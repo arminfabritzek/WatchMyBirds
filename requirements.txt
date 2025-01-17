@@ -1,0 +1,7 @@
+opencv-python~=4.11.0.86
+tensorflow~=2.18.0
+numpy~=2.0.2
+matplotlib~=3.9.4
+pillow~=11.1.0
+six~=1.17.0
+keras~=3.8.0
