@@ -27,9 +27,9 @@ def main():
     # Configuration Parameters
     # --------------------------------------------------------------------------
     # Hard-coded parameters
-    model_choice = "efficientdet_lite4"  # efficientdet_lite4 or ssd_mobilenet_v2
-    class_filter = ["person", "dog", "banana", "potted plant", "keyboard"]  # e.g. filter these classes; None for all classes
-    confidence_threshold = 0.6
+    model_choice = "pytorch_ssd"  # pytorch_ssd or efficientdet_lite4 or ssd_mobilenet_v2
+    class_filter = ["bird"]
+    confidence_threshold = 0.5
     save_threshold = 0.8
     save_interval = 5  # Seconds between saving
 
@@ -113,6 +113,9 @@ def main():
         # Quit with 'q'
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break
+
+        # Optional frame limiter
+        time.sleep(0.03)
 
     # --------------------------------------------------------------------------
     # Cleanup

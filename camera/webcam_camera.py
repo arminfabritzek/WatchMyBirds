@@ -3,12 +3,16 @@
 # ------------------------------------------------------------------------------
 
 import os
+import torch
+from torchvision.models.detection import ssd300_vgg16
+from torchvision.models.detection import SSD300_VGG16_Weights
 import tensorflow as tf
 import tensorflow_hub as hub
 import numpy as np
 from camera.base_camera import BaseCamera
 import re
 import cv2
+from PIL import Image
 
 # ------------------------------------------------------------------------------
 # Helper Functions
@@ -34,22 +38,22 @@ def parse_label_map(file_path):
                 label_map[class_id] = display_name
     return label_map
 
-def download_and_save_model(model_url, save_path):
+def preprocess_pytorch_frame(frame):
     """
-    Downloads a TensorFlow Hub model and saves it locally if it doesn't already exist.
-
-    :param model_url: URL of the TensorFlow Hub model.
-    :param save_path: Local directory path to save the model.
+    Preprocess the frame for PyTorch SSD model.
+    :param frame: Input frame (OpenCV image).
+    :return: Preprocessed tensor.
     """
-    if not os.path.exists(save_path):
-        print(f"Model not found at {save_path}. Downloading...")
-        model = hub.load(model_url)
-        tf.saved_model.save(model, save_path)
-        print(f"Model saved at {save_path}")
-    else:
-        print(f"Model already exists at {save_path}")
-
-
+    from torchvision import transforms
+    transform = transforms.Compose([
+        transforms.ToTensor()  # Convert to PyTorch tensor
+    ])
+    # Convert BGR (OpenCV) to RGB (Pillow)
+    frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    # Convert to PIL image
+    image = Image.fromarray(frame_rgb)
+    # Apply the transformation
+    return transform(image).unsqueeze(0)  # Add batch dimension
 # ------------------------------------------------------------------------------
 # WebcamCamera Class
 # ------------------------------------------------------------------------------
@@ -63,7 +67,7 @@ class WebcamCamera(BaseCamera):
         Initializes the webcam and loads the selected object detection model.
 
         :param source: Camera source index (e.g., 0 for the default webcam).
-        :param model_choice: Model choice for object detection ('efficientdet_lite4' or 'ssd_mobilenet_v2').
+        :param model_choice: Model choice for object detection ('efficientdet_lite4' or 'ssd_mobilenet_v2' ...).
         :param label_map_path: Path to the label map file.
         """
         super().__init__(source=source)
@@ -71,9 +75,31 @@ class WebcamCamera(BaseCamera):
 
         print(f"Loading model: {self.model_choice}...")
 
-        if self.model_choice == "efficientdet_lite4":
+        if self.model_choice == "pytorch_ssd":
+            # Load the SSD300 VGG16 model pre-trained on the COCO dataset using updated weights parameter
+            self.model = ssd300_vgg16(weights=SSD300_VGG16_Weights.COCO_V1)
+            self.model.eval()
+            print("PyTorch SSD model loaded successfully!")
+
+            self.coco_classes = [
+                '__background__', 'person', 'bicycle', 'car', 'motorcycle', 'airplane', 'bus',
+                'train', 'truck', 'boat', 'traffic light', 'fire hydrant', 'N/A', 'stop sign',
+                'parking meter', 'bench', 'bird', 'cat', 'dog', 'horse', 'sheep', 'cow',
+                'elephant', 'bear', 'zebra', 'giraffe', 'N/A', 'backpack', 'umbrella', 'N/A', 'N/A',
+                'handbag', 'tie', 'suitcase', 'frisbee', 'skis', 'snowboard', 'sports ball',
+                'kite', 'baseball bat', 'baseball glove', 'skateboard', 'surfboard', 'tennis racket',
+                'bottle', 'N/A', 'wine glass', 'cup', 'fork', 'knife', 'spoon', 'bowl',
+                'banana', 'apple', 'sandwich', 'orange', 'broccoli', 'carrot', 'hot dog', 'pizza',
+                'donut', 'cake', 'chair', 'couch', 'potted plant', 'bed', 'N/A', 'dining table',
+                'N/A', 'N/A', 'toilet', 'N/A', 'tv', 'laptop', 'mouse', 'remote', 'keyboard', 'cell phone',
+                'microwave', 'oven', 'toaster', 'sink', 'refrigerator', 'N/A', 'book',
+                'clock', 'vase', 'scissors', 'teddy bear', 'hair drier', 'toothbrush'
+            ]
+
+            print("PyTorch SSD MobileNet V2 model loaded successfully!")
+
+        elif self.model_choice == "efficientdet_lite4":
             # Load TFLite model
-            model_path = "models/efficientdet_lite4.tflite"
             model_path = "models/efficientdet-tflite-lite4-detection-default-v2.tflite"
             if not os.path.exists(model_path):
                 raise FileNotFoundError(f"TFLite model not found at {model_path}")
@@ -85,21 +111,19 @@ class WebcamCamera(BaseCamera):
             self.input_details = self.interpreter.get_input_details()
             self.output_details = self.interpreter.get_output_details()
 
-            print("TFLite model loaded successfully!")
-            print(f"Input details: {self.input_details}")
-            print(f"Output details: {self.output_details}")
+            print("Local TFLite efficientdet_lite4 model loaded successfully!")
 
         elif self.model_choice == "ssd_mobilenet_v2":
             # Load TF Hub model
             model_url = "https://tfhub.dev/tensorflow/ssd_mobilenet_v2/2"
             self.model = hub.load(model_url).signatures['serving_default']
-            print("TF Hub model loaded successfully!")
+            print("TF Hub ssd_mobilenet_v2 model loaded successfully!")
+
         else:
             raise ValueError(f"Unsupported model choice: {self.model_choice}")
 
         # Load label map
         self.labels = parse_label_map(label_map_path)
-        print("Label map loaded successfully!")
 
     def detect_objects(self, frame, class_filter=None, confidence_threshold=0.5, save_threshold=0.8):
         """
@@ -114,7 +138,40 @@ class WebcamCamera(BaseCamera):
         # Make a copy BEFORE we annotate
         original_frame = frame.copy()
 
-        if self.model_choice == "efficientdet_lite4":
+        if self.model_choice == "pytorch_ssd":
+            input_tensor = preprocess_pytorch_frame(frame)
+            with torch.no_grad():
+                outputs = self.model(input_tensor)
+
+            boxes = outputs[0]['boxes']
+            labels = outputs[0]['labels']
+            scores = outputs[0]['scores']
+
+            detection_info_list = []
+            for i, score in enumerate(scores):
+                if score >= confidence_threshold and self.coco_classes[labels[i].item()] == "bird":
+                    x1, y1, x2, y2 = boxes[i].tolist()
+                    detection_info_list.append({
+                        "class_name": "bird",
+                        "confidence": float(score),
+                        "x1": int(x1), "y1": int(y1),
+                        "x2": int(x2), "y2": int(y2)
+                    })
+                    cv2.rectangle(frame, (int(x1), int(y1)), (int(x2), int(y2)), (0, 255, 0), 2)
+                    cv2.putText(
+                        frame,
+                        f"bird ({score:.2f})",
+                        (int(x1), int(y1) - 10),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.5,
+                        (0, 255, 0),
+                        2
+                    )
+
+            return frame, any(
+                [d['confidence'] >= save_threshold for d in detection_info_list]), original_frame, detection_info_list
+
+        elif self.model_choice == "efficientdet_lite4":
             # Preprocess for TFLite model
             input_size = self.input_details[0]['shape'][1:3]
             resized_frame = cv2.resize(frame, tuple(input_size))
@@ -172,8 +229,6 @@ class WebcamCamera(BaseCamera):
                 # Ensure box coords are within image boundaries
                 y1, x1 = max(0, y1), max(0, x1)
                 y2, x2 = min(height, y2), min(width, x2)
-
-                print(f"Detected: {class_name}, Probability: {score:.2f}, Box: [{x1}, {y1}, {x2}, {y2}]")
 
                 # Draw bounding box + label on `frame`
                 cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
