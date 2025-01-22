@@ -1,6 +1,7 @@
 # ------------------------------------------------------------------------------
 # Main Script for Real-Time Object Detection with Webcam and Flask Streaming
 # ------------------------------------------------------------------------------
+# main.py
 
 from flask import Flask, Response
 from dotenv import load_dotenv
@@ -17,15 +18,34 @@ frame_lock = threading.Lock()
 app = Flask(__name__)
 latest_frame = None  # Global variable to store the latest frame for streaming
 
+
 def generate_frames():
     global latest_frame
+    # Laden eines Platzhalterbildes, z.B. "static/no_signal.jpg"
+    placeholder = cv2.imread('assets/No_Signal.jpeg')
     while True:
         with frame_lock:
-            if latest_frame is not None:
-                _, buffer = cv2.imencode('.jpg', latest_frame)
+            current_frame = latest_frame
+        if current_frame is not None:
+            ret, buffer = cv2.imencode('.jpg', current_frame)
+            if not ret:
+                print("Failed to encode frame")
+            else:
                 frame = buffer.tobytes()
                 yield (b'--frame\r\n'
                        b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')
+        else:
+            # Falls kein Live-Frame verfügbar, sende Platzhalter
+            if placeholder is not None:
+                ret, buffer = cv2.imencode('.jpg', placeholder)
+                if not ret:
+                    print("Failed to encode placeholder")
+                else:
+                    frame = buffer.tobytes()
+                    yield (b'--frame\r\n'
+                           b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')
+            else:
+                print("No frame and no placeholder available.")
         time.sleep(0.03)
 
 @app.route('/video_feed')
@@ -70,7 +90,7 @@ def detection_loop():
         print("Video source is a WebCam.")
     except ValueError:
         source = video_source  # Use RTSP URL if webcam_source is not a valid integer
-        backend = cv2.CAP_FFMPEG  # Specify FFmpeg backend for RTSP
+        backend = cv2.CAP_GSTREAMER  # Specify GSTREAMER backend for RTSP
         print("Video source is RTSP Stream.")
 
     # --------------------------------------------------------------------------
@@ -110,8 +130,19 @@ def detection_loop():
     while True:
         frame = camera.get_frame()
         if frame is None:
-            print("Kein Frame verfügbar. Überprüfe die Kamera.")
-            break
+            print("Kein Frame verfügbar. Versuche Kamera neu zu initialisieren.")
+            try:
+                camera.release()  # Versuche, die aktuelle Kamera freizugeben
+            except Exception as e:
+                print(f"Fehler beim Freigeben der Kamera: {e}")
+            # Neue Initialisierung der Kamera
+            camera = WebcamCamera(source=source, backend=backend, model_choice=model_choice, use_threaded=use_threaded)
+            time.sleep(2)  # Kurze Wartezeit vor erneutem Versuch
+            continue
+
+
+        # After capturing frame
+        # print("Frame captured.", flush=True)
 
         # We now get 4 values back
         annotated_frame, should_save_interval, original_frame, detection_info_list = camera.detect_objects(
@@ -164,12 +195,13 @@ def detection_loop():
         # Optional frame limiter
         time.sleep(0.03)
 
+# Start the detection loop in a separate thread
+detection_thread = threading.Thread(target=detection_loop)
+detection_thread.daemon = True
+detection_thread.start()
+
 
 if __name__ == '__main__':
-    # Start the detection loop in a separate thread
-    detection_thread = threading.Thread(target=detection_loop)
-    detection_thread.daemon = True
-    detection_thread.start()
 
     # Start the Flask server
     app.run(host='0.0.0.0', port=5001, debug=True)
