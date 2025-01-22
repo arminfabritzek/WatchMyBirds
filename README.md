@@ -6,7 +6,13 @@
 
 ## Features
 
-- **Real-Time Object Detection**: Perform object detection directly from a webcam feed.
+- **Real-Time Object Detection**: Perform object detection directly from a webcam or RTSP camera streams.
+
+
+- **Future Plans**:
+  - Integrate PTZ (Pan-Tilt-Zoom) camera control to track objects and keep them centered.
+  - Support Raspberry Pi 4 (4GB) for ~1 FPS.
+  - Compatibility with OAK-D stereo cameras.
 
 
 - **Customizable Detection Settings**:
@@ -15,23 +21,18 @@
 
 
 - **Support for Pre-Trained Models**:
-  - Choose between `EfficientDet Lite4` and `SSD MobileNet V2` models.
-  - Use TensorFlow or TFLite formats.
-  - Tested on Raspberry Pi 4 4GB with approximately 1 FPS.
-  - Future adaptation planned for OAK-D cameras.
+  - Includes `ssd300_vgg16` and `EfficientDet Lite4` and `SSD MobileNet V2`.
+  - Supports PyTorch, TensorFlow, and TFLite formats.
 
 
 - **Batch Classification**: Crop detected objects for further classification with a separate model.
-
-
-- **Expandable Camera Support**: Designed with flexibility for additional camera types (e.g., RTSP and PTZ cameras).
 
 
 - **Modular Design**: Organized file structure for easy updates and extensions.
 
 ---
 
-## Installation
+## Installation & Video Source Configuration
 
 ### Steps
 
@@ -53,16 +54,29 @@
    ```
 
 
+4. **Configure the Video Source**:
+- Create or edit the .env file in the project root
+- Add the VIDEO_SOURCE variable:
 
+   ```plaintext
+   VIDEO_SOURCE=0
+   ```
+   For an RTSP stream, use:
+   ```plaintext
+   VIDEO_SOURCE=rtsp://user:user_pw@192.168.0.21:554/11
+   ```
 
-
-4. **Download and Place Pre-Trained Models**:
+5. **Download and Place Pre-Trained Models (optional, depending on your framework choice)**:
    - Download the TensorFlow SavedModel `ssd_mobilenet_v2` for from Kaggle: [ssd_mobilenet_v2](https://www.kaggle.com/models/tensorflow/ssd-mobilenet-v2/tensorFlow2/ssd-mobilenet-v2)
    - Download the `EfficientDet Lite4` TFLite model:
      [EfficientDet Lite4 as TFLite](https://www.kaggle.com/models/tensorflow/efficientdet/tfLite/lite4-detection-default)
    - Download the label files:
      [ImageNetLabels.txt](https://storage.googleapis.com/download.tensorflow.org/data/ImageNetLabels.txt), [coco_label_map.pbtxt](research/object_detection/data/mscoco_label_map.pbtxt)
    - Place these files in the `models/` directory.
+
+**Notes**:
+- Planing to switch entirely to PyTorch --> the TensorFlow model downloads will not be necessary.
+- The .env file allows dynamic switching between a webcam (e.g. VIDEO_SOURCE=2) and an RTSP stream for greater flexibility.
 
 ---
 
@@ -95,6 +109,7 @@ WatchMyBirds/
 ├── camera/
 │   ├── __init__.py
 │   ├── base_camera.py
+│   ├── video_capture.py
 │   ├── webcam_camera.py
 ├── models/
 │   ├── ssd_mobilenet_v2/                                       # TensorFlow SavedModel
@@ -103,10 +118,11 @@ WatchMyBirds/
 │   ├── efficientdet_labels.pbtxt                               # EfficientDet labels
 │   ├── ImageNetLabels.txt                                      # ImageNet labels
 ├── output/                                                     # Saved frames and logs
-├── requirements.txt                                            # Python dependencies
-├── README.md                                                   # Project documentation
-├── main.py                                                     # Entry point for the application
 ├── batch_classification.py                                     # Crops and classifies detected objects
+├── requirements.txt                                            # Python dependencies
+├── main.py                                                     # Entry point for the application
+├── README.md                                                   # Project documentation
+├── requirements.txt
 └── .gitignore                                                  # Ignored files/folders
 ```
 
@@ -136,6 +152,12 @@ You can modify parameters in `main.py` to suit your use case:
   save_threshold = 0.8  # Default: 80%
   ```
 
+- **Use Threading**:
+  Determine when to save frames:
+  ```python
+  use_threaded = True  # Set to False to use non-threaded video capture
+  ```
+
 ### Adding More Cameras
 
 Future updates will include support for:
@@ -148,20 +170,16 @@ Future updates will include support for:
 
 This project is a work in progress. Upcoming features include:
 
-1. **Custom Bird Detection Models**:
-   - Train a specialized bird detection model in a separate repository and integrate it into this application.
-   - Integrate AIY models for classification, including birds, insects and plants:
-     - `google/aiy/vision/classifier/insects_V1/1` ([google/aiy/vision/classifier/insects_V1/1](https://www.kaggle.com/models/google/aiy/tfLite/vision-classifier-insects-v1))
+1. **Custom Models**:
+   - Train specialized bird detection models and integrate AIY vision classifiers for birds, insects, and plants.
 
-
-     
 
 2. **Enhanced Camera Support**:
    - Add support for RTSP and PTZ cameras to monitor more complex setups.
 
 
 3. **Edge Deployment**:
-   - Optimize the application for deployment on edge devices like Raspberry Pi or NVIDIA Jetson Nano.
+   - Optimize for edge devices like Raspberry Pi or NVIDIA Jetson Nano.
 
 
 4. **Advanced Classification**:

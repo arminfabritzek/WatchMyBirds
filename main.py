@@ -2,11 +2,13 @@
 # Main Script for Real-Time Object Detection with Webcam
 # ------------------------------------------------------------------------------
 
+from dotenv import load_dotenv
 import os
 import time
 import csv
 import cv2
 from camera.webcam_camera import WebcamCamera
+
 
 
 def main():
@@ -23,11 +25,23 @@ def main():
         - Detected objects and metadata are saved to the output directory.
     """
 
+    # Load variables from .env file
+    load_dotenv()
+    video_source = os.getenv("VIDEO_SOURCE")  # Retrieves the RTSP URL
+
+    # Convert webcam_source to int if applicable
+    try:
+        source = int(video_source)
+        print("Video source is a WebCam.")
+    except ValueError:
+        source = video_source  # Use RTSP URL if webcam_source is not a valid integer
+        print("Video source is RTSP Stream.")
+
     # --------------------------------------------------------------------------
     # Configuration Parameters
     # --------------------------------------------------------------------------
     # Hard-coded parameters
-    use_threaded = False  # Set to False to use non-threaded video capture
+    use_threaded = True  # Set to False to use non-threaded video capture
     model_choice = "pytorch_ssd"  # pytorch_ssd or efficientdet_lite4 or ssd_mobilenet_v2
     class_filter = ["bird"]
     confidence_threshold = 0.5
@@ -37,7 +51,7 @@ def main():
     # --------------------------------------------------------------------------
     # Setup
     # --------------------------------------------------------------------------
-    camera = WebcamCamera(model_choice=model_choice, use_threaded=use_threaded)
+    camera = WebcamCamera(source=source, model_choice=model_choice, use_threaded=use_threaded)
     output_dir = "output"
     os.makedirs(output_dir, exist_ok=True)
 

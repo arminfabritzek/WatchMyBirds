@@ -67,7 +67,7 @@ class WebcamCamera(BaseCamera):
         """
         Initializes the webcam and loads the selected object detection model.
 
-        :param source: Camera source index (e.g., 0 for the default webcam).
+        :param source: Camera source index (e.g., 0 for the default webcam; on my MacBook my internal webcam is 2).
         :param model_choice: Model choice for object detection ('efficientdet_lite4' or 'ssd_mobilenet_v2' ...).
         :param label_map_path: Path to the label map file.
         """
