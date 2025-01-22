@@ -9,10 +9,11 @@ from torchvision.models.detection import SSD300_VGG16_Weights
 import tensorflow as tf
 import tensorflow_hub as hub
 import numpy as np
-from camera.base_camera import BaseCamera
 import re
 import cv2
 from PIL import Image
+from camera.base_camera import BaseCamera
+from camera.video_capture import VideoCapture  # Import VideoCapture class
 
 # ------------------------------------------------------------------------------
 # Helper Functions
@@ -62,7 +63,7 @@ class WebcamCamera(BaseCamera):
     """
     Webcam-based video capture class with integrated object detection capabilities.
     """
-    def __init__(self, source=2, model_choice="ssd_mobilenet_v2", label_map_path="models/coco_label_map.pbtxt"):
+    def __init__(self, source=2, model_choice="ssd_mobilenet_v2", label_map_path="models/coco_label_map.pbtxt", use_threaded=False):
         """
         Initializes the webcam and loads the selected object detection model.
 
@@ -70,7 +71,14 @@ class WebcamCamera(BaseCamera):
         :param model_choice: Model choice for object detection ('efficientdet_lite4' or 'ssd_mobilenet_v2' ...).
         :param label_map_path: Path to the label map file.
         """
-        super().__init__(source=source)
+
+        if use_threaded:
+            print("Using threaded VideoCapture for minimal latency.")
+            self.video_capture = VideoCapture(source=source)
+        else:
+            print("Using non-threaded BaseCamera.")
+            super().__init__(source=source)
+
         self.model_choice = model_choice.lower()
 
         print(f"Loading model: {self.model_choice}...")
@@ -257,3 +265,22 @@ class WebcamCamera(BaseCamera):
 
         # Return annotated/unannotated frames, plus detection data
         return frame, should_save_interval, original_frame, detection_info_list
+
+    def get_frame(self):
+        """
+        Retrieves the latest frame from the video capture.
+
+        :return: A numpy array representing the current frame.
+        """
+        if hasattr(self, "video_capture"):
+            return self.video_capture.get_frame()
+        return super().get_frame()
+
+    def release(self):
+        """
+        Releases the video capture resources.
+        """
+        if hasattr(self, "video_capture"):
+            self.video_capture.release_camera()
+        else:
+            super().release()

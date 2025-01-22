@@ -27,6 +27,7 @@ def main():
     # Configuration Parameters
     # --------------------------------------------------------------------------
     # Hard-coded parameters
+    use_threaded = False  # Set to False to use non-threaded video capture
     model_choice = "pytorch_ssd"  # pytorch_ssd or efficientdet_lite4 or ssd_mobilenet_v2
     class_filter = ["bird"]
     confidence_threshold = 0.5
@@ -36,7 +37,7 @@ def main():
     # --------------------------------------------------------------------------
     # Setup
     # --------------------------------------------------------------------------
-    camera = WebcamCamera(model_choice=model_choice)
+    camera = WebcamCamera(model_choice=model_choice, use_threaded=use_threaded)
     output_dir = "output"
     os.makedirs(output_dir, exist_ok=True)
 
