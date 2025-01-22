@@ -63,7 +63,7 @@ class WebcamCamera(BaseCamera):
     """
     Webcam-based video capture class with integrated object detection capabilities.
     """
-    def __init__(self, source=2, model_choice="ssd_mobilenet_v2", label_map_path="models/coco_label_map.pbtxt", use_threaded=False):
+    def __init__(self, source=2, backend=None, model_choice="ssd_mobilenet_v2", label_map_path="models/coco_label_map.pbtxt", use_threaded=False):
         """
         Initializes the webcam and loads the selected object detection model.
 
@@ -74,7 +74,7 @@ class WebcamCamera(BaseCamera):
 
         if use_threaded:
             print("Using threaded VideoCapture for minimal latency.")
-            self.video_capture = VideoCapture(source=source)
+            self.video_capture = VideoCapture(source=source, backend=None)
         else:
             print("Using non-threaded BaseCamera.")
             super().__init__(source=source)

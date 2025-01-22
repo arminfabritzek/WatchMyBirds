@@ -1,29 +1,63 @@
 # ------------------------------------------------------------------------------
-# Main Script for Real-Time Object Detection with Webcam
+# Main Script for Real-Time Object Detection with Webcam and Flask Streaming
 # ------------------------------------------------------------------------------
 
+from flask import Flask, Response
 from dotenv import load_dotenv
 import os
 import time
 import csv
 import cv2
+import threading
 from camera.webcam_camera import WebcamCamera
 
+# Global lock for thread-safe frame access
+frame_lock = threading.Lock()
+
+app = Flask(__name__)
+latest_frame = None  # Global variable to store the latest frame for streaming
+
+def generate_frames():
+    global latest_frame
+    while True:
+        with frame_lock:
+            if latest_frame is not None:
+                _, buffer = cv2.imencode('.jpg', latest_frame)
+                frame = buffer.tobytes()
+                yield (b'--frame\r\n'
+                       b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')
+        time.sleep(0.03)
+
+@app.route('/video_feed')
+def video_feed():
+    """
+    Route to serve the MJPEG video feed.
+    """
+    return Response(generate_frames(), mimetype='multipart/x-mixed-replace; boundary=frame')
 
 
-def main():
+@app.route('/')
+def index():
+    """
+    Simple HTML page displaying the video feed.
+    """
+    return (
+        '''
+        <html>
+            <body>
+                <h1>Live Stream</h1>
+                <img src="/video_feed" style="max-width: 100%; height: auto;">
+            </body>
+        </html>
+        '''
+    )
+
+
+def detection_loop():
     """
     Main function to run real-time object detection using a webcam.
-    The script captures frames, performs object detection, displays annotated
-    frames, and optionally saves detected objects and metadata.
-
-    Parameters:
-        None (hardcoded parameters can be modified within the script).
-
-    Usage:
-        - Press 'q' to quit the livestream.
-        - Detected objects and metadata are saved to the output directory.
     """
+    global latest_frame
 
     # Load variables from .env file
     load_dotenv()
@@ -32,26 +66,27 @@ def main():
     # Convert webcam_source to int if applicable
     try:
         source = int(video_source)
+        backend = None  # Use default backend for webcams
         print("Video source is a WebCam.")
     except ValueError:
         source = video_source  # Use RTSP URL if webcam_source is not a valid integer
+        backend = cv2.CAP_FFMPEG  # Specify FFmpeg backend for RTSP
         print("Video source is RTSP Stream.")
 
     # --------------------------------------------------------------------------
     # Configuration Parameters
     # --------------------------------------------------------------------------
-    # Hard-coded parameters
     use_threaded = True  # Set to False to use non-threaded video capture
     model_choice = "pytorch_ssd"  # pytorch_ssd or efficientdet_lite4 or ssd_mobilenet_v2
     class_filter = ["bird"]
     confidence_threshold = 0.5
-    save_threshold = 0.8
-    save_interval = 5  # Seconds between saving
+    save_threshold = 0.6
+    save_interval = 3  # Seconds between saving
 
     # --------------------------------------------------------------------------
     # Setup
     # --------------------------------------------------------------------------
-    camera = WebcamCamera(source=source, model_choice=model_choice, use_threaded=use_threaded)
+    camera = WebcamCamera(source=source, backend=backend, model_choice=model_choice, use_threaded=use_threaded)
     output_dir = "output"
     os.makedirs(output_dir, exist_ok=True)
 
@@ -86,8 +121,9 @@ def main():
             save_threshold=save_threshold
         )
 
-        # Display livestream
-        cv2.imshow("Livestream with Object Detection", annotated_frame)
+        # Update the latest frame for streaming
+        with frame_lock:
+            latest_frame = annotated_frame
 
         current_time = time.time()
         if should_save_interval and (current_time - last_save_time >= save_interval):
@@ -125,21 +161,15 @@ def main():
 
         frame_count += 1
 
-        # Quit with 'q'
-        if cv2.waitKey(1) & 0xFF == ord('q'):
-            break
-
         # Optional frame limiter
         time.sleep(0.03)
 
-    # --------------------------------------------------------------------------
-    # Cleanup
-    # --------------------------------------------------------------------------
-    camera.release()
-    cv2.destroyAllWindows()
 
-# ------------------------------------------------------------------------------
-# Run the Script
-# ------------------------------------------------------------------------------
-if __name__ == "__main__":
-    main()
+if __name__ == '__main__':
+    # Start the detection loop in a separate thread
+    detection_thread = threading.Thread(target=detection_loop)
+    detection_thread.daemon = True
+    detection_thread.start()
+
+    # Start the Flask server
+    app.run(host='0.0.0.0', port=5001, debug=True)
