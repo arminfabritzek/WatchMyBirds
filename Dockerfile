@@ -7,6 +7,8 @@ RUN apt-get update && apt-get install -y \
     libglib2.0-0 \
     libsm6 \
     libxext6 \
+    libx264-dev \
+    libavcodec-extra \
     libxrender-dev \
     ffmpeg \
     gstreamer1.0-tools \
@@ -64,6 +66,10 @@ EXPOSE 5001
 
 # Define environment variables with default values (can be overridden)
 ENV VIDEO_SOURCE=0 OUTPUT_DIR=/output
+
+# Set the health check
+HEALTHCHECK --interval=30s --timeout=5s \
+  CMD curl --fail http://localhost:5001 || exit 1
 
 # Set the command to run your app
 CMD ["waitress-serve", "--listen=0.0.0.0:5001", "main:app"]

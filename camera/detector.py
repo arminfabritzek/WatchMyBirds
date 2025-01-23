@@ -1,5 +1,5 @@
 # ------------------------------------------------------------------------------
-# WebcamCamera Module for Object Detection
+# Detector Module for Object Detection
 # ------------------------------------------------------------------------------
 
 import os
@@ -12,7 +12,6 @@ import numpy as np
 import re
 import cv2
 from PIL import Image
-from camera.base_camera import BaseCamera
 from camera.video_capture import VideoCapture  # Import VideoCapture class
 
 # ------------------------------------------------------------------------------
@@ -20,12 +19,7 @@ from camera.video_capture import VideoCapture  # Import VideoCapture class
 # ------------------------------------------------------------------------------
 
 def parse_label_map(file_path):
-    """
-    Parses a TensorFlow label map file to create a mapping of class IDs to names.
-
-    :param file_path: Path to the label map file.
-    :return: Dictionary mapping class IDs to display names.
-    """
+    """Parses a TensorFlow label map file."""
     label_map = {}
     with open(file_path, 'r') as file:
         content = file.read()
@@ -40,11 +34,7 @@ def parse_label_map(file_path):
     return label_map
 
 def preprocess_pytorch_frame(frame):
-    """
-    Preprocess the frame for PyTorch SSD model.
-    :param frame: Input frame (OpenCV image).
-    :return: Preprocessed tensor.
-    """
+    """Preprocesses an image frame for PyTorch."""
     from torchvision import transforms
     transform = transforms.Compose([
         transforms.ToTensor()  # Convert to PyTorch tensor
@@ -56,14 +46,14 @@ def preprocess_pytorch_frame(frame):
     # Apply the transformation
     return transform(image).unsqueeze(0)  # Add batch dimension
 # ------------------------------------------------------------------------------
-# WebcamCamera Class
+# Detector Class
 # ------------------------------------------------------------------------------
 
-class WebcamCamera(BaseCamera):
+class Detector():
     """
     Webcam-based video capture class with integrated object detection capabilities.
     """
-    def __init__(self, source=2, backend=None, model_choice="ssd_mobilenet_v2", label_map_path="models/coco_label_map.pbtxt", use_threaded=False):
+    def __init__(self, source=2, model_choice="ssd_mobilenet_v2", label_map_path="models/coco_label_map.pbtxt"):
         """
         Initializes the webcam and loads the selected object detection model.
 
@@ -72,22 +62,14 @@ class WebcamCamera(BaseCamera):
         :param label_map_path: Path to the label map file.
         """
 
-        if use_threaded:
-            print("Using threaded VideoCapture for minimal latency.")
-            self.video_capture = VideoCapture(source=source, backend=backend)
-        else:
-            print("Using non-threaded BaseCamera.")
-            super().__init__(source=source)
-
+        print("Using threaded VideoCapture for minimal latency.")
+        self.video_capture = VideoCapture(source=source)
         self.model_choice = model_choice.lower()
-
-        print(f"Loading model: {self.model_choice}...")
 
         if self.model_choice == "pytorch_ssd":
             # Load the SSD300 VGG16 model pre-trained on the COCO dataset using updated weights parameter
             self.model = ssd300_vgg16(weights=SSD300_VGG16_Weights.COCO_V1)
             self.model.eval()
-            print("PyTorch SSD model loaded successfully!")
 
             self.coco_classes = [
                 '__background__', 'person', 'bicycle', 'car', 'motorcycle', 'airplane', 'bus',
@@ -104,7 +86,7 @@ class WebcamCamera(BaseCamera):
                 'clock', 'vase', 'scissors', 'teddy bear', 'hair drier', 'toothbrush'
             ]
 
-            print("PyTorch SSD MobileNet V2 model loaded successfully!")
+            print(f"{self.model_choice.capitalize()} model loaded successfully.")
 
         elif self.model_choice == "efficientdet_lite4":
             # Load TFLite model
@@ -143,7 +125,6 @@ class WebcamCamera(BaseCamera):
         :param save_threshold: Confidence level at which the frame should be marked for saving.
         :return: Annotated frame, save flag, original frame, and detection details.
         """
-        # Make a copy BEFORE we annotate
         original_frame = frame.copy()
 
         if self.model_choice == "pytorch_ssd":
@@ -276,6 +257,13 @@ class WebcamCamera(BaseCamera):
             return self.video_capture.get_frame()
         return super().get_frame()
 
+    def get_frame(self):
+        """
+        Retrieves the latest frame from the VideoCapture object.
+        """
+        return self.video_capture.get_frame()
+
+
     def release(self):
         """
         Releases the video capture resources.
@@ -284,3 +272,9 @@ class WebcamCamera(BaseCamera):
             self.video_capture.release_camera()
         else:
             super().release()
+
+    def release(self):
+        """
+        Releases resources used by VideoCapture.
+        """
+        self.video_capture.release()

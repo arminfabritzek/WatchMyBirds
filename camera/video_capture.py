@@ -1,170 +1,202 @@
+import subprocess
 import cv2
 import queue
 import threading
+from threading import Event
 import time
+import numpy as np
 
 
 class VideoCapture:
     """
-    A class for threaded video capture, suitable for specialized applications requiring minimal latency.
+    Handles video input streams from various sources (RTSP, WebRTC, Webcam, FFmpeg).
     """
-
-    _counter = 0  # Class-level counter for multiple camera instances
-
-    def __init__(self, source=0, backend=None):
+    def __init__(self, source):
         """
-        Initializes the video capture object with threading and queue.
-
-        :param source: Camera source, such as an index for a connected camera (e.g., 0 for the default camera).
-        :param backend: Optional backend for OpenCV (e.g., cv2.CAP_FFMPEG).
+        Initializes the VideoCapture object and detects the stream type.
         """
-        # Increment instance counter for multiple cameras
-        VideoCapture._counter += 1
-        self.num_instance = VideoCapture._counter
-
-        self.backend = backend
         self.source = source
-        self.stop_flag = False  # Flag to stop the thread
+        self.stop_flag = False
+        self.stop_event = Event()  # Event to signal the thread to stop
+        self.cap = None
+        self.ffmpeg_process = None  # Used for FFmpeg streams
+        self.q = queue.Queue(maxsize=10)  # Queue for storing frames
+        self.stream_type = self._detect_stream_type()
+        self._setup_capture()
+        self._start_reader_thread()
 
-        # Initialize VideoCapture with optional backend
-        if self.backend is not None:
-            self.cap = cv2.VideoCapture(self.source, self.backend)
+
+    def _detect_stream_type(self):
+        """
+        Automatically detects the stream type based on the source string.
+
+        :return: Detected stream type as a string ("rtsp", "http", "webcam").
+        """
+        if isinstance(self.source, str):
+            if self.source.startswith("rtsp://"):
+                return "rtsp"
+            elif self.source.startswith(("http://", "https://")):
+                return "http"
+        elif isinstance(self.source, int):  # Integer sources are treated as webcams
+            return "webcam"
+        raise ValueError(f"Unable to determine stream type for source: {self.source}")
+
+
+    def _setup_capture(self):
+        """
+        Sets up the video capture based on the detected stream type.
+        """
+        if self.stream_type == "rtsp":
+            self._setup_ffmpeg()
+        elif self.stream_type == "http":
+            self._setup_http()
+        elif self.stream_type == "webcam":
+            self._setup_webcam()
         else:
-            self.cap = cv2.VideoCapture(self.source)
+            raise ValueError(f"Unsupported stream type: {self.stream_type}")
+
+    def _setup_rtsp(self):
+        self.cap = cv2.VideoCapture(self.source, cv2.CAP_FFMPEG)
+        self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 3)
+
+    def _setup_ffmpeg(self):
+        ffmpeg_cmd = [
+            "ffmpeg",
+            "-probesize", "50000000",  # Increase probesize for complex streams
+            "-analyzeduration", "10000000",  # Increase analyze duration
+            "-rtsp_transport", "tcp",  # Use TCP transport for RTSP
+            "-i", self.source,  # Input stream URL
+            "-f", "rawvideo",  # Output raw video
+            "-pix_fmt", "bgr24",  # Keep pixel format as bgr24
+            "-an",  # Disable audio
+            "pipe:"  # Output to pipe
+        ]
+        try:
+            self.ffmpeg_process = subprocess.Popen(
+                ffmpeg_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=10 ** 8
+            )
+            print("FFmpeg process started successfully.")
+        except Exception as e:
+            raise RuntimeError(f"Failed to start FFmpeg process: {e}")
+
+    def _setup_http(self):
+        """
+        Sets up OpenCV's VideoCapture for HTTP streams.
+        """
+        self.cap = cv2.VideoCapture(self.source)
         self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 3)
         self.cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 5000)  # 5-second timeout
         self.cap.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, 5000)  # 5-second read timeout
 
-        if not self.cap.isOpened():
-            raise ValueError("Failed to open video source.")
-
-        # Queue to store frames
-        self.q = queue.Queue(maxsize=10)  # Limit to 10 frames
-        self.counter = 0  # Counter for dropped frames
-
-        # Start the reader thread
-        self.t = threading.Thread(target=self._reader, daemon=True)
-        self.t.start()
-
-    def _reader(self):
+    def _setup_webcam(self):
         """
-        Background thread to read frames continuously and keep only the latest frame.
+        Sets up OpenCV's VideoCapture for webcam streams.
         """
-        while not self.stop_flag:
-            ret, frame = self.cap.read()
-            if not ret:
-                print("Failed to read frame from video source.")
-                self.counter += 1
-                time.sleep(1)  # Prevent busy looping
-                if self.counter >= 10:  # Attempt to reinitialize after 10 failed reads
-                    print("Reinitializing camera after multiple failures...")
-                    self._reinitialize_camera()
-                continue
-
-            # Discard old frames if queue is full
-            if not self.q.empty():
-                try:
-                    self.q.get_nowait()
-                except queue.Empty:
-                    pass
-
-            # Add the new frame to the queue
-            try:
-                self.q.put(frame, timeout=0.1)
-            except queue.Full:
-                print("Frame queue is full. Dropping frame.")
-
-    def _reader(self):
-        """
-        Background thread to read frames continuously and keep only the latest frame.
-        """
-        while not self.stop_flag:
-            ret, frame = self.cap.read()
-            if not ret:
-                print("Failed to read frame from video source.")
-                self.counter += 1
-                if self.counter >= 10:  # Attempt to reinitialize after 10 failed reads
-                    print("Reinitializing camera after multiple failures...")
-                    self._reinitialize_camera()
-                time.sleep(1)  # Prevent busy looping
-                continue
-
-            self.counter = 0  # Reset failure counter on successful frame read
-
-            # Discard old frames if queue is full
-            if not self.q.empty():
-                try:
-                    self.q.get_nowait()
-                except queue.Empty:
-                    print("Queue unexpectedly empty during discard operation.")
-
-            # Add the new frame to the queue
-            try:
-                self.q.put(frame, timeout=0.1)
-            except queue.Full:
-                print("Frame queue is full. Dropping frame.")
-
-    def _reinitialize_camera(self):
-        """
-        Reinitializes the camera after multiple failures to read frames.
-        """
-        self.cap.release()
-        if self.backend is not None:
-            self.cap = cv2.VideoCapture(self.source, self.backend)
-        else:
-            self.cap = cv2.VideoCapture(self.source)
+        self.cap = cv2.VideoCapture(self.source)
         self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 3)
 
-        if self.cap.isOpened():
-            print("Camera reinitialized successfully.")
-            self.counter = 0
-        else:
-            print("Failed to reinitialize the camera.")
+
+    def _start_reader_thread(self):
+        # Add a short delay to allow FFmpeg to initialize properly
+        time.sleep(4)
+        self.reader_thread = threading.Thread(target=self._reader, daemon=True)
+        self.reader_thread.start()
+
+    def _reader(self):
+        """
+        Background thread to read frames continuously and keep only the latest frame.
+        """
+        while not self.stop_flag:
+            try:
+                frame = self._read_frame()
+                if frame is not None:
+                    # Discard old frames if queue is full
+                    if not self.q.empty():
+                        try:
+                            self.q.get_nowait()
+                        except queue.Empty:
+                            pass
+                    self.q.put(frame, timeout=0.1)
+            except Exception as e:
+                print(f"Error reading frame: {e}")
+                self._reinitialize_camera()
+
+    def _reader(self):
+        while not self.stop_event.is_set():  # Exit if stop_event is set
+            try:
+                frame = self._read_frame()
+                if frame is not None:
+                    # Discard old frames if queue is full
+                    if not self.q.empty():
+                        try:
+                            self.q.get_nowait()
+                        except queue.Empty:
+                            pass
+                    self.q.put(frame, timeout=0.1)
+                else:
+                    # Attempt to reinitialize only if stop_event is not set
+                    if not self.stop_event.is_set():
+                        print("No frame available. Attempting to reinitialize camera...")
+                        self._reinitialize_camera()
+            except Exception as e:
+                if not self.stop_event.is_set():
+                    print(f"Error reading frame: {e}")
+                break
+
+    def _read_frame(self):
+        """
+        Reads a single frame based on the stream type.
+        """
+        if self.stream_type == "rtsp":
+            return self._read_ffmpeg_frame()
+        elif self.cap and self.cap.isOpened():
+            ret, frame = self.cap.read()
+            return frame if ret else None
+        return None
+
+    def _read_ffmpeg_frame(self):
+        width, height = 1920, 1080  # Update these values to match your stream resolution
+        frame_size = width * height * 3  # For bgr24 (3 bytes per pixel)
+
+        try:
+            raw_frame = self.ffmpeg_process.stdout.read(frame_size)
+            if len(raw_frame) != frame_size:
+                raise ValueError("Failed to read a full frame from FFmpeg.")
+            frame = np.frombuffer(raw_frame, np.uint8).reshape((height, width, 3))
+            return frame
+        except ValueError as e:
+            print(f"Error reading frame: {e}")
+            return None
 
     def _reinitialize_camera(self):
         """
-        Reinitializes the camera with exponential backoff after multiple failures.
+        Reinitializes the camera with exponential backoff after failures.
         """
-        self.cap.release()
-        retry_attempts = 0
-        while retry_attempts < 5:  # Retry up to 5 times
-            print(f"Reinitializing camera (attempt {retry_attempts + 1})...")
-            if self.backend is not None:
-                self.cap = cv2.VideoCapture(self.source, self.backend)
-            else:
-                self.cap = cv2.VideoCapture(self.source)
-            self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 3)
-
-            if self.cap.isOpened():
-                print("Camera reinitialized successfully.")
-                self.counter = 0
-                return
-            else:
-                retry_attempts += 1
-                time.sleep(2 ** retry_attempts)  # Exponential backoff: 2, 4, 8, 16 seconds
-
-        raise ValueError("Failed to reinitialize camera after multiple attempts.")
+        self.stop_flag = True
+        self.release()
+        time.sleep(2)  # Short delay before reinitialization
+        self._setup_capture()
+        self._start_reader_thread()
 
     def get_frame(self):
-        """
-        Retrieves the latest frame from the queue.
-
-        :return: A numpy array representing the latest frame, or None if no frame is available.
-        """
         if self.q.empty():
-            print("Queue is empty. No frame to return.")
             return None
         try:
             return self.q.get_nowait()
         except queue.Empty:
-            print("Queue unexpectedly empty during get_frame.")
             return None
 
-    def release_camera(self):
+    def release(self):
         """
-        Releases the camera resources and stops the thread.
+        Releases the video capture resources.
         """
-        self.stop_flag = True  # Signal the thread to stop
-        self.t.join()  # Wait for the thread to finish
-        self.cap.release()
-        print("Camera released and thread stopped.")
+        self.stop_event.set()  # Signal the thread to stop
+        self.stop_flag = True
+        if self.reader_thread.is_alive():
+            self.reader_thread.join()  # Ensure the reader thread exits
+        if self.cap:
+            self.cap.release()
+        if self.ffmpeg_process:
+            self.ffmpeg_process.terminate()
+            self.ffmpeg_process.wait()
+        print("Resources released.")
