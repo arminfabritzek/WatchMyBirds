@@ -11,6 +11,7 @@ import csv
 import cv2
 import threading
 from camera.webcam_camera import WebcamCamera
+import numpy as np
 
 # Global lock for thread-safe frame access
 frame_lock = threading.Lock()
@@ -21,32 +22,45 @@ latest_frame = None  # Global variable to store the latest frame for streaming
 
 def generate_frames():
     global latest_frame
-    # Laden eines Platzhalterbildes, z.B. "static/no_signal.jpg"
-    placeholder = cv2.imread('assets/No_Signal.jpeg')
+    # Create simple "No Signal" placeholder
+    width, height = 640, 480
+    placeholder = np.zeros((height, width, 3), dtype=np.uint8)
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    text = "Waiting for Images"
+    text_size = cv2.getTextSize(text, font, 2, 3)[0]
+    text_x = (width - text_size[0]) // 2
+    text_y = (height + text_size[1]) // 2
+    cv2.putText(placeholder, text, (text_x, text_y), font, 2, (0, 0, 255), 3)
+
     while True:
-        with frame_lock:
-            current_frame = latest_frame
-        if current_frame is not None:
-            ret, buffer = cv2.imencode('.jpg', current_frame)
-            if not ret:
-                print("Failed to encode frame")
-            else:
-                frame = buffer.tobytes()
-                yield (b'--frame\r\n'
-                       b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')
-        else:
-            # Falls kein Live-Frame verfügbar, sende Platzhalter
-            if placeholder is not None:
-                ret, buffer = cv2.imencode('.jpg', placeholder)
-                if not ret:
-                    print("Failed to encode placeholder")
-                else:
-                    frame = buffer.tobytes()
+        try:
+            with frame_lock:
+                current_frame = latest_frame
+
+            if current_frame is not None:
+                timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+                frame_with_time = current_frame.copy()
+                cv2.putText(frame_with_time, timestamp, (10, 30), font, 1, (0, 255, 0), 2)
+                ret, buffer = cv2.imencode('.jpg', frame_with_time)
+                if ret:
                     yield (b'--frame\r\n'
-                           b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')
+                           b'Content-Type: image/jpeg\r\n\r\n' + buffer.tobytes() + b'\r\n')
             else:
-                print("No frame and no placeholder available.")
-        time.sleep(0.03)
+                raise ValueError("No live frame available")
+        except Exception as e:
+            print(f"Error generating frames: {e}")
+            timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+            placeholder_with_time = placeholder.copy()
+            cv2.putText(placeholder_with_time, timestamp, (10, 30), font, 1, (0, 255, 0), 2)
+            ret, buffer = cv2.imencode('.jpg', placeholder_with_time)
+            if ret:
+                yield (b'--frame\r\n'
+                       b'Content-Type: image/jpeg\r\n\r\n' + buffer.tobytes() + b'\r\n')
+        dynamic_sleep = 0.1 if current_frame is not None else 1.0
+        time.sleep(dynamic_sleep)
+
+
+
 
 @app.route('/video_feed')
 def video_feed():
@@ -81,7 +95,7 @@ def detection_loop():
 
     # Load variables from .env file
     load_dotenv()
-    video_source = os.getenv("VIDEO_SOURCE")  # Retrieves the RTSP URL
+    video_source = os.getenv("VIDEO_SOURCE", 0)  # Default to 0 if VIDEO_SOURCE isn't set
 
     # Convert webcam_source to int if applicable
     try:
@@ -90,8 +104,9 @@ def detection_loop():
         print("Video source is a WebCam.")
     except ValueError:
         source = video_source  # Use RTSP URL if webcam_source is not a valid integer
-        backend = cv2.CAP_GSTREAMER  # Specify GSTREAMER backend for RTSP
-        print("Video source is RTSP Stream.")
+        # backend = cv2.CAP_GSTREAMER  # Specify GSTREAMER backend for RTSP
+        backend = cv2.CAP_FFMPEG  # Specify GSTREAMER backend for RTSP
+        print(f"Video source is RTSP Stream: {source}")
 
     # --------------------------------------------------------------------------
     # Configuration Parameters
@@ -99,7 +114,7 @@ def detection_loop():
     use_threaded = True  # Set to False to use non-threaded video capture
     model_choice = "pytorch_ssd"  # pytorch_ssd or efficientdet_lite4 or ssd_mobilenet_v2
     class_filter = ["bird"]
-    confidence_threshold = 0.5
+    confidence_threshold = 0.3
     save_threshold = 0.6
     save_interval = 3  # Seconds between saving
 
@@ -107,7 +122,9 @@ def detection_loop():
     # Setup
     # --------------------------------------------------------------------------
     camera = WebcamCamera(source=source, backend=backend, model_choice=model_choice, use_threaded=use_threaded)
-    output_dir = "output"
+
+    # Get the output directory from the environment variable, with a default fallback
+    output_dir = os.getenv("OUTPUT_DIR", "output")
     os.makedirs(output_dir, exist_ok=True)
 
     frame_count = 0
@@ -128,80 +145,86 @@ def detection_loop():
     # Livestream and Object Detection Loop
     # --------------------------------------------------------------------------
     while True:
-        frame = camera.get_frame()
-        if frame is None:
-            print("Kein Frame verfügbar. Versuche Kamera neu zu initialisieren.")
-            try:
-                camera.release()  # Versuche, die aktuelle Kamera freizugeben
-            except Exception as e:
-                print(f"Fehler beim Freigeben der Kamera: {e}")
-            # Neue Initialisierung der Kamera
-            camera = WebcamCamera(source=source, backend=backend, model_choice=model_choice, use_threaded=use_threaded)
-            time.sleep(2)  # Kurze Wartezeit vor erneutem Versuch
-            continue
+        try:
+            frame = camera.get_frame()
+            if frame is None:
+                print("No frame available. Using placeholder.")
+                with frame_lock:
+                    latest_frame = None
 
+                print("Attempting to reinitialize camera.")
+                camera.release()
 
-        # After capturing frame
-        # print("Frame captured.", flush=True)
+                # Reinitialize the camera
+                camera = WebcamCamera(source=source, backend=backend, model_choice=model_choice, use_threaded=use_threaded)
+                time.sleep(2)
+                continue
 
-        # We now get 4 values back
-        annotated_frame, should_save_interval, original_frame, detection_info_list = camera.detect_objects(
-            frame,
-            class_filter=class_filter,
-            confidence_threshold=confidence_threshold,
-            save_threshold=save_threshold
-        )
+            # We now get 4 values back
+            annotated_frame, should_save_interval, original_frame, detection_info_list = camera.detect_objects(
+                frame,
+                class_filter=class_filter,
+                confidence_threshold=confidence_threshold,
+                save_threshold=save_threshold
+            )
 
-        # Update the latest frame for streaming
-        with frame_lock:
-            latest_frame = annotated_frame
+            # Update the latest frame for streaming
+            with frame_lock:
+                latest_frame = annotated_frame
 
-        current_time = time.time()
-        if should_save_interval and (current_time - last_save_time >= save_interval):
-            timestamp = time.strftime("%Y%m%d_%H%M%S")
+            current_time = time.time()
+            if should_save_interval and (current_time - last_save_time >= save_interval):
+                timestamp = time.strftime("%Y%m%d_%H%M%S")
 
-            # 1) Save annotated frame
-            annotated_name = f"{timestamp}_frame_annotated.jpg"
-            annotated_path = os.path.join(output_dir, annotated_name)
-            cv2.imwrite(annotated_path, annotated_frame)
+                # 1) Save annotated frame
+                annotated_name = f"{timestamp}_frame_annotated.jpg"
+                annotated_path = os.path.join(output_dir, annotated_name)
+                cv2.imwrite(annotated_path, annotated_frame)
 
-            # 2) Save unannotated frame
-            unannotated_name = f"{timestamp}_frame_original.jpg"
-            original_path = os.path.join(output_dir, unannotated_name)
-            cv2.imwrite(original_path, original_frame)
+                # 2) Save unannotated frame
+                unannotated_name = f"{timestamp}_frame_original.jpg"
+                original_path = os.path.join(output_dir, unannotated_name)
+                cv2.imwrite(original_path, original_frame)
 
-            print(f"Annotated frame saved: {annotated_path}")
-            print(f"Original frame saved: {original_path}")
+                print(f"Annotated frame saved: {annotated_path}")
+                print(f"Original frame saved: {original_path}")
 
-            # 3) Append bounding-box info to CSV (for the *annotated* image)
-            with open(csv_path, mode="a", newline="") as f:
-                writer = csv.writer(f)
-                for det in detection_info_list:
-                    writer.writerow([
-                        timestamp,
-                        annotated_name,  # We link bounding boxes to the annotated file
-                        det["class_name"],
-                        f"{det['confidence']:.2f}",
-                        det["x1"],
-                        det["y1"],
-                        det["x2"],
-                        det["y2"]
-                    ])
+                # 3) Append bounding-box info to CSV (for the *annotated* image)
+                with open(csv_path, mode="a", newline="") as f:
+                    writer = csv.writer(f)
+                    for det in detection_info_list:
+                        writer.writerow([
+                            timestamp,
+                            annotated_name,  # We link bounding boxes to the annotated file
+                            det["class_name"],
+                            f"{det['confidence']:.2f}",
+                            det["x1"],
+                            det["y1"],
+                            det["x2"],
+                            det["y2"]
+                        ])
 
-            last_save_time = current_time
+                last_save_time = current_time
 
-        frame_count += 1
+            frame_count += 1
 
-        # Optional frame limiter
-        time.sleep(0.03)
-
+            # Optional frame limiter
+            time.sleep(0.03)
+        except Exception as e:
+            print(f"Error in detection loop: {e}")
+            time.sleep(2)  # Prevent busy looping during errors
 # Start the detection loop in a separate thread
 detection_thread = threading.Thread(target=detection_loop)
 detection_thread.daemon = True
 detection_thread.start()
 
-
+'''
 if __name__ == '__main__':
 
     # Start the Flask server
     app.run(host='0.0.0.0', port=5001, debug=True)
+'''
+if __name__ == '__main__':
+    # Start the Flask server using Waitress
+    from waitress import serve
+    serve(app, host='0.0.0.0', port=5001)

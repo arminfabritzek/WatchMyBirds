@@ -1,0 +1,8 @@
+.env
+output/*
+ignore/
+*.pyc
+__pycache__/
+.git
+.gitignore
+.gitattributes

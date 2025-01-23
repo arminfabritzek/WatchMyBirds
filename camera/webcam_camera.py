@@ -74,7 +74,7 @@ class WebcamCamera(BaseCamera):
 
         if use_threaded:
             print("Using threaded VideoCapture for minimal latency.")
-            self.video_capture = VideoCapture(source=source, backend=None)
+            self.video_capture = VideoCapture(source=source, backend=backend)
         else:
             print("Using non-threaded BaseCamera.")
             super().__init__(source=source)

@@ -32,6 +32,8 @@ class VideoCapture:
         else:
             self.cap = cv2.VideoCapture(self.source)
         self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 3)
+        self.cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 5000)  # 5-second timeout
+        self.cap.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, 5000)  # 5-second read timeout
 
         if not self.cap.isOpened():
             raise ValueError("Failed to open video source.")
@@ -72,6 +74,36 @@ class VideoCapture:
             except queue.Full:
                 print("Frame queue is full. Dropping frame.")
 
+    def _reader(self):
+        """
+        Background thread to read frames continuously and keep only the latest frame.
+        """
+        while not self.stop_flag:
+            ret, frame = self.cap.read()
+            if not ret:
+                print("Failed to read frame from video source.")
+                self.counter += 1
+                if self.counter >= 10:  # Attempt to reinitialize after 10 failed reads
+                    print("Reinitializing camera after multiple failures...")
+                    self._reinitialize_camera()
+                time.sleep(1)  # Prevent busy looping
+                continue
+
+            self.counter = 0  # Reset failure counter on successful frame read
+
+            # Discard old frames if queue is full
+            if not self.q.empty():
+                try:
+                    self.q.get_nowait()
+                except queue.Empty:
+                    print("Queue unexpectedly empty during discard operation.")
+
+            # Add the new frame to the queue
+            try:
+                self.q.put(frame, timeout=0.1)
+            except queue.Full:
+                print("Frame queue is full. Dropping frame.")
+
     def _reinitialize_camera(self):
         """
         Reinitializes the camera after multiple failures to read frames.
@@ -88,6 +120,30 @@ class VideoCapture:
             self.counter = 0
         else:
             print("Failed to reinitialize the camera.")
+
+    def _reinitialize_camera(self):
+        """
+        Reinitializes the camera with exponential backoff after multiple failures.
+        """
+        self.cap.release()
+        retry_attempts = 0
+        while retry_attempts < 5:  # Retry up to 5 times
+            print(f"Reinitializing camera (attempt {retry_attempts + 1})...")
+            if self.backend is not None:
+                self.cap = cv2.VideoCapture(self.source, self.backend)
+            else:
+                self.cap = cv2.VideoCapture(self.source)
+            self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 3)
+
+            if self.cap.isOpened():
+                print("Camera reinitialized successfully.")
+                self.counter = 0
+                return
+            else:
+                retry_attempts += 1
+                time.sleep(2 ** retry_attempts)  # Exponential backoff: 2, 4, 8, 16 seconds
+
+        raise ValueError("Failed to reinitialize camera after multiple attempts.")
 
     def get_frame(self):
         """
