@@ -22,8 +22,8 @@ latest_frame = None  # Global variable to store the latest frame for streaming
 model_choice = "pytorch_ssd"  # pytorch_ssd or efficientdet_lite4 or ssd_mobilenet_v2
 class_filter = ["bird"]
 confidence_threshold = 0.3
-save_threshold = 0.6
-save_interval = 3  # Seconds between saving
+save_threshold = 0.3
+save_interval = 1  # Seconds between saving
 output_dir = os.getenv("OUTPUT_DIR", "/output")
 os.makedirs(output_dir, exist_ok=True)
 csv_path = os.path.join(output_dir, "all_bounding_boxes.csv")
@@ -65,7 +65,7 @@ def generate_frames():
                     yield (b'--frame\r\n'
                            b'Content-Type: image/jpeg\r\n\r\n' + buffer.tobytes() + b'\r\n')
             else:
-                raise ValueError("No live frame available")
+                raise ValueError("No live frame available, retrying...")
         except Exception as e:
             print(f"Error generating frames: {e}")
             placeholder_with_time = placeholder.copy()
@@ -153,7 +153,7 @@ def detection_loop():
 
             # Update the global frame for streaming
             with frame_lock:
-                latest_frame = annotated_frame
+                latest_frame = annotated_frame.copy()  # Make a writable copy
 
             # Save results if needed
             current_time = time.time()
@@ -182,7 +182,7 @@ def detection_loop():
 
             frame_count += 1
 
-            time.sleep(0.03)  # Optional frame limiter
+            time.sleep(0.1)  # Optional frame limiter
         except Exception as e:
             print(f"Error in detection loop: {e}")
             time.sleep(1)

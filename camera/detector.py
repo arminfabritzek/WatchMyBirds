@@ -146,6 +146,7 @@ class Detector():
                         "x1": int(x1), "y1": int(y1),
                         "x2": int(x2), "y2": int(y2)
                     })
+                    frame = frame.copy()  # Ensure that frame is writable before modifying it
                     cv2.rectangle(frame, (int(x1), int(y1)), (int(x2), int(y2)), (0, 255, 0), 2)
                     cv2.putText(
                         frame,
@@ -220,6 +221,7 @@ class Detector():
                 y2, x2 = min(height, y2), min(width, x2)
 
                 # Draw bounding box + label on `frame`
+                frame = frame.copy()  # Ensure that frame is writable before modifying it
                 cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
                 cv2.putText(
                     frame,
@@ -247,15 +249,6 @@ class Detector():
         # Return annotated/unannotated frames, plus detection data
         return frame, should_save_interval, original_frame, detection_info_list
 
-    def get_frame(self):
-        """
-        Retrieves the latest frame from the video capture.
-
-        :return: A numpy array representing the current frame.
-        """
-        if hasattr(self, "video_capture"):
-            return self.video_capture.get_frame()
-        return super().get_frame()
 
     def get_frame(self):
         """
@@ -264,14 +257,6 @@ class Detector():
         return self.video_capture.get_frame()
 
 
-    def release(self):
-        """
-        Releases the video capture resources.
-        """
-        if hasattr(self, "video_capture"):
-            self.video_capture.release_camera()
-        else:
-            super().release()
 
     def release(self):
         """

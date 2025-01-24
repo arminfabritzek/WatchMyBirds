@@ -1,3 +1,9 @@
+# ------------------------------------------------------------------------------
+# Video Capture Class for Input Streams
+# ------------------------------------------------------------------------------
+# video_capture.py
+
+
 import subprocess
 import cv2
 import queue
@@ -103,45 +109,18 @@ class VideoCapture:
         self.reader_thread.start()
 
     def _reader(self):
-        """
-        Background thread to read frames continuously and keep only the latest frame.
-        """
-        while not self.stop_flag:
+        while not self.stop_event.is_set():
             try:
                 frame = self._read_frame()
                 if frame is not None:
-                    # Discard old frames if queue is full
-                    if not self.q.empty():
-                        try:
-                            self.q.get_nowait()
-                        except queue.Empty:
-                            pass
-                    self.q.put(frame, timeout=0.1)
+                    if not self.q.full():
+                        self.q.put(frame, timeout=0.1)  # Keep the queue filled with new frames
+                else:
+                    print("Frame not available, retrying...")
+                    self._reinitialize_camera()  # Trigger reinitialization in case of failure
             except Exception as e:
                 print(f"Error reading frame: {e}")
-                self._reinitialize_camera()
-
-    def _reader(self):
-        while not self.stop_event.is_set():  # Exit if stop_event is set
-            try:
-                frame = self._read_frame()
-                if frame is not None:
-                    # Discard old frames if queue is full
-                    if not self.q.empty():
-                        try:
-                            self.q.get_nowait()
-                        except queue.Empty:
-                            pass
-                    self.q.put(frame, timeout=0.1)
-                else:
-                    # Attempt to reinitialize only if stop_event is not set
-                    if not self.stop_event.is_set():
-                        print("No frame available. Attempting to reinitialize camera...")
-                        self._reinitialize_camera()
-            except Exception as e:
-                if not self.stop_event.is_set():
-                    print(f"Error reading frame: {e}")
-                break
+                self._reinitialize_camera()  # Reinitialize in case of error
 
     def _read_frame(self):
         """

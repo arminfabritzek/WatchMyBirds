@@ -1,6 +1,9 @@
 # Use a base image compatible with your application
 FROM python:3.11-slim-bookworm
 
+# Set the build argument for the timestamp
+ARG BUILD_TIMESTAMP
+
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
     libglib2.0-0 \
@@ -15,11 +18,13 @@ RUN apt-get update && apt-get install -y \
     gstreamer1.0-plugins-good \
     wget \
     gosu \
+    fontconfig \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Set environment variables
 ENV MPLCONFIGDIR=/tmp/matplotlib
 ENV XDG_CACHE_HOME=/tmp/fontconfig
+ENV FONTCONFIG_PATH=/tmp/fontconfig
 
 # Create directories for the model and app
 RUN mkdir -p /home/appuser/.cache/torch/hub/checkpoints/ /tmp/fontconfig/torch/hub/checkpoints/
@@ -40,6 +45,9 @@ RUN wget https://download.pytorch.org/models/ssd300_vgg16_coco-b556d3b4.pth -O /
 # Add the entrypoint script
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
+
+# Write the build timestamp to a file
+RUN echo "Build timestamp: ${BUILD_TIMESTAMP}" > /app/build_timestamp.txt
 
 # Expose the port used by your app
 EXPOSE 5001
