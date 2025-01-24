@@ -25,6 +25,7 @@ RUN apt-get update && apt-get install -y \
 ENV MPLCONFIGDIR=/tmp/matplotlib
 ENV XDG_CACHE_HOME=/tmp/fontconfig
 ENV FONTCONFIG_PATH=/tmp/fontconfig
+ENV DEBUG_MODE=False
 
 # Create directories for the model and app
 RUN mkdir -p /home/appuser/.cache/torch/hub/checkpoints/ /tmp/fontconfig/torch/hub/checkpoints/

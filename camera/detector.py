@@ -8,6 +8,10 @@ from torchvision.models.detection import SSD300_VGG16_Weights
 import cv2
 from PIL import Image
 from camera.video_capture import VideoCapture  # Import VideoCapture class
+import logging
+
+logging.basicConfig(level=logging.DEBUG)  # Default to INFO level
+logger = logging.getLogger(__name__)
 
 # ------------------------------------------------------------------------------
 # Helper Functions
@@ -33,7 +37,7 @@ class Detector():
     """
     Webcam-based video capture class with integrated object detection capabilities.
     """
-    def __init__(self, source=2, model_choice="pytorch_ssd"):
+    def __init__(self, source=2, model_choice="pytorch_ssd", debug=False):
         """
         Initializes the webcam and loads the selected object detection model.
 
@@ -41,8 +45,9 @@ class Detector():
         :param model_choice: Model choice for object detection ('efficientdet_lite4' or 'ssd_mobilenet_v2' ...).
         """
 
-        print("Using threaded VideoCapture for minimal latency.")
-        self.video_capture = VideoCapture(source=source)
+        self.debug = debug
+        self._log("Using threaded VideoCapture for minimal latency.")
+        self.video_capture = VideoCapture(source, debug=self.debug)
         self.model_choice = model_choice.lower()
 
         if self.model_choice == "pytorch_ssd":
@@ -65,9 +70,15 @@ class Detector():
                 'clock', 'vase', 'scissors', 'teddy bear', 'hair drier', 'toothbrush'
             ]
 
-            print(f"{self.model_choice.capitalize()} model loaded successfully.")
+            self._log(f"{self.model_choice.capitalize()} model loaded successfully.")
+
         else:
             raise ValueError(f"Unsupported model choice: {self.model_choice}")
+
+    def _log(self, message):
+        """Logs a message if debug mode is enabled."""
+        if self.debug:
+            logger.debug(message)
 
     def detect_objects(self, frame, class_filter=None, confidence_threshold=0.5, save_threshold=0.8):
         original_frame = frame.copy()
@@ -122,7 +133,12 @@ class Detector():
         """
         return self.video_capture.get_frame()
 
+    def get_frame(self):
+        frame = self.video_capture.get_frame()
+        if frame is None:
+            self._log("No frame available from VideoCapture.")
 
+        return frame
 
     def release(self):
         """

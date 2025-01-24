@@ -4,6 +4,10 @@
 
 ---
 
+[![Build and Push Docker Image](https://github.com/arminfabritzek/WatchMyBirds/actions/workflows/docker.yml/badge.svg)](https://github.com/arminfabritzek/WatchMyBirds/actions/workflows/docker.yml)
+
+---
+
 ## Features
 
 - **Real-Time Object Detection**: Perform object detection directly from a webcam or RTSP camera streams.
@@ -33,9 +37,55 @@
 
 ---
 
-## Installation & Video Source Configuration
+## Installation
 
-### Steps
+
+## Docker Usage
+
+To run **WatchMyBirds** in a Docker container with default settings:
+
+1. **Pull the Docker Image**:
+   ```bash
+   docker pull starminworks/watchmybirds:latest
+   ```
+
+2. **Create a `docker-compose.yml` file** with the following content:
+
+   ```yaml
+   version: '3'
+   services:
+     watchmybirds:
+       image: starminworks/watchmybirds:latest
+       container_name: watchmybirds
+       environment:
+         - VIDEO_SOURCE=rtsp://user:password@192.168.0.2:554/1  # Replace with your RTSP stream
+         - PUID=1000  # Replace with your user ID
+         - PGID=1000   # Replace with your group ID
+         - TZ=Europe/Berlin  # Set your timezone
+         - DEBUG_MODE=False
+       volumes:
+         - /your_path/output:/output  # Path for saving output
+       ports:
+         - "5001:5001"  # HTTP port for Flask app
+         - "8554:8554"  # RTSP port
+         - "8081:8081"  # MJPEG port
+         - "1936:1936"  # Custom port
+         - "8889:8889"  # Custom port
+         - "8189:8189/udp"  # UDP port
+       restart: unless-stopped
+   ```
+
+3. **Start the container** using Docker Compose:
+
+   ```bash
+   docker-compose up -d
+   ```
+
+   This will run the **WatchMyBirds** application, and you can access the livestream at `http://<your-server-ip>:5001`.
+
+---
+
+## Clone Repository
 
 1. **Clone the Repository**:
    ```bash
@@ -64,13 +114,15 @@
    ```
    For an RTSP stream, use:
    ```plaintext
-   VIDEO_SOURCE=rtsp://user:user_pw@192.168.0.21:554/11
+   VIDEO_SOURCE=rtsp://user:password@192.168.0.2:554/1
    ```
 
 
 **Notes**:
 - Planing to switch entirely to PyTorch!
 - The .env file allows dynamic switching between a webcam (e.g. VIDEO_SOURCE=2) and an RTSP stream for greater flexibility.
+
+
 
 ---
 

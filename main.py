@@ -1,9 +1,11 @@
 # ------------------------------------------------------------------------------
 # Main Script for Real-Time Object Detection with Webcam and Flask Streaming
 # ------------------------------------------------------------------------------
+
 # main.py
 from flask import Flask, Response
 from dotenv import load_dotenv
+load_dotenv()
 import os
 import time
 import csv
@@ -11,11 +13,25 @@ import cv2
 import threading
 from camera.detector import Detector
 import numpy as np
+import logging
+import os
+
+# Read the debug flag from the environment variable (default: False)
+_debug = os.getenv("DEBUG_MODE", "False").lower() == "true"
+
+# Configure logging
+logging.basicConfig(
+    level=logging.DEBUG if _debug else logging.INFO,  # Set level based on _debug
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
+logger = logging.getLogger(__name__)
+
+# Log the current debug mode
+logger.info(f"Debug mode is {'enabled' if _debug else 'disabled'}.")
 
 # Global lock for thread-safe frame access
 frame_lock = threading.Lock()
 latest_frame = None  # Global variable to store the latest frame for streaming
-
 # --------------------------------------------------------------------------
 # Configuration Parameters
 # --------------------------------------------------------------------------
@@ -123,7 +139,7 @@ def detection_loop():
 
     # Initialize Detector instance
     try:
-        detector = Detector(source=source, model_choice=model_choice)
+        detector = Detector(source=source, model_choice=model_choice, debug=_debug)
     except Exception as e:
         print(f"Failed to initialize detector: {e}")
         return
@@ -133,15 +149,25 @@ def detection_loop():
     frame_count = 0
     last_save_time = 0
 
+    retries = 0
     while True:
         try:
             frame = detector.get_frame()
             if frame is None:
-                print("No frame available. Attempting to reinitialize detector...")
+                logger.debug("No frame available. Attempting to reinitialize detector...")
                 detector.release()
-                time.sleep(2)  # Short delay before retry
-                detector = Detector(source=source, model_choice=model_choice)
-                continue
+                time.sleep(min(2 ** retries, 30))  # Exponential backoff with a max of 30 seconds
+                retries += 1
+                try:
+                    detector = Detector(source=source, model_choice=model_choice, debug=_debug)
+                    logger.debug("Detector reinitialized successfully.")
+
+                    retries = 0  # Reset retries on success
+                except Exception as e:
+                    logger.debug(f"Failed to reinitialize detector: {e}")
+                    time.sleep(1)  # Prevent rapid retries
+                    continue
+                continue  # Restart loop after reinitializing
 
             # We now get 4 values back
             annotated_frame, should_save_interval, original_frame, detection_info_list = detector.detect_objects(
