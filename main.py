@@ -24,7 +24,7 @@ class_filter = ["bird"]
 confidence_threshold = 0.3
 save_threshold = 0.6
 save_interval = 3  # Seconds between saving
-output_dir = os.getenv("OUTPUT_DIR", "output")
+output_dir = os.getenv("OUTPUT_DIR", "/output")
 os.makedirs(output_dir, exist_ok=True)
 csv_path = os.path.join(output_dir, "all_bounding_boxes.csv")
 

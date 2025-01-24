@@ -1,7 +1,6 @@
 # Use a base image compatible with your application
 FROM python:3.11-slim-bookworm
 
-
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
     libglib2.0-0 \
@@ -14,10 +13,8 @@ RUN apt-get update && apt-get install -y \
     gstreamer1.0-tools \
     gstreamer1.0-plugins-base \
     gstreamer1.0-plugins-good \
-    iputils-ping \
-    telnet \
     wget \
-    tar \
+    gosu \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Set environment variables
@@ -28,8 +25,11 @@ ENV XDG_CACHE_HOME=/tmp/fontconfig
 RUN mkdir -p /home/appuser/.cache/torch/hub/checkpoints/ /tmp/fontconfig/torch/hub/checkpoints/
 WORKDIR /app
 
-# Copy only necessary files (see .dockerignore for exclusions)
+# Copy the application files
 COPY . /app
+
+# Install Python dependencies
+RUN pip install --no-cache-dir -r requirements.txt
 
 # Download the pre-trained model file and copy it to the desired locations
 RUN wget https://download.pytorch.org/models/ssd300_vgg16_coco-b556d3b4.pth -O /tmp/ssd300_vgg16_coco-b556d3b4.pth && \
@@ -37,39 +37,18 @@ RUN wget https://download.pytorch.org/models/ssd300_vgg16_coco-b556d3b4.pth -O /
     cp /tmp/ssd300_vgg16_coco-b556d3b4.pth /tmp/fontconfig/torch/hub/checkpoints/ && \
     rm /tmp/ssd300_vgg16_coco-b556d3b4.pth
 
-# Set environment variables
-ENV PYTHONUNBUFFERED=1
-
-# Upgrade pip
-RUN pip install --upgrade pip
-
-# Install Python dependencies
-RUN pip install --no-cache-dir -r requirements.txt
-
-# Add a non-root user with customizable UID/GID
-ARG PUID=1000
-ARG PGID=1000
-RUN groupadd -g $PGID appgroup && useradd -u $PUID -g $PGID -ms /bin/bash appuser
-
-# Create the output directory and set ownership before switching users
-RUN mkdir -p /output && chown appuser:appgroup /output
-RUN mkdir -p /tmp/matplotlib /tmp/fontconfig && chown -R appuser:appgroup /tmp/matplotlib /tmp/fontconfig
-
-# Ensure all files are readable by all users
-RUN chmod -R a+r /app/assets
-
-# Switch to non-root user
-USER appuser
+# Add the entrypoint script
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
 
 # Expose the port used by your app
 EXPOSE 5001
 
-# Define environment variables with default values (can be overridden)
+# Set environment variables
 ENV VIDEO_SOURCE=0 OUTPUT_DIR=/output
 
-# Set the health check
-HEALTHCHECK --interval=30s --timeout=5s \
-  CMD curl --fail http://localhost:5001 || exit 1
+# Use the entrypoint to dynamically handle users and permissions
+ENTRYPOINT ["/entrypoint.sh"]
 
 # Set the command to run your app
 CMD ["waitress-serve", "--listen=0.0.0.0:5001", "main:app"]
