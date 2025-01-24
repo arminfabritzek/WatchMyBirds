@@ -1,5 +1,5 @@
 # Use a base image compatible with your application
-FROM python:3.11-slim-bookworm
+FROM python:3.11-slim
 
 # Set the build argument for the timestamp
 ARG BUILD_TIMESTAMP

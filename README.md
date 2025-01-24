@@ -20,9 +20,10 @@
   - Configure confidence thresholds for detections and frame saving.
 
 
-- **Support for Pre-Trained Models**:
+- **Support for Pre-Trained Models from PyTorch**:
   - Includes `ssd300_vgg16` and `EfficientDet Lite4` and `SSD MobileNet V2`.
-  - Supports PyTorch, TensorFlow, and TFLite formats.
+  - Supports PyTorch (TensorFlow, and TFLite formats coming soon).
+
 
 
 - **Batch Classification**: Crop detected objects for further classification with a separate model.
@@ -66,16 +67,9 @@
    VIDEO_SOURCE=rtsp://user:user_pw@192.168.0.21:554/11
    ```
 
-5. **Download and Place Pre-Trained Models (optional, depending on your framework choice)**:
-   - Download the TensorFlow SavedModel `ssd_mobilenet_v2` for from Kaggle: [ssd_mobilenet_v2](https://www.kaggle.com/models/tensorflow/ssd-mobilenet-v2/tensorFlow2/ssd-mobilenet-v2)
-   - Download the `EfficientDet Lite4` TFLite model:
-     [EfficientDet Lite4 as TFLite](https://www.kaggle.com/models/tensorflow/efficientdet/tfLite/lite4-detection-default)
-   - Download the label files:
-     [ImageNetLabels.txt](https://storage.googleapis.com/download.tensorflow.org/data/ImageNetLabels.txt), [coco_label_map.pbtxt](research/object_detection/data/mscoco_label_map.pbtxt)
-   - Place these files in the `models/` directory.
 
 **Notes**:
-- Planing to switch entirely to PyTorch --> the TensorFlow model downloads will not be necessary.
+- Planing to switch entirely to PyTorch!
 - The .env file allows dynamic switching between a webcam (e.g. VIDEO_SOURCE=2) and an RTSP stream for greater flexibility.
 
 ---
@@ -89,7 +83,7 @@ To start the object detection livestream, run:
 python main.py
 ```
 
-To start batch classification, run:
+To start batch classification, run (on hold):
 ```bash
 python batch_classification.py
 ```
@@ -102,31 +96,6 @@ python batch_classification.py
 
 ---
 
-## File Structure
-
-```plaintext
-WatchMyBirds/
-├── camera/
-│   ├── __init__.py
-│   ├── base_camera.py
-│   ├── video_capture.py
-│   ├── webcam_camera.py
-├── models/
-│   ├── ssd_mobilenet_v2/                                       # TensorFlow SavedModel
-│   ├── coco_label_map.pbtxt                                    # COCO label map
-│   ├── efficientdet-tflite-lite4-detection-default-v2.tflite   # EfficientDet Lite4 detection model
-│   ├── efficientdet_labels.pbtxt                               # EfficientDet labels
-│   ├── ImageNetLabels.txt                                      # ImageNet labels
-├── output/                                                     # Saved frames and logs
-├── batch_classification.py                                     # Crops and classifies detected objects
-├── requirements.txt                                            # Python dependencies
-├── main.py                                                     # Entry point for the application
-├── README.md                                                   # Project documentation
-├── requirements.txt
-└── .gitignore                                                  # Ignored files/folders
-```
-
----
 
 ## Customization
 

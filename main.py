@@ -19,7 +19,7 @@ latest_frame = None  # Global variable to store the latest frame for streaming
 # --------------------------------------------------------------------------
 # Configuration Parameters
 # --------------------------------------------------------------------------
-model_choice = "pytorch_ssd"  # pytorch_ssd or efficientdet_lite4 or ssd_mobilenet_v2
+model_choice = "pytorch_ssd"
 class_filter = ["bird"]
 confidence_threshold = 0.3
 save_threshold = 0.3
