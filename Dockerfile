@@ -1,5 +1,5 @@
 # Use a base image compatible with your application
-FROM python:3.11-slim
+FROM python:3.12-slim
 
 # Set the build argument for the timestamp
 ARG BUILD_TIMESTAMP
@@ -27,8 +27,6 @@ ENV XDG_CACHE_HOME=/tmp/fontconfig
 ENV FONTCONFIG_PATH=/tmp/fontconfig
 ENV DEBUG_MODE=False
 
-# Create directories for the model and app
-RUN mkdir -p /home/appuser/.cache/torch/hub/checkpoints/ /tmp/fontconfig/torch/hub/checkpoints/
 WORKDIR /app
 
 # Copy the application files
@@ -38,10 +36,8 @@ COPY . /app
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Download the pre-trained model file and copy it to the desired locations
-RUN wget https://download.pytorch.org/models/ssd300_vgg16_coco-b556d3b4.pth -O /tmp/ssd300_vgg16_coco-b556d3b4.pth && \
-    cp /tmp/ssd300_vgg16_coco-b556d3b4.pth /home/appuser/.cache/torch/hub/checkpoints/ && \
-    cp /tmp/ssd300_vgg16_coco-b556d3b4.pth /tmp/fontconfig/torch/hub/checkpoints/ && \
-    rm /tmp/ssd300_vgg16_coco-b556d3b4.pth
+RUN mkdir -p /tmp/fontconfig/torch/hub/checkpoints/ && \
+    wget https://download.pytorch.org/models/ssd300_vgg16_coco-b556d3b4.pth -O /tmp/fontconfig/torch/hub/checkpoints/ssd300_vgg16_coco-b556d3b4.pth
 
 # Add the entrypoint script
 COPY entrypoint.sh /entrypoint.sh
