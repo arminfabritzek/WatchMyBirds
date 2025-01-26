@@ -5,6 +5,7 @@
 # main.py
 from flask import Flask, Response
 from dotenv import load_dotenv
+import json
 load_dotenv()
 import os
 import time
@@ -14,7 +15,6 @@ import threading
 from camera.detector import Detector
 import numpy as np
 import logging
-import os
 
 # Read the debug flag from the environment variable (default: False)
 _debug = os.getenv("DEBUG_MODE", "False").lower() == "true"
@@ -35,11 +35,17 @@ latest_frame = None  # Global variable to store the latest frame for streaming
 # --------------------------------------------------------------------------
 # Configuration Parameters
 # --------------------------------------------------------------------------
-model_choice = "pytorch_ssd"
-class_filter = ["bird"]
-confidence_threshold = 0.3
-save_threshold = 0.3
-save_interval = 1  # Seconds between saving
+# Load variables from environment variables or use default values
+model_choice = os.getenv("MODEL_CHOICE", "pytorch_ssd")
+class_filter = json.loads(os.getenv("CLASS_FILTER", '["bird"]'))  # Load JSON for array
+confidence_threshold = float(os.getenv("CONFIDENCE_THRESHOLD", 0.5))
+save_threshold = float(os.getenv("SAVE_THRESHOLD", 0.5))
+save_interval = int(os.getenv("SAVE_INTERVAL", 1))  # Seconds between saving
+input_fps = float(os.getenv("INPUT_FPS", 10))  # Default FPS is 10
+process_time = float(os.getenv("PROCESS_TIME", 1))  # Average detection time per frame
+stream_width = int(os.getenv("STREAM_WIDTH", 640))  # Default streaming width: 640
+stream_height = int(os.getenv("STREAM_HEIGHT", 360))  # Default streaming height: 360
+
 output_dir = os.getenv("OUTPUT_DIR", "/output")
 os.makedirs(output_dir, exist_ok=True)
 csv_path = os.path.join(output_dir, "all_bounding_boxes.csv")
@@ -58,14 +64,26 @@ app = Flask(__name__)
 
 def generate_frames():
     global latest_frame
-    width, height = 1920, 1080
-    placeholder = np.zeros((height, width, 3), dtype=np.uint8)
+
+    # Dynamically adjust font size and thickness based on input stream resolution
+    input_stream_resolution = 1080  # Reference resolution for scaling (1080p)
+    # Dynamic font size adjustment
+    scale_factor = 1.5  # Custom scaling factor
+    font_scale = (stream_height / input_stream_resolution) * scale_factor  # Scale font size based on stream height and scaler
+    font_thickness = max(1, int(font_scale * 2))  # Ensure thickness is at least 1
+
     font = cv2.FONT_HERSHEY_SIMPLEX
     text = "Waiting for Stream"
-    text_size = cv2.getTextSize(text, font, 1.5, 3)[0]
-    text_x = (width - text_size[0]) // 2
-    text_y = (height + text_size[1]) // 2
-    cv2.putText(placeholder, text, (text_x, text_y), font, 2, (0, 0, 255), 3)
+
+    # Create the placeholder frame
+    placeholder = np.zeros((stream_height, stream_width, 3), dtype=np.uint8)
+    text_size = cv2.getTextSize(text, font, font_scale, font_thickness)[0]
+    text_x = (stream_width - text_size[0]) // 2
+    text_y = (stream_height + text_size[1]) // 2
+    cv2.putText(placeholder, text, (text_x, text_y), font, font_scale, (0, 0, 255), font_thickness)
+
+    # Dynamically calculate the timestamp position
+    timestamp_y = int(font_scale * 50)  # Scaled Y offset for upper-left placement
 
     while True:
         try:
@@ -73,10 +91,23 @@ def generate_frames():
                 current_frame = latest_frame
 
             if current_frame is not None:
+                # Resize frame for streaming
+                resized_frame = cv2.resize(current_frame.copy(), (stream_width, stream_height))
+
+                # Add timestamp to the resized frame
                 timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
-                frame_with_time = current_frame.copy()
-                cv2.putText(frame_with_time, timestamp, (10, 30), font, 1, (0, 255, 0), 2)
-                ret, buffer = cv2.imencode('.jpg', frame_with_time)
+                cv2.putText(
+                    resized_frame,
+                    timestamp,
+                    (10, timestamp_y),  # Dynamically scaled upper-left placement
+                    font,
+                    font_scale,
+                    (0, 255, 0),  # Green text color
+                    font_thickness
+                )
+
+                # Encode the resized frame
+                ret, buffer = cv2.imencode('.jpg', resized_frame)
                 if ret:
                     yield (b'--frame\r\n'
                            b'Content-Type: image/jpeg\r\n\r\n' + buffer.tobytes() + b'\r\n')
@@ -86,12 +117,20 @@ def generate_frames():
             print(f"Error generating frames: {e}")
             placeholder_with_time = placeholder.copy()
             timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
-            cv2.putText(placeholder_with_time, timestamp, (10, 30), font, 1, (0, 255, 0), 2)
+            cv2.putText(
+                placeholder_with_time,
+                timestamp,
+                (10, timestamp_y),  # Dynamically scaled upper-left placement
+                font,
+                font_scale,
+                (0, 255, 0),  # Green text color
+                font_thickness
+            )
             ret, buffer = cv2.imencode('.jpg', placeholder_with_time)
             if ret:
-                yield (b'--frame\r\n'
+                yield (b'--frame\r\n'   
                        b'Content-Type: image/jpeg\r\n\r\n' + buffer.tobytes() + b'\r\n')
-        time.sleep(0.1)
+        time.sleep(0.1)  # Prevents the generate_frames loop from running too fast when no new frames are available.
 
 
 
@@ -156,7 +195,7 @@ def detection_loop():
             if frame is None:
                 logger.debug("No frame available. Attempting to reinitialize detector...")
                 detector.release()
-                time.sleep(min(2 ** retries, 30))  # Exponential backoff with a max of 30 seconds
+                time.sleep(min(2 ** retries, 30))  # Exponential backoff with a max of 30 seconds when reinitializing the detector fails.
                 retries += 1
                 try:
                     detector = Detector(source=source, model_choice=model_choice, debug=_debug)
@@ -165,7 +204,7 @@ def detection_loop():
                     retries = 0  # Reset retries on success
                 except Exception as e:
                     logger.debug(f"Failed to reinitialize detector: {e}")
-                    time.sleep(1)  # Prevent rapid retries
+                    time.sleep(1)  # Prevent rapid retries when the detector fails to initialize.
                     continue
                 continue  # Restart loop after reinitializing
 
@@ -208,10 +247,11 @@ def detection_loop():
 
             frame_count += 1
 
-            time.sleep(0.1)  # Optional frame limiter
+            delay = max(1.0 / input_fps, process_time)
+            time.sleep(delay)  # Frame limiter to avoid processing frames too frequently.
         except Exception as e:
             print(f"Error in detection loop: {e}")
-            time.sleep(1)
+            time.sleep(1)  # Prevents rapid error handling loops.
 
 
 # Start the detection loop in a separate thread

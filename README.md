@@ -62,7 +62,16 @@ To run **WatchMyBirds** in a Docker container with default settings:
          - PUID=1000  # Replace with your user ID
          - PGID=1000   # Replace with your group ID
          - TZ=Europe/Berlin  # Set your timezone
-         - DEBUG_MODE=False
+         - DEBUG_MODE=False  
+         - MODEL_CHOICE="pytorch_ssd"  
+         - CLASS_FILTER="'["bird"]'"  
+         - CONFIDENCE_THRESHOLD=0.5  
+         - SAVE_THRESHOLD=0.5  
+         - SAVE_INTERVAL=1  # Seconds between saving
+         - INPUT_FPS=10  # Default FPS is 10
+         - PROCESS_TIME=1  # Average detection time per frame
+         - STREAM_WIDTH=640  # Width of the output stream. Default width: 640
+         - STREAM_HEIGHT=360  # Height of the output stream. Default height: 360
        volumes:
          - /your_path/output:/output  # Path for saving output
        ports:
