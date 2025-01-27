@@ -17,7 +17,7 @@ import logging
 
 # Read the debug flag from the environment variable (default: False)
 _debug = os.getenv("DEBUG_MODE", "False").lower() == "true"
-
+_debug=True
 # Configure logging
 logging.basicConfig(
     level=logging.DEBUG if _debug else logging.INFO,  # Set level based on _debug
@@ -49,8 +49,16 @@ save_interval = int(os.getenv("SAVE_INTERVAL", 1))  # Seconds between saving
 input_fps = float(os.getenv("INPUT_FPS", 10))  # Default FPS is 10
 process_time = float(os.getenv("PROCESS_TIME", 0.1))  # Average detection time per frame
 
+logger.info(f"model_choice: {model_choice} ")
+logger.info(f"class_filter: {class_filter} ")
+logger.info(f"confidence_threshold: {confidence_threshold} ")
+logger.info(f"save_threshold: {save_threshold} ")
+logger.info(f"save_interval: {save_interval} ")
+logger.info(f"input_fps: {input_fps} ")
+logger.info(f"process_time: {process_time} ")
+
 # Output resize width from environment variables with a default value
-output_resize_width = int(os.getenv("STREAM_WIDTH_OUTPUT_RESIZE", 1080))  # Fixed output width after Docker start
+output_resize_width = int(os.getenv("STREAM_WIDTH_OUTPUT_RESIZE", 800))  # Fixed output width after Docker start
 logger.info(f"Output Resize Width set to: {output_resize_width} pixels")
 
 # Input stream dimensions initialized as None
