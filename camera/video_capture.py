@@ -45,10 +45,12 @@ class VideoCapture:
         self._start_reader_thread()
         self._start_health_check_thread()
 
-    def _log(self, message):
-        """Logs a message if debug mode is enabled."""
+    def _log(self, message, level=logging.DEBUG):
+        """
+        Logs a message at the given level, only if debug mode is enabled.
+        """
         if self.debug:
-            logger.debug(message)
+            logger.log(level, message)
 
     def _detect_stream_type(self):
         """
@@ -56,19 +58,19 @@ class VideoCapture:
 
         :return: Detected stream type as a string ("rtsp", "http", "webcam").
         """
-        self._log("Detect stream type...")
+        self._log("Detect stream type...", level=logging.DEBUG)
         if isinstance(self.source, str):
             if self.source.startswith("rtsp://"):
-                self._log("Stream type detected as RTSP.")
+                self._log("Stream type detected as RTSP.", level=logging.DEBUG)
                 return "rtsp"
             elif self.source.startswith(("http://", "https://")):
-                self._log("Stream type detected as HTTP.")
+                self._log("Stream type detected as HTTP.", level=logging.DEBUG)
                 return "http"
         elif isinstance(self.source, int):  # Integer sources are treated as webcams
-            self._log("Stream type detected as Webcam.")
+            self._log("Stream type detected as Webcam.", level=logging.DEBUG)
             return "webcam"
         error_msg = f"Unable to determine stream type for source: {self.source}"
-        self._log(error_msg)
+        self._log(error_msg, level=logging.ERROR)
         raise ValueError(f"Unable to determine stream type for source: {self.source}")
 
 
@@ -76,7 +78,7 @@ class VideoCapture:
         """
         Sets up the video capture based on the detected stream type.
         """
-        self._log("Setting up video capture...")
+        self._log("Setting up video capture...", level=logging.DEBUG)
         if self.stream_type == "rtsp":
             self._setup_ffmpeg()
         elif self.stream_type == "http":
@@ -85,9 +87,9 @@ class VideoCapture:
             self._setup_webcam()
         else:
             error_msg = f"Unsupported stream type: {self.stream_type}"
-            self._log(error_msg)
+            self._log(error_msg, level=logging.ERROR)
             raise ValueError(f"Unsupported stream type: {self.stream_type}")
-        self._log("Video capture setup completed.")
+        self._log("Video capture setup completed.", level=logging.DEBUG)
 
     def _setup_ffmpeg(self):
         ffmpeg_cmd = [
@@ -102,15 +104,15 @@ class VideoCapture:
             "pipe:"
         ]
 
-        self._log(f"FFmpeg command: {' '.join(ffmpeg_cmd)}")
+        self._log(f"FFmpeg command: {' '.join(ffmpeg_cmd)}", level=logging.DEBUG)
 
         for attempt in range(5):  # Retry up to 5 times
             try:
-                self._log(f"Starting FFmpeg process (attempt {attempt + 1})...")
+                self._log(f"Starting FFmpeg process (attempt {attempt + 1})...", level=logging.DEBUG)
                 self.ffmpeg_process = subprocess.Popen(
                     ffmpeg_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=10 ** 8
                 )
-                self._log("FFmpeg process started successfully.")
+                self._log("FFmpeg process started successfully.", level=logging.DEBUG)
 
                 # Start logging FFmpeg errors if in debug mode
                 if self.debug:
@@ -120,32 +122,32 @@ class VideoCapture:
                 if self.ffmpeg_process.poll() is not None:
                     stderr_output = self.ffmpeg_process.stderr.read().decode()
                     error_msg = f"FFmpeg process terminated prematurely. STDERR: {stderr_output}"
-                    self._log(error_msg)
+                    self._log(error_msg, level=logging.ERROR)
                     raise RuntimeError(error_msg)
 
                 return  # Exit loop on success
             except Exception as e:
-                self._log(f"Failed to start FFmpeg process: {e}. Retrying...")
+                self._log(f"Failed to start FFmpeg process: {e}. Retrying...", level=logging.ERROR)
                 time.sleep(2 ** attempt)  # Exponential backoff
         error_msg = "Failed to start FFmpeg after multiple attempts."
-        self._log(error_msg)
+        self._log(error_msg, level=logging.ERROR)
         raise RuntimeError(error_msg)
 
     def _log_ffmpeg_errors(self):
         """
         Continuously logs FFmpeg's stderr for debugging purposes, only if debug mode is enabled.
         """
-        self._log("Starting FFmpeg stderr logging.")
+        self._log("Starting FFmpeg stderr logging.", level=logging.DEBUG)
         try:
             for line in iter(self.ffmpeg_process.stderr.readline, b''):
                 if line:
                     logger.debug(f"FFmpeg STDERR: {line.decode('utf-8').strip()}")
                 if self.stop_event.is_set():
-                    self._log("Stop event set. Ending FFmpeg stderr logging.")
+                    self._log("Stop event set. Ending FFmpeg stderr logging.", level=logging.DEBUG)
                     break
         except Exception as e:
             logger.error(f"Exception while logging FFmpeg stderr: {e}")
-        self._log("FFmpeg stderr logging thread terminated.")
+        self._log("FFmpeg stderr logging thread terminated.", level=logging.DEBUG)
 
     def _get_stream_resolution_ffprobe(self):
         ffprobe_cmd = [
@@ -157,43 +159,43 @@ class VideoCapture:
             self.source
         ]
 
-        self._log(f"Running FFprobe command: {' '.join(ffprobe_cmd)}")
+        self._log(f"Running FFprobe command: {' '.join(ffprobe_cmd)}", level=logging.DEBUG)
 
         try:
             output = subprocess.check_output(ffprobe_cmd, stderr=subprocess.STDOUT, timeout=10).decode().strip()
-            self._log(f"FFprobe output: {output}")
+            self._log(f"FFprobe output: {output}", level=logging.DEBUG)
 
             # Parse the FFprobe output
             width, height = map(int, output.split('\n'))
-            self._log(f"Detected stream resolution: {width}x{height}")
+            self._log(f"Detected stream resolution: {width}x{height}", level=logging.DEBUG)
 
             # Set the resolution as instance attributes
             self.stream_width = width
             self.stream_height = height
 
         except subprocess.TimeoutExpired:
-            self._log("FFprobe command timed out. Cannot reach the RTSP stream.")
+            self._log("FFprobe command timed out. Cannot reach the RTSP stream.", level=logging.DEBUG)
             raise RuntimeError("FFprobe timed out while trying to get stream resolution.")
         except subprocess.CalledProcessError as e:
             error_output = e.output.decode().strip()
-            self._log(f"FFprobe failed with error: {error_output}")
+            self._log(f"FFprobe failed with error: {error_output}", level=logging.DEBUG)
             raise RuntimeError("Failed to get stream resolution using FFprobe.")
         except ValueError as ve:
-            self._log(f"Error parsing FFprobe output: {ve}")
+            self._log(f"Error parsing FFprobe output: {ve}", level=logging.DEBUG)
             raise RuntimeError("Failed to parse stream resolution from FFprobe output.")
         except Exception as e:
-            self._log(f"Unexpected error during FFprobe: {e}")
+            self._log(f"Unexpected error during FFprobe: {e}", level=logging.DEBUG)
             raise RuntimeError("An unexpected error occurred while getting stream resolution.")
 
     def _setup_http(self):
         """
         Sets up OpenCV's VideoCapture for HTTP streams.
         """
-        self._log(f"Setting up HTTP stream with source: {self.source}")
+        self._log(f"Setting up HTTP stream with source: {self.source}", level=logging.DEBUG)
         self.cap = cv2.VideoCapture(self.source)
         if not self.cap.isOpened():
             error_msg = f"Failed to open HTTP stream: {self.source}"
-            self._log(error_msg)
+            self._log(error_msg, level=logging.ERROR)
             raise RuntimeError(error_msg)
 
         self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 3)
@@ -213,7 +215,7 @@ class VideoCapture:
         self.cap = cv2.VideoCapture(self.source)
         if not self.cap.isOpened():
             error_msg = f"Failed to open webcam with index: {self.source}"
-            self._log(error_msg)
+            self._log(error_msg, level=logging.ERROR)
             raise RuntimeError(error_msg)
 
         self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 3)
@@ -265,7 +267,7 @@ class VideoCapture:
                 retcode = self.ffmpeg_process.poll()
                 if retcode is not None:
                     stderr_output = self.ffmpeg_process.stderr.read().decode().strip()
-                    self._log(f"FFmpeg subprocess terminated with return code {retcode}. STDERR: {stderr_output}")
+                    self._log(f"FFmpeg subprocess terminated with return code {retcode}. STDERR: {stderr_output}", level=logging.ERROR)
                     self._reinitialize_camera(reason="FFmpeg subprocess terminated unexpectedly.")
             time.sleep(5)  # Check every 5 seconds
         self._log("Health check thread is stopping.")
@@ -293,7 +295,7 @@ class VideoCapture:
                     self._log("Frame not available, triggering reinitialization.")
                     self._reinitialize_camera(reason="Received None frame.")
             except Exception as e:
-                self._log(f"Error reading frame: {e}")
+                self._log(f"Error reading frame: {e}", level=logging.ERROR)
                 if self.stop_event.is_set():
                     break
                 self._reinitialize_camera()  # Reinitialize in case of error
@@ -312,9 +314,9 @@ class VideoCapture:
                 self._log("Frame read successfully from OpenCV capture.")
                 return frame
             else:
-                self._log("OpenCV capture failed to read frame.")
+                self._log("OpenCV capture failed to read frame.", level=logging.ERROR)
                 return None
-        self._log("VideoCapture is not opened.")
+        self._log("VideoCapture is not opened.", level=logging.DEBUG)
         return None
 
 
@@ -324,13 +326,13 @@ class VideoCapture:
         try:
             raw_frame = self.ffmpeg_process.stdout.read(frame_size)
             if len(raw_frame) != frame_size:
-                self._log(f"FFmpeg produced incomplete frame: expected {frame_size} bytes, got {len(raw_frame)} bytes.")
+                self._log(f"FFmpeg produced incomplete frame: expected {frame_size} bytes, got {len(raw_frame)} bytes.", level=logging.ERROR)
                 return None  # Skip incomplete frames
             frame = np.frombuffer(raw_frame, np.uint8).reshape((self.stream_height, self.stream_width, 3))
             self._log("Frame read successfully from FFmpeg.")
             return frame
         except Exception as e:
-            self._log(f"Error reading frame from FFmpeg: {e}")
+            self._log(f"Error reading frame from FFmpeg: {e}", level=logging.ERROR)
             return None
 
     def _reinitialize_camera(self, reason="Unknown"):

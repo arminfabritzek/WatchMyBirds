@@ -5,6 +5,7 @@
 # main.py
 from flask import Flask, Response
 from dotenv import load_dotenv
+load_dotenv()
 import json
 import os
 import time
@@ -40,30 +41,25 @@ detector_lock = threading.Lock()  # Lock to protect access to detector_instance
 # Configuration Parameters
 # --------------------------------------------------------------------------
 # Load variables from environment variables or use default values
-load_dotenv()
 model_choice = os.getenv("MODEL_CHOICE", "pytorch_ssd")
 class_filter = json.loads(os.getenv("CLASS_FILTER", '["bird"]'))  # Load JSON for array
 confidence_threshold = float(os.getenv("CONFIDENCE_THRESHOLD", 0.5))
 save_threshold = float(os.getenv("SAVE_THRESHOLD", 0.5))
 save_interval = int(os.getenv("SAVE_INTERVAL", 1))  # Seconds between saving
-input_fps = float(os.getenv("INPUT_FPS", 10))  # Default FPS is 10
-process_time = float(os.getenv("PROCESS_TIME", 0.1))  # Average detection time per frame
+max_fps_detection = float(os.getenv("MAX_FPS_DETECTION", 3))  # CPU/GPU usage limiter
+STREAM_FPS = float(os.getenv("STREAM_FPS", 3))  # Max FPS for the output stream
+
+# Output resize width from environment variables with a default value
+output_resize_width = int(os.getenv("STREAM_WIDTH_OUTPUT_RESIZE", 800))  # Fixed output width after Docker start
 
 logger.info(f"model_choice: {model_choice} ")
 logger.info(f"class_filter: {class_filter} ")
 logger.info(f"confidence_threshold: {confidence_threshold} ")
 logger.info(f"save_threshold: {save_threshold} ")
-logger.info(f"save_interval: {save_interval} ")
-logger.info(f"input_fps: {input_fps} ")
-logger.info(f"process_time: {process_time} ")
-
-# Output resize width from environment variables with a default value
-output_resize_width = int(os.getenv("STREAM_WIDTH_OUTPUT_RESIZE", 800))  # Fixed output width after Docker start
-logger.info(f"Output Resize Width set to: {output_resize_width} pixels")
-
-# Input stream dimensions initialized as None
-input_stream_width = None
-input_stream_height = None
+logger.info(f"save_threshold: {save_threshold} ")
+logger.info(f"max_fps_detection: {max_fps_detection} ")
+logger.info(f"STREAM_FPS: {STREAM_FPS} ")
+logger.info(f"STREAM_WIDTH_OUTPUT_RESIZE: {output_resize_width} ")
 
 output_dir = os.getenv("OUTPUT_DIR", "/output")
 os.makedirs(output_dir, exist_ok=True)
@@ -97,107 +93,82 @@ app = Flask(__name__)
 
 
 def generate_frames():
-    global latest_frame, detector_instance, input_stream_width, input_stream_height
+    global latest_frame, detector_instance
 
     # Font settings
     font = cv2.FONT_HERSHEY_SIMPLEX
-    text = "Waiting for Stream"
+    font_scale = 0.7
+    font_thickness = 2
+    timestamp_y = 50
 
-    # Fixed font size adjustment variables
-    font_scale = 0.7  # Suitable for output width of 1080
-    font_thickness = 2  # Suitable thickness
+    # Try loading the static placeholder image
+    static_placeholder_path = "assets/static_placeholder.jpg"
+    if os.path.exists(static_placeholder_path):
+        static_placeholder = cv2.imread(static_placeholder_path)
+        if static_placeholder is not None:
+            # Compute aspect ratio from the original placeholder
+            original_h, original_w = static_placeholder.shape[:2]
+            ratio = original_h / float(original_w)
 
-    # Placeholder initialization flag and variables
-    placeholder_initialized = False
-    placeholder = None
-    # Fixed output resolution (enforced for all frames)
-    fixed_output_width = 640
-    fixed_output_height = 360
-    timestamp_y = 50  # Will be updated based on input stream height
+            # Derive placeholder height based on desired width and original ratio
+            placeholder_w = output_resize_width
+            placeholder_h = int(placeholder_w * ratio)
+
+            # Resize the placeholder to keep its aspect ratio
+            static_placeholder = cv2.resize(static_placeholder, (placeholder_w, placeholder_h))
+            logger.info("Using static placeholder from file, adjusted to aspect ratio.")
+        else:
+            logger.error("Failed to load static placeholder image; falling back to black image.")
+            # Fall back to a black image at the configured width, fixed ratio 16:9 (as an example)
+            placeholder_w = output_resize_width
+            placeholder_h = int(placeholder_w * 9 / 16)
+            static_placeholder = np.zeros((placeholder_h, placeholder_w, 3), dtype=np.uint8)
+    else:
+        logger.error("Static placeholder image not found; falling back to black image.")
+        # Fall back to a black image at the configured width, fixed ratio 16:9 (as an example)
+        placeholder_w = output_resize_width
+        placeholder_h = int(placeholder_w * 9 / 16)
+        static_placeholder = np.zeros((placeholder_h, placeholder_w, 3), dtype=np.uint8)
 
     while True:
+        start_loop_time = time.time()
         try:
-            # Retrieve current resolution
+            # Retrieve the current resolution from the detector (if available)
             with detector_lock:
                 if detector_instance:
-                    resolution = detector_instance.resolution  # Tuple (width, height)
+                    resolution = detector_instance.resolution
                 else:
                     resolution = None
-
-            if resolution:
-                current_input_width, current_input_height = resolution
-
-                # Check if resolution has changed
-                if (input_stream_width, input_stream_height) != (current_input_width, current_input_height):
-                    input_stream_width, input_stream_height = current_input_width, current_input_height
-
-                    # Calculate output_resize_height to maintain aspect ratio
-                    output_resize_height = int(input_stream_height * output_resize_width / input_stream_width)
-
-                    # Update timestamp Y-position based on input stream height
-                    timestamp_y = int(input_stream_height * 0.03)  # 3% from the top
-
-                    # Reinitialize the placeholder with new resized dimensions
-                    placeholder = np.zeros((output_resize_height, output_resize_width, 3), dtype=np.uint8)
-
-                    # Center the "Waiting for Stream" text on the placeholder
-                    text_size = cv2.getTextSize(text, font, font_scale, font_thickness)[0]
-                    text_x = (output_resize_width - text_size[0]) // 2
-                    text_y_center = (output_resize_height + text_size[1]) // 2
-                    cv2.putText(
-                        placeholder,
-                        text,
-                        (text_x, text_y_center),
-                        font,
-                        font_scale,
-                        (0, 0, 255),  # Red text color
-                        font_thickness
-                    )
-                    placeholder_initialized = True
-                    logger.info("Placeholder initialized with 'Waiting for Stream' text.")
-            elif not placeholder_initialized:
-                # Initialize a default placeholder if resolution is not detected
-                placeholder = np.zeros((fixed_output_height, fixed_output_width, 3), dtype=np.uint8)
-                text_size = cv2.getTextSize(text, font, font_scale, font_thickness)[0]
-                text_x = (output_resize_width - text_size[0]) // 2
-                text_y_center = (fixed_output_height + text_size[1]) // 2
-                cv2.putText(
-                    placeholder,
-                    text,
-                    (text_x, text_y_center),
-                    font,
-                    font_scale,
-                    (0, 0, 255),  # Red text color
-                    font_thickness
-                )
-                placeholder_initialized = True
-                logger.info("Default placeholder initialized.")
 
             # Retrieve the latest frame
             with frame_lock:
                 current_frame = latest_frame
 
+            # If we have a frame and a resolution, resize the frame and send it
             if current_frame is not None and resolution:
-                # Calculate output_resize_height to maintain aspect ratio
-                output_resize_height = int(input_stream_height * output_resize_width / input_stream_width)
+                current_input_width, current_input_height = resolution
 
-                # Resize frame for output streaming while maintaining aspect ratio
-                resized_frame = cv2.resize(current_frame, (output_resize_width, output_resize_height))
+                # Calculate the new height while preserving the aspect ratio
+                output_resize_height = int(current_input_height * placeholder_w / current_input_width)
+
+                # Resize the frame
+                resized_frame = cv2.resize(current_frame, (placeholder_w, output_resize_height))
 
                 # Add timestamp to the resized frame
                 timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
                 cv2.putText(
                     resized_frame,
                     timestamp,
-                    (10, timestamp_y),  # Fixed position relative to resized output
+                    (10, timestamp_y),
                     font,
                     font_scale,
-                    (0, 255, 0),  # Green text color
+                    (0, 255, 0),
                     font_thickness
                 )
 
-                # Encode the resized frame
-                ret, buffer = cv2.imencode('.jpg', resized_frame)
+                # Encode the frame to JPEG
+                encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), 80]  # 60% quality
+                ret, buffer = cv2.imencode('.jpg', resized_frame, encode_param)
                 if ret:
                     yield (
                         b'--frame\r\n'
@@ -206,23 +177,24 @@ def generate_frames():
                 else:
                     logger.error("Failed to encode resized frame.")
             else:
-                # Use the placeholder
-                placeholder_with_time = placeholder.copy()
+                # No current frame/resolution -> use the placeholder
+                placeholder_with_time = static_placeholder.copy()
 
                 # Add timestamp to the placeholder
                 timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
                 cv2.putText(
                     placeholder_with_time,
                     timestamp,
-                    (10, timestamp_y),  # Fixed position relative to resized output
+                    (10, timestamp_y),
                     font,
                     font_scale,
-                    (0, 255, 0),  # Green text color
+                    (0, 255, 0),
                     font_thickness
                 )
 
                 # Encode the placeholder frame
-                ret, buffer = cv2.imencode('.jpg', placeholder_with_time)
+                encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), 80]  # 60% quality
+                ret, buffer = cv2.imencode('.jpg', placeholder_with_time, encode_param)
                 if ret:
                     yield (
                         b'--frame\r\n'
@@ -230,9 +202,16 @@ def generate_frames():
                     )
                 else:
                     logger.error("Failed to encode placeholder frame.")
+
         except Exception as e:
             logger.error(f"Error generating frames: {e}")
-            time.sleep(0.1)  # Baseline sleep to prevent rapid looping on error
+            time.sleep(0.1)  # Slight delay to prevent tight error loops
+
+        # Enforce streaming FPS
+        elapsed = time.time() - start_loop_time
+        desired_frame_time = 1.0 / STREAM_FPS  # e.g. 0.2s for 5 FPS
+        if elapsed < desired_frame_time:
+            time.sleep(desired_frame_time - elapsed)
 
 @app.route('/video_feed')
 def video_feed():
@@ -302,6 +281,7 @@ def detection_loop():
                     continue
                 continue  # Restart loop after reinitializing
 
+            start_time = time.time()
             # We now get 4 values back
             annotated_frame, should_save_interval, original_frame, detection_info_list = detector.detect_objects(
                 frame,
@@ -309,6 +289,9 @@ def detection_loop():
                 confidence_threshold=confidence_threshold,
                 save_threshold=save_threshold
             )
+            detection_time = time.time() - start_time
+
+            logger.info(f"Detection took {detection_time:.4f} seconds for one frame.")
 
             # Update the global frame for streaming
             with frame_lock:
@@ -341,8 +324,10 @@ def detection_loop():
 
             frame_count += 1
 
-            delay = max(1.0 / input_fps, process_time)
-            time.sleep(delay)  # Frame limiter to avoid processing frames too frequently.
+            detection_duration = time.time() - start_time
+            target_duration = 1.0 / max_fps_detection
+            if detection_duration < target_duration:
+                time.sleep(target_duration - detection_duration)
         except Exception as e:
             print(f"Error in detection loop: {e}")
             time.sleep(1)  # Prevents rapid error handling loops.
