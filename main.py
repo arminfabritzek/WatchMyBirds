@@ -6,7 +6,6 @@
 from flask import Flask, Response
 from dotenv import load_dotenv
 import json
-load_dotenv()
 import os
 import time
 import csv
@@ -32,19 +31,31 @@ logger.info(f"Debug mode is {'enabled' if _debug else 'disabled'}.")
 # Global lock for thread-safe frame access
 frame_lock = threading.Lock()
 latest_frame = None  # Global variable to store the latest frame for streaming
+
+# Global Detector instance
+detector_instance = None
+detector_lock = threading.Lock()  # Lock to protect access to detector_instance
+
 # --------------------------------------------------------------------------
 # Configuration Parameters
 # --------------------------------------------------------------------------
 # Load variables from environment variables or use default values
+load_dotenv()
 model_choice = os.getenv("MODEL_CHOICE", "pytorch_ssd")
 class_filter = json.loads(os.getenv("CLASS_FILTER", '["bird"]'))  # Load JSON for array
 confidence_threshold = float(os.getenv("CONFIDENCE_THRESHOLD", 0.5))
 save_threshold = float(os.getenv("SAVE_THRESHOLD", 0.5))
 save_interval = int(os.getenv("SAVE_INTERVAL", 1))  # Seconds between saving
 input_fps = float(os.getenv("INPUT_FPS", 10))  # Default FPS is 10
-process_time = float(os.getenv("PROCESS_TIME", 1))  # Average detection time per frame
-stream_width = int(os.getenv("STREAM_WIDTH", 640))  # Default streaming width: 640
-stream_height = int(os.getenv("STREAM_HEIGHT", 360))  # Default streaming height: 360
+process_time = float(os.getenv("PROCESS_TIME", 0.1))  # Average detection time per frame
+
+# Output resize width from environment variables with a default value
+output_resize_width = int(os.getenv("STREAM_WIDTH_OUTPUT_RESIZE", 1080))  # Fixed output width after Docker start
+logger.info(f"Output Resize Width set to: {output_resize_width} pixels")
+
+# Input stream dimensions initialized as None
+input_stream_width = None
+input_stream_height = None
 
 output_dir = os.getenv("OUTPUT_DIR", "/output")
 os.makedirs(output_dir, exist_ok=True)
@@ -57,49 +68,100 @@ if not os.path.exists(csv_path):
         writer.writerow(["timestamp", "filename", "class_name", "confidence", "x1", "y1", "x2", "y2"])
 
 # ------------------------------------------------------------------------------
+# Global Video Source Retrieval and Processing
+# ------------------------------------------------------------------------------
+video_source_env = os.getenv("VIDEO_SOURCE", "0")  # Default to "0" if VIDEO_SOURCE isn't set
+
+try:
+    # Attempt to convert to integer (webcam index)
+    video_source = int(video_source_env)
+    logger.info("Video source is a webcam.")
+except ValueError:
+    # Treat as RTSP or HTTP stream URL
+    video_source = video_source_env
+    logger.info(f"Video source is a stream: {video_source}")
+
+
+# ------------------------------------------------------------------------------
 # Flask App Setup
 # ------------------------------------------------------------------------------
 app = Flask(__name__)
 
 
 def generate_frames():
-    global latest_frame
+    global latest_frame, detector_instance, input_stream_width, input_stream_height
 
-    # Dynamically adjust font size and thickness based on input stream resolution
-    input_stream_resolution = 1080  # Reference resolution for scaling (1080p)
-    # Dynamic font size adjustment
-    scale_factor = 1.5  # Custom scaling factor
-    font_scale = (stream_height / input_stream_resolution) * scale_factor  # Scale font size based on stream height and scaler
-    font_thickness = max(1, int(font_scale * 2))  # Ensure thickness is at least 1
-
+    # Font settings
     font = cv2.FONT_HERSHEY_SIMPLEX
     text = "Waiting for Stream"
 
-    # Create the placeholder frame
-    placeholder = np.zeros((stream_height, stream_width, 3), dtype=np.uint8)
-    text_size = cv2.getTextSize(text, font, font_scale, font_thickness)[0]
-    text_x = (stream_width - text_size[0]) // 2
-    text_y = (stream_height + text_size[1]) // 2
-    cv2.putText(placeholder, text, (text_x, text_y), font, font_scale, (0, 0, 255), font_thickness)
+    # Fixed font size adjustment variables
+    font_scale = 0.7  # Suitable for output width of 1080
+    font_thickness = 2  # Suitable thickness
 
-    # Dynamically calculate the timestamp position
-    timestamp_y = int(font_scale * 50)  # Scaled Y offset for upper-left placement
+    # Placeholder initialization flag and variables
+    placeholder_initialized = False
+    placeholder = None
+    timestamp_y = 50  # Will be updated based on input stream height
 
     while True:
         try:
+            # Retrieve current resolution
+            with detector_lock:
+                if detector_instance:
+                    resolution = detector_instance.resolution  # Tuple (width, height)
+                else:
+                    resolution = None
+
+            if resolution:
+                current_input_width, current_input_height = resolution
+
+                # Check if resolution has changed
+                if (input_stream_width, input_stream_height) != (current_input_width, current_input_height):
+                    input_stream_width, input_stream_height = current_input_width, current_input_height
+
+                    # Calculate output_resize_height to maintain aspect ratio
+                    output_resize_height = int(input_stream_height * output_resize_width / input_stream_width)
+
+                    # Update timestamp Y-position based on input stream height
+                    timestamp_y = int(input_stream_height * 0.03)  # 3% from the top
+
+                    # Reinitialize the placeholder with new resized dimensions
+                    placeholder = np.zeros((output_resize_height, output_resize_width, 3), dtype=np.uint8)
+
+                    # Center the "Waiting for Stream" text on the placeholder
+                    text_size = cv2.getTextSize(text, font, font_scale, font_thickness)[0]
+                    text_x = (output_resize_width - text_size[0]) // 2
+                    text_y_center = (output_resize_height + text_size[1]) // 2
+                    cv2.putText(
+                        placeholder,
+                        text,
+                        (text_x, text_y_center),
+                        font,
+                        font_scale,
+                        (0, 0, 255),  # Red text color
+                        font_thickness
+                    )
+                    placeholder_initialized = True
+                    logger.info("Placeholder initialized with 'Waiting for Stream' text.")
+
+            # Retrieve the latest frame
             with frame_lock:
                 current_frame = latest_frame
 
-            if current_frame is not None:
-                # Resize frame for streaming
-                resized_frame = cv2.resize(current_frame.copy(), (stream_width, stream_height))
+            if current_frame is not None and resolution:
+                # Calculate output_resize_height to maintain aspect ratio
+                output_resize_height = int(input_stream_height * output_resize_width / input_stream_width)
+
+                # Resize frame for output streaming while maintaining aspect ratio
+                resized_frame = cv2.resize(current_frame, (output_resize_width, output_resize_height))
 
                 # Add timestamp to the resized frame
                 timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
                 cv2.putText(
                     resized_frame,
                     timestamp,
-                    (10, timestamp_y),  # Dynamically scaled upper-left placement
+                    (10, timestamp_y),  # Fixed position relative to resized output
                     font,
                     font_scale,
                     (0, 255, 0),  # Green text color
@@ -109,30 +171,45 @@ def generate_frames():
                 # Encode the resized frame
                 ret, buffer = cv2.imencode('.jpg', resized_frame)
                 if ret:
-                    yield (b'--frame\r\n'
-                           b'Content-Type: image/jpeg\r\n\r\n' + buffer.tobytes() + b'\r\n')
+                    yield (
+                        b'--frame\r\n'
+                        b'Content-Type: image/jpeg\r\n\r\n' + buffer.tobytes() + b'\r\n'
+                    )
+                else:
+                    logger.error("Failed to encode resized frame.")
             else:
-                raise ValueError("No live frame available, retrying...")
+                if placeholder_initialized and 'output_resize_height' in locals():
+                    # Use the pre-initialized placeholder
+                    placeholder_with_time = placeholder.copy()
+
+                    # Add timestamp to the placeholder
+                    timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+                    cv2.putText(
+                        placeholder_with_time,
+                        timestamp,
+                        (10, timestamp_y),  # Fixed position relative to resized output
+                        font,
+                        font_scale,
+                        (0, 255, 0),  # Green text color
+                        font_thickness
+                    )
+
+                    # Encode the placeholder frame
+                    ret, buffer = cv2.imencode('.jpg', placeholder_with_time)
+                    if ret:
+                        yield (
+                            b'--frame\r\n'
+                            b'Content-Type: image/jpeg\r\n\r\n' + buffer.tobytes() + b'\r\n'
+                        )
+                    else:
+                        logger.error("Failed to encode placeholder frame.")
+                else:
+                    # Placeholder not initialized yet; wait for resolution
+                    time.sleep(0.1)  # Baseline sleep to prevent rapid looping
+                    continue
         except Exception as e:
-            print(f"Error generating frames: {e}")
-            placeholder_with_time = placeholder.copy()
-            timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
-            cv2.putText(
-                placeholder_with_time,
-                timestamp,
-                (10, timestamp_y),  # Dynamically scaled upper-left placement
-                font,
-                font_scale,
-                (0, 255, 0),  # Green text color
-                font_thickness
-            )
-            ret, buffer = cv2.imencode('.jpg', placeholder_with_time)
-            if ret:
-                yield (b'--frame\r\n'   
-                       b'Content-Type: image/jpeg\r\n\r\n' + buffer.tobytes() + b'\r\n')
-        time.sleep(0.1)  # Prevents the generate_frames loop from running too fast when no new frames are available.
-
-
+            logger.error(f"Error generating frames: {e}")
+            time.sleep(0.1)  # Baseline sleep to prevent rapid looping on error
 
 @app.route('/video_feed')
 def video_feed():
@@ -159,26 +236,17 @@ def index():
     )
 
 
-
-
 def detection_loop():
-    global latest_frame
+    global latest_frame, detector_instance
 
-    # Load variables from .env file
-    load_dotenv()
-    video_source = os.getenv("VIDEO_SOURCE", 0)  # Default to 0 if VIDEO_SOURCE isn't set
-
-    try:
-        # Convert source to int if it's a webcam index, otherwise treat as a string
-        source = int(video_source)
-        print("Video source is a webcam.")
-    except ValueError:
-        source = video_source  # RTSP or HTTP stream
-        print(f"Video source is a stream: {source}")
+    # Use the globally defined video_source
+    source = video_source  # Already processed globally
 
     # Initialize Detector instance
     try:
         detector = Detector(source=source, model_choice=model_choice, debug=_debug)
+        with detector_lock:
+            detector_instance = detector  # Assign to global variable
     except Exception as e:
         print(f"Failed to initialize detector: {e}")
         return
@@ -191,14 +259,17 @@ def detection_loop():
     retries = 0
     while True:
         try:
-            frame = detector.get_frame()
+            with detector_lock:
+                frame = detector_instance.get_frame()
+
             if frame is None:
                 logger.debug("No frame available. Attempting to reinitialize detector...")
-                detector.release()
+                detector_instance.release()
                 time.sleep(min(2 ** retries, 30))  # Exponential backoff with a max of 30 seconds when reinitializing the detector fails.
                 retries += 1
                 try:
-                    detector = Detector(source=source, model_choice=model_choice, debug=_debug)
+                    with detector_lock:
+                        detector_instance = Detector(source=source, model_choice=model_choice, debug=_debug)
                     logger.debug("Detector reinitialized successfully.")
 
                     retries = 0  # Reset retries on success
@@ -253,6 +324,17 @@ def detection_loop():
             print(f"Error in detection loop: {e}")
             time.sleep(1)  # Prevents rapid error handling loops.
 
+
+# Register cleanup function to ensure resources are released on exit
+import atexit
+
+def cleanup():
+    global detector_instance
+    with detector_lock:
+        if detector_instance:
+            detector_instance.release()
+
+atexit.register(cleanup)
 
 # Start the detection loop in a separate thread
 detection_thread = threading.Thread(target=detection_loop, daemon=True)

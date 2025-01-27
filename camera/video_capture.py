@@ -33,6 +33,10 @@ class VideoCapture:
         self.q = queue.Queue(maxsize=10)  # Queue for storing frames
         self.reader_thread = None  # Initialize the reader_thread attribute
         self.stream_type = self._detect_stream_type()
+
+        if self.stream_type == "rtsp":
+            self._get_stream_resolution_ffprobe()  # Detect resolution before setting up
+
         self._setup_capture()
         self._start_reader_thread()
 
@@ -116,6 +120,40 @@ class VideoCapture:
         for line in self.ffmpeg_process.stderr:
             logger.debug(f"FFmpeg STDERR: {line.decode('utf-8').strip()}")
 
+    def _get_stream_resolution_ffprobe(self):
+        """
+        Uses FFprobe to get the resolution of the RTSP stream.
+        Sets the stream_width and stream_height attributes accordingly.
+        """
+        ffprobe_cmd = [
+            'ffprobe',
+            '-v', 'error',
+            '-select_streams', 'v:0',
+            '-show_entries', 'stream=width,height',
+            '-of', 'default=noprint_wrappers=1:nokey=1',
+            self.source
+        ]
+
+        try:
+            self._log("Running FFprobe to get stream resolution...")
+            output = subprocess.check_output(ffprobe_cmd, stderr=subprocess.STDOUT).decode().strip()
+            self._log(f"FFprobe output: {output}")
+
+            # Parse the FFprobe output
+            width, height = map(int, output.split('\n'))
+            self._log(f"Detected stream resolution: {width}x{height}")
+
+            # Set the resolution as instance attributes
+            self.stream_width = width
+            self.stream_height = height
+
+        except subprocess.CalledProcessError as e:
+            self._log(f"FFprobe failed with error: {e.output.decode().strip()}")
+            raise RuntimeError("Failed to get stream resolution using FFprobe.")
+        except Exception as e:
+            self._log(f"Error parsing FFprobe output: {e}")
+            raise RuntimeError("Failed to parse stream resolution from FFprobe output.")
+
     def _setup_http(self):
         """
         Sets up OpenCV's VideoCapture for HTTP streams.
@@ -125,6 +163,11 @@ class VideoCapture:
         self.cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 5000)  # 5-second timeout
         self.cap.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, 5000)  # 5-second read timeout
 
+        # Retrieve resolution using OpenCV
+        self.stream_width = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        self.stream_height = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        self._log(f"Detected HTTP stream resolution: {self.stream_width}x{self.stream_height}")
+
     def _setup_webcam(self):
         """
         Sets up OpenCV's VideoCapture for webcam streams.
@@ -132,6 +175,10 @@ class VideoCapture:
         self.cap = cv2.VideoCapture(self.source)
         self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 3)
 
+        # Retrieve resolution using OpenCV
+        self.stream_width = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        self.stream_height = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        self._log(f"Detected Webcam resolution: {self.stream_width}x{self.stream_height}")
 
     def _start_reader_thread(self):
         """
@@ -147,6 +194,23 @@ class VideoCapture:
             self.reader_thread = threading.Thread(target=self._reader, daemon=True)
             self.reader_thread.start()
             self._log("Reader thread started successfully.")
+
+    def _start_health_check_thread(self):
+        """
+        Starts a health check thread to monitor FFmpeg subprocess.
+        """
+        self.health_check_thread = threading.Thread(target=self._health_check, daemon=True)
+        self.health_check_thread.start()
+
+    def _health_check(self):
+        """
+        Periodically checks if FFmpeg subprocess is alive. If not, attempts to reinitialize.
+        """
+        while not self.stop_event.is_set():
+            if self.ffmpeg_process and self.ffmpeg_process.poll() is not None:
+                self._log("FFmpeg subprocess has terminated unexpectedly.")
+                self._reinitialize_camera()
+            time.sleep(5)  # Check every 5 seconds
 
 
     def _reader(self):
@@ -185,26 +249,22 @@ class VideoCapture:
 
 
     def _read_ffmpeg_frame(self):
-        width, height = 1920, 1080  # Update these values to match your stream resolution
-        frame_size = width * height * 3  # For bgr24 (3 bytes per pixel)
+        frame_size = self.stream_width * self.stream_height * 3  # For bgr24 (3 bytes per pixel)
 
         try:
             raw_frame = self.ffmpeg_process.stdout.read(frame_size)
             if len(raw_frame) != frame_size:
                 self._log("FFmpeg did not produce a complete frame...")
-
                 return None  # Skip incomplete frames
-            frame = np.frombuffer(raw_frame, np.uint8).reshape((height, width, 3))
+            frame = np.frombuffer(raw_frame, np.uint8).reshape((self.stream_height, self.stream_width, 3))
             return frame
         except Exception as e:
             self._log(f"Error reading frame from FFmpeg: {e}")
             return None
 
-
     def _reinitialize_camera(self):
         if threading.current_thread() == self.reader_thread:
             self._log("Warning: Skipping reinitialization from within the reader thread.")
-
             self.stop_event.set()  # Ensure the thread stops cleanly
             return
 
@@ -232,7 +292,6 @@ class VideoCapture:
     def get_frame(self):
         if self.q.empty():
             self._log("Frame queue is empty.")
-
             return None
         try:
             frame = self.q.get_nowait()
@@ -252,23 +311,25 @@ class VideoCapture:
         # Stop the reader thread
         if self.reader_thread and self.reader_thread.is_alive():
             self._log("Joining reader thread...")
-
             self.reader_thread.join(timeout=5)  # Wait for the thread to exit
 
         # Clear the queue
         with self.q.mutex:
             self.q.queue.clear()
 
+        # Stop the health check thread
+        if hasattr(self, 'health_check_thread') and self.health_check_thread.is_alive():
+            self._log("Joining health check thread...")
+            self.health_check_thread.join(timeout=5)
+
         # Release FFmpeg process
         if self.ffmpeg_process:
             self._log("Terminating FFmpeg process...")
-
             self.ffmpeg_process.terminate()
             try:
                 self.ffmpeg_process.wait(timeout=5)  # Wait for FFmpeg to exit
             except subprocess.TimeoutExpired:
                 self._log("FFmpeg process did not terminate. Killing process...")
-
                 self.ffmpeg_process.kill()
 
         # Release OpenCV capture if used
@@ -276,3 +337,10 @@ class VideoCapture:
             self.cap.release()
 
         self._log("Resources released.")
+
+    @property
+    def resolution(self):
+        """
+        Property to get the resolution of the video stream.
+        """
+        return (self.stream_width, self.stream_height)

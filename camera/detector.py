@@ -128,12 +128,6 @@ class Detector():
         return frame, False, original_frame, []
 
     def get_frame(self):
-        """
-        Retrieves the latest frame from the VideoCapture object.
-        """
-        return self.video_capture.get_frame()
-
-    def get_frame(self):
         frame = self.video_capture.get_frame()
         if frame is None:
             self._log("No frame available from VideoCapture.")
@@ -145,3 +139,11 @@ class Detector():
         Releases resources used by VideoCapture.
         """
         self.video_capture.release()
+
+    @property
+    def resolution(self):
+        """
+        Property to get the resolution of the video stream.
+        """
+        return self.video_capture.resolution
+
