@@ -273,7 +273,7 @@ class VideoCapture:
 
     def _reader(self):
         """
-        Continuously reads frames from the video source and places them in the queue.
+        Continuously reads frames from the video source and places only the latest frame in the queue.
         Terminates cleanly if stop_event is set.
         """
         self._log("Reader thread is running.")
@@ -284,11 +284,11 @@ class VideoCapture:
                     self._log("Stop event set. Reader thread is terminating.")
                     break
                 if frame is not None:
-                    if not self.q.full():
-                        self.q.put(frame, timeout=0.1)  # Keep the queue filled with new frames
-                        self._log("Frame added to queue. Queue size: {}".format(self.q.qsize()))
-                    else:
-                        self._log("Frame queue is full. Dropping frame.")
+                    # Clear the queue before adding the new frame
+                    with self.q.mutex:
+                        self.q.queue.clear()
+                    self.q.put(frame, timeout=0.1)  # Always have the latest frame in the queue
+                    self._log("Replaced the queue with the latest frame.")
                 else:
                     self._log("Frame not available, triggering reinitialization.")
                     self._reinitialize_camera(reason="Received None frame.")

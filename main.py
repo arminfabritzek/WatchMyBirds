@@ -17,7 +17,7 @@ import logging
 
 # Read the debug flag from the environment variable (default: False)
 _debug = os.getenv("DEBUG_MODE", "False").lower() == "true"
-_debug=True
+
 # Configure logging
 logging.basicConfig(
     level=logging.DEBUG if _debug else logging.INFO,  # Set level based on _debug
@@ -110,6 +110,9 @@ def generate_frames():
     # Placeholder initialization flag and variables
     placeholder_initialized = False
     placeholder = None
+    # Fixed output resolution (enforced for all frames)
+    fixed_output_width = 640
+    fixed_output_height = 360
     timestamp_y = 50  # Will be updated based on input stream height
 
     while True:
@@ -152,6 +155,23 @@ def generate_frames():
                     )
                     placeholder_initialized = True
                     logger.info("Placeholder initialized with 'Waiting for Stream' text.")
+            elif not placeholder_initialized:
+                # Initialize a default placeholder if resolution is not detected
+                placeholder = np.zeros((fixed_output_height, fixed_output_width, 3), dtype=np.uint8)
+                text_size = cv2.getTextSize(text, font, font_scale, font_thickness)[0]
+                text_x = (output_resize_width - text_size[0]) // 2
+                text_y_center = (fixed_output_height + text_size[1]) // 2
+                cv2.putText(
+                    placeholder,
+                    text,
+                    (text_x, text_y_center),
+                    font,
+                    font_scale,
+                    (0, 0, 255),  # Red text color
+                    font_thickness
+                )
+                placeholder_initialized = True
+                logger.info("Default placeholder initialized.")
 
             # Retrieve the latest frame
             with frame_lock:
@@ -186,35 +206,30 @@ def generate_frames():
                 else:
                     logger.error("Failed to encode resized frame.")
             else:
-                if placeholder_initialized and 'output_resize_height' in locals():
-                    # Use the pre-initialized placeholder
-                    placeholder_with_time = placeholder.copy()
+                # Use the placeholder
+                placeholder_with_time = placeholder.copy()
 
-                    # Add timestamp to the placeholder
-                    timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
-                    cv2.putText(
-                        placeholder_with_time,
-                        timestamp,
-                        (10, timestamp_y),  # Fixed position relative to resized output
-                        font,
-                        font_scale,
-                        (0, 255, 0),  # Green text color
-                        font_thickness
+                # Add timestamp to the placeholder
+                timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+                cv2.putText(
+                    placeholder_with_time,
+                    timestamp,
+                    (10, timestamp_y),  # Fixed position relative to resized output
+                    font,
+                    font_scale,
+                    (0, 255, 0),  # Green text color
+                    font_thickness
+                )
+
+                # Encode the placeholder frame
+                ret, buffer = cv2.imencode('.jpg', placeholder_with_time)
+                if ret:
+                    yield (
+                        b'--frame\r\n'
+                        b'Content-Type: image/jpeg\r\n\r\n' + buffer.tobytes() + b'\r\n'
                     )
-
-                    # Encode the placeholder frame
-                    ret, buffer = cv2.imencode('.jpg', placeholder_with_time)
-                    if ret:
-                        yield (
-                            b'--frame\r\n'
-                            b'Content-Type: image/jpeg\r\n\r\n' + buffer.tobytes() + b'\r\n'
-                        )
-                    else:
-                        logger.error("Failed to encode placeholder frame.")
                 else:
-                    # Placeholder not initialized yet; wait for resolution
-                    time.sleep(0.1)  # Baseline sleep to prevent rapid looping
-                    continue
+                    logger.error("Failed to encode placeholder frame.")
         except Exception as e:
             logger.error(f"Error generating frames: {e}")
             time.sleep(0.1)  # Baseline sleep to prevent rapid looping on error
