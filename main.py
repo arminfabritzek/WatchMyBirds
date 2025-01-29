@@ -15,6 +15,7 @@ import threading
 from camera.detector import Detector
 import numpy as np
 import logging
+from utils.telegram_notifier import send_telegram_message
 
 # Read the debug flag from the environment variable (default: False)
 _debug = os.getenv("DEBUG_MODE", "False").lower() == "true"
@@ -24,10 +25,20 @@ logging.basicConfig(
     level=logging.DEBUG if _debug else logging.INFO,  # Set level based on _debug
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
+
 logger = logging.getLogger(__name__)
+
+logging.getLogger().setLevel(logging.DEBUG if _debug else logging.INFO)
 
 # Log the current debug mode
 logger.info(f"Debug mode is {'enabled' if _debug else 'disabled'}.")
+
+print(f"DEBUG_MODE environment variable: {os.getenv('DEBUG_MODE')}")
+print(f"Debug mode in code: {_debug}")
+
+if _debug:
+    send_telegram_message(text="🐦 Birdwatching has started in DEBUG mode!", photo_path="assets/No_Signal.jpeg")
+
 
 # Global lock for thread-safe frame access
 frame_lock = threading.Lock()
@@ -45,12 +56,12 @@ model_choice = os.getenv("MODEL_CHOICE", "pytorch_ssd")
 class_filter = json.loads(os.getenv("CLASS_FILTER", '["bird"]'))  # Load JSON for array
 confidence_threshold = float(os.getenv("CONFIDENCE_THRESHOLD", 0.5))
 save_threshold = float(os.getenv("SAVE_THRESHOLD", 0.5))
-save_interval = int(os.getenv("SAVE_INTERVAL", 1))  # Seconds between saving
+save_interval = int(os.getenv("SAVE_INTERVAL", 0))  # Seconds between saving # 0 ensures all detected frames are saved
 max_fps_detection = float(os.getenv("MAX_FPS_DETECTION", 3))  # CPU/GPU usage limiter
 STREAM_FPS = float(os.getenv("STREAM_FPS", 3))  # Max FPS for the output stream
+output_resize_width = int(os.getenv("STREAM_WIDTH_OUTPUT_RESIZE", 800))  # Fixed output width after Docker start
 
 # Output resize width from environment variables with a default value
-output_resize_width = int(os.getenv("STREAM_WIDTH_OUTPUT_RESIZE", 800))  # Fixed output width after Docker start
 
 logger.info(f"model_choice: {model_choice} ")
 logger.info(f"class_filter: {class_filter} ")
@@ -283,7 +294,7 @@ def detection_loop():
 
             start_time = time.time()
             # We now get 4 values back
-            annotated_frame, should_save_interval, original_frame, detection_info_list = detector.detect_objects(
+            annotated_frame, object_detected, original_frame, detection_info_list = detector.detect_objects(
                 frame,
                 class_filter=class_filter,
                 confidence_threshold=confidence_threshold,
@@ -291,7 +302,7 @@ def detection_loop():
             )
             detection_time = time.time() - start_time
 
-            logger.info(f"Detection took {detection_time:.4f} seconds for one frame.")
+            logger.debug(f"Detection took {detection_time:.4f} seconds for one frame.")
 
             # Update the global frame for streaming
             with frame_lock:
@@ -299,7 +310,7 @@ def detection_loop():
 
             # Save results if needed
             current_time = time.time()
-            if should_save_interval and (current_time - last_save_time >= save_interval):
+            if object_detected and (save_interval == 0 or (current_time - last_save_time >= save_interval)):
                 timestamp = time.strftime("%Y%m%d_%H%M%S")
                 annotated_name = f"{timestamp}_frame_annotated.jpg"
                 original_name = f"{timestamp}_frame_original.jpg"
@@ -321,6 +332,16 @@ def detection_loop():
                             det["x1"], det["y1"], det["x2"], det["y2"]
                         ])
                 last_save_time = current_time
+
+                # 🔔 ✅ Send Telegram alert *after* saving the image
+                if detection_info_list:
+                    detected_classes = ", ".join(
+                        set(det["class_name"] for det in detection_info_list))  # Unique class names
+                    detection_text = f"🔎 Detection Alert!\nDetected: {detected_classes}"
+
+                    # Send the stored annotated image to Telegram
+                    send_telegram_message(text=detection_text, photo_path=os.path.join(output_dir, annotated_name))
+                    logger.info(f"📩 Telegram notification sent: {detection_text}")
 
             frame_count += 1
 

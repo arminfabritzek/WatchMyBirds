@@ -120,9 +120,9 @@ class Detector():
                         )
 
             # Determine if frame should be saved based on detection results
-            should_save_interval = bool(detection_info_list)
+            object_detected = bool(detection_info_list)
 
-            return frame, should_save_interval, original_frame, detection_info_list
+            return frame, object_detected, original_frame, detection_info_list
 
         # If no object detection model is chosen
         return frame, False, original_frame, []
