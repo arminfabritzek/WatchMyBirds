@@ -6,7 +6,7 @@
 
 ---
 
-**WatchMyBirds** is a lightweight and customizable object detection application designed for real-time monitoring using webcams and TensorFlow. The application focuses on identifying objects of interest, such as birds, insects or plants, which are then classified with another model for further analysis, and saving frames where specific conditions are met. It is ideal for hobbyists, researchers, or anyone interested in automated visual monitoring.
+**WatchMyBirds** is a lightweight and customizable object detection application designed for real-time monitoring using webcams and PyTorch & TensorFlow. The application focuses on identifying objects of interest, such as birds, insects or plants, which are then classified with another model for further analysis, and saving frames where specific conditions are met. It is ideal for hobbyists, researchers, or anyone interested in automated visual monitoring.
 
 ---
 
@@ -60,6 +60,8 @@
 ### 📊 **Expanded Data & Logging Capabilities**  
 - 🏆 **Comprehensive CSV & JSON Logging** → Improved tracking of detections for data-driven insights.  
 - 🏆 **Adaptive Filtering** → Dynamic threshold adjustments for smarter detection.  
+- 🏆 **Bird Activity Analytics** → Generate statistics on **number of visits, species diversity, and time-based patterns**.  
+- 🏆 **Graphical Dashboards** → Visualize detection trends and bird activity with **interactive charts & reports**.
 
 ---
 
@@ -90,30 +92,33 @@ To run **WatchMyBirds** in a Docker container with default settings:
        container_name: watchmybirds
        environment:
          - VIDEO_SOURCE=rtsp://user:password@192.168.0.2:554/1  # Replace with your RTSP stream
-         - PUID=1000  # Replace with your user ID
-         - PGID=1000   # Replace with your group ID
-         - TZ=Europe/Berlin  # Set your timezone
-         - DEBUG_MODE=False  
-         - MODEL_CHOICE="pytorch_ssd"  
-         - CLASS_FILTER="'["bird"]'"  
-         - CONFIDENCE_THRESHOLD=0.5  
-         - SAVE_THRESHOLD=0.5  
-         - SAVE_INTERVAL=0  # Seconds between saving # 0 ensures all detected frames are saved
-         - MAX_FPS_DETECTION=1  # CPU/GPU usage limiter
-         - STREAM_FPS=3  # Max FPS for the output stream
-         - STREAM_WIDTH_OUTPUT_RESIZE=800  # Default streaming width for resizing: 800
-         - TELEGRAM_BOT_TOKEN=YOUR_BOT_TOKEN
-         - TELEGRAM_CHAT_ID=YOUR_CHAT_ID
+         - PUID=1000  # User ID (UID) to run the container with proper permissions.
+         - PGID=1000   # Group ID (GID) to ensure correct file access within the container.
+         - TZ=Europe/Berlin  # Set your local timezone to ensure correct timestamp logging.
+         - DEBUG_MODE=False  # Set to "True" for additional logging output for debugging.
+         - MODEL_CHOICE="pytorch_ssd"  # The object detection model to use (e.g., PyTorch SSD).
+         - CLASS_FILTER="'["bird"]'"  # Define which object classes to detect; default is "bird".
+         - CONFIDENCE_THRESHOLD=0.5  # Minimum confidence score for an object to be considered detected.
+         - SAVE_THRESHOLD=0.5  # Minimum confidence score for saving an image of a detected object.
+         - SAVE_INTERVAL=0  # Time interval (in seconds) between saved detections (0 = save all detected frames).
+         - MAX_FPS_DETECTION=1  # Limit detection FPS to reduce CPU/GPU usage (higher values increase load).
+         - STREAM_FPS=3  # Maximum FPS for the video stream output.
+         - STREAM_WIDTH_OUTPUT_RESIZE=800  # Resize the output stream width to optimize performance.
+         - TELEGRAM_BOT_TOKEN=YOUR_BOT_TOKEN  # Token for Telegram bot notifications (replace with your actual bot token).
+         - TELEGRAM_CHAT_ID=YOUR_CHAT_ID  # Telegram chat ID to send detection alerts to.
+         - DAY_AND_NIGHT_CAPTURE=False  # Set to "True" to allow detection at night; "False" stops detection at night.
+         - DAY_AND_NIGHT_CAPTURE_LOCATION="Berlin"  # The location to determine daylight hours (used for night mode).
+         - CPU_LIMIT=1  # Limit the container to use only 1 CPU core to optimize resource usage.
        volumes:
          - /your_path/output:/output  # Path for saving output
        ports:
-         - "5001:5001"  # HTTP port for Flask app
-         - "8554:8554"  # RTSP port
-         - "8081:8081"  # MJPEG port
-         - "1936:1936"  # Custom port
-         - "8889:8889"  # Custom port
-         - "8189:8189/udp"  # UDP port
-       restart: unless-stopped
+         - "5001:5001"  # HTTP port for the Flask web app (streaming and API).
+         - "8554:8554"  # RTSP port for serving the video stream.
+         - "8081:8081"  # MJPEG streaming port.
+         - "1936:1936"  # Custom RTMP or alternative streaming port.
+         - "8889:8889"  # Custom port for additional services (if needed).
+         - "8189:8189/udp"  # UDP port for specific video streaming protocols.
+       restart: unless-stopped  # Ensures the container restarts automatically unless manually stopped.
    ```
 
 3. **Start the container** using Docker Compose:
