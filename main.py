@@ -3,6 +3,7 @@
 # ------------------------------------------------------------------------------
 
 # main.py
+import random
 from flask import Flask, Response
 from dotenv import load_dotenv
 load_dotenv()
@@ -12,10 +13,18 @@ import time
 import csv
 import cv2
 import threading
-from camera.detector import Detector
+import pytz
+from datetime import datetime, timedelta
 import numpy as np
 import logging
+from astral.geocoder import database, lookup
+from astral.sun import sun
+from camera.detector import Detector
 from utils.telegram_notifier import send_telegram_message
+from utils.cpu_limiter import restrict_to_cpus  # Import CPU limiter
+
+# Apply CPU restriction before starting any threads for slow systems
+restrict_to_cpus()
 
 # Read the debug flag from the environment variable (default: False)
 _debug = os.getenv("DEBUG_MODE", "False").lower() == "true"
@@ -39,7 +48,6 @@ print(f"Debug mode in code: {_debug}")
 if _debug:
     send_telegram_message(text="🐦 Birdwatching has started in DEBUG mode!", photo_path="assets/No_Signal.jpeg")
 
-
 # Global lock for thread-safe frame access
 frame_lock = threading.Lock()
 latest_frame = None  # Global variable to store the latest frame for streaming
@@ -60,17 +68,24 @@ save_interval = int(os.getenv("SAVE_INTERVAL", 0))  # Seconds between saving # 0
 max_fps_detection = float(os.getenv("MAX_FPS_DETECTION", 3))  # CPU/GPU usage limiter
 STREAM_FPS = float(os.getenv("STREAM_FPS", 3))  # Max FPS for the output stream
 output_resize_width = int(os.getenv("STREAM_WIDTH_OUTPUT_RESIZE", 800))  # Fixed output width after Docker start
+day_and_night_capture = os.getenv("DAY_AND_NIGHT_CAPTURE", "True").lower() == "true"
+day_and_night_capture_location = os.getenv("DAY_AND_NIGHT_CAPTURE_LOCATION", "Berlin")
+cpu_limit = int(float(os.getenv("CPU_LIMIT", 2)))  # Safe conversion
 
-# Output resize width from environment variables with a default value
+config = {
+    "model_choice": model_choice,
+    "class_filter": class_filter,
+    "confidence_threshold": confidence_threshold,
+    "save_threshold": save_threshold,
+    "max_fps_detection": max_fps_detection,
+    "STREAM_FPS": STREAM_FPS,
+    "STREAM_WIDTH_OUTPUT_RESIZE": output_resize_width,
+    "DAY_NIGHT_CAPTURE": day_and_night_capture,
+    "DAY_NIGHT_CAPTURE_LOCATION": day_and_night_capture_location,
+    "cpu_limit": cpu_limit
+}
+logger.info(f"Configuration: {json.dumps(config, indent=2)}")
 
-logger.info(f"model_choice: {model_choice} ")
-logger.info(f"class_filter: {class_filter} ")
-logger.info(f"confidence_threshold: {confidence_threshold} ")
-logger.info(f"save_threshold: {save_threshold} ")
-logger.info(f"save_threshold: {save_threshold} ")
-logger.info(f"max_fps_detection: {max_fps_detection} ")
-logger.info(f"STREAM_FPS: {STREAM_FPS} ")
-logger.info(f"STREAM_WIDTH_OUTPUT_RESIZE: {output_resize_width} ")
 
 output_dir = os.getenv("OUTPUT_DIR", "/output")
 os.makedirs(output_dir, exist_ok=True)
@@ -81,6 +96,23 @@ if not os.path.exists(csv_path):
     with open(csv_path, mode="w", newline="") as f:
         writer = csv.writer(f)
         writer.writerow(["timestamp", "filename", "class_name", "confidence", "x1", "y1", "x2", "y2"])
+
+# Function to check if it's currently daytime
+def is_daytime(city_name):
+    """
+    Returns True if it's currently daytime in the given city.
+    """
+    try:
+        city = lookup(city_name, database())  # Get location info from database
+        tz = pytz.timezone(city.timezone)
+        now = datetime.now(tz)
+        s = sun(city.observer, date=now)
+
+        return s["sunrise"] < now < s["dusk"]
+    except Exception as e:
+        logger.error(f"Error determining daylight status: {e}")
+        return True  # Default to True to avoid unintended blocking
+
 
 # ------------------------------------------------------------------------------
 # Global Video Source Retrieval and Processing
@@ -191,6 +223,10 @@ def generate_frames():
                 # No current frame/resolution -> use the placeholder
                 placeholder_with_time = static_placeholder.copy()
 
+                # Add random noise
+                noise = np.random.randint(-100, 20, placeholder_with_time.shape, dtype=np.int16)
+                placeholder_with_time = np.clip(placeholder_with_time.astype(np.int16) + noise, 0, 255).astype(np.uint8)
+
                 # Add timestamp to the placeholder
                 timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
                 cv2.putText(
@@ -291,6 +327,32 @@ def detection_loop():
                     time.sleep(1)  # Prevent rapid retries when the detector fails to initialize.
                     continue
                 continue  # Restart loop after reinitializing
+
+            if not day_and_night_capture and not is_daytime(day_and_night_capture_location):
+                next_check = 300  # Default: Check every 5 minutes if an error occurs
+
+                try:
+                    city = lookup(day_and_night_capture_location, database())
+                    now = datetime.now(pytz.timezone(city.timezone))
+                    s = sun(city.observer, date=now)
+
+                    logger.info(
+                        f"🌙 Nighttime in {day_and_night_capture_location} - Current Time: {now}, Sunrise: {s['sunrise']}, Dusk: {s['dusk']}")
+
+                    if now < s["sunrise"]:
+                        next_check = (s["sunrise"] - now).seconds
+                    elif now > s["dusk"]:  # If it's after sunset, wait until the next sunrise
+                        tomorrow_sunrise = sun(city.observer, date=now + timedelta(days=1))["sunrise"]
+                        next_check = (tomorrow_sunrise - now).seconds
+
+                except Exception as e:
+                    logger.error(f"⚠️ Could not determine next sunrise time: {e}")
+                    next_check = 300  # Fallback: Check again in 5 minutes
+
+                logger.info(
+                    f"🌙 Nighttime detected in {day_and_night_capture_location}. Sleeping for {next_check} seconds before checking again.")
+                time.sleep(next_check)  # Sleep until the next daylight check
+                continue  # Restart loop after sleep
 
             start_time = time.time()
             # We now get 4 values back

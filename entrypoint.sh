@@ -16,6 +16,7 @@ fi
 
 # Ensure proper ownership and permissions for /output
 chown -R $PUID:$PGID /output
+chown -R $PUID:$PGID /app/assets  # Ensure `appuser` owns the assets folder
 
 # Print the build timestamp
 echo "Build Timestamp:"

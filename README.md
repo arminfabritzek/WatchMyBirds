@@ -1,5 +1,11 @@
 # WatchMyBirds
 
+
+![WatchMyBirds in Action](assets/birds_1280.gif)
+*Live object detection capturing birds in real-time!*
+
+---
+
 **WatchMyBirds** is a lightweight and customizable object detection application designed for real-time monitoring using webcams and TensorFlow. The application focuses on identifying objects of interest, such as birds, insects or plants, which are then classified with another model for further analysis, and saving frames where specific conditions are met. It is ideal for hobbyists, researchers, or anyone interested in automated visual monitoring.
 
 ---
@@ -8,32 +14,57 @@
 
 ---
 
-## Features
+## 🚀 Key Features
 
-- **Real-Time Object Detection**: Perform object detection directly from a webcam or RTSP camera streams.
-
-
-- **Future Plans**:
-  - Integrate PTZ (Pan-Tilt-Zoom) camera control to track objects and keep them centered.
-  - Support Raspberry Pi 4 (4GB) for ~1 FPS.
-  - Compatibility with OAK-D stereo cameras.
+- **Real-Time Object Detection**:  
+  Transform any webcam or RTSP camera stream into a powerful detection system.  
+  - ✅ **Seamless integration with MotionEye OS** for network camera support.  
+  - ✅ **Tested with Chronics PLZ Camera** for robust performance.  
 
 
-- **Customizable Detection Settings**:
-  - Filter detections by specific object classes.
-  - Configure confidence thresholds for detections and frame saving.
+- **Optimized for Diverse Hardware**:  
+  Built to run across various devices with performance in mind.  
+  - ⚡ **Runs efficiently on Synology NAS 923+ (Docker)** → Achieves ~0.3 FPS  
+  - ⚡ **MacBook Air M1** → Delivers ~1.3 FPS  
+  - ⚡ **Planned Support: Raspberry Pi 4 (4GB)** targeting ~1 FPS  
 
 
-- **Support for Pre-Trained Models from PyTorch**:
-  - Includes `ssd300_vgg16` and `EfficientDet Lite4` and `SSD MobileNet V2`.
-  - Supports PyTorch (TensorFlow, and TFLite formats coming soon).
+- **Next-Gen Detection & Classification**:  
+  - 🎯 Filter detections by specific object classes.  
+  - 🎯 Fine-tune confidence thresholds for both detections and frame saving.  
 
 
+- **State-of-the-Art AI Models**:  
+  Powered by **PyTorch** with support for cutting-edge detection networks.  
+  - 🔍 `ssd300_vgg16`, `EfficientDet Lite4`, `SSD MobileNet V2` pre-trained models.  
+  - 🔍 Future support for **TensorFlow & TFLite models**.  
 
-- **Batch Classification**: Crop detected objects for further classification with a separate model.
+---
 
+## 🌟 Future Roadmap  
 
-- **Modular Design**: Organized file structure for easy updates and extensions.
+### 🚀 **Camera & Tracking Enhancements**
+
+- 🏆 **PTZ (Pan-Tilt-Zoom) Camera Control** → Auto-tracking & framing of detected objects.  
+- 🏆 **RTSP & Network Camera Expansion** → Full support for RTSP streams and **MotionEye OS integration**.  
+- 🏆 **Enhanced Stereo Vision** → **Full compatibility with OAK-D stereo cameras** for depth-based tracking.  
+
+### 🛠️ **AI & Model Optimization**  
+- 🏆 **Custom AI Models** → Train specialized models for birds, insects, and plants with **AIY vision classifiers**.  
+- 🏆 **Advanced Object Classification** → More precise species identification using **batch classification**.  
+
+### ⚡ **Performance & Edge Deployment**  
+- 🏆 **Optimized for Edge Devices** → Efficient performance tuning for **Raspberry Pi 4 & 5** and **NVIDIA Jetson Nano**.  
+- 🏆 **Low-Latency Processing** → Further optimizations for improved real-time detection with reduced computational overhead.  
+
+### 📊 **Expanded Data & Logging Capabilities**  
+- 🏆 **Comprehensive CSV & JSON Logging** → Improved tracking of detections for data-driven insights.  
+- 🏆 **Adaptive Filtering** → Dynamic threshold adjustments for smarter detection.  
+
+---
+
+### **Why These Upgrades Matter** 🚀  
+These upcoming improvements will **enhance accuracy, expand hardware compatibility, and refine detection capabilities**—making **WatchMyBirds** an even more powerful tool for wildlife monitoring! Stay tuned for exciting updates!
 
 ---
 
@@ -67,11 +98,12 @@ To run **WatchMyBirds** in a Docker container with default settings:
          - CLASS_FILTER="'["bird"]'"  
          - CONFIDENCE_THRESHOLD=0.5  
          - SAVE_THRESHOLD=0.5  
-         - SAVE_INTERVAL=1  # Seconds between saving
-         - INPUT_FPS=10  # Default FPS is 10
-         - PROCESS_TIME=1  # Average detection time per frame
-         - STREAM_WIDTH=640  # Width of the output stream. Default width: 640
-         - STREAM_HEIGHT=360  # Height of the output stream. Default height: 360
+         - SAVE_INTERVAL=0  # Seconds between saving # 0 ensures all detected frames are saved
+         - MAX_FPS_DETECTION=1  # CPU/GPU usage limiter
+         - STREAM_FPS=3  # Max FPS for the output stream
+         - STREAM_WIDTH_OUTPUT_RESIZE=800  # Default streaming width for resizing: 800
+         - TELEGRAM_BOT_TOKEN=YOUR_BOT_TOKEN
+         - TELEGRAM_CHAT_ID=YOUR_CHAT_ID
        volumes:
          - /your_path/output:/output  # Path for saving output
        ports:
@@ -125,12 +157,6 @@ To run **WatchMyBirds** in a Docker container with default settings:
    ```plaintext
    VIDEO_SOURCE=rtsp://user:password@192.168.0.2:554/1
    ```
-
-
-**Notes**:
-- Planing to switch entirely to PyTorch!
-- The .env file allows dynamic switching between a webcam (e.g. VIDEO_SOURCE=2) and an RTSP stream for greater flexibility.
-
 
 
 ---
@@ -188,35 +214,9 @@ You can modify parameters in `main.py` to suit your use case:
   use_threaded = True  # Set to False to use non-threaded video capture
   ```
 
-### Adding More Cameras
-
-Future updates will include support for:
-- RTSP cameras for network streaming.
-- PTZ (Pan-Tilt-Zoom) cameras for enhanced control and flexibility.
 
 ---
 
-## Further Development
-
-This project is a work in progress. Upcoming features include:
-
-1. **Custom Models**:
-   - Train specialized bird detection models and integrate AIY vision classifiers for birds, insects, and plants.
-
-
-2. **Enhanced Camera Support**:
-   - Add support for RTSP and PTZ cameras to monitor more complex setups.
-
-
-3. **Edge Deployment**:
-   - Optimize for edge devices like Raspberry Pi or NVIDIA Jetson Nano.
-
-
-4. **Advanced Classification**:
-   - Expand batch classification capabilities with more accurate models for identifying bird species.
-
-
----
 
 ## Contributing
 

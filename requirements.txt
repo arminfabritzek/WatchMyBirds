@@ -11,4 +11,5 @@ matplotlib~=3.10.0
 six~=1.17.0
 imutils~=0.5.4
 waitress~=3.0.2
+psutil~=6.1.1
 requests~=2.32.3
