@@ -10,7 +10,14 @@
 
 **WatchMyBirds** is a lightweight, customizable object detection application for real-time monitoring using webcams, RTSP streams, and Docker. It is built using PyTorch and TensorFlow, and it supports live video streaming, automatic frame saving based on detection criteria, and integration with Telegram for notifications. The application is ideal for hobbyists, researchers, and wildlife enthusiasts interested in automated visual monitoring.
 
+
 ---
+
+## Build Status
+
+
+[![Build and Push Docker Image](https://github.com/arminfabritzek/WatchMyBirds/actions/workflows/docker.yml/badge.svg)](https://github.com/arminfabritzek/WatchMyBirds/actions/workflows/docker.yml)
+
 
 ---
 
