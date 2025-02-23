@@ -1,0 +1,16 @@
+psutil~=7.0.0
+requests~=2.32.3
+torch~=2.6.0
+opencv-python~=4.11.0.86
+pillow~=11.1.0
+~=8.3.78
+python-dotenv~=1.0.1
+numpy<=2.1.1
+Flask~=3.1.0
+pytz~=2025.1
+astral~=3.2
+matplotlib~=3.10.0
+six~=1.17.0
+imutils~=0.5.4
+waitress~=3.0.2
+pandas~=2.2.3
