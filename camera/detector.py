@@ -3,7 +3,6 @@
 # ------------------------------------------------------------------------------
 import os
 import cv2
-from camera.video_capture import VideoCapture  # Import VideoCapture class
 import logging
 from ultralytics import YOLO
 from dotenv import load_dotenv
@@ -99,15 +98,12 @@ class YOLOv8Model(BaseDetectionModel):
 # Detector Class (Modularized)
 # ------------------------------------------------------------------------------
 class Detector:
-    def __init__(self, source=2, model_choice="yolo8n", debug=False):
+    def __init__(self, model_choice="yolo8n", debug=False):
         """
-        Initializes the VideoCapture and loads the detection model.
+        Loads the detection model.
         Currently, only the 'yolo8n' model is supported.
         """
         self.debug = debug
-        logger.debug("Initializing VideoCapture for Detector")
-        self.video_capture = VideoCapture(source, debug=debug)
-        self.source = source
         self.model_choice = model_choice.lower()
         if self.model_choice == "yolo8n":
             model_path = os.getenv("YOLO8N_MODEL_PATH", "models/yolov8n.pt")
@@ -126,15 +122,3 @@ class Detector:
         object_detected = any(det["confidence"] >= save_threshold for det in detection_info_list)
         return annotated_frame, object_detected, original_frame, detection_info_list
 
-    def get_frame(self):
-        frame = self.video_capture.get_frame()
-        if frame is None and self.debug:
-            logger.debug("No frame available from VideoCapture.")
-        return frame
-
-    def release(self):
-        self.video_capture.release()
-
-    @property
-    def resolution(self):
-        return self.video_capture.resolution
