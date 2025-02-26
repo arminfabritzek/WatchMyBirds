@@ -21,6 +21,8 @@ from astral.sun import sun
 from camera.detector import Detector
 from utils.telegram_notifier import send_telegram_message
 from utils.cpu_limiter import restrict_to_cpus  # Import CPU limiter
+# Initialize VideoCapture
+from camera.video_capture import VideoCapture
 
 # Apply CPU restriction before starting any threads for slow systems
 restrict_to_cpus()
@@ -50,6 +52,9 @@ latest_frame = None  # Global variable to store the latest frame for streaming
 # Global Detector instance and lock
 detector_instance = None
 detector_lock = threading.Lock()
+
+# Global Video Capture instance and lock
+video_capture_lock = threading.Lock()
 
 # Global lock for telegram notifications
 telegram_lock = threading.Lock()
@@ -127,7 +132,7 @@ except ValueError:
 app = Flask(__name__)
 
 def generate_frames():
-    global latest_frame, detector_instance
+    global latest_frame, video_capture
     font = cv2.FONT_HERSHEY_SIMPLEX
     font_scale = 0.7
     font_thickness = 2
@@ -157,8 +162,9 @@ def generate_frames():
     while True:
         start_loop_time = time.time()
         try:
-            with detector_lock:
-                resolution = detector_instance.resolution if detector_instance else None
+            # Retrieve the resolution from the VideoCapture instance.
+            with video_capture_lock:
+                resolution = video_capture.resolution if video_capture else None
             with frame_lock:
                 current_frame = latest_frame
             if current_frame is not None and resolution:
@@ -197,9 +203,11 @@ def generate_frames():
         if elapsed < desired_frame_time:
             time.sleep(desired_frame_time - elapsed)
 
+
 @app.route('/video_feed')
 def video_feed():
     return Response(generate_frames(), mimetype='multipart/x-mixed-replace; boundary=frame')
+
 
 @app.route('/')
 def index():
@@ -214,40 +222,57 @@ def index():
         '''
     )
 
+
 def detection_loop():
-    global latest_frame, detector_instance, last_telegram_time
-    source = video_source
+    global latest_frame, detector_instance, last_telegram_time, video_capture
+    consecutive_none_count = 0  # Counter for consecutive failures in frame acquisition
+    none_threshold = 10         # Threshold for consecutive None frames before reinitializing VideoCapture
+    backoff_time = 1            # Initial backoff time in seconds
+
     try:
-        detector = Detector(source=source, model_choice=model_choice, debug=_debug)
+        # Initialize the VideoCapture.
+        video_capture = VideoCapture(video_source, debug=_debug)
+        # Initialize the Detector.
+        detector = Detector(model_choice=model_choice, debug=_debug)
         with detector_lock:
             detector_instance = detector
     except Exception as e:
-        print(f"Failed to initialize detector: {e}")
+        print(f"Failed to initialize detector or video capture: {e}")
         return
 
     print("Object detection started. Press 'Ctrl+C' to stop.")
     frame_count = 0
-    retries = 0
 
     while True:
         try:
-            with detector_lock:
-                frame = detector_instance.get_frame()
+            # Retrieve the latest frame from VideoCapture.
+            with video_capture_lock:
+                frame = video_capture.get_frame()
             if frame is None:
-                logger.debug("No frame available. Attempting to reinitialize detector...")
-                detector_instance.release()
-                time.sleep(min(2 ** retries, 30))
-                retries += 1
-                try:
-                    with detector_lock:
-                        detector_instance = Detector(source=source, model_choice=model_choice, debug=_debug)
-                    logger.debug("Detector reinitialized successfully.")
-                    retries = 0
-                except Exception as e:
-                    logger.debug(f"Failed to reinitialize detector: {e}")
-                    time.sleep(1)
-                    continue
+                consecutive_none_count += 1
+                logger.debug(f"No frame available from VideoCapture. Consecutive failures: {consecutive_none_count}")
+                if consecutive_none_count >= none_threshold:
+                    logger.error("Consecutive frame retrieval failures reached threshold. Reinitializing VideoCapture...")
+                    with video_capture_lock:
+                        try:
+                            video_capture.release()
+                        except Exception as e:
+                            logger.error(f"Error releasing VideoCapture: {e}")
+                        time.sleep(backoff_time)
+                        backoff_time = min(backoff_time * 2, 30)
+                        try:
+                            video_capture = VideoCapture(video_source, debug=_debug)
+                            logger.info("VideoCapture reinitialized successfully.")
+                        except Exception as e:
+                            logger.error(f"Failed to reinitialize VideoCapture: {e}")
+                        consecutive_none_count = 0
+                else:
+                    time.sleep(0.1)
                 continue
+            else:
+                # Reset counters and backoff if a valid frame is retrieved.
+                consecutive_none_count = 0
+                backoff_time = 1
 
             if not day_and_night_capture and not is_daytime(day_and_night_capture_location):
                 try:
@@ -267,19 +292,19 @@ def detection_loop():
                 time.sleep(next_check)
                 continue
 
-            # Wrap object detection in its own try/except block
+            # Run object detection on the captured frame.
             try:
                 start_time = time.time()
-                annotated_frame, object_detected, original_frame, detection_info_list = detector.detect_objects(
+                annotated_frame, object_detected, original_frame, detection_info_list = detector_instance.detect_objects(
                     frame, class_filter=class_filter,
                     confidence_threshold=confidence_threshold,
                     save_threshold=save_threshold
                 )
             except Exception as e:
                 logger.error(f"Inference error detected: {e}. Reinitializing detector...")
+                # Reinitialize detector.
                 with detector_lock:
-                    detector_instance.release()
-                    detector_instance = Detector(source=source, model_choice=model_choice, debug=_debug)
+                    detector_instance = Detector(model_choice=model_choice, debug=_debug)
                 time.sleep(1)
                 continue
 
@@ -307,7 +332,7 @@ def detection_loop():
                             det["x1"], det["y1"], det["x2"], det["y2"]
                         ])
 
-                # Telegram notification section with lock for synchronization
+                # Send Telegram alert if detection information is available.
                 if detection_info_list:
                     with telegram_lock:
                         if current_time - last_telegram_time >= telegram_cooldown:
@@ -328,21 +353,20 @@ def detection_loop():
                 time.sleep(target_duration - detection_duration)
         except Exception as e:
             logger.error(f"Error in detection loop: {e}")
-            # Ensure that any error triggers a detector reinitialization
+            # If any error occurs, reinitialize the detector.
             with detector_lock:
-                detector_instance.release()
                 try:
-                    detector_instance = Detector(source=source, model_choice=model_choice, debug=_debug)
+                    detector_instance = Detector(model_choice=model_choice, debug=_debug)
                 except Exception as e2:
-                    logger.error(f"Reinitialization failed: {e2}")
+                    logger.error(f"Detector reinitialization failed: {e2}")
             time.sleep(1)
 
 import atexit
 def cleanup():
-    global detector_instance
-    with detector_lock:
-        if detector_instance:
-            detector_instance.release()
+    global video_capture
+    with video_capture_lock:
+        if video_capture:
+            video_capture.release()
 atexit.register(cleanup)
 
 detection_thread = threading.Thread(target=detection_loop, daemon=True)
