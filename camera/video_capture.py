@@ -36,6 +36,9 @@ class VideoCapture:
         self.retry_count = 0  # Initialize retry count for reinitialization
         self.stream_type = self._detect_stream_type()
 
+        self.reinit_lock = threading.Lock()
+        self.reinitializing = False
+
         logger.debug(f"Initialized VideoCapture with source: {self.source}, stream_type: {self.stream_type}")
 
         if self.stream_type == "rtsp":
@@ -259,19 +262,26 @@ class VideoCapture:
 
     def _health_check(self):
         """
-        Periodically checks if FFmpeg subprocess is alive. If not, attempts to reinitialize.
+        Periodically checks if the stream (FFmpeg for RTSP, or OpenCV for HTTP) is alive.
+        If not, attempts to reinitialize.
         """
         self._log("Health check thread is running.")
         while not self.stop_event.is_set():
-            if self.ffmpeg_process:
-                retcode = self.ffmpeg_process.poll()
-                if retcode is not None:
-                    stderr_output = self.ffmpeg_process.stderr.read().decode().strip()
-                    self._log(f"FFmpeg subprocess terminated with return code {retcode}. STDERR: {stderr_output}", level=logging.ERROR)
-                    self._reinitialize_camera(reason="FFmpeg subprocess terminated unexpectedly.")
+            if self.stream_type == "rtsp":
+                if self.ffmpeg_process:
+                    retcode = self.ffmpeg_process.poll()
+                    if retcode is not None:
+                        stderr_output = self.ffmpeg_process.stderr.read().decode().strip()
+                        self._log(f"FFmpeg subprocess terminated with return code {retcode}. STDERR: {stderr_output}",
+                                  level=logging.ERROR)
+                        self._reinitialize_camera(reason="RTSP FFmpeg subprocess terminated unexpectedly.")
+            elif self.stream_type == "http":
+                if not self.cap or not self.cap.isOpened():
+                    self._log("HTTP stream is not opened. Triggering reinitialization.", level=logging.ERROR)
+                    self._reinitialize_camera(reason="HTTP stream not opened.")
+            # You can also add a similar check for webcams if needed.
             time.sleep(5)  # Check every 5 seconds
         self._log("Health check thread is stopping.")
-
 
     def _reader(self):
         """
@@ -301,24 +311,21 @@ class VideoCapture:
                 self._reinitialize_camera()  # Reinitialize in case of error
         self._log("Reader thread has exited.")
 
-
     def _read_frame(self):
-        """
-        Reads a single frame based on the stream type.
-        """
         if self.stream_type == "rtsp":
             return self._read_ffmpeg_frame()
         elif self.cap and self.cap.isOpened():
             ret, frame = self.cap.read()
             if ret:
-                # self._log("Frame read successfully from OpenCV capture.")
                 return frame
             else:
-                self._log("OpenCV capture failed to read frame.", level=logging.ERROR)
+                self._log("HTTP capture failed to read frame.", level=logging.ERROR)
+                self._reinitialize_camera(reason="HTTP capture failed to read frame.")
                 return None
-        self._log("VideoCapture is not opened.", level=logging.DEBUG)
-        return None
-
+        else:
+            self._log("HTTP capture is not opened.", level=logging.ERROR)
+            self._reinitialize_camera(reason="HTTP capture not opened.")
+            return None
 
     def _read_ffmpeg_frame(self):
         frame_size = self.stream_width * self.stream_height * 3  # For bgr24 (3 bytes per pixel)
@@ -335,28 +342,47 @@ class VideoCapture:
             self._log(f"Error reading frame from FFmpeg: {e}", level=logging.ERROR)
             return None
 
+    def _schedule_reinit(self, reason):
+        delay = 2 ** self.retry_count
+        self._log(f"Scheduling reinitialization in {delay} seconds due to: {reason}")
+        threading.Timer(delay, self._reinitialize_camera, kwargs={'reason': reason}).start()
+
     def _reinitialize_camera(self, reason="Unknown"):
         """
         Attempts to reinitialize the camera after a failure.
 
         :param reason: The reason triggering reinitialization.
         """
-        self._log(f"Reinitializing camera due to: {reason}")
-        if self.retry_count >= 5:
-            self._log("Maximum retry attempts reached. Aborting reinitialization.")
+        # Try to get the lock to avoid parallel reinitializations.
+        if not self.reinit_lock.acquire(blocking=False):
+            self._log("Reinitialization is already being performed in another thread.")
             return
 
-        self.retry_count += 1
-        self._log(f"Reinitialization attempt {self.retry_count}/5.")
+        # Check whether a reinitialization is already activated.
+        if self.reinitializing:
+            self._log("Reinitialization is already in progress. Skip retry.")
+            self.reinit_lock.release()
+            return
 
-        # Stop current capture and threads
-        self.release()
-
-        # Wait before attempting to reinitialize
-        self._log("Waiting 2 seconds before reinitialization attempt.")
-        time.sleep(2)
-
+        self.reinitializing = True
         try:
+            self._log(f"Reinitializing camera due to: {reason}")
+            if self.retry_count >= 5:
+                self._log("Maximum retry attempts reached. Scheduling longer delay before next attempt.")
+                # Longer delay before retrying again (e.g. 60 seconds)
+                threading.Timer(60, self._reinitialize_camera, kwargs={'reason': "Retry after long delay"}).start()
+                # Reset the retry counter after scheduling a longer delay
+                self.retry_count = 0
+                return
+
+            self.retry_count += 1
+            self._log(f"Reinitialization attempt {self.retry_count}/5.")
+
+            # Stop current capture and threads
+            self.release()
+            self._log("Waiting 2 seconds before reinitialization attempt.")
+            time.sleep(2)
+
             self.stop_event.clear()  # Reset stop_event for new threads
             self._setup_capture()
             self._start_reader_thread()
@@ -366,9 +392,10 @@ class VideoCapture:
         except Exception as e:
             self._log(f"Reinitialization failed: {e}")
             self._log("Scheduling next reinitialization attempt.")
-            time.sleep(2 ** self.retry_count)  # Exponential backoff
-            self._reinitialize_camera(reason=f"Failed to reinitialize: {e}")
-
+            self._schedule_reinit(reason=f"Failed to reinitialize: {e}")
+        finally:
+            self.reinitializing = False
+            self.reinit_lock.release()
 
     def get_frame(self):
         if self.q.empty():
@@ -390,12 +417,15 @@ class VideoCapture:
         self.stop_event.set()  # Signal the thread to stop
         self.stop_flag = True
 
-        # Stop the reader thread
+        # Stop the reader thread if it's not the current thread
         if self.reader_thread and self.reader_thread.is_alive():
-            self._log("Joining reader thread...")
-            self.reader_thread.join(timeout=5)  # Wait for the thread to exit
-            if self.reader_thread.is_alive():
-                self._log("Reader thread did not terminate within timeout.")
+            if self.reader_thread != threading.current_thread():
+                self._log("Joining reader thread...")
+                self.reader_thread.join(timeout=5)  # Wait for the thread to exit
+                if self.reader_thread.is_alive():
+                    self._log("Reader thread did not terminate within timeout.")
+            else:
+                self._log("Skipping join on current thread (reader thread).")
 
         # Clear the queue
         with self.q.mutex:
