@@ -2,7 +2,6 @@
 # Main Script for Real-Time Object Detection with Webcam and Flask Streaming
 # ------------------------------------------------------------------------------
 
-import random
 from flask import Flask, Response
 from dotenv import load_dotenv
 load_dotenv()
@@ -55,9 +54,13 @@ detector_lock = threading.Lock()
 
 # Global Video Capture instance and lock
 video_capture_lock = threading.Lock()
+video_capture = None  # Global variable for the VideoCapture instance
 
 # Global lock for telegram notifications
 telegram_lock = threading.Lock()
+
+# Timestamp of the last updated frame
+latest_frame_timestamp = 0
 
 # --------------------------------------------------------------------------
 # Configuration Parameters
@@ -132,11 +135,12 @@ except ValueError:
 app = Flask(__name__)
 
 def generate_frames():
-    global latest_frame, video_capture
+    global latest_frame, latest_frame_timestamp, video_capture
     font = cv2.FONT_HERSHEY_SIMPLEX
     font_scale = 0.7
     font_thickness = 2
     timestamp_y = 50
+    placeholder_threshold = 5  # seconds without a new frame before showing placeholder
 
     static_placeholder_path = "assets/static_placeholder.jpg"
     if os.path.exists(static_placeholder_path):
@@ -162,12 +166,20 @@ def generate_frames():
     while True:
         start_loop_time = time.time()
         try:
-            # Retrieve the resolution from the VideoCapture instance.
+            # Retrieve resolution if video_capture is defined; otherwise, set to None.
             with video_capture_lock:
-                resolution = video_capture.resolution if video_capture else None
+                if video_capture is None:
+                    logger.debug("video_capture is not initialized; using placeholder.")
+                    resolution = None
+                else:
+                    resolution = video_capture.resolution
+
             with frame_lock:
                 current_frame = latest_frame
-            if current_frame is not None and resolution:
+                last_ts = latest_frame_timestamp
+            # If we have a fresh frame and a valid resolution, use it;
+            # otherwise, show the placeholder.
+            if current_frame is not None and resolution and (time.time() - last_ts < placeholder_threshold):
                 current_input_width, current_input_height = resolution
                 output_resize_height = int(current_input_height * placeholder_w / current_input_width)
                 resized_frame = cv2.resize(current_frame, (placeholder_w, output_resize_height))
@@ -182,6 +194,7 @@ def generate_frames():
                 else:
                     logger.error("Failed to encode resized frame.")
             else:
+                # Either no new frame, or video_capture is not defined—show the placeholder.
                 placeholder_with_time = static_placeholder.copy()
                 noise = np.random.randint(-100, 20, placeholder_with_time.shape, dtype=np.int16)
                 placeholder_with_time = np.clip(placeholder_with_time.astype(np.int16) + noise, 0, 255).astype(np.uint8)
@@ -224,21 +237,24 @@ def index():
 
 
 def detection_loop():
-    global latest_frame, detector_instance, last_telegram_time, video_capture
-    consecutive_none_count = 0  # Counter for consecutive failures in frame acquisition
-    none_threshold = 10         # Threshold for consecutive None frames before reinitializing VideoCapture
-    backoff_time = 1            # Initial backoff time in seconds
+    global latest_frame, latest_frame_timestamp, detector_instance, last_telegram_time, video_capture
 
-    try:
-        # Initialize the VideoCapture.
-        video_capture = VideoCapture(video_source, debug=_debug)
-        # Initialize the Detector.
-        detector = Detector(model_choice=model_choice, debug=_debug)
-        with detector_lock:
-            detector_instance = detector
-    except Exception as e:
-        print(f"Failed to initialize detector or video capture: {e}")
-        return
+    # Keep trying to initialize video_capture and detector until successful.
+    while video_capture is None:
+        try:
+            video_capture = VideoCapture(video_source, debug=_debug)
+            logger.info("VideoCapture initialized successfully in detection loop.")
+        except Exception as e:
+            logger.error(f"Failed to initialize video capture: {e}. Retrying in 5 seconds.")
+            time.sleep(5)
+
+    while detector_instance is None:
+        try:
+            detector_instance = Detector(model_choice=model_choice, debug=_debug)
+            logger.info("Detector initialized successfully in detection loop.")
+        except Exception as e:
+            logger.error(f"Failed to initialize detector: {e}. Retrying in 5 seconds.")
+            time.sleep(5)
 
     print("Object detection started. Press 'Ctrl+C' to stop.")
     frame_count = 0
@@ -249,30 +265,9 @@ def detection_loop():
             with video_capture_lock:
                 frame = video_capture.get_frame()
             if frame is None:
-                consecutive_none_count += 1
-                logger.debug(f"No frame available from VideoCapture. Consecutive failures: {consecutive_none_count}")
-                if consecutive_none_count >= none_threshold:
-                    logger.error("Consecutive frame retrieval failures reached threshold. Reinitializing VideoCapture...")
-                    with video_capture_lock:
-                        try:
-                            video_capture.release()
-                        except Exception as e:
-                            logger.error(f"Error releasing VideoCapture: {e}")
-                        time.sleep(backoff_time)
-                        backoff_time = min(backoff_time * 2, 30)
-                        try:
-                            video_capture = VideoCapture(video_source, debug=_debug)
-                            logger.info("VideoCapture reinitialized successfully.")
-                        except Exception as e:
-                            logger.error(f"Failed to reinitialize VideoCapture: {e}")
-                        consecutive_none_count = 0
-                else:
-                    time.sleep(0.1)
+                logger.debug("No frame available from VideoCapture. Pausing detection.")
+                time.sleep(5)  # Pause detection entirely for 5 seconds
                 continue
-            else:
-                # Reset counters and backoff if a valid frame is retrieved.
-                consecutive_none_count = 0
-                backoff_time = 1
 
             if not day_and_night_capture and not is_daytime(day_and_night_capture_location):
                 try:
@@ -302,9 +297,11 @@ def detection_loop():
                 )
             except Exception as e:
                 logger.error(f"Inference error detected: {e}. Reinitializing detector...")
-                # Reinitialize detector.
                 with detector_lock:
-                    detector_instance = Detector(model_choice=model_choice, debug=_debug)
+                    try:
+                        detector_instance = Detector(model_choice=model_choice, debug=_debug)
+                    except Exception as e2:
+                        logger.error(f"Detector reinitialization failed: {e2}")
                 time.sleep(1)
                 continue
 
@@ -313,6 +310,7 @@ def detection_loop():
 
             with frame_lock:
                 latest_frame = annotated_frame.copy()
+                latest_frame_timestamp = time.time()  # update timestamp when a new frame arrives
 
             current_time = time.time()
             if object_detected:
