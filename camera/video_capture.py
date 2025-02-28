@@ -2,8 +2,7 @@
 # Video Capture Class for Input Streams
 # ------------------------------------------------------------------------------
 # video_capture.py
-
-
+import os
 import subprocess
 import cv2
 import queue
@@ -12,9 +11,24 @@ from threading import Event
 import time
 import numpy as np
 import logging
+from dotenv import load_dotenv
+load_dotenv()
 
-logging.basicConfig(level=logging.DEBUG)  # Default to INFO level
+# Read the debug flag from the environment variable (default: False)
+_debug = os.getenv("DEBUG_MODE", "False").lower() == "true"
+
+# Configure logging
+logging.basicConfig(
+    level=logging.DEBUG if _debug else logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
 logger = logging.getLogger(__name__)
+logging.getLogger().setLevel(logging.DEBUG if _debug else logging.INFO)
+
+logger.info(f"Debug mode is {'enabled' if _debug else 'disabled'}.")
+print(f"DEBUG_MODE environment variable: {os.getenv('DEBUG_MODE')}")
+print(f"Debug mode in code: {_debug}")
+
 
 class VideoCapture:
     """
@@ -32,6 +46,7 @@ class VideoCapture:
         self.ffmpeg_process = None  # Used for FFmpeg streams
         self.q = queue.Queue(maxsize=10)  # Queue for storing frames
         self.reader_thread = None  # Initialize the reader_thread attribute
+        self.last_frame_time = time.time()
         self.health_check_thread = None  # Initialize the health_check_thread attribute
         self.retry_count = 0  # Initialize retry count for reinitialization
         self.stream_type = self._detect_stream_type()
@@ -165,9 +180,8 @@ class VideoCapture:
         self._log(f"Running FFprobe command: {' '.join(ffprobe_cmd)}", level=logging.DEBUG)
 
         try:
-            output = subprocess.check_output(ffprobe_cmd, stderr=subprocess.STDOUT, timeout=10).decode().strip()
+            output = subprocess.check_output(ffprobe_cmd, stderr=subprocess.STDOUT, timeout=30).decode().strip()
             self._log(f"FFprobe output: {output}", level=logging.DEBUG)
-
             # Parse the FFprobe output
             width, height = map(int, output.split('\n'))
             self._log(f"Detected stream resolution: {width}x{height}", level=logging.DEBUG)
@@ -275,6 +289,12 @@ class VideoCapture:
                         self._log(f"FFmpeg subprocess terminated with return code {retcode}. STDERR: {stderr_output}",
                                   level=logging.ERROR)
                         self._reinitialize_camera(reason="RTSP FFmpeg subprocess terminated unexpectedly.")
+                    else:
+                        # Check if frames have been read recently.
+                        if time.time() - self.last_frame_time > 10:  # 10-second threshold to wait until reinitialization.
+                            self._log("No frame received for over 10 seconds; triggering reinitialization.",
+                                      level=logging.ERROR)
+                            self._reinitialize_camera(reason="RTSP stream stale.")
             elif self.stream_type == "http":
                 if not self.cap or not self.cap.isOpened():
                     self._log("HTTP stream is not opened. Triggering reinitialization.", level=logging.ERROR)
@@ -332,11 +352,13 @@ class VideoCapture:
 
         try:
             raw_frame = self.ffmpeg_process.stdout.read(frame_size)
+            self._log(f"Read {len(raw_frame)} bytes from FFmpeg", level=logging.DEBUG)
             if len(raw_frame) != frame_size:
                 self._log(f"FFmpeg produced incomplete frame: expected {frame_size} bytes, got {len(raw_frame)} bytes.", level=logging.ERROR)
                 return None  # Skip incomplete frames
             frame = np.frombuffer(raw_frame, np.uint8).reshape((self.stream_height, self.stream_width, 3))
-            # self._log("Frame read successfully from FFmpeg.")
+            self.last_frame_time = time.time()  # Update timestamp on successful frame read
+            # self._log("Frame read successfully from FFmpeg.", level=logging.DEBUG)
             return frame
         except Exception as e:
             self._log(f"Error reading frame from FFmpeg: {e}", level=logging.ERROR)
