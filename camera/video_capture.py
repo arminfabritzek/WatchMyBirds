@@ -352,7 +352,7 @@ class VideoCapture:
 
         try:
             raw_frame = self.ffmpeg_process.stdout.read(frame_size)
-            self._log(f"Read {len(raw_frame)} bytes from FFmpeg", level=logging.DEBUG)
+            # self._log(f"Read {len(raw_frame)} bytes from FFmpeg", level=logging.DEBUG)
             if len(raw_frame) != frame_size:
                 self._log(f"FFmpeg produced incomplete frame: expected {frame_size} bytes, got {len(raw_frame)} bytes.", level=logging.ERROR)
                 return None  # Skip incomplete frames
