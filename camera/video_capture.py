@@ -455,7 +455,7 @@ class VideoCapture:
             self._log("Frame queue cleared.")
 
         # Stop the health check thread if it's not the current thread
-        if self.health_check_thread != threading.current_thread():
+        if self.health_check_thread and self.health_check_thread != threading.current_thread():
             self._log("Joining health check thread...")
             self.health_check_thread.join(timeout=5)
             if self.health_check_thread.is_alive():
