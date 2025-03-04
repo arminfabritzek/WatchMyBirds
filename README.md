@@ -46,7 +46,7 @@
 
 - **State-of-the-Art AI Models**  
   - Pre-trained models including `yolov8n`, `EfficientDet Lite4`
-  - Planned to integrate Megvii-BaseDetection `YOLOX-Nano` custom trained models
+  - Planned to integrate Megvii-BaseDetection `YOLOX` custom trained models
   - Future support for TensorFlow and TFLite models
 
 
@@ -226,6 +226,14 @@ Set the path to the model you downloaded.
 ## Contributing
 
 Contributions are welcome! If you have ideas or improvements, please open an issue or submit a pull request.
+
+
+---
+
+## Acknowledgements
+
+This project uses **Label Studio** – provided free through the Academic Program by HumanSignal, Inc.  
+[![Label Studio Logo](https://user-images.githubusercontent.com/12534576/192582340-4c9e4401-1fe6-4dbb-95bb-fdbba5493f61.png)](https://labelstud.io)
 
 ---
 

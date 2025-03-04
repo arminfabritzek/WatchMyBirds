@@ -65,7 +65,7 @@ latest_frame_timestamp = 0
 # --------------------------------------------------------------------------
 # Configuration Parameters
 # --------------------------------------------------------------------------
-model_choice = os.getenv("MODEL_CHOICE", "yolo8n")  # only "yolo8n" supported now
+model_choice = os.getenv("MODEL_CHOICE", "yolo8n")  # only "yolo8n" supported for now
 class_filter = json.loads(os.getenv("CLASS_FILTER", '["bird", "person"]'))
 confidence_threshold = float(os.getenv("CONFIDENCE_THRESHOLD", 0.8))
 save_threshold = float(os.getenv("SAVE_THRESHOLD", 0.8))
@@ -75,7 +75,7 @@ output_resize_width = int(os.getenv("STREAM_WIDTH_OUTPUT_RESIZE", 800))
 day_and_night_capture = os.getenv("DAY_AND_NIGHT_CAPTURE", "True").lower() == "true"
 day_and_night_capture_location = os.getenv("DAY_AND_NIGHT_CAPTURE_LOCATION", "Berlin")
 cpu_limit = int(float(os.getenv("CPU_LIMIT", 2)))
-model_path = os.getenv("YOLO8N_MODEL_PATH", "models/yolov8n.pt")
+model_path = os.getenv("YOLO8N_MODEL_PATH", "models/best.pt")
 telegram_cooldown = float(os.getenv("TELEGRAM_COOLDOWN", 5))  # seconds between telegram alerts
 
 config = {
