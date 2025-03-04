@@ -5,6 +5,9 @@ import os
 import cv2
 import logging
 from ultralytics import YOLO
+import requests
+import hashlib
+
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -25,16 +28,29 @@ class BaseDetectionModel:
 # ------------------------------------------------------------------------------
 # YOLOv8 Model Wrapper
 # ------------------------------------------------------------------------------
-
 class YOLOv8Model(BaseDetectionModel):
-    def __init__(self, model_path, debug=False):
+    def __init__(self, debug=False):
+        """
+        Initialize the YOLOv8 model.
+        """
         self.debug = debug
-        self.model = YOLO(model_path)
+        # Use the provided model_path or fall back to the environment variable,
+        # defaulting to "models/best.pt" if not set.
+        model_path = os.getenv("YOLO8N_MODEL_PATH", "models/best.pt")
+        logger.debug(f"Using YOLOv8 model from: {model_path}")
+
+        self.model_path = model_path
+
+        # Download the best model (if needed) before loading.
+        self.download_best_model()
+
+        # Load the model.
+        self.model = YOLO(self.model_path)
         if hasattr(self.model, 'names'):
             self.names = self.model.names
         else:
             self.names = {}
-        logger.info(f"YOLOv8 model loaded from {model_path}")
+        logger.info(f"YOLOv8 model loaded from {self.model_path}")
 
         # Initialize inference error counter
         self.inference_error_count = 0
@@ -49,6 +65,43 @@ class YOLOv8Model(BaseDetectionModel):
                 logger.error(f"Model warm-up failed: {e}", exc_info=True)
         else:
             logger.warning("Dummy image for model warm-up not found.")
+
+    def download_best_model(self):
+        """
+        Download the latest best.pt model from GitHub and store it at self.model_path.
+        If the file already exists, compare its SHA256 hash to the downloaded file,
+        and only overwrite the local file if the hash has changed.
+        """
+        model_url = "https://raw.githubusercontent.com/arminfabritzek/WatchMyBirds-Train-YOLO/main/best_model/weights/best.pt"
+        dest_path = self.model_path
+        os.makedirs(os.path.dirname(dest_path), exist_ok=True)
+
+        # Download the file from GitHub.
+        response = requests.get(model_url, stream=True)
+        if response.status_code != 200:
+            logger.error(f"Failed to download model. Status code: {response.status_code}")
+            return
+
+        downloaded_data = response.content
+        downloaded_hash = hashlib.sha256(downloaded_data).hexdigest()
+        logger.info(f"Downloaded model hash: {downloaded_hash}")
+
+        # Check if the file already exists and compute its hash.
+        if os.path.exists(dest_path):
+            with open(dest_path, "rb") as f:
+                local_data = f.read()
+            local_hash = hashlib.sha256(local_data).hexdigest()
+            logger.info(f"Local model hash: {local_hash}")
+        else:
+            local_hash = None
+
+        # Overwrite the file only if the hashes differ.
+        if local_hash != downloaded_hash:
+            with open(dest_path, "wb") as f:
+                f.write(downloaded_data)
+            logger.info(f"Best model updated at {dest_path}")
+        else:
+            logger.info("Local model is already up-to-date.")
 
     def detect(self, frame, confidence_threshold, class_filter):
         detection_info_list = []
@@ -106,9 +159,7 @@ class Detector:
         self.debug = debug
         self.model_choice = model_choice.lower()
         if self.model_choice == "yolo8n":
-            model_path = os.getenv("YOLO8N_MODEL_PATH", "models/yolov8n.pt")
-            logger.debug(f"Using YOLOv8 model from: {model_path}")
-            self.model = YOLOv8Model(model_path, debug=debug)
+            self.model = YOLOv8Model(debug=debug)
         else:
             raise ValueError(f"Unsupported model choice: {self.model_choice}")
 

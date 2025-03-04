@@ -1,6 +1,18 @@
 import json
 import os
 import requests
+import logging
+
+# Read the debug flag from the environment variable (default: False)
+_debug = os.getenv("DEBUG_MODE", "False").lower() == "true"
+
+# Configure logging
+logging.basicConfig(
+    level=logging.DEBUG if _debug else logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
+logger = logging.getLogger(__name__)
+logging.getLogger().setLevel(logging.DEBUG if _debug else logging.INFO)
 
 # Load environment variables
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
@@ -25,11 +37,11 @@ def send_telegram_message(text, photo_path=None):
     :param photo_path: Optional path to an image file.
     """
     if not TELEGRAM_BOT_TOKEN:
-        print("❌ ERROR: TELEGRAM_BOT_TOKEN is missing. Message cannot be sent.")
+        logger.error("TELEGRAM_BOT_TOKEN is missing. Message cannot be sent.")
         return None
 
     if not TELEGRAM_CHAT_ID:
-        print("⚠️ WARNING: No TELEGRAM_CHAT_ID provided. Message will not be sent.")
+        logger.warning("No TELEGRAM_CHAT_ID provided. Message will not be sent.")
         return None
 
     responses = []
@@ -37,17 +49,28 @@ def send_telegram_message(text, photo_path=None):
         if photo_path:
             # Use caption field when sending a photo
             url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendPhoto"
-            with open(photo_path, "rb") as photo:
-                files = {"photo": photo}
-                data = {"chat_id": chat_id, "caption": text}  # <-- Use "caption" instead of "text"
-                response = requests.post(url, data=data, files=files)
+            try:
+                with open(photo_path, "rb") as photo:
+                    files = {"photo": photo}
+                    data = {"chat_id": chat_id, "caption": text}  # <-- Use "caption" instead of "text"
+                    response = requests.post(url, data=data, files=files)
+            except Exception as e:
+                logger.error(f"Error sending photo: {e}")
+                continue
         else:
             # Send text message normally
             url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
             data = {"chat_id": chat_id, "text": text}
             response = requests.post(url, data=data)
 
-        responses.append(response.json())
+        try:
+            response_json = response.json()
+            if not response.ok:
+                logger.error(f"Telegram API error: {response_json}")
+            responses.append(response_json)
+        except Exception as e:
+            logger.error(f"Failed to decode Telegram response: {e}")
+            responses.append(None)
 
     return responses
 
