@@ -34,15 +34,16 @@ class YOLOv8Model(BaseDetectionModel):
         Initialize the YOLOv8 model.
         """
         self.debug = debug
-        # Use the provided model_path or fall back to the environment variable,
-        # defaulting to "models/best.pt" if not set.
-        model_path = os.getenv("YOLO8N_MODEL_PATH", "models/best.pt")
-        logger.debug(f"Using YOLOv8 model from: {model_path}")
-
-        self.model_path = model_path
-
-        # Download the best model (if needed) before loading.
-        self.download_best_model()
+        model_env = os.getenv("YOLO8N_MODEL_PATH")
+        if model_env:
+            # If a custom model path is provided, use it and skip downloading.
+            self.model_path = model_env
+            logger.debug(f"Using YOLOv8 model from env variable: {self.model_path}. Skipping download.")
+        else:
+            # Otherwise, use the default model path and download the model.
+            self.model_path = "models/best.pt"
+            logger.debug(f"No YOLO8N_MODEL_PATH provided. Using default model path: {self.model_path}")
+            self.download_best_model()
 
         # Load the model.
         self.model = YOLO(self.model_path)
