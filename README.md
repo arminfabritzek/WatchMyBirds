@@ -128,8 +128,8 @@ To run **WatchMyBirds** in a Docker container with default settings:
          - PGID=1000   # Group ID (GID) to ensure correct file access within the container.
          - TZ=Europe/Berlin  # Set your local timezone to ensure correct timestamp logging.
          - DEBUG_MODE=False  # Set to "True" for additional logging output for debugging.
-         - MODEL_CHOICE="yolo8n"  # The object detection model to use (e.g., yolo8n, pytorch_ssd).
-         - YOLO8N_MODEL_PATH="/models/yolov8n.pt"  # The object detection model path. Currently pointing to the COCO pre-trained.
+         - MODEL_CHOICE="yolo"  # The object detection model to use (e.g., yolo, pytorch_ssd).
+         - YOLO8N_MODEL_PATH="/models/yolov8n.pt"  # The object detection model path.
          - CLASS_FILTER="'["bird", "person"]'"  # Define which object classes to detect; default is "bird".
          - CONFIDENCE_THRESHOLD=0.8  # Minimum confidence score for an object to be considered detected.
          - SAVE_THRESHOLD=0.8  # Minimum confidence score for saving an image of a detected object.
@@ -204,7 +204,7 @@ For a webcam connected via USB use:
 
 Set the path to the model you downloaded.
    ```plaintext
-   YOLO8N_MODEL_PATH="/models/yolov8n.pt"
+   YOLO8N_MODEL_PATH="/models/your_yolo.pt"
    
    DEBUG_MODE=True
    ```
