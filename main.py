@@ -1,8 +1,10 @@
 # ------------------------------------------------------------------------------
-# Main Script for Real-Time Object Detection with Webcam and Flask Streaming
+# Main Script for Real-Time Object Detection with Webcam and Dash Web Interface
 # ------------------------------------------------------------------------------
+from flask import send_from_directory, Response
+from dash import Dash, html, dcc, callback_context, ALL, Input, Output, State
+import dash_bootstrap_components as dbc
 
-from flask import Flask, Response
 from dotenv import load_dotenv
 load_dotenv()
 import json
@@ -44,34 +46,28 @@ print(f"Debug mode in code: {_debug}")
 if _debug:
     send_telegram_message(text="🐦 Birdwatching has started in DEBUG mode!", photo_path="assets/the_birdwatcher_small.jpeg")
 
-# Global lock for thread-safe frame access
+# -----------------------------
+# Global Variables and Locks
+# -----------------------------
 frame_lock = threading.Lock()
-latest_frame = None  # Global variable to store the latest frame for streaming
-
-# Global Detector instance and lock
+latest_frame = None
 detector_instance = None
 detector_lock = threading.Lock()
-
-# Global Video Capture instance and lock
 video_capture_lock = threading.Lock()
-video_capture = None  # Global variable for the VideoCapture instance
-
-# Global lock for telegram notifications
+video_capture = None
 telegram_lock = threading.Lock()
-
-# Timestamp of the last updated frame
 latest_frame_timestamp = 0
 
 # --------------------------------------------------------------------------
 # Configuration Parameters
 # --------------------------------------------------------------------------
-model_choice = os.getenv("MODEL_CHOICE", "yolo8n")  # only "yolo8n" supported for now
+model_choice = os.getenv("MODEL_CHOICE", "yolo")  # only "yolo" supported for now
 class_filter = json.loads(os.getenv("CLASS_FILTER", '["bird", "person"]'))
 confidence_threshold = float(os.getenv("CONFIDENCE_THRESHOLD", 0.8))
 save_threshold = float(os.getenv("SAVE_THRESHOLD", 0.8))
 max_fps_detection = float(os.getenv("MAX_FPS_DETECTION", 3))
 STREAM_FPS = float(os.getenv("STREAM_FPS", 3))
-output_resize_width = int(os.getenv("STREAM_WIDTH_OUTPUT_RESIZE", 800))
+output_resize_width = int(os.getenv("STREAM_WIDTH_OUTPUT_RESIZE", 640))
 day_and_night_capture = os.getenv("DAY_AND_NIGHT_CAPTURE", "True").lower() == "true"
 day_and_night_capture_location = os.getenv("DAY_AND_NIGHT_CAPTURE_LOCATION", "Berlin")
 cpu_limit = int(float(os.getenv("CPU_LIMIT", 2)))
@@ -101,6 +97,10 @@ if not os.path.exists(csv_path):
     with open(csv_path, mode="w", newline="") as f:
         writer = csv.writer(f)
         writer.writerow(["timestamp", "filename", "class_name", "confidence", "x1", "y1", "x2", "y2"])
+
+# -----------------------------
+# Helper Functions
+# -----------------------------
 
 def is_daytime(city_name):
     try:
@@ -132,8 +132,10 @@ except ValueError:
     video_source = video_source_env
     logger.info(f"Video source is a stream: {video_source}")
 
-app = Flask(__name__)
 
+# -----------------------------
+# Frame Generation Function
+# -----------------------------
 def generate_frames():
     global latest_frame, latest_frame_timestamp, video_capture
     font = cv2.FONT_HERSHEY_SIMPLEX
@@ -217,25 +219,9 @@ def generate_frames():
             time.sleep(desired_frame_time - elapsed)
 
 
-@app.route('/video_feed')
-def video_feed():
-    return Response(generate_frames(), mimetype='multipart/x-mixed-replace; boundary=frame')
-
-
-@app.route('/')
-def index():
-    return (
-        '''
-        <html>
-            <body>
-                <h1>Live Stream</h1>
-                <img src="/video_feed" style="max-width: 100%; height: auto;">
-            </body>
-        </html>
-        '''
-    )
-
-
+# -----------------------------
+# Detection Loop Function
+# -----------------------------
 def detection_loop():
     global latest_frame, latest_frame_timestamp, detector_instance, last_telegram_time, video_capture
 
@@ -359,6 +345,9 @@ def detection_loop():
                     logger.error(f"Detector reinitialization failed: {e2}")
             time.sleep(1)
 
+# -----------------------------
+# Cleanup Function
+# -----------------------------
 import atexit
 def cleanup():
     global video_capture
@@ -367,9 +356,164 @@ def cleanup():
             video_capture.release()
 atexit.register(cleanup)
 
+
+# -----------------------------
+# Start Detection Loop in Background
+# -----------------------------
 detection_thread = threading.Thread(target=detection_loop, daemon=True)
 detection_thread.start()
 
+
+# -----------------------------
+# Static File Serving for Captured Images
+# -----------------------------
+def serve_image(filename):
+    return send_from_directory(output_dir, filename)
+
+# -----------------------------
+# Dash App Setup
+# -----------------------------
+app = Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP])
+app.config.suppress_callback_exceptions = True
+server = app.server  # Expose the Flask server
+
+# Register static route to serve images.
+server.route("/images/<path:filename>")(serve_image)
+
+# Video feed route.
+@server.route("/video_feed")
+def video_feed():
+    return Response(generate_frames(), mimetype="multipart/x-mixed-replace; boundary=frame")
+
+# -----------------------------
+# Helper Function: Get Captured Images
+# -----------------------------
+def get_captured_images():
+    files = [f for f in os.listdir(output_dir) if f.endswith("_frame_annotated.jpg")]
+    files.sort(reverse=True)  # Most recent first
+    return files
+
+# -----------------------------
+# Layout Definitions
+# -----------------------------
+def stream_layout():
+    all_images = get_captured_images()
+    recent_images = all_images[:5]
+    recent_gallery = []
+    for annotated in recent_images:
+        recent_gallery.append(
+            html.Div([
+                html.Img(
+                    src=f"/images/{annotated}",
+                    style={"width": "350px", "padding": "5px", "cursor": "pointer"},
+                    id={'type': 'thumbnail', 'index': annotated},
+                    n_clicks=0
+                )
+            ], style={"display": "inline-block", "textAlign": "center"})
+        )
+    return html.Div([
+        # Static image in the top right corner
+        html.Img(
+            src="/assets/the_birdwatcher.jpeg",
+            style={"position": "absolute", "top": "10px", "right": "10px", "width": "200px"}
+        ),
+        html.H1("Real-Time Object Detection Stream"),
+        # Direct link to carousel view.
+        dcc.Link("View Carousel", href="/carousel"),
+        html.Div([
+            html.Img(id="video-feed", src="/video_feed", style={"width": "80%"})
+        ]),
+        html.H2("Recent Captured Images"),
+        html.Div(recent_gallery, id="recent-gallery")
+    ], style={"position": "relative"})
+
+def gallery_carousel_layout():
+    images = get_captured_images()
+    # Create carousel items.
+    items = [
+        {"key": str(i), "src": f"/images/{image}", "caption": image}
+        for i, image in enumerate(images)
+    ]
+    # Define the carousel with an id and an initial active index.
+    carousel = dbc.Carousel(
+        id="carousel-component",
+        items=items,
+        controls=True,
+        indicators=True,
+        interval=2000,
+        ride="carousel",
+        active_index=0,
+        style={"width": "80%", "margin": "auto"}
+    )
+    # Create a row of clickable thumbnails below the carousel.
+    thumbnails = []
+    for i, image in enumerate(images):
+        thumbnails.append(
+            html.Button(
+                html.Img(
+                    src=f"/images/{image}",
+                    style={"width": "150px", "padding": "5px", "cursor": "pointer"}
+                ),
+                id={'type': 'carousel-thumbnail', 'index': i},
+                n_clicks=0,
+                style={"border": "none", "background": "none", "padding": "0"}
+            )
+        )
+    thumbnail_row = html.Div(thumbnails, style={"textAlign": "center", "marginTop": "20px"})
+    return html.Div([
+        html.H1("Image Carousel"),
+        dcc.Link("Back to Stream", href="/"),
+        carousel,
+        thumbnail_row
+    ])
+
+# -----------------------------
+# Main App Layout
+# -----------------------------
+app.layout = html.Div([
+    dcc.Location(id="url", refresh=False),
+    html.Div(id="page-content")
+])
+
+# -----------------------------
+# URL Routing Callback
+# -----------------------------
+@app.callback(
+    Output("page-content", "children"),
+    Input("url", "pathname")
+)
+def display_page(pathname):
+    if pathname == "/carousel":
+        return gallery_carousel_layout()
+    else:
+        return stream_layout()
+
+# -----------------------------
+# Callback to Update Carousel Active Index via Thumbnail Clicks
+# -----------------------------
+@app.callback(
+    Output("carousel-component", "active_index"),
+    [Input({'type': 'carousel-thumbnail', 'index': ALL}, 'n_clicks')],
+    [State({'type': 'carousel-thumbnail', 'index': ALL}, 'id')]
+)
+def update_carousel_index(n_clicks_list, ids):
+    ctx = callback_context
+    if not ctx.triggered:
+        # Default to the first image.
+        return 0
+    trigger_id = ctx.triggered[0]['prop_id'].split('.')[0]
+    try:
+        clicked = json.loads(trigger_id)
+        # Return the index (as integer) of the clicked thumbnail.
+        return int(clicked["index"])
+    except Exception:
+        return 0
+
+
+# -----------------------------
+# Run the Dash App
+# -----------------------------
 if __name__ == '__main__':
-    from waitress import serve
-    serve(app, host='0.0.0.0', port=5001)
+    # Only run the development server when not in production
+    if _debug:
+        app.run_server(host='0.0.0.0', port=8050, debug=True)

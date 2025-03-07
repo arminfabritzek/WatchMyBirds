@@ -45,10 +45,10 @@ RUN chmod +x /entrypoint.sh
 RUN echo "Build timestamp: ${BUILD_TIMESTAMP}" > /app/build_timestamp.txt
 
 # Expose the port used by your app
-EXPOSE 5001
+EXPOSE 8050
 
 # Use the entrypoint to dynamically handle users and permissions
 ENTRYPOINT ["/entrypoint.sh"]
 
 # Set the command to run your app
-CMD ["waitress-serve", "--listen=0.0.0.0:5001", "main:app"]
+CMD ["waitress-serve", "--listen=0.0.0.0:8050", "main:server"]
