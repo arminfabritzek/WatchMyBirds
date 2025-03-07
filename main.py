@@ -103,7 +103,7 @@ if not os.path.exists(csv_path):
 THUMBNAIL_WIDTH = 150
 IMAGE_WIDTH = 150
 RECENT_IMAGES_COUNT = 5
-CAROUSEL_INTERVAL = 2000
+CAROUSEL_INTERVAL = 0
 
 
 # -----------------------------
@@ -541,7 +541,7 @@ def gallery_carousel_layout() -> html.Div:
         controls=True,
         indicators=True,
         interval=CAROUSEL_INTERVAL,
-        ride="carousel",
+        ride=False,
         style={"width": "100%", "maxWidth": "800px", "margin": "auto"}
     )
 
