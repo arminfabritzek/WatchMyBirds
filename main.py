@@ -2,7 +2,7 @@
 # Main Script for Real-Time Object Detection with Webcam and Dash Web Interface
 # ------------------------------------------------------------------------------
 from flask import send_from_directory, Response
-from dash import Dash, html, dcc, callback_context, ALL, Input, Output, State
+from dash import Dash, html, dcc, callback_context, ALL, Input, Output, State, no_update
 import dash_bootstrap_components as dbc
 
 from dotenv import load_dotenv
@@ -57,6 +57,7 @@ video_capture_lock = threading.Lock()
 video_capture = None
 telegram_lock = threading.Lock()
 latest_frame_timestamp = 0
+last_telegram_time = 0
 
 # --------------------------------------------------------------------------
 # Configuration Parameters
@@ -98,10 +99,16 @@ if not os.path.exists(csv_path):
         writer = csv.writer(f)
         writer.writerow(["timestamp", "filename", "class_name", "confidence", "x1", "y1", "x2", "y2"])
 
+# Additional constants for the frontend
+THUMBNAIL_WIDTH = 150
+IMAGE_WIDTH = 150
+RECENT_IMAGES_COUNT = 5
+CAROUSEL_INTERVAL = 2000
+
+
 # -----------------------------
 # Helper Functions
 # -----------------------------
-
 def is_daytime(city_name):
     try:
         city = lookup(city_name, database())
@@ -122,7 +129,84 @@ def send_alert(detected_classes, annotated_path):
     except Exception as e:
         logger.error(f"Error sending Telegram alert: {e}")
 
-last_telegram_time = 0
+def get_captured_images() -> list:
+    """Returns a list of captured images sorted by date."""
+    try:
+        files = [f for f in os.listdir(output_dir) if f.endswith("_frame_annotated.jpg")]
+        files.sort(reverse=True)  # Neueste zuerst
+        return files
+    except Exception as e:
+        logger.error(f"Error retrieving captured images: {e}")
+        return []
+
+def create_thumbnail(image_filename: str, index: int, carousel: bool = False) -> html.Button:
+    """Creates a thumbnail button that can be clicked on for the image."""
+    style = {
+        "cursor": "pointer",
+        "border": "none",
+        "background": "none",
+        "padding": "5px"
+    }
+    # Larger images are displayed in the stream.
+    if not carousel:
+        style["width"] = f"{IMAGE_WIDTH}px"
+        id_type = 'thumbnail'
+    else:
+        style["width"] = f"{THUMBNAIL_WIDTH}px"
+        id_type = 'carousel-thumbnail'
+
+    return html.Button(
+        html.Img(
+            src=f"/images/{image_filename}",
+            alt=f"Thumbnail of {image_filename}",
+            style=style
+        ),
+        id={'type': id_type, 'index': index},
+        n_clicks=0,
+        style={"border": "none", "background": "none", "padding": "0"}
+    )
+
+def create_image_modal(image_filename: str) -> dbc.Modal:
+    """Creates a modal to display the enlarged image."""
+    return dbc.Modal(
+        [
+            dbc.ModalHeader(dbc.ModalTitle(image_filename)),
+            dbc.ModalBody(
+                html.Img(src=f"/images/{image_filename}", style={"width": "100%"})
+            ),
+            dbc.ModalFooter(
+                dbc.Button("Close", id=f"close-{image_filename}", className="ml-auto", n_clicks=0)
+            ),
+        ],
+        id=f"modal-{image_filename}",
+        is_open=False,
+        size="lg",
+    )
+
+def generate_recent_gallery() -> html.Div:
+    """Generates the gallery of the last captured images including modals."""
+    images = get_captured_images()
+    recent_images = images[:RECENT_IMAGES_COUNT]
+    thumbnails = [create_thumbnail(img, i) for i, img in enumerate(recent_images)]
+    modals = [create_image_modal(img) for img in recent_images]
+    return html.Div(thumbnails + modals, id="recent-gallery", style={"textAlign": "center"})
+
+def generate_carousel() -> dbc.Carousel:
+    """Generates the image carousel."""
+    images = get_captured_images()
+    items = [
+        {"key": str(i), "src": f"/images/{image}", "caption": image, "alt": image}
+        for i, image in enumerate(images)
+    ]
+    return dbc.Carousel(
+        id="carousel-component",
+        items=items,
+        controls=True,
+        indicators=True,
+        interval=CAROUSEL_INTERVAL,
+        ride="carousel",
+        style={"width": "80%", "margin": "auto"}
+    )
 
 video_source_env = os.getenv("VIDEO_SOURCE", "0")
 try:
@@ -364,120 +448,171 @@ detection_thread = threading.Thread(target=detection_loop, daemon=True)
 detection_thread.start()
 
 
-# -----------------------------
-# Static File Serving for Captured Images
-# -----------------------------
+# ------------------------------------------------------------------------------
+# 8. Flask routes: static files and video feed
+# ------------------------------------------------------------------------------
 def serve_image(filename):
+    image_path = os.path.join(output_dir, filename)
+    if not os.path.exists(image_path):
+        return "Image not found", 404
     return send_from_directory(output_dir, filename)
 
-# -----------------------------
-# Dash App Setup
-# -----------------------------
-app = Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP])
-app.config.suppress_callback_exceptions = True
-server = app.server  # Expose the Flask server
-
-# Register static route to serve images.
+# Registering the static route
+from flask import Flask
+server = Flask(__name__)
 server.route("/images/<path:filename>")(serve_image)
+server.route("/video_feed")(lambda: Response(generate_frames(), mimetype="multipart/x-mixed-replace; boundary=frame"))
 
-# Video feed route.
-@server.route("/video_feed")
-def video_feed():
-    return Response(generate_frames(), mimetype="multipart/x-mixed-replace; boundary=frame")
+# ------------------------------------------------------------------------------
+# 9. Dash App Setup und Layouts
+# ------------------------------------------------------------------------------
+external_stylesheets = [dbc.themes.BOOTSTRAP]
+app = Dash(__name__, server=server, external_stylesheets=external_stylesheets)
+app.config.suppress_callback_exceptions = True
 
-# -----------------------------
-# Helper Function: Get Captured Images
-# -----------------------------
-def get_captured_images():
-    files = [f for f in os.listdir(output_dir) if f.endswith("_frame_annotated.jpg")]
-    files.sort(reverse=True)  # Most recent first
-    return files
-
-# -----------------------------
-# Layout Definitions
-# -----------------------------
-def stream_layout():
-    all_images = get_captured_images()
-    recent_images = all_images[:5]
-    recent_gallery = []
-    for annotated in recent_images:
-        recent_gallery.append(
-            html.Div([
-                html.Img(
-                    src=f"/images/{annotated}",
-                    style={"width": "350px", "padding": "5px", "cursor": "pointer"},
-                    id={'type': 'thumbnail', 'index': annotated},
-                    n_clicks=0
-                )
-            ], style={"display": "inline-block", "textAlign": "center"})
-        )
-    return html.Div([
-        # Static image in the top right corner
-        html.Img(
-            src="/assets/the_birdwatcher.jpeg",
-            style={"position": "absolute", "top": "10px", "right": "10px", "width": "200px"}
+def stream_layout() -> html.Div:
+    """Responsive layout for the main page with live stream and recent images gallery."""
+    return dbc.Container([
+        dbc.NavbarSimple(
+            # Center the logo and nav items by using a custom class.
+            brand=html.Img(
+                src="/assets/the_birdwatcher.jpeg",
+                className="img-fluid",  # Responsive logo image
+                style={
+                    "width": "20vw",      # 20% of the viewport width
+                    "minWidth": "100px",  # Do not shrink below 100px
+                    "maxWidth": "200px"   # Do not grow larger than 200px
+                }
+            ),
+            brand_href="/",
+            children=[
+                dbc.NavItem(dbc.NavLink("Live Stream", href="/", className="mx-auto")),
+                dbc.NavItem(dbc.NavLink("Image Gallery", href="/carousel", className="mx-auto"))
+            ],
+            color="primary",
+            dark=True,
+            fluid=True,
+            className="justify-content-center"  # Centers nav items in the navbar
         ),
-        html.H1("Real-Time Object Detection Stream"),
-        # Direct link to carousel view.
-        dcc.Link("View Carousel", href="/carousel"),
-        html.Div([
-            html.Img(id="video-feed", src="/video_feed", style={"width": "80%"})
+        dbc.Row([
+            dbc.Col(html.H1("Real-Time Stream", className="text-center"), width=12, className="my-3")
         ]),
-        html.H2("Recent Captured Images"),
-        html.Div(recent_gallery, id="recent-gallery")
-    ], style={"position": "relative"})
+        dbc.Row([
+            dbc.Col(
+                dcc.Loading(
+                    id="loading-video",
+                    type="default",  # Spinner type; can be "circle" or "dot"
+                    children=html.Img(
+                        id="video-feed",
+                        src="/video_feed",
+                        style={
+                            "width": "100%",
+                            "maxWidth": "800px",
+                            "display": "block",
+                            "margin": "0 auto"
+                        }
+                    )
+                ),
+                width=12
+            )
+        ], className="my-3"),
+        dbc.Row([
+            dbc.Col(html.H2("Recent Detections", className="text-center"), width=12, className="mt-4")
+        ]),
+        dbc.Row([
+            dbc.Col(generate_recent_gallery(), width=12)
+        ], className="mb-5")
+    ], fluid=True)
 
-def gallery_carousel_layout():
+
+def gallery_carousel_layout() -> html.Div:
+    """Responsive layout for the carousel page with inline thumbnails beneath the main carousel."""
     images = get_captured_images()
-    # Create carousel items.
-    items = [
-        {"key": str(i), "src": f"/images/{image}", "caption": image}
-        for i, image in enumerate(images)
+
+    # Build carousel items from images.
+    carousel_items = [
+        {"key": str(i), "src": f"/images/{img}", "caption": img, "alt": img}
+        for i, img in enumerate(images)
     ]
-    # Define the carousel with an id and an initial active index.
+
     carousel = dbc.Carousel(
         id="carousel-component",
-        items=items,
+        items=carousel_items,
         controls=True,
         indicators=True,
-        interval=2000,
+        interval=CAROUSEL_INTERVAL,
         ride="carousel",
-        active_index=0,
-        style={"width": "80%", "margin": "auto"}
+        style={"width": "100%", "maxWidth": "800px", "margin": "auto"}
     )
-    # Create a row of clickable thumbnails below the carousel.
-    thumbnails = []
-    for i, image in enumerate(images):
-        thumbnails.append(
-            html.Button(
-                html.Img(
-                    src=f"/images/{image}",
-                    style={"width": "150px", "padding": "5px", "cursor": "pointer"}
-                ),
-                id={'type': 'carousel-thumbnail', 'index': i},
-                n_clicks=0,
-                style={"border": "none", "background": "none", "padding": "0"}
-            )
-        )
-    thumbnail_row = html.Div(thumbnails, style={"textAlign": "center", "marginTop": "20px"})
-    return html.Div([
-        html.H1("Image Carousel"),
-        dcc.Link("Back to Stream", href="/"),
-        carousel,
-        thumbnail_row
-    ])
 
-# -----------------------------
-# Main App Layout
-# -----------------------------
+    # Build a row of thumbnails.
+    thumbnails = html.Div(
+        [
+            html.Img(
+                src=f"/images/{img}",
+                alt=f"Thumbnail of {img}",
+                style={
+                    "width": "100%",
+                    "maxWidth": "150px",
+                    "padding": "5px",
+                    "cursor": "pointer",
+                    "transition": "transform 0.2s"  # Hover effect
+                },
+                id={'type': 'carousel-thumbnail', 'index': i},
+                n_clicks=0
+            )
+            for i, img in enumerate(images)
+        ],
+        style={
+            "display": "flex",
+            "flexWrap": "wrap",
+            "justifyContent": "center",
+            "marginTop": "20px"
+        }
+    )
+
+    return dbc.Container([
+        dbc.NavbarSimple(
+            # Center the logo and navigation items.
+            brand=html.Img(
+                src="/assets/the_birdwatcher.jpeg",
+                className="img-fluid",
+                style={
+                    "width": "20vw",
+                    "minWidth": "100px",
+                    "maxWidth": "200px"
+                }
+            ),
+            brand_href="/",
+            children=[
+                dbc.NavItem(dbc.NavLink("Live Stream", href="/", className="mx-auto")),
+                dbc.NavItem(dbc.NavLink("Image Gallery", href="/carousel", className="mx-auto"))
+            ],
+            color="primary",
+            dark=True,
+            fluid=True,
+            className="justify-content-center"
+        ),
+        dbc.Row([
+            dbc.Col(html.H1("Image Gallery", className="text-center"), width=12, className="my-3")
+        ]),
+        dbc.Row([
+            dbc.Col(carousel, width=12)
+        ]),
+        dbc.Row([
+            dbc.Col(thumbnails, width=12)
+        ], className="mt-3")
+    ], fluid=True)
+
+
 app.layout = html.Div([
     dcc.Location(id="url", refresh=False),
     html.Div(id="page-content")
 ])
 
-# -----------------------------
-# URL Routing Callback
-# -----------------------------
+# ------------------------------------------------------------------------------
+# 10. Callbacks
+# ------------------------------------------------------------------------------
 @app.callback(
     Output("page-content", "children"),
     Input("url", "pathname")
@@ -485,29 +620,52 @@ app.layout = html.Div([
 def display_page(pathname):
     if pathname == "/carousel":
         return gallery_carousel_layout()
-    else:
+    elif pathname == "/" or pathname == "":
         return stream_layout()
+    else:
+        return "404 Not Found"
 
-# -----------------------------
-# Callback to Update Carousel Active Index via Thumbnail Clicks
-# -----------------------------
+# callback for updating the carousel active index when clicking on thumbnails
 @app.callback(
     Output("carousel-component", "active_index"),
     [Input({'type': 'carousel-thumbnail', 'index': ALL}, 'n_clicks')],
-    [State({'type': 'carousel-thumbnail', 'index': ALL}, 'id')]
+    [State({'type': 'carousel-thumbnail', 'index': ALL}, 'id')],
+    prevent_initial_call=True
 )
 def update_carousel_index(n_clicks_list, ids):
     ctx = callback_context
     if not ctx.triggered:
-        # Default to the first image.
-        return 0
+        return no_update
     trigger_id = ctx.triggered[0]['prop_id'].split('.')[0]
     try:
-        clicked = json.loads(trigger_id)
-        # Return the index (as integer) of the clicked thumbnail.
-        return int(clicked["index"])
+        clicked_id = json.loads(trigger_id)
+        return int(clicked_id["index"])
     except Exception:
-        return 0
+        return no_update
+
+# Callback for opening/closing image modals
+@app.callback(
+    Output({"type": "modal", "index": ALL}, "is_open"),
+    [Input({'type': 'thumbnail', 'index': ALL}, 'n_clicks'),
+     Input({'type': 'close', 'index': ALL}, 'n_clicks')],
+    [State({"type": "modal", "index": ALL}, "is_open")],
+    prevent_initial_call=True
+)
+def toggle_modal(n1, n2, is_open):
+    # Simply toggling when a thumbnail or close button is clicked.
+    return [not open_state if (n1 or n2) else open_state for open_state in is_open]
+
+# Callback to show/hide the spinner while the video is loading.
+@app.callback(
+    Output("loading-spinner", "style"),
+    [Input("video-feed", "loading_state")],
+    prevent_initial_call=True
+)
+def show_hide_spinner(loading_state):
+    if loading_state and loading_state.get('is_loading'):
+        return {"display": "block"}
+    else:
+        return {"display": "none"}
 
 
 # -----------------------------
