@@ -8,8 +8,8 @@ import numpy as np
 import onnxruntime
 import requests
 import hashlib
+from PIL import Image, ImageDraw, ImageFont
 from dotenv import load_dotenv
-
 load_dotenv()
 
 logger = logging.getLogger(__name__)
@@ -247,12 +247,50 @@ class ONNXModel(BaseDetectionModel):
                         "y2": int(detection['box'][3]),
                     })
 
-                    # Draw bounding boxes and labels
+                    # Draw bounding box
                     x1, y1, x2, y2 = detection['box']
-                    cv2.rectangle(annotated_frame, (x1, y1),
-                                  (x2, y2), (0, 255, 0), 2)
-                    cv2.putText(annotated_frame, f"{label} ({detection['confidence']:.2f})",
-                                (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+                    cv2.rectangle(annotated_frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+
+                    # Prepare the annotation text
+                    annotation_text = f"{label} ({detection['confidence']:.2f})"
+
+                    # Convert the OpenCV image (BGR) to a PIL image (RGB)
+                    annotated_pil = Image.fromarray(cv2.cvtColor(annotated_frame, cv2.COLOR_BGR2RGB))
+                    draw = ImageDraw.Draw(annotated_pil)
+
+                    # Load the TrueType font from the assets folder.
+                    # If the font file is not found, it falls back to the default PIL font.
+                    font_size = 24  # Adjust as needed.
+                    try:
+                        font = ImageFont.truetype("assets/WRP_cruft.ttf", font_size)
+                    except IOError:
+                        font = ImageFont.load_default()
+
+                    # Calculate the text dimensions using the font's getbbox method.
+                    bbox = font.getbbox(annotation_text)
+                    text_width = bbox[2] - bbox[0]
+                    text_height = bbox[3] - bbox[1]
+
+                    # Add some padding around the text.
+                    padding = 1
+
+                    # The rectangle height should accommodate the text height plus the top/bottom padding.
+                    box_height = text_height + 2 * padding
+
+                    # Draw a filled white rectangle directly under the bounding box.
+                    draw.rectangle([(x1, y2), (x2, y2 + box_height)], fill="white")
+
+                    # Adjust text_y to account for bbox[1] ---
+                    text_x = x1 + padding
+                    text_y = y2 + padding - bbox[1]  # Subtract bbox[1]
+
+                    # Draw the annotation text in black inside the white rectangle.
+                    draw.text((text_x, text_y), annotation_text, font=font, fill="black")
+
+                    # Convert the PIL image back to a NumPy array in BGR format.
+                    annotated_frame = cv2.cvtColor(np.array(annotated_pil), cv2.COLOR_RGB2BGR)
+
+
 
         except Exception as e:
             self.inference_error_count += 1

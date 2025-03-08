@@ -9,6 +9,7 @@ from dotenv import load_dotenv
 load_dotenv()
 import json
 import os
+import math
 import time
 import csv
 import cv2
@@ -57,7 +58,9 @@ video_capture_lock = threading.Lock()
 video_capture = None
 telegram_lock = threading.Lock()
 latest_frame_timestamp = 0
-last_telegram_time = 0
+detection_occurred = False
+last_notification_time = time.time()  # using time.time() for wall-clock
+
 
 # --------------------------------------------------------------------------
 # Configuration Parameters
@@ -66,8 +69,8 @@ model_choice = os.getenv("MODEL_CHOICE", "yolo")  # only "yolo" supported for no
 class_filter = json.loads(os.getenv("CLASS_FILTER", '["bird", "person"]'))
 confidence_threshold = float(os.getenv("CONFIDENCE_THRESHOLD", 0.8))
 save_threshold = float(os.getenv("SAVE_THRESHOLD", 0.8))
-max_fps_detection = float(os.getenv("MAX_FPS_DETECTION", 3))
-STREAM_FPS = float(os.getenv("STREAM_FPS", 3))
+max_fps_detection = float(os.getenv("MAX_FPS_DETECTION", 3))  # Lowering this reduces the frame rate for inference, thus lowering CPU usage.
+STREAM_FPS = float(os.getenv("STREAM_FPS", 3))  # Lowering this reduces the frame rate for streaming, conserving resources.
 output_resize_width = int(os.getenv("STREAM_WIDTH_OUTPUT_RESIZE", 640))
 day_and_night_capture = os.getenv("DAY_AND_NIGHT_CAPTURE", "True").lower() == "true"
 day_and_night_capture_location = os.getenv("DAY_AND_NIGHT_CAPTURE_LOCATION", "Berlin")
@@ -100,10 +103,9 @@ if not os.path.exists(csv_path):
         writer.writerow(["timestamp", "filename", "class_name", "confidence", "x1", "y1", "x2", "y2"])
 
 # Additional constants for the frontend
-THUMBNAIL_WIDTH = 150
 IMAGE_WIDTH = 150
-RECENT_IMAGES_COUNT = 5
-CAROUSEL_INTERVAL = 0
+RECENT_IMAGES_COUNT = 3
+PAGE_SIZE = 20  # Number of images per page
 
 
 # -----------------------------
@@ -147,46 +149,60 @@ def get_captured_images() -> list:
         logger.error(f"Error retrieving captured images: {e}")
         return []
 
-def create_thumbnail(image_filename: str, index: int, carousel: bool = False) -> html.Button:
-    """Creates a thumbnail button that can be clicked on for the image."""
+def derive_original_filename(annotated_filename: str,
+                             annotated_suffix: str = "_frame_annotated",
+                             original_suffix: str = "_frame_original") -> str:
+    """Derives the original image filename from the annotated filename."""
+    return annotated_filename.replace(annotated_suffix, original_suffix)
+
+def derive_zoomed_filename(annotated_filename: str,
+                           annotated_suffix: str = "_frame_annotated",
+                           zoomed_suffix: str = "_frame_zoomed") -> str:
+    """Derives the zoomed image filename from the annotated filename."""
+    return annotated_filename.replace(annotated_suffix, zoomed_suffix)
+
+def create_thumbnail(image_filename: str, index: int) -> html.Button:
+    """
+    Creates a thumbnail button that shows the zoomed version of the annotated image.
+    When clicked, the modal will show the original image.
+    """
+    zoomed_filename = derive_zoomed_filename(image_filename)
     style = {
         "cursor": "pointer",
         "border": "none",
         "background": "none",
-        "padding": "5px"
+        "padding": "5px",
+        "width": f"{IMAGE_WIDTH}px"
     }
-    # Larger images are displayed in the stream.
-    if not carousel:
-        style["width"] = f"{IMAGE_WIDTH}px"
-        id_type = 'thumbnail'
-    else:
-        style["width"] = f"{THUMBNAIL_WIDTH}px"
-        id_type = 'carousel-thumbnail'
-
     return html.Button(
         html.Img(
-            src=f"/images/{image_filename}",
-            alt=f"Thumbnail of {image_filename}",
+            src=f"/images/{zoomed_filename}",
+            alt=f"Thumbnail of {zoomed_filename}",
             style=style
         ),
-        id={'type': id_type, 'index': index},
+        id={'type': 'thumbnail', 'index': index},
         n_clicks=0,
         style={"border": "none", "background": "none", "padding": "0"}
     )
 
-def create_image_modal(image_filename: str) -> dbc.Modal:
-    """Creates a modal to display the enlarged image."""
+def create_image_modal(image_filename: str, index: int) -> dbc.Modal:
+    """
+    Creates a modal to display the original image when its thumbnail is clicked.
+    The modal header will show the filename, and the body displays the full-size original image.
+    """
+    original_filename = image_filename
     return dbc.Modal(
         [
-            dbc.ModalHeader(dbc.ModalTitle(image_filename)),
+            # Disable the default close button by setting close_button=False.
+            dbc.ModalHeader(dbc.ModalTitle(original_filename), close_button=False),
             dbc.ModalBody(
-                html.Img(src=f"/images/{image_filename}", style={"width": "100%"})
+                html.Img(src=f"/images/{original_filename}", style={"width": "100%"})
             ),
             dbc.ModalFooter(
-                dbc.Button("Close", id=f"close-{image_filename}", className="ml-auto", n_clicks=0)
+                dbc.Button("Close", id={'type': 'close', 'index': index}, className="ml-auto", n_clicks=0)
             ),
         ],
-        id=f"modal-{image_filename}",
+        id={'type': 'modal', 'index': index},
         is_open=False,
         size="lg",
     )
@@ -196,24 +212,33 @@ def generate_recent_gallery() -> html.Div:
     images = get_captured_images()
     recent_images = images[:RECENT_IMAGES_COUNT]
     thumbnails = [create_thumbnail(img, i) for i, img in enumerate(recent_images)]
-    modals = [create_image_modal(img) for img in recent_images]
+    modals = [create_image_modal(img, i) for i, img in enumerate(recent_images)]
     return html.Div(thumbnails + modals, id="recent-gallery", style={"textAlign": "center"})
 
-def generate_carousel() -> dbc.Carousel:
-    """Generates the image carousel."""
+def generate_gallery() -> html.Div:
+    """Generates a grid view of all captured images with modals for larger display."""
     images = get_captured_images()
-    items = [
-        {"key": str(i), "src": f"/images/{image}", "caption": image, "alt": image}
-        for i, image in enumerate(images)
-    ]
-    return dbc.Carousel(
-        id="carousel-component",
-        items=items,
-        controls=True,
-        indicators=True,
-        interval=CAROUSEL_INTERVAL,
-        ride="carousel",
-        style={"width": "80%", "margin": "auto"}
+    grid_items = []
+    modals = []
+    for i, img in enumerate(images):
+        grid_items.append(
+            html.Div(
+                create_thumbnail(img, i),
+                style={
+                    "flex": "1 0 21%",  # Adjust to control items per row
+                    "margin": "5px",
+                    "maxWidth": "150px"
+                }
+            )
+        )
+        modals.append(create_image_modal(img, i))
+    return html.Div(
+        grid_items + modals,
+        style={
+            "display": "flex",
+            "flexWrap": "wrap",
+            "justifyContent": "center"
+        }
     )
 
 video_source_env = os.getenv("VIDEO_SOURCE", "0")
@@ -315,7 +340,7 @@ def generate_frames():
 # Detection Loop Function
 # -----------------------------
 def detection_loop():
-    global latest_frame, latest_frame_timestamp, detector_instance, last_telegram_time, video_capture
+    global latest_frame, latest_frame_timestamp, detector_instance, video_capture, last_notification_time, detection_occurred
 
     # Keep trying to initialize video_capture and detector until successful.
     while video_capture is None:
@@ -410,9 +435,28 @@ def detection_loop():
                 timestamp = time.strftime("%Y%m%d_%H%M%S")
                 annotated_name = f"{timestamp}_frame_annotated.jpg"
                 original_name = f"{timestamp}_frame_original.jpg"
+                zoomed_name = f"{timestamp}_frame_zoomed.jpg"
+
                 cv2.imwrite(os.path.join(output_dir, annotated_name), annotated_frame)
                 cv2.imwrite(os.path.join(output_dir, original_name), original_frame)
-                print(f"Saved frames: {annotated_name}, {original_name}")
+
+                # Generate the zoomed version based on the first detection's bounding box.
+                if detection_info_list:
+                    # For simplicity, use the first detected object's bounding box.
+                    first_det = detection_info_list[0]
+                    x1, y1, x2, y2 = first_det["x1"], first_det["y1"], first_det["x2"], first_det["y2"]
+                    # Optionally add some margin (e.g. 10 pixels) and ensure the values are within image bounds.
+                    margin = 100
+                    h, w = annotated_frame.shape[:2]
+                    x1 = max(0, x1 - margin)
+                    y1 = max(0, y1 - margin)
+                    x2 = min(w, x2 + margin)
+                    y2 = min(h, y2 + margin)
+                    zoomed_frame = annotated_frame[y1:y2, x1:x2]
+                    cv2.imwrite(os.path.join(output_dir, zoomed_name), zoomed_frame)
+                else:
+                    # If no bounding box is available, fall back to a resized annotated frame.
+                    cv2.imwrite(os.path.join(output_dir, zoomed_name), annotated_frame)
 
                 with open(csv_path, mode="a", newline="") as f:
                     writer = csv.writer(f)
@@ -423,19 +467,22 @@ def detection_loop():
                             det["x1"], det["y1"], det["x2"], det["y2"]
                         ])
 
+                # Set flag indicating a detection occurred.
+                detection_occurred = True
+
                 # Send Telegram alert if detection information is available.
-                if detection_info_list:
-                    with telegram_lock:
-                        if current_time - last_telegram_time >= telegram_cooldown:
-                            detected_classes = ", ".join(set(det["class_name"] for det in detection_info_list))
-                            alert_thread = threading.Thread(
-                                target=send_alert,
-                                args=(detected_classes, os.path.join(output_dir, annotated_name)),
-                                daemon=True
-                            )
-                            alert_thread.start()
-                            logger.info(f"📩 Telegram notification sent: 🔎 Detection Alert! Detected: {detected_classes}")
-                            last_telegram_time = current_time
+                with telegram_lock:
+                    if detection_occurred and (current_time - last_notification_time >= telegram_cooldown):
+                        detected_classes = ", ".join(set(det["class_name"] for det in detection_info_list))
+                        send_telegram_message(
+                            text=f"🔎 Detection Alert!\nDetected: {detected_classes}",
+                            photo_path=os.path.join(output_dir, annotated_name)
+                        )
+                        logger.info(f"📩 Telegram notification sent: 🔎 Detection Alert! Detected: {detected_classes}")
+                        last_notification_time = current_time
+                        detection_occurred = False
+                    else:
+                        logger.debug("Cooldown active, not sending alert.")
 
             frame_count += 1
             detection_duration = time.time() - start_time
@@ -497,25 +544,20 @@ def stream_layout() -> html.Div:
     """Responsive layout for the main page with live stream and recent images gallery."""
     return dbc.Container([
         dbc.NavbarSimple(
-            # Center the logo and nav items by using a custom class.
             brand=html.Img(
                 src="/assets/the_birdwatcher.jpeg",
-                className="img-fluid",  # Responsive logo image
-                style={
-                    "width": "20vw",      # 20% of the viewport width
-                    "minWidth": "100px",  # Do not shrink below 100px
-                    "maxWidth": "200px"   # Do not grow larger than 200px
-                }
+                className="img-fluid",
+                style={"width": "20vw", "minWidth": "100px", "maxWidth": "200px"}
             ),
             brand_href="/",
             children=[
                 dbc.NavItem(dbc.NavLink("Live Stream", href="/", className="mx-auto")),
-                dbc.NavItem(dbc.NavLink("Image Gallery", href="/carousel", className="mx-auto"))
+                dbc.NavItem(dbc.NavLink("Image Gallery", href="/gallery", className="mx-auto"))
             ],
             color="primary",
             dark=True,
             fluid=True,
-            className="justify-content-center"  # Centers nav items in the navbar
+            className="justify-content-center"
         ),
         dbc.Row([
             dbc.Col(html.H1("Real-Time Stream", className="text-center"), width=12, className="my-3")
@@ -524,16 +566,11 @@ def stream_layout() -> html.Div:
             dbc.Col(
                 dcc.Loading(
                     id="loading-video",
-                    type="default",  # Spinner type; can be "circle" or "dot"
+                    type="default",
                     children=html.Img(
                         id="video-feed",
                         src="/video_feed",
-                        style={
-                            "width": "100%",
-                            "maxWidth": "800px",
-                            "display": "block",
-                            "margin": "0 auto"
-                        }
+                        style={"width": "100%", "maxWidth": "800px", "display": "block", "margin": "0 auto"}
                     )
                 ),
                 width=12
@@ -548,85 +585,40 @@ def stream_layout() -> html.Div:
     ], fluid=True)
 
 
-def gallery_carousel_layout() -> html.Div:
-    """Responsive layout for the carousel page with inline thumbnails beneath the main carousel."""
-    images = get_captured_images()
-
-    # Build carousel items from images.
-    carousel_items = [
-        {"key": str(i), "src": f"/images/{img}", "caption": img, "alt": img}
-        for i, img in enumerate(images)
-    ]
-
-    carousel = dbc.Carousel(
-        id="carousel-component",
-        items=carousel_items,
-        controls=True,
-        indicators=True,
-        interval=CAROUSEL_INTERVAL,
-        ride=False,
-        style={"width": "100%", "maxWidth": "800px", "margin": "auto"}
-    )
-
-    # Build a row of thumbnails.
-    thumbnails = html.Div(
-        [
-            html.Img(
-                src=f"/images/{img}",
-                alt=f"Thumbnail of {img}",
-                style={
-                    "width": "100%",
-                    "maxWidth": "150px",
-                    "padding": "5px",
-                    "cursor": "pointer",
-                    "transition": "transform 0.2s"  # Hover effect
-                },
-                id={'type': 'carousel-thumbnail', 'index': i},
-                n_clicks=0
-            )
-            for i, img in enumerate(images)
-        ],
-        style={
-            "display": "flex",
-            "flexWrap": "wrap",
-            "justifyContent": "center",
-            "marginTop": "20px"
-        }
-    )
-
+def gallery_layout() -> html.Div:
     return dbc.Container([
         dbc.NavbarSimple(
-            # Center the logo and navigation items.
             brand=html.Img(
                 src="/assets/the_birdwatcher.jpeg",
                 className="img-fluid",
-                style={
-                    "width": "20vw",
-                    "minWidth": "100px",
-                    "maxWidth": "200px"
-                }
+                style={"width": "20vw", "minWidth": "100px", "maxWidth": "200px"}
             ),
             brand_href="/",
             children=[
                 dbc.NavItem(dbc.NavLink("Live Stream", href="/", className="mx-auto")),
-                dbc.NavItem(dbc.NavLink("Image Gallery", href="/carousel", className="mx-auto"))
+                dbc.NavItem(dbc.NavLink("Image Gallery", href="/gallery", className="mx-auto"))
             ],
             color="primary",
             dark=True,
             fluid=True,
             className="justify-content-center"
         ),
+        # Store to hold the current page index
+        dcc.Store(id="page-store", data=0),
         dbc.Row([
             dbc.Col(html.H1("Image Gallery", className="text-center"), width=12, className="my-3")
         ]),
         dbc.Row([
-            dbc.Col(carousel, width=12)
+            # Pagination controls
+            dbc.Col([
+                dbc.Button("Previous", id="prev-page", n_clicks=0, color="primary", className="me-2"),
+                dbc.Button("Next", id="next-page", n_clicks=0, color="primary"),
+            ], width=12, className="mb-2", style={"textAlign": "center"}),
         ]),
         dbc.Row([
-            dbc.Col(thumbnails, width=12)
-        ], className="mt-3")
+            dbc.Col(html.Div(id="gallery-content"), width=12)
+        ], className="mb-5"),
     ], fluid=True)
-
 
 app.layout = html.Div([
     dcc.Location(id="url", refresh=False),
@@ -641,42 +633,35 @@ app.layout = html.Div([
     Input("url", "pathname")
 )
 def display_page(pathname):
-    if pathname == "/carousel":
-        return gallery_carousel_layout()
+    if pathname == "/gallery":
+        return gallery_layout()
     elif pathname == "/" or pathname == "":
         return stream_layout()
     else:
         return "404 Not Found"
-
-# callback for updating the carousel active index when clicking on thumbnails
-@app.callback(
-    Output("carousel-component", "active_index"),
-    [Input({'type': 'carousel-thumbnail', 'index': ALL}, 'n_clicks')],
-    [State({'type': 'carousel-thumbnail', 'index': ALL}, 'id')],
-    prevent_initial_call=True
-)
-def update_carousel_index(n_clicks_list, ids):
-    ctx = callback_context
-    if not ctx.triggered:
-        return no_update
-    trigger_id = ctx.triggered[0]['prop_id'].split('.')[0]
-    try:
-        clicked_id = json.loads(trigger_id)
-        return int(clicked_id["index"])
-    except Exception:
-        return no_update
 
 # Callback for opening/closing image modals
 @app.callback(
     Output({"type": "modal", "index": ALL}, "is_open"),
     [Input({'type': 'thumbnail', 'index': ALL}, 'n_clicks'),
      Input({'type': 'close', 'index': ALL}, 'n_clicks')],
-    [State({"type": "modal", "index": ALL}, "is_open")],
-    prevent_initial_call=True
+    [State({"type": "modal", "index": ALL}, "is_open")]
 )
-def toggle_modal(n1, n2, is_open):
-    # Simply toggling when a thumbnail or close button is clicked.
-    return [not open_state if (n1 or n2) else open_state for open_state in is_open]
+def toggle_modal(thumbnail_clicks, close_clicks, current_states):
+    ctx = callback_context
+    if not ctx.triggered:
+        return current_states
+
+    triggered_prop = ctx.triggered[0]['prop_id']
+    triggered_id = json.loads(triggered_prop.split('.')[0])
+    new_states = [False] * len(current_states)
+    # If a thumbnail is clicked, open that modal.
+    if "thumbnail" in triggered_prop:
+        new_states[triggered_id["index"]] = True
+    # If a close button is clicked, ensure that modal is closed.
+    elif "close" in triggered_prop:
+        new_states[triggered_id["index"]] = False
+    return new_states
 
 # Callback to show/hide the spinner while the video is loading.
 @app.callback(
@@ -690,6 +675,50 @@ def show_hide_spinner(loading_state):
     else:
         return {"display": "none"}
 
+@app.callback(
+    [Output("gallery-content", "children"),
+     Output("page-store", "data")],
+    [Input("prev-page", "n_clicks"),
+     Input("next-page", "n_clicks"),
+     Input("page-store", "data")]
+)
+def update_gallery_and_page(prev_clicks, next_clicks, current_page):
+    ctx = callback_context
+    triggered_id = ctx.triggered[0]["prop_id"].split(".")[0] if ctx.triggered else None
+
+    images = get_captured_images()
+    total_pages = math.ceil(len(images) / PAGE_SIZE) if images else 1
+
+    # Update current_page based on the button clicked
+    if triggered_id == "prev-page" and current_page > 0:
+        current_page -= 1
+    elif triggered_id == "next-page" and current_page < total_pages - 1:
+        current_page += 1
+
+    # Build the subset for the current page
+    start_idx = current_page * PAGE_SIZE
+    end_idx = min(start_idx + PAGE_SIZE, len(images))
+    subset = images[start_idx:end_idx]
+
+    # Create gallery using local (page-relative) indices
+    grid_items = []
+    modals = []
+    for i, img in enumerate(subset):
+        # Use 'i' instead of start_idx + i so that indices go from 0 to len(subset)-1
+        grid_items.append(
+            html.Div(
+                create_thumbnail(img, i),
+                style={"flex": "1 0 21%", "margin": "5px", "maxWidth": "150px"}
+            )
+        )
+        modals.append(create_image_modal(img, i))
+
+    gallery_div = html.Div(
+        grid_items + modals,
+        style={"display": "flex", "flexWrap": "wrap", "justifyContent": "center"}
+    )
+
+    return gallery_div, current_page
 
 # -----------------------------
 # Run the Dash App

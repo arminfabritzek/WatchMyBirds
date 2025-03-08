@@ -146,7 +146,7 @@ To run **WatchMyBirds** in a Docker container with default settings:
          - /your_path/output:/output  # Path for saving output
          - /your_path/models:/models  # Path for your model of choice
        ports:
-         - "5001:5001"  # HTTP port for the Flask web app (streaming and API).
+         - "8050:8050"  # HTTP port for the Flask web app (streaming and API).
          - "8554:8554"  # RTSP port for serving the video stream.
          - "8081:8081"  # MJPEG streaming port.
          - "1936:1936"  # Custom RTMP or alternative streaming port.
@@ -161,7 +161,7 @@ To run **WatchMyBirds** in a Docker container with default settings:
    docker-compose up -d
    ```
 
-This will run the **WatchMyBirds** application, and you can access the livestream at `http://<your-server-ip>:5001`.
+This will run the **WatchMyBirds** application, and you can access the livestream at `http://<your-server-ip>:8050`.
 
 
 The container will use the custom model stored in your host’s ~/your_model_path directory (mounted to /models in the container). Output images and logs are saved in ~/your_output_path.
@@ -213,7 +213,7 @@ Set the path to the model you downloaded.
 
 # Usage
 
-- **Livestream**: `http://<your-server-ip>:5001` displays a real-time video feed with bounding boxes around detected objects.
+- **Livestream**: `http://<your-server-ip>:8050` displays a real-time video feed with bounding boxes around detected objects.
 - **Saved Frames**: Frames with objects exceeding the confidence threshold are saved in the `output/` directory.
 - **CSV Logging**: All detections are logged to a CSV file (`all_bounding_boxes.csv`) for analysis.
 

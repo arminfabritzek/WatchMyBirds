@@ -53,7 +53,7 @@ def send_telegram_message(text, photo_path=None):
                 with open(photo_path, "rb") as photo:
                     files = {"photo": photo}
                     data = {"chat_id": chat_id, "caption": text}  # <-- Use "caption" instead of "text"
-                    response = requests.post(url, data=data, files=files)
+                    response = requests.post(url, data=data, files=files, timeout=10)
             except Exception as e:
                 logger.error(f"Error sending photo: {e}")
                 continue
