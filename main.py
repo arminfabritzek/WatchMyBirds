@@ -110,14 +110,22 @@ CAROUSEL_INTERVAL = 0
 # Helper Functions
 # -----------------------------
 def is_daytime(city_name):
+    """
+    Returns True if the current time is between dawn and dusk,
+    meaning there is sufficient light (including post-sunset twilight).
+    """
     try:
         city = lookup(city_name, database())
         tz = pytz.timezone(city.timezone)
         now = datetime.now(tz)
-        s = sun(city.observer, date=now)
-        return s["sunrise"] < now < s["dusk"]
+        # Use 12 for nautical dawn (or 18 for astronomical dawn, if desired)
+        dawn_depression = 12
+        s = sun(city.observer, date=now, tzinfo=tz, dawn_dusk_depression=dawn_depression)
+        # Capture is active from dawn until dusk.
+        return s["dawn"] < now < s["dusk"]
     except Exception as e:
         logger.error(f"Error determining daylight status: {e}")
+        # Default to daytime to avoid halting capture on error.
         return True
 
 def send_alert(detected_classes, annotated_path):
@@ -339,21 +347,36 @@ def detection_loop():
                 time.sleep(5)  # Pause detection entirely for 5 seconds
                 continue
 
+            # If day_and_night_capture is enabled and it's currently dark,
+            # stop detection until the next dawn.
             if not day_and_night_capture and not is_daytime(day_and_night_capture_location):
                 try:
                     city = lookup(day_and_night_capture_location, database())
-                    now = datetime.now(pytz.timezone(city.timezone))
-                    s = sun(city.observer, date=now)
-                    logger.info(f"🌙 Nighttime in {day_and_night_capture_location} - Now: {now}, Sunrise: {s['sunrise']}, Dusk: {s['dusk']}")
-                    if now < s["sunrise"]:
-                        next_check = (s["sunrise"] - now).seconds
-                    elif now > s["dusk"]:
-                        tomorrow_sunrise = sun(city.observer, date=now + timedelta(days=1))["sunrise"]
-                        next_check = (tomorrow_sunrise - now).seconds
+                    tz = pytz.timezone(city.timezone)
+                    now = datetime.now(tz)
+                    dawn_depression = 12  # Use 12 for nautical dawn (or change to 18 for astronomical dawn)
+                    s = sun(city.observer, date=now, tzinfo=tz, dawn_dusk_depression=dawn_depression)
+                    logger.info(
+                        f"🌙 Insufficient light in {day_and_night_capture_location} - Now: {now}, Dawn: {s['dawn']}, Dusk: {s['dusk']}")
+
+                    # Determine sleep duration:
+                    if now < s["dawn"]:
+                        # Before dawn, sleep until dawn.
+                        next_check = (s["dawn"] - now).seconds
+                    elif now >= s["dusk"]:
+                        # After dusk, sleep until the next dawn.
+                        tomorrow = now + timedelta(days=1)
+                        tomorrow_s = sun(city.observer, date=tomorrow, tzinfo=tz, dawn_dusk_depression=dawn_depression)
+                        next_check = (tomorrow_s["dawn"] - now).seconds
+                    else:
+                        # Fallback: short sleep.
+                        next_check = 60
                 except Exception as e:
-                    logger.error(f"⚠️ Could not determine next sunrise time: {e}")
-                    next_check = 300
-                logger.info(f"🌙 Nighttime detected in {day_and_night_capture_location}. Sleeping for {next_check} seconds.")
+                    logger.error(f"⚠️ Could not determine next dawn time: {e}")
+                    next_check = 60
+
+                logger.info(
+                    f"🌙 Light insufficient for capture in {day_and_night_capture_location}. Sleeping for {next_check} seconds.")
                 time.sleep(next_check)
                 continue
 
