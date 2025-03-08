@@ -372,123 +372,138 @@ def detection_loop():
                 time.sleep(5)  # Pause detection entirely for 5 seconds
                 continue
 
-            # If day_and_night_capture is enabled and it's currently dark,
-            # stop detection until the next dawn.
-            if not day_and_night_capture and not is_daytime(day_and_night_capture_location):
-                try:
-                    city = lookup(day_and_night_capture_location, database())
-                    tz = pytz.timezone(city.timezone)
-                    now = datetime.now(tz)
-                    dawn_depression = 12  # Use 12 for nautical dawn (or change to 18 for astronomical dawn)
-                    s = sun(city.observer, date=now, tzinfo=tz, dawn_dusk_depression=dawn_depression)
-                    logger.info(
-                        f"🌙 Insufficient light in {day_and_night_capture_location} - Now: {now}, Dawn: {s['dawn']}, Dusk: {s['dusk']}")
-
-                    # Determine sleep duration:
-                    if now < s["dawn"]:
-                        # Before dawn, sleep until dawn.
-                        next_check = (s["dawn"] - now).seconds
-                    elif now >= s["dusk"]:
-                        # After dusk, sleep until the next dawn.
-                        tomorrow = now + timedelta(days=1)
-                        tomorrow_s = sun(city.observer, date=tomorrow, tzinfo=tz, dawn_dusk_depression=dawn_depression)
-                        next_check = (tomorrow_s["dawn"] - now).seconds
-                    else:
-                        # Fallback: short sleep.
-                        next_check = 60
-                except Exception as e:
-                    logger.error(f"⚠️ Could not determine next dawn time: {e}")
-                    next_check = 60
-
-                logger.info(
-                    f"🌙 Light insufficient for capture in {day_and_night_capture_location}. Sleeping for {next_check} seconds.")
-                time.sleep(next_check)
-                continue
-
-            # Run object detection on the captured frame.
-            try:
-                start_time = time.time()
-                annotated_frame, object_detected, original_frame, detection_info_list = detector_instance.detect_objects(
-                    frame, class_filter=class_filter,
-                    confidence_threshold=confidence_threshold,
-                    save_threshold=save_threshold
-                )
-            except Exception as e:
-                logger.error(f"Inference error detected: {e}. Reinitializing detector...")
-                with detector_lock:
-                    try:
-                        detector_instance = Detector(model_choice=model_choice, debug=_debug)
-                    except Exception as e2:
-                        logger.error(f"Detector reinitialization failed: {e2}")
-                time.sleep(1)
-                continue
-
-            detection_time = time.time() - start_time
-            logger.debug(f"Detection took {detection_time:.4f} seconds for one frame.")
-
+            # Always update the video stream (latest_frame) regardless of detection.
             with frame_lock:
-                latest_frame = annotated_frame.copy()
-                latest_frame_timestamp = time.time()  # update timestamp when a new frame arrives
+                latest_frame = frame.copy()
+                latest_frame_timestamp = time.time()
 
-            current_time = time.time()
-            if object_detected:
-                timestamp = time.strftime("%Y%m%d_%H%M%S")
-                annotated_name = f"{timestamp}_frame_annotated.jpg"
-                original_name = f"{timestamp}_frame_original.jpg"
-                zoomed_name = f"{timestamp}_frame_zoomed.jpg"
-
-                cv2.imwrite(os.path.join(output_dir, annotated_name), annotated_frame)
-                cv2.imwrite(os.path.join(output_dir, original_name), original_frame)
-
-                # Generate the zoomed version based on the first detection's bounding box.
-                if detection_info_list:
-                    # For simplicity, use the first detected object's bounding box.
-                    first_det = detection_info_list[0]
-                    x1, y1, x2, y2 = first_det["x1"], first_det["y1"], first_det["x2"], first_det["y2"]
-                    # Optionally add some margin (e.g. 10 pixels) and ensure the values are within image bounds.
-                    margin = 100
-                    h, w = annotated_frame.shape[:2]
-                    x1 = max(0, x1 - margin)
-                    y1 = max(0, y1 - margin)
-                    x2 = min(w, x2 + margin)
-                    y2 = min(h, y2 + margin)
-                    zoomed_frame = annotated_frame[y1:y2, x1:x2]
-                    cv2.imwrite(os.path.join(output_dir, zoomed_name), zoomed_frame)
+            # Determine if we should run detection.
+            # - If DAY_AND_NIGHT_CAPTURE is True: run detection regardless.
+            # - If DAY_AND_NIGHT_CAPTURE is False: run detection only if it's daytime.
+            run_detection = False
+            if day_and_night_capture:
+                run_detection = True
+            else:
+                if is_daytime(day_and_night_capture_location):
+                    run_detection = True
                 else:
-                    # If no bounding box is available, fall back to a resized annotated frame.
-                    cv2.imwrite(os.path.join(output_dir, zoomed_name), annotated_frame)
+                    # Calculate sleep duration until next dawn.
+                    try:
+                        city = lookup(day_and_night_capture_location, database())
+                        tz = pytz.timezone(city.timezone)
+                        now = datetime.now(tz)
+                        dawn_depression = 12  # Use 12 for nautical dawn (or change to 18 for astronomical dawn)
+                        s = sun(city.observer, date=now, tzinfo=tz, dawn_dusk_depression=dawn_depression)
+                        logger.info(
+                            f"🌙 Insufficient light in {day_and_night_capture_location} - Now: {now}, Dawn: {s['dawn']}, Dusk: {s['dusk']}")
 
-                with open(csv_path, mode="a", newline="") as f:
-                    writer = csv.writer(f)
-                    for det in detection_info_list:
-                        writer.writerow([
-                            timestamp, annotated_name, det["class_name"],
-                            f"{det['confidence']:.2f}",
-                            det["x1"], det["y1"], det["x2"], det["y2"]
-                        ])
+                        # Determine sleep duration:
+                        if now < s["dawn"]:
+                            # Before dawn, sleep until dawn.
+                            next_check = (s["dawn"] - now).seconds
+                        elif now >= s["dusk"]:
+                            # After dusk, sleep until the next dawn.
+                            tomorrow = now + timedelta(days=1)
+                            tomorrow_s = sun(city.observer, date=tomorrow, tzinfo=tz, dawn_dusk_depression=dawn_depression)
+                            next_check = (tomorrow_s["dawn"] - now).seconds
+                        else:
+                            # Fallback: short sleep.
+                            next_check = 60
+                    except Exception as e:
+                        logger.error(f"⚠️ Could not determine next dawn time: {e}")
+                        next_check = 60
 
-                # Set flag indicating a detection occurred.
-                detection_occurred = True
+                    logger.info(
+                        f"🌙 Light insufficient for capture in {day_and_night_capture_location}. Sleeping for {next_check} seconds.")
+                    time.sleep(next_check)
+                    continue
 
-                # Send Telegram alert if detection information is available.
-                with telegram_lock:
-                    if detection_occurred and (current_time - last_notification_time >= telegram_cooldown):
-                        detected_classes = ", ".join(set(det["class_name"] for det in detection_info_list))
-                        send_telegram_message(
-                            text=f"🔎 Detection Alert!\nDetected: {detected_classes}",
-                            photo_path=os.path.join(output_dir, annotated_name)
-                        )
-                        logger.info(f"📩 Telegram notification sent: 🔎 Detection Alert! Detected: {detected_classes}")
-                        last_notification_time = current_time
-                        detection_occurred = False
+            # If we have decided to run detection on the captured frame.
+            if run_detection:
+                try:
+                    start_time = time.time()
+                    annotated_frame, object_detected, original_frame, detection_info_list = detector_instance.detect_objects(
+                        frame, class_filter=class_filter,
+                        confidence_threshold=confidence_threshold,
+                        save_threshold=save_threshold
+                    )
+                except Exception as e:
+                    logger.error(f"Inference error detected: {e}. Reinitializing detector...")
+                    with detector_lock:
+                        try:
+                            detector_instance = Detector(model_choice=model_choice, debug=_debug)
+                        except Exception as e2:
+                            logger.error(f"Detector reinitialization failed: {e2}")
+                    time.sleep(1)
+                    continue
+
+                detection_time = time.time() - start_time
+                logger.debug(f"Detection took {detection_time:.4f} seconds for one frame.")
+
+                with frame_lock:
+                    latest_frame = annotated_frame.copy()
+                    latest_frame_timestamp = time.time()  # update timestamp when a new frame arrives
+
+                current_time = time.time()
+                if object_detected:
+                    timestamp = time.strftime("%Y%m%d_%H%M%S")
+                    annotated_name = f"{timestamp}_frame_annotated.jpg"
+                    original_name = f"{timestamp}_frame_original.jpg"
+                    zoomed_name = f"{timestamp}_frame_zoomed.jpg"
+
+                    cv2.imwrite(os.path.join(output_dir, annotated_name), annotated_frame)
+                    cv2.imwrite(os.path.join(output_dir, original_name), original_frame)
+
+                    # Generate the zoomed version based on the first detection's bounding box.
+                    if detection_info_list:
+                        # For simplicity, use the first detected object's bounding box.
+                        first_det = detection_info_list[0]
+                        x1, y1, x2, y2 = first_det["x1"], first_det["y1"], first_det["x2"], first_det["y2"]
+                        # Optionally add some margin (e.g. 10 pixels) and ensure the values are within image bounds.
+                        margin = 100
+                        h, w = annotated_frame.shape[:2]
+                        x1 = max(0, x1 - margin)
+                        y1 = max(0, y1 - margin)
+                        x2 = min(w, x2 + margin)
+                        y2 = min(h, y2 + margin)
+                        zoomed_frame = annotated_frame[y1:y2, x1:x2]
+                        cv2.imwrite(os.path.join(output_dir, zoomed_name), zoomed_frame)
                     else:
-                        logger.debug("Cooldown active, not sending alert.")
+                        # If no bounding box is available, fall back to a resized annotated frame.
+                        cv2.imwrite(os.path.join(output_dir, zoomed_name), annotated_frame)
 
-            frame_count += 1
-            detection_duration = time.time() - start_time
-            target_duration = 1.0 / max_fps_detection
-            if detection_duration < target_duration:
-                time.sleep(target_duration - detection_duration)
+                    with open(csv_path, mode="a", newline="") as f:
+                        writer = csv.writer(f)
+                        for det in detection_info_list:
+                            writer.writerow([
+                                timestamp, annotated_name, det["class_name"],
+                                f"{det['confidence']:.2f}",
+                                det["x1"], det["y1"], det["x2"], det["y2"]
+                            ])
+
+                    # Set flag indicating a detection occurred.
+                    detection_occurred = True
+
+                    # Send Telegram alert if detection information is available.
+                    with telegram_lock:
+                        if detection_occurred and (current_time - last_notification_time >= telegram_cooldown):
+                            detected_classes = ", ".join(set(det["class_name"] for det in detection_info_list))
+                            send_telegram_message(
+                                text=f"🔎 Detection Alert!\nDetected: {detected_classes}",
+                                photo_path=os.path.join(output_dir, annotated_name)
+                            )
+                            logger.info(f"📩 Telegram notification sent: 🔎 Detection Alert! Detected: {detected_classes}")
+                            last_notification_time = current_time
+                            detection_occurred = False
+                        else:
+                            logger.debug("Cooldown active, not sending alert.")
+
+                frame_count += 1
+                detection_duration = time.time() - start_time
+                target_duration = 1.0 / max_fps_detection
+                if detection_duration < target_duration:
+                    time.sleep(target_duration - detection_duration)
+
         except Exception as e:
             logger.error(f"Error in detection loop: {e}")
             # If any error occurs, reinitialize the detector.
