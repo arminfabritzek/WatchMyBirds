@@ -67,7 +67,6 @@ detection_classes_agg = set()  # Aggregated set of detected classes since last a
 # Configuration Parameters
 # --------------------------------------------------------------------------
 model_choice = os.getenv("MODEL_CHOICE", "yolo")  # only "yolo" supported for now
-class_filter = json.loads(os.getenv("CLASS_FILTER", '["bird", "person"]'))
 confidence_threshold = float(os.getenv("CONFIDENCE_THRESHOLD", 0.8))
 save_threshold = float(os.getenv("SAVE_THRESHOLD", 0.8))
 max_fps_detection = float(os.getenv("MAX_FPS_DETECTION", 3))  # Lowering this reduces the frame rate for inference, thus lowering CPU usage.
@@ -81,7 +80,6 @@ telegram_cooldown = float(os.getenv("TELEGRAM_COOLDOWN", 5))  # seconds between 
 
 config = {
     "model_choice": model_choice,
-    "class_filter": class_filter,
     "confidence_threshold": confidence_threshold,
     "save_threshold": save_threshold,
     "max_fps_detection": max_fps_detection,
@@ -425,7 +423,7 @@ def detection_loop():
                 try:
                     start_time = time.time()
                     annotated_frame, object_detected, original_frame, detection_info_list = detector_instance.detect_objects(
-                        frame, class_filter=class_filter,
+                        frame,
                         confidence_threshold=confidence_threshold,
                         save_threshold=save_threshold
                     )

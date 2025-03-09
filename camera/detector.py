@@ -8,6 +8,8 @@ import numpy as np
 import onnxruntime
 import requests
 import hashlib
+
+import yaml
 from PIL import Image, ImageDraw, ImageFont
 from dotenv import load_dotenv
 load_dotenv()
@@ -21,7 +23,7 @@ logger.setLevel(logging.DEBUG)
 
 
 class BaseDetectionModel:
-    def detect(self, frame, confidence_threshold, class_filter):
+    def detect(self, frame, confidence_threshold):
         """
         Perform detection on the provided frame.
         Must return a tuple: (annotated_frame, detection_info_list)
@@ -49,6 +51,7 @@ class ONNXModel(BaseDetectionModel):
             logger.debug(
                 f"No YOLO8N_MODEL_PATH provided.  Using default model path: {self.model_path}")
             self.download_best_model()
+            self.download_latest_labels()
 
         # Initialize ONNX Runtime session.  Handles potential errors.
         try:
@@ -60,14 +63,39 @@ class ONNXModel(BaseDetectionModel):
             raise  # Re-raise the exception to halt execution
 
         self.input_size = (640, 640)  # Assuming 640x640 input.  Get from model metadata if possible.
-        self.class_names = ["bird"]  # Get this from model metadata if your model has it.
+        # Load class names from labels.yaml in the same folder as the model.
+        labels_path = os.path.join(os.path.dirname(self.model_path), "labels.yaml")
+        if not os.path.exists(labels_path):
+            self.download_latest_labels()
+
+        if os.path.exists(labels_path):
+            try:
+                with open(labels_path, "r") as f:
+                    label_data = yaml.safe_load(f)
+                names = label_data.get("names")
+                if isinstance(names, dict):
+                    # Convert dict to a list sorted by key (assuming keys are integers or strings of integers)
+                    sorted_items = sorted(names.items(), key=lambda item: int(item[0]))
+                    self.class_names = [name for key, name in sorted_items]
+                elif isinstance(names, list):
+                    self.class_names = names
+                else:
+                    logger.warning("Unexpected format in labels.yaml; using default class name.")
+                    self.class_names = ["bird"]
+            except Exception as e:
+                logger.error(f"Error loading labels from {labels_path}: {e}", exc_info=True)
+                self.class_names = ["bird"]
+        else:
+            logger.warning(f"Label file not found at {labels_path}. Using default class name.")
+            self.class_names = ["bird"]
+
         self.inference_error_count = 0
 
         # Warm-up (optional, but good practice)
         dummy_image = cv2.imread("assets/static_placeholder.jpg")
         if dummy_image is not None:
             try:
-                self.detect(dummy_image, 0.5, None)  # Warm-up call
+                self.detect(dummy_image, 0.5)  # Warm-up call
                 logger.info("Model warm-up successful.")
             except Exception as e:
                 logger.error(f"Model warm-up failed: {e}", exc_info=True)
@@ -107,6 +135,38 @@ class ONNXModel(BaseDetectionModel):
             logger.info(f"Best model updated at {dest_path}")
         else:
             logger.info("Local model is already up-to-date.")
+
+    def download_latest_labels(self):
+        """
+        Download the latest labels.yaml file from GitHub and store it next to the model.
+        """
+        labels_url = "https://raw.githubusercontent.com/arminfabritzek/WatchMyBirds-Train-YOLO/main/best_model/weights/labels.yaml"
+        labels_dest_path = os.path.join(os.path.dirname(self.model_path), "labels.yaml")
+        os.makedirs(os.path.dirname(labels_dest_path), exist_ok=True)
+
+        response = requests.get(labels_url, stream=True)
+        if response.status_code != 200:
+            logger.error(f"Failed to download labels.yaml. Status code: {response.status_code}")
+            return
+
+        downloaded_data = response.content
+        downloaded_hash = hashlib.sha256(downloaded_data).hexdigest()
+        logger.info(f"Downloaded labels.yaml hash: {downloaded_hash}")
+
+        if os.path.exists(labels_dest_path):
+            with open(labels_dest_path, "rb") as f:
+                local_data = f.read()
+            local_hash = hashlib.sha256(local_data).hexdigest()
+            logger.info(f"Local labels.yaml hash: {local_hash}")
+        else:
+            local_hash = None
+
+        if local_hash != downloaded_hash:
+            with open(labels_dest_path, "wb") as f:
+                f.write(downloaded_data)
+            logger.info(f"labels.yaml updated at {labels_dest_path}")
+        else:
+            logger.info("Local labels.yaml is already up-to-date.")
 
     def preprocess_image(self, img):
         """Preprocesses an image for YOLOv8 inference (ONNX version)."""
@@ -209,7 +269,7 @@ class ONNXModel(BaseDetectionModel):
             box[3] = max(0, min(box[3], original_image_shape[0]))
         return detections
 
-    def detect(self, frame, confidence_threshold, class_filter):
+    def detect(self, frame, confidence_threshold):
         """
         Performs object detection on a single frame using ONNX Runtime.
         """
@@ -237,58 +297,57 @@ class ONNXModel(BaseDetectionModel):
                 class_id = detection['class_id']
                 label = self.class_names[class_id] if class_id < len(
                     self.class_names) else "unknown"
-                if class_filter is None or label in class_filter:
-                    detection_info_list.append({
-                        "class_name": label,
-                        "confidence": detection['confidence'],
-                        "x1": int(detection['box'][0]),
-                        "y1": int(detection['box'][1]),
-                        "x2": int(detection['box'][2]),
-                        "y2": int(detection['box'][3]),
-                    })
+                detection_info_list.append({
+                    "class_name": label,
+                    "confidence": detection['confidence'],
+                    "x1": int(detection['box'][0]),
+                    "y1": int(detection['box'][1]),
+                    "x2": int(detection['box'][2]),
+                    "y2": int(detection['box'][3]),
+                })
 
-                    # Draw bounding box
-                    x1, y1, x2, y2 = detection['box']
-                    cv2.rectangle(annotated_frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                # Draw bounding box
+                x1, y1, x2, y2 = detection['box']
+                cv2.rectangle(annotated_frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
 
-                    # Prepare the annotation text
-                    annotation_text = f"{label} ({detection['confidence']:.2f})"
+                # Prepare the annotation text
+                annotation_text = f"{label} ({detection['confidence']:.2f})"
 
-                    # Convert the OpenCV image (BGR) to a PIL image (RGB)
-                    annotated_pil = Image.fromarray(cv2.cvtColor(annotated_frame, cv2.COLOR_BGR2RGB))
-                    draw = ImageDraw.Draw(annotated_pil)
+                # Convert the OpenCV image (BGR) to a PIL image (RGB)
+                annotated_pil = Image.fromarray(cv2.cvtColor(annotated_frame, cv2.COLOR_BGR2RGB))
+                draw = ImageDraw.Draw(annotated_pil)
 
-                    # Load the TrueType font from the assets folder.
-                    # If the font file is not found, it falls back to the default PIL font.
-                    font_size = 24  # Adjust as needed.
-                    try:
-                        font = ImageFont.truetype("assets/WRP_cruft.ttf", font_size)
-                    except IOError:
-                        font = ImageFont.load_default()
+                # Load the TrueType font from the assets folder.
+                # If the font file is not found, it falls back to the default PIL font.
+                font_size = 24  # Adjust as needed.
+                try:
+                    font = ImageFont.truetype("assets/WRP_cruft.ttf", font_size)
+                except IOError:
+                    font = ImageFont.load_default()
 
-                    # Calculate the text dimensions using the font's getbbox method.
-                    bbox = font.getbbox(annotation_text)
-                    text_width = bbox[2] - bbox[0]
-                    text_height = bbox[3] - bbox[1]
+                # Calculate the text dimensions using the font's getbbox method.
+                bbox = font.getbbox(annotation_text)
+                text_width = bbox[2] - bbox[0]
+                text_height = bbox[3] - bbox[1]
 
-                    # Add some padding around the text.
-                    padding = 1
+                # Add some padding around the text.
+                padding = 1
 
-                    # The rectangle height should accommodate the text height plus the top/bottom padding.
-                    box_height = text_height + 2 * padding
+                # The rectangle height should accommodate the text height plus the top/bottom padding.
+                box_height = text_height + 2 * padding
 
-                    # Draw a filled white rectangle directly under the bounding box.
-                    draw.rectangle([(x1, y2), (x2, y2 + box_height)], fill="white")
+                # Draw a filled white rectangle directly under the bounding box.
+                draw.rectangle([(x1, y2), (x2, y2 + box_height)], fill="white")
 
-                    # Adjust text_y to account for bbox[1] ---
-                    text_x = x1 + padding
-                    text_y = y2 + padding - bbox[1]  # Subtract bbox[1]
+                # Adjust text_y to account for bbox[1] ---
+                text_x = x1 + padding
+                text_y = y2 + padding - bbox[1]  # Subtract bbox[1]
 
-                    # Draw the annotation text in black inside the white rectangle.
-                    draw.text((text_x, text_y), annotation_text, font=font, fill="black")
+                # Draw the annotation text in black inside the white rectangle.
+                draw.text((text_x, text_y), annotation_text, font=font, fill="black")
 
-                    # Convert the PIL image back to a NumPy array in BGR format.
-                    annotated_frame = cv2.cvtColor(np.array(annotated_pil), cv2.COLOR_RGB2BGR)
+                # Convert the PIL image back to a NumPy array in BGR format.
+                annotated_frame = cv2.cvtColor(np.array(annotated_pil), cv2.COLOR_RGB2BGR)
 
 
 
@@ -322,14 +381,14 @@ class Detector:
         else:
             raise ValueError(f"Unsupported model choice: {self.model_choice}")
 
-    def detect_objects(self, frame, class_filter=None, confidence_threshold=0.5, save_threshold=0.8):
+    def detect_objects(self, frame, confidence_threshold=0.5, save_threshold=0.8):
         """
         Runs object detection on a frame.
         Returns a tuple: (annotated_frame, object_detected, original_frame, detection_info_list)
         """
         original_frame = frame.copy()
         annotated_frame, detection_info_list = self.model.detect(
-            frame, confidence_threshold, class_filter)
+            frame, confidence_threshold)
         object_detected = any(
             det["confidence"] >= save_threshold for det in detection_info_list)
         return annotated_frame, object_detected, original_frame, detection_info_list
