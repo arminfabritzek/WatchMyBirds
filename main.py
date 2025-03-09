@@ -60,7 +60,8 @@ telegram_lock = threading.Lock()
 latest_frame_timestamp = 0
 detection_occurred = False
 last_notification_time = time.time()  # using time.time() for wall-clock
-
+detection_counter = 0  # Global variable to count detections between alerts
+detection_classes_agg = set()  # Aggregated set of detected classes since last alert.
 
 # --------------------------------------------------------------------------
 # Configuration Parameters
@@ -340,7 +341,8 @@ def generate_frames():
 # Detection Loop Function
 # -----------------------------
 def detection_loop():
-    global latest_frame, latest_frame_timestamp, detector_instance, video_capture, last_notification_time, detection_occurred
+    global latest_frame, latest_frame_timestamp, detector_instance, video_capture
+    global last_notification_time, detection_occurred, detection_counter, detection_classes_agg
 
     # Keep trying to initialize video_capture and detector until successful.
     while video_capture is None:
@@ -481,20 +483,28 @@ def detection_loop():
                                 det["x1"], det["y1"], det["x2"], det["y2"]
                             ])
 
-                    # Set flag indicating a detection occurred.
+                    # Mark that a detection occurred and update the aggregated values.
                     detection_occurred = True
+                    detection_counter += len(detection_info_list)
+                    # Aggregate the classes from the current detection.
+                    detection_classes_agg.update(det["class_name"] for det in detection_info_list)
 
                     # Send Telegram alert if detection information is available.
                     with telegram_lock:
                         if detection_occurred and (current_time - last_notification_time >= telegram_cooldown):
-                            detected_classes = ", ".join(set(det["class_name"] for det in detection_info_list))
+                            aggregated_classes = ", ".join(sorted(detection_classes_agg))
+                            alert_text = (f"🔎 Detection Alert!\n"
+                                          f"Detected classes: {aggregated_classes}\n"
+                                          f"Total detections since last alert: {detection_counter}")
                             send_telegram_message(
-                                text=f"🔎 Detection Alert!\nDetected: {detected_classes}",
+                                text=alert_text,
                                 photo_path=os.path.join(output_dir, annotated_name)
                             )
-                            logger.info(f"📩 Telegram notification sent: 🔎 Detection Alert! Detected: {detected_classes}")
+                            logger.info(f"📩 Telegram notification sent: {alert_text}")
                             last_notification_time = current_time
                             detection_occurred = False
+                            detection_counter = 0  # Reset the counter.
+                            detection_classes_agg = set()  # Reset the aggregated classes.
                         else:
                             logger.debug("Cooldown active, not sending alert.")
 
