@@ -51,4 +51,4 @@ EXPOSE 8050
 ENTRYPOINT ["/entrypoint.sh"]
 
 # Set the command to run your app
-CMD ["waitress-serve", "--listen=0.0.0.0:8050", "main:server"]
+CMD ["waitress-serve", "--listen=0.0.0.0:8050", "main:app"]

@@ -16,3 +16,4 @@ waitress~=3.0.2
 dash~=2.18.2
 dash-bootstrap-components~=1.7.1
 pandas~=2.2.3
+PyYAML~=6.0.2

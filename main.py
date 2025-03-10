@@ -2,22 +2,17 @@
 # Main Script for Real-Time Object Detection with Webcam and Dash Web Interface
 # main.py
 # ------------------------------------------------------------------------------
-from flask import send_from_directory, Response
-from dash import Dash, html, dcc, callback_context, ALL, Input, Output, State, no_update
-import dash_bootstrap_components as dbc
 
 from dotenv import load_dotenv
 load_dotenv()
 import json
 import os
-import math
 import time
 import csv
 import cv2
 import threading
 import pytz
 from datetime import datetime, timedelta
-import numpy as np
 import logging
 from astral.geocoder import database, lookup
 from astral.sun import sun
@@ -102,12 +97,6 @@ if not os.path.exists(csv_path):
         writer = csv.writer(f)
         writer.writerow(["timestamp", "filename", "class_name", "confidence", "x1", "y1", "x2", "y2"])
 
-# Additional constants for the frontend
-IMAGE_WIDTH = 150
-RECENT_IMAGES_COUNT = 3
-PAGE_SIZE = 20  # Number of images per page
-
-
 # -----------------------------
 # Helper Functions
 # -----------------------------
@@ -138,108 +127,6 @@ def send_alert(detected_classes, annotated_path):
         logger.info(f"📩 Telegram notification sent: {detection_text}")
     except Exception as e:
         logger.error(f"Error sending Telegram alert: {e}")
-
-def get_captured_images() -> list:
-    """Returns a list of captured images sorted by date."""
-    try:
-        files = [f for f in os.listdir(output_dir) if f.endswith("_frame_annotated.jpg")]
-        files.sort(reverse=True)  # Neueste zuerst
-        return files
-    except Exception as e:
-        logger.error(f"Error retrieving captured images: {e}")
-        return []
-
-def derive_original_filename(annotated_filename: str,
-                             annotated_suffix: str = "_frame_annotated",
-                             original_suffix: str = "_frame_original") -> str:
-    """Derives the original image filename from the annotated filename."""
-    return annotated_filename.replace(annotated_suffix, original_suffix)
-
-def derive_zoomed_filename(annotated_filename: str,
-                           annotated_suffix: str = "_frame_annotated",
-                           zoomed_suffix: str = "_frame_zoomed") -> str:
-    """Derives the zoomed image filename from the annotated filename."""
-    return annotated_filename.replace(annotated_suffix, zoomed_suffix)
-
-def create_thumbnail(image_filename: str, index: int) -> html.Button:
-    """
-    Creates a thumbnail button that shows the zoomed version of the annotated image.
-    When clicked, the modal will show the original image.
-    """
-    zoomed_filename = derive_zoomed_filename(image_filename)
-    style = {
-        "cursor": "pointer",
-        "border": "none",
-        "background": "none",
-        "padding": "5px",
-        "width": f"{IMAGE_WIDTH}px"
-    }
-    return html.Button(
-        html.Img(
-            src=f"/images/{zoomed_filename}",
-            alt=f"Thumbnail of {zoomed_filename}",
-            style=style
-        ),
-        id={'type': 'thumbnail', 'index': index},
-        n_clicks=0,
-        style={"border": "none", "background": "none", "padding": "0"}
-    )
-
-def create_image_modal(image_filename: str, index: int) -> dbc.Modal:
-    """
-    Creates a modal to display the original image when its thumbnail is clicked.
-    The modal header will show the filename, and the body displays the full-size original image.
-    """
-    original_filename = image_filename
-    return dbc.Modal(
-        [
-            # Disable the default close button by setting close_button=False.
-            dbc.ModalHeader(dbc.ModalTitle(original_filename), close_button=False),
-            dbc.ModalBody(
-                html.Img(src=f"/images/{original_filename}", style={"width": "100%"})
-            ),
-            dbc.ModalFooter(
-                dbc.Button("Close", id={'type': 'close', 'index': index}, className="ml-auto", n_clicks=0)
-            ),
-        ],
-        id={'type': 'modal', 'index': index},
-        is_open=False,
-        size="lg",
-    )
-
-def generate_recent_gallery() -> html.Div:
-    """Generates the gallery of the last captured images including modals."""
-    images = get_captured_images()
-    recent_images = images[:RECENT_IMAGES_COUNT]
-    thumbnails = [create_thumbnail(img, i) for i, img in enumerate(recent_images)]
-    modals = [create_image_modal(img, i) for i, img in enumerate(recent_images)]
-    return html.Div(thumbnails + modals, id="recent-gallery", style={"textAlign": "center"})
-
-def generate_gallery() -> html.Div:
-    """Generates a grid view of all captured images with modals for larger display."""
-    images = get_captured_images()
-    grid_items = []
-    modals = []
-    for i, img in enumerate(images):
-        grid_items.append(
-            html.Div(
-                create_thumbnail(img, i),
-                style={
-                    "flex": "1 0 21%",  # Adjust to control items per row
-                    "margin": "5px",
-                    "maxWidth": "150px"
-                }
-            )
-        )
-        modals.append(create_image_modal(img, i))
-    return html.Div(
-        grid_items + modals,
-        style={
-            "display": "flex",
-            "flexWrap": "wrap",
-            "justifyContent": "center"
-        }
-    )
 
 video_source_env = os.getenv("VIDEO_SOURCE", "0")
 try:
@@ -463,217 +350,27 @@ detection_thread = threading.Thread(target=detection_loop, daemon=True)
 detection_thread.start()
 
 
-# ------------------------------------------------------------------------------
-# 8. Flask routes: static files and video feed
-# ------------------------------------------------------------------------------
-# Registering the static route
-from flask import Flask
-server = Flask(__name__, static_folder="assets", static_url_path="/assets")
-
-def setup_web_routes(server):
-    # Route to serve images from the output directory.
-    def serve_image(filename):
-        image_path = os.path.join(output_dir, filename)
-        if not os.path.exists(image_path):
-            return "Image not found", 404
-        return send_from_directory(output_dir, filename)
-
-    server.route("/images/<path:filename>")(serve_image)
-    server.route("/video_feed")(lambda: Response(video_capture.generate_frames(output_resize_width, STREAM_FPS),
-                                                 mimetype="multipart/x-mixed-replace; boundary=frame"))
-
-setup_web_routes(server)
-# ------------------------------------------------------------------------------
-# 9. Dash App Setup und Layouts
-# ------------------------------------------------------------------------------
-external_stylesheets = [dbc.themes.BOOTSTRAP]
-app = Dash(__name__, server=server, external_stylesheets=external_stylesheets)
-app.config.suppress_callback_exceptions = True
-
-def stream_layout() -> html.Div:
-    """Responsive layout for the main page with live stream and recent images gallery."""
-    return dbc.Container([
-        dbc.NavbarSimple(
-            brand=html.Img(
-                src="/assets/the_birdwatcher.jpeg",
-                className="img-fluid",
-                style={"width": "20vw", "minWidth": "100px", "maxWidth": "200px"}
-            ),
-            brand_href="/",
-            children=[
-                dbc.NavItem(dbc.NavLink("Live Stream", href="/", className="mx-auto")),
-                dbc.NavItem(dbc.NavLink("Image Gallery", href="/gallery", className="mx-auto"))
-            ],
-            color="primary",
-            dark=True,
-            fluid=True,
-            className="justify-content-center"
-        ),
-        dbc.Row([
-            dbc.Col(html.H1("Real-Time Stream", className="text-center"), width=12, className="my-3")
-        ]),
-        dbc.Row([
-            dbc.Col(
-                dcc.Loading(
-                    id="loading-video",
-                    type="default",
-                    children=html.Img(
-                        id="video-feed",
-                        src="/video_feed",
-                        style={"width": "100%", "maxWidth": "800px", "display": "block", "margin": "0 auto"}
-                    )
-                ),
-                width=12
-            )
-        ], className="my-3"),
-        dbc.Row([
-            dbc.Col(html.H2("Recent Detections", className="text-center"), width=12, className="mt-4")
-        ]),
-        dbc.Row([
-            dbc.Col(generate_recent_gallery(), width=12)
-        ], className="mb-5")
-    ], fluid=True)
-
-
-def gallery_layout() -> html.Div:
-    return dbc.Container([
-        dbc.NavbarSimple(
-            brand=html.Img(
-                src="/assets/the_birdwatcher.jpeg",
-                className="img-fluid",
-                style={"width": "20vw", "minWidth": "100px", "maxWidth": "200px"}
-            ),
-            brand_href="/",
-            children=[
-                dbc.NavItem(dbc.NavLink("Live Stream", href="/", className="mx-auto")),
-                dbc.NavItem(dbc.NavLink("Image Gallery", href="/gallery", className="mx-auto"))
-            ],
-            color="primary",
-            dark=True,
-            fluid=True,
-            className="justify-content-center"
-        ),
-        # Store to hold the current page index
-        dcc.Store(id="page-store", data=0),
-        dbc.Row([
-            dbc.Col(html.H1("Image Gallery", className="text-center"), width=12, className="my-3")
-        ]),
-        dbc.Row([
-            # Pagination controls
-            dbc.Col([
-                dbc.Button("Previous", id="prev-page", n_clicks=0, color="primary", className="me-2"),
-                dbc.Button("Next", id="next-page", n_clicks=0, color="primary"),
-            ], width=12, className="mb-2", style={"textAlign": "center"}),
-        ]),
-        dbc.Row([
-            dbc.Col(html.Div(id="gallery-content"), width=12)
-        ], className="mb-5"),
-    ], fluid=True)
-
-app.layout = html.Div([
-    dcc.Location(id="url", refresh=False),
-    html.Div(id="page-content")
-])
-
-# ------------------------------------------------------------------------------
-# 10. Callbacks
-# ------------------------------------------------------------------------------
-@app.callback(
-    Output("page-content", "children"),
-    Input("url", "pathname")
-)
-def display_page(pathname):
-    if pathname == "/gallery":
-        return gallery_layout()
-    elif pathname == "/" or pathname == "":
-        return stream_layout()
-    else:
-        return "404 Not Found"
-
-# Callback for opening/closing image modals
-@app.callback(
-    Output({"type": "modal", "index": ALL}, "is_open"),
-    [Input({'type': 'thumbnail', 'index': ALL}, 'n_clicks'),
-     Input({'type': 'close', 'index': ALL}, 'n_clicks')],
-    [State({"type": "modal", "index": ALL}, "is_open")]
-)
-def toggle_modal(thumbnail_clicks, close_clicks, current_states):
-    ctx = callback_context
-    if not ctx.triggered:
-        return current_states
-
-    triggered_prop = ctx.triggered[0]['prop_id']
-    triggered_id = json.loads(triggered_prop.split('.')[0])
-    new_states = [False] * len(current_states)
-    # If a thumbnail is clicked, open that modal.
-    if "thumbnail" in triggered_prop:
-        new_states[triggered_id["index"]] = True
-    # If a close button is clicked, ensure that modal is closed.
-    elif "close" in triggered_prop:
-        new_states[triggered_id["index"]] = False
-    return new_states
-
-# Callback to show/hide the spinner while the video is loading.
-@app.callback(
-    Output("loading-spinner", "style"),
-    [Input("video-feed", "loading_state")],
-    prevent_initial_call=True
-)
-def show_hide_spinner(loading_state):
-    if loading_state and loading_state.get('is_loading'):
-        return {"display": "block"}
-    else:
-        return {"display": "none"}
-
-@app.callback(
-    [Output("gallery-content", "children"),
-     Output("page-store", "data")],
-    [Input("prev-page", "n_clicks"),
-     Input("next-page", "n_clicks"),
-     Input("page-store", "data")]
-)
-def update_gallery_and_page(prev_clicks, next_clicks, current_page):
-    ctx = callback_context
-    triggered_id = ctx.triggered[0]["prop_id"].split(".")[0] if ctx.triggered else None
-
-    images = get_captured_images()
-    total_pages = math.ceil(len(images) / PAGE_SIZE) if images else 1
-
-    # Update current_page based on the button clicked
-    if triggered_id == "prev-page" and current_page > 0:
-        current_page -= 1
-    elif triggered_id == "next-page" and current_page < total_pages - 1:
-        current_page += 1
-
-    # Build the subset for the current page
-    start_idx = current_page * PAGE_SIZE
-    end_idx = min(start_idx + PAGE_SIZE, len(images))
-    subset = images[start_idx:end_idx]
-
-    # Create gallery using local (page-relative) indices
-    grid_items = []
-    modals = []
-    for i, img in enumerate(subset):
-        # Use 'i' instead of start_idx + i so that indices go from 0 to len(subset)-1
-        grid_items.append(
-            html.Div(
-                create_thumbnail(img, i),
-                style={"flex": "1 0 21%", "margin": "5px", "maxWidth": "150px"}
-            )
-        )
-        modals.append(create_image_modal(img, i))
-
-    gallery_div = html.Div(
-        grid_items + modals,
-        style={"display": "flex", "flexWrap": "wrap", "justifyContent": "center"}
-    )
-
-    return gallery_div, current_page
-
 # -----------------------------
-# Run the Dash App
+# Import and Run the Web Interface
 # -----------------------------
+from web.web_interface import create_web_interface
+
+# Prepare parameters to pass to the web interface module.
+params = {
+    "output_dir": output_dir,
+    "video_capture": video_capture,
+    "output_resize_width": output_resize_width,
+    "STREAM_FPS": STREAM_FPS,
+    "IMAGE_WIDTH": 150,
+    "RECENT_IMAGES_COUNT": 3,
+    "PAGE_SIZE": 20,
+}
+
+interface = create_web_interface(params)
+
+# Expose the Flask server as the WSGI app for Waitress.
+app = interface["server"]
+
 if __name__ == '__main__':
-    # Only run the development server when not in production
-    if _debug:
-        app.run_server(host='0.0.0.0', port=8050, debug=True)
+    # Run the web interface
+    interface["run"](debug=_debug, host='0.0.0.0', port=8050)
