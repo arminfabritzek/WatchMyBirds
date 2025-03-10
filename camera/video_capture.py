@@ -1,5 +1,6 @@
 # ------------------------------------------------------------------------------
 # Video Capture Class for Input Streams
+# camera/video_capture.py
 # ------------------------------------------------------------------------------
 # video_capture.py
 import os
@@ -420,16 +421,80 @@ class VideoCapture:
             self.reinit_lock.release()
 
     def get_frame(self):
-        if self.q.empty():
-            self._log("Frame queue is empty.")
-            return None
         try:
-            frame = self.q.get_nowait()
+            # Block for up to 0.1 seconds waiting for a frame.
+            frame = self.q.get(timeout=0.3)
             self._log("Retrieved a frame from the queue.")
             return frame
         except queue.Empty:
             self._log("Queue is empty, unable to retrieve frame.")
             return None
+
+    def generate_frames(self, output_resize_width, stream_fps):
+        """
+        Generator that yields JPEG-encoded frames from the video stream.
+        """
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        font_scale = 0.7
+        font_thickness = 2
+        timestamp_y = 50
+        placeholder_threshold = 5  # seconds
+
+        # Load a static placeholder image once.
+        static_placeholder_path = "assets/static_placeholder.jpg"
+        if os.path.exists(static_placeholder_path):
+            static_placeholder = cv2.imread(static_placeholder_path)
+            if static_placeholder is not None:
+                original_h, original_w = static_placeholder.shape[:2]
+                ratio = original_h / float(original_w)
+                placeholder_w = output_resize_width
+                placeholder_h = int(placeholder_w * ratio)
+                static_placeholder = cv2.resize(static_placeholder, (placeholder_w, placeholder_h))
+            else:
+                placeholder_w = output_resize_width
+                placeholder_h = int(placeholder_w * 9 / 16)
+                static_placeholder = np.zeros((placeholder_h, placeholder_w, 3), dtype=np.uint8)
+        else:
+            placeholder_w = output_resize_width
+            placeholder_h = int(placeholder_w * 9 / 16)
+            static_placeholder = np.zeros((placeholder_h, placeholder_w, 3), dtype=np.uint8)
+
+        while True:
+            start_time = time.time()
+            # Use the blocking get_frame() method.
+            frame = self.get_frame()
+            if frame is not None:
+                # Use self.resolution to determine how to resize.
+                w, h = self.resolution
+                output_resize_height = int(h * placeholder_w / w)
+                resized_frame = cv2.resize(frame, (placeholder_w, output_resize_height))
+                timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+                cv2.putText(resized_frame, timestamp, (10, timestamp_y),
+                            font, font_scale, (0, 255, 0), font_thickness)
+                ret, buffer = cv2.imencode('.jpg', resized_frame, [int(cv2.IMWRITE_JPEG_QUALITY), 80])
+                if ret:
+                    yield (b'--frame\r\n'
+                           b'Content-Type: image/jpeg\r\n\r\n' + buffer.tobytes() + b'\r\n')
+                else:
+                    logger.error("Failed to encode resized frame.")
+            else:
+                # Use the placeholder if no frame is available.
+                placeholder_copy = static_placeholder.copy()
+                noise = np.random.randint(-100, 20, placeholder_copy.shape, dtype=np.int16)
+                placeholder_copy = np.clip(placeholder_copy.astype(np.int16) + noise, 0, 255).astype(np.uint8)
+                timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+                cv2.putText(placeholder_copy, timestamp, (10, timestamp_y),
+                            font, font_scale, (0, 255, 0), font_thickness)
+                ret, buffer = cv2.imencode('.jpg', placeholder_copy, [int(cv2.IMWRITE_JPEG_QUALITY), 80])
+                if ret:
+                    yield (b'--frame\r\n'
+                           b'Content-Type: image/jpeg\r\n\r\n' + buffer.tobytes() + b'\r\n')
+                else:
+                    logger.error("Failed to encode placeholder frame.")
+            elapsed = time.time() - start_time
+            desired_frame_time = 1.0 / stream_fps
+            if elapsed < desired_frame_time:
+                time.sleep(desired_frame_time - elapsed)
 
     def release(self):
         """

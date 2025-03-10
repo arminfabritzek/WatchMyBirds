@@ -1,5 +1,6 @@
 # ------------------------------------------------------------------------------
 # Detector Module for Object Detection (Modularized, ONNX Runtime)
+# camera/detector.py
 # ------------------------------------------------------------------------------
 import os
 import cv2

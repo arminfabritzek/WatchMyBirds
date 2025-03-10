@@ -1,5 +1,6 @@
 # ------------------------------------------------------------------------------
 # Main Script for Real-Time Object Detection with Webcam and Dash Web Interface
+# main.py
 # ------------------------------------------------------------------------------
 from flask import send_from_directory, Response
 from dash import Dash, html, dcc, callback_context, ALL, Input, Output, State, no_update
@@ -69,8 +70,8 @@ detection_classes_agg = set()  # Aggregated set of detected classes since last a
 model_choice = os.getenv("MODEL_CHOICE", "yolo")  # only "yolo" supported for now
 confidence_threshold = float(os.getenv("CONFIDENCE_THRESHOLD", 0.8))
 save_threshold = float(os.getenv("SAVE_THRESHOLD", 0.8))
-max_fps_detection = float(os.getenv("MAX_FPS_DETECTION", 3))  # Lowering this reduces the frame rate for inference, thus lowering CPU usage.
-STREAM_FPS = float(os.getenv("STREAM_FPS", 3))  # Lowering this reduces the frame rate for streaming, conserving resources.
+max_fps_detection = float(os.getenv("MAX_FPS_DETECTION", 1.0))  # Lowering this reduces the frame rate for inference, thus lowering CPU usage.
+STREAM_FPS = float(os.getenv("STREAM_FPS", 1))  # Lowering this reduces the frame rate for streaming, conserving resources.
 output_resize_width = int(os.getenv("STREAM_WIDTH_OUTPUT_RESIZE", 640))
 day_and_night_capture = os.getenv("DAY_AND_NIGHT_CAPTURE", "True").lower() == "true"
 day_and_night_capture_location = os.getenv("DAY_AND_NIGHT_CAPTURE_LOCATION", "Berlin")
@@ -246,94 +247,13 @@ try:
     logger.info("Video source is a webcam.")
 except ValueError:
     video_source = video_source_env
-    logger.info(f"Video source is a stream: {video_source}")
+    logger.info(f"Video source is a stream.")
 
-
-# -----------------------------
-# Frame Generation Function
-# -----------------------------
-def generate_frames():
-    global latest_frame, latest_frame_timestamp, video_capture
-    font = cv2.FONT_HERSHEY_SIMPLEX
-    font_scale = 0.7
-    font_thickness = 2
-    timestamp_y = 50
-    placeholder_threshold = 5  # seconds without a new frame before showing placeholder
-
-    static_placeholder_path = "assets/static_placeholder.jpg"
-    if os.path.exists(static_placeholder_path):
-        static_placeholder = cv2.imread(static_placeholder_path)
-        if static_placeholder is not None:
-            original_h, original_w = static_placeholder.shape[:2]
-            ratio = original_h / float(original_w)
-            placeholder_w = output_resize_width
-            placeholder_h = int(placeholder_w * ratio)
-            static_placeholder = cv2.resize(static_placeholder, (placeholder_w, placeholder_h))
-            logger.info("Using static placeholder from file, adjusted to aspect ratio.")
-        else:
-            logger.error("Failed to load static placeholder image; using black image.")
-            placeholder_w = output_resize_width
-            placeholder_h = int(placeholder_w * 9 / 16)
-            static_placeholder = np.zeros((placeholder_h, placeholder_w, 3), dtype=np.uint8)
-    else:
-        logger.error("Static placeholder not found; using black image.")
-        placeholder_w = output_resize_width
-        placeholder_h = int(placeholder_w * 9 / 16)
-        static_placeholder = np.zeros((placeholder_h, placeholder_w, 3), dtype=np.uint8)
-
-    while True:
-        start_loop_time = time.time()
-        try:
-            # Retrieve resolution if video_capture is defined; otherwise, set to None.
-            with video_capture_lock:
-                if video_capture is None:
-                    logger.debug("video_capture is not initialized; using placeholder.")
-                    resolution = None
-                else:
-                    resolution = video_capture.resolution
-
-            with frame_lock:
-                current_frame = latest_frame
-                last_ts = latest_frame_timestamp
-            # If we have a fresh frame and a valid resolution, use it;
-            # otherwise, show the placeholder.
-            if current_frame is not None and resolution and (time.time() - last_ts < placeholder_threshold):
-                current_input_width, current_input_height = resolution
-                output_resize_height = int(current_input_height * placeholder_w / current_input_width)
-                resized_frame = cv2.resize(current_frame, (placeholder_w, output_resize_height))
-                timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
-                cv2.putText(resized_frame, timestamp, (10, timestamp_y),
-                            font, font_scale, (0, 255, 0), font_thickness)
-                encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), 80]
-                ret, buffer = cv2.imencode('.jpg', resized_frame, encode_param)
-                if ret:
-                    yield (b'--frame\r\n'
-                           b'Content-Type: image/jpeg\r\n\r\n' + buffer.tobytes() + b'\r\n')
-                else:
-                    logger.error("Failed to encode resized frame.")
-            else:
-                # Either no new frame, or video_capture is not defined—show the placeholder.
-                placeholder_with_time = static_placeholder.copy()
-                noise = np.random.randint(-100, 20, placeholder_with_time.shape, dtype=np.int16)
-                placeholder_with_time = np.clip(placeholder_with_time.astype(np.int16) + noise, 0, 255).astype(np.uint8)
-                timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
-                cv2.putText(placeholder_with_time, timestamp, (10, timestamp_y),
-                            font, font_scale, (0, 255, 0), font_thickness)
-                encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), 80]
-                ret, buffer = cv2.imencode('.jpg', placeholder_with_time, encode_param)
-                if ret:
-                    yield (b'--frame\r\n'
-                           b'Content-Type: image/jpeg\r\n\r\n' + buffer.tobytes() + b'\r\n')
-                else:
-                    logger.error("Failed to encode placeholder frame.")
-        except Exception as e:
-            logger.error(f"Error generating frames: {e}")
-            time.sleep(0.1)
-        elapsed = time.time() - start_loop_time
-        desired_frame_time = 1.0 / STREAM_FPS
-        if elapsed < desired_frame_time:
-            time.sleep(desired_frame_time - elapsed)
-
+try:
+    video_capture = VideoCapture(video_source, debug=_debug)
+    logger.info("VideoCapture initial initialization.")
+except Exception as e:
+    logger.error(f"Failed to initialize video capture.")
 
 # -----------------------------
 # Detection Loop Function
@@ -509,8 +429,10 @@ def detection_loop():
                 frame_count += 1
                 detection_duration = time.time() - start_time
                 target_duration = 1.0 / max_fps_detection
-                if detection_duration < target_duration:
-                    time.sleep(target_duration - detection_duration)
+                sleep_time = target_duration - detection_duration
+                logger.debug(f"Detection duration: {detection_duration:.4f}s, sleeping for: {sleep_time:.4f}s")
+                if sleep_time > 0:
+                    time.sleep(sleep_time)
 
         except Exception as e:
             logger.error(f"Error in detection loop: {e}")
@@ -544,18 +466,23 @@ detection_thread.start()
 # ------------------------------------------------------------------------------
 # 8. Flask routes: static files and video feed
 # ------------------------------------------------------------------------------
-def serve_image(filename):
-    image_path = os.path.join(output_dir, filename)
-    if not os.path.exists(image_path):
-        return "Image not found", 404
-    return send_from_directory(output_dir, filename)
-
 # Registering the static route
 from flask import Flask
-server = Flask(__name__)
-server.route("/images/<path:filename>")(serve_image)
-server.route("/video_feed")(lambda: Response(generate_frames(), mimetype="multipart/x-mixed-replace; boundary=frame"))
+server = Flask(__name__, static_folder="assets", static_url_path="/assets")
 
+def setup_web_routes(server):
+    # Route to serve images from the output directory.
+    def serve_image(filename):
+        image_path = os.path.join(output_dir, filename)
+        if not os.path.exists(image_path):
+            return "Image not found", 404
+        return send_from_directory(output_dir, filename)
+
+    server.route("/images/<path:filename>")(serve_image)
+    server.route("/video_feed")(lambda: Response(video_capture.generate_frames(output_resize_width, STREAM_FPS),
+                                                 mimetype="multipart/x-mixed-replace; boundary=frame"))
+
+setup_web_routes(server)
 # ------------------------------------------------------------------------------
 # 9. Dash App Setup und Layouts
 # ------------------------------------------------------------------------------
