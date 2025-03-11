@@ -3,6 +3,8 @@
 # camera/video_capture.py
 # ------------------------------------------------------------------------------
 # video_capture.py
+from config import load_config
+config = load_config()
 import os
 import subprocess
 import cv2
@@ -12,11 +14,8 @@ from threading import Event
 import time
 import numpy as np
 import logging
-from dotenv import load_dotenv
-load_dotenv()
 
-# Read the debug flag from the environment variable (default: False)
-_debug = os.getenv("DEBUG_MODE", "False").lower() == "true"
+_debug = config["DEBUG_MODE"]
 
 # Configure logging
 logging.basicConfig(
@@ -27,7 +26,7 @@ logger = logging.getLogger(__name__)
 logging.getLogger().setLevel(logging.DEBUG if _debug else logging.INFO)
 
 logger.info(f"Debug mode is {'enabled' if _debug else 'disabled'}.")
-print(f"DEBUG_MODE environment variable: {os.getenv('DEBUG_MODE')}")
+print(f"DEBUG_MODE environment variable: {_debug}")
 print(f"Debug mode in code: {_debug}")
 
 

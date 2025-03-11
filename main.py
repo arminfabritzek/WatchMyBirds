@@ -2,9 +2,9 @@
 # Main Script for Real-Time Object Detection with Webcam and Dash Web Interface
 # main.py
 # ------------------------------------------------------------------------------
+from config import load_config
+config = load_config()
 
-from dotenv import load_dotenv
-load_dotenv()
 import json
 import os
 import time
@@ -25,8 +25,39 @@ from camera.video_capture import VideoCapture
 # Apply CPU restriction before starting any threads for slow systems
 restrict_to_cpus()
 
-# Read the debug flag from the environment variable (default: False)
-_debug = os.getenv("DEBUG_MODE", "False").lower() == "true"
+# --------------------------------------------------------------------------
+# Configuration Parameters
+# --------------------------------------------------------------------------
+
+# use the configuration values from the config dictionary.
+_debug = config["DEBUG_MODE"]
+model_choice = config["MODEL_CHOICE"]
+confidence_threshold = config["CONFIDENCE_THRESHOLD"]
+save_threshold = config["SAVE_THRESHOLD"]
+max_fps_detection = config["MAX_FPS_DETECTION"]
+model_path = config["YOLO8N_MODEL_PATH"]
+STREAM_FPS = config["STREAM_FPS"]
+output_resize_width = config["STREAM_WIDTH_OUTPUT_RESIZE"]
+day_and_night_capture = config["DAY_AND_NIGHT_CAPTURE"]
+day_and_night_capture_location = config["DAY_AND_NIGHT_CAPTURE_LOCATION"]
+cpu_limit = config["CPU_LIMIT"]
+telegram_cooldown = config["TELEGRAM_COOLDOWN"]
+output_dir = config["OUTPUT_DIR"]
+video_source = config["VIDEO_SOURCE"]
+
+config = {
+    "model_choice": model_choice,
+    "confidence_threshold": confidence_threshold,
+    "save_threshold": save_threshold,
+    "max_fps_detection": max_fps_detection,
+    "STREAM_FPS": STREAM_FPS,
+    "STREAM_WIDTH_OUTPUT_RESIZE": output_resize_width,
+    "DAY_NIGHT_CAPTURE": day_and_night_capture,
+    "DAY_NIGHT_CAPTURE_LOCATION": day_and_night_capture_location,
+    "cpu_limit": cpu_limit,
+    "model_path": model_path,
+    "telegram_cooldown": telegram_cooldown
+}
 
 # Configure logging
 logging.basicConfig(
@@ -37,7 +68,7 @@ logger = logging.getLogger(__name__)
 logging.getLogger().setLevel(logging.DEBUG if _debug else logging.INFO)
 
 logger.info(f"Debug mode is {'enabled' if _debug else 'disabled'}.")
-print(f"DEBUG_MODE environment variable: {os.getenv('DEBUG_MODE')}")
+print(f"DEBUG_MODE environment variable: {_debug}")
 print(f"Debug mode in code: {_debug}")
 
 if _debug:
@@ -59,37 +90,9 @@ last_notification_time = time.time()  # using time.time() for wall-clock
 detection_counter = 0  # Global variable to count detections between alerts
 detection_classes_agg = set()  # Aggregated set of detected classes since last alert.
 
-# --------------------------------------------------------------------------
-# Configuration Parameters
-# --------------------------------------------------------------------------
-model_choice = os.getenv("MODEL_CHOICE", "yolo")  # only "yolo" supported for now
-confidence_threshold = float(os.getenv("CONFIDENCE_THRESHOLD", 0.8))
-save_threshold = float(os.getenv("SAVE_THRESHOLD", 0.8))
-max_fps_detection = float(os.getenv("MAX_FPS_DETECTION", 1.0))  # Lowering this reduces the frame rate for inference, thus lowering CPU usage.
-STREAM_FPS = float(os.getenv("STREAM_FPS", 1))  # Lowering this reduces the frame rate for streaming, conserving resources.
-output_resize_width = int(os.getenv("STREAM_WIDTH_OUTPUT_RESIZE", 640))
-day_and_night_capture = os.getenv("DAY_AND_NIGHT_CAPTURE", "True").lower() == "true"
-day_and_night_capture_location = os.getenv("DAY_AND_NIGHT_CAPTURE_LOCATION", "Berlin")
-cpu_limit = int(float(os.getenv("CPU_LIMIT", 2)))
-model_path = os.getenv("YOLO8N_MODEL_PATH", "models/best.pt")
-telegram_cooldown = float(os.getenv("TELEGRAM_COOLDOWN", 5))  # seconds between telegram alerts
 
-config = {
-    "model_choice": model_choice,
-    "confidence_threshold": confidence_threshold,
-    "save_threshold": save_threshold,
-    "max_fps_detection": max_fps_detection,
-    "STREAM_FPS": STREAM_FPS,
-    "STREAM_WIDTH_OUTPUT_RESIZE": output_resize_width,
-    "DAY_NIGHT_CAPTURE": day_and_night_capture,
-    "DAY_NIGHT_CAPTURE_LOCATION": day_and_night_capture_location,
-    "cpu_limit": cpu_limit,
-    "model_path": model_path,
-    "telegram_cooldown": telegram_cooldown
-}
 logger.info(f"Configuration: {json.dumps(config, indent=2)}")
 
-output_dir = os.getenv("OUTPUT_DIR", "/output")
 os.makedirs(output_dir, exist_ok=True)
 csv_path = os.path.join(output_dir, "all_bounding_boxes.csv")
 if not os.path.exists(csv_path):
@@ -128,12 +131,11 @@ def send_alert(detected_classes, annotated_path):
     except Exception as e:
         logger.error(f"Error sending Telegram alert: {e}")
 
-video_source_env = os.getenv("VIDEO_SOURCE", "0")
 try:
-    video_source = int(video_source_env)
+    video_source = int(video_source)
     logger.info("Video source is a webcam.")
 except ValueError:
-    video_source = video_source_env
+    video_source = video_source
     logger.info(f"Video source is a stream.")
 
 try:

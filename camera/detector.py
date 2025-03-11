@@ -2,6 +2,8 @@
 # Detector Module for Object Detection (Modularized, ONNX Runtime)
 # camera/detector.py
 # ------------------------------------------------------------------------------
+from config import load_config
+config = load_config()
 import os
 import cv2
 import logging
@@ -12,8 +14,6 @@ import hashlib
 
 import yaml
 from PIL import Image, ImageDraw, ImageFont
-from dotenv import load_dotenv
-load_dotenv()
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -42,17 +42,17 @@ class ONNXModel(BaseDetectionModel):
         Initialize the ONNX Runtime model.
         """
         self.debug = debug
-        model_env = os.getenv("YOLO8N_MODEL_PATH")  # Use ONNX model path.
-        if model_env:
-            self.model_path = model_env
-            logger.debug(
-                f"Using ONNX model from env variable: {self.model_path}. Skipping download.")
-        else:
-            self.model_path = "models/best.onnx"  # Default ONNX model path
-            logger.debug(
-                f"No YOLO8N_MODEL_PATH provided.  Using default model path: {self.model_path}")
+        model_env = config["YOLO8N_MODEL_PATH"]  # Use ONNX model path.
+        self.model_path = model_env if model_env else "models/best.onnx"
+        os.makedirs(os.path.dirname(self.model_path), exist_ok=True)
+
+        # Check if the model file exists; if not, download it.
+        if not os.path.exists(self.model_path):
+            logger.info(f"Model file not found at {self.model_path}. Downloading...")
             self.download_best_model()
             self.download_latest_labels()
+        else:
+            logger.debug(f"Model file found at {self.model_path}. Skipping download.")
 
         # Initialize ONNX Runtime session.  Handles potential errors.
         try:
