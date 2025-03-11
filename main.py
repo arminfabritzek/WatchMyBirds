@@ -4,7 +4,8 @@
 # ------------------------------------------------------------------------------
 from config import load_config
 config = load_config()
-
+from logging_config import get_logger
+logger = get_logger(__name__)
 import json
 import os
 import time
@@ -13,7 +14,6 @@ import cv2
 import threading
 import pytz
 from datetime import datetime, timedelta
-import logging
 from astral.geocoder import database, lookup
 from astral.sun import sun
 from camera.detector import Detector
@@ -60,16 +60,8 @@ config = {
 }
 
 # Configure logging
-logging.basicConfig(
-    level=logging.DEBUG if _debug else logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-)
-logger = logging.getLogger(__name__)
-logging.getLogger().setLevel(logging.DEBUG if _debug else logging.INFO)
 
 logger.info(f"Debug mode is {'enabled' if _debug else 'disabled'}.")
-print(f"DEBUG_MODE environment variable: {_debug}")
-print(f"Debug mode in code: {_debug}")
 
 if _debug:
     send_telegram_message(text="🐦 Birdwatching has started in DEBUG mode!", photo_path="assets/the_birdwatcher_small.jpeg")
@@ -168,7 +160,7 @@ def detection_loop():
             logger.error(f"Failed to initialize detector: {e}. Retrying in 5 seconds.")
             time.sleep(5)
 
-    print("Object detection started. Press 'Ctrl+C' to stop.")
+    logger.info("Object detection started. Press 'Ctrl+C' to stop.")
     frame_count = 0
 
     while True:

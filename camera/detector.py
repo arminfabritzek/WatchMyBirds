@@ -4,9 +4,10 @@
 # ------------------------------------------------------------------------------
 from config import load_config
 config = load_config()
+from logging_config import get_logger
+logger = get_logger(__name__)
 import os
 import cv2
-import logging
 import numpy as np
 import onnxruntime
 import requests
@@ -15,8 +16,6 @@ import hashlib
 import yaml
 from PIL import Image, ImageDraw, ImageFont
 
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
 
 # ------------------------------------------------------------------------------
 # Base Detection Model Interface
