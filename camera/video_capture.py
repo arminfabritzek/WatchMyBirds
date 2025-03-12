@@ -432,14 +432,14 @@ class VideoCapture:
     def generate_frames(self, output_resize_width, stream_fps):
         """
         Generator that yields JPEG-encoded frames from the video stream.
+        Dynamically scales the font size based on the image height.
         """
-        font = cv2.FONT_HERSHEY_SIMPLEX
-        font_scale = 0.7
-        font_thickness = 2
-        timestamp_y = 50
-        placeholder_threshold = 5  # seconds
+        import time
+        import numpy as np
+        import cv2
+        from PIL import Image, ImageDraw, ImageFont
 
-        # Load a static placeholder image once.
+        # Load placeholder once
         static_placeholder_path = "assets/static_placeholder.jpg"
         if os.path.exists(static_placeholder_path):
             static_placeholder = cv2.imread(static_placeholder_path)
@@ -458,18 +458,59 @@ class VideoCapture:
             placeholder_h = int(placeholder_w * 9 / 16)
             static_placeholder = np.zeros((placeholder_h, placeholder_w, 3), dtype=np.uint8)
 
+        # Percent-based padding from the bottom-right corner
+        padding_x_percent = 0.005  # e.g., 1% of image width
+        padding_y_percent = 0.04  # e.g., 3.5% of image height
+        # Let's make the font ~3% of the image height (but at least 12)
+        min_font_size = 12
+        min_font_size_percent = 0.05
+
         while True:
             start_time = time.time()
-            # Use the blocking get_frame() method.
             frame = self.get_frame()
             if frame is not None:
-                # Use self.resolution to determine how to resize.
+                # Resize the frame
                 w, h = self.resolution
                 output_resize_height = int(h * placeholder_w / w)
                 resized_frame = cv2.resize(frame, (placeholder_w, output_resize_height))
-                timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
-                cv2.putText(resized_frame, timestamp, (10, timestamp_y),
-                            font, font_scale, (0, 255, 0), font_thickness)
+
+                # Convert to PIL to draw text
+                pil_image = Image.fromarray(cv2.cvtColor(resized_frame, cv2.COLOR_BGR2RGB))
+                draw = ImageDraw.Draw(pil_image)
+
+                # Get image dimensions
+                img_width, img_height = pil_image.size
+
+                # Convert percentages to pixel values
+                padding_x = int(img_width * padding_x_percent)
+                padding_y = int(img_height * padding_y_percent)
+
+                # ----- Dynamically scale the font size -----
+                scaled_font_size = max(min_font_size, int(img_height * min_font_size_percent))
+
+                try:
+                    custom_font = ImageFont.truetype("assets/WRP_cruft.ttf", scaled_font_size)
+                except IOError:
+                    custom_font = ImageFont.load_default()
+                # -------------------------------------------
+
+                # Prepare timestamp text
+                timestamp_text = time.strftime("%Y-%m-%d %H:%M:%S")
+
+                # Calculate the text width and height (for offset calculation)
+                bbox = draw.textbbox((0, 0), timestamp_text, font=custom_font)
+                text_width = bbox[2] - bbox[0]
+                text_height = bbox[3] - bbox[1]
+
+                # Bottom-right position, offset by padding
+                text_x = img_width - text_width - padding_x
+                text_y = img_height - text_height - padding_y
+
+                # Draw the timestamp (no background box)
+                draw.text((text_x, text_y), timestamp_text, font=custom_font, fill="white")
+
+                # Convert back to OpenCV image
+                resized_frame = cv2.cvtColor(np.array(pil_image), cv2.COLOR_RGB2BGR)
                 ret, buffer = cv2.imencode('.jpg', resized_frame, [int(cv2.IMWRITE_JPEG_QUALITY), 80])
                 if ret:
                     yield (b'--frame\r\n'
@@ -477,19 +518,42 @@ class VideoCapture:
                 else:
                     logger.error("Failed to encode resized frame.")
             else:
-                # Use the placeholder if no frame is available.
+                # Use placeholder if no frame is available
                 placeholder_copy = static_placeholder.copy()
                 noise = np.random.randint(-100, 20, placeholder_copy.shape, dtype=np.int16)
                 placeholder_copy = np.clip(placeholder_copy.astype(np.int16) + noise, 0, 255).astype(np.uint8)
-                timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
-                cv2.putText(placeholder_copy, timestamp, (10, timestamp_y),
-                            font, font_scale, (0, 255, 0), font_thickness)
+
+                pil_image = Image.fromarray(cv2.cvtColor(placeholder_copy, cv2.COLOR_BGR2RGB))
+                draw = ImageDraw.Draw(pil_image)
+
+                img_width, img_height = pil_image.size
+                padding_x = int(img_width * padding_x_percent)
+                padding_y = int(img_height * padding_y_percent)
+
+                scaled_font_size = max(min_font_size, int(img_height * min_font_size_percent))
+                try:
+                    custom_font = ImageFont.truetype("assets/WRP_cruft.ttf", scaled_font_size)
+                except IOError:
+                    custom_font = ImageFont.load_default()
+
+                timestamp_text = time.strftime("%Y-%m-%d %H:%M:%S")
+                bbox = draw.textbbox((0, 0), timestamp_text, font=custom_font)
+                text_width = bbox[2] - bbox[0]
+                text_height = bbox[3] - bbox[1]
+
+                text_x = img_width - text_width - padding_x
+                text_y = img_height - text_height - padding_y
+                draw.text((text_x, text_y), timestamp_text, font=custom_font, fill="white")
+
+                placeholder_copy = cv2.cvtColor(np.array(pil_image), cv2.COLOR_RGB2BGR)
                 ret, buffer = cv2.imencode('.jpg', placeholder_copy, [int(cv2.IMWRITE_JPEG_QUALITY), 80])
                 if ret:
                     yield (b'--frame\r\n'
                            b'Content-Type: image/jpeg\r\n\r\n' + buffer.tobytes() + b'\r\n')
                 else:
                     logger.error("Failed to encode placeholder frame.")
+
+            # Maintain the requested FPS
             elapsed = time.time() - start_time
             desired_frame_time = 1.0 / stream_fps
             if elapsed < desired_frame_time:
