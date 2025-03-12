@@ -1,7 +1,7 @@
-# web/web_interface.py
 import os
 import json
 import math
+import re
 import time
 import logging
 import cv2
@@ -35,6 +35,27 @@ def create_web_interface(params):
     # -----------------------------
     # Helper Functions for the Gallery
     # -----------------------------
+    def get_captured_images_by_date():
+        """Returns a dictionary grouping images by date."""
+        try:
+            files = [f for f in os.listdir(output_dir) if f.endswith("_frame_annotated.jpg")]
+            files.sort(key=lambda f: os.path.getmtime(os.path.join(output_dir, f)), reverse=True)
+
+            images_by_date = {}
+            for filename in files:
+                match = re.match(r"(\d{8})_\d{6}_frame.*\.jpg", filename)
+                if match:
+                    date_str = match.group(1)  # Extract YYYYMMDD
+                    formatted_date = f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:]}"  # YYYY-MM-DD
+                    if formatted_date not in images_by_date:
+                        images_by_date[formatted_date] = []
+                    images_by_date[formatted_date].append(filename)
+
+            return images_by_date
+        except Exception as e:
+            logger.error(f"Error retrieving captured images: {e}")
+            return {}
+
     def get_captured_images():
         """Returns a list of captured images (annotated) sorted by modification time (newest first)."""
         try:
@@ -113,27 +134,81 @@ def create_web_interface(params):
         modals = [create_image_modal(img, i) for i, img in enumerate(recent_images)]
         return html.Div(thumbnails + modals, id="recent-gallery", style={"textAlign": "center"})
 
+    def generate_navbar():
+        """Creates the navbar with the logo for gallery pages."""
+        return dbc.NavbarSimple(
+            brand=html.Img(
+                src="/assets/the_birdwatcher.jpeg",
+                className="img-fluid",
+                style={"width": "20vw", "minWidth": "100px", "maxWidth": "200px"}
+            ),
+            brand_href="/",
+            children=[
+                dbc.NavItem(dbc.NavLink("Live Stream", href="/", className="mx-auto")),
+                dbc.NavItem(dbc.NavLink("Image Gallery", href="/gallery", className="mx-auto"))
+            ],
+            color="primary",
+            dark=True,
+            fluid=True,
+            className="justify-content-center"
+        )
+
     def generate_gallery():
-        """Generates a full gallery grid of captured images with modals."""
-        images = get_captured_images()
+        """Generates the main gallery page with daily subgallery links, including the logo."""
+        images_by_date = get_captured_images_by_date()
+
+        grid_items = []
+        for date, images in images_by_date.items():
+            thumbnail = images[0]  # Use the first image of the day as the representative
+            grid_items.append(
+                html.Div([
+                    html.A(
+                        html.Img(
+                            src=f"/images/{thumbnail}",
+                            style={"width": "150px", "cursor": "pointer", "margin": "5px"}
+                        ),
+                        href=f"/gallery/{date}"  # Link to subgallery
+                    ),
+                    html.P(date, style={"textAlign": "center", "marginTop": "5px"})
+                ], style={"textAlign": "center"})
+            )
+
+        content = html.Div(
+            grid_items,
+            style={"display": "flex", "flexWrap": "wrap", "justifyContent": "center"}
+        )
+        return dbc.Container([
+            generate_navbar(),
+            html.H1("Image Gallery", className="text-center my-3"),
+            content
+        ], fluid=True)
+
+    def generate_subgallery(date):
+        """Generates a subgallery for a specific date, including the logo."""
+        images_by_date = get_captured_images_by_date()
+        images = images_by_date.get(date, [])
+
         grid_items = []
         modals = []
         for i, img in enumerate(images):
             grid_items.append(
                 html.Div(
                     create_thumbnail(img, i),
-                    style={
-                        "flex": "1 0 21%",
-                        "margin": "5px",
-                        "maxWidth": "150px"
-                    }
+                    style={"flex": "1 0 21%", "margin": "5px", "maxWidth": "150px"}
                 )
             )
             modals.append(create_image_modal(img, i))
-        return html.Div(
+
+        content = html.Div(
             grid_items + modals,
             style={"display": "flex", "flexWrap": "wrap", "justifyContent": "center"}
         )
+        return dbc.Container([
+            generate_navbar(),
+            dbc.Button("Back to Gallery", href="/gallery", color="secondary", className="mb-3"),
+            html.H2(f"Images from {date}", className="text-center"),
+            content
+        ], fluid=True)
 
     # -----------------------------
     # Flask Server and Routes
@@ -172,7 +247,7 @@ def create_web_interface(params):
         return dbc.Container([
             dbc.NavbarSimple(
                 brand=html.Img(
-                    src="/assets/the_birdwatcher.jpeg",  # Now loads from the repository's assets folder
+                    src="/assets/the_birdwatcher.jpeg",
                     className="img-fluid",
                     style={"width": "20vw", "minWidth": "100px", "maxWidth": "200px"}
                 ),
@@ -212,39 +287,8 @@ def create_web_interface(params):
         ], fluid=True)
 
     def gallery_layout():
-        """Layout for the image gallery page."""
-        return dbc.Container([
-            dbc.NavbarSimple(
-                brand=html.Img(
-                    src="/assets/the_birdwatcher.jpeg",
-                    className="img-fluid",
-                    style={"width": "20vw", "minWidth": "100px", "maxWidth": "200px"}
-                ),
-                brand_href="/",
-                children=[
-                    dbc.NavItem(dbc.NavLink("Live Stream", href="/", className="mx-auto")),
-                    dbc.NavItem(dbc.NavLink("Image Gallery", href="/gallery", className="mx-auto"))
-                ],
-                color="primary",
-                dark=True,
-                fluid=True,
-                className="justify-content-center"
-            ),
-            dcc.Store(id="page-store", data=0),
-            dcc.Interval(id="gallery-interval", interval=60000, n_intervals=0),
-            dbc.Row([
-                dbc.Col(html.H1("Image Gallery", className="text-center"), width=12, className="my-3")
-            ]),
-            dbc.Row([
-                dbc.Col([
-                    dbc.Button("Previous", id="prev-page", n_clicks=0, color="primary", className="me-2"),
-                    dbc.Button("Next", id="next-page", n_clicks=0, color="primary")
-                ], width=12, className="mb-2", style={"textAlign": "center"})
-            ]),
-            dbc.Row([
-                dbc.Col(html.Div(id="gallery-content"), width=12)
-            ], className="mb-5"),
-        ], fluid=True)
+        """Layout for the image gallery page (same as landing page)."""
+        return generate_gallery()
 
     app.layout = html.Div([
         dcc.Location(id="url", refresh=False),
@@ -259,8 +303,11 @@ def create_web_interface(params):
         Input("url", "pathname")
     )
     def display_page(pathname):
-        if pathname == "/gallery":
-            return gallery_layout()
+        if pathname.startswith("/gallery/"):
+            date = pathname.split("/")[-1]
+            return generate_subgallery(date)
+        elif pathname == "/gallery":
+            return generate_gallery()
         elif pathname == "/" or pathname == "":
             return stream_layout()
         else:
