@@ -100,30 +100,11 @@ class DetectionManager:
                     self.latest_frame = frame.copy()
                     self.latest_frame_timestamp = time.time()
 
-                # Determine if detection should run.
-                run_detection = self.config["DAY_AND_NIGHT_CAPTURE"] or \
-                                self._is_daytime(self.config["DAY_AND_NIGHT_CAPTURE_LOCATION"])
-                if not run_detection:
-                    try:
-                        city = lookup(self.config["DAY_AND_NIGHT_CAPTURE_LOCATION"], database())
-                        tz = pytz.timezone(city.timezone)
-                        now = datetime.now(tz)
-                        dawn_depression = 12
-                        s = sun(city.observer, date=now, tzinfo=tz, dawn_dusk_depression=dawn_depression)
-                        if now < s["dawn"]:
-                            next_check = (s["dawn"] - now).seconds
-                        elif now >= s["dusk"]:
-                            tomorrow = now + timedelta(days=1)
-                            tomorrow_s = sun(city.observer, date=tomorrow, tzinfo=tz, dawn_dusk_depression=dawn_depression)
-                            next_check = (tomorrow_s["dawn"] - now).seconds
-                        else:
-                            next_check = 60
-                    except Exception as e:
-                        logger.error(f"Could not determine next dawn time: {e}")
-                        next_check = 60
-
-                    logger.info(f"Insufficient light for detection. Sleeping for {next_check} seconds.")
-                    time.sleep(next_check)
+                # Run detection if either DAY_AND_NIGHT_CAPTURE is True or it's daytime.
+                if not (self.config["DAY_AND_NIGHT_CAPTURE"] or
+                        self._is_daytime(self.config["DAY_AND_NIGHT_CAPTURE_LOCATION"])):
+                    logger.info("Not enough light for detection. Sleeping for 60 seconds.")
+                    time.sleep(60)
                     continue
 
                 # Run detection.
@@ -156,17 +137,28 @@ class DetectionManager:
                 current_time = time.time()
                 if object_detected:
                     timestamp = time.strftime("%Y%m%d_%H%M%S")
-                    annotated_name = f"{timestamp}_frame_annotated.jpg"
+                    # Filenames for the three versions:
                     original_name = f"{timestamp}_frame_original.jpg"
+                    annotated_name = f"{timestamp}_frame_annotated.jpg"
                     zoomed_name = f"{timestamp}_frame_zoomed.jpg"
 
-                    cv2.imwrite(os.path.join(self.output_dir, annotated_name), annotated_frame)
+                    # 1. Save the original full-resolution image (for download).
                     cv2.imwrite(os.path.join(self.output_dir, original_name), original_frame)
 
-                    # Generate the zoomed version based on the first detection's bounding box.
+                    # 2. Generate an optimized version of annotated image for display.
+                    if annotated_frame.shape[1] > 800:
+                        optimized = cv2.resize(annotated_frame,
+                                               (800, int(annotated_frame.shape[0] * 800 / annotated_frame.shape[1])))
+                        cv2.imwrite(os.path.join(self.output_dir, annotated_name), optimized,
+                                    [int(cv2.IMWRITE_JPEG_QUALITY), 70])
+                    else:
+                        cv2.imwrite(os.path.join(self.output_dir, annotated_name), annotated_frame,
+                                    [int(cv2.IMWRITE_JPEG_QUALITY), 70])
+
+                    # Generate the zoomed version based on the detection with the highest confidence.
                     if detection_info_list:
-                        first_det = detection_info_list[0]
-                        x1, y1, x2, y2 = first_det["x1"], first_det["y1"], first_det["x2"], first_det["y2"]
+                        best_det = max(detection_info_list, key=lambda d: d["confidence"])
+                        x1, y1, x2, y2 = best_det["x1"], best_det["y1"], best_det["x2"], best_det["y2"]
                         margin = 100
                         h, w = annotated_frame.shape[:2]
                         x1 = max(0, x1 - margin)
@@ -174,15 +166,17 @@ class DetectionManager:
                         x2 = min(w, x2 + margin)
                         y2 = min(h, y2 + margin)
                         zoomed_frame = annotated_frame[y1:y2, x1:x2]
-                        cv2.imwrite(os.path.join(self.output_dir, zoomed_name), zoomed_frame)
+                        cv2.imwrite(os.path.join(self.output_dir, zoomed_name), zoomed_frame,
+                                    [int(cv2.IMWRITE_JPEG_QUALITY), 70])
                     else:
-                        cv2.imwrite(os.path.join(self.output_dir, zoomed_name), annotated_frame)
+                        cv2.imwrite(os.path.join(self.output_dir, zoomed_name), annotated_frame,
+                                    [int(cv2.IMWRITE_JPEG_QUALITY), 70])
 
                     with open(self.csv_path, mode="a", newline="") as f:
                         writer = csv.writer(f)
                         for det in detection_info_list:
                             writer.writerow([
-                                timestamp, annotated_name, det["class_name"],
+                                timestamp, original_name, det["class_name"],
                                 f"{det['confidence']:.2f}",
                                 det["x1"], det["y1"], det["x2"], det["y2"]
                             ])
@@ -199,7 +193,7 @@ class DetectionManager:
                                           f"Total detections since last alert: {self.detection_counter}")
                             send_telegram_message(
                                 text=alert_text,
-                                photo_path=os.path.join(self.output_dir, annotated_name)
+                                photo_path=os.path.join(self.output_dir, zoomed_name)
                             )
                             logger.info(f"Telegram notification sent: {alert_text}")
                             self.last_notification_time = current_time
