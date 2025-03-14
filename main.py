@@ -80,7 +80,7 @@ from web.web_interface import create_web_interface
 # Prepare parameters to pass to the web interface module.
 params = {
     "output_dir": output_dir,
-    "video_capture": detection_manager.video_capture,
+    "detection_manager": detection_manager,
     "output_resize_width": output_resize_width,
     "STREAM_FPS": STREAM_FPS,
     "IMAGE_WIDTH": 150,

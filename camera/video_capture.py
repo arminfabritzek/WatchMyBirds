@@ -92,18 +92,6 @@ class VideoCapture:
     def _setup_ffmpeg(self):
         ffmpeg_cmd = [
             "ffmpeg",
-            "-probesize", "50000000",
-            "-analyzeduration", "10000000",
-            "-rtsp_transport", "tcp",
-            "-i", self.source,
-            "-f", "rawvideo",
-            "-pix_fmt", "bgr24",
-            "-an",
-            "pipe:"
-        ]
-
-        ffmpeg_cmd = [
-            "ffmpeg",
             "-fflags", "nobuffer",
             "-flags", "low_delay",
             "-probesize", "50000000",

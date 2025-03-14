@@ -2,12 +2,15 @@ import os
 import json
 import math
 import re
-import time
 import logging
-import cv2
 from flask import Flask, send_from_directory, Response
 from dash import Dash, html, dcc, callback_context, ALL, Input, Output, State
 import dash_bootstrap_components as dbc
+import time
+import cv2
+from PIL import Image, ImageDraw, ImageFont
+import numpy as np
+
 
 def create_web_interface(params):
     """
@@ -23,7 +26,7 @@ def create_web_interface(params):
     """
     # Unpack parameters
     output_dir = params.get("output_dir", "/output")
-    video_capture = params.get("video_capture")
+    detection_manager = params.get("detection_manager")  # New detection manager
     output_resize_width = params.get("output_resize_width", 640)
     STREAM_FPS = params.get("STREAM_FPS", 1)
     IMAGE_WIDTH = params.get("IMAGE_WIDTH", 150)
@@ -210,6 +213,79 @@ def create_web_interface(params):
             content
         ], fluid=True)
 
+    def generate_video_feed():
+        import time
+        import cv2
+        import numpy as np
+        from PIL import Image, ImageDraw, ImageFont
+
+        # Load placeholder once
+        static_placeholder_path = "assets/static_placeholder.jpg"
+        if os.path.exists(static_placeholder_path):
+            static_placeholder = cv2.imread(static_placeholder_path)
+            if static_placeholder is not None:
+                original_h, original_w = static_placeholder.shape[:2]
+                ratio = original_h / float(original_w)
+                placeholder_w = output_resize_width
+                placeholder_h = int(placeholder_w * ratio)
+                static_placeholder = cv2.resize(static_placeholder, (placeholder_w, placeholder_h))
+            else:
+                placeholder_w = output_resize_width
+                placeholder_h = int(placeholder_w * 9 / 16)
+                static_placeholder = np.zeros((placeholder_h, placeholder_w, 3), dtype=np.uint8)
+        else:
+            placeholder_w = output_resize_width
+            placeholder_h = int(placeholder_w * 9 / 16)
+            static_placeholder = np.zeros((placeholder_h, placeholder_w, 3), dtype=np.uint8)
+
+        # Parameters for text overlay
+        padding_x_percent = 0.005
+        padding_y_percent = 0.04
+        min_font_size = 12
+        min_font_size_percent = 0.05
+
+        while True:
+            start_time = time.time()
+            # Retrieve the most recent display frame (raw or annotated)
+            frame = detection_manager.get_display_frame()
+            if frame is not None:
+                # Assume we want to resize using the original resolution from video capture.
+                w, h = detection_manager.video_capture.resolution
+                output_resize_height = int(h * output_resize_width / w)
+                resized_frame = cv2.resize(frame, (output_resize_width, output_resize_height))
+                # Overlay current timestamp
+                pil_image = Image.fromarray(cv2.cvtColor(resized_frame, cv2.COLOR_BGR2RGB))
+            else:
+                # If no frame, use the placeholder.
+                pil_image = Image.fromarray(cv2.cvtColor(static_placeholder, cv2.COLOR_BGR2RGB))
+
+            draw = ImageDraw.Draw(pil_image)
+            img_width, img_height = pil_image.size
+            padding_x = int(img_width * padding_x_percent)
+            padding_y = int(img_height * padding_y_percent)
+            scaled_font_size = max(min_font_size, int(img_height * min_font_size_percent))
+            try:
+                custom_font = ImageFont.truetype("assets/WRP_cruft.ttf", scaled_font_size)
+            except IOError:
+                custom_font = ImageFont.load_default()
+            timestamp_text = time.strftime("%Y-%m-%d %H:%M:%S")
+            bbox = draw.textbbox((0, 0), timestamp_text, font=custom_font)
+            text_width = bbox[2] - bbox[0]
+            text_height = bbox[3] - bbox[1]
+            text_x = img_width - text_width - padding_x
+            text_y = img_height - text_height - padding_y
+            draw.text((text_x, text_y), timestamp_text, font=custom_font, fill="white")
+            # Convert back to OpenCV BGR format
+            frame_with_timestamp = cv2.cvtColor(np.array(pil_image), cv2.COLOR_RGB2BGR)
+
+            ret, buffer = cv2.imencode('.jpg', frame_with_timestamp, [int(cv2.IMWRITE_JPEG_QUALITY), 80])
+            if ret:
+                yield (b'--frame\r\n'
+                       b'Content-Type: image/jpeg\r\n\r\n' + buffer.tobytes() + b'\r\n')
+            elapsed = time.time() - start_time
+            desired_frame_time = 1.0 / STREAM_FPS
+            if elapsed < desired_frame_time:
+                time.sleep(desired_frame_time - elapsed)
     # -----------------------------
     # Flask Server and Routes
     # -----------------------------
@@ -224,9 +300,8 @@ def create_web_interface(params):
                 return "Image not found", 404
             return send_from_directory(output_dir, filename)
         app.route("/images/<path:filename>")(serve_image)
-        # Route to serve the video feed using video_capture.generate_frames.
         app.route("/video_feed")(lambda: Response(
-            video_capture.generate_frames(output_resize_width, STREAM_FPS),
+            generate_video_feed(),
             mimetype="multipart/x-mixed-replace; boundary=frame"
         ))
     setup_web_routes(server)
