@@ -280,14 +280,12 @@ class VideoCapture:
                     retcode = self.ffmpeg_process.poll()
                     if retcode is not None:
                         stderr_output = self.ffmpeg_process.stderr.read().decode().strip()
-                        logger.error(f"FFmpeg subprocess terminated with return code {retcode}. STDERR: {stderr_output}",
-                                  level=logging.ERROR)
+                        logger.error(f"FFmpeg subprocess terminated with return code {retcode}. STDERR: {stderr_output}")
                         self._reinitialize_camera(reason="RTSP FFmpeg subprocess terminated unexpectedly.")
                     else:
                         # Check if frames have been read recently.
                         if time.time() - self.last_frame_time > 10:  # 10-second threshold to wait until reinitialization.
-                            logger.error("No frame received for over 10 seconds; triggering reinitialization.",
-                                      level=logging.ERROR)
+                            logger.error("No frame received for over 10 seconds; triggering reinitialization.")
                             self._reinitialize_camera(reason="RTSP stream stale.")
             elif self.stream_type == "http":
                 if not self.cap or not self.cap.isOpened():
