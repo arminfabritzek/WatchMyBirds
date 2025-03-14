@@ -40,6 +40,8 @@ class VideoCapture:
 
         self.reinit_lock = threading.Lock()
         self.reinitializing = False
+        self.latest_frame = None
+        self.frame_lock = threading.Lock()
 
         logger.debug(f"Initialized VideoCapture with source: {self.source}, stream_type: {self.stream_type}")
 
@@ -284,30 +286,21 @@ class VideoCapture:
         logger.info("Health check thread is stopping.")
 
     def _reader(self):
-        """
-        Continuously reads frames from the video source and places only the latest frame in the queue.
-        Terminates cleanly if stop_event is set.
-        """
         logger.info("Reader thread is running.")
-        while not self.stop_event.is_set():  # Check for thread termination
+        while not self.stop_event.is_set():
             try:
                 frame = self._read_frame()
-                if self.stop_event.is_set():  # Recheck stop_event after potentially long operations
-                    logger.info("Stop event set. Reader thread is terminating.")
+                if self.stop_event.is_set():
                     break
                 if frame is not None:
-                    # Clear the queue before adding the new frame
-                    with self.q.mutex:
-                        self.q.queue.clear()
-                    self.q.put(frame, timeout=0.1)  # Always have the latest frame in the queue
+                    with self.frame_lock:
+                        self.latest_frame = frame  # Always store the most recent frame
                 else:
                     logger.info("Frame not available, triggering reinitialization.")
                     self._reinitialize_camera(reason="Received None frame.")
             except Exception as e:
                 logger.error(f"Error reading frame: {e}")
-                if self.stop_event.is_set():
-                    break
-                self._reinitialize_camera()  # Reinitialize in case of error
+                self._reinitialize_camera(reason="Exception during frame read")
         logger.info("Reader thread has exited.")
 
     def _read_frame(self):
@@ -327,19 +320,24 @@ class VideoCapture:
             return None
 
     def _read_ffmpeg_frame(self):
-        frame_size = self.stream_width * self.stream_height * 3  # For bgr24 (3 bytes per pixel)
-
-        try:
-            raw_frame = self.ffmpeg_process.stdout.read(frame_size)
-            if len(raw_frame) != frame_size:
-                logger.error(f"FFmpeg produced incomplete frame: expected {frame_size} bytes, got {len(raw_frame)} bytes.")
-                return None  # Skip incomplete frames
-            frame = np.frombuffer(raw_frame, np.uint8).reshape((self.stream_height, self.stream_width, 3))
-            self.last_frame_time = time.time()  # Update timestamp on successful frame read
-            return frame
-        except Exception as e:
-            logger.error(f"Error reading frame from FFmpeg: {e}")
+        frame_size = self.stream_width * self.stream_height * 3  # bgr24: 3 bytes per pixel
+        max_retries = 3
+        raw_frame = b''
+        retries = 0
+        while len(raw_frame) < frame_size and retries < max_retries:
+            needed = frame_size - len(raw_frame)
+            chunk = self.ffmpeg_process.stdout.read(needed)
+            if not chunk:
+                retries += 1
+                time.sleep(0.1)
+            else:
+                raw_frame += chunk
+        if len(raw_frame) != frame_size:
+            logger.error(f"Incomplete frame: expected {frame_size} bytes, got {len(raw_frame)} bytes.")
             return None
+        self.last_frame_time = time.time()
+        frame = np.frombuffer(raw_frame, np.uint8).reshape((self.stream_height, self.stream_width, 3))
+        return frame
 
     def _schedule_reinit(self, reason):
         delay = 2 ** self.retry_count
@@ -397,14 +395,8 @@ class VideoCapture:
             self.reinit_lock.release()
 
     def get_frame(self):
-        try:
-            # Block for up to 0.1 seconds waiting for a frame.
-            frame = self.q.get(timeout=0.3)
-            logger.debug("Retrieved a frame from the queue.")
-            return frame
-        except queue.Empty:
-            logger.info("Queue is empty, unable to retrieve frame.")
-            return None
+        with self.frame_lock:
+            return self.latest_frame
 
     def generate_frames(self, output_resize_width, stream_fps):
         """
