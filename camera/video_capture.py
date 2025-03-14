@@ -102,6 +102,20 @@ class VideoCapture:
             "pipe:"
         ]
 
+        ffmpeg_cmd = [
+            "ffmpeg",
+            "-fflags", "nobuffer",
+            "-flags", "low_delay",
+            "-probesize", "50000000",
+            "-analyzeduration", "10000000",
+            "-rtsp_transport", "tcp",
+            "-i", self.source,
+            "-f", "rawvideo",
+            "-pix_fmt", "bgr24",
+            "-an",
+            "pipe:"
+        ]
+
         logger.debug(f"FFmpeg command: {' '.join(ffmpeg_cmd)}")
 
         for attempt in range(5):  # Retry up to 5 times
