@@ -400,7 +400,7 @@ class VideoCapture:
         try:
             # Block for up to 0.1 seconds waiting for a frame.
             frame = self.q.get(timeout=0.3)
-            logger.debug("Retrieved a frame from the queue.")
+            # logger.debug("Retrieved a frame from the queue.")
             return frame
         except queue.Empty:
             logger.info("Queue is empty, unable to retrieve frame.")

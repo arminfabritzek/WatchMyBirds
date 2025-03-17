@@ -1,3 +1,7 @@
+# ------------------------------------------------------------------------------
+# Detection Manager Module for Object Detection
+# detectors/detection_manager.py
+# ------------------------------------------------------------------------------
 import threading
 import time
 from datetime import datetime, timedelta
