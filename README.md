@@ -34,11 +34,6 @@
   - Runs on Docker (e.g., Synology NAS), macOS, and planned support for Raspberry Pi and NVIDIA Jetson  
 
 
-- **Customizable Detection & Classification**  
-  - Filter detections by specific object classes  
-  - Fine-tune confidence thresholds for detections and frame saving
-
-
 - **Integrated Notifications**  
   - Telegram alerts for detections  
   - Configurable cooldowns to prevent spam
@@ -81,10 +76,6 @@ Your contributions help improve **WatchMyBirds** for everyone! 🚀
 ---
 
 ## 🌟 Future Roadmap  
-
-### 🚀 **Camera & Tracking Enhancements**
-
-- 🏆 **PTZ (Pan-Tilt-Zoom) Camera Control** → Auto-tracking & framing of detected objects.  
 
 ### 🛠️ **AI & Model Optimization**  
 - 🏆 **Custom AI Models** → Train specialized models for birds, insects, and plants with **AIY vision classifiers**.  
@@ -129,7 +120,7 @@ To run **WatchMyBirds** in a Docker container with default settings:
          - TZ=Europe/Berlin  # Set your local timezone to ensure correct timestamp logging.
          - DEBUG_MODE=False  # Set to "True" for additional logging output for debugging.
          - MODEL_CHOICE="yolo"  # The object detection model to use (e.g., yolo, pytorch_ssd).
-         - YOLO8N_MODEL_PATH="/models/yolov8n.pt"  # The object detection model path.
+         - YOLO8N_MODEL_PATH="/models/best.onnx"  # The object detection model path.
          - CLASS_FILTER="'["bird", "person"]'"  # Define which object classes to detect; default is "bird".
          - CONFIDENCE_THRESHOLD=0.8  # Minimum confidence score for an object to be considered detected.
          - SAVE_THRESHOLD=0.8  # Minimum confidence score for saving an image of a detected object.
@@ -202,20 +193,11 @@ For a webcam connected via USB use:
    ```
 
 
-Set the path to the model you downloaded.
-   ```plaintext
-   YOLO8N_MODEL_PATH="/models/your_yolo.pt"
-   
-   DEBUG_MODE=True
-   ```
-
-
 
 # Usage
 
 - **Livestream**: `http://<your-server-ip>:8050` displays a real-time video feed with bounding boxes around detected objects.
 - **Saved Frames**: Frames with objects exceeding the confidence threshold are saved in the `output/` directory.
-- **CSV Logging**: All detections are logged to a CSV file (`all_bounding_boxes.csv`) for analysis.
 
 ---
 

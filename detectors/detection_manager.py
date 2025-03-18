@@ -186,7 +186,7 @@ class DetectionManager:
                     writer.writerow([timestamp, original_name, annotated_name, zoomed_name, best_class_sanitized])
 
                 # 1. Save the original full-resolution image (for download).
-                cv2.imwrite(os.path.join(day_folder, original_frame), original_frame)
+                cv2.imwrite(os.path.join(day_folder, original_name), original_frame)
 
                 # 2. Generate an optimized version of annotated image for display.
                 if annotated_frame.shape[1] > 800:
