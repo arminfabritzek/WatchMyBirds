@@ -42,11 +42,6 @@ if _debug:
     send_telegram_message(text="🐦 Birdwatching has started in DEBUG mode!", photo_path="assets/the_birdwatcher_small.jpeg")
 
 os.makedirs(output_dir, exist_ok=True)
-csv_path = os.path.join(output_dir, "all_bounding_boxes.csv")
-if not os.path.exists(csv_path):
-    with open(csv_path, mode="w", newline="") as f:
-        writer = csv.writer(f)
-        writer.writerow(["timestamp", "filename", "class_name", "confidence", "x1", "y1", "x2", "y2"])
 
 # -----------------------------
 # Start the Detection Manager
@@ -85,7 +80,7 @@ params = {
     "STREAM_FPS": STREAM_FPS,
     "IMAGE_WIDTH": 150,
     "RECENT_IMAGES_COUNT": 3,
-    "PAGE_SIZE": 20,
+    "PAGE_SIZE": 50,
 }
 
 # Expose the Flask server as the WSGI app for Waitress.

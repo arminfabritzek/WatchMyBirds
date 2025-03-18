@@ -46,14 +46,9 @@ class DetectionManager:
         self.video_capture = None
         self.detector_instance = None
 
-        # Set up output directory and CSV file.
+        # Set up output directory
         self.output_dir = self.config["OUTPUT_DIR"]
         os.makedirs(self.output_dir, exist_ok=True)
-        self.csv_path = os.path.join(self.output_dir, "all_bounding_boxes.csv")
-        if not os.path.exists(self.csv_path):
-            with open(self.csv_path, mode="w", newline="") as f:
-                writer = csv.writer(f)
-                writer.writerow(["timestamp", "filename", "class_name", "confidence", "x1", "y1", "x2", "y2"])
 
         # For clean shutdown.
         self.stop_event = threading.Event()
@@ -165,23 +160,31 @@ class DetectionManager:
 
             if object_detected:
                 timestamp = time.strftime("%Y%m%d_%H%M%S")
+                # Determine the subfolder for the current day, e.g., "20250318"
+                day_folder = os.path.join(self.output_dir, timestamp[:8])
+                os.makedirs(day_folder, exist_ok=True)
+                csv_path = os.path.join(day_folder, "images.csv")
+
                 # Filenames for the three versions:
                 original_name = f"{timestamp}_frame_original.jpg"
                 annotated_name = f"{timestamp}_frame_annotated.jpg"
                 zoomed_name = f"{timestamp}_frame_zoomed.jpg"
 
+                # Write image metadata to CSV (append mode)
+                with open(csv_path, mode="a", newline="") as f:
+                    writer = csv.writer(f)
+                    writer.writerow([timestamp, original_name, annotated_name, zoomed_name])
+
                 # 1. Save the original full-resolution image (for download).
-                cv2.imwrite(os.path.join(self.output_dir, original_name), original_frame)
+                cv2.imwrite(os.path.join(day_folder, annotated_name), original_frame)
 
                 # 2. Generate an optimized version of annotated image for display.
                 if annotated_frame.shape[1] > 800:
                     optimized = cv2.resize(annotated_frame,
                                            (800, int(annotated_frame.shape[0] * 800 / annotated_frame.shape[1])))
-                    cv2.imwrite(os.path.join(self.output_dir, annotated_name), optimized,
-                                [int(cv2.IMWRITE_JPEG_QUALITY), 70])
+                    cv2.imwrite(os.path.join(day_folder, annotated_name), optimized,[int(cv2.IMWRITE_JPEG_QUALITY), 70])
                 else:
-                    cv2.imwrite(os.path.join(self.output_dir, annotated_name), annotated_frame,
-                                [int(cv2.IMWRITE_JPEG_QUALITY), 70])
+                    cv2.imwrite(os.path.join(day_folder, annotated_name), annotated_frame, [int(cv2.IMWRITE_JPEG_QUALITY), 70])
 
                 # Generate the zoomed version based on the detection with the highest confidence.
                 if detection_info_list:
@@ -194,20 +197,11 @@ class DetectionManager:
                     x2 = min(w, x2 + margin)
                     y2 = min(h, y2 + margin)
                     zoomed_frame = annotated_frame[y1:y2, x1:x2]
-                    cv2.imwrite(os.path.join(self.output_dir, zoomed_name), zoomed_frame,
+                    cv2.imwrite(os.path.join(day_folder, zoomed_name), zoomed_frame,
                                 [int(cv2.IMWRITE_JPEG_QUALITY), 70])
                 else:
-                    cv2.imwrite(os.path.join(self.output_dir, zoomed_name), annotated_frame,
+                    cv2.imwrite(os.path.join(day_folder, zoomed_name), annotated_frame,
                                 [int(cv2.IMWRITE_JPEG_QUALITY), 70])
-
-                with open(self.csv_path, mode="a", newline="") as f:
-                    writer = csv.writer(f)
-                    for det in detection_info_list:
-                        writer.writerow([
-                            timestamp, original_name, det["class_name"],
-                            f"{det['confidence']:.2f}",
-                            det["x1"], det["y1"], det["x2"], det["y2"]
-                        ])
 
                 self.detection_occurred = True
                 self.detection_counter += len(detection_info_list)
@@ -222,7 +216,7 @@ class DetectionManager:
                                       f"Total detections since last alert: {self.detection_counter}")
                         send_telegram_message(
                             text=alert_text,
-                            photo_path=os.path.join(self.output_dir, zoomed_name)
+                            photo_path=os.path.join(day_folder, zoomed_name)
                         )
                         logger.info(f"Telegram notification sent: {alert_text}")
                         self.last_notification_time = current_time

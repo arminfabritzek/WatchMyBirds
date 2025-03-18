@@ -1,8 +1,10 @@
 import os
 import json
 import math
+from urllib.parse import parse_qs
 import re
 import logging
+import csv
 from flask import Flask, send_from_directory, Response
 from dash import Dash, html, dcc, callback_context, ALL, Input, Output, State
 import dash_bootstrap_components as dbc
@@ -11,6 +13,12 @@ import cv2
 from PIL import Image, ImageDraw, ImageFont
 import numpy as np
 
+# Caching settings for gallery functions
+_CACHE_TIMEOUT = 10  # seconds
+_cached_images = {
+    "images": None,
+    "timestamp": 0
+}
 
 def create_web_interface(params):
     """
@@ -31,43 +39,91 @@ def create_web_interface(params):
     STREAM_FPS = params.get("STREAM_FPS", 1)
     IMAGE_WIDTH = params.get("IMAGE_WIDTH", 150)
     RECENT_IMAGES_COUNT = params.get("RECENT_IMAGES_COUNT", 3)
-    PAGE_SIZE = params.get("PAGE_SIZE", 20)
+    PAGE_SIZE = params.get("PAGE_SIZE", 50)
 
     logger = logging.getLogger(__name__)
 
-    # -----------------------------
-    # Helper Functions for the Gallery
-    # -----------------------------
-    def get_captured_images_by_date():
-        """Returns a dictionary grouping images by date."""
-        try:
-            files = [f for f in os.listdir(output_dir) if f.endswith("_frame_annotated.jpg")]
-            files.sort(key=lambda f: os.path.getmtime(os.path.join(output_dir, f)), reverse=True)
-
-            images_by_date = {}
-            for filename in files:
-                match = re.match(r"(\d{8})_\d{6}_frame.*\.jpg", filename)
-                if match:
-                    date_str = match.group(1)  # Extract YYYYMMDD
-                    formatted_date = f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:]}"  # YYYY-MM-DD
-                    if formatted_date not in images_by_date:
-                        images_by_date[formatted_date] = []
-                    images_by_date[formatted_date].append(filename)
-
-            return images_by_date
-        except Exception as e:
-            logger.error(f"Error retrieving captured images: {e}")
-            return {}
+    # ----------------------------------------------------
+    # Helper Functions for CSV-Based Gallery Retrieval
+    # ----------------------------------------------------
+    def get_all_images():
+        """
+        Reads all per-day CSV files (from folders named YYYYMMDD) and returns a list of annotated image paths,
+        sorted by timestamp (newest first). Each returned path is relative to output_dir.
+        Assumes that each CSV file has at least:
+          [0] timestamp (YYYYMMDD_HHMMSS),
+          [2] annotated image filename.
+        """
+        images = []
+        # List subfolders in output_dir that match a day folder (e.g. "20250318")
+        for item in os.listdir(output_dir):
+            subfolder = os.path.join(output_dir, item)
+            if os.path.isdir(subfolder) and re.match(r'\d{8}', item):
+                csv_file = os.path.join(subfolder, "images.csv")
+                if os.path.exists(csv_file):
+                    try:
+                        with open(csv_file, newline="") as f:
+                            reader = csv.reader(f)
+                            # Skip header row if present
+                            header = next(reader, None)
+                            # Check if header looks like text (e.g. "timestamp")
+                            if header and "timestamp" not in header[0].lower():
+                                # No header; rewind
+                                f.seek(0)
+                                reader = csv.reader(f)
+                            for row in reader:
+                                try:
+                                    # Expect at least 3 columns: [0]=timestamp, [2]=annotated image filename
+                                    if len(row) < 3:
+                                        continue
+                                    timestamp = row[0].strip()
+                                    annotated_name = row[2].strip()
+                                    if not timestamp or not annotated_name:
+                                        continue
+                                    # Construct a relative path: foldername/annotated_name
+                                    rel_path = os.path.join(item, annotated_name)
+                                    images.append((timestamp, rel_path))
+                                except Exception as row_err:
+                                    logger.error(f"Error processing row {row} in file {csv_file}: {row_err}")
+                                    continue
+                    except Exception as file_err:
+                        logger.error(f"Error reading CSV file {csv_file}: {file_err}")
+                        continue
+        # Sort images by timestamp descending (lexical order works with YYYYMMDD_HHMMSS)
+        images.sort(key=lambda x: x[0], reverse=True)
+        # Return only the relative paths
+        return [img[1] for img in images]
 
     def get_captured_images():
-        """Returns a list of captured images (annotated) sorted by modification time (newest first)."""
-        try:
-            files = [f for f in os.listdir(output_dir) if f.endswith("_frame_annotated.jpg")]
-            files.sort(key=lambda f: os.path.getmtime(os.path.join(output_dir, f)), reverse=True)
-            return files
-        except Exception as e:
-            logger.error(f"Error retrieving captured images: {e}")
-            return []
+        """
+        Returns a list of captured annotated images using the CSV-based approach.
+        Uses caching to avoid repeated disk reads.
+        """
+        now = time.time()
+        if _cached_images["images"] is not None and (now - _cached_images["timestamp"]) < _CACHE_TIMEOUT:
+            return _cached_images["images"]
+        images = get_all_images()
+        _cached_images["images"] = images
+        _cached_images["timestamp"] = now
+        return images
+
+    def get_captured_images_by_date():
+        """
+        Returns a dictionary grouping images by date (YYYY-MM-DD) using the CSV-based image list.
+        The grouping is done by extracting the date from the annotated filename (which is expected to start with YYYYMMDD).
+        """
+        images = get_captured_images()
+        images_by_date = {}
+        for filename in images:
+            base = os.path.basename(filename)
+            match = re.match(r"(\d{8})_\d{6}_frame.*\.jpg", base)
+            if match:
+                date_str = match.group(1)  # Extract YYYYMMDD
+                formatted_date = f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:]}"
+                if formatted_date not in images_by_date:
+                    images_by_date[formatted_date] = []
+                images_by_date[formatted_date].append(filename)
+        return images_by_date
 
     def derive_zoomed_filename(annotated_filename: str,
                                annotated_suffix: str = "_frame_annotated",
@@ -98,7 +154,7 @@ def create_web_interface(params):
 
     def create_image_modal(image_filename: str, index: int):
         """Creates a modal dialog to display the full-size image with a download button."""
-        original_filename = image_filename.replace("_frame_annotated", "_frame_original")  # Adjust as needed
+        original_filename = image_filename.replace("_frame_annotated", "_frame_original")
         return dbc.Modal(
             [
                 dbc.ModalHeader(dbc.ModalTitle(image_filename), close_button=False),
@@ -181,44 +237,59 @@ def create_web_interface(params):
             style={"display": "flex", "flexWrap": "wrap", "justifyContent": "center"}
         )
         return dbc.Container([
-            generate_navbar(),
+            generate_navbar(), # Call the function here
             html.H1("Image Gallery", className="text-center my-3"),
             content
         ], fluid=True)
 
-    def generate_subgallery(date):
-        """Generates a subgallery for a specific date, including the logo."""
+    def generate_subgallery(date, page=1):
         images_by_date = get_captured_images_by_date()
         images = images_by_date.get(date, [])
+        total_images = len(images)
+        total_pages = math.ceil(total_images / PAGE_SIZE) or 1
 
-        grid_items = []
-        modals = []
-        for i, img in enumerate(images):
-            grid_items.append(
-                html.Div(
-                    create_thumbnail(img, i),
-                    style={"flex": "1 0 21%", "margin": "5px", "maxWidth": "150px"}
+        page = max(1, min(page, total_pages))
+        page_images = images[(page - 1) * PAGE_SIZE: page * PAGE_SIZE]
+
+        # Create a list of page links
+        page_links = []
+        for p in range(1, total_pages + 1):
+            style = {"margin": "5px"}
+            # Different styling if it’s the active page
+            if p == page:
+                link = dbc.Button(str(p), color="primary", disabled=True, style=style)
+            else:
+                link = dbc.Button(
+                    str(p),
+                    color="secondary",
+                    href=f"/gallery/{date}?page={p}",
+                    style=style
                 )
-            )
-            modals.append(create_image_modal(img, i))
+            page_links.append(link)
+
+        pagination_controls = html.Div(
+            page_links,
+            style={"textAlign": "center", "marginBottom": "20px"}
+        )
+
+        grid_items = [html.Div(create_thumbnail(img, i), style={"margin": "5px"})
+                      for i, img in enumerate(page_images)]
+        modals = [create_image_modal(img, i) for i, img in enumerate(page_images)]
 
         content = html.Div(
             grid_items + modals,
             style={"display": "flex", "flexWrap": "wrap", "justifyContent": "center"}
         )
+
         return dbc.Container([
             generate_navbar(),
             dbc.Button("Back to Gallery", href="/gallery", color="secondary", className="mb-3"),
             html.H2(f"Images from {date}", className="text-center"),
+            pagination_controls,
             content
         ], fluid=True)
 
     def generate_video_feed():
-        import time
-        import cv2
-        import numpy as np
-        from PIL import Image, ImageDraw, ImageFont
-
         # Load placeholder once
         static_placeholder_path = "assets/static_placeholder.jpg"
         if os.path.exists(static_placeholder_path):
@@ -309,7 +380,6 @@ def create_web_interface(params):
     # -----------------------------
     # Dash App Setup and Layouts
     # -----------------------------
-
     external_stylesheets = [dbc.themes.BOOTSTRAP]
     # Pass the absolute assets folder to Dash.
     app = Dash(__name__, server=server, external_stylesheets=external_stylesheets,
@@ -375,12 +445,22 @@ def create_web_interface(params):
     # -----------------------------
     @app.callback(
         Output("page-content", "children"),
-        Input("url", "pathname")
+        [Input("url", "pathname"), Input("url", "search")]
     )
-    def display_page(pathname):
+    def display_page(pathname, search):
         if pathname.startswith("/gallery/"):
+            # The URL path is of the form "/gallery/<date>"
             date = pathname.split("/")[-1]
-            return generate_subgallery(date)
+            # Parse query string for page number (default to 1)
+            page = 1
+            if search:
+                params = parse_qs(search.lstrip('?'))
+                if 'page' in params:
+                    try:
+                        page = int(params['page'][0])
+                    except ValueError:
+                        page = 1
+            return generate_subgallery(date, page)
         elif pathname == "/gallery":
             return generate_gallery()
         elif pathname == "/" or pathname == "":
@@ -404,59 +484,9 @@ def create_web_interface(params):
         new_states = [False] * len(current_states)
         if triggered_id["type"] == "thumbnail":
             new_states[triggered_id["index"]] = True
-        elif triggered_id["type"] in ["close", "modal-image"]:  # Close modal on clicking close button or image
+        elif triggered_id["type"] in ["close", "modal-image"]:
             new_states[triggered_id["index"]] = False
         return new_states
-
-    @app.callback(
-        Output("loading-spinner", "style"),
-        [Input("video-feed", "loading_state")],
-        prevent_initial_call=True
-    )
-    def show_hide_spinner(loading_state):
-        if loading_state and loading_state.get('is_loading'):
-            return {"display": "block"}
-        else:
-            return {"display": "none"}
-
-    @app.callback(
-        [Output("gallery-content", "children"),
-         Output("page-store", "data")],
-        [Input("prev-page", "n_clicks"),
-         Input("next-page", "n_clicks"),
-         Input("page-store", "data"),
-         Input("gallery-interval", "n_intervals")]
-    )
-    def update_gallery_and_page(prev_clicks, next_clicks, current_page, n_intervals):
-        ctx = callback_context
-        triggered_prop = ctx.triggered[0]["prop_id"].split(".")[0] if ctx.triggered else None
-        images = get_captured_images()
-        total_pages = math.ceil(len(images) / PAGE_SIZE) if images else 1
-
-        if triggered_prop == "prev-page" and current_page > 0:
-            current_page -= 1
-        elif triggered_prop == "next-page" and current_page < total_pages - 1:
-            current_page += 1
-
-        start_idx = current_page * PAGE_SIZE
-        end_idx = min(start_idx + PAGE_SIZE, len(images))
-        subset = images[start_idx:end_idx]
-
-        grid_items = []
-        modals = []
-        for i, img in enumerate(subset):
-            grid_items.append(
-                html.Div(
-                    create_thumbnail(img, i),
-                    style={"flex": "1 0 21%", "margin": "5px", "maxWidth": "150px"}
-                )
-            )
-            modals.append(create_image_modal(img, i))
-        gallery_div = html.Div(
-            grid_items + modals,
-            style={"display": "flex", "flexWrap": "wrap", "justifyContent": "center"}
-        )
-        return gallery_div, current_page
 
     # -----------------------------
     # Function to Start the Web Interface
