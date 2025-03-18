@@ -2,6 +2,7 @@
 # Detection Manager Module for Object Detection
 # detectors/detection_manager.py
 # ------------------------------------------------------------------------------
+import re
 import threading
 import time
 from datetime import datetime, timedelta
@@ -165,18 +166,27 @@ class DetectionManager:
                 os.makedirs(day_folder, exist_ok=True)
                 csv_path = os.path.join(day_folder, "images.csv")
 
-                # Filenames for the three versions:
-                original_name = f"{timestamp}_frame_original.jpg"
-                annotated_name = f"{timestamp}_frame_annotated.jpg"
-                zoomed_name = f"{timestamp}_frame_zoomed.jpg"
+                # ------------------------------------------
+                # 1) Figure out the best detection's class
+                # ------------------------------------------
+                best_det = max(detection_info_list, key=lambda d: d["confidence"])
+                best_class = best_det["class_name"]  # e.g., "Eurasian Blue Tit" --> "Eurasian_Blue_Tit"
+                best_class_sanitized = re.sub(r'[^A-Za-z0-9_-]+', '_', best_class)
+
+                # ------------------------------------------
+                # 2) Include the class name in your filenames
+                # ------------------------------------------
+                original_name = f"{timestamp}_{best_class_sanitized}_original.jpg"
+                annotated_name = f"{timestamp}_{best_class_sanitized}_annotated.jpg"
+                zoomed_name = f"{timestamp}_{best_class_sanitized}_zoomed.jpg"
 
                 # Write image metadata to CSV (append mode)
                 with open(csv_path, mode="a", newline="") as f:
                     writer = csv.writer(f)
-                    writer.writerow([timestamp, original_name, annotated_name, zoomed_name])
+                    writer.writerow([timestamp, original_name, annotated_name, zoomed_name, best_class_sanitized])
 
                 # 1. Save the original full-resolution image (for download).
-                cv2.imwrite(os.path.join(day_folder, annotated_name), original_frame)
+                cv2.imwrite(os.path.join(day_folder, original_frame), original_frame)
 
                 # 2. Generate an optimized version of annotated image for display.
                 if annotated_frame.shape[1] > 800:
@@ -188,7 +198,6 @@ class DetectionManager:
 
                 # Generate the zoomed version based on the detection with the highest confidence.
                 if detection_info_list:
-                    best_det = max(detection_info_list, key=lambda d: d["confidence"])
                     x1, y1, x2, y2 = best_det["x1"], best_det["y1"], best_det["x2"], best_det["y2"]
                     margin = 100
                     h, w = annotated_frame.shape[:2]

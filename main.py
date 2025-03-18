@@ -79,7 +79,7 @@ params = {
     "output_resize_width": output_resize_width,
     "STREAM_FPS": STREAM_FPS,
     "IMAGE_WIDTH": 150,
-    "RECENT_IMAGES_COUNT": 3,
+    "RECENT_IMAGES_COUNT": 10,
     "PAGE_SIZE": 50,
 }
 

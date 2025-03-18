@@ -38,7 +38,7 @@ def create_web_interface(params):
     output_resize_width = params.get("output_resize_width", 640)
     STREAM_FPS = params.get("STREAM_FPS", 1)
     IMAGE_WIDTH = params.get("IMAGE_WIDTH", 150)
-    RECENT_IMAGES_COUNT = params.get("RECENT_IMAGES_COUNT", 3)
+    RECENT_IMAGES_COUNT = params.get("RECENT_IMAGES_COUNT", 10)
     PAGE_SIZE = params.get("PAGE_SIZE", 50)
 
     logger = logging.getLogger(__name__)
@@ -48,11 +48,9 @@ def create_web_interface(params):
     # ----------------------------------------------------
     def get_all_images():
         """
-        Reads all per-day CSV files (from folders named YYYYMMDD) and returns a list of annotated image paths,
-        sorted by timestamp (newest first). Each returned path is relative to output_dir.
-        Assumes that each CSV file has at least:
-          [0] timestamp (YYYYMMDD_HHMMSS),
-          [2] annotated image filename.
+        Reads all per-day CSV files (from folders named YYYYMMDD) and returns a list of tuples:
+          (timestamp, annotated image relative path, best_class_sanitized)
+        Sorted by timestamp (newest first).
         """
         images = []
         # List subfolders in output_dir that match a day folder (e.g. "20250318")
@@ -64,25 +62,23 @@ def create_web_interface(params):
                     try:
                         with open(csv_file, newline="") as f:
                             reader = csv.reader(f)
-                            # Skip header row if present
                             header = next(reader, None)
-                            # Check if header looks like text (e.g. "timestamp")
                             if header and "timestamp" not in header[0].lower():
-                                # No header; rewind
                                 f.seek(0)
                                 reader = csv.reader(f)
                             for row in reader:
                                 try:
-                                    # Expect at least 3 columns: [0]=timestamp, [2]=annotated image filename
-                                    if len(row) < 3:
+                                    # Expect at least 5 columns: [0]=timestamp, [2]=annotated image, [4]=best_class_sanitized
+                                    if len(row) < 5:
                                         continue
                                     timestamp = row[0].strip()
                                     annotated_name = row[2].strip()
+                                    best_class = row[4].strip()
                                     if not timestamp or not annotated_name:
                                         continue
                                     # Construct a relative path: foldername/annotated_name
                                     rel_path = os.path.join(item, annotated_name)
-                                    images.append((timestamp, rel_path))
+                                    images.append((timestamp, rel_path, best_class))
                                 except Exception as row_err:
                                     logger.error(f"Error processing row {row} in file {csv_file}: {row_err}")
                                     continue
@@ -91,8 +87,7 @@ def create_web_interface(params):
                         continue
         # Sort images by timestamp descending (lexical order works with YYYYMMDD_HHMMSS)
         images.sort(key=lambda x: x[0], reverse=True)
-        # Return only the relative paths
-        return [img[1] for img in images]
+        return images
 
     def get_captured_images():
         """
@@ -112,11 +107,11 @@ def create_web_interface(params):
         Returns a dictionary grouping images by date (YYYY-MM-DD) using the CSV-based image list.
         The grouping is done by extracting the date from the annotated filename (which is expected to start with YYYYMMDD).
         """
-        images = get_captured_images()
+        images = get_captured_images()  # Now each element is a tuple: (timestamp, filename, best_class)
         images_by_date = {}
-        for filename in images:
+        for timestamp, filename, best_class in images:
             base = os.path.basename(filename)
-            match = re.match(r"(\d{8})_\d{6}_frame.*\.jpg", base)
+            match = re.match(r"(\d{8})_\d{6}.*\.jpg", base)
             if match:
                 date_str = match.group(1)  # Extract YYYYMMDD
                 formatted_date = f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:]}"
@@ -126,8 +121,8 @@ def create_web_interface(params):
         return images_by_date
 
     def derive_zoomed_filename(annotated_filename: str,
-                               annotated_suffix: str = "_frame_annotated",
-                               zoomed_suffix: str = "_frame_zoomed") -> str:
+                               annotated_suffix: str = "_annotated",
+                               zoomed_suffix: str = "_zoomed") -> str:
         """Derives the zoomed image filename from the annotated filename."""
         return annotated_filename.replace(annotated_suffix, zoomed_suffix)
 
@@ -154,7 +149,7 @@ def create_web_interface(params):
 
     def create_image_modal(image_filename: str, index: int):
         """Creates a modal dialog to display the full-size image with a download button."""
-        original_filename = image_filename.replace("_frame_annotated", "_frame_original")
+        original_filename = image_filename.replace("_annotated", "_original")
         return dbc.Modal(
             [
                 dbc.ModalHeader(dbc.ModalTitle(image_filename), close_button=False),
@@ -186,11 +181,30 @@ def create_web_interface(params):
         )
 
     def generate_recent_gallery():
-        """Generates a gallery of the most recent captured images."""
-        images = get_captured_images()
-        recent_images = images[:RECENT_IMAGES_COUNT]
-        thumbnails = [create_thumbnail(img, i) for i, img in enumerate(recent_images)]
-        modals = [create_image_modal(img, i) for i, img in enumerate(recent_images)]
+        """Generates a gallery showing the most recent detected image for each unique class.
+           It displays at most RECENT_IMAGES_COUNT unique classes.
+        """
+        all_images = get_captured_images()  # now list of (timestamp, rel_path, best_class)
+        unique_classes = {}
+        recent_unique = []  # list of tuples: (image_path, best_class)
+        for ts, path, best_class in all_images:
+            # If we haven’t already seen this class, take this image.
+            if best_class not in unique_classes:
+                unique_classes[best_class] = path
+                recent_unique.append((path, best_class))
+            if len(recent_unique) >= RECENT_IMAGES_COUNT:
+                break
+
+        thumbnails = []
+        modals = []
+        for i, (img, best_class) in enumerate(recent_unique):
+            thumb = html.Div([
+                html.Div(best_class, style={"textAlign": "center", "marginBottom": "5px"}),
+                create_thumbnail(img, i)
+            ], style={"display": "inline-block", "margin": "5px"})
+            thumbnails.append(thumb)
+            modals.append(create_image_modal(img, i))
+
         return html.Div(thumbnails + modals, id="recent-gallery", style={"textAlign": "center"})
 
     def generate_navbar():
@@ -424,7 +438,7 @@ def create_web_interface(params):
                 )
             ], className="my-3"),
             dbc.Row([
-                dbc.Col(html.H2("Recent Detections", className="text-center"), width=12, className="mt-4")
+                dbc.Col(html.H2("Today's Species", className="text-center"), width=12, className="mt-4")
             ]),
             dbc.Row([
                 dbc.Col(generate_recent_gallery(), width=12)
@@ -518,7 +532,7 @@ if __name__ == '__main__':
         "output_resize_width": 640,
         "STREAM_FPS": 1,
         "IMAGE_WIDTH": 150,
-        "RECENT_IMAGES_COUNT": 3,
+        "RECENT_IMAGES_COUNT": 10,
         "PAGE_SIZE": 20,
     }
     os.makedirs(params["output_dir"], exist_ok=True)
