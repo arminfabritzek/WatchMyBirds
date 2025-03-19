@@ -12,6 +12,7 @@ import time
 import cv2
 from PIL import Image, ImageDraw, ImageFont
 import numpy as np
+from datetime import datetime
 
 # Caching settings for gallery functions
 _CACHE_TIMEOUT = 10  # seconds
@@ -68,17 +69,18 @@ def create_web_interface(params):
                                 reader = csv.reader(f)
                             for row in reader:
                                 try:
-                                    # Expect at least 5 columns: [0]=timestamp, [2]=annotated image, [4]=best_class_sanitized
-                                    if len(row) < 5:
+                                    # Expect at least 6 columns: [0]=timestamp, [2]=annotated image, [4]=best_class_sanitized, [5]=confidence
+                                    if len(row) < 6:
                                         continue
                                     timestamp = row[0].strip()
                                     annotated_name = row[2].strip()
                                     best_class = row[4].strip()
+                                    confidence = row[5].strip()
                                     if not timestamp or not annotated_name:
                                         continue
                                     # Construct a relative path: foldername/annotated_name
                                     rel_path = os.path.join(item, annotated_name)
-                                    images.append((timestamp, rel_path, best_class))
+                                    images.append((timestamp, rel_path, best_class, confidence))
                                 except Exception as row_err:
                                     logger.error(f"Error processing row {row} in file {csv_file}: {row_err}")
                                     continue
@@ -109,7 +111,7 @@ def create_web_interface(params):
         """
         images = get_captured_images()  # Now each element is a tuple: (timestamp, filename, best_class)
         images_by_date = {}
-        for timestamp, filename, best_class in images:
+        for timestamp, filename, best_class, confidence in images:
             base = os.path.basename(filename)
             match = re.match(r"(\d{8})_\d{6}.*\.jpg", base)
             if match:
@@ -117,7 +119,7 @@ def create_web_interface(params):
                 formatted_date = f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:]}"
                 if formatted_date not in images_by_date:
                     images_by_date[formatted_date] = []
-                images_by_date[formatted_date].append(filename)
+                images_by_date[formatted_date].append((filename, best_class, confidence))
         return images_by_date
 
     def derive_zoomed_filename(annotated_filename: str,
@@ -148,11 +150,32 @@ def create_web_interface(params):
         )
 
     def create_image_modal(image_filename: str, index: int):
-        """Creates a modal dialog to display the full-size image with a download button."""
+        """Creates a modal dialog to display the full-size image with a download button.
+        The modal title is formatted as 'dd.mm.yyyy HH:MM:SS - <italic>Class Name</italic>'.
+        Expected filename format: optionally with folder, e.g. 'YYYYMMDD/YYYYMMDD_HHMMSS_Class_Name_annotated.jpg'."""
+        import re
+        # Replace to get the original filename for download
         original_filename = image_filename.replace("_annotated", "_original")
+        # Regex pattern allows for an optional folder prefix before the actual filename
+        pattern = r"(?:.*/)?(\d{8})_(\d{6})_([A-Za-z]+_[A-Za-z]+)_annotated\.jpg"
+        match = re.match(pattern, image_filename)
+        if match:
+            date_str, time_str, class_name = match.groups()
+            # Format the date: YYYYMMDD -> dd.mm.yyyy
+            formatted_date = f"{date_str[6:8]}.{date_str[4:6]}.{date_str[0:4]}"
+            # Format the time: HHMMSS -> HH:MM:SS
+            formatted_time = f"{time_str[0:2]}:{time_str[2:4]}:{time_str[4:6]}"
+            # Replace the underscore in the class name with a space
+            formatted_class = class_name.replace('_', ' ')
+            # Create the title content with italicized class name
+            title_content = [f"{formatted_date} {formatted_time} - ", html.Em(formatted_class)]
+        else:
+            # Fallback if the pattern doesn't match
+            title_content = image_filename
+
         return dbc.Modal(
             [
-                dbc.ModalHeader(dbc.ModalTitle(image_filename), close_button=False),
+                dbc.ModalHeader(dbc.ModalTitle(title_content), close_button=False),
                 dbc.ModalBody(
                     html.Img(
                         src=f"/images/{image_filename}",
@@ -185,10 +208,12 @@ def create_web_interface(params):
            It displays at most RECENT_IMAGES_COUNT unique classes.
         """
         all_images = get_captured_images()  # now list of (timestamp, rel_path, best_class)
+        today_str = datetime.now().strftime("%Y%m%d")
         unique_classes = {}
         recent_unique = []  # list of tuples: (image_path, best_class)
-        for ts, path, best_class in all_images:
-            # If we haven’t already seen this class, take this image.
+        for ts, path, best_class, _ in all_images:
+            if not ts.startswith(today_str):
+                continue
             if best_class not in unique_classes:
                 unique_classes[best_class] = path
                 recent_unique.append((path, best_class))
@@ -199,7 +224,7 @@ def create_web_interface(params):
         modals = []
         for i, (img, best_class) in enumerate(recent_unique):
             thumb = html.Div([
-                html.Div(best_class, style={"textAlign": "center", "marginBottom": "5px"}),
+                html.Div(html.Em(best_class.replace('_', ' ')), style={"textAlign": "center", "marginBottom": "5px"}),
                 create_thumbnail(img, i)
             ], style={"display": "inline-block", "margin": "5px"})
             thumbnails.append(thumb)
@@ -232,7 +257,7 @@ def create_web_interface(params):
 
         grid_items = []
         for date, images in images_by_date.items():
-            thumbnail = images[0]  # Use the first image of the day as the representative
+            thumbnail = images[0][0]  # Use the first image of the day as the representative
             grid_items.append(
                 html.Div([
                     html.A(
@@ -286,9 +311,13 @@ def create_web_interface(params):
             style={"textAlign": "center", "marginBottom": "20px"}
         )
 
-        grid_items = [html.Div(create_thumbnail(img, i), style={"margin": "5px"})
-                      for i, img in enumerate(page_images)]
-        modals = [create_image_modal(img, i) for i, img in enumerate(page_images)]
+        grid_items = [html.Div([
+            html.Div(html.Em(best_class.replace('_', ' ')), style={"textAlign": "center", "marginBottom": "2px"}),
+            html.Div(f"{int(float(confidence) * 100)}%", style={"textAlign": "center", "marginBottom": "5px"}),
+            create_thumbnail(img, i)
+        ], style={"margin": "5px"})
+        for i, (img, best_class, confidence) in enumerate(page_images)]
+        modals = [create_image_modal(img, i) for i, (img, best_class, confidence) in enumerate(page_images)]
 
         content = html.Div(
             grid_items + modals,
@@ -300,7 +329,8 @@ def create_web_interface(params):
             dbc.Button("Back to Gallery", href="/gallery", color="secondary", className="mb-3"),
             html.H2(f"Images from {date}", className="text-center"),
             pagination_controls,
-            content
+            content,
+            pagination_controls
         ], fluid=True)
 
     def generate_video_feed():
@@ -517,7 +547,6 @@ if __name__ == '__main__':
     # For testing purposes, we create a dummy video_capture.
     class DummyVideoCapture:
         def generate_frames(self, width, fps):
-            import numpy as np
             blank_frame = np.zeros((480, 640, 3), dtype=np.uint8)
             while True:
                 ret, buffer = cv2.imencode('.jpg', blank_frame)

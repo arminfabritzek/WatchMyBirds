@@ -261,24 +261,6 @@ class ONNXModel(BaseDetectionModel):
                 x1, y1, x2, y2 = detection['x1'], detection['y1'], detection['x2'], detection['y2']
                 cv2.rectangle(annotated_frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
 
-                annotation_text = f"{label} ({detection['confidence']:.2f})"
-                annotated_pil = Image.fromarray(cv2.cvtColor(annotated_frame, cv2.COLOR_BGR2RGB))
-                draw = ImageDraw.Draw(annotated_pil)
-                font_size = 24
-                try:
-                    font = ImageFont.truetype("assets/WRP_cruft.ttf", font_size)  # Replace with your font path
-                except IOError:
-                    font = ImageFont.load_default()
-                bbox = font.getbbox(annotation_text)
-                text_height = bbox[3] - bbox[1]
-                padding = 1
-                box_height = text_height + 2 * padding
-                draw.rectangle([(x1, y2), (x2, y2 + box_height)], fill="white")
-                text_x = x1 + padding
-                text_y = y2 + padding - bbox[1]
-                draw.text((text_x, text_y), annotation_text, font=font, fill="black")
-                annotated_frame = cv2.cvtColor(np.array(annotated_pil), cv2.COLOR_RGB2BGR)
-
         except Exception as e:
             self.inference_error_count += 1
             logger.debug(f"Error during ONNX inference: {e} (Error count: {self.inference_error_count})")

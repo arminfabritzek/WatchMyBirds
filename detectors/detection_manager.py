@@ -16,6 +16,7 @@ from utils.telegram_notifier import send_telegram_message
 from logging_config import get_logger
 import os
 import csv
+import json
 
 logger = get_logger(__name__)
 
@@ -172,6 +173,7 @@ class DetectionManager:
                 best_det = max(detection_info_list, key=lambda d: d["confidence"])
                 best_class = best_det["class_name"]  # e.g., "Eurasian Blue Tit" --> "Eurasian_Blue_Tit"
                 best_class_sanitized = re.sub(r'[^A-Za-z0-9_-]+', '_', best_class)
+                best_class_conf = best_det["confidence"]
 
                 # ------------------------------------------
                 # 2) Include the class name in your filenames
@@ -180,36 +182,80 @@ class DetectionManager:
                 annotated_name = f"{timestamp}_{best_class_sanitized}_annotated.jpg"
                 zoomed_name = f"{timestamp}_{best_class_sanitized}_zoomed.jpg"
 
+                # Generate COCO formatted detection information
+                image_id = int(timestamp.replace('_', ''))
+                image_info = {
+                    "id": image_id,
+                    "file_name": original_name,
+                    "width": original_frame.shape[1],
+                    "height": original_frame.shape[0]
+                }
+                annotations = []
+                for i, det in enumerate(detection_info_list, start=1):
+                    x1, y1, x2, y2 = det["x1"], det["y1"], det["x2"], det["y2"]
+                    bbox = [x1, y1, x2 - x1, y2 - y1]  # COCO uses [x, y, width, height]
+                    area = (x2 - x1) * (y2 - y1)
+                    # Assign a dummy category_id: use 7 if the class matches best_class_sanitized, else 1
+                    category_id = 7 if det["class_name"].replace(' ', '_') == best_class_sanitized else 1
+                    annotations.append({
+                        "id": image_id * 100 + i,
+                        "image_id": image_id,
+                        "category_id": category_id,
+                        "bbox": bbox,
+                        "area": area,
+                        "iscrowd": 0
+                    })
+                categories = []
+                unique_categories = {}
+                for det in detection_info_list:
+                    cat_name = det["class_name"].replace(' ', '_')
+                    if cat_name not in unique_categories:
+                        cat_id = 7 if cat_name == best_class_sanitized else 1
+                        unique_categories[cat_name] = cat_id
+                        categories.append({
+                            "id": cat_id,
+                            "name": cat_name
+                        })
+                coco_detection = {
+                    "annotations": annotations,
+                    "images": [image_info],
+                    "categories": categories
+                }
+                coco_json = json.dumps(coco_detection)
+
                 # Write image metadata to CSV (append mode)
                 with open(csv_path, mode="a", newline="") as f:
                     writer = csv.writer(f)
-                    writer.writerow([timestamp, original_name, annotated_name, zoomed_name, best_class_sanitized])
+                    if os.stat(csv_path).st_size == 0:
+                        writer.writerow(["timestamp", "original_name", "annotated_name", "zoomed_name", "best_class",
+                                         "best_class_conf", "coco_json"])
+                    writer.writerow([timestamp, original_name, annotated_name, zoomed_name, best_class_sanitized, best_class_conf, coco_json])
 
                 # 1. Save the original full-resolution image (for download).
                 cv2.imwrite(os.path.join(day_folder, original_name), original_frame)
 
-                # 2. Generate an optimized version of annotated image for display.
-                if annotated_frame.shape[1] > 800:
-                    optimized = cv2.resize(annotated_frame,
-                                           (800, int(annotated_frame.shape[0] * 800 / annotated_frame.shape[1])))
+                # 2. Generate an optimized version of the original image for display.
+                if original_frame.shape[1] > 800:
+                    optimized = cv2.resize(original_frame,
+                                           (800, int(original_frame.shape[0] * 800 / original_frame.shape[1])))
                     cv2.imwrite(os.path.join(day_folder, annotated_name), optimized,[int(cv2.IMWRITE_JPEG_QUALITY), 70])
                 else:
-                    cv2.imwrite(os.path.join(day_folder, annotated_name), annotated_frame, [int(cv2.IMWRITE_JPEG_QUALITY), 70])
+                    cv2.imwrite(os.path.join(day_folder, annotated_name), original_frame, [int(cv2.IMWRITE_JPEG_QUALITY), 70])
 
                 # Generate the zoomed version based on the detection with the highest confidence.
                 if detection_info_list:
                     x1, y1, x2, y2 = best_det["x1"], best_det["y1"], best_det["x2"], best_det["y2"]
                     margin = 100
-                    h, w = annotated_frame.shape[:2]
+                    h, w = original_frame.shape[:2]
                     x1 = max(0, x1 - margin)
                     y1 = max(0, y1 - margin)
                     x2 = min(w, x2 + margin)
                     y2 = min(h, y2 + margin)
-                    zoomed_frame = annotated_frame[y1:y2, x1:x2]
+                    zoomed_frame = original_frame[y1:y2, x1:x2]
                     cv2.imwrite(os.path.join(day_folder, zoomed_name), zoomed_frame,
                                 [int(cv2.IMWRITE_JPEG_QUALITY), 70])
                 else:
-                    cv2.imwrite(os.path.join(day_folder, zoomed_name), annotated_frame,
+                    cv2.imwrite(os.path.join(day_folder, zoomed_name), original_frame,
                                 [int(cv2.IMWRITE_JPEG_QUALITY), 70])
 
                 self.detection_occurred = True
