@@ -232,7 +232,6 @@ class ONNXModel(BaseDetectionModel):
 
     def detect(self, frame, confidence_threshold):
         detection_info_list = []
-        annotated_frame = frame.copy()
         try:
             # Preprocess the frame and retrieve ratio and padding info
             processed_image, original_image, ratio, dw, dh = self.preprocess_image(frame)
@@ -258,8 +257,6 @@ class ONNXModel(BaseDetectionModel):
                     "x2": int(detection['x2']),
                     "y2": int(detection['y2']),
                 })
-                x1, y1, x2, y2 = detection['x1'], detection['y1'], detection['x2'], detection['y2']
-                cv2.rectangle(annotated_frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
 
         except Exception as e:
             self.inference_error_count += 1
@@ -269,7 +266,7 @@ class ONNXModel(BaseDetectionModel):
                 return frame, []  # Return the original frame
             return frame, []  # Return the original frame
 
-        return annotated_frame, detection_info_list
+        return detection_info_list
 
 
 # ------------------------------------------------------------------------------
@@ -290,11 +287,11 @@ class Detector:
     def detect_objects(self, frame, confidence_threshold=0.5, save_threshold=0.8):
         """
         Runs object detection on a frame.
-        Returns a tuple: (annotated_frame, object_detected, original_frame, detection_info_list)
+        Returns a tuple: (object_detected, original_frame, detection_info_list)
         """
         original_frame = frame.copy()
-        annotated_frame, detection_info_list = self.model.detect(
+        detection_info_list = self.model.detect(
             frame, confidence_threshold)
         object_detected = any(
             det["confidence"] >= save_threshold for det in detection_info_list)
-        return annotated_frame, object_detected, original_frame, detection_info_list
+        return object_detected, original_frame, detection_info_list

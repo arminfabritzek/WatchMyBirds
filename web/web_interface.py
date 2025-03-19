@@ -50,7 +50,7 @@ def create_web_interface(params):
     def get_all_images():
         """
         Reads all per-day CSV files (from folders named YYYYMMDD) and returns a list of tuples:
-          (timestamp, annotated image relative path, best_class_sanitized)
+          (timestamp, optimized_name image relative path, best_class_sanitized)
         Sorted by timestamp (newest first).
         """
         images = []
@@ -69,17 +69,17 @@ def create_web_interface(params):
                                 reader = csv.reader(f)
                             for row in reader:
                                 try:
-                                    # Expect at least 6 columns: [0]=timestamp, [2]=annotated image, [4]=best_class_sanitized, [5]=confidence
+                                    # Expect at least 6 columns: [0]=timestamp, [2]=optimized_name image, [4]=best_class_sanitized, [5]=confidence
                                     if len(row) < 6:
                                         continue
                                     timestamp = row[0].strip()
-                                    annotated_name = row[2].strip()
+                                    optimized_name = row[2].strip()
                                     best_class = row[4].strip()
                                     confidence = row[5].strip()
-                                    if not timestamp or not annotated_name:
+                                    if not timestamp or not optimized_name:
                                         continue
-                                    # Construct a relative path: foldername/annotated_name
-                                    rel_path = os.path.join(item, annotated_name)
+                                    # Construct a relative path: foldername/optimized_name
+                                    rel_path = os.path.join(item, optimized_name)
                                     images.append((timestamp, rel_path, best_class, confidence))
                                 except Exception as row_err:
                                     logger.error(f"Error processing row {row} in file {csv_file}: {row_err}")
@@ -93,7 +93,7 @@ def create_web_interface(params):
 
     def get_captured_images():
         """
-        Returns a list of captured annotated images using the CSV-based approach.
+        Returns a list of captured optimized images using the CSV-based approach.
         Uses caching to avoid repeated disk reads.
         """
         now = time.time()
@@ -107,7 +107,7 @@ def create_web_interface(params):
     def get_captured_images_by_date():
         """
         Returns a dictionary grouping images by date (YYYY-MM-DD) using the CSV-based image list.
-        The grouping is done by extracting the date from the annotated filename (which is expected to start with YYYYMMDD).
+        The grouping is done by extracting the date from the optimized filename (which is expected to start with YYYYMMDD).
         """
         images = get_captured_images()  # Now each element is a tuple: (timestamp, filename, best_class)
         images_by_date = {}
@@ -122,11 +122,11 @@ def create_web_interface(params):
                 images_by_date[formatted_date].append((filename, best_class, confidence))
         return images_by_date
 
-    def derive_zoomed_filename(annotated_filename: str,
-                               annotated_suffix: str = "_annotated",
+    def derive_zoomed_filename(optimized_filename: str,
+                               optimized_suffix: str = "_optimized",
                                zoomed_suffix: str = "_zoomed") -> str:
-        """Derives the zoomed image filename from the annotated filename."""
-        return annotated_filename.replace(annotated_suffix, zoomed_suffix)
+        """Derives the zoomed image filename from the optimized filename."""
+        return optimized_filename.replace(optimized_suffix, zoomed_suffix)
 
     def create_thumbnail(image_filename: str, index: int):
         """Creates a clickable thumbnail button for the given image."""
@@ -152,12 +152,12 @@ def create_web_interface(params):
     def create_image_modal(image_filename: str, index: int):
         """Creates a modal dialog to display the full-size image with a download button.
         The modal title is formatted as 'dd.mm.yyyy HH:MM:SS - <italic>Class Name</italic>'.
-        Expected filename format: optionally with folder, e.g. 'YYYYMMDD/YYYYMMDD_HHMMSS_Class_Name_annotated.jpg'."""
+        Expected filename format: optionally with folder, e.g. 'YYYYMMDD/YYYYMMDD_HHMMSS_Class_Name_optimized.jpg'."""
         import re
         # Replace to get the original filename for download
-        original_filename = image_filename.replace("_annotated", "_original")
+        original_filename = image_filename.replace("_optimized", "_original")
         # Regex pattern allows for an optional folder prefix before the actual filename
-        pattern = r"(?:.*/)?(\d{8})_(\d{6})_([A-Za-z]+_[A-Za-z]+)_annotated\.jpg"
+        pattern = r"(?:.*/)?(\d{8})_(\d{6})_([A-Za-z]+_[A-Za-z]+)_optimized\.jpg"
         match = re.match(pattern, image_filename)
         if match:
             date_str, time_str, class_name = match.groups()
@@ -361,7 +361,7 @@ def create_web_interface(params):
 
         while True:
             start_time = time.time()
-            # Retrieve the most recent display frame (raw or annotated)
+            # Retrieve the most recent display frame (raw or optimized)
             frame = detection_manager.get_display_frame()
             if frame is not None:
                 # Assume we want to resize using the original resolution from video capture.

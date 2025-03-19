@@ -35,7 +35,6 @@ class DetectionManager:
         # Shared state.
         self.latest_raw_frame = None       # Updated continuously by the frame updater.
         self.latest_raw_timestamp = 0      # Timestamp for the raw frame.
-        self.latest_annotated_frame = None # Updated when detection is complete.
         self.latest_detection_time = 0
 
         # Statistics and notifications.
@@ -136,7 +135,7 @@ class DetectionManager:
             # Run detection.
             start_time = time.time()
             try:
-                annotated_frame, object_detected, original_frame, detection_info_list = \
+                object_detected, original_frame, detection_info_list = \
                     self.detector_instance.detect_objects(
                         raw_frame,
                         confidence_threshold=self.config["CONFIDENCE_THRESHOLD"],
@@ -155,9 +154,8 @@ class DetectionManager:
             detection_time = time.time() - start_time
             logger.debug(f"Detection took {detection_time:.4f} seconds.")
 
-            # Update the annotated frame.
+            # Update the last frame time.
             with self.frame_lock:
-                self.latest_annotated_frame = annotated_frame.copy()
                 self.latest_detection_time = time.time()
 
             if object_detected:
@@ -179,7 +177,7 @@ class DetectionManager:
                 # 2) Include the class name in your filenames
                 # ------------------------------------------
                 original_name = f"{timestamp}_{best_class_sanitized}_original.jpg"
-                annotated_name = f"{timestamp}_{best_class_sanitized}_annotated.jpg"
+                optimized_name = f"{timestamp}_{best_class_sanitized}_optimized.jpg"
                 zoomed_name = f"{timestamp}_{best_class_sanitized}_zoomed.jpg"
 
                 # Generate COCO formatted detection information
@@ -227,9 +225,9 @@ class DetectionManager:
                 with open(csv_path, mode="a", newline="") as f:
                     writer = csv.writer(f)
                     if os.stat(csv_path).st_size == 0:
-                        writer.writerow(["timestamp", "original_name", "annotated_name", "zoomed_name", "best_class",
+                        writer.writerow(["timestamp", "original_name", "optimized_name", "zoomed_name", "best_class",
                                          "best_class_conf", "coco_json"])
-                    writer.writerow([timestamp, original_name, annotated_name, zoomed_name, best_class_sanitized, best_class_conf, coco_json])
+                    writer.writerow([timestamp, original_name, optimized_name, zoomed_name, best_class_sanitized, best_class_conf, coco_json])
 
                 # 1. Save the original full-resolution image (for download).
                 cv2.imwrite(os.path.join(day_folder, original_name), original_frame)
@@ -238,9 +236,9 @@ class DetectionManager:
                 if original_frame.shape[1] > 800:
                     optimized = cv2.resize(original_frame,
                                            (800, int(original_frame.shape[0] * 800 / original_frame.shape[1])))
-                    cv2.imwrite(os.path.join(day_folder, annotated_name), optimized,[int(cv2.IMWRITE_JPEG_QUALITY), 70])
+                    cv2.imwrite(os.path.join(day_folder, optimized_name), optimized,[int(cv2.IMWRITE_JPEG_QUALITY), 70])
                 else:
-                    cv2.imwrite(os.path.join(day_folder, annotated_name), original_frame, [int(cv2.IMWRITE_JPEG_QUALITY), 70])
+                    cv2.imwrite(os.path.join(day_folder, optimized_name), original_frame, [int(cv2.IMWRITE_JPEG_QUALITY), 70])
 
                 # Generate the zoomed version based on the detection with the highest confidence.
                 if detection_info_list:
@@ -292,12 +290,9 @@ class DetectionManager:
     def get_display_frame(self):
         """
         Returns the most recent frame to be displayed.
-        Prefer the annotated frame if available; otherwise, return the raw frame.
         """
         with self.frame_lock:
-            if self.latest_annotated_frame is not None:
-                return self.latest_annotated_frame.copy()
-            elif self.latest_raw_frame is not None:
+            if self.latest_raw_frame is not None:
                 return self.latest_raw_frame.copy()
             else:
                 return None
