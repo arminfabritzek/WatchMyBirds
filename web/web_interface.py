@@ -44,6 +44,16 @@ def create_web_interface(params):
 
     logger = logging.getLogger(__name__)
 
+    common_names_file = os.path.join(os.getcwd(), "assets", "common_names_DE.json")
+    try:
+        with open(common_names_file, "r", encoding="utf-8") as f:
+            COMMON_NAMES = json.load(f)
+    except Exception as e:
+        logger.error(f"Failed to load common names from {common_names_file}: {e}")
+        COMMON_NAMES = {
+            "Cyanistes_caeruleus": "Eurasian blue tit"
+        }
+
     # ----------------------------------------------------
     # Helper Functions for CSV-Based Gallery Retrieval
     # ----------------------------------------------------
@@ -210,24 +220,41 @@ def create_web_interface(params):
         all_images = get_captured_images()  # now list of (timestamp, rel_path, best_class)
         today_str = datetime.now().strftime("%Y%m%d")
         unique_classes = {}
-        recent_unique = []  # list of tuples: (image_path, best_class)
-        for ts, path, best_class, _ in all_images:
+        recent_unique = []  # list of tuples: (image_path, best_class, confidence)
+        for ts, path, best_class, confidence in all_images:
             if not ts.startswith(today_str):
                 continue
             if best_class not in unique_classes:
                 unique_classes[best_class] = path
-                recent_unique.append((path, best_class))
+                recent_unique.append((path, best_class, confidence))
             if len(recent_unique) >= RECENT_IMAGES_COUNT:
                 break
 
         thumbnails = []
         modals = []
-        for i, (img, best_class) in enumerate(recent_unique):
-            thumb = html.Div([
-                html.Div(html.Em(best_class.replace('_', ' ')), style={"textAlign": "center", "marginBottom": "5px"}),
+        for i, (img, best_class, confidence) in enumerate(recent_unique):
+            tile = html.Div([
+                html.Div([
+                    # Row 1: Common name in bold
+                    html.Div(
+                        html.Strong(COMMON_NAMES.get(best_class, best_class.replace('_', ' '))),
+                        style={"textAlign": "center", "marginBottom": "2px"}
+                    ),
+                    # Row 2: Scientific name in brackets with italic text (brackets not italicized)
+                    html.Div([
+                        "(",
+                        html.I(best_class.replace('_', ' ')),
+                        ")"
+                    ], style={"textAlign": "center", "marginBottom": "2px"}),
+                    # Row 3: Confidence percentage
+                    html.Div(
+                        f"{int(float(confidence) * 100)}%",
+                        style={"textAlign": "center", "marginBottom": "5px"}
+                    )
+                ], style={"display": "flex", "flexDirection": "column", "alignItems": "center"}),
                 create_thumbnail(img, i)
-            ], style={"display": "inline-block", "margin": "5px"})
-            thumbnails.append(thumb)
+            ], style={"display": "inline-block", "margin": "5px", "flexDirection": "column", "alignItems": "center"})
+            thumbnails.append(tile)
             modals.append(create_image_modal(img, i))
 
         return html.Div(thumbnails + modals, id="recent-gallery", style={"textAlign": "center"})
@@ -311,12 +338,30 @@ def create_web_interface(params):
             style={"textAlign": "center", "marginBottom": "20px"}
         )
 
-        grid_items = [html.Div([
-            html.Div(html.Em(best_class.replace('_', ' ')), style={"textAlign": "center", "marginBottom": "2px"}),
-            html.Div(f"{int(float(confidence) * 100)}%", style={"textAlign": "center", "marginBottom": "5px"}),
-            create_thumbnail(img, i)
-        ], style={"margin": "5px"})
-        for i, (img, best_class, confidence) in enumerate(page_images)]
+        grid_items = [
+            html.Div([
+                html.Div([
+                    # Row 1: Common name in bold
+                    html.Div(
+                        html.Strong(COMMON_NAMES.get(best_class, best_class.replace('_', ' '))),
+                        style={"textAlign": "center", "marginBottom": "2px"}
+                    ),
+                    # Row 2: Scientific name in brackets with italic text (brackets not italicized)
+                    html.Div([
+                        "(",
+                        html.I(best_class.replace('_', ' ')),
+                        ")"
+                    ], style={"textAlign": "center", "marginBottom": "2px"}),
+                    # Row 3: Confidence percentage
+                    html.Div(
+                        f"{int(float(confidence) * 100)}%",
+                        style={"textAlign": "center", "marginBottom": "5px"}
+                    )
+                ], style={"display": "flex", "flexDirection": "column", "alignItems": "center"}),
+                create_thumbnail(img, i)
+            ], style={"margin": "5px", "display": "flex", "flexDirection": "column", "alignItems": "center"})
+            for i, (img, best_class, confidence) in enumerate(page_images)
+        ]
         modals = [create_image_modal(img, i) for i, (img, best_class, confidence) in enumerate(page_images)]
 
         content = html.Div(
@@ -326,8 +371,8 @@ def create_web_interface(params):
 
         return dbc.Container([
             generate_navbar(),
-            dbc.Button("Back to Gallery", href="/gallery", color="secondary", className="mb-3"),
-            html.H2(f"Images from {date}", className="text-center"),
+            dbc.Button("Zurück", href="/gallery", color="secondary", className="mb-3"),
+            html.H2(f"Bilder vom {date}", className="text-center"),
             pagination_controls,
             content,
             pagination_controls
@@ -443,7 +488,7 @@ def create_web_interface(params):
                 brand_href="/",
                 children=[
                     dbc.NavItem(dbc.NavLink("Live Stream", href="/", className="mx-auto")),
-                    dbc.NavItem(dbc.NavLink("Image Gallery", href="/gallery", className="mx-auto"))
+                    dbc.NavItem(dbc.NavLink("Galerie", href="/gallery", className="mx-auto"))
                 ],
                 color="primary",
                 dark=True,
@@ -451,7 +496,7 @@ def create_web_interface(params):
                 className="justify-content-center"
             ),
             dbc.Row([
-                dbc.Col(html.H1("Real-Time Stream", className="text-center"), width=12, className="my-3")
+                dbc.Col(html.H1("Live Stream", className="text-center"), width=12, className="my-3")
             ]),
             dbc.Row([
                 dbc.Col(
@@ -468,7 +513,7 @@ def create_web_interface(params):
                 )
             ], className="my-3"),
             dbc.Row([
-                dbc.Col(html.H2("Today's Species", className="text-center"), width=12, className="mt-4")
+                dbc.Col(html.H2("Arten des Tages", className="text-center"), width=12, className="mt-4")
             ]),
             dbc.Row([
                 dbc.Col(generate_recent_gallery(), width=12)

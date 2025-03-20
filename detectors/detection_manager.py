@@ -242,19 +242,34 @@ class DetectionManager:
 
                 # Generate the zoomed version based on the detection with the highest confidence.
                 if detection_info_list:
-                    x1, y1, x2, y2 = best_det["x1"], best_det["y1"], best_det["x2"], best_det["y2"]
-                    margin = 100
+                    # Extract bounding box coordinates from the best detection.
+                    bx1, by1, bx2, by2 = best_det["x1"], best_det["y1"], best_det["x2"], best_det["y2"]
+                    # Calculate center and dimensions of the bounding box.
+                    bbox_center_x = (bx1 + bx2) / 2
+                    bbox_center_y = (by1 + by2) / 2
+                    bbox_width = bx2 - bx1
+                    bbox_height = by2 - by1
+                    # Define the side length of the square based on the larger dimension.
+                    bbox_side = max(bbox_width, bbox_height)
+                    # Add a percentage margin (e.g., 20% margin).
+                    margin_percent = 0.2
+                    new_side = bbox_side * (1 + margin_percent)
+                    # Determine the new square coordinates centered on the bounding box center.
+                    new_x1 = int(bbox_center_x - new_side / 2)
+                    new_y1 = int(bbox_center_y - new_side / 2)
+                    new_x2 = int(bbox_center_x + new_side / 2)
+                    new_y2 = int(bbox_center_y + new_side / 2)
+                    # Ensure the coordinates are within the image boundaries.
                     h, w = original_frame.shape[:2]
-                    x1 = max(0, x1 - margin)
-                    y1 = max(0, y1 - margin)
-                    x2 = min(w, x2 + margin)
-                    y2 = min(h, y2 + margin)
-                    zoomed_frame = original_frame[y1:y2, x1:x2]
-                    cv2.imwrite(os.path.join(day_folder, zoomed_name), zoomed_frame,
-                                [int(cv2.IMWRITE_JPEG_QUALITY), 70])
+                    new_x1 = max(0, new_x1)
+                    new_y1 = max(0, new_y1)
+                    new_x2 = min(w, new_x2)
+                    new_y2 = min(h, new_y2)
+                    # Crop the image using the new square coordinates.
+                    zoomed_frame = original_frame[new_y1:new_y2, new_x1:new_x2]
+                    cv2.imwrite(os.path.join(day_folder, zoomed_name), zoomed_frame, [int(cv2.IMWRITE_JPEG_QUALITY), 70])
                 else:
-                    cv2.imwrite(os.path.join(day_folder, zoomed_name), original_frame,
-                                [int(cv2.IMWRITE_JPEG_QUALITY), 70])
+                    cv2.imwrite(os.path.join(day_folder, zoomed_name), original_frame, [int(cv2.IMWRITE_JPEG_QUALITY), 70])
 
                 self.detection_occurred = True
                 self.detection_counter += len(detection_info_list)
