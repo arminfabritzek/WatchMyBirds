@@ -214,21 +214,31 @@ def create_web_interface(params):
         )
 
     def generate_recent_gallery():
-        """Generates a gallery showing the most recent detected image for each unique class.
+        """Generates a gallery showing the image with the highest confidence for each unique class detected today.
            It displays at most RECENT_IMAGES_COUNT unique classes.
         """
-        all_images = get_captured_images()  # now list of (timestamp, rel_path, best_class)
+        all_images = get_captured_images()  # now list of (timestamp, rel_path, best_class, confidence)
         today_str = datetime.now().strftime("%Y%m%d")
-        unique_classes = {}
-        recent_unique = []  # list of tuples: (image_path, best_class, confidence)
+        best_images = {}
         for ts, path, best_class, confidence in all_images:
             if not ts.startswith(today_str):
                 continue
-            if best_class not in unique_classes:
-                unique_classes[best_class] = path
-                recent_unique.append((path, best_class, confidence))
-            if len(recent_unique) >= RECENT_IMAGES_COUNT:
-                break
+            try:
+                conf_val = float(confidence)
+            except ValueError:
+                continue
+            # If the class is not recorded or the current image has a higher confidence, update
+            if best_class not in best_images or conf_val > best_images[best_class][1]:
+                best_images[best_class] = (path, conf_val, ts)
+
+        # Create list of tuples (path, best_class, confidence) from best_images
+        recent_unique = [(path, best_class, conf_val) for best_class, (path, conf_val, ts) in best_images.items()]
+
+        # Sort by confidence descending (optional)
+        recent_unique.sort(key=lambda x: x[2], reverse=True)
+
+        # Limit to RECENT_IMAGES_COUNT unique classes
+        recent_unique = recent_unique[:RECENT_IMAGES_COUNT]
 
         thumbnails = []
         modals = []
@@ -248,7 +258,7 @@ def create_web_interface(params):
                     ], style={"textAlign": "center", "marginBottom": "2px"}),
                     # Row 3: Confidence percentage
                     html.Div(
-                        f"{int(float(confidence) * 100)}%",
+                        f"{int(confidence * 100)}%",
                         style={"textAlign": "center", "marginBottom": "5px"}
                     )
                 ], style={"display": "flex", "flexDirection": "column", "alignItems": "center"}),
@@ -270,7 +280,7 @@ def create_web_interface(params):
             brand_href="/",
             children=[
                 dbc.NavItem(dbc.NavLink("Live Stream", href="/", className="mx-auto")),
-                dbc.NavItem(dbc.NavLink("Image Gallery", href="/gallery", className="mx-auto"))
+                dbc.NavItem(dbc.NavLink("Galerie", href="/gallery", className="mx-auto"))
             ],
             color="primary",
             dark=True,
@@ -304,7 +314,7 @@ def create_web_interface(params):
         )
         return dbc.Container([
             generate_navbar(), # Call the function here
-            html.H1("Image Gallery", className="text-center my-3"),
+            html.H1("Galerie", className="text-center my-3"),
             content
         ], fluid=True)
 
