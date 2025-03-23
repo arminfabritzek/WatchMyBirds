@@ -1,4 +1,5 @@
 import os
+os.environ["HF_HOME"] = os.path.abspath("models")
 import onnxruntime as ort
 from PIL import Image
 import torchvision.transforms as transforms

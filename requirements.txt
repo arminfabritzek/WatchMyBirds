@@ -17,3 +17,6 @@ dash~=2.18.2
 dash-bootstrap-components~=1.7.1
 pandas~=2.2.3
 PyYAML~=6.0.2
+timm~=1.0.15
+torchvision~=0.21.0
+onnx~=1.17.0
