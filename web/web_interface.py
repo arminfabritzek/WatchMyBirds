@@ -244,6 +244,7 @@ def create_web_interface(params):
         modals = []
         for i, (img, best_class, confidence) in enumerate(recent_unique):
             tile = html.Div([
+                create_thumbnail(img, i),
                 html.Div([
                     # Row 1: Common name in bold
                     html.Div(
@@ -261,8 +262,7 @@ def create_web_interface(params):
                         f"{int(confidence * 100)}%",
                         style={"textAlign": "center", "marginBottom": "5px"}
                     )
-                ], style={"display": "flex", "flexDirection": "column", "alignItems": "center"}),
-                create_thumbnail(img, i)
+                ], style={"display": "flex", "flexDirection": "column", "alignItems": "center"})
             ], style={"display": "inline-block", "margin": "5px", "flexDirection": "column", "alignItems": "center"})
             thumbnails.append(tile)
             modals.append(create_image_modal(img, i))
@@ -350,6 +350,7 @@ def create_web_interface(params):
 
         grid_items = [
             html.Div([
+                create_thumbnail(img, i),
                 html.Div([
                     # Row 1: Common name in bold
                     html.Div(
@@ -367,8 +368,7 @@ def create_web_interface(params):
                         f"{int(float(confidence) * 100)}%",
                         style={"textAlign": "center", "marginBottom": "5px"}
                     )
-                ], style={"display": "flex", "flexDirection": "column", "alignItems": "center"}),
-                create_thumbnail(img, i)
+                ], style={"display": "flex", "flexDirection": "column", "alignItems": "center"})
             ], style={"margin": "5px", "display": "flex", "flexDirection": "column", "alignItems": "center"})
             for i, (img, best_class, confidence) in enumerate(page_images)
         ]
