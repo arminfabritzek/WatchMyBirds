@@ -60,7 +60,7 @@ def create_web_interface(params):
     def get_all_images():
         """
         Reads all per-day CSV files (from folders named YYYYMMDD) and returns a list of tuples:
-          (timestamp, optimized_name image relative path, best_class_sanitized)
+          (timestamp, optimized image relative path, best_class, best_class_conf, top1_class_name, top1_confidence)
         Sorted by timestamp (newest first).
         """
         images = []
@@ -72,32 +72,24 @@ def create_web_interface(params):
                 if os.path.exists(csv_file):
                     try:
                         with open(csv_file, newline="") as f:
-                            reader = csv.reader(f)
-                            header = next(reader, None)
-                            if header and "timestamp" not in header[0].lower():
-                                f.seek(0)
-                                reader = csv.reader(f)
+                            reader = csv.DictReader(f)
                             for row in reader:
-                                try:
-                                    # Expect at least 6 columns: [0]=timestamp, [2]=optimized_name image, [4]=best_class_sanitized, [5]=confidence
-                                    if len(row) < 6:
-                                        continue
-                                    timestamp = row[0].strip()
-                                    optimized_name = row[2].strip()
-                                    best_class = row[4].strip()
-                                    confidence = row[5].strip()
-                                    if not timestamp or not optimized_name:
-                                        continue
-                                    # Construct a relative path: foldername/optimized_name
-                                    rel_path = os.path.join(item, optimized_name)
-                                    images.append((timestamp, rel_path, best_class, confidence))
-                                except Exception as row_err:
-                                    logger.error(f"Error processing row {row} in file {csv_file}: {row_err}")
+                                # Extract values by column names.
+                                timestamp = row.get("timestamp", "").strip()
+                                optimized_name = row.get("optimized_name", "").strip()
+                                best_class = row.get("best_class", "").strip()
+                                best_class_conf = row.get("best_class_conf", "").strip()
+                                top1_class = row.get("top1_class_name", "").strip()
+                                top1_conf = row.get("top1_confidence", "").strip()
+                                if not timestamp or not optimized_name:
                                     continue
+                                # Construct relative path: folder/optimized_name
+                                rel_path = os.path.join(item, optimized_name)
+                                images.append((timestamp, rel_path, best_class, best_class_conf, top1_class, top1_conf))
                     except Exception as file_err:
                         logger.error(f"Error reading CSV file {csv_file}: {file_err}")
                         continue
-        # Sort images by timestamp descending (lexical order works with YYYYMMDD_HHMMSS)
+        # Sort images by timestamp descending (YYYYMMDD_HHMMSS lexical order)
         images.sort(key=lambda x: x[0], reverse=True)
         return images
 
@@ -119,9 +111,9 @@ def create_web_interface(params):
         Returns a dictionary grouping images by date (YYYY-MM-DD) using the CSV-based image list.
         The grouping is done by extracting the date from the optimized filename (which is expected to start with YYYYMMDD).
         """
-        images = get_captured_images()  # Now each element is a tuple: (timestamp, filename, best_class)
+        images = get_captured_images()  # now each element is a tuple: (timestamp, filename, best_class, best_class_conf, top1_class_name, top1_confidence)
         images_by_date = {}
-        for timestamp, filename, best_class, confidence in images:
+        for timestamp, filename, best_class, best_class_conf, top1_class, top1_conf in images:
             base = os.path.basename(filename)
             match = re.match(r"(\d{8})_\d{6}.*\.jpg", base)
             if match:
@@ -129,7 +121,7 @@ def create_web_interface(params):
                 formatted_date = f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:]}"
                 if formatted_date not in images_by_date:
                     images_by_date[formatted_date] = []
-                images_by_date[formatted_date].append((filename, best_class, confidence))
+                images_by_date[formatted_date].append((filename, best_class, best_class_conf, top1_class, top1_conf))
         return images_by_date
 
     def derive_zoomed_filename(optimized_filename: str,
@@ -217,50 +209,57 @@ def create_web_interface(params):
         """Generates a gallery showing the image with the highest confidence for each unique class detected today.
            It displays at most RECENT_IMAGES_COUNT unique classes.
         """
-        all_images = get_captured_images()  # now list of (timestamp, rel_path, best_class, confidence)
+        # all_images is a list of tuples:
+        # (timestamp, rel_path, best_class, best_class_conf, top1_class_name, top1_confidence)
+        all_images = get_captured_images()
         today_str = datetime.now().strftime("%Y%m%d")
         best_images = {}
-        for ts, path, best_class, confidence in all_images:
+        for ts, path, best_class, best_class_conf, top1_class, top1_conf in all_images:
             if not ts.startswith(today_str):
                 continue
             try:
-                conf_val = float(confidence)
+                conf_val = float(best_class_conf)  # use detection confidence
             except ValueError:
                 continue
-            # If the class is not recorded or the current image has a higher confidence, update
+            # Group by detection result (best_class)
             if best_class not in best_images or conf_val > best_images[best_class][1]:
-                best_images[best_class] = (path, conf_val, ts)
+                best_images[best_class] = (path, conf_val, ts, top1_class, top1_conf)
 
-        # Create list of tuples (path, best_class, confidence) from best_images
-        recent_unique = [(path, best_class, conf_val) for best_class, (path, conf_val, ts) in best_images.items()]
+        # Create list of tuples (path, best_class, best_class_conf, top1_class, top1_conf) from best_images
+        recent_unique = [(path, best_class, conf_val, top1_class, top1_conf) for
+                         best_class, (path, conf_val, ts, top1_class, top1_conf) in best_images.items()]
 
         # Sort by confidence descending (optional)
         recent_unique.sort(key=lambda x: x[2], reverse=True)
-
         # Limit to RECENT_IMAGES_COUNT unique classes
         recent_unique = recent_unique[:RECENT_IMAGES_COUNT]
 
         thumbnails = []
         modals = []
-        for i, (img, best_class, confidence) in enumerate(recent_unique):
+        for i, (img, best_class, confidence, top1_class, top1_conf) in enumerate(recent_unique):
             tile = html.Div([
                 create_thumbnail(img, i),
                 html.Div([
-                    # Row 1: Common name in bold
+                    # Row 1: Detection result common name in bold (using detection)
                     html.Div(
                         html.Strong(COMMON_NAMES.get(best_class, best_class.replace('_', ' '))),
                         style={"textAlign": "center", "marginBottom": "2px"}
                     ),
-                    # Row 2: Scientific name in brackets with italic text (brackets not italicized)
+                    # Row 2: Scientific name in brackets with italic text
                     html.Div([
                         "(",
                         html.I(best_class.replace('_', ' ')),
                         ")"
                     ], style={"textAlign": "center", "marginBottom": "2px"}),
-                    # Row 3: Confidence percentage
+                    # Row 3: Detector confidence percentage
                     html.Div(
-                        f"{int(confidence * 100)}%",
-                        style={"textAlign": "center", "marginBottom": "5px"}
+                        f"Detector: {int(float(confidence) * 100)}%",
+                        style={"textAlign": "center", "marginBottom": "2px", "color": "gray"}
+                    ),
+                    # Row 4: Classifier result
+                    html.Div(
+                        f"Classifier: {top1_class} ({int(float(top1_conf) * 100)}%)",
+                        style={"textAlign": "center", "marginBottom": "5px", "color": "blue"}
                     )
                 ], style={"display": "flex", "flexDirection": "column", "alignItems": "center"})
             ], style={"display": "inline-block", "margin": "5px", "flexDirection": "column", "alignItems": "center"})
@@ -320,6 +319,7 @@ def create_web_interface(params):
 
     def generate_subgallery(date, page=1):
         images_by_date = get_captured_images_by_date()
+        # images_by_date now contains tuples: (filename, best_class, best_class_conf, top1_class_name, top1_confidence)
         images = images_by_date.get(date, [])
         total_images = len(images)
         total_pages = math.ceil(total_images / PAGE_SIZE) or 1
@@ -352,27 +352,33 @@ def create_web_interface(params):
             html.Div([
                 create_thumbnail(img, i),
                 html.Div([
-                    # Row 1: Common name in bold
+                    # Row 1: Detection result common name in bold
                     html.Div(
                         html.Strong(COMMON_NAMES.get(best_class, best_class.replace('_', ' '))),
                         style={"textAlign": "center", "marginBottom": "2px"}
                     ),
-                    # Row 2: Scientific name in brackets with italic text (brackets not italicized)
+                    # Row 2: Scientific name in brackets with italic text
                     html.Div([
                         "(",
                         html.I(best_class.replace('_', ' ')),
                         ")"
                     ], style={"textAlign": "center", "marginBottom": "2px"}),
-                    # Row 3: Confidence percentage
+                    # Row 3: Detector confidence percentage
                     html.Div(
-                        f"{int(float(confidence) * 100)}%",
-                        style={"textAlign": "center", "marginBottom": "5px"}
+                        f"Detector: {int(float(best_class_conf) * 100)}%",
+                        style={"textAlign": "center", "marginBottom": "2px", "color": "gray"}
+                    ),
+                    # Row 4: Classifier result
+                    html.Div(
+                        f"Classifier: {top1_class} ({int(float(top1_conf) * 100)}%)",
+                        style={"textAlign": "center", "marginBottom": "5px", "color": "blue"}
                     )
                 ], style={"display": "flex", "flexDirection": "column", "alignItems": "center"})
             ], style={"margin": "5px", "display": "flex", "flexDirection": "column", "alignItems": "center"})
-            for i, (img, best_class, confidence) in enumerate(page_images)
+            for i, (img, best_class, best_class_conf, top1_class, top1_conf) in enumerate(page_images)
         ]
-        modals = [create_image_modal(img, i) for i, (img, best_class, confidence) in enumerate(page_images)]
+        modals = [create_image_modal(img, i) for i, (img, best_class, best_class_conf, top1_class, top1_conf) in
+                  enumerate(page_images)]
 
         content = html.Div(
             grid_items + modals,

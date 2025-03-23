@@ -31,7 +31,7 @@ class BaseDetectionModel:
 # ------------------------------------------------------------------------------
 # ONNX Runtime Model Wrapper
 # ------------------------------------------------------------------------------
-class ONNXModel(BaseDetectionModel):
+class ONNXDetectionModel(BaseDetectionModel):
     def __init__(self, debug=False):
         """
         Initialize the ONNX Runtime model.
@@ -59,7 +59,7 @@ class ONNXModel(BaseDetectionModel):
             logger.error(f"Failed to load ONNX model: {e}", exc_info=True)
             raise
 
-        self.input_size = ONNXModel.get_model_input_size(self.session)
+        self.input_size = ONNXDetectionModel.get_model_input_size(self.session)
 
         # Set the labels paths
         labels_json_path = os.path.join(os.path.dirname(self.model_path), "labels.json")
@@ -280,7 +280,7 @@ class Detector:
         self.debug = debug
         self.model_choice = model_choice.lower()
         if self.model_choice == "yolo":  # Corrected model choice
-            self.model = ONNXModel(debug=debug)
+            self.model = ONNXDetectionModel(debug=debug)
         else:
             raise ValueError(f"Unsupported model choice: {self.model_choice}")
 

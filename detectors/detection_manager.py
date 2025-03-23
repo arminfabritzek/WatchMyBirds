@@ -11,6 +11,7 @@ import pytz
 from astral.geocoder import database, lookup
 from astral.sun import sun
 from detectors.detector import Detector
+from detectors.classifier import ImageClassifier
 from camera.video_capture import VideoCapture
 from utils.telegram_notifier import send_telegram_message
 from logging_config import get_logger
@@ -26,6 +27,10 @@ class DetectionManager:
         self.model_choice = model_choice
         self.config = config
         self.debug = debug
+
+        # Initialize the classifier.
+        self.classifier = ImageClassifier("models/efficientnet_b0.onnx", "models/imagenet_classes.txt")
+        print("Classifier initialized.")
 
         # Locks for thread-safe operations.
         self.frame_lock = threading.Lock()      # Protects raw frame and timestamp.
@@ -107,6 +112,68 @@ class DetectionManager:
                 logger.debug("No frame available from VideoCapture in frame updater.")
                 time.sleep(0.1)
 
+    def create_square_crop(self, image, bbox, margin_percent=0.2, pad_color=(0, 0, 0)):
+        """
+        Creates a square crop centered on the object defined by bbox, adding padding if necessary
+        so that the output is always a full square with the object centered.
+
+        Parameters:
+            image (np.ndarray): The source image.
+            bbox (tuple): Bounding box as (x1, y1, x2, y2).
+            margin_percent (float): Extra margin percentage to add around the bbox.
+            pad_color (tuple): Color for padding (default is black).
+
+        Returns:
+            np.ndarray: The square cropped image.
+        """
+        bx1, by1, bx2, by2 = bbox
+        # Compute the center of the bounding box.
+        cx = (bx1 + bx2) / 2
+        cy = (by1 + by2) / 2
+
+        # Compute width and height of the bbox, and choose the larger side.
+        bbox_width = bx2 - bx1
+        bbox_height = by2 - by1
+        bbox_side = max(bbox_width, bbox_height)
+
+        # Apply margin to get the desired square side length.
+        new_side = int(bbox_side * (1 + margin_percent))
+
+        # Desired square coordinates centered on the bbox center.
+        desired_x1 = int(cx - new_side / 2)
+        desired_y1 = int(cy - new_side / 2)
+        desired_x2 = desired_x1 + new_side
+        desired_y2 = desired_y1 + new_side
+
+        # Get original image dimensions.
+        image_h, image_w = image.shape[:2]
+
+        # Determine the part of the desired square that lies within the image.
+        crop_x1 = max(0, desired_x1)
+        crop_y1 = max(0, desired_y1)
+        crop_x2 = min(image_w, desired_x2)
+        crop_y2 = min(image_h, desired_y2)
+
+        # Extract that region from the image.
+        crop = image[crop_y1:crop_y2, crop_x1:crop_x2]
+
+        # Calculate the padding needed on each side.
+        pad_left = crop_x1 - desired_x1
+        pad_top = crop_y1 - desired_y1
+        pad_right = desired_x2 - crop_x2
+        pad_bottom = desired_y2 - crop_y2
+
+        # Use cv2.copyMakeBorder to add padding and form a full square.
+        square_crop = cv2.copyMakeBorder(crop,
+                                         pad_top,
+                                         pad_bottom,
+                                         pad_left,
+                                         pad_right,
+                                         borderType=cv2.BORDER_CONSTANT,
+                                         value=pad_color)
+
+        return square_crop
+
     def _detection_loop(self):
         """
         Continuously processes the latest frame for detection.
@@ -150,9 +217,6 @@ class DetectionManager:
                         logger.error(f"Detector reinitialization failed: {e2}")
                 time.sleep(1)
                 continue
-
-            detection_time = time.time() - start_time
-            logger.debug(f"Detection took {detection_time:.4f} seconds.")
 
             # Update the last frame time.
             with self.frame_lock:
@@ -221,14 +285,6 @@ class DetectionManager:
                 }
                 coco_json = json.dumps(coco_detection)
 
-                # Write image metadata to CSV (append mode)
-                with open(csv_path, mode="a", newline="") as f:
-                    writer = csv.writer(f)
-                    if os.stat(csv_path).st_size == 0:
-                        writer.writerow(["timestamp", "original_name", "optimized_name", "zoomed_name", "best_class",
-                                         "best_class_conf", "coco_json"])
-                    writer.writerow([timestamp, original_name, optimized_name, zoomed_name, best_class_sanitized, best_class_conf, coco_json])
-
                 # 1. Save the original full-resolution image (for download).
                 cv2.imwrite(os.path.join(day_folder, original_name), original_frame)
 
@@ -240,36 +296,34 @@ class DetectionManager:
                 else:
                     cv2.imwrite(os.path.join(day_folder, optimized_name), original_frame, [int(cv2.IMWRITE_JPEG_QUALITY), 70])
 
-                # Generate the zoomed version based on the detection with the highest confidence.
+                # Generate the zoomed version based on the detection with the highest confidence using create_square_crop()
                 if detection_info_list:
-                    # Extract bounding box coordinates from the best detection.
-                    bx1, by1, bx2, by2 = best_det["x1"], best_det["y1"], best_det["x2"], best_det["y2"]
-                    # Calculate center and dimensions of the bounding box.
-                    bbox_center_x = (bx1 + bx2) / 2
-                    bbox_center_y = (by1 + by2) / 2
-                    bbox_width = bx2 - bx1
-                    bbox_height = by2 - by1
-                    # Define the side length of the square based on the larger dimension.
-                    bbox_side = max(bbox_width, bbox_height)
-                    # Add a percentage margin (e.g., 20% margin).
-                    margin_percent = 0.2
-                    new_side = bbox_side * (1 + margin_percent)
-                    # Determine the new square coordinates centered on the bounding box center.
-                    new_x1 = int(bbox_center_x - new_side / 2)
-                    new_y1 = int(bbox_center_y - new_side / 2)
-                    new_x2 = int(bbox_center_x + new_side / 2)
-                    new_y2 = int(bbox_center_y + new_side / 2)
-                    # Ensure the coordinates are within the image boundaries.
-                    h, w = original_frame.shape[:2]
-                    new_x1 = max(0, new_x1)
-                    new_y1 = max(0, new_y1)
-                    new_x2 = min(w, new_x2)
-                    new_y2 = min(h, new_y2)
-                    # Crop the image using the new square coordinates.
-                    zoomed_frame = original_frame[new_y1:new_y2, new_x1:new_x2]
+                    # Extract bounding box from the best detection
+                    bbox = (best_det["x1"], best_det["y1"], best_det["x2"], best_det["y2"])
+                    zoomed_frame = self.create_square_crop(original_frame, bbox, margin_percent=0.2)
+
+                    # Ensure the zoomed frame is resized to 224x224, if needed
+                    zoomed_frame = cv2.resize(zoomed_frame, (224, 224))
+
+                    # Perform classification directly on the zoomed_frame
+                    top_k_indices, top_k_confidences, top1_class_name, top1_confidence = self.classifier.predict_from_image(zoomed_frame)
+
+                    # Save the zoomed image with classification result for download/viewing.
                     cv2.imwrite(os.path.join(day_folder, zoomed_name), zoomed_frame, [int(cv2.IMWRITE_JPEG_QUALITY), 70])
                 else:
+                    # If no detection exists, save the original frame and leave classification empty.
                     cv2.imwrite(os.path.join(day_folder, zoomed_name), original_frame, [int(cv2.IMWRITE_JPEG_QUALITY), 70])
+                    top1_class_name = ""
+                    top1_confidence = ""
+
+                logger.debug(f"Classification Restuls: {top1_class_name} - {top1_confidence}")
+
+                # Write image metadata and classification result to CSV (append mode)
+                with open(csv_path, mode="a", newline="") as f:
+                    writer = csv.writer(f)
+                    if os.stat(csv_path).st_size == 0:
+                        writer.writerow(["timestamp", "original_name", "optimized_name", "zoomed_name", "best_class", "best_class_conf", "top1_class_name", "top1_confidence", "coco_json"])
+                    writer.writerow([timestamp, original_name, optimized_name, zoomed_name, best_class_sanitized, best_class_conf, top1_class_name, top1_confidence, coco_json])
 
                 self.detection_occurred = True
                 self.detection_counter += len(detection_info_list)
@@ -293,6 +347,9 @@ class DetectionManager:
                         self.detection_classes_agg = set()
                     else:
                         logger.debug("Cooldown active, not sending alert.")
+
+            detection_time = time.time() - start_time
+            logger.info(f"Detection took {detection_time:.4f} seconds.")
 
             target_duration = 1.0 / self.config["MAX_FPS_DETECTION"]
             sleep_time = target_duration - detection_time
