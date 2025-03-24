@@ -29,7 +29,7 @@ class DetectionManager:
         self.debug = debug
 
         # Initialize the classifier.
-        self.classifier = ImageClassifier("models/efficientnet_b0.onnx", "models/imagenet_classes.txt")
+        self.classifier = ImageClassifier("models/classifier_best.onnx", "models/classifier_classes.txt")
         print("Classifier initialized.")
 
         # Locks for thread-safe operations.
