@@ -30,8 +30,8 @@ WORKDIR /app
 # Copy only requirements.txt first to leverage Docker cache for dependency installation
 COPY requirements.txt /app/requirements.txt
 
-# Install Python dependencies
-RUN python -m pip install --upgrade pip && \
+# Install Python dependencies (upgrade pip, setuptools, and wheel first)
+RUN python -m pip install --upgrade pip setuptools wheel && \
     pip install --no-cache-dir -r requirements.txt
 
 # Copy the rest of the application source code
