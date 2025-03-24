@@ -11,7 +11,6 @@ pytz~=2025.1
 astral~=3.2
 matplotlib~=3.10.0
 six~=1.17.0
-imutils~=0.5.4
 waitress~=3.0.2
 dash~=2.18.2
 dash-bootstrap-components~=1.7.1
