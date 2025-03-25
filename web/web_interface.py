@@ -151,6 +151,26 @@ def create_web_interface(params):
             style={"border": "none", "background": "none", "padding": "0"}
         )
 
+    def create_thumbnail_classifier(image_filename: str, index: int):
+        zoomed_filename = derive_zoomed_filename(image_filename)
+        style = {
+            "cursor": "pointer",
+            "border": "none",
+            "background": "none",
+            "padding": "5px",
+            "width": f"{IMAGE_WIDTH}px"
+        }
+        return html.Button(
+            html.Img(
+                src=f"/images/{zoomed_filename}",
+                alt=f"Thumbnail of {zoomed_filename}",
+                style=style
+            ),
+            id={'type': 'thumbnail_classifier', 'index': index},
+            n_clicks=0,
+            style={"border": "none", "background": "none", "padding": "0"}
+        )
+
     def create_image_modal(image_filename: str, index: int):
         """Creates a modal dialog to display the full-size image with a download button.
         The modal title is formatted as 'dd.mm.yyyy HH:MM:SS - <italic>Class Name</italic>'.
@@ -201,6 +221,52 @@ def create_web_interface(params):
                 ]),
             ],
             id={'type': 'modal', 'index': index},
+            is_open=False,
+            size="lg",
+        )
+
+    def create_image_modal_classifier(image_filename: str, index: int):
+        import re
+        # Replace to get the original filename for download
+        original_filename = image_filename.replace("_optimized", "_original")
+
+        pattern = r"(?:.*/)?(\\d{8})_(\\d{6})_([A-Za-z]+_[A-Za-z]+)_optimized\\.jpg"
+        match = re.match(pattern, image_filename)
+        if match:
+            date_str, time_str, class_name = match.groups()
+            formatted_date = f"{date_str[6:8]}.{date_str[4:6]}.{date_str[0:4]}"
+            formatted_time = f"{time_str[0:2]}:{time_str[2:4]}:{time_str[4:6]}"
+            formatted_class = class_name.replace('_', ' ')
+            title_content = [f"{formatted_date} {formatted_time} - ", html.Em(formatted_class)]
+        else:
+            title_content = image_filename
+
+        return dbc.Modal(
+            [
+                dbc.ModalHeader(dbc.ModalTitle(title_content), close_button=False),
+                dbc.ModalBody(
+                    html.Img(
+                        src=f"/images/{image_filename}",
+                        style={"width": "100%"},
+                        id={'type': 'modal-image_classifier', 'index': index}
+                    )
+                ),
+                dbc.ModalFooter([
+                    html.A(
+                        dbc.Button("Download", color="secondary", target="_blank"),
+                        href=f"/images/{original_filename}",
+                        download=original_filename,
+                        style={"textDecoration": "none"}
+                    ),
+                    dbc.Button(
+                        "Close",
+                        id={'type': 'close_classifier', 'index': index},
+                        className="ml-auto",
+                        n_clicks=0
+                    )
+                ]),
+            ],
+            id={'type': 'modal_classifier', 'index': index},
             is_open=False,
             size="lg",
         )
@@ -267,6 +333,54 @@ def create_web_interface(params):
             modals.append(create_image_modal(img, i))
 
         return html.Div(thumbnails + modals, id="recent-gallery", style={"textAlign": "center"})
+
+    def generate_recent_gallery_classifier():
+        """Generates a gallery showing the image with the highest classifier confidence for each unique class (top1_class) detected today.
+           It displays at most RECENT_IMAGES_COUNT unique classes.
+        """
+        all_images = get_captured_images()
+        today_str = datetime.now().strftime("%Y%m%d")
+        classifier_images = {}
+        for ts, path, best_class, best_class_conf, top1_class, top1_conf in all_images:
+            if not ts.startswith(today_str):
+                continue
+            try:
+                conf_val = float(top1_conf)  # use classifier confidence
+            except ValueError:
+                continue
+            # Group by classifier result (top1_class)
+            if top1_class not in classifier_images or conf_val > classifier_images[top1_class][1]:
+                classifier_images[top1_class] = (path, conf_val, ts)
+        # Create list of tuples (path, top1_class, top1_conf) from classifier_images
+        recent_unique = [(path, top1_class, conf_val) for top1_class, (path, conf_val, ts) in classifier_images.items()]
+        recent_unique.sort(key=lambda x: x[2], reverse=True)
+        recent_unique = recent_unique[:RECENT_IMAGES_COUNT]
+
+        thumbnails = []
+        modals = []
+        for i, (img, top1_class, confidence) in enumerate(recent_unique):
+            tile = html.Div([
+                create_thumbnail_classifier(img, i),
+                html.Div([
+                    html.Div(
+                        html.Strong(COMMON_NAMES.get(top1_class, top1_class.replace('_', ' '))),
+                        style={"textAlign": "center", "marginBottom": "2px"}
+                    ),
+                    html.Div([
+                        "(",
+                        html.I(top1_class.replace('_', ' ')),
+                        ")"
+                    ], style={"textAlign": "center", "marginBottom": "2px"}),
+                    html.Div(
+                        f"Classifier: {int(float(confidence) * 100)}%",
+                        style={"textAlign": "center", "marginBottom": "5px", "color": "blue"}
+                    )
+                ], style={"display": "flex", "flexDirection": "column", "alignItems": "center"})
+            ], style={"display": "inline-block", "margin": "5px", "flexDirection": "column", "alignItems": "center"})
+            thumbnails.append(tile)
+            modals.append(create_image_modal_classifier(img, i))
+
+        return html.Div(thumbnails + modals, id="recent-gallery-classifier", style={"textAlign": "center"})
 
     def generate_navbar():
         """Creates the navbar with the logo for gallery pages."""
@@ -529,10 +643,16 @@ def create_web_interface(params):
                 )
             ], className="my-3"),
             dbc.Row([
-                dbc.Col(html.H2("Arten des Tages", className="text-center"), width=12, className="mt-4")
+                dbc.Col(html.H2("Arten des Tages (Detector)", className="text-center"), width=12, className="mt-4")
             ]),
             dbc.Row([
                 dbc.Col(generate_recent_gallery(), width=12)
+            ], className="mb-5"),
+            dbc.Row([
+                dbc.Col(html.H2("Arten des Tages (Classifier)", className="text-center"), width=12, className="mt-4")
+            ]),
+            dbc.Row([
+                dbc.Col(generate_recent_gallery_classifier(), width=12)
             ], className="mb-5")
         ], fluid=True)
 
@@ -590,6 +710,26 @@ def create_web_interface(params):
         if triggered_id["type"] == "thumbnail":
             new_states[triggered_id["index"]] = True
         elif triggered_id["type"] in ["close", "modal-image"]:
+            new_states[triggered_id["index"]] = False
+        return new_states
+
+    @app.callback(
+        Output({"type": "modal_classifier", "index": ALL}, "is_open"),
+        [Input({'type': 'thumbnail_classifier', 'index': ALL}, 'n_clicks'),
+         Input({'type': 'close_classifier', 'index': ALL}, 'n_clicks'),
+         Input({'type': 'modal-image_classifier', 'index': ALL}, 'n_clicks')],
+        [State({"type": "modal_classifier", "index": ALL}, "is_open")]
+    )
+    def toggle_modal_classifier(thumbnail_clicks, close_clicks, modal_image_clicks, current_states):
+        ctx = callback_context
+        if not ctx.triggered:
+            return current_states
+        triggered_prop = ctx.triggered[0]['prop_id']
+        triggered_id = json.loads(triggered_prop.split('.')[0])
+        new_states = [False] * len(current_states)
+        if triggered_id["type"] == "thumbnail_classifier":
+            new_states[triggered_id["index"]] = True
+        elif triggered_id["type"] in ["close_classifier", "modal-image_classifier"]:
             new_states[triggered_id["index"]] = False
         return new_states
 
