@@ -207,7 +207,7 @@ class DetectionManager:
                 object_detected, original_frame, detection_info_list = \
                     self.detector_instance.detect_objects(
                         raw_frame,
-                        confidence_threshold=self.config["CONFIDENCE_THRESHOLD"],
+                        confidence_threshold=self.config["CONFIDENCE_THRESHOLD_DETECTION"],
                         save_threshold=self.config["SAVE_THRESHOLD"]
                     )
             except Exception as e:

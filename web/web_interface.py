@@ -41,6 +41,7 @@ def create_web_interface(params):
     IMAGE_WIDTH = params.get("IMAGE_WIDTH", 150)
     RECENT_IMAGES_COUNT = params.get("RECENT_IMAGES_COUNT", 10)
     PAGE_SIZE = params.get("PAGE_SIZE", 50)
+    CLASSIFIER_CONFIDENCE_THRESHOLD = params.get("CLASSIFIER_CONFIDENCE_THRESHOLD", 0.7)
 
     logger = logging.getLogger(__name__)
 
@@ -175,7 +176,6 @@ def create_web_interface(params):
         """Creates a modal dialog to display the full-size image with a download button.
         The modal title is formatted as 'dd.mm.yyyy HH:MM:SS - <italic>Class Name</italic>'.
         Expected filename format: optionally with folder, e.g. 'YYYYMMDD/YYYYMMDD_HHMMSS_Class_Name_optimized.jpg'."""
-        import re
         # Replace to get the original filename for download
         original_filename = image_filename.replace("_optimized", "_original")
         # Regex pattern allows for an optional folder prefix before the actual filename
@@ -226,11 +226,10 @@ def create_web_interface(params):
         )
 
     def create_image_modal_classifier(image_filename: str, index: int):
-        import re
         # Replace to get the original filename for download
         original_filename = image_filename.replace("_optimized", "_original")
 
-        pattern = r"(?:.*/)?(\\d{8})_(\\d{6})_([A-Za-z]+_[A-Za-z]+)_optimized\\.jpg"
+        pattern = r"(?:.*/)?(\d{8})_(\d{6})_([A-Za-z]+_[A-Za-z]+)_optimized\.jpg"
         match = re.match(pattern, image_filename)
         if match:
             date_str, time_str, class_name = match.groups()
@@ -347,6 +346,8 @@ def create_web_interface(params):
             try:
                 conf_val = float(top1_conf)  # use classifier confidence
             except ValueError:
+                continue
+            if conf_val < CLASSIFIER_CONFIDENCE_THRESHOLD:
                 continue
             # Group by classifier result (top1_class)
             if top1_class not in classifier_images or conf_val > classifier_images[top1_class][1]:

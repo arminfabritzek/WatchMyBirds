@@ -18,13 +18,14 @@ def load_config():
         # Model and Detection Settings
         "DETECTOR_MODEL_CHOICE": os.getenv("DETECTOR_MODEL_CHOICE", "yolo"),  # Only "yolo" supported for now
         "DETECTOR_MODEL_PATH": os.getenv("DETECTOR_MODEL_PATH", "models/best.onnx"),
-        "CONFIDENCE_THRESHOLD": float(os.getenv("CONFIDENCE_THRESHOLD", 0.8)),
+        "CONFIDENCE_THRESHOLD_DETECTION": float(os.getenv("CONFIDENCE_THRESHOLD_DETECTION", 0.8)),
         "SAVE_THRESHOLD": float(os.getenv("SAVE_THRESHOLD", 0.8)),
         "MAX_FPS_DETECTION": float(os.getenv("MAX_FPS_DETECTION", 1.0)),
 
         # Model and Classifier Settings
         "CLASSIFIER_MODEL_PATH": os.getenv("CLASSIFIER_MODEL_PATH", "models/classifier_best.onnx"),
         "CLASSIFIER_CLASSES_PATH": os.getenv("CLASSIFIER_CLASSES_PATH", "models/classifier_classes.txt"),
+        "CLASSIFIER_CONFIDENCE_THRESHOLD": float(os.getenv("CLASSIFIER_CONFIDENCE_THRESHOLD", 0.7)),
 
         # Streaming Settings
         "STREAM_FPS": float(os.getenv("STREAM_FPS", 1)),
