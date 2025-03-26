@@ -16,7 +16,7 @@ import numpy as np  # Import numpy
 
 
 class ImageClassifier:
-    def __init__(self, model_path, class_path="models/classifier_classes.txt"):
+    def __init__(self):
         """
         Initializes the ImageClassifier.
 
@@ -26,8 +26,9 @@ class ImageClassifier:
                                         Defaults to "classifier_classes.txt".  Handles
                                         cases where the file might not exist.
         """
-        self.model_path = model_path
-        self.class_path = class_path
+        self.config = config
+        self.model_path = self.config["CLASSIFIER_MODEL_PATH"]
+        self.class_path = self.config["CLASSIFIER_CLASSES_PATH"]
 
         # Always download the latest ONNX model from the remote repository
         logger.info("Downloading latest ONNX model from remote...")

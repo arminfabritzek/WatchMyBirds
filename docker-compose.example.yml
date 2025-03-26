@@ -1,0 +1,37 @@
+   version: '3'
+   services:
+     watchmybirds:
+       image: starminworks/watchmybirds:latest
+       container_name: watchmybirds
+       environment:
+         - VIDEO_SOURCE=rtsp://user:password@192.168.0.2:554/1  # Replace with your RTSP stream
+         - PUID=1000  # User ID (UID) to run the container with proper permissions.
+         - PGID=1000   # Group ID (GID) to ensure correct file access within the container.
+         - TZ=Europe/Berlin  # Set your local timezone to ensure correct timestamp logging.
+         - DEBUG_MODE=False  # Set to "True" for additional logging output for debugging.
+         - DETECTOR_MODEL_CHOICE="yolo"  # The object detection model to use (e.g., yolo, pytorch_ssd).
+         - DETECTOR_MODEL_PATH="models/best.onnx"  # The object detection model path.
+         - CONFIDENCE_THRESHOLD=0.8  # Minimum confidence score for an object to be considered detected.
+         - SAVE_THRESHOLD=0.8  # Minimum confidence score for saving an image of a detected object.
+         - MAX_FPS_DETECTION=1  # Limit detection FPS to reduce CPU/GPU usage (higher values increase load).
+         - CLASSIFIER_MODEL_PATH="models/classifier_best.onnx"  # The classifier model.
+         - CLASSIFIER_CLASSES_PATH="models/classifier_classes.txt"  # The classifier model classes file.
+         - STREAM_FPS=3  # Maximum FPS for the video stream output.
+         - STREAM_WIDTH_OUTPUT_RESIZE=800  # Resize the output stream width to optimize performance.
+         - TELEGRAM_BOT_TOKEN=YOUR_BOT_TOKEN  # Token for Telegram bot notifications (replace with your actual bot token).
+         - TELEGRAM_CHAT_ID=YOUR_CHAT_ID  # Telegram chat ID to send detection alerts to.
+         - DAY_AND_NIGHT_CAPTURE=False  # Set to "True" to allow detection at night; "False" stops detection at night.
+         - DAY_AND_NIGHT_CAPTURE_LOCATION="Berlin"  # The location to determine daylight hours (used for night mode).
+         - CPU_LIMIT=1  # Limit the container to use only 1 CPU core to optimize resource usage.
+         - TELEGRAM_COOLDOWN=5  # Delay Telegram Notifications in seconds
+       volumes:
+         - /your_path/output:/output  # Path for saving output
+         - /your_path/models:/models  # Path for your model of choice
+       ports:
+         - "8050:8050"  # HTTP port for the Flask web app (streaming and API).
+         - "8554:8554"  # RTSP port for serving the video stream.
+         - "8081:8081"  # MJPEG streaming port.
+         - "1936:1936"  # Custom RTMP or alternative streaming port.
+         - "8889:8889"  # Custom port for additional services (if needed).
+         - "8189:8189/udp"  # UDP port for specific video streaming protocols.
+       restart: unless-stopped  # Ensures the container restarts automatically unless manually stopped.

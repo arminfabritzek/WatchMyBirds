@@ -2,9 +2,11 @@
 # Detection Manager Module for Object Detection
 # detectors/detection_manager.py
 # ------------------------------------------------------------------------------
+import time
+from config import load_config
+config = load_config()
 import re
 import threading
-import time
 from datetime import datetime, timedelta
 import cv2
 import pytz
@@ -22,14 +24,14 @@ import json
 logger = get_logger(__name__)
 
 class DetectionManager:
-    def __init__(self, video_source, model_choice, config, debug=False):
-        self.video_source = video_source
-        self.model_choice = model_choice
+    def __init__(self):
         self.config = config
-        self.debug = debug
+        self.model_choice = self.config["DETECTOR_MODEL_CHOICE"]
+        self.video_source = self.config["VIDEO_SOURCE"]
+        self.debug = self.config["DEBUG_MODE"]
 
         # Initialize the classifier.
-        self.classifier = ImageClassifier("models/classifier_best.onnx", "models/classifier_classes.txt")
+        self.classifier = ImageClassifier()
         print("Classifier initialized.")
 
         # Locks for thread-safe operations.

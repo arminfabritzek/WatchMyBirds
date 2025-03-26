@@ -16,11 +16,15 @@ def load_config():
         "VIDEO_SOURCE": os.getenv("VIDEO_SOURCE", "0"),
 
         # Model and Detection Settings
-        "MODEL_CHOICE": os.getenv("MODEL_CHOICE", "yolo"),  # Only "yolo" supported for now
+        "DETECTOR_MODEL_CHOICE": os.getenv("DETECTOR_MODEL_CHOICE", "yolo"),  # Only "yolo" supported for now
+        "DETECTOR_MODEL_PATH": os.getenv("DETECTOR_MODEL_PATH", "models/best.onnx"),
         "CONFIDENCE_THRESHOLD": float(os.getenv("CONFIDENCE_THRESHOLD", 0.8)),
         "SAVE_THRESHOLD": float(os.getenv("SAVE_THRESHOLD", 0.8)),
         "MAX_FPS_DETECTION": float(os.getenv("MAX_FPS_DETECTION", 1.0)),
-        "YOLO8N_MODEL_PATH": os.getenv("YOLO8N_MODEL_PATH", "models/best.onnx"),
+
+        # Model and Classifier Settings
+        "CLASSIFIER_MODEL_PATH": os.getenv("CLASSIFIER_MODEL_PATH", "models/classifier_best.onnx"),
+        "CLASSIFIER_CLASSES_PATH": os.getenv("CLASSIFIER_CLASSES_PATH", "models/classifier_classes.txt"),
 
         # Streaming Settings
         "STREAM_FPS": float(os.getenv("STREAM_FPS", 1)),

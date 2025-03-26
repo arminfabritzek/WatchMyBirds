@@ -9,7 +9,6 @@ from logging_config import get_logger
 logger = get_logger(__name__)
 import json
 import os
-import csv
 from utils.telegram_notifier import send_telegram_message
 from utils.cpu_limiter import restrict_to_cpus  # Import CPU limiter
 
@@ -21,19 +20,9 @@ restrict_to_cpus()
 # --------------------------------------------------------------------------
 # use the configuration values from the config dictionary.
 _debug = config["DEBUG_MODE"]
-model_choice = config["MODEL_CHOICE"]
-confidence_threshold = config["CONFIDENCE_THRESHOLD"]
-save_threshold = config["SAVE_THRESHOLD"]
-max_fps_detection = config["MAX_FPS_DETECTION"]
-model_path = config["YOLO8N_MODEL_PATH"]
 STREAM_FPS = config["STREAM_FPS"]
 output_resize_width = config["STREAM_WIDTH_OUTPUT_RESIZE"]
-day_and_night_capture = config["DAY_AND_NIGHT_CAPTURE"]
-day_and_night_capture_location = config["DAY_AND_NIGHT_CAPTURE_LOCATION"]
-cpu_limit = config["CPU_LIMIT"]
-telegram_cooldown = config["TELEGRAM_COOLDOWN"]
 output_dir = config["OUTPUT_DIR"]
-video_source = config["VIDEO_SOURCE"]
 
 logger.info(f"Debug mode is {'enabled' if _debug else 'disabled'}.")
 logger.info(f"Configuration: {json.dumps(config, indent=2)}")
@@ -49,12 +38,7 @@ os.makedirs(output_dir, exist_ok=True)
 from detectors.detection_manager import DetectionManager
 
 # Create a DetectionManager instance.
-detection_manager = DetectionManager(
-    video_source=video_source,
-    model_choice=model_choice,
-    config=config,
-    debug=_debug
-)
+detection_manager = DetectionManager()
 
 # Start the detection loop on a background thread.
 detection_manager.start()

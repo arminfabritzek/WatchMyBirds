@@ -37,7 +37,7 @@ class ONNXDetectionModel(BaseDetectionModel):
         Initialize the ONNX Runtime model.
         """
         self.debug = debug
-        model_env = config["YOLO8N_MODEL_PATH"]  # Use ONNX model path.
+        model_env = config["DETECTOR_MODEL_PATH"]  # Use ONNX model path.
         self.model_path = model_env if model_env else "models/best.onnx"
         os.makedirs(os.path.dirname(self.model_path), exist_ok=True)
 
