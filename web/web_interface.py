@@ -386,7 +386,7 @@ def create_web_interface(params):
         """Creates the navbar with the logo for gallery pages."""
         return dbc.NavbarSimple(
             brand=html.Img(
-                src="/assets/WatchMyBirds.jpeg",
+                src="/assets/WatchMyBirds.png",
                 className="img-fluid round-logo",
                 style={"width": "20vw", "minWidth": "100px", "maxWidth": "200px"}
             ),
@@ -611,7 +611,7 @@ def create_web_interface(params):
         return dbc.Container([
             dbc.NavbarSimple(
                 brand=html.Img(
-                    src="/assets/WatchMyBirds.jpeg",
+                    src="/assets/WatchMyBirds.png",
                     className="img-fluid round-logo",
                     style={"width": "20vw", "minWidth": "100px", "maxWidth": "200px"}
                 ),
