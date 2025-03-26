@@ -386,8 +386,8 @@ def create_web_interface(params):
         """Creates the navbar with the logo for gallery pages."""
         return dbc.NavbarSimple(
             brand=html.Img(
-                src="/assets/the_birdwatcher.jpeg",
-                className="img-fluid",
+                src="/assets/WatchMyBirds.jpeg",
+                className="img-fluid round-logo",
                 style={"width": "20vw", "minWidth": "100px", "maxWidth": "200px"}
             ),
             brand_href="/",
@@ -398,7 +398,7 @@ def create_web_interface(params):
             color="primary",
             dark=True,
             fluid=True,
-            className="justify-content-center"
+            className="justify-content-center custom-navbar"
         )
 
     def generate_gallery():
@@ -611,8 +611,8 @@ def create_web_interface(params):
         return dbc.Container([
             dbc.NavbarSimple(
                 brand=html.Img(
-                    src="/assets/the_birdwatcher.jpeg",
-                    className="img-fluid",
+                    src="/assets/WatchMyBirds.jpeg",
+                    className="img-fluid round-logo",
                     style={"width": "20vw", "minWidth": "100px", "maxWidth": "200px"}
                 ),
                 brand_href="/",
@@ -623,7 +623,7 @@ def create_web_interface(params):
                 color="primary",
                 dark=True,
                 fluid=True,
-                className="justify-content-center"
+                className="justify-content-center custom-navbar"
             ),
             dbc.Row([
                 dbc.Col(html.H1("Live Stream", className="text-center"), width=12, className="my-3")

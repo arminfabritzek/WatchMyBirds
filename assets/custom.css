@@ -1,0 +1,16 @@
+.custom-navbar {
+    background-color: #B5EAD7 !important;
+}
+
+.custom-navbar .navbar-nav .nav-link {
+    color: black !important;
+}
+
+.custom-navbar .navbar-brand {
+    color: black !important;
+}
+
+.round-logo {
+    border-radius: 50%;
+    object-fit: cover;
+}
