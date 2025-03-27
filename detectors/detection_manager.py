@@ -29,6 +29,7 @@ class DetectionManager:
         self.model_choice = self.config["DETECTOR_MODEL_CHOICE"]
         self.video_source = self.config["VIDEO_SOURCE"]
         self.debug = self.config["DEBUG_MODE"]
+        self.CLASSIFIER_IMAGE_SIZE = self.config["CLASSIFIER_IMAGE_SIZE"]
 
         # Initialize the classifier.
         self.classifier = ImageClassifier()
@@ -304,8 +305,8 @@ class DetectionManager:
                     bbox = (best_det["x1"], best_det["y1"], best_det["x2"], best_det["y2"])
                     zoomed_frame = self.create_square_crop(original_frame, bbox, margin_percent=0.2)
 
-                    # Ensure the zoomed frame is resized to 224x224, if needed
-                    zoomed_frame = cv2.resize(zoomed_frame, (224, 224))
+                    # Ensure the zoomed frame is resized to e.g. 224x224, if needed
+                    zoomed_frame = cv2.resize(zoomed_frame, (self.CLASSIFIER_IMAGE_SIZE, self.CLASSIFIER_IMAGE_SIZE))
 
                     # Perform classification directly on the zoomed_frame
                     zoomed_frame_rgb = cv2.cvtColor(zoomed_frame, cv2.COLOR_BGR2RGB)

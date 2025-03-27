@@ -9,6 +9,16 @@ def load_config():
     """
     Loads configuration from environment variables and returns a dictionary.
     """
+    # Determine the image size based on the classifier model
+    classifier_model = os.getenv("CLASSIFIER_MODEL", "efficientnet_b0")
+    model_sizes = {
+        "efficientnet_b0": 224,
+        "efficientnet_b1": 240,
+        "efficientnet_b2": 256,
+        "efficientnet_b3": 288
+    }
+    classifier_image_size = model_sizes.get(classifier_model, 224)
+
     config = {
         # General Settings
         "DEBUG_MODE": os.getenv("DEBUG_MODE", "False").lower() == "true",
@@ -23,9 +33,12 @@ def load_config():
         "MAX_FPS_DETECTION": float(os.getenv("MAX_FPS_DETECTION", 1.0)),
 
         # Model and Classifier Settings
-        "CLASSIFIER_MODEL_PATH": os.getenv("CLASSIFIER_MODEL_PATH", "models/classifier_best.onnx"),
-        "CLASSIFIER_CLASSES_PATH": os.getenv("CLASSIFIER_CLASSES_PATH", "models/classifier_classes.txt"),
-        "CLASSIFIER_CONFIDENCE_THRESHOLD": float(os.getenv("CLASSIFIER_CONFIDENCE_THRESHOLD", 0.7)),
+        "CLASSIFIER_MODEL": classifier_model,
+        "CLASSIFIER_IMAGE_SIZE": classifier_image_size,
+        "CLASSIFIER_MODEL_PATH": os.getenv("CLASSIFIER_MODEL_PATH", f"models/classifier_best_{classifier_model}.onnx"),
+        "CLASSIFIER_CLASSES_PATH": os.getenv("CLASSIFIER_CLASSES_PATH", f"models/classifier_classes_{classifier_model}.txt"),
+        "CLASSIFIER_CONFIDENCE_THRESHOLD": float(os.getenv("CLASSIFIER_CONFIDENCE_THRESHOLD", 0.8)),
+        "CLASSIFIER_DOWNLOAD_LATEST_MODEL": os.getenv("CLASSIFIER_DOWNLOAD_LATEST_MODEL", "True").lower() == "true",
 
         # Streaming Settings
         "STREAM_FPS": float(os.getenv("STREAM_FPS", 1)),

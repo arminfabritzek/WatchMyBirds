@@ -13,6 +13,8 @@ import onnxruntime as ort
 from PIL import Image
 import torchvision.transforms as transforms
 import numpy as np  # Import numpy
+import requests
+import os
 
 
 class ImageClassifier:
@@ -27,50 +29,45 @@ class ImageClassifier:
                                         cases where the file might not exist.
         """
         self.config = config
+        self.model = self.config["CLASSIFIER_MODEL"]
         self.model_path = self.config["CLASSIFIER_MODEL_PATH"]
         self.class_path = self.config["CLASSIFIER_CLASSES_PATH"]
+        self.CLASSIFIER_IMAGE_SIZE = self.config["CLASSIFIER_IMAGE_SIZE"]
+        self.CLASSIFIER_DOWNLOAD_LATEST_MODEL = self.config["CLASSIFIER_DOWNLOAD_LATEST_MODEL"]
 
-        # Always download the latest ONNX model from the remote repository
-        logger.info("Downloading latest ONNX model from remote...")
-        ImageClassifier.download_model(self.model_path)
+        if self.CLASSIFIER_DOWNLOAD_LATEST_MODEL:
+            # Download the latest classifier ONNX model and classes file from the remote repository
+            logger.info("Downloading latest ONNX model from remote...")
+            self.download_model()
 
-        # Always download the latest classifier classes file from the remote repository
-        logger.info("Downloading latest classifier classes file from remote...")
-        ImageClassifier.download_classes(self.class_path)
+            logger.info("Downloading latest classifier classes file from remote...")
+            self.download_classes()
 
         self.ort_session = ort.InferenceSession(self.model_path)
         self.classes = self._load_classes()
         self.transform = self._get_transform()
 
-    @staticmethod
-    def download_model(dest_path):
+    def download_model(self):
         """Downloads the latest ONNX model from the remote repository."""
-        import requests
-        import os
-
-        url = "https://raw.githubusercontent.com/arminfabritzek/WatchMyBirds-Classifier/b0af22302087c8bbd8443a37d50c77d71775c74f/best_model/classifier_best.onnx"
-        os.makedirs(os.path.dirname(dest_path), exist_ok=True)
+        url = f"https://raw.githubusercontent.com/arminfabritzek/WatchMyBirds-Classifier/main/best_model/classifier_best_{self.model}.onnx"
+        os.makedirs(os.path.dirname(self.model_path), exist_ok=True)
         response = requests.get(url, stream=True)
         if response.status_code == 200:
-            with open(dest_path, 'wb') as f:
+            with open(self.model_path, 'wb') as f:
                 f.write(response.content)
-            logger.info(f"Downloaded ONNX model to: {dest_path}")
+            logger.info(f"Downloaded ONNX model to: {self.model_path}")
         else:
             logger.debug(f"Failed to download ONNX model. Status code: {response.status_code}")
 
-    @staticmethod
-    def download_classes(dest_path):
+    def download_classes(self):
         """Downloads the latest classifier classes file from the remote repository."""
-        import requests
-        import os
-
-        url = "https://raw.githubusercontent.com/arminfabritzek/WatchMyBirds-Classifier/b0af22302087c8bbd8443a37d50c77d71775c74f/best_model/classifier_classes.txt"
-        os.makedirs(os.path.dirname(dest_path), exist_ok=True)
+        url = f"https://raw.githubusercontent.com/arminfabritzek/WatchMyBirds-Classifier/main/best_model/classifier_classes_{self.model}.txt"
+        os.makedirs(os.path.dirname(self.class_path), exist_ok=True)
         response = requests.get(url, stream=True)
         if response.status_code == 200:
-            with open(dest_path, 'wb') as f:
+            with open(self.class_path, 'wb') as f:
                 f.write(response.content)
-            logger.info(f"Downloaded classifier classes file to: {dest_path}")
+            logger.info(f"Downloaded classifier classes file to: {self.class_path}")
         else:
             logger.debug(f"Failed to download classifier classes file. Status code: {response.status_code}")
 
@@ -90,7 +87,7 @@ class ImageClassifier:
         std = [0.229, 0.224, 0.225]
 
         return transforms.Compose([
-            transforms.Resize((224, 224)),  # Resize to 224x224
+            transforms.Resize((self.CLASSIFIER_IMAGE_SIZE, self.CLASSIFIER_IMAGE_SIZE)),  # Resize to 224x224
             transforms.ToTensor(),  # Convert PIL Image to Tensor
             transforms.Normalize(mean, std)  # Normalize image
         ])
