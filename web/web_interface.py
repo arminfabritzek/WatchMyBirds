@@ -336,7 +336,11 @@ def create_web_interface(params):
 
     def generate_recent_gallery_classifier():
         """Generates a gallery showing the image with the highest classifier confidence for each unique class (top1_class) detected today.
-           It displays at most RECENT_IMAGES_COUNT unique classes.
+           It displays at most RECENT_IMAGES_COUNT unique classes, with the display format:
+           <Common Name>
+           (<Scientific Name>)
+           Detector: <Detector Confidence>%
+           Classifier: <top1_class> (<Classifier Confidence>%)
         """
         all_images = get_captured_images()
         today_str = datetime.now().strftime("%Y%m%d")
@@ -345,36 +349,47 @@ def create_web_interface(params):
             if not ts.startswith(today_str):
                 continue
             try:
-                conf_val = float(top1_conf)  # use classifier confidence
+                classifier_conf_val = float(top1_conf)  # use classifier confidence for filtering
             except ValueError:
                 continue
-            if conf_val < CLASSIFIER_CONFIDENCE_THRESHOLD:
+            if classifier_conf_val < CLASSIFIER_CONFIDENCE_THRESHOLD:
                 continue
-            # Group by classifier result (top1_class)
-            if top1_class not in classifier_images or conf_val > classifier_images[top1_class][1]:
-                classifier_images[top1_class] = (path, conf_val, ts)
-        # Create list of tuples (path, top1_class, top1_conf) from classifier_images
-        recent_unique = [(path, top1_class, conf_val) for top1_class, (path, conf_val, ts) in classifier_images.items()]
-        recent_unique.sort(key=lambda x: x[2], reverse=True)
+            # Group by classifier result (top1_class) and store all relevant information
+            if top1_class not in classifier_images or classifier_conf_val > float(classifier_images[top1_class][4]):
+                classifier_images[top1_class] = (path, best_class, best_class_conf, top1_class, top1_conf, ts)
+        # Create list of tuples: (path, best_class, best_class_conf, top1_class, top1_conf)
+        recent_unique = [
+            (path, best_class, best_class_conf, top1_class, top1_conf)
+            for top1_class, (path, best_class, best_class_conf, top1_class, top1_conf, ts) in classifier_images.items()
+        ]
+        recent_unique.sort(key=lambda x: float(x[4]), reverse=True)
         recent_unique = recent_unique[:RECENT_IMAGES_COUNT]
 
         thumbnails = []
         modals = []
-        for i, (img, top1_class, confidence) in enumerate(recent_unique):
+        for i, (img, best_class, best_class_conf, top1_class, top1_conf) in enumerate(recent_unique):
             tile = html.Div([
                 create_thumbnail_classifier(img, i),
                 html.Div([
+                    # Row 1: Common name in bold
                     html.Div(
-                        html.Strong(COMMON_NAMES.get(top1_class, top1_class.replace('_', ' '))),
+                        html.Strong(COMMON_NAMES.get(best_class, best_class.replace('_', ' '))),
                         style={"textAlign": "center", "marginBottom": "2px"}
                     ),
+                    # Row 2: Scientific name in brackets in italic
                     html.Div([
                         "(",
-                        html.I(top1_class.replace('_', ' ')),
+                        html.I(best_class.replace('_', ' ')),
                         ")"
                     ], style={"textAlign": "center", "marginBottom": "2px"}),
+                    # Row 3: Detector confidence percentage
                     html.Div(
-                        f"Classifier: {int(float(confidence) * 100)}%",
+                        f"Detector: {int(float(best_class_conf) * 100)}%",
+                        style={"textAlign": "center", "marginBottom": "2px", "color": "gray"}
+                    ),
+                    # Row 4: Classifier result
+                    html.Div(
+                        f"Classifier: {top1_class} ({int(float(top1_conf) * 100)}%)",
                         style={"textAlign": "center", "marginBottom": "5px", "color": "blue"}
                     )
                 ], style={"display": "flex", "flexDirection": "column", "alignItems": "center"})
