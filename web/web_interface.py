@@ -13,6 +13,7 @@ import cv2
 from PIL import Image, ImageDraw, ImageFont
 import numpy as np
 from datetime import datetime
+import plotly.express as px
 
 # Caching settings for gallery functions
 _CACHE_TIMEOUT = 10  # seconds
@@ -577,6 +578,42 @@ def create_web_interface(params):
             desired_frame_time = 1.0 / STREAM_FPS
             if elapsed < desired_frame_time:
                 time.sleep(desired_frame_time - elapsed)
+
+    def generate_hourly_detection_plot():
+        # Get all captured images
+        all_images = get_captured_images()
+        today_str = datetime.now().strftime("%Y%m%d")
+
+        # Initialize count for all 24 hours
+        counts = {f"{hour:02d}": 0 for hour in range(24)}
+
+        # Count detections per hour for today
+        for ts, _, _, _, _, _ in all_images:
+            if ts.startswith(today_str):
+                # Assuming timestamp format "YYYYMMDD_HHMMSS"
+                hour = ts[9:11]
+                if hour in counts:
+                    counts[hour] += 1
+
+        # Create lists for plotting
+        hours = list(counts.keys())
+        values = [counts[h] for h in hours]
+
+        # Create a Plotly bar plot
+        fig = px.bar(x=hours, y=values,
+                     labels={"x": "Stunde", "y": "Erkennungen"},
+                     title="Beobachtungen pro Stunde",
+                     color_discrete_sequence=["#B5EAD7"]
+                     )
+        fig.update_layout(
+            paper_bgcolor='rgba(0,0,0,0)',
+            plot_bgcolor='rgba(0,0,0,0)'
+        )
+        fig.update_xaxes(showline=True, linewidth=1, linecolor='black', tickfont=dict(color='black'))
+        fig.update_yaxes(showline=True, linewidth=1, linecolor='black', tickfont=dict(color='black'))
+
+        return dcc.Graph(figure=fig)
+
     # -----------------------------
     # Flask Server and Routes
     # -----------------------------
@@ -654,7 +691,10 @@ def create_web_interface(params):
             ]),
             dbc.Row([
                 dbc.Col(generate_recent_gallery_classifier(), width=12)
-            ], className="mb-5")
+            ], className="mb-5"),
+            dbc.Row([
+                dbc.Col(generate_hourly_detection_plot(), width=12)
+            ], className="my-3")
         ], fluid=True)
 
     def gallery_layout():

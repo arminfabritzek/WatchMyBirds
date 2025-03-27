@@ -308,7 +308,8 @@ class DetectionManager:
                     zoomed_frame = cv2.resize(zoomed_frame, (224, 224))
 
                     # Perform classification directly on the zoomed_frame
-                    top_k_indices, top_k_confidences, top1_class_name, top1_confidence = self.classifier.predict_from_image(zoomed_frame)
+                    zoomed_frame_rgb = cv2.cvtColor(zoomed_frame, cv2.COLOR_BGR2RGB)
+                    top_k_indices, top_k_confidences, top1_class_name, top1_confidence = self.classifier.predict_from_image(zoomed_frame_rgb)
 
                     # Save the zoomed image with classification result for download/viewing.
                     cv2.imwrite(os.path.join(day_folder, zoomed_name), zoomed_frame, [int(cv2.IMWRITE_JPEG_QUALITY), 70])
