@@ -19,11 +19,22 @@ def load_config():
     }
     classifier_image_size = model_sizes.get(classifier_model, 224)
 
+    location_str = os.getenv("LOCATION_DATA", "52.646,13.377")
+    try:
+        lat_str, lon_str = location_str.split(",")
+        LOCATION_DATA = {"latitude": float(lat_str), "longitude": float(lon_str)}
+    except Exception:
+        # Fallback to defaults if parsing fails
+        LOCATION_DATA = {"latitude": 52.646, "longitude": 13.377}
+
     config = {
         # General Settings
         "DEBUG_MODE": os.getenv("DEBUG_MODE", "False").lower() == "true",
         "OUTPUT_DIR": os.getenv("OUTPUT_DIR", "/output"),
         "VIDEO_SOURCE": os.getenv("VIDEO_SOURCE", "0"),
+
+        # GPS Location
+        "LOCATION_DATA": LOCATION_DATA,
 
         # Model and Detection Settings
         "DETECTOR_MODEL_CHOICE": os.getenv("DETECTOR_MODEL_CHOICE", "yolo"),  # Only "yolo" supported for now
