@@ -1,3 +1,9 @@
+/*
+# ------------------------------------------------------------------------------
+# custom.css for web_interface
+# ------------------------------------------------------------------------------
+*/
+
 .custom-navbar {
     background-color: #B5EAD7 !important;
 }
@@ -14,4 +20,131 @@
     border-radius: 50%;
     object-fit: cover;
     box-shadow: 0 0 10px rgba(0,0,0,0.1); /* subtle glow */
+    width: 20vw;
+    min-width: 100px;
+    max-width: 200px;
+    vertical-align: middle;
+}
+
+/* Styles for the overall gallery grid layout */
+.gallery-grid-container {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+}
+
+/* Individual tile/item in recent/sub galleries */
+.gallery-tile {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    margin: 5px;
+    text-align: center;
+    vertical-align: top;
+    max-width: 160px;
+}
+
+/* Clickable button wrapping the thumbnail image */
+.thumbnail-button {
+    border: none;
+    background: none;
+    padding: 0;
+    cursor: pointer;
+    display: block;
+}
+
+/* The thumbnail image itself */
+.thumbnail-image {
+    padding: 5px;
+    display: block;
+    margin-left: auto;
+    margin-right: auto;
+    border: 1px solid #eee;
+}
+.thumbnail-image:hover {
+    border-color: #ccc;
+}
+
+/* Container for text below thumbnail */
+.thumbnail-info {
+    margin-top: 5px;
+    width: 100%;
+    word-wrap: break-word;
+    font-size: 0.9em;
+}
+
+.thumbnail-info span {
+    display: block;
+}
+
+/* Specific text styles within thumbnail info */
+.info-common-name {
+    font-weight: bold;
+    margin-bottom: 2px;
+    display: block;
+}
+
+/* Slightly smaller font for scientific name and confidences */
+.info-scientific-name, .info-detector-conf, .info-classifier-conf, .info-regular {
+    font-size: 0.85em;
+    color: #555;
+    margin-bottom: 3px;
+}
+
+.info-classifier-conf {
+     color: #0056b3;
+}
+
+.info-combined-conf {
+   color: purple;
+}
+
+/* Main gallery page items (date folders) */
+.main-gallery-item {
+    text-align: center;
+    margin: 10px;
+}
+
+.main-gallery-image {
+     cursor: pointer;
+     margin-bottom: 5px;
+     border: 1px solid #ddd;
+     padding: 3px;
+     background-color: white;
+}
+.main-gallery-image:hover {
+    border-color: #aaa;
+}
+
+.main-gallery-date {
+    margin-top: 5px;
+    font-size: 0.9em;
+}
+
+/* Pagination Controls */
+.pagination-controls {
+    text-align: center;
+    margin-bottom: 20px;
+    margin-top: 20px;
+}
+
+/* Modal Styles */
+.modal-image {
+    width: 100%;
+    display: block;
+}
+
+.modal-download-link {
+    text-decoration: none;
+}
+
+/* Video Feed */
+.video-feed-image {
+    width: 100%;
+    max-width: 800px;
+    display: block;
+    margin-left: auto;
+    margin-right: auto;
+    background-color: #f0f0f0;
+    border: 1px solid #ccc;
 }

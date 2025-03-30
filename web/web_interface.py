@@ -1,3 +1,7 @@
+# ------------------------------------------------------------------------------
+# web_interface.py
+# ------------------------------------------------------------------------------
+
 import os
 import json
 import math
@@ -6,7 +10,7 @@ import re
 import logging
 import csv
 from flask import Flask, send_from_directory, Response
-from dash import Dash, html, dcc, callback_context, ALL, Input, Output, State
+from dash import Dash, html, dcc, callback_context, ALL, Input, Output, State, no_update, ClientsideFunction
 import dash_bootstrap_components as dbc
 import time
 import cv2
@@ -42,7 +46,9 @@ def create_web_interface(params):
     IMAGE_WIDTH = params.get("IMAGE_WIDTH", 150)
     RECENT_IMAGES_COUNT = params.get("RECENT_IMAGES_COUNT", 10)
     PAGE_SIZE = params.get("PAGE_SIZE", 50)
+    CONFIDENCE_THRESHOLD_DETECTION = params.get("CONFIDENCE_THRESHOLD_DETECTION", 0.7)
     CLASSIFIER_CONFIDENCE_THRESHOLD = params.get("CLASSIFIER_CONFIDENCE_THRESHOLD", 0.7)
+    FUSION_ALPHA = params.get("FUSION_ALPHA", 0.5)
 
     logger = logging.getLogger(__name__)
 
@@ -132,207 +138,281 @@ def create_web_interface(params):
         """Derives the zoomed image filename from the optimized filename."""
         return optimized_filename.replace(optimized_suffix, zoomed_suffix)
 
-    def create_thumbnail(image_filename: str, index: int):
-        """Creates a clickable thumbnail button for the given image."""
+    def create_thumbnail_button(image_filename: str, index: int, id_type: str):
+        """Creates a clickable thumbnail button with standard styling."""
         zoomed_filename = derive_zoomed_filename(image_filename)
-        style = {
-            "cursor": "pointer",
-            "border": "none",
-            "background": "none",
-            "padding": "5px",
-            "width": f"{IMAGE_WIDTH}px"
-        }
         return html.Button(
             html.Img(
                 src=f"/images/{zoomed_filename}",
                 alt=f"Thumbnail of {zoomed_filename}",
-                style=style
+                className="thumbnail-image",
+                style={"width": f"{IMAGE_WIDTH}px"}
             ),
-            id={'type': 'thumbnail', 'index': index},
+            id={'type': id_type, 'index': index},
             n_clicks=0,
-            style={"border": "none", "background": "none", "padding": "0"}
+            className="thumbnail-button" # Apply class to button
         )
+
+    def create_image_modal_layout(image_filename: str, index: int, id_prefix: str):
+        """Creates the modal layout content with standard styling."""
+        original_filename = image_filename.replace("_optimized", "_original")
+        pattern = r"(?:.*/)?(\d{8})_(\d{6})_([A-Za-z]+_[A-Za-z]+)_optimized\.jpg"
+        match = re.match(pattern, image_filename)
+        if match:
+            date_str, time_str, class_name = match.groups()
+            formatted_date = f"{date_str[6:8]}.{date_str[4:6]}.{date_str[0:4]}"
+            formatted_time = f"{time_str[0:2]}:{time_str[2:4]}:{time_str[4:6]}"
+            formatted_class = class_name.replace('_', ' ')
+            title_content = [f"{formatted_date} {formatted_time} - ", html.Em(formatted_class)]
+        else:
+            title_content = image_filename
+
+        return dbc.Modal(
+            [
+                dbc.ModalHeader(dbc.ModalTitle(title_content), close_button=False),
+                dbc.ModalBody(
+                    html.Img(
+                        src=f"/images/{image_filename}",
+                        className="modal-image",
+                        id={'type': f'{id_prefix}-modal-image', 'index': index}
+                    )
+                ),
+                dbc.ModalFooter([
+                    html.A(
+                        dbc.Button("Download", color="secondary", target="_blank"),
+                        href=f"/images/{original_filename}",
+                        download=original_filename,
+                        className="modal-download-link"
+                    ),
+                    dbc.Button(
+                        "Close",
+                        id={'type': f'{id_prefix}-close', 'index': index},
+                        className="ms-auto",
+                        n_clicks=0
+                    )
+                ]),
+            ],
+            id={'type': f'{id_prefix}-modal', 'index': index},
+            is_open=False,
+            size="lg",
+        )
+
+    def create_thumbnail_info_box(best_class, best_class_conf, top1_class, top1_conf):
+        """
+        Creates the standardized information box displayed below gallery thumbnails.
+
+        Args:
+            best_class (str): The scientific name from the detector.
+            best_class_conf (str or float): The confidence score from the detector.
+            top1_class (str): The scientific name from the classifier.
+            top1_conf (str or float): The confidence score from the classifier.
+
+        Returns:
+            html.Div: The Dash HTML component for the info box.
+        """
+        # Basic error checking/default values for confidence if they might be missing/invalid
+        try:
+            detector_conf_percent = int(float(best_class_conf) * 100)
+        except (ValueError, TypeError):
+            detector_conf_percent = 0
+
+        try:
+            classifier_conf_percent = int(float(top1_conf) * 100)
+        except (ValueError, TypeError):
+            classifier_conf_percent = 0
+
+        # Format names (handle potential None or empty strings if necessary)
+        best_class_sci = best_class.replace('_', ' ') if best_class else "N/A"
+        top1_class_sci = top1_class.replace('_',
+                                            ' ') if top1_class else "N/A"  # We need this formatted for consistency later, even if not displayed directly in Classifier line
+
+        common_name_display = COMMON_NAMES.get(best_class, best_class_sci) if best_class else "Unbekannt"
+
+        return html.Div([
+            # Line 1: Common Name (from best_class)
+            html.Span(
+                html.Strong(common_name_display),
+                className="info-common-name"
+            ),
+            # Line 2: Scientific Name (from best_class)
+            html.Span(
+                ["(", html.I(best_class_sci), ")"],
+                className="info-scientific-name"
+            ),
+            # Line 3: Classifier Confidence (ONLY confidence percentage)
+            html.Span(
+                f"Classifier: {classifier_conf_percent}%",
+                className="info-classifier-conf"
+            ),
+            # Line 4: Detector Confidence (WITH formatted best_class name)
+            html.Span(
+                [
+                    "Detector: ",
+                    html.I(best_class_sci),  # Use formatted detector name
+                    f" ({detector_conf_percent}%)"  # Detector confidence
+                ],
+                className="info-detector-conf"
+            )
+        ], className="thumbnail-info")
+
+    def create_fused_agreement_info_box(final_class, combined_score, conf_d, conf_c):
+        """Creates an info box for the agreement-based fusion summary."""
+        final_class_sci = final_class.replace('_', ' ') if final_class else "N/A"
+        common_name_display = COMMON_NAMES.get(final_class, final_class_sci) if final_class else "Unbekannt"
+        combined_score_percent = int(combined_score * 100)  # Product score needs scaling
+        detector_conf_percent = int(conf_d * 100)
+        classifier_conf_percent = int(conf_c * 100)
+
+        return html.Div([
+            html.Span(html.Strong(common_name_display), className="info-common-name"),
+            html.Span(["(", html.I(final_class_sci), ")"], className="info-scientific-name"),
+            # Show the combined score prominently
+            html.Span(f"Produkt: {combined_score_percent}%", className="info-combined-conf"),
+            # Optionally show original scores for context (smaller font?)
+            html.Span(f"(Det: {detector_conf_percent}%, Cls: {classifier_conf_percent}%)", className="info-detector-conf")
+        ], className="thumbnail-info")
+
+    def create_fused_weighted_info_box(final_class, combined_score, best_class, conf_d, conf_c):
+        """Creates an info box for the weighted fusion summary."""
+        final_class_sci = final_class.replace('_', ' ') if final_class else "N/A"
+        common_name_display = COMMON_NAMES.get(final_class, final_class_sci) if final_class else "Unbekannt"
+        combined_score_percent = int(combined_score * 100)  # Weighted score already 0-1
+        detector_conf_percent = int(conf_d * 100)
+        classifier_conf_percent = int(conf_c * 100)
+        detector_class_sci = best_class.replace('_', ' ') if best_class else "N/A"
+
+        # Indicate if detector disagreed
+        disagreement_note = ""
+        if final_class != best_class and best_class:
+             disagreement_note = f" (Det: {detector_class_sci})"  # Show what detector thought
+
+        return html.Div([
+            html.Span(html.Strong(common_name_display), className="info-common-name"),
+            html.Span(["(", html.I(final_class_sci), ")", disagreement_note], className="info-scientific-name"),
+            # Show the combined score prominently
+            html.Span(f"Gewichtet: {combined_score_percent}%", className="info-combined-conf"),
+            html.Span(f"(Det: {detector_conf_percent}%, Cls: {classifier_conf_percent}%)", className="info-regular")
+        ], className="thumbnail-info")
+
+    def create_thumbnail(image_filename: str, index: int):
+        return create_thumbnail_button(image_filename, index, 'thumbnail')
 
     def create_thumbnail_classifier(image_filename: str, index: int):
-        zoomed_filename = derive_zoomed_filename(image_filename)
-        style = {
-            "cursor": "pointer",
-            "border": "none",
-            "background": "none",
-            "padding": "5px",
-            "width": f"{IMAGE_WIDTH}px"
-        }
-        return html.Button(
-            html.Img(
-                src=f"/images/{zoomed_filename}",
-                alt=f"Thumbnail of {zoomed_filename}",
-                style=style
-            ),
-            id={'type': 'thumbnail_classifier', 'index': index},
-            n_clicks=0,
-            style={"border": "none", "background": "none", "padding": "0"}
-        )
+        return create_thumbnail_button(image_filename, index, 'thumbnail_classifier')
 
     def create_image_modal(image_filename: str, index: int):
-        """Creates a modal dialog to display the full-size image with a download button.
-        The modal title is formatted as 'dd.mm.yyyy HH:MM:SS - <italic>Class Name</italic>'.
-        Expected filename format: optionally with folder, e.g. 'YYYYMMDD/YYYYMMDD_HHMMSS_Class_Name_optimized.jpg'."""
-        # Replace to get the original filename for download
-        original_filename = image_filename.replace("_optimized", "_original")
-        # Regex pattern allows for an optional folder prefix before the actual filename
-        pattern = r"(?:.*/)?(\d{8})_(\d{6})_([A-Za-z]+_[A-Za-z]+)_optimized\.jpg"
-        match = re.match(pattern, image_filename)
-        if match:
-            date_str, time_str, class_name = match.groups()
-            # Format the date: YYYYMMDD -> dd.mm.yyyy
-            formatted_date = f"{date_str[6:8]}.{date_str[4:6]}.{date_str[0:4]}"
-            # Format the time: HHMMSS -> HH:MM:SS
-            formatted_time = f"{time_str[0:2]}:{time_str[2:4]}:{time_str[4:6]}"
-            # Replace the underscore in the class name with a space
-            formatted_class = class_name.replace('_', ' ')
-            # Create the title content with italicized class name
-            title_content = [f"{formatted_date} {formatted_time} - ", html.Em(formatted_class)]
-        else:
-            # Fallback if the pattern doesn't match
-            title_content = image_filename
-
-        return dbc.Modal(
-            [
-                dbc.ModalHeader(dbc.ModalTitle(title_content), close_button=False),
-                dbc.ModalBody(
-                    html.Img(
-                        src=f"/images/{image_filename}",
-                        style={"width": "100%"},
-                        id={'type': 'modal-image', 'index': index}
-                    )
-                ),
-                dbc.ModalFooter([
-                    html.A(
-                        dbc.Button("Download", color="secondary", target="_blank"),
-                        href=f"/images/{original_filename}",
-                        download=original_filename,
-                        style={"textDecoration": "none"}
-                    ),
-                    dbc.Button(
-                        "Close",
-                        id={'type': 'close', 'index': index},
-                        className="ml-auto",
-                        n_clicks=0
-                    )
-                ]),
-            ],
-            id={'type': 'modal', 'index': index},
-            is_open=False,
-            size="lg",
-        )
+        return create_image_modal_layout(image_filename, index, 'modal')
 
     def create_image_modal_classifier(image_filename: str, index: int):
-        # Replace to get the original filename for download
-        original_filename = image_filename.replace("_optimized", "_original")
-
-        pattern = r"(?:.*/)?(\d{8})_(\d{6})_([A-Za-z]+_[A-Za-z]+)_optimized\.jpg"
-        match = re.match(pattern, image_filename)
-        if match:
-            date_str, time_str, class_name = match.groups()
-            formatted_date = f"{date_str[6:8]}.{date_str[4:6]}.{date_str[0:4]}"
-            formatted_time = f"{time_str[0:2]}:{time_str[2:4]}:{time_str[4:6]}"
-            formatted_class = class_name.replace('_', ' ')
-            title_content = [f"{formatted_date} {formatted_time} - ", html.Em(formatted_class)]
-        else:
-            title_content = image_filename
-
-        return dbc.Modal(
-            [
-                dbc.ModalHeader(dbc.ModalTitle(title_content), close_button=False),
-                dbc.ModalBody(
-                    html.Img(
-                        src=f"/images/{image_filename}",
-                        style={"width": "100%"},
-                        id={'type': 'modal-image_classifier', 'index': index}
-                    )
-                ),
-                dbc.ModalFooter([
-                    html.A(
-                        dbc.Button("Download", color="secondary", target="_blank"),
-                        href=f"/images/{original_filename}",
-                        download=original_filename,
-                        style={"textDecoration": "none"}
-                    ),
-                    dbc.Button(
-                        "Close",
-                        id={'type': 'close_classifier', 'index': index},
-                        className="ml-auto",
-                        n_clicks=0
-                    )
-                ]),
-            ],
-            id={'type': 'modal_classifier', 'index': index},
-            is_open=False,
-            size="lg",
-        )
-
-    def create_subgallery_thumbnail(image_filename: str, index: int):
-        zoomed_filename = derive_zoomed_filename(image_filename)
-        style = {
-            "cursor": "pointer",
-            "border": "none",
-            "background": "none",
-            "padding": "5px",
-            "width": f"{IMAGE_WIDTH}px"
-        }
-        return html.Button(
-            html.Img(
-                src=f"/images/{zoomed_filename}",
-                alt=f"Thumbnail of {zoomed_filename}",
-                style=style
-            ),
-            id={'type': 'subgallery-thumbnail', 'index': index},
-            n_clicks=0,
-            style={"border": "none", "background": "none", "padding": "0"}
-        )
+        return create_image_modal_layout(image_filename, index, 'modal_classifier')
 
     def create_subgallery_modal(image_filename: str, index: int):
-        original_filename = image_filename.replace("_optimized", "_original")
-        pattern = r"(?:.*/)?(\d{8})_(\d{6})_([A-Za-z]+_[A-Za-z]+)_optimized\.jpg"
-        match = re.match(pattern, image_filename)
-        if match:
-            date_str, time_str, class_name = match.groups()
-            formatted_date = f"{date_str[6:8]}.{date_str[4:6]}.{date_str[0:4]}"
-            formatted_time = f"{time_str[0:2]}:{time_str[2:4]}:{time_str[4:6]}"
-            formatted_class = class_name.replace('_', ' ')
-            title_content = [f"{formatted_date} {formatted_time} - ", html.Em(formatted_class)]
-        else:
-            title_content = image_filename
+        return create_image_modal_layout(image_filename, index, 'subgallery-modal')
 
-        return dbc.Modal(
-            [
-                dbc.ModalHeader(dbc.ModalTitle(title_content), close_button=False),
-                dbc.ModalBody(
-                    html.Img(
-                        src=f"/images/{image_filename}",
-                        style={"width": "100%"},
-                        id={'type': 'subgallery-modal-image', 'index': index}
-                    )
-                ),
-                dbc.ModalFooter([
-                    html.A(
-                        dbc.Button("Download", color="secondary", target="_blank"),
-                        href=f"/images/{original_filename}",
-                        download=original_filename,
-                        style={"textDecoration": "none"}
-                    ),
-                    dbc.Button(
-                        "Close",
-                        id={'type': 'subgallery-close', 'index': index},
-                        className="ml-auto",
-                        n_clicks=0
-                    )
-                ]),
-            ],
-            id={'type': 'subgallery-modal', 'index': index},
-            is_open=False,
-            size="lg",
-        )
+    def generate_daily_detector_summary(date_str_iso, images_for_date):
+        """Generates a detector-based species summary gallery for a specific date."""
+        # Input: date_str_iso (YYYY-MM-DD), images_for_date (list of tuples for that day)
+
+        best_images = {}
+        for path, best_class, best_class_conf, top1_class, top1_conf in images_for_date:
+            try:
+                conf_val = float(best_class_conf)
+            except ValueError:
+                continue
+            # Group by detection result (best_class), keep highest confidence image
+            if best_class not in best_images or conf_val > best_images[best_class][1]:
+                # Store path, conf, and other details needed for display
+                best_images[best_class] = (path, conf_val, top1_class, top1_conf)
+
+        # Create list of tuples (path, best_class, best_class_conf, top1_class, top1_conf)
+        daily_unique_detector = [
+            (path, best_class, conf_val, top1_class, top1_conf)
+            for best_class, (path, conf_val, top1_class, top1_conf) in best_images.items()
+        ]
+
+        daily_unique_detector.sort(key=lambda x: x[2], reverse=True)  # Sort by detector confidence
+        daily_unique_detector = daily_unique_detector[:RECENT_IMAGES_COUNT]  # Limit count
+
+        gallery_items = []
+        modals = []
+        if not daily_unique_detector:
+            return html.P(f"Keine eindeutigen Arten (Detector) für {date_str_iso} gefunden.",
+                          className="text-center text-muted small")
+
+        # Use unique index based on date + i to potentially help debugging, though type is key
+        base_index_str = date_str_iso.replace('-', '')  # e.g., "20250330"
+
+        thumbnail_id_type = 'daily-detector-thumbnail'
+        modal_id_prefix = 'daily-detector'
+
+        for i, (img, best_class, confidence, top1_class, top1_conf) in enumerate(daily_unique_detector):
+            unique_index = f"{base_index_str}-{i}"  # Create a more unique index string
+
+            tile = html.Div([
+                create_thumbnail_button(img, unique_index, thumbnail_id_type),
+                create_thumbnail_info_box(best_class, confidence, top1_class, top1_conf)
+
+            ], className="gallery-tile")  # Outer tile div
+            gallery_items.append(tile)
+            modals.append(
+                create_image_modal_layout(img, unique_index, modal_id_prefix)
+            )
+
+        # Return a Div containing the gallery and its modals
+        return html.Div(gallery_items + modals, className="gallery-grid-container")
+
+    def generate_daily_classifier_summary(date_str_iso, images_for_date):
+        """Generates a classifier-based species summary gallery for a specific date."""
+        # Input: date_str_iso (YYYY-MM-DD), images_for_date (list of tuples for that day)
+
+        classifier_images = {}
+        for path, best_class, best_class_conf, top1_class, top1_conf in images_for_date:
+            try:
+                classifier_conf_val = float(top1_conf)
+            except ValueError:
+                continue
+            if classifier_conf_val < CLASSIFIER_CONFIDENCE_THRESHOLD:
+                continue
+            # Group by classifier result (top1_class), keep highest confidence image
+            if top1_class not in classifier_images or classifier_conf_val > float(classifier_images[top1_class][4]):
+                # Store path, detector class/conf, classifier class/conf
+                classifier_images[top1_class] = (path, best_class, best_class_conf, top1_class, top1_conf)
+
+        # Create list of tuples (path, best_class, best_class_conf, top1_class, top1_conf)
+        daily_unique_classifier = [
+            (path, best_class, best_class_conf, top1_class, top1_conf)
+            for top1_class, (path, best_class, best_class_conf, top1_class, top1_conf) in classifier_images.items()
+        ]
+
+        daily_unique_classifier.sort(key=lambda x: float(x[4]), reverse=True)  # Sort by classifier confidence
+        daily_unique_classifier = daily_unique_classifier[:RECENT_IMAGES_COUNT]  # Limit count
+
+        gallery_items = []
+        modals = []
+        if not daily_unique_classifier:
+            return html.P(
+                f"Keine eindeutigen Arten (Classifier) für {date_str_iso} gefunden (Schwelle: {int(CLASSIFIER_CONFIDENCE_THRESHOLD * 100)}%).",
+                className="text-center text-muted small")
+
+        # Use unique index based on date + i
+        base_index_str = date_str_iso.replace('-', '')
+        thumbnail_id_type = 'daily-classifier-thumbnail'
+        modal_id_prefix = 'daily-classifier'
+
+        for i, (img, best_class, best_class_conf, top1_class, top1_conf) in enumerate(daily_unique_classifier):
+            unique_index = f"{base_index_str}-{i}"
+
+            tile = html.Div([
+                create_thumbnail_button(img, unique_index, thumbnail_id_type),
+                create_thumbnail_info_box(best_class, best_class_conf, top1_class, top1_conf)
+            ], className="gallery-tile")  # Outer tile div
+            gallery_items.append(tile)
+            modals.append(
+                create_image_modal_layout(img, unique_index, modal_id_prefix)  # Use new prefix and unique index
+            )
+
+        # Return a Div containing the gallery and its modals
+        return html.Div(gallery_items + modals, className="gallery-grid-container")
 
     def generate_recent_gallery():
         """Generates a gallery showing the image with the highest confidence for each unique class detected today.
@@ -358,44 +438,23 @@ def create_web_interface(params):
         recent_unique = [(path, best_class, conf_val, top1_class, top1_conf) for
                          best_class, (path, conf_val, ts, top1_class, top1_conf) in best_images.items()]
 
-        # Sort by confidence descending (optional)
+        # Sort by confidence descending
         recent_unique.sort(key=lambda x: x[2], reverse=True)
         # Limit to RECENT_IMAGES_COUNT unique classes
         recent_unique = recent_unique[:RECENT_IMAGES_COUNT]
 
-        thumbnails = []
+        gallery_items = []
         modals = []
         for i, (img, best_class, confidence, top1_class, top1_conf) in enumerate(recent_unique):
             tile = html.Div([
                 create_thumbnail(img, i),
-                html.Div([
-                    # Row 1: Detection result common name in bold (using detection)
-                    html.Div(
-                        html.Strong(COMMON_NAMES.get(best_class, best_class.replace('_', ' '))),
-                        style={"textAlign": "center", "marginBottom": "2px"}
-                    ),
-                    # Row 2: Scientific name in brackets with italic text
-                    html.Div([
-                        "(",
-                        html.I(best_class.replace('_', ' ')),
-                        ")"
-                    ], style={"textAlign": "center", "marginBottom": "2px"}),
-                    # Row 3: Detector confidence percentage
-                    html.Div(
-                        f"Detector: {int(float(confidence) * 100)}%",
-                        style={"textAlign": "center", "marginBottom": "2px", "color": "gray"}
-                    ),
-                    # Row 4: Classifier result
-                    html.Div(
-                        f"Classifier: {top1_class} ({int(float(top1_conf) * 100)}%)",
-                        style={"textAlign": "center", "marginBottom": "5px", "color": "blue"}
-                    )
-                ], style={"display": "flex", "flexDirection": "column", "alignItems": "center"})
-            ], style={"display": "inline-block", "margin": "5px", "flexDirection": "column", "alignItems": "center"})
-            thumbnails.append(tile)
-            modals.append(create_image_modal(img, i))
+                create_thumbnail_info_box(best_class, confidence, top1_class, top1_conf)
+            ], className="gallery-tile")
+            gallery_items.append(tile)
+            modals.append(create_image_modal(img, i)) # Function now uses classes
 
-        return html.Div(thumbnails + modals, id="recent-gallery", style={"textAlign": "center"})
+        # Use gallery-grid-container for the overall layout
+        return html.Div(gallery_items + modals, id="recent-gallery", className="gallery-grid-container")
 
     def generate_recent_gallery_classifier():
         """Generates a gallery showing the image with the highest classifier confidence for each unique class (top1_class) detected today.
@@ -428,39 +487,257 @@ def create_web_interface(params):
         recent_unique.sort(key=lambda x: float(x[4]), reverse=True)
         recent_unique = recent_unique[:RECENT_IMAGES_COUNT]
 
-        thumbnails = []
+        gallery_items = []
         modals = []
         for i, (img, best_class, best_class_conf, top1_class, top1_conf) in enumerate(recent_unique):
             tile = html.Div([
                 create_thumbnail_classifier(img, i),
-                html.Div([
-                    # Row 1: Common name in bold
-                    html.Div(
-                        html.Strong(COMMON_NAMES.get(best_class, best_class.replace('_', ' '))),
-                        style={"textAlign": "center", "marginBottom": "2px"}
-                    ),
-                    # Row 2: Scientific name in brackets in italic
-                    html.Div([
-                        "(",
-                        html.I(best_class.replace('_', ' ')),
-                        ")"
-                    ], style={"textAlign": "center", "marginBottom": "2px"}),
-                    # Row 3: Detector confidence percentage
-                    html.Div(
-                        f"Detector: {int(float(best_class_conf) * 100)}%",
-                        style={"textAlign": "center", "marginBottom": "2px", "color": "gray"}
-                    ),
-                    # Row 4: Classifier result
-                    html.Div(
-                        f"Classifier: {top1_class} ({int(float(top1_conf) * 100)}%)",
-                        style={"textAlign": "center", "marginBottom": "5px", "color": "blue"}
-                    )
-                ], style={"display": "flex", "flexDirection": "column", "alignItems": "center"})
-            ], style={"display": "inline-block", "margin": "5px", "flexDirection": "column", "alignItems": "center"})
-            thumbnails.append(tile)
+                create_thumbnail_info_box(best_class, best_class_conf, top1_class, top1_conf)
+            ], className="gallery-tile")
+            gallery_items.append(tile)
             modals.append(create_image_modal_classifier(img, i))
 
-        return html.Div(thumbnails + modals, id="recent-gallery-classifier", style={"textAlign": "center"})
+        return html.Div(gallery_items + modals, id="recent-gallery-classifier", className="gallery-grid-container")
+
+    def generate_all_time_detector_summary():
+        """Generates a gallery of the best detector result for each species across all time."""
+        all_images = get_captured_images()  # Get all images (uses cache)
+        best_images_all_time = {}  # Dictionary to store best image per species
+
+        # Find the highest confidence detection for each species
+        for _, path, best_class, best_class_conf, top1_class, top1_conf in all_images:
+            if not best_class: continue # Skip if detector class is missing
+            try: conf_val = float(best_class_conf)
+            except (ValueError, TypeError): continue
+
+            current_best_conf = best_images_all_time.get(best_class, (None, -1.0, None, None))[1]
+            if conf_val > current_best_conf:
+                best_images_all_time[best_class] = (path, conf_val, top1_class, top1_conf)
+
+        all_time_unique_detector = [ (data[0], species, data[1], data[2], data[3]) for species, data in best_images_all_time.items() ]
+        all_time_unique_detector.sort(key=lambda x: COMMON_NAMES.get(x[1], x[1])) # Sort by common name of best_class
+
+        gallery_items, modals = [], []
+        if not all_time_unique_detector: return html.P("Keine Arten (Detector) bisher erfasst.", className="text-center text-muted")
+
+        thumbnail_id_type = 'alltime-detector-thumbnail'
+        modal_id_prefix = 'alltime-detector'
+
+        for i, (img, best_class, confidence, top1_class, top1_conf) in enumerate(all_time_unique_detector):
+            tile = html.Div([
+                create_thumbnail_button(img, i, thumbnail_id_type),
+                create_thumbnail_info_box(best_class, confidence, top1_class, top1_conf) # Standard info box
+            ], className="gallery-tile")
+            gallery_items.append(tile)
+            modals.append(create_image_modal_layout(img, i, modal_id_prefix))
+
+        return html.Div(gallery_items + modals, className="gallery-grid-container")
+
+    def generate_all_time_classifier_summary():
+        """Generates a gallery of the best classifier result for each species across all time."""
+        all_images = get_captured_images()  # Get all images (uses cache)
+        best_classifier_images_all_time = {}  # Dictionary to store best image per classified species
+
+        for _, path, best_class, best_class_conf, top1_class, top1_conf in all_images:
+            if not top1_class: continue  # Skip if classifier class is missing
+            try: conf_val = float(top1_conf)
+            except (ValueError, TypeError): continue
+
+            if conf_val < CLASSIFIER_CONFIDENCE_THRESHOLD: continue
+
+            current_best_conf = best_classifier_images_all_time.get(top1_class, (None, None, None, None, -1.0))[4]
+            if conf_val > current_best_conf:
+                # Store original detector info too
+                best_classifier_images_all_time[top1_class] = (path, best_class, best_class_conf, top1_class, conf_val)
+
+        all_time_unique_classifier = [ (data[0], data[1], data[2], species, data[4]) for species, data in best_classifier_images_all_time.items() ]
+        # Sort by common name of the CLASSIFIED species (top1_class)
+        all_time_unique_classifier.sort(key=lambda x: COMMON_NAMES.get(x[3], x[3]))
+
+        gallery_items, modals = [], []
+        if not all_time_unique_classifier: return html.P(f"Keine Arten (Classifier) bisher erfasst (Schwelle: {int(CLASSIFIER_CONFIDENCE_THRESHOLD * 100)}%).", className="text-center text-muted")
+
+        thumbnail_id_type = 'alltime-classifier-thumbnail'
+        modal_id_prefix = 'alltime-classifier'
+
+        for i, (img, best_class, best_class_conf, top1_class, top1_conf) in enumerate(all_time_unique_classifier):
+             tile = html.Div([
+                 create_thumbnail_button(img, i, thumbnail_id_type),
+                 create_thumbnail_info_box(best_class, best_class_conf, top1_class, top1_conf) # Standard info box
+             ], className="gallery-tile")
+             gallery_items.append(tile)
+             modals.append(create_image_modal_layout(img, i, modal_id_prefix))
+
+        return html.Div(gallery_items + modals, className="gallery-grid-container")
+
+    def generate_all_time_fused_summary_agreement():
+        """Generates a gallery based on agreement and multiplicative score."""
+        all_images = get_captured_images()
+        best_results_per_species = {}  # key: species_name, value: (combined_score, path, best_class, conf_d, top1_class, conf_c)
+
+        for _, path, best_class, best_class_conf, top1_class, top1_conf in all_images:
+            if not best_class or not top1_class: continue  # Need both classes
+
+            try:
+                conf_d = float(best_class_conf)
+                conf_c = float(top1_conf)
+            except (ValueError, TypeError):
+                continue  # Skip if confidences aren't valid numbers
+
+            is_valid = (
+                conf_d >= CONFIDENCE_THRESHOLD_DETECTION and
+                conf_c >= CLASSIFIER_CONFIDENCE_THRESHOLD and
+                best_class == top1_class
+            )
+
+            if is_valid:
+                final_class = best_class
+                combined_score = conf_d * conf_c  # Multiplicative score
+
+                # Check if this is the best score found so far for this species
+                current_best_score = best_results_per_species.get(final_class, (-1.0,))[0]
+                if combined_score > current_best_score:
+                    best_results_per_species[final_class] = (combined_score, path, best_class, conf_d, top1_class, conf_c)
+
+        # Convert dict to list for sorting/display
+        # List items: (final_class, combined_score, path, conf_d, conf_c) <= simplified for info box
+        summary_data = [
+            (species, data[0], data[1], data[3], data[5])
+            for species, data in best_results_per_species.items()
+        ]
+
+        # Sort alphabetically by common name of the agreed class
+        summary_data.sort(key=lambda x: COMMON_NAMES.get(x[0], x[0]))
+
+        # --- Build Gallery ---
+        gallery_items = []
+        modals = []
+        if not summary_data:
+             return html.P("Keine übereinstimmenden Erkennungen über Schwellenwerten gefunden.", className="text-center text-muted")
+
+        thumbnail_id_type = 'alltime-fused-agreement-thumbnail'
+        modal_id_prefix = 'alltime-fused-agreement'
+
+        for i, (final_class, combined_score, img, conf_d, conf_c) in enumerate(summary_data):
+             tile = html.Div([
+                 create_thumbnail_button(img, i, thumbnail_id_type),
+                 create_fused_agreement_info_box(final_class, combined_score, conf_d, conf_c)  # Use specific info box
+             ], className="gallery-tile")
+             gallery_items.append(tile)
+             modals.append(create_image_modal_layout(img, i, modal_id_prefix))  # Standard modal layout
+
+        return html.Div(gallery_items + modals, className="gallery-grid-container")
+
+    def generate_all_time_fused_summary_weighted():
+        """Generates a gallery based on weighted score, prioritizing classifier label."""
+        all_images = get_captured_images()
+        best_results_per_species = {}  # key: species_name (top1_class), value: (combined_score, path, best_class, conf_d, top1_class, conf_c)
+
+        for _, path, best_class, best_class_conf, top1_class, top1_conf in all_images:
+            # Require a classifier result for this method
+            if not top1_class: continue
+
+            try:
+                conf_d = float(best_class_conf) if best_class_conf else 0.0 # Default detector conf to 0 if missing
+                conf_c = float(top1_conf)
+            except (ValueError, TypeError):
+                continue  # Skip if classifier conf is invalid
+
+            is_valid = (
+                conf_d >= CONFIDENCE_THRESHOLD_DETECTION and
+                conf_c >= CLASSIFIER_CONFIDENCE_THRESHOLD
+            )
+
+            if is_valid:
+                final_class = top1_class  # Prioritize classifier label
+                combined_score = FUSION_ALPHA * conf_d + (1.0 - FUSION_ALPHA) * conf_c  # Weighted score
+
+                # Check if this is the best score found so far for this final_class (top1_class)
+                current_best_score = best_results_per_species.get(final_class, (-1.0,))[0]
+                if combined_score > current_best_score:
+                     # Store original detector info as well
+                    best_results_per_species[final_class] = (combined_score, path, best_class, conf_d, top1_class, conf_c)
+
+        # Convert dict to list for sorting/display
+        # List items: (final_class, combined_score, path, best_class, conf_d, conf_c) <= Need original detector class for info box
+        summary_data = [
+            (species, data[0], data[1], data[2], data[3], data[5])
+            for species, data in best_results_per_species.items()
+        ]
+
+        # Sort alphabetically by common name of the FINAL class (top1_class)
+        summary_data.sort(key=lambda x: COMMON_NAMES.get(x[0], x[0]))
+
+        # --- Build Gallery ---
+        gallery_items = []
+        modals = []
+        if not summary_data:
+             return html.P("Keine Erkennungen über Schwellenwerten für gewichtete Bewertung gefunden.", className="text-center text-muted")
+
+        thumbnail_id_type = 'alltime-fused-weighted-thumbnail'
+        modal_id_prefix = 'alltime-fused-weighted'
+
+        for i, (final_class, combined_score, img, best_class, conf_d, conf_c) in enumerate(summary_data):
+             tile = html.Div([
+                 create_thumbnail_button(img, i, thumbnail_id_type),
+                 create_fused_weighted_info_box(final_class, combined_score, best_class, conf_d, conf_c) # Use specific info box
+             ], className="gallery-tile")
+             gallery_items.append(tile)
+             modals.append(create_image_modal_layout(img, i, modal_id_prefix)) # Standard modal layout
+
+        return html.Div(gallery_items + modals, className="gallery-grid-container")
+
+    def species_summary_layout():
+        """Layout for the all-time species summary page."""
+        detector_summary = dcc.Loading(type="circle", children=generate_all_time_detector_summary())
+        classifier_summary = dcc.Loading(type="circle", children=generate_all_time_classifier_summary())
+        fused_agreement_summary = dcc.Loading(type="circle", children=generate_all_time_fused_summary_agreement())
+        fused_weighted_summary = dcc.Loading(type="circle", children=generate_all_time_fused_summary_weighted())
+
+        return dbc.Container([
+            generate_navbar(),  # Include navbar
+            html.H1("Artenübersicht (Alle Tage)", className="text-center my-3"),
+
+            # --- Section 1: Best Detector ---
+            dbc.Row([
+                dbc.Col([
+                    html.H3("Beste Detektion pro Art", className="text-center mt-4 mb-3"),
+                    html.P("Zeigt das Bild mit der höchsten Detector-Konfidenz für jede mindestens einmal erkannte Art.", className="text-center text-muted small mb-3"),
+                    detector_summary
+                ], width=12),
+            ]),
+            html.Hr(className="my-4"),
+
+             # --- Section 2: Best Classifier ---
+            dbc.Row([
+                dbc.Col([
+                    html.H3("Beste Klassifizierung pro Art", className="text-center mt-4 mb-3"),
+                    html.P(f"Zeigt das Bild mit der höchsten Classifier-Konfidenz (>= {int(CLASSIFIER_CONFIDENCE_THRESHOLD*100)}%) für jede klassifizierte Art.", className="text-center text-muted small mb-3"),
+                    classifier_summary
+                ], width=12),
+            ]),
+            html.Hr(className="my-4"),
+
+            # --- Section 3: Fused - Agreement & Multiplicative Score ---
+            dbc.Row([
+                dbc.Col([
+                    html.H3("Agreement & Produkt-Score", className="text-center mt-4 mb-3"),
+                     html.P(f"Zeigt das Bild mit dem höchsten Produkt-Score (Detektor x Classifier), nur wenn beide Modelle zustimmen und über ihren Schwellenwerten liegen (Det >= {int(CONFIDENCE_THRESHOLD_DETECTION*100)}%, Cls >= {int(CLASSIFIER_CONFIDENCE_THRESHOLD*100)}%).", className="text-center text-muted small mb-3"),
+                    fused_agreement_summary # Add new summary here
+                ], width=12),
+            ]),
+            html.Hr(className="my-4"),
+
+            # --- Section 4: Fused - Weighted Score ---
+             dbc.Row([
+                dbc.Col([
+                    html.H3(f"Gewichteter Score, α={FUSION_ALPHA}", className="text-center mt-4 mb-3"),
+                     html.P(f"Zeigt das Bild mit dem höchsten gewichteten Score ({FUSION_ALPHA*100:.0f}% Detektor + { (1-FUSION_ALPHA)*100:.0f}% Classifier), wenn beide Modelle über ihren Schwellenwerten liegen. Bei Uneinigkeit wird die Klasse des Classifiers verwendet.", className="text-center text-muted small mb-3"),
+                    fused_weighted_summary # Add new summary here
+                ], width=12),
+            ]),
+
+        ], fluid=True)
 
     def generate_navbar():
         """Creates the navbar with the logo for gallery pages."""
@@ -468,12 +745,12 @@ def create_web_interface(params):
             brand=html.Img(
                 src="/assets/WatchMyBirds.png",
                 className="img-fluid round-logo",
-                style={"width": "20vw", "minWidth": "100px", "maxWidth": "200px"}
             ),
             brand_href="/",
             children=[
                 dbc.NavItem(dbc.NavLink("Live Stream", href="/", className="mx-auto")),
-                dbc.NavItem(dbc.NavLink("Galerie", href="/gallery", className="mx-auto"))
+                dbc.NavItem(dbc.NavLink("Galerie", href="/gallery", className="mx-auto")),
+                dbc.NavItem(dbc.NavLink("Artenübersicht", href="/species", className="mx-auto"))  # <-- ADD THIS LINK
             ],
             color="primary",
             dark=True,
@@ -485,106 +762,143 @@ def create_web_interface(params):
         """Generates the main gallery page with daily subgallery links, including the logo."""
         images_by_date = get_captured_images_by_date()
 
+        # Sort dates descending (newest first)
+        sorted_dates = sorted(images_by_date.keys(), reverse=True)
+
         grid_items = []
-        for date, images in images_by_date.items():
-            thumbnail = images[0][0]  # Use the first image of the day as the representative
-            grid_items.append(
-                html.Div([
-                    html.A(
-                        html.Img(
-                            src=f"/images/{thumbnail}",
-                            style={"width": "150px", "cursor": "pointer", "margin": "5px"}
+        if not sorted_dates:
+            grid_items.append(html.P("Bisher keine Bilder in der Galerie.", className="text-center text-muted mt-5"))
+        else:
+            for date in sorted_dates:
+                images = images_by_date[date]
+                if not images: continue  # Skip if a date folder exists but is empty
+                # Use the first image of the day as the representative thumbnail
+                # Ensure the tuple structure is correct (filename is the first element)
+                thumbnail_rel_path = images[0][0]
+                # Derive the zoomed filename for the thumbnail link display
+                thumbnail_display_path = derive_zoomed_filename(thumbnail_rel_path)
+
+                grid_items.append(
+                    html.Div([
+                        html.A(
+                            html.Img(
+                                src=f"/images/{thumbnail_display_path}",
+                                className="main-gallery-image",
+                                style={"width": f"{IMAGE_WIDTH}px"}
+                            ),
+                            href=f"/gallery/{date}"  # Link to subgallery
                         ),
-                        href=f"/gallery/{date}"  # Link to subgallery
-                    ),
-                    html.P(date, style={"textAlign": "center", "marginTop": "5px"})
-                ], style={"textAlign": "center"})
-            )
+                        html.P(date, className="main-gallery-date")
+                    ], className="main-gallery-item")
+                )
 
         content = html.Div(
             grid_items,
-            style={"display": "flex", "flexWrap": "wrap", "justifyContent": "center"}
+            className="gallery-grid-container"
         )
         return dbc.Container([
-            generate_navbar(), # Call the function here
+            generate_navbar(),
             html.H1("Galerie", className="text-center my-3"),
-            content
+            content  # Add the container with grid items
         ], fluid=True)
 
     def generate_subgallery(date, page=1, include_header=True):
+        """
+        Generates the content for a specific date's subgallery page,
+        including daily species summaries, pagination, loading indicator,
+        and empty state handling.
+        """
         images_by_date = get_captured_images_by_date()
-        # images_by_date now contains tuples: (filename, best_class, best_class_conf, top1_class_name, top1_confidence)
-        images = images_by_date.get(date, [])
-        total_images = len(images)
+        images_for_this_date = images_by_date.get(date, [])
+        total_images = len(images_for_this_date)
         total_pages = math.ceil(total_images / PAGE_SIZE) or 1
-
         page = max(1, min(page, total_pages))
-        page_images = images[(page - 1) * PAGE_SIZE: page * PAGE_SIZE]
+        start_index = (page - 1) * PAGE_SIZE
+        end_index = page * PAGE_SIZE
+        page_images = images_for_this_date[start_index:end_index]
 
-        # Create a list of page links
+        # --- Pagination Controls ---
         page_links = []
         for p in range(1, total_pages + 1):
-            style = {"margin": "5px"}
-            # Different styling if it’s the active page
             if p == page:
-                link = dbc.Button(str(p), color="primary", disabled=True, style=style)
+                link = dbc.Button(str(p), color="primary", disabled=True, className="mx-1", size="sm")
             else:
-                link = dbc.Button(
-                    str(p),
-                    color="secondary",
-                    href=f"/gallery/{date}?page={p}",
-                    style=style
-                )
+                link = dbc.Button(str(p), color="secondary", href=f"/gallery/{date}?page={p}", className="mx-1",
+                                  size="sm")
             page_links.append(link)
-
         pagination_controls = html.Div(
             page_links,
-            style={"textAlign": "center", "marginBottom": "20px"}
+            className="pagination-controls",
+            id="pagination-top"
         )
 
-        grid_items = [
-            html.Div([
-                create_subgallery_thumbnail(img, i),
-                html.Div([
-                    # Row 1: Detection result common name in bold
-                    html.Div(
-                        html.Strong(COMMON_NAMES.get(best_class, best_class.replace('_', ' '))),
-                        style={"textAlign": "center", "marginBottom": "2px"}
-                    ),
-                    # Row 2: Scientific name in brackets with italic text
-                    html.Div([
-                        "(",
-                        html.I(best_class.replace('_', ' ')),
-                        ")"
-                    ], style={"textAlign": "center", "marginBottom": "2px"}),
-                    # Row 3: Detector confidence percentage
-                    html.Div(
-                        f"Detector: {int(float(best_class_conf) * 100)}%",
-                        style={"textAlign": "center", "marginBottom": "2px", "color": "gray"}
-                    ),
-                    # Row 4: Classifier result
-                    html.Div(
-                        f"Classifier: {top1_class} ({int(float(top1_conf) * 100)}%)",
-                        style={"textAlign": "center", "marginBottom": "5px", "color": "blue"}
-                    )
-                ], style={"display": "flex", "flexDirection": "column", "alignItems": "center"})
-            ], style={"margin": "5px", "display": "flex", "flexDirection": "column", "alignItems": "center"})
-            for i, (img, best_class, best_class_conf, top1_class, top1_conf) in enumerate(page_images)
-        ]
-        modals = [create_subgallery_modal(img, i) for i, (img, best_class, best_class_conf, top1_class, top1_conf) in
-                  enumerate(page_images)]
+        # --- Main Paginated Gallery Items and Modals ---
+        gallery_items = []
+        subgallery_modals = []
 
-        content = html.Div(
-            grid_items + modals,
-            style={"display": "flex", "flexWrap": "wrap", "justifyContent": "center"}
+        # Define ID types/prefixes needed within the loop
+        button_id_type = 'subgallery-thumbnail'
+        modal_id_prefix = 'subgallery-modal'
+
+        if not page_images:
+            gallery_items.append(html.P(f"Keine Bilder für den {date} auf dieser Seite gefunden.",
+                                        className="text-center text-muted mt-4 mb-4"))
+        else:
+            for i, (img, best_class, best_class_conf, top1_class, top1_conf) in enumerate(page_images):
+                unique_subgallery_index = f"{date.replace('-', '')}-sub-{i + start_index}"
+
+                tile = html.Div([
+                    create_thumbnail_button(img, unique_subgallery_index, button_id_type),
+                    create_thumbnail_info_box(best_class, best_class_conf, top1_class, top1_conf)
+                ], className="gallery-tile")
+
+                gallery_items.append(tile)
+                subgallery_modals.append(create_subgallery_modal(img, unique_subgallery_index))
+
+        # --- Main Paginated Content Area with Loading ---
+        gallery_grid = html.Div(gallery_items, className="gallery-grid-container")
+        loading_wrapper = dcc.Loading(
+            id=f"loading-subgallery-{date}-{page}",
+            type="circle",
+            children=gallery_grid
         )
 
+        # --- Generate Daily Summaries ---
+        detector_summary_content = generate_daily_detector_summary(date, images_for_this_date)
+        classifier_summary_content = generate_daily_classifier_summary(date, images_for_this_date)
+
+        # --- Final Page Structure ---
         container_elements = []
         if include_header:
             container_elements.append(generate_navbar())
-            container_elements.append(dbc.Button("Zurück", href="/gallery", color="secondary", className="mb-3"))
+            container_elements.append(
+                dbc.Button("Zurück zur Galerieübersicht", href="/gallery", color="secondary", className="mb-3 mt-3",
+                           outline=True)
+            )
             container_elements.append(html.H2(f"Bilder vom {date}", className="text-center"))
-        container_elements.extend([pagination_controls, content, pagination_controls])
+            container_elements.append(html.P(f"Seite {page} von {total_pages} ({total_images} Bilder insgesamt)",
+                                             className="text-center text-muted small"))
+
+        # --- Add Daily Summaries to Layout ---
+        if include_header:
+            container_elements.extend([
+                html.Hr(),
+                html.H4("Arten des Tages (Detector)", className="text-center mt-4"),
+                detector_summary_content,
+                html.H4("Arten des Tages (Classifier)", className="text-center mt-4"),
+                classifier_summary_content,
+                html.Hr(),
+                html.H4("Alle Bilder (Paginiert)", className="text-center mt-4")
+            ])
+
+        # Add pagination, main loading wrapper, main modals, pagination again
+        container_elements.extend([
+            pagination_controls,
+            loading_wrapper,
+            *subgallery_modals,
+            pagination_controls
+        ])
+
         return dbc.Container(container_elements, fluid=True)
 
     def generate_video_feed():
@@ -634,7 +948,7 @@ def create_web_interface(params):
             padding_y = int(img_height * padding_y_percent)
             scaled_font_size = max(min_font_size, int(img_height * min_font_size_percent))
             try:
-                custom_font = ImageFont.truetype("assets/WRP_cruft.ttf", scaled_font_size)
+                custom_font = ImageFont.truetype("assets/WRP_cruft.ttf", scaled_font_size)  # I think we don't use the font anymore
             except IOError:
                 custom_font = ImageFont.load_default()
             timestamp_text = time.strftime("%Y-%m-%d %H:%M:%S")
@@ -678,18 +992,71 @@ def create_web_interface(params):
 
         # Create a Plotly bar plot
         fig = px.bar(x=hours, y=values,
-                     labels={"x": "Stunde", "y": "Erkennungen"},
-                     title="Beobachtungen pro Stunde",
+                     labels={"x": "Stunde des Tages", "y": "Anzahl Beobachtungen"},
                      color_discrete_sequence=["#B5EAD7"]
                      )
-        fig.update_layout(
-            paper_bgcolor='rgba(0,0,0,0)',
-            plot_bgcolor='rgba(0,0,0,0)'
-        )
-        fig.update_xaxes(showline=True, linewidth=1, linecolor='black', tickfont=dict(color='black'))
-        fig.update_yaxes(showline=True, linewidth=1, linecolor='black', tickfont=dict(color='black'))
 
-        return dcc.Graph(figure=fig)
+        fig.update_layout(
+            title={
+                'text': "Heutige Beobachtungen pro Stunde",
+                'y': 0.95,
+                'x': 0.5,
+                'xanchor': 'center',
+                'yanchor': 'top'},
+            font=dict(
+                family="Arial, sans-serif",
+                size=12,
+                color="#333333"
+            ),
+            xaxis_title_font_size=14,
+            yaxis_title_font_size=14,
+            paper_bgcolor='rgba(0,0,0,0)',
+            plot_bgcolor='rgba(0,0,0,0)',
+            margin=dict(l=40, r=20, t=50, b=40),
+            hoverlabel=dict(
+                bgcolor="white",
+                font_size=12,
+                font_family="Arial, sans-serif"
+            )
+        )
+
+        fig.update_xaxes(
+            showline=True, linewidth=1, linecolor='#cccccc',
+            tickfont=dict(color='#555555', size=11),
+            gridcolor='#eeeeee',
+            showgrid=True
+        )
+        fig.update_yaxes(
+            showline=True, linewidth=1, linecolor='#cccccc',
+            tickfont=dict(color='#555555', size=11),
+            gridcolor='#eeeeee',
+            showgrid=False
+        )
+
+        # Customize hover text
+        fig.update_traces(
+            hovertemplate="<b>Stunde %{x}</b><br>Beobachtungen: %{y}<extra></extra>")
+
+        # Add a simple check for no data
+        if not any(values):
+            fig.update_layout(
+                xaxis_showticklabels=False,
+                yaxis_showticklabels=False,
+                annotations=[
+                    dict(
+                        text="Noch keine Beobachtungen heute",
+                        xref="paper",
+                        yref="paper",
+                        showarrow=False,
+                        font=dict(size=16, color="#888888")
+                    )
+                ]
+            )
+
+        return dcc.Loading(
+            type="circle",
+            children=dcc.Graph(figure=fig, config={'displayModeBar': False})
+        )
 
     # -----------------------------
     # Flask Server and Routes
@@ -722,25 +1089,11 @@ def create_web_interface(params):
     app.config.suppress_callback_exceptions = True
 
     def stream_layout():
-        """Layout for the live stream page."""
+        """Layout for the live stream page using CSS classes."""
         return dbc.Container([
-            dbc.NavbarSimple(
-                brand=html.Img(
-                    src="/assets/WatchMyBirds.png",
-                    className="img-fluid round-logo",
-                    style={"width": "20vw", "minWidth": "100px", "maxWidth": "200px"}
-                ),
-                brand_href="/",
-                children=[
-                    dbc.NavItem(dbc.NavLink("Live Stream", href="/", className="mx-auto")),
-                    dbc.NavItem(dbc.NavLink("Galerie", href="/gallery", className="mx-auto"))
-                ],
-                color="primary",
-                dark=True,
-                fluid=True,
-                className="justify-content-center custom-navbar"
-            ),
+            generate_navbar(),
             dbc.Row([
+                # Use Bootstrap text/margin classes
                 dbc.Col(html.H1("Live Stream", className="text-center"), width=12, className="my-3")
             ]),
             dbc.Row([
@@ -751,7 +1104,7 @@ def create_web_interface(params):
                         children=html.Img(
                             id="video-feed",
                             src="/video_feed",
-                            style={"width": "100%", "maxWidth": "800px", "display": "block", "margin": "0 auto"}
+                            className="video-feed-image"
                         )
                     ),
                     width=12
@@ -769,39 +1122,122 @@ def create_web_interface(params):
             dbc.Row([
                 dbc.Col(generate_recent_gallery_classifier(), width=12)
             ], className="my-3"),
-            dbc.Row([
+             dbc.Row([
                 dbc.Col(generate_hourly_detection_plot(), width=12)
             ], className="my-3"),
             dbc.Row([
                 dbc.Col(html.H2("Bilder von heute", className="text-center mt-4"), width=12)
             ]),
             dbc.Row([
-                dbc.Col(generate_subgallery(datetime.now().strftime("%Y-%m-%d"), page=1, include_header=False),
-                        width=12)
+                dbc.Col(
+                    generate_subgallery(datetime.now().strftime("%Y-%m-%d"), page=1, include_header=False),
+                    width=12)
             ], className="my-3")
         ], fluid=True)
 
     def gallery_layout():
-        """Layout for the image gallery page (same as landing page)."""
+        """Layout for the gallery page (calls generate_gallery which uses classes)."""
         return generate_gallery()
 
     app.layout = html.Div([
         dcc.Location(id="url", refresh=False),
-        html.Div(id="page-content")
+        html.Div(id="page-content"),
+        dcc.Store(id="scroll-trigger-store", data=None),
+        html.Div(id="dummy-clientside-output-div", style={"display": "none"})
     ])
 
     # -----------------------------
     # Dash Callbacks
     # -----------------------------
     @app.callback(
+        Output({"type": "alltime-fused-agreement-modal", "index": ALL}, "is_open"),
+        [Input({'type': 'alltime-fused-agreement-thumbnail', 'index': ALL}, 'n_clicks'),
+         Input({'type': 'alltime-fused-agreement-close', 'index': ALL}, 'n_clicks'),
+         Input({'type': 'alltime-fused-agreement-modal-image', 'index': ALL}, 'n_clicks')],
+        [State({"type": "alltime-fused-agreement-modal", "index": ALL}, "is_open")]
+    )
+    def toggle_alltime_fused_agreement_modal(thumbnail_clicks, close_clicks, modal_image_clicks, current_states):
+        return _toggle_modal_generic(
+            open_trigger_type='alltime-fused-agreement-thumbnail',
+            close_button_trigger_type='alltime-fused-agreement-close',
+            close_image_trigger_type='alltime-fused-agreement-modal-image',
+            thumbnail_clicks=thumbnail_clicks, close_clicks=close_clicks, modal_image_clicks=modal_image_clicks, current_states=current_states
+        )
+
+    @app.callback(
+        Output({"type": "alltime-fused-weighted-modal", "index": ALL}, "is_open"),
+        [Input({'type': 'alltime-fused-weighted-thumbnail', 'index': ALL}, 'n_clicks'),
+         Input({'type': 'alltime-fused-weighted-close', 'index': ALL}, 'n_clicks'),
+         Input({'type': 'alltime-fused-weighted-modal-image', 'index': ALL}, 'n_clicks')],
+        [State({"type": "alltime-fused-weighted-modal", "index": ALL}, "is_open")]
+    )
+    def toggle_alltime_fused_weighted_modal(thumbnail_clicks, close_clicks, modal_image_clicks, current_states):
+        return _toggle_modal_generic(
+            open_trigger_type='alltime-fused-weighted-thumbnail',
+            close_button_trigger_type='alltime-fused-weighted-close',
+            close_image_trigger_type='alltime-fused-weighted-modal-image',
+            thumbnail_clicks=thumbnail_clicks, close_clicks=close_clicks, modal_image_clicks=modal_image_clicks, current_states=current_states
+        )
+
+    @app.callback(
+        Output({"type": "alltime-detector-modal", "index": ALL}, "is_open"),
+        [Input({'type': 'alltime-detector-thumbnail', 'index': ALL}, 'n_clicks'),
+         Input({'type': 'alltime-detector-close', 'index': ALL}, 'n_clicks'),
+         Input({'type': 'alltime-detector-modal-image', 'index': ALL}, 'n_clicks')],
+        [State({"type": "alltime-detector-modal", "index": ALL}, "is_open")]
+    )
+    def toggle_alltime_detector_modal(thumbnail_clicks, close_clicks, modal_image_clicks, current_states):
+        return _toggle_modal_generic(
+            open_trigger_type='alltime-detector-thumbnail',
+            close_button_trigger_type='alltime-detector-close',
+            close_image_trigger_type='alltime-detector-modal-image',
+            thumbnail_clicks=thumbnail_clicks,
+            close_clicks=close_clicks,
+            modal_image_clicks=modal_image_clicks,
+            current_states=current_states
+        )
+
+    @app.callback(
+        Output({"type": "alltime-classifier-modal", "index": ALL}, "is_open"),
+        [Input({'type': 'alltime-classifier-thumbnail', 'index': ALL}, 'n_clicks'),
+         Input({'type': 'alltime-classifier-close', 'index': ALL}, 'n_clicks'),
+         Input({'type': 'alltime-classifier-modal-image', 'index': ALL}, 'n_clicks')],
+        [State({"type": "alltime-classifier-modal", "index": ALL}, "is_open")]
+    )
+    def toggle_alltime_classifier_modal(thumbnail_clicks, close_clicks, modal_image_clicks, current_states):
+        return _toggle_modal_generic(
+            open_trigger_type='alltime-classifier-thumbnail',
+            close_button_trigger_type='alltime-classifier-close',
+            close_image_trigger_type='alltime-classifier-modal-image',
+            thumbnail_clicks=thumbnail_clicks,
+            close_clicks=close_clicks,
+            modal_image_clicks=modal_image_clicks,
+            current_states=current_states
+        )
+
+    @app.callback(
         Output("page-content", "children"),
-        [Input("url", "pathname"), Input("url", "search")]
+        Output("scroll-trigger-store", "data"),  # Add Store output
+        [Input("url", "pathname"), Input("url", "search")],
+        prevent_initial_call=True
     )
     def display_page(pathname, search):
+        scroll_trigger = no_update
+
+        ctx = callback_context
+        # Basic check: Did input 'search' change while on a subgallery path?
+        is_subgallery_page_nav = (
+                pathname.startswith("/gallery/") and
+                ctx.triggered and
+                ctx.triggered[0]['prop_id'] == "url.search"
+        )
+
+        if is_subgallery_page_nav:
+            # Generate a new value (like current time) to trigger clientside callback
+            scroll_trigger = time.time()
+
         if pathname.startswith("/gallery/"):
-            # The URL path is of the form "/gallery/<date>"
             date = pathname.split("/")[-1]
-            # Parse query string for page number (default to 1)
             page = 1
             if search:
                 params = parse_qs(search.lstrip('?'))
@@ -810,73 +1246,197 @@ def create_web_interface(params):
                         page = int(params['page'][0])
                     except ValueError:
                         page = 1
-            return generate_subgallery(date, page)
+            content = generate_subgallery(date, page)
+            return content, scroll_trigger
         elif pathname == "/gallery":
-            return generate_gallery()
-        elif pathname == "/" or pathname == "":
-            return stream_layout()
+            return generate_gallery(), no_update
+        elif pathname == "/species":
+            return species_summary_layout(), no_update
+        elif pathname == "/" or pathname is None or pathname == "":
+            return stream_layout(), no_update
         else:
-            return "404 Not Found"
+            return "404 Not Found", no_update
+
+    def _toggle_modal_generic(
+            # Pass the specific types expected for this modal group
+            open_trigger_type: str,
+            close_button_trigger_type: str,
+            close_image_trigger_type: str,
+            thumbnail_clicks,
+            close_clicks,
+            modal_image_clicks,
+            current_states
+    ):
+        """Generic function to toggle modals based on explicit trigger types."""
+        ctx = callback_context
+        if not ctx.triggered or not ctx.outputs_list:
+            if current_states is not None: return [no_update] * len(current_states)
+            if ctx.outputs_list: return [no_update] * len(ctx.outputs_list)
+            from dash import PreventUpdate
+            raise PreventUpdate
+
+        triggered_prop = ctx.triggered[0]['prop_id']
+        triggered_value = ctx.triggered[0]['value']
+
+        if triggered_value is None or triggered_value == 0:
+            return [no_update] * len(ctx.outputs_list)
+
+        try:
+            triggered_id_str = triggered_prop.split('.')[0]
+            triggered_id_dict = json.loads(triggered_id_str)
+            triggered_type = triggered_id_dict.get("type")
+            triggered_component_index = triggered_id_dict.get("index")
+        except (IndexError, json.JSONDecodeError, AttributeError, TypeError):
+            # print(f"Error parsing trigger ID: {triggered_prop}") # Debugging
+            return [no_update] * len(ctx.outputs_list)
+
+        if triggered_type is None or triggered_component_index is None:
+            # print(f"Invalid trigger type/index: {triggered_id_dict}") # Debugging
+            return [no_update] * len(ctx.outputs_list)
+
+        output_component_ids = [output['id'] for output in ctx.outputs_list]
+        new_states = [no_update] * len(output_component_ids)
+
+        target_list_index = -1
+        for i, output_id in enumerate(output_component_ids):
+            if isinstance(output_id, dict) and output_id.get("index") == triggered_component_index:
+                target_list_index = i
+                break
+
+        try:
+            expected_modal_output_type = ctx.outputs_list[0]['id']['type']
+        except (IndexError, KeyError, TypeError):
+            # print("Could not determine expected output type from context") # Debugging
+            return [no_update] * len(ctx.outputs_list)
+
+        # Did the user click the designated open trigger (e.g., thumbnail button)?
+        if triggered_type == open_trigger_type:
+            if target_list_index != -1:  # Did we find the corresponding modal output?
+                if output_component_ids[target_list_index].get("type") == expected_modal_output_type:
+                    is_currently_open = current_states[target_list_index]
+                    if not is_currently_open:
+                        # Close others, open target
+                        for i in range(len(new_states)):
+                            new_states[i] = False if i != target_list_index else True
+                        # print(f"Opening modal via {open_trigger_type}: list_idx={target_list_index}, comp_idx={triggered_component_index}") # Debugging
+                # else: # Debugging
+                #    print(f"Open Trigger Type Mismatch: Found {output_component_ids[target_list_index].get('type')}, expected {expected_modal_output_type}")
+
+        # Did the user click the designated close button OR the close image?
+        elif triggered_type == close_button_trigger_type or triggered_type == close_image_trigger_type:
+            if target_list_index != -1:  # Did we find the corresponding modal output?
+                if output_component_ids[target_list_index].get("type") == expected_modal_output_type:
+                    if current_states[target_list_index]:  # Only close if it's open
+                        new_states[target_list_index] = False
+                        # print(f"Closing modal via {triggered_type}: list_idx={target_list_index}, comp_idx={triggered_component_index}") # Debugging
+                # else: # Debugging
+                #     print(f"Close Trigger Type Mismatch: Found {output_component_ids[target_list_index].get('type')}, expected {expected_modal_output_type}")
+
+        # print(f"Returning states: {new_states}") # Debugging
+        return new_states
 
     @app.callback(
-        Output({"type": "modal", "index": ALL}, "is_open"),
+        Output({"type": "daily-detector-modal", "index": ALL}, "is_open"),
+        [Input({'type': 'daily-detector-thumbnail', 'index': ALL}, 'n_clicks'),
+         Input({'type': 'daily-detector-close', 'index': ALL}, 'n_clicks'),
+         Input({'type': 'daily-detector-modal-image', 'index': ALL}, 'n_clicks')],
+        [State({"type": "daily-detector-modal", "index": ALL}, "is_open")]
+    )
+    def toggle_daily_detector_modal(thumbnail_clicks, close_clicks, modal_image_clicks, current_states):
+        # Use the generic toggle function with the correct types for this section
+        return _toggle_modal_generic(
+            open_trigger_type='daily-detector-thumbnail',
+            close_button_trigger_type='daily-detector-close',
+            close_image_trigger_type='daily-detector-modal-image',
+            thumbnail_clicks=thumbnail_clicks,
+            close_clicks=close_clicks,
+            modal_image_clicks=modal_image_clicks,
+            current_states=current_states
+        )
+
+    @app.callback(
+        Output({"type": "daily-classifier-modal", "index": ALL}, "is_open"),
+        [Input({'type': 'daily-classifier-thumbnail', 'index': ALL}, 'n_clicks'),
+         Input({'type': 'daily-classifier-close', 'index': ALL}, 'n_clicks'),
+         Input({'type': 'daily-classifier-modal-image', 'index': ALL}, 'n_clicks')],
+        [State({"type": "daily-classifier-modal", "index": ALL}, "is_open")]
+    )
+    def toggle_daily_classifier_modal(thumbnail_clicks, close_clicks, modal_image_clicks, current_states):
+        # Use the generic toggle function with the correct types for this section
+        return _toggle_modal_generic(
+            open_trigger_type='daily-classifier-thumbnail',
+            close_button_trigger_type='daily-classifier-close',
+            close_image_trigger_type='daily-classifier-modal-image',
+            thumbnail_clicks=thumbnail_clicks,
+            close_clicks=close_clicks,
+            modal_image_clicks=modal_image_clicks,
+            current_states=current_states
+        )
+
+    @app.callback(
+        Output({"type": "modal-modal", "index": ALL}, "is_open"),
         [Input({'type': 'thumbnail', 'index': ALL}, 'n_clicks'),
-         Input({'type': 'close', 'index': ALL}, 'n_clicks'),
-         Input({'type': 'modal-image', 'index': ALL}, 'n_clicks')],  # New Input for image clicks
-        [State({"type": "modal", "index": ALL}, "is_open")]
+         Input({'type': 'modal-close', 'index': ALL}, 'n_clicks'),
+         Input({'type': 'modal-modal-image', 'index': ALL}, 'n_clicks')],
+        [State({"type": "modal-modal", "index": ALL}, "is_open")]
     )
     def toggle_modal(thumbnail_clicks, close_clicks, modal_image_clicks, current_states):
-        ctx = callback_context
-        if not ctx.triggered:
-            return current_states
-        triggered_prop = ctx.triggered[0]['prop_id']
-        triggered_id = json.loads(triggered_prop.split('.')[0])
-        new_states = [False] * len(current_states)
-        if triggered_id["type"] == "thumbnail":
-            new_states[triggered_id["index"]] = True
-        elif triggered_id["type"] in ["close", "modal-image"]:
-            new_states[triggered_id["index"]] = False
-        return new_states
+        return _toggle_modal_generic(
+            open_trigger_type='thumbnail',
+            close_button_trigger_type='modal-close',
+            close_image_trigger_type='modal-modal-image',
+            thumbnail_clicks=thumbnail_clicks,
+            close_clicks=close_clicks,
+            modal_image_clicks=modal_image_clicks,
+            current_states=current_states
+        )
 
     @app.callback(
-        Output({"type": "modal_classifier", "index": ALL}, "is_open"),
+        Output({"type": "modal_classifier-modal", "index": ALL}, "is_open"),
         [Input({'type': 'thumbnail_classifier', 'index': ALL}, 'n_clicks'),
-         Input({'type': 'close_classifier', 'index': ALL}, 'n_clicks'),
-         Input({'type': 'modal-image_classifier', 'index': ALL}, 'n_clicks')],
-        [State({"type": "modal_classifier", "index": ALL}, "is_open")]
+         Input({'type': 'modal_classifier-close', 'index': ALL}, 'n_clicks'),
+         Input({'type': 'modal_classifier-modal-image', 'index': ALL}, 'n_clicks')],
+        [State({"type": "modal_classifier-modal", "index": ALL}, "is_open")]
     )
     def toggle_modal_classifier(thumbnail_clicks, close_clicks, modal_image_clicks, current_states):
-        ctx = callback_context
-        if not ctx.triggered:
-            return current_states
-        triggered_prop = ctx.triggered[0]['prop_id']
-        triggered_id = json.loads(triggered_prop.split('.')[0])
-        new_states = [False] * len(current_states)
-        if triggered_id["type"] == "thumbnail_classifier":
-            new_states[triggered_id["index"]] = True
-        elif triggered_id["type"] in ["close_classifier", "modal-image_classifier"]:
-            new_states[triggered_id["index"]] = False
-        return new_states
+        return _toggle_modal_generic(
+            open_trigger_type='thumbnail_classifier',
+            close_button_trigger_type='modal_classifier-close',
+            close_image_trigger_type='modal_classifier-modal-image',
+            thumbnail_clicks=thumbnail_clicks,
+            close_clicks=close_clicks,
+            modal_image_clicks=modal_image_clicks,
+            current_states=current_states
+        )
 
     @app.callback(
-        Output({"type": "subgallery-modal", "index": ALL}, "is_open"),
+        Output({"type": "subgallery-modal-modal", "index": ALL}, "is_open"),
         [Input({'type': 'subgallery-thumbnail', 'index': ALL}, 'n_clicks'),
-         Input({'type': 'subgallery-close', 'index': ALL}, 'n_clicks'),
-         Input({'type': 'subgallery-modal-image', 'index': ALL}, 'n_clicks')],
-        [State({"type": "subgallery-modal", "index": ALL}, "is_open")]
+         Input({'type': 'subgallery-modal-close', 'index': ALL}, 'n_clicks'),
+         Input({'type': 'subgallery-modal-modal-image', 'index': ALL}, 'n_clicks')],
+        [State({"type": "subgallery-modal-modal", "index": ALL}, "is_open")]
     )
     def toggle_subgallery_modal(thumbnail_clicks, close_clicks, modal_image_clicks, current_states):
-        ctx = callback_context
-        if not ctx.triggered:
-            return current_states
-        triggered_prop = ctx.triggered[0]['prop_id']
-        triggered_id = json.loads(triggered_prop.split('.')[0])
-        new_states = [False] * len(current_states)
-        if triggered_id["type"] == "subgallery-thumbnail":
-            new_states[triggered_id["index"]] = True
-        elif triggered_id["type"] in ["subgallery-close", "subgallery-modal-image"]:
-            new_states[triggered_id["index"]] = False
-        return new_states
+        return _toggle_modal_generic(
+            open_trigger_type='subgallery-thumbnail',
+            close_button_trigger_type='subgallery-modal-close',
+            close_image_trigger_type='subgallery-modal-modal-image',
+            thumbnail_clicks=thumbnail_clicks,
+            close_clicks=close_clicks,
+            modal_image_clicks=modal_image_clicks,
+            current_states=current_states
+        )
+
+    app.clientside_callback(
+        ClientsideFunction(
+            namespace='clientside',
+            function_name='scrollToPagination'
+        ),
+        # Change this Output:
+        Output("dummy-clientside-output-div", "children"),  # Target the dummy div instead
+        Input("scroll-trigger-store", "data"),
+        prevent_initial_call=True
+    )
 
     # -----------------------------
     # Function to Start the Web Interface

@@ -51,6 +51,9 @@ def load_config():
         "CLASSIFIER_CONFIDENCE_THRESHOLD": float(os.getenv("CLASSIFIER_CONFIDENCE_THRESHOLD", 0.8)),
         "CLASSIFIER_DOWNLOAD_LATEST_MODEL": os.getenv("CLASSIFIER_DOWNLOAD_LATEST_MODEL", "True").lower() == "true",
 
+        # Results Settings
+        "FUSION_ALPHA": float(os.getenv("FUSION_ALPHA", 0.5)),
+
         # Streaming Settings
         "STREAM_FPS": float(os.getenv("STREAM_FPS", 1)),
         "STREAM_WIDTH_OUTPUT_RESIZE": int(os.getenv("STREAM_WIDTH_OUTPUT_RESIZE", 640)),
