@@ -523,11 +523,9 @@ class DetectionManager:
                                     logger.error(f"Failed to send Telegram text-only notification: {e}")
 
             detection_time = time.time() - start_time
-            logger.info(f"Detection took {detection_time:.4f} seconds.")
-
             target_duration = 1.0 / self.config["MAX_FPS_DETECTION"]
             sleep_time = target_duration - detection_time
-            print(f"Detection duration: {detection_time:.4f}s, sleeping for: {sleep_time:.4f}s")
+            logger.info(f"AI duration: {detection_time:.4f}s, sleeping for: {sleep_time:.4f}s")
             if sleep_time > 0:
                 time.sleep(sleep_time)
 

@@ -271,6 +271,69 @@ def create_web_interface(params):
             size="lg",
         )
 
+    def create_subgallery_thumbnail(image_filename: str, index: int):
+        zoomed_filename = derive_zoomed_filename(image_filename)
+        style = {
+            "cursor": "pointer",
+            "border": "none",
+            "background": "none",
+            "padding": "5px",
+            "width": f"{IMAGE_WIDTH}px"
+        }
+        return html.Button(
+            html.Img(
+                src=f"/images/{zoomed_filename}",
+                alt=f"Thumbnail of {zoomed_filename}",
+                style=style
+            ),
+            id={'type': 'subgallery-thumbnail', 'index': index},
+            n_clicks=0,
+            style={"border": "none", "background": "none", "padding": "0"}
+        )
+
+    def create_subgallery_modal(image_filename: str, index: int):
+        original_filename = image_filename.replace("_optimized", "_original")
+        pattern = r"(?:.*/)?(\d{8})_(\d{6})_([A-Za-z]+_[A-Za-z]+)_optimized\.jpg"
+        match = re.match(pattern, image_filename)
+        if match:
+            date_str, time_str, class_name = match.groups()
+            formatted_date = f"{date_str[6:8]}.{date_str[4:6]}.{date_str[0:4]}"
+            formatted_time = f"{time_str[0:2]}:{time_str[2:4]}:{time_str[4:6]}"
+            formatted_class = class_name.replace('_', ' ')
+            title_content = [f"{formatted_date} {formatted_time} - ", html.Em(formatted_class)]
+        else:
+            title_content = image_filename
+
+        return dbc.Modal(
+            [
+                dbc.ModalHeader(dbc.ModalTitle(title_content), close_button=False),
+                dbc.ModalBody(
+                    html.Img(
+                        src=f"/images/{image_filename}",
+                        style={"width": "100%"},
+                        id={'type': 'subgallery-modal-image', 'index': index}
+                    )
+                ),
+                dbc.ModalFooter([
+                    html.A(
+                        dbc.Button("Download", color="secondary", target="_blank"),
+                        href=f"/images/{original_filename}",
+                        download=original_filename,
+                        style={"textDecoration": "none"}
+                    ),
+                    dbc.Button(
+                        "Close",
+                        id={'type': 'subgallery-close', 'index': index},
+                        className="ml-auto",
+                        n_clicks=0
+                    )
+                ]),
+            ],
+            id={'type': 'subgallery-modal', 'index': index},
+            is_open=False,
+            size="lg",
+        )
+
     def generate_recent_gallery():
         """Generates a gallery showing the image with the highest confidence for each unique class detected today.
            It displays at most RECENT_IMAGES_COUNT unique classes.
@@ -448,7 +511,7 @@ def create_web_interface(params):
             content
         ], fluid=True)
 
-    def generate_subgallery(date, page=1):
+    def generate_subgallery(date, page=1, include_header=True):
         images_by_date = get_captured_images_by_date()
         # images_by_date now contains tuples: (filename, best_class, best_class_conf, top1_class_name, top1_confidence)
         images = images_by_date.get(date, [])
@@ -481,7 +544,7 @@ def create_web_interface(params):
 
         grid_items = [
             html.Div([
-                create_thumbnail(img, i),
+                create_subgallery_thumbnail(img, i),
                 html.Div([
                     # Row 1: Detection result common name in bold
                     html.Div(
@@ -508,7 +571,7 @@ def create_web_interface(params):
             ], style={"margin": "5px", "display": "flex", "flexDirection": "column", "alignItems": "center"})
             for i, (img, best_class, best_class_conf, top1_class, top1_conf) in enumerate(page_images)
         ]
-        modals = [create_image_modal(img, i) for i, (img, best_class, best_class_conf, top1_class, top1_conf) in
+        modals = [create_subgallery_modal(img, i) for i, (img, best_class, best_class_conf, top1_class, top1_conf) in
                   enumerate(page_images)]
 
         content = html.Div(
@@ -516,14 +579,13 @@ def create_web_interface(params):
             style={"display": "flex", "flexWrap": "wrap", "justifyContent": "center"}
         )
 
-        return dbc.Container([
-            generate_navbar(),
-            dbc.Button("Zurück", href="/gallery", color="secondary", className="mb-3"),
-            html.H2(f"Bilder vom {date}", className="text-center"),
-            pagination_controls,
-            content,
-            pagination_controls
-        ], fluid=True)
+        container_elements = []
+        if include_header:
+            container_elements.append(generate_navbar())
+            container_elements.append(dbc.Button("Zurück", href="/gallery", color="secondary", className="mb-3"))
+            container_elements.append(html.H2(f"Bilder vom {date}", className="text-center"))
+        container_elements.extend([pagination_controls, content, pagination_controls])
+        return dbc.Container(container_elements, fluid=True)
 
     def generate_video_feed():
         # Load placeholder once
@@ -706,9 +768,16 @@ def create_web_interface(params):
             ]),
             dbc.Row([
                 dbc.Col(generate_recent_gallery_classifier(), width=12)
-            ], className="mb-5"),
+            ], className="my-3"),
             dbc.Row([
                 dbc.Col(generate_hourly_detection_plot(), width=12)
+            ], className="my-3"),
+            dbc.Row([
+                dbc.Col(html.H2("Bilder von heute", className="text-center mt-4"), width=12)
+            ]),
+            dbc.Row([
+                dbc.Col(generate_subgallery(datetime.now().strftime("%Y-%m-%d"), page=1, include_header=False),
+                        width=12)
             ], className="my-3")
         ], fluid=True)
 
@@ -786,6 +855,26 @@ def create_web_interface(params):
         if triggered_id["type"] == "thumbnail_classifier":
             new_states[triggered_id["index"]] = True
         elif triggered_id["type"] in ["close_classifier", "modal-image_classifier"]:
+            new_states[triggered_id["index"]] = False
+        return new_states
+
+    @app.callback(
+        Output({"type": "subgallery-modal", "index": ALL}, "is_open"),
+        [Input({'type': 'subgallery-thumbnail', 'index': ALL}, 'n_clicks'),
+         Input({'type': 'subgallery-close', 'index': ALL}, 'n_clicks'),
+         Input({'type': 'subgallery-modal-image', 'index': ALL}, 'n_clicks')],
+        [State({"type": "subgallery-modal", "index": ALL}, "is_open")]
+    )
+    def toggle_subgallery_modal(thumbnail_clicks, close_clicks, modal_image_clicks, current_states):
+        ctx = callback_context
+        if not ctx.triggered:
+            return current_states
+        triggered_prop = ctx.triggered[0]['prop_id']
+        triggered_id = json.loads(triggered_prop.split('.')[0])
+        new_states = [False] * len(current_states)
+        if triggered_id["type"] == "subgallery-thumbnail":
+            new_states[triggered_id["index"]] = True
+        elif triggered_id["type"] in ["subgallery-close", "subgallery-modal-image"]:
             new_states[triggered_id["index"]] = False
         return new_states
 
