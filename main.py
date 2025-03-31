@@ -54,20 +54,8 @@ atexit.register(detection_manager.stop)
 # -----------------------------
 from web.web_interface import create_web_interface
 
-# Prepare parameters to pass to the web interface module.
-params = {
-    "output_dir": output_dir,
-    "detection_manager": detection_manager,
-    "output_resize_width": config["STREAM_WIDTH_OUTPUT_RESIZE"],
-    "STREAM_FPS": config["STREAM_FPS"],
-    "IMAGE_WIDTH": 150,
-    "RECENT_IMAGES_COUNT": 10,
-    "PAGE_SIZE": 50,
-    "CLASSIFIER_CONFIDENCE_THRESHOLD": config["CLASSIFIER_CONFIDENCE_THRESHOLD"],
-}
-
 # Expose the Flask server as the WSGI app for Waitress.
-interface = create_web_interface(params)
+interface = create_web_interface(detection_manager)
 app = interface["server"]
 
 if __name__ == '__main__':

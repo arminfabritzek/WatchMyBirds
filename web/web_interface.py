@@ -18,6 +18,8 @@ from PIL import Image, ImageDraw, ImageFont
 import numpy as np
 from datetime import datetime
 import plotly.express as px
+from config import load_config
+config = load_config()
 
 # Caching settings for gallery functions
 _CACHE_TIMEOUT = 10  # seconds
@@ -26,7 +28,7 @@ _cached_images = {
     "timestamp": 0
 }
 
-def create_web_interface(params):
+def create_web_interface(detection_manager):
     """
     Creates and returns a web interface (Dash app and Flask server) for the project.
     Expects the following keys in params:
@@ -38,17 +40,16 @@ def create_web_interface(params):
       - RECENT_IMAGES_COUNT: Number of recent images to display.
       - PAGE_SIZE: Number of images per gallery page.
     """
-    # Unpack parameters
-    output_dir = params.get("output_dir", "/output")
-    detection_manager = params.get("detection_manager")  # New detection manager
-    output_resize_width = params.get("output_resize_width", 640)
-    STREAM_FPS = params.get("STREAM_FPS", 1)
-    IMAGE_WIDTH = params.get("IMAGE_WIDTH", 150)
-    RECENT_IMAGES_COUNT = params.get("RECENT_IMAGES_COUNT", 10)
-    PAGE_SIZE = params.get("PAGE_SIZE", 50)
-    CONFIDENCE_THRESHOLD_DETECTION = params.get("CONFIDENCE_THRESHOLD_DETECTION", 0.7)
-    CLASSIFIER_CONFIDENCE_THRESHOLD = params.get("CLASSIFIER_CONFIDENCE_THRESHOLD", 0.7)
-    FUSION_ALPHA = params.get("FUSION_ALPHA", 0.5)
+    output_dir = config["OUTPUT_DIR"]
+    output_resize_width = config["STREAM_WIDTH_OUTPUT_RESIZE"]
+    STREAM_FPS = config["STREAM_FPS"]
+    CONFIDENCE_THRESHOLD_DETECTION = config["CONFIDENCE_THRESHOLD_DETECTION"]
+    CLASSIFIER_CONFIDENCE_THRESHOLD = config["CLASSIFIER_CONFIDENCE_THRESHOLD"]
+    FUSION_ALPHA = config["FUSION_ALPHA"]
+
+    RECENT_IMAGES_COUNT = 10
+    IMAGE_WIDTH = 150
+    PAGE_SIZE = 50
 
     logger = logging.getLogger(__name__)
 
@@ -223,8 +224,7 @@ def create_web_interface(params):
 
         # Format names (handle potential None or empty strings if necessary)
         best_class_sci = best_class.replace('_', ' ') if best_class else "N/A"
-        top1_class_sci = top1_class.replace('_',
-                                            ' ') if top1_class else "N/A"  # We need this formatted for consistency later, even if not displayed directly in Classifier line
+        top1_class_sci = top1_class.replace('_', ' ') if top1_class else "N/A"  # We need this formatted for consistency later, even if not displayed directly in Classifier line
 
         common_name_display = COMMON_NAMES.get(best_class, best_class_sci) if best_class else "Unbekannt"
 
@@ -294,239 +294,185 @@ def create_web_interface(params):
             html.Span(f"(Det: {detector_conf_percent}%, Cls: {classifier_conf_percent}%)", className="info-regular")
         ], className="thumbnail-info")
 
-    def create_thumbnail(image_filename: str, index: int):
-        return create_thumbnail_button(image_filename, index, 'thumbnail')
-
-    def create_thumbnail_classifier(image_filename: str, index: int):
-        return create_thumbnail_button(image_filename, index, 'thumbnail_classifier')
-
-    def create_image_modal(image_filename: str, index: int):
-        return create_image_modal_layout(image_filename, index, 'modal')
-
-    def create_image_modal_classifier(image_filename: str, index: int):
-        return create_image_modal_layout(image_filename, index, 'modal_classifier')
-
     def create_subgallery_modal(image_filename: str, index: int):
         return create_image_modal_layout(image_filename, index, 'subgallery-modal')
 
-    def generate_daily_detector_summary(date_str_iso, images_for_date):
-        """Generates a detector-based species summary gallery for a specific date."""
-        # Input: date_str_iso (YYYY-MM-DD), images_for_date (list of tuples for that day)
+    def generate_daily_fused_summary_agreement(date_str_iso, images_for_date):
+        """Generates a gallery based on agreement and multiplicative score for a specific date."""
+        best_results_per_species = {}  # key: species_name, value: (combined_score, path, best_class, conf_d, top1_class, conf_c)
+        # Input images_for_date is list of: (path, best_class, best_class_conf, top1_class, top1_conf)
 
-        best_images = {}
         for path, best_class, best_class_conf, top1_class, top1_conf in images_for_date:
+            if not best_class or not top1_class: continue  # Need both classes
+
             try:
-                conf_val = float(best_class_conf)
-            except ValueError:
-                continue
-            # Group by detection result (best_class), keep highest confidence image
-            if best_class not in best_images or conf_val > best_images[best_class][1]:
-                # Store path, conf, and other details needed for display
-                best_images[best_class] = (path, conf_val, top1_class, top1_conf)
+                conf_d = float(best_class_conf)
+                conf_c = float(top1_conf)
+            except (ValueError, TypeError):
+                continue  # Skip if confidences aren't valid numbers
 
-        # Create list of tuples (path, best_class, best_class_conf, top1_class, top1_conf)
-        daily_unique_detector = [
-            (path, best_class, conf_val, top1_class, top1_conf)
-            for best_class, (path, conf_val, top1_class, top1_conf) in best_images.items()
-        ]
-
-        daily_unique_detector.sort(key=lambda x: x[2], reverse=True)  # Sort by detector confidence
-        daily_unique_detector = daily_unique_detector[:RECENT_IMAGES_COUNT]  # Limit count
-
-        gallery_items = []
-        modals = []
-        if not daily_unique_detector:
-            return html.P(f"Keine eindeutigen Arten (Detector) für {date_str_iso} gefunden.",
-                          className="text-center text-muted small")
-
-        # Use unique index based on date + i to potentially help debugging, though type is key
-        base_index_str = date_str_iso.replace('-', '')  # e.g., "20250330"
-
-        thumbnail_id_type = 'daily-detector-thumbnail'
-        modal_id_prefix = 'daily-detector'
-
-        for i, (img, best_class, confidence, top1_class, top1_conf) in enumerate(daily_unique_detector):
-            unique_index = f"{base_index_str}-{i}"  # Create a more unique index string
-
-            tile = html.Div([
-                create_thumbnail_button(img, unique_index, thumbnail_id_type),
-                create_thumbnail_info_box(best_class, confidence, top1_class, top1_conf)
-
-            ], className="gallery-tile")  # Outer tile div
-            gallery_items.append(tile)
-            modals.append(
-                create_image_modal_layout(img, unique_index, modal_id_prefix)
+            is_valid = (
+                conf_d >= CONFIDENCE_THRESHOLD_DETECTION and
+                conf_c >= CLASSIFIER_CONFIDENCE_THRESHOLD and
+                best_class == top1_class
             )
 
-        # Return a Div containing the gallery and its modals
-        return html.Div(gallery_items + modals, className="gallery-grid-container")
+            if is_valid:
+                final_class = best_class
+                combined_score = conf_d * conf_c  # Multiplicative score
 
-    def generate_daily_classifier_summary(date_str_iso, images_for_date):
-        """Generates a classifier-based species summary gallery for a specific date."""
-        # Input: date_str_iso (YYYY-MM-DD), images_for_date (list of tuples for that day)
+                # Check if this is the best score found so far for this species ON THIS DAY
+                current_best_score = best_results_per_species.get(final_class, (-1.0,))[0]
+                if combined_score > current_best_score:
+                    best_results_per_species[final_class] = (combined_score, path, best_class, conf_d, top1_class, conf_c)
 
-        classifier_images = {}
-        for path, best_class, best_class_conf, top1_class, top1_conf in images_for_date:
-            try:
-                classifier_conf_val = float(top1_conf)
-            except ValueError:
-                continue
-            if classifier_conf_val < CLASSIFIER_CONFIDENCE_THRESHOLD:
-                continue
-            # Group by classifier result (top1_class), keep highest confidence image
-            if top1_class not in classifier_images or classifier_conf_val > float(classifier_images[top1_class][4]):
-                # Store path, detector class/conf, classifier class/conf
-                classifier_images[top1_class] = (path, best_class, best_class_conf, top1_class, top1_conf)
-
-        # Create list of tuples (path, best_class, best_class_conf, top1_class, top1_conf)
-        daily_unique_classifier = [
-            (path, best_class, best_class_conf, top1_class, top1_conf)
-            for top1_class, (path, best_class, best_class_conf, top1_class, top1_conf) in classifier_images.items()
+        # Convert dict to list for sorting/display
+        summary_data = [
+            (species, data[0], data[1], data[3], data[5]) # (final_class, combined_score, path, conf_d, conf_c)
+            for species, data in best_results_per_species.items()
         ]
 
-        daily_unique_classifier.sort(key=lambda x: float(x[4]), reverse=True)  # Sort by classifier confidence
-        daily_unique_classifier = daily_unique_classifier[:RECENT_IMAGES_COUNT]  # Limit count
+        # Sort by combined score descending for daily view
+        summary_data.sort(key=lambda x: x[1], reverse=True)
+        summary_data = summary_data[:RECENT_IMAGES_COUNT] # Limit count for daily view
 
+        # --- Build Gallery ---
         gallery_items = []
-        modals = []
-        if not daily_unique_classifier:
-            return html.P(
-                f"Keine eindeutigen Arten (Classifier) für {date_str_iso} gefunden (Schwelle: {int(CLASSIFIER_CONFIDENCE_THRESHOLD * 100)}%).",
-                className="text-center text-muted small")
+        modals = []  # Keep modals separate
 
-        # Use unique index based on date + i
+        if not summary_data:
+            # Return placeholder component
+            return html.P(f"Keine übereinstimmenden Erkennungen für {date_str_iso} gefunden.", className="text-center text-muted small")
+
         base_index_str = date_str_iso.replace('-', '')
-        thumbnail_id_type = 'daily-classifier-thumbnail'
-        modal_id_prefix = 'daily-classifier'
+        thumbnail_id_type = 'daily-fused-agreement-thumbnail'
+        modal_id_prefix = 'daily-fused-agreement'
 
-        for i, (img, best_class, best_class_conf, top1_class, top1_conf) in enumerate(daily_unique_classifier):
-            unique_index = f"{base_index_str}-{i}"
-
+        for i, (final_class, combined_score, img, conf_d, conf_c) in enumerate(summary_data):
+            unique_index = f"{base_index_str}-agree-{i}"
             tile = html.Div([
                 create_thumbnail_button(img, unique_index, thumbnail_id_type),
-                create_thumbnail_info_box(best_class, best_class_conf, top1_class, top1_conf)
-            ], className="gallery-tile")  # Outer tile div
+                create_fused_agreement_info_box(final_class, combined_score, conf_d, conf_c)
+            ], className="gallery-tile")
             gallery_items.append(tile)
-            modals.append(
-                create_image_modal_layout(img, unique_index, modal_id_prefix)  # Use new prefix and unique index
+            # Create and add modal to the separate list
+            modals.append(create_image_modal_layout(img, unique_index, modal_id_prefix))
+
+        return html.Div(gallery_items + modals, className="gallery-grid-container")  # <<< REVERT HERE
+
+    def generate_daily_fused_summary_weighted(date_str_iso, images_for_date):
+        """Generates a gallery based on weighted score for a specific date."""
+        best_results_per_species = {}  # key: species_name (top1_class), value: (combined_score, path, best_class, conf_d, top1_class, conf_c)
+        # Input images_for_date is list of: (path, best_class, best_class_conf, top1_class, top1_conf)
+
+        for path, best_class, best_class_conf, top1_class, top1_conf in images_for_date:
+            if not top1_class: continue # Require a classifier result
+
+            try:
+                conf_d = float(best_class_conf) if best_class_conf else 0.0
+                conf_c = float(top1_conf)
+            except (ValueError, TypeError):
+                continue
+
+            is_valid = (
+                conf_d >= CONFIDENCE_THRESHOLD_DETECTION and
+                conf_c >= CLASSIFIER_CONFIDENCE_THRESHOLD
             )
 
-        # Return a Div containing the gallery and its modals
-        return html.Div(gallery_items + modals, className="gallery-grid-container")
+            if is_valid:
+                final_class = top1_class  # Prioritize classifier label
+                combined_score = FUSION_ALPHA * conf_d + (1.0 - FUSION_ALPHA) * conf_c
 
-    def generate_recent_gallery():
-        """Generates a gallery showing the image with the highest confidence for each unique class detected today.
-           It displays at most RECENT_IMAGES_COUNT unique classes.
-        """
-        # all_images is a list of tuples:
-        # (timestamp, rel_path, best_class, best_class_conf, top1_class_name, top1_confidence)
-        all_images = get_captured_images()
-        today_str = datetime.now().strftime("%Y%m%d")
-        best_images = {}
-        for ts, path, best_class, best_class_conf, top1_class, top1_conf in all_images:
-            if not ts.startswith(today_str):
-                continue
-            try:
-                conf_val = float(best_class_conf)  # use detection confidence
-            except ValueError:
-                continue
-            # Group by detection result (best_class)
-            if best_class not in best_images or conf_val > best_images[best_class][1]:
-                best_images[best_class] = (path, conf_val, ts, top1_class, top1_conf)
+                # Check if this is the best score found so far for this final_class ON THIS DAY
+                current_best_score = best_results_per_species.get(final_class, (-1.0,))[0]
+                if combined_score > current_best_score:
+                    best_results_per_species[final_class] = (combined_score, path, best_class, conf_d, top1_class, conf_c)
 
-        # Create list of tuples (path, best_class, best_class_conf, top1_class, top1_conf) from best_images
-        recent_unique = [(path, best_class, conf_val, top1_class, top1_conf) for
-                         best_class, (path, conf_val, ts, top1_class, top1_conf) in best_images.items()]
-
-        # Sort by confidence descending
-        recent_unique.sort(key=lambda x: x[2], reverse=True)
-        # Limit to RECENT_IMAGES_COUNT unique classes
-        recent_unique = recent_unique[:RECENT_IMAGES_COUNT]
-
-        gallery_items = []
-        modals = []
-        for i, (img, best_class, confidence, top1_class, top1_conf) in enumerate(recent_unique):
-            tile = html.Div([
-                create_thumbnail(img, i),
-                create_thumbnail_info_box(best_class, confidence, top1_class, top1_conf)
-            ], className="gallery-tile")
-            gallery_items.append(tile)
-            modals.append(create_image_modal(img, i)) # Function now uses classes
-
-        # Use gallery-grid-container for the overall layout
-        return html.Div(gallery_items + modals, id="recent-gallery", className="gallery-grid-container")
-
-    def generate_recent_gallery_classifier():
-        """Generates a gallery showing the image with the highest classifier confidence for each unique class (top1_class) detected today.
-           It displays at most RECENT_IMAGES_COUNT unique classes, with the display format:
-           <Common Name>
-           (<Scientific Name>)
-           Detector: <Detector Confidence>%
-           Classifier: <top1_class> (<Classifier Confidence>%)
-        """
-        all_images = get_captured_images()
-        today_str = datetime.now().strftime("%Y%m%d")
-        classifier_images = {}
-        for ts, path, best_class, best_class_conf, top1_class, top1_conf in all_images:
-            if not ts.startswith(today_str):
-                continue
-            try:
-                classifier_conf_val = float(top1_conf)  # use classifier confidence for filtering
-            except ValueError:
-                continue
-            if classifier_conf_val < CLASSIFIER_CONFIDENCE_THRESHOLD:
-                continue
-            # Group by classifier result (top1_class) and store all relevant information
-            if top1_class not in classifier_images or classifier_conf_val > float(classifier_images[top1_class][4]):
-                classifier_images[top1_class] = (path, best_class, best_class_conf, top1_class, top1_conf, ts)
-        # Create list of tuples: (path, best_class, best_class_conf, top1_class, top1_conf)
-        recent_unique = [
-            (path, best_class, best_class_conf, top1_class, top1_conf)
-            for top1_class, (path, best_class, best_class_conf, top1_class, top1_conf, ts) in classifier_images.items()
+        # Convert dict to list for sorting/display
+        summary_data = [
+             # (final_class, combined_score, path, best_class, conf_d, conf_c)
+            (species, data[0], data[1], data[2], data[3], data[5])
+            for species, data in best_results_per_species.items()
         ]
-        recent_unique.sort(key=lambda x: float(x[4]), reverse=True)
-        recent_unique = recent_unique[:RECENT_IMAGES_COUNT]
 
+        # Sort by combined score descending for daily view
+        summary_data.sort(key=lambda x: x[1], reverse=True)
+        summary_data = summary_data[:RECENT_IMAGES_COUNT] # Limit count for daily view
+
+        # --- Build Gallery ---
         gallery_items = []
-        modals = []
-        for i, (img, best_class, best_class_conf, top1_class, top1_conf) in enumerate(recent_unique):
+        modals = []  # Keep modals separate
+
+        if not summary_data:
+            # Return placeholder and empty list for modals
+            return html.P(f"Keine gewichteten Erkennungen für {date_str_iso} gefunden.", className="text-center text-muted small")
+
+        base_index_str = date_str_iso.replace('-', '')
+        thumbnail_id_type = 'daily-fused-weighted-thumbnail'
+        modal_id_prefix = 'daily-fused-weighted'
+
+        for i, (final_class, combined_score, img, best_class_orig, conf_d_orig, conf_c_orig) in enumerate(summary_data):
+            unique_index = f"{base_index_str}-weight-{i}"
             tile = html.Div([
-                create_thumbnail_classifier(img, i),
-                create_thumbnail_info_box(best_class, best_class_conf, top1_class, top1_conf)
+                create_thumbnail_button(img, unique_index, thumbnail_id_type),
+                create_fused_weighted_info_box(final_class, combined_score, best_class_orig, conf_d_orig, conf_c_orig)
             ], className="gallery-tile")
             gallery_items.append(tile)
-            modals.append(create_image_modal_classifier(img, i))
+            # Create and add modal to the separate list
+            modals.append(create_image_modal_layout(img, unique_index, modal_id_prefix))
 
-        return html.Div(gallery_items + modals, id="recent-gallery-classifier", className="gallery-grid-container")
+        # Return the Div containing only gallery items, and the list of modals
+        return html.Div(gallery_items + modals, className="gallery-grid-container")
 
     def generate_all_time_detector_summary():
-        """Generates a gallery of the best detector result for each species across all time."""
+        """
+        Generates a gallery of the best detector result for each species across all time,
+        considering only detections above the confidence threshold.
+        """
         all_images = get_captured_images()  # Get all images (uses cache)
         best_images_all_time = {}  # Dictionary to store best image per species
 
-        # Find the highest confidence detection for each species
+        # Find the highest confidence detection for each species THAT MEETS THE THRESHOLD
         for _, path, best_class, best_class_conf, top1_class, top1_conf in all_images:
-            if not best_class: continue # Skip if detector class is missing
-            try: conf_val = float(best_class_conf)
-            except (ValueError, TypeError): continue
+            if not best_class: continue  # Skip if detector class is missing
+            try:
+                conf_val = float(best_class_conf)
+            except (ValueError, TypeError):
+                continue  # Skip if confidence is not a valid number
 
+            if conf_val < CONFIDENCE_THRESHOLD_DETECTION:
+                continue  # Skip if detection confidence is below the threshold
+
+            # Get the current best confidence stored for this species (default to -1.0 if not found)
             current_best_conf = best_images_all_time.get(best_class, (None, -1.0, None, None))[1]
+
+            # If the current image's confidence is higher than the stored one, update it
             if conf_val > current_best_conf:
                 best_images_all_time[best_class] = (path, conf_val, top1_class, top1_conf)
 
-        all_time_unique_detector = [ (data[0], species, data[1], data[2], data[3]) for species, data in best_images_all_time.items() ]
-        all_time_unique_detector.sort(key=lambda x: COMMON_NAMES.get(x[1], x[1])) # Sort by common name of best_class
+        # Create the list of unique detections from the dictionary
+        all_time_unique_detector = [
+            (data[0], species, data[1], data[2], data[3])  # (path, best_class, conf_val, top1_class, top1_conf)
+            for species, data in best_images_all_time.items()
+        ]
+        # Sort alphabetically by the common name of the detected species (best_class)
+        all_time_unique_detector.sort(key=lambda x: COMMON_NAMES.get(x[1], x[1]))
 
         gallery_items, modals = [], []
-        if not all_time_unique_detector: return html.P("Keine Arten (Detector) bisher erfasst.", className="text-center text-muted")
+        if not all_time_unique_detector:
+            return html.P(
+                f"Keine Arten (Detector) über Schwellenwert ({int(CONFIDENCE_THRESHOLD_DETECTION * 100)}%) bisher erfasst.",
+                className="text-center text-muted"
+            )
 
         thumbnail_id_type = 'alltime-detector-thumbnail'
         modal_id_prefix = 'alltime-detector'
 
+        # Generate gallery tiles and modals
         for i, (img, best_class, confidence, top1_class, top1_conf) in enumerate(all_time_unique_detector):
             tile = html.Div([
                 create_thumbnail_button(img, i, thumbnail_id_type),
-                create_thumbnail_info_box(best_class, confidence, top1_class, top1_conf) # Standard info box
+                create_thumbnail_info_box(best_class, confidence, top1_class, top1_conf)  # Standard info box
             ], className="gallery-tile")
             gallery_items.append(tile)
             modals.append(create_image_modal_layout(img, i, modal_id_prefix))
@@ -680,10 +626,10 @@ def create_web_interface(params):
         for i, (final_class, combined_score, img, best_class, conf_d, conf_c) in enumerate(summary_data):
              tile = html.Div([
                  create_thumbnail_button(img, i, thumbnail_id_type),
-                 create_fused_weighted_info_box(final_class, combined_score, best_class, conf_d, conf_c) # Use specific info box
+                 create_fused_weighted_info_box(final_class, combined_score, best_class, conf_d, conf_c)  # Use specific info box
              ], className="gallery-tile")
              gallery_items.append(tile)
-             modals.append(create_image_modal_layout(img, i, modal_id_prefix)) # Standard modal layout
+             modals.append(create_image_modal_layout(img, i, modal_id_prefix))  # Standard modal layout
 
         return html.Div(gallery_items + modals, className="gallery-grid-container")
 
@@ -702,7 +648,7 @@ def create_web_interface(params):
             dbc.Row([
                 dbc.Col([
                     html.H3("Beste Detektion pro Art", className="text-center mt-4 mb-3"),
-                    html.P("Zeigt das Bild mit der höchsten Detector-Konfidenz für jede mindestens einmal erkannte Art.", className="text-center text-muted small mb-3"),
+                    html.P(f"Zeigt das Bild mit der höchsten Detector-Konfidenz (>= {int(CONFIDENCE_THRESHOLD_DETECTION*100)}%) für jede klassifizierte Art.", className="text-center text-muted small mb-3"),
                     detector_summary
                 ], width=12),
             ]),
@@ -723,7 +669,7 @@ def create_web_interface(params):
                 dbc.Col([
                     html.H3("Agreement & Produkt-Score", className="text-center mt-4 mb-3"),
                      html.P(f"Zeigt das Bild mit dem höchsten Produkt-Score (Detektor x Classifier), nur wenn beide Modelle zustimmen und über ihren Schwellenwerten liegen (Det >= {int(CONFIDENCE_THRESHOLD_DETECTION*100)}%, Cls >= {int(CLASSIFIER_CONFIDENCE_THRESHOLD*100)}%).", className="text-center text-muted small mb-3"),
-                    fused_agreement_summary # Add new summary here
+                    fused_agreement_summary
                 ], width=12),
             ]),
             html.Hr(className="my-4"),
@@ -733,7 +679,7 @@ def create_web_interface(params):
                 dbc.Col([
                     html.H3(f"Gewichteter Score, α={FUSION_ALPHA}", className="text-center mt-4 mb-3"),
                      html.P(f"Zeigt das Bild mit dem höchsten gewichteten Score ({FUSION_ALPHA*100:.0f}% Detektor + { (1-FUSION_ALPHA)*100:.0f}% Classifier), wenn beide Modelle über ihren Schwellenwerten liegen. Bei Uneinigkeit wird die Klasse des Classifiers verwendet.", className="text-center text-muted small mb-3"),
-                    fused_weighted_summary # Add new summary here
+                    fused_weighted_summary
                 ], width=12),
             ]),
 
@@ -750,7 +696,7 @@ def create_web_interface(params):
             children=[
                 dbc.NavItem(dbc.NavLink("Live Stream", href="/", className="mx-auto")),
                 dbc.NavItem(dbc.NavLink("Galerie", href="/gallery", className="mx-auto")),
-                dbc.NavItem(dbc.NavLink("Artenübersicht", href="/species", className="mx-auto"))  # <-- ADD THIS LINK
+                dbc.NavItem(dbc.NavLink("Artenübersicht", href="/species", className="mx-auto"))
             ],
             color="primary",
             dark=True,
@@ -863,42 +809,47 @@ def create_web_interface(params):
             children=gallery_grid
         )
 
-        # --- Generate Daily Summaries ---
-        detector_summary_content = generate_daily_detector_summary(date, images_for_this_date)
-        classifier_summary_content = generate_daily_classifier_summary(date, images_for_this_date)
+        # --- Generate Daily Summaries (Get content AND modals) ---
+        agreement_summary_content = generate_daily_fused_summary_agreement(date, images_for_this_date)
+        weighted_summary_content = generate_daily_fused_summary_weighted(date, images_for_this_date)
 
-        # --- Final Page Structure ---
+        # --- Final Page Structure (Build initial elements) ---
         container_elements = []
         if include_header:
             container_elements.append(generate_navbar())
             container_elements.append(
-                dbc.Button("Zurück zur Galerieübersicht", href="/gallery", color="secondary", className="mb-3 mt-3",
-                           outline=True)
+                 dbc.Button("Zurück zur Galerieübersicht", href="/gallery", color="secondary", className="mb-3 mt-3", outline=True)
             )
             container_elements.append(html.H2(f"Bilder vom {date}", className="text-center"))
             container_elements.append(html.P(f"Seite {page} von {total_pages} ({total_images} Bilder insgesamt)",
-                                             className="text-center text-muted small"))
+                                               className="text-center text-muted small"))
 
-        # --- Add Daily Summaries to Layout ---
+        # --- Add Daily Summary Content (Divs only) to Layout ---
         if include_header:
             container_elements.extend([
                 html.Hr(),
-                html.H4("Arten des Tages (Detector)", className="text-center mt-4"),
-                detector_summary_content,
-                html.H4("Arten des Tages (Classifier)", className="text-center mt-4"),
-                classifier_summary_content,
+                html.H4("Tagesübersicht: Agreement & Produkt-Score", className="text-center mt-4"),
+                agreement_summary_content,
+                html.H4(f"Tagesübersicht: Gewichteter Score, α={FUSION_ALPHA}", className="text-center mt-4"),
+                weighted_summary_content,
                 html.Hr(),
-                html.H4("Alle Bilder (Paginiert)", className="text-center mt-4")
+                html.H4("Alle Bilder", className="text-center mt-4")
             ])
 
-        # Add pagination, main loading wrapper, main modals, pagination again
+        # Add pagination and main loading wrapper (NO MODALS YET)
         container_elements.extend([
             pagination_controls,
             loading_wrapper,
-            *subgallery_modals,
-            pagination_controls
+            pagination_controls  # Add pagination again at the bottom
         ])
 
+        # --- Collect ALL Modals ---
+        all_modals = subgallery_modals
+
+        # --- Add all collected modals to the end of the layout ---
+        container_elements.extend(all_modals)  # Add modals here
+
+        # --- Return the final container ---
         return dbc.Container(container_elements, fluid=True)
 
     def generate_video_feed():
@@ -1090,50 +1041,36 @@ def create_web_interface(params):
 
     def stream_layout():
         """Layout for the live stream page using CSS classes."""
-        return dbc.Container([
+        # --- Get data needed for the new daily summaries ---
+        today_date_iso = datetime.now().strftime("%Y-%m-%d")
+        images_by_date = get_captured_images_by_date()
+        images_for_today = images_by_date.get(today_date_iso, [])
+
+        # --- Generate Content ---
+        agreement_content = generate_daily_fused_summary_agreement(today_date_iso, images_for_today)
+        weighted_content = generate_daily_fused_summary_weighted(today_date_iso, images_for_today)
+
+        # Generate today's paginated gallery content
+        todays_paginated_gallery_content = generate_subgallery(today_date_iso, page=1, include_header=False)
+
+        # --- Build the Layout List ---
+        layout_children = [
             generate_navbar(),
-            dbc.Row([
-                # Use Bootstrap text/margin classes
-                dbc.Col(html.H1("Live Stream", className="text-center"), width=12, className="my-3")
-            ]),
-            dbc.Row([
-                dbc.Col(
-                    dcc.Loading(
-                        id="loading-video",
-                        type="default",
-                        children=html.Img(
-                            id="video-feed",
-                            src="/video_feed",
-                            className="video-feed-image"
-                        )
-                    ),
-                    width=12
-                )
-            ], className="my-3"),
-            dbc.Row([
-                dbc.Col(html.H2("Arten des Tages (Detector)", className="text-center"), width=12, className="mt-4")
-            ]),
-            dbc.Row([
-                dbc.Col(generate_recent_gallery(), width=12)
-            ], className="mb-5"),
-            dbc.Row([
-                dbc.Col(html.H2("Arten des Tages (Classifier)", className="text-center"), width=12, className="mt-4")
-            ]),
-            dbc.Row([
-                dbc.Col(generate_recent_gallery_classifier(), width=12)
-            ], className="my-3"),
-             dbc.Row([
-                dbc.Col(generate_hourly_detection_plot(), width=12)
-            ], className="my-3"),
-            dbc.Row([
-                dbc.Col(html.H2("Bilder von heute", className="text-center mt-4"), width=12)
-            ]),
-            dbc.Row([
-                dbc.Col(
-                    generate_subgallery(datetime.now().strftime("%Y-%m-%d"), page=1, include_header=False),
-                    width=12)
-            ], className="my-3")
-        ], fluid=True)
+            dbc.Row(dbc.Col(html.H1("Live Stream", className="text-center"), width=12, className="my-3")),
+            dbc.Row(dbc.Col(dcc.Loading(id="loading-video", type="default", children=html.Img(id="video-feed", src="/video_feed", className="video-feed-image")), width=12), className="my-3"),
+
+            dbc.Row(dbc.Col(html.H2("Tagesübersicht: Agreement & Produkt-Score", className="text-center"), width=12, className="mt-4")),
+            dbc.Row(dbc.Col(dcc.Loading(type="circle", children=agreement_content), width=12), className="mb-3"),
+
+            dbc.Row(dbc.Col(html.H2(f"Tagesübersicht: Gewichteter Score, α={FUSION_ALPHA}", className="text-center"), width=12, className="mt-4")),
+            dbc.Row(dbc.Col(dcc.Loading(type="circle", children=weighted_content), width=12), className="mb-5"),
+
+            dbc.Row(dbc.Col(generate_hourly_detection_plot(), width=12), className="my-3"),
+
+            dbc.Row(dbc.Col(html.H2("Alle heutigen Bilder", className="text-center mt-4"), width=12)),
+            dbc.Row(dbc.Col(todays_paginated_gallery_content, width=12), className="my-3")
+        ]
+        return dbc.Container(layout_children, fluid=True)
 
     def gallery_layout():
         """Layout for the gallery page (calls generate_gallery which uses classes)."""
@@ -1149,6 +1086,36 @@ def create_web_interface(params):
     # -----------------------------
     # Dash Callbacks
     # -----------------------------
+    @app.callback(
+        Output({"type": "daily-fused-agreement-modal", "index": ALL}, "is_open"),
+        [Input({'type': 'daily-fused-agreement-thumbnail', 'index': ALL}, 'n_clicks'),
+         Input({'type': 'daily-fused-agreement-close', 'index': ALL}, 'n_clicks'),
+         Input({'type': 'daily-fused-agreement-modal-image', 'index': ALL}, 'n_clicks')],
+        [State({"type": "daily-fused-agreement-modal", "index": ALL}, "is_open")]
+    )
+    def toggle_daily_fused_agreement_modal(thumbnail_clicks, close_clicks, modal_image_clicks, current_states):
+        return _toggle_modal_generic(
+            open_trigger_type='daily-fused-agreement-thumbnail',
+            close_button_trigger_type='daily-fused-agreement-close',
+            close_image_trigger_type='daily-fused-agreement-modal-image',
+            thumbnail_clicks=thumbnail_clicks, close_clicks=close_clicks, modal_image_clicks=modal_image_clicks, current_states=current_states
+        )
+
+    @app.callback(
+        Output({"type": "daily-fused-weighted-modal", "index": ALL}, "is_open"),
+        [Input({'type': 'daily-fused-weighted-thumbnail', 'index': ALL}, 'n_clicks'),
+         Input({'type': 'daily-fused-weighted-close', 'index': ALL}, 'n_clicks'),
+         Input({'type': 'daily-fused-weighted-modal-image', 'index': ALL}, 'n_clicks')],
+        [State({"type": "daily-fused-weighted-modal", "index": ALL}, "is_open")]
+    )
+    def toggle_daily_fused_weighted_modal(thumbnail_clicks, close_clicks, modal_image_clicks, current_states):
+        return _toggle_modal_generic(
+            open_trigger_type='daily-fused-weighted-thumbnail',
+            close_button_trigger_type='daily-fused-weighted-close',
+            close_image_trigger_type='daily-fused-weighted-modal-image',
+            thumbnail_clicks=thumbnail_clicks, close_clicks=close_clicks, modal_image_clicks=modal_image_clicks, current_states=current_states
+        )
+
     @app.callback(
         Output({"type": "alltime-fused-agreement-modal", "index": ALL}, "is_open"),
         [Input({'type': 'alltime-fused-agreement-thumbnail', 'index': ALL}, 'n_clicks'),
@@ -1217,7 +1184,7 @@ def create_web_interface(params):
 
     @app.callback(
         Output("page-content", "children"),
-        Output("scroll-trigger-store", "data"),  # Add Store output
+        Output("scroll-trigger-store", "data"),
         [Input("url", "pathname"), Input("url", "search")],
         prevent_initial_call=True
     )
@@ -1269,145 +1236,110 @@ def create_web_interface(params):
     ):
         """Generic function to toggle modals based on explicit trigger types."""
         ctx = callback_context
+        # Initialize variables used in the try block
+        triggered_prop = None
+        triggered_value = None
+        triggered_id_dict = None
+        triggered_type = None
+        triggered_component_index = None
+
+        # Guard clause: No trigger or no outputs defined
         if not ctx.triggered or not ctx.outputs_list:
-            if current_states is not None: return [no_update] * len(current_states)
-            if ctx.outputs_list: return [no_update] * len(ctx.outputs_list)
-            from dash import PreventUpdate
-            raise PreventUpdate
+            # Returning no_update for all outputs is often preferred over raising PreventUpdate
+            # when dealing with ALL pattern callbacks if some outputs might exist.
+            num_outputs = len(ctx.outputs_list) if ctx.outputs_list else (len(current_states) if current_states else 0)
+            if num_outputs > 0:
+                return [no_update] * num_outputs
+            else:
+                # If truly nothing to update, PreventUpdate might be applicable,
+                # but returning an empty list or handling upstream might be safer.
+                # For now, let's stick to no_update based on state length if possible.
+                if current_states is not None: return [no_update] * len(current_states)
+                return []  # Or potentially raise PreventUpdate if appropriate for your broader app structure
 
         triggered_prop = ctx.triggered[0]['prop_id']
         triggered_value = ctx.triggered[0]['value']
 
+        # Guard clause: Trigger value indicates no actual click/event
         if triggered_value is None or triggered_value == 0:
             return [no_update] * len(ctx.outputs_list)
 
+        # Safely parse the trigger ID
         try:
             triggered_id_str = triggered_prop.split('.')[0]
             triggered_id_dict = json.loads(triggered_id_str)
             triggered_type = triggered_id_dict.get("type")
             triggered_component_index = triggered_id_dict.get("index")
-        except (IndexError, json.JSONDecodeError, AttributeError, TypeError):
-            # print(f"Error parsing trigger ID: {triggered_prop}") # Debugging
+        except (IndexError, json.JSONDecodeError, AttributeError, TypeError) as e:
+            logger.error(f"Error parsing trigger ID: {triggered_prop} -> {e}", exc_info=True)
             return [no_update] * len(ctx.outputs_list)
 
+        # Guard clause: Parsed ID lacks necessary parts
         if triggered_type is None or triggered_component_index is None:
-            # print(f"Invalid trigger type/index: {triggered_id_dict}") # Debugging
+            logger.error(f"Invalid trigger type/index after parsing: {triggered_id_dict}")
             return [no_update] * len(ctx.outputs_list)
 
         output_component_ids = [output['id'] for output in ctx.outputs_list]
         new_states = [no_update] * len(output_component_ids)
 
+        # Find the index in the output list corresponding to the triggered component's index
         target_list_index = -1
         for i, output_id in enumerate(output_component_ids):
             if isinstance(output_id, dict) and output_id.get("index") == triggered_component_index:
                 target_list_index = i
                 break
 
+        # Guard clause: Could not find the target modal in the output list
+        if target_list_index == -1:
+            logger.error(f"Could not find target modal index for trigger component index {triggered_component_index}")
+            return new_states  # Return no_update for all
+
+        # Determine the expected type of the output modal component
         try:
             expected_modal_output_type = ctx.outputs_list[0]['id']['type']
-        except (IndexError, KeyError, TypeError):
-            # print("Could not determine expected output type from context") # Debugging
+        except (IndexError, KeyError, TypeError) as e:
+            logger.error(f"Could not determine expected output type from context: {e}", exc_info=True)
             return [no_update] * len(ctx.outputs_list)
 
-        # Did the user click the designated open trigger (e.g., thumbnail button)?
+        # Guard clause: Ensure state list matches output list
+        if current_states is None or len(current_states) != len(output_component_ids):
+            logger.error(
+                f"Mismatch or missing current_states. Len states: {len(current_states) if current_states else 'None'}, Len outputs: {len(output_component_ids)}"
+            )
+            return [no_update] * len(output_component_ids)
+
+        # --- Main Logic ---
+        target_output_id = output_component_ids[target_list_index]
+
+        # Check if the target output component matches the expected type for this modal group
+        if not isinstance(target_output_id, dict) or target_output_id.get("type") != expected_modal_output_type:
+            logger.error(
+                f"Output type mismatch at target index {target_list_index}. Expected '{expected_modal_output_type}', Found '{target_output_id.get('type')}'")
+            return [no_update] * len(output_component_ids)  # Prevent update on mismatch
+
+        is_currently_open = current_states[target_list_index]
+
+        # --- Logic for Opening ---
         if triggered_type == open_trigger_type:
-            if target_list_index != -1:  # Did we find the corresponding modal output?
-                if output_component_ids[target_list_index].get("type") == expected_modal_output_type:
-                    is_currently_open = current_states[target_list_index]
-                    if not is_currently_open:
-                        # Close others, open target
-                        for i in range(len(new_states)):
-                            new_states[i] = False if i != target_list_index else True
-                        # print(f"Opening modal via {open_trigger_type}: list_idx={target_list_index}, comp_idx={triggered_component_index}") # Debugging
-                # else: # Debugging
-                #    print(f"Open Trigger Type Mismatch: Found {output_component_ids[target_list_index].get('type')}, expected {expected_modal_output_type}")
+            if not is_currently_open:
+                # Explicitly create the list of desired states: close all, open target
+                final_states = [False] * len(output_component_ids)
+                final_states[target_list_index] = True
+                new_states = final_states
+            # else: modal already open, do nothing (implicit no_update)
 
-        # Did the user click the designated close button OR the close image?
+        # --- Logic for Closing ---
         elif triggered_type == close_button_trigger_type or triggered_type == close_image_trigger_type:
-            if target_list_index != -1:  # Did we find the corresponding modal output?
-                if output_component_ids[target_list_index].get("type") == expected_modal_output_type:
-                    if current_states[target_list_index]:  # Only close if it's open
-                        new_states[target_list_index] = False
-                        # print(f"Closing modal via {triggered_type}: list_idx={target_list_index}, comp_idx={triggered_component_index}") # Debugging
-                # else: # Debugging
-                #     print(f"Close Trigger Type Mismatch: Found {output_component_ids[target_list_index].get('type')}, expected {expected_modal_output_type}")
+            if is_currently_open:  # Only close if it's open
+                # Explicitly create the list: keep existing states, close target
+                final_states = list(current_states)  # Important: work from current state
+                final_states[target_list_index] = False
+                new_states = final_states
+            # else: modal already closed, do nothing (implicit no_update)
 
-        # print(f"Returning states: {new_states}") # Debugging
+        # else: trigger type didn't match open/close types, do nothing (implicit no_update)
+
         return new_states
-
-    @app.callback(
-        Output({"type": "daily-detector-modal", "index": ALL}, "is_open"),
-        [Input({'type': 'daily-detector-thumbnail', 'index': ALL}, 'n_clicks'),
-         Input({'type': 'daily-detector-close', 'index': ALL}, 'n_clicks'),
-         Input({'type': 'daily-detector-modal-image', 'index': ALL}, 'n_clicks')],
-        [State({"type": "daily-detector-modal", "index": ALL}, "is_open")]
-    )
-    def toggle_daily_detector_modal(thumbnail_clicks, close_clicks, modal_image_clicks, current_states):
-        # Use the generic toggle function with the correct types for this section
-        return _toggle_modal_generic(
-            open_trigger_type='daily-detector-thumbnail',
-            close_button_trigger_type='daily-detector-close',
-            close_image_trigger_type='daily-detector-modal-image',
-            thumbnail_clicks=thumbnail_clicks,
-            close_clicks=close_clicks,
-            modal_image_clicks=modal_image_clicks,
-            current_states=current_states
-        )
-
-    @app.callback(
-        Output({"type": "daily-classifier-modal", "index": ALL}, "is_open"),
-        [Input({'type': 'daily-classifier-thumbnail', 'index': ALL}, 'n_clicks'),
-         Input({'type': 'daily-classifier-close', 'index': ALL}, 'n_clicks'),
-         Input({'type': 'daily-classifier-modal-image', 'index': ALL}, 'n_clicks')],
-        [State({"type": "daily-classifier-modal", "index": ALL}, "is_open")]
-    )
-    def toggle_daily_classifier_modal(thumbnail_clicks, close_clicks, modal_image_clicks, current_states):
-        # Use the generic toggle function with the correct types for this section
-        return _toggle_modal_generic(
-            open_trigger_type='daily-classifier-thumbnail',
-            close_button_trigger_type='daily-classifier-close',
-            close_image_trigger_type='daily-classifier-modal-image',
-            thumbnail_clicks=thumbnail_clicks,
-            close_clicks=close_clicks,
-            modal_image_clicks=modal_image_clicks,
-            current_states=current_states
-        )
-
-    @app.callback(
-        Output({"type": "modal-modal", "index": ALL}, "is_open"),
-        [Input({'type': 'thumbnail', 'index': ALL}, 'n_clicks'),
-         Input({'type': 'modal-close', 'index': ALL}, 'n_clicks'),
-         Input({'type': 'modal-modal-image', 'index': ALL}, 'n_clicks')],
-        [State({"type": "modal-modal", "index": ALL}, "is_open")]
-    )
-    def toggle_modal(thumbnail_clicks, close_clicks, modal_image_clicks, current_states):
-        return _toggle_modal_generic(
-            open_trigger_type='thumbnail',
-            close_button_trigger_type='modal-close',
-            close_image_trigger_type='modal-modal-image',
-            thumbnail_clicks=thumbnail_clicks,
-            close_clicks=close_clicks,
-            modal_image_clicks=modal_image_clicks,
-            current_states=current_states
-        )
-
-    @app.callback(
-        Output({"type": "modal_classifier-modal", "index": ALL}, "is_open"),
-        [Input({'type': 'thumbnail_classifier', 'index': ALL}, 'n_clicks'),
-         Input({'type': 'modal_classifier-close', 'index': ALL}, 'n_clicks'),
-         Input({'type': 'modal_classifier-modal-image', 'index': ALL}, 'n_clicks')],
-        [State({"type": "modal_classifier-modal", "index": ALL}, "is_open")]
-    )
-    def toggle_modal_classifier(thumbnail_clicks, close_clicks, modal_image_clicks, current_states):
-        return _toggle_modal_generic(
-            open_trigger_type='thumbnail_classifier',
-            close_button_trigger_type='modal_classifier-close',
-            close_image_trigger_type='modal_classifier-modal-image',
-            thumbnail_clicks=thumbnail_clicks,
-            close_clicks=close_clicks,
-            modal_image_clicks=modal_image_clicks,
-            current_states=current_states
-        )
 
     @app.callback(
         Output({"type": "subgallery-modal-modal", "index": ALL}, "is_open"),
@@ -1446,30 +1378,3 @@ def create_web_interface(params):
 
     return {"app": app, "server": server, "run": run}
 
-# ------------------------------------------------------------------
-# Module test: Run the web interface if executed directly.
-# ------------------------------------------------------------------
-if __name__ == '__main__':
-    # For testing purposes, we create a dummy video_capture.
-    class DummyVideoCapture:
-        def generate_frames(self, width, fps):
-            blank_frame = np.zeros((480, 640, 3), dtype=np.uint8)
-            while True:
-                ret, buffer = cv2.imencode('.jpg', blank_frame)
-                frame = buffer.tobytes()
-                yield (b'--frame\r\n'
-                       b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')
-                time.sleep(1 / fps)
-
-    params = {
-        "output_dir": "./output",
-        "video_capture": DummyVideoCapture(),
-        "output_resize_width": 640,
-        "STREAM_FPS": 1,
-        "IMAGE_WIDTH": 150,
-        "RECENT_IMAGES_COUNT": 10,
-        "PAGE_SIZE": 20,
-    }
-    os.makedirs(params["output_dir"], exist_ok=True)
-    interface = create_web_interface(params)
-    interface["run"](debug=True)
