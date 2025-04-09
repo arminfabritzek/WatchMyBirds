@@ -19,9 +19,5 @@ chown -R $PUID:$PGID /output
 chown -R $PUID:$PGID /app/assets  # Ensure `appuser` owns the assets folder
 chown -R $PUID:$PGID /app/models  # Ensure `appuser` owns the models folder
 
-# Print the build timestamp
-echo "Build Timestamp:"
-cat /app/build_timestamp.txt
-
 # Switch to the user and execute the CMD
 exec gosu $PUID:$PGID "$@"

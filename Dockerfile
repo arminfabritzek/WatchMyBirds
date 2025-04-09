@@ -1,9 +1,6 @@
 # Use a slim base image
 FROM python:3.12-bullseye
 
-# Set the build argument for the timestamp
-ARG BUILD_TIMESTAMP
-
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
     libglib2.0-0 \
@@ -13,7 +10,6 @@ RUN apt-get update && apt-get install -y \
     libxrender-dev \
     ffmpeg \
     gosu \
-    fontconfig \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Set environment variables
@@ -35,14 +31,21 @@ RUN python -m pip install --upgrade pip setuptools wheel && \
     pip install --no-cache-dir -r requirements.txt
 
 # Copy the rest of the application source code
-COPY . /app
+COPY models ./models
+COPY assets ./assets
+COPY output ./output
+COPY README.md ./
+COPY utils ./utils
+COPY logging_config.py ./
+COPY main.py ./
+COPY config.py ./
+COPY camera ./camera
+COPY detectors ./detectors
+COPY web ./web
 
 # Add the entrypoint script
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
-
-# Write the build timestamp to a file
-RUN echo "Build timestamp: ${BUILD_TIMESTAMP}" > /app/build_timestamp.txt
 
 # Expose the port used by your app
 EXPOSE 8050
