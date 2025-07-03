@@ -21,8 +21,15 @@ import plotly.express as px
 from config import load_config
 config = load_config()
 
-# Caching settings for gallery functions
-_CACHE_TIMEOUT = 10  # seconds
+import zipfile
+import io  # Create in-memory zip buffer
+import base64  # Send zip data to dcc.Download
+from dash.exceptions import PreventUpdate
+import pandas as pd
+
+
+# >>> Caching settings for gallery functions >>>
+_CACHE_TIMEOUT = 10  # Set cache timeout in seconds
 _cached_images = {
     "images": None,
     "timestamp": 0
@@ -40,18 +47,24 @@ def create_web_interface(detection_manager):
       - RECENT_IMAGES_COUNT: Number of recent images to display.
       - PAGE_SIZE: Number of images per gallery page.
     """
+    logger = logging.getLogger(__name__)
+
     output_dir = config["OUTPUT_DIR"]
     output_resize_width = config["STREAM_WIDTH_OUTPUT_RESIZE"]
     STREAM_FPS = config["STREAM_FPS"]
     CONFIDENCE_THRESHOLD_DETECTION = config["CONFIDENCE_THRESHOLD_DETECTION"]
     CLASSIFIER_CONFIDENCE_THRESHOLD = config["CLASSIFIER_CONFIDENCE_THRESHOLD"]
     FUSION_ALPHA = config["FUSION_ALPHA"]
+    EDIT_PASSWORD = config["EDIT_PASSWORD"]
+    logger.info(f"Loaded EDIT_PASSWORD: {'***' if EDIT_PASSWORD and EDIT_PASSWORD != 'default_pass' else '<Not Set or Default>'}")
+
+    if EDIT_PASSWORD == "default_pass":
+        logger.warning("EDIT_PASSWORD not set in .env file, using default. THIS IS INSECURE.")
 
     RECENT_IMAGES_COUNT = 10
     IMAGE_WIDTH = 150
     PAGE_SIZE = 50
 
-    logger = logging.getLogger(__name__)
 
     common_names_file = os.path.join(os.getcwd(), "assets", "common_names_DE.json")
     try:
@@ -63,9 +76,66 @@ def create_web_interface(detection_manager):
             "Cyanistes_caeruleus": "Eurasian blue tit"
         }
 
-    # ----------------------------------------------------
-    # Helper Functions for CSV-Based Gallery Retrieval
-    # ----------------------------------------------------
+    # >>> Helper Functions for CSV and File Operations >>>
+    def get_csv_path(date_str_iso):
+        """Gets the expected path to the images.csv file for a given date."""
+        date_folder = date_str_iso.replace('-', '')  # Convert YYYY-MM-DD to YYYYMMDD
+        return os.path.join(output_dir, date_folder, "images.csv")
+
+    def read_csv_for_date(date_str_iso):
+        """Reads the CSV for a specific date into a pandas DataFrame."""
+        csv_path = get_csv_path(date_str_iso)
+        if not os.path.exists(csv_path):
+            return pd.DataFrame()  # Return empty DataFrame if file doesn't exist
+        try:
+            # Specify dtype={'downloaded_timestamp': str} to avoid pandas interpreting it as date/time
+            # Keep other columns as default or specify if needed
+            return pd.read_csv(csv_path, keep_default_na=False, dtype={'downloaded_timestamp': str}).sort_values(by='timestamp', ascending=False)
+        except Exception as e:
+            logger.error(f"Error reading CSV {csv_path}: {e}")
+            return pd.DataFrame()  # Return empty on error
+
+    def write_csv_for_date(date_str_iso, df):
+        """Writes a pandas DataFrame back to the CSV for a specific date."""
+        csv_path = get_csv_path(date_str_iso)
+        try:
+            # Ensure the directory exists
+            os.makedirs(os.path.dirname(csv_path), exist_ok=True)
+
+            # Work on a copy to avoid SettingWithCopyWarning
+            df = df.copy()
+
+            # Ensure 'downloaded_timestamp' exists before writing; fill with empty string if not
+            if 'downloaded_timestamp' not in df.columns:
+                df.loc[:, 'downloaded_timestamp'] = ''
+            df.to_csv(csv_path, index=False, quoting=csv.QUOTE_MINIMAL)  # Use minimal quoting
+
+            # Clear the cache as CSV has changed
+            _cached_images["images"] = None
+            _cached_images["timestamp"] = 0
+            logger.info(f"Successfully wrote CSV for {date_str_iso}")
+            return True
+        except Exception as e:
+            logger.error(f"Error writing CSV {csv_path}: {e}")
+            return False
+
+    def delete_image_files(relative_optimized_path):
+        """Deletes original, optimized, and zoomed versions of an image."""
+        base_path = os.path.join(output_dir, relative_optimized_path)
+        original_path = base_path.replace("_optimized", "_original")
+        zoomed_path = derive_zoomed_filename(base_path)  # Use existing helper
+
+        deleted_count = 0
+        for img_path in [original_path, base_path, zoomed_path]:
+            try:
+                if os.path.exists(img_path):
+                    os.remove(img_path)
+                    logger.info(f"Deleted image file: {img_path}")
+                    deleted_count += 1
+            except OSError as e:
+                logger.error(f"Error deleting file {img_path}: {e}")
+        return deleted_count > 0  # Return True if at least one file was deleted
+
     def get_all_images():
         """
         Reads all per-day CSV files (from folders named YYYYMMDD) and returns a list of tuples:
@@ -358,7 +428,7 @@ def create_web_interface(detection_manager):
             # Create and add modal to the separate list
             modals.append(create_image_modal_layout(img, unique_index, modal_id_prefix))
 
-        return html.Div(gallery_items + modals, className="gallery-grid-container")  # <<< REVERT HERE
+        return html.Div(gallery_items + modals, className="gallery-grid-container")
 
     def generate_daily_fused_summary_weighted(date_str_iso, images_for_date):
         """Generates a gallery based on weighted score for a specific date."""
@@ -397,7 +467,7 @@ def create_web_interface(detection_manager):
 
         # Sort by combined score descending for daily view
         summary_data.sort(key=lambda x: x[1], reverse=True)
-        summary_data = summary_data[:RECENT_IMAGES_COUNT] # Limit count for daily view
+        summary_data = summary_data[:RECENT_IMAGES_COUNT]  # Limit count for daily view
 
         # --- Build Gallery ---
         gallery_items = []
@@ -685,6 +755,105 @@ def create_web_interface(detection_manager):
 
         ], fluid=True)
 
+    # -------------------------------------
+    # Edit Page Layout Generation
+    # -------------------------------------
+    def generate_edit_page(date_str_iso):
+        """Generates the layout for the image editing page (simplified)."""
+        df = read_csv_for_date(date_str_iso)
+        if df.empty:
+            return dbc.Container([
+                generate_navbar(),
+                html.H2(f"Edit Bilder vom {date_str_iso}", className="text-center my-3"),
+                dbc.Alert(f"No images found or error reading data for {date_str_iso}.", color="warning"),
+                dbc.Button("Back to Subgallery", href=f"/gallery/{date_str_iso}", color="secondary", className="me-2"),
+                dbc.Button("Back to Main Gallery", href="/gallery", color="secondary"),
+            ], fluid=True)
+
+        image_tiles = []
+
+        # Generate image tiles with checkboxes
+        for df_index, row in df.iterrows():  # No need for enumerate index anymore
+            relative_path = os.path.join(date_str_iso.replace('-', ''), row['optimized_name'])
+            checklist_value = relative_path  # Use relative path as the unique identifier
+
+            info_box = create_thumbnail_info_box(
+                row.get('best_class', ''),
+                row.get('best_class_conf', ''),
+                row.get('top1_class_name', ''),
+                row.get('top1_confidence', '')
+            )
+            downloaded_ts = row.get('downloaded_timestamp', '')
+            if downloaded_ts and str(downloaded_ts).strip():
+                info_box.children.append(
+                    html.Span(f"Downloaded", className="info-download-status text-success small")
+                )
+
+            zoomed_filename = derive_zoomed_filename(relative_path)
+
+            # --- Simplified Checkbox Placement ---
+            checkbox_component = dbc.Checkbox(
+                id={'type': 'edit-image-checkbox', 'index': checklist_value},
+                value=False,
+                className="edit-checkbox",
+            )
+
+            # Determine ClassName for the Tile ---
+            tile_classname = "gallery-tile edit-tile"  # Base classes
+            if downloaded_ts and str(downloaded_ts).strip():
+                tile_classname += " downloaded-image"  # Add class if downloaded
+
+            image_tile = html.Div([
+                checkbox_component,
+                html.Img(
+                    src=f"/images/{zoomed_filename}",
+                    alt=f"Thumbnail {row['optimized_name']}",
+                    className="thumbnail-image",
+                    style={"width": f"{IMAGE_WIDTH}px", 'cursor': 'pointer'}
+                ),
+                info_box
+            ], className=tile_classname)  # Use the determined classname
+
+            image_tiles.append(image_tile)
+
+        return dbc.Container([
+            generate_navbar(),
+            html.H2(f"Edit Images for {date_str_iso}", className="text-center my-3"),
+            # Navigation Buttons
+            html.Div([
+                dbc.Button("Back to Subgallery", href=f"/gallery/{date_str_iso}", color="secondary", outline=True,
+                           className="me-2"),
+                dbc.Button("Back to Main Gallery", href="/gallery", color="secondary", outline=True),
+            ], className="mb-3"),
+
+            # Action Buttons, Confirmation, Store, Download
+            dbc.Row([
+                dbc.Col(dbc.Button("Delete Selected Images", id="delete-button", color="danger", className="me-2"),
+                        width="auto"),
+                dbc.Col(dbc.Button("Download Selected Images", id="download-button", color="success"), width="auto"),
+            ], justify="start", className="mb-3"),
+            dcc.ConfirmDialog(
+                id='confirm-delete',
+                message=f'Are you sure you want to permanently delete the selected images and their CSV entries for {date_str_iso}? This cannot be undone.',
+            ),
+            dcc.Store(id='selected-images-store', data=[]),  # Store is now updated by Python callback
+            dcc.Download(id="download-zip"),
+            html.Div(id="edit-status-message"),
+
+            # The Grid containing the tiles
+            html.Div(image_tiles, className="gallery-grid-container", id="edit-gallery-grid"),  # Keep ID for JS
+
+            # Bottom Action Buttons
+            dbc.Row([
+                dbc.Col(
+                    dbc.Button("Delete Selected Images", id="delete-button-bottom", color="danger", className="me-2"),
+                    width="auto"),
+                dbc.Col(dbc.Button("Download Selected Images", id="download-button-bottom", color="success"),
+                        width="auto"),
+            ], justify="start", className="mt-3"),
+
+        ], fluid=True, id="edit-page-container")
+
     def generate_navbar():
         """Creates the navbar with the logo for gallery pages."""
         return dbc.NavbarSimple(
@@ -754,6 +923,23 @@ def create_web_interface(detection_manager):
         including daily species summaries, pagination, loading indicator,
         and empty state handling.
         """
+        # Get today's date for comparison >>> ---
+        today_date_iso = datetime.now().strftime("%Y-%m-%d")
+        df = read_csv_for_date(date)
+        # get_captured_images_by_date() is no longer the primary source here,
+        # but still used by summaries if page == 1 and include_header == True
+        images_by_date_for_summaries = get_captured_images_by_date()
+        images_for_summary = images_by_date_for_summaries.get(date, [])
+
+        if df.empty and not images_for_summary:  # Check both in case one fails but not the other
+             # Handle case where no data exists for the date
+             return dbc.Container([
+                 generate_navbar(),
+                 html.H2(f"Bilder vom {date}", className="text-center"),
+                 dbc.Alert(f"Keine Bilder für den {date} gefunden.", color="info"),
+                 dbc.Button("Zurück zur Galerieübersicht", href="/gallery", color="secondary", outline=True)
+             ], fluid=True)
+
         images_by_date = get_captured_images_by_date()
         images_for_this_date = images_by_date.get(date, [])
         total_images = len(images_for_this_date)
@@ -761,6 +947,8 @@ def create_web_interface(detection_manager):
         page = max(1, min(page, total_pages))
         start_index = (page - 1) * PAGE_SIZE
         end_index = page * PAGE_SIZE
+        # Slice the DataFrame for pagination
+        page_df = df.iloc[start_index:end_index]
         page_images = images_for_this_date[start_index:end_index]
 
         # --- Pagination Controls ---
@@ -772,10 +960,20 @@ def create_web_interface(detection_manager):
                 link = dbc.Button(str(p), color="secondary", href=f"/gallery/{date}?page={p}", className="mx-1",
                                   size="sm")
             page_links.append(link)
-        pagination_controls = html.Div(
-            page_links,
-            className="pagination-controls",
-            id="pagination-top"
+
+        # --- Define Top Controls ---
+        pagination_controls_top = html.Div(
+            page_links,  # Use the list of links
+            className="pagination-controls pagination-top",
+            id="pagination-top"  # Keep this ID for the scroll target
+        )
+
+        # --- Define Bottom Controls ---
+        # Create a new Div, potentially cloning the links or just reusing the list
+        pagination_controls_bottom = html.Div(
+            page_links,  # Reuse the list of links
+            className="pagination-controls pagination-bottom",
+            # id="pagination-bottom" # Optional: Add a UNIQUE ID if needed, otherwise omit
         )
 
         # --- Main Paginated Gallery Items and Modals ---
@@ -786,20 +984,43 @@ def create_web_interface(detection_manager):
         button_id_type = 'subgallery-thumbnail'
         modal_id_prefix = 'subgallery-modal'
 
-        if not page_images:
+        # Iterate over the DataFrame slice >>> ---
+        if page_df.empty:
             gallery_items.append(html.P(f"Keine Bilder für den {date} auf dieser Seite gefunden.",
                                         className="text-center text-muted mt-4 mb-4"))
         else:
-            for i, (img, best_class, best_class_conf, top1_class, top1_conf) in enumerate(page_images):
-                unique_subgallery_index = f"{date.replace('-', '')}-sub-{i + start_index}"
+            for i, row in page_df.iterrows():
+                # Construct the relative path from date and optimized_name
+                relative_path = os.path.join(date.replace('-', ''), row['optimized_name'])
+                # Get other data from the row
+                best_class = row.get('best_class', '')
+                best_class_conf = row.get('best_class_conf', '')
+                top1_class = row.get('top1_class_name', '')
+                top1_conf = row.get('top1_confidence', '')
+                downloaded_ts = row.get('downloaded_timestamp', '')  # Get download status
+
+                unique_subgallery_index = f"{date.replace('-', '')}-sub-{start_index + i}"  # Adjust index calculation slightly if needed based on iloc behavior vs enumerate
+
+                # Add class if downloaded
+                tile_classname = "gallery-tile"
+                if downloaded_ts and str(downloaded_ts).strip():  # Check if timestamp exists and is not empty/whitespace
+                    tile_classname += " downloaded-image"
+
+                info_box = create_thumbnail_info_box(best_class, best_class_conf, top1_class, top1_conf)
+                # Add downloaded text to info box
+                if downloaded_ts and str(downloaded_ts).strip():
+                     info_box.children.append(
+                         html.Span(f"Downloaded", className="info-download-status text-success small")
+                     )
 
                 tile = html.Div([
-                    create_thumbnail_button(img, unique_subgallery_index, button_id_type),
-                    create_thumbnail_info_box(best_class, best_class_conf, top1_class, top1_conf)
-                ], className="gallery-tile")
+                    create_thumbnail_button(relative_path, unique_subgallery_index, button_id_type),
+                    info_box  # Use the potentially modified info_box
+                ], className=tile_classname)  # Use the potentially modified classname
 
                 gallery_items.append(tile)
-                subgallery_modals.append(create_subgallery_modal(img, unique_subgallery_index))
+                # Use relative_path for creating modals as well
+                subgallery_modals.append(create_subgallery_modal(relative_path, unique_subgallery_index))
 
         # --- Main Paginated Content Area with Loading ---
         gallery_grid = html.Div(gallery_items, className="gallery-grid-container")
@@ -809,23 +1030,38 @@ def create_web_interface(detection_manager):
             children=gallery_grid
         )
 
-        # --- Generate Daily Summaries (Get content AND modals) ---
-        agreement_summary_content = generate_daily_fused_summary_agreement(date, images_for_this_date)
-        weighted_summary_content = generate_daily_fused_summary_weighted(date, images_for_this_date)
-
-        # --- Final Page Structure (Build initial elements) ---
+        # --- Final Page Structure ---
         container_elements = []
         if include_header:
             container_elements.append(generate_navbar())
-            container_elements.append(
-                 dbc.Button("Zurück zur Galerieübersicht", href="/gallery", color="secondary", className="mb-3 mt-3", outline=True)
-            )
-            container_elements.append(html.H2(f"Bilder vom {date}", className="text-center"))
-            container_elements.append(html.P(f"Seite {page} von {total_pages} ({total_images} Bilder insgesamt)",
-                                               className="text-center text-muted small"))
+            # Group Back and Edit buttons
+            header_buttons = [
+                 dbc.Button("Zurück zur Galerieübersicht", href="/gallery", color="secondary", className="mb-3 mt-3 me-2", outline=True)
+            ]
+            # Conditionally add Edit Button
+            if date != today_date_iso:
+                 # Button triggers modal, ID includes the date
+                 header_buttons.append(
+                     dbc.Button(
+                         "Diesen Tag bearbeiten",
+                         id={'type': 'open-edit-modal-button', 'date': date}, # New ID pattern
+                         color="warning", size="sm", className="mb-3 mt-3",
+                         n_clicks=0
+                    )
+                 )
+            else:
+                 header_buttons.append(
+                     dbc.Button("Bearbeiten (Nur vergangene Tage)", color="warning", size="sm", className="mb-3 mt-3", disabled=True)
+                 )
+            container_elements.append(html.Div(header_buttons))
 
-        # --- Add Daily Summary Content (Divs only) to Layout ---
-        if include_header:
+            container_elements.append(html.H2(f"Bilder vom {date}", className="text-center"))
+            container_elements.append(html.P(f"Seite {page} von {total_pages} ({total_images} Bilder insgesamt)", className="text-center text-muted small"))
+
+        # --- Add Daily Summary Content ONLY if page is 1 ---
+        if page == 1 and include_header:
+            agreement_summary_content = generate_daily_fused_summary_agreement(date, images_for_this_date)
+            weighted_summary_content = generate_daily_fused_summary_weighted(date, images_for_this_date)
             container_elements.extend([
                 html.Hr(),
                 html.H4("Tagesübersicht: Agreement & Produkt-Score", className="text-center mt-4"),
@@ -833,23 +1069,22 @@ def create_web_interface(detection_manager):
                 html.H4(f"Tagesübersicht: Gewichteter Score, α={FUSION_ALPHA}", className="text-center mt-4"),
                 weighted_summary_content,
                 html.Hr(),
-                html.H4("Alle Bilder", className="text-center mt-4")
             ])
 
-        # Add pagination and main loading wrapper (NO MODALS YET)
+        # Add Header for the main paginated gallery section
+        # container_elements.append(html.H4("Alle Bilder", className="text-center mt-4"))
+
+        # Add pagination and main loading wrapper
         container_elements.extend([
-            pagination_controls,
+            pagination_controls_top,
             loading_wrapper,
-            pagination_controls  # Add pagination again at the bottom
+            pagination_controls_bottom
         ])
 
-        # --- Collect ALL Modals ---
+        # Collect ALL Modals
         all_modals = subgallery_modals
+        container_elements.extend(all_modals)
 
-        # --- Add all collected modals to the end of the layout ---
-        container_elements.extend(all_modals)  # Add modals here
-
-        # --- Return the final container ---
         return dbc.Container(container_elements, fluid=True)
 
     def generate_video_feed():
@@ -897,11 +1132,7 @@ def create_web_interface(detection_manager):
             img_width, img_height = pil_image.size
             padding_x = int(img_width * padding_x_percent)
             padding_y = int(img_height * padding_y_percent)
-            scaled_font_size = max(min_font_size, int(img_height * min_font_size_percent))
-            try:
-                custom_font = ImageFont.truetype("assets/WRP_cruft.ttf", scaled_font_size)  # I think we don't use the font anymore
-            except IOError:
-                custom_font = ImageFont.load_default()
+            custom_font = ImageFont.load_default()
             timestamp_text = time.strftime("%Y-%m-%d %H:%M:%S")
             bbox = draw.textbbox((0, 0), timestamp_text, font=custom_font)
             text_width = bbox[2] - bbox[0]
@@ -1015,28 +1246,89 @@ def create_web_interface(detection_manager):
     # Create Flask server without overriding the static asset defaults.
     server = Flask(__name__)
 
-    def setup_web_routes(app):
+    def setup_web_routes(app_server):
         # Route to serve images from the output directory.
         def serve_image(filename):
             image_path = os.path.join(output_dir, filename)
             if not os.path.exists(image_path):
                 return "Image not found", 404
             return send_from_directory(output_dir, filename)
-        app.route("/images/<path:filename>")(serve_image)
-        app.route("/video_feed")(lambda: Response(
+        app_server.route("/images/<path:filename>")(serve_image)
+        app_server.route("/video_feed")(lambda: Response(
             generate_video_feed(),
             mimetype="multipart/x-mixed-replace; boundary=frame"
         ))
     setup_web_routes(server)
 
-    # -----------------------------
-    # Dash App Setup and Layouts
-    # -----------------------------
+    # -------------------------------------
+    # Dash App Setup and Google Analytics Integration
+    # -------------------------------------
     external_stylesheets = [dbc.themes.BOOTSTRAP]
-    # Pass the absolute assets folder to Dash.
+
+    # --- Cookiebot Integration ---
+    cookiebot_cbid = config["COOKIEBOT_CBID"]
+
+    cookiebot_snippet = ""  # Initialize empty
+    if cookiebot_cbid:
+        logger.info(f"Integrating Cookiebot with CBID: {cookiebot_cbid}")
+        cookiebot_snippet = f"""
+        <script id="Cookiebot" src="https://consent.cookiebot.com/uc.js" data-cbid="{cookiebot_cbid}" type="text/javascript" async></script>
+        """
+    else:
+        logger.warning("COOKIEBOT_CBID not found in config. Cookiebot snippet will NOT be included.")
+        # cookiebot_snippet = ""  # Optional comment
+
+    # --- Google Analytics Integration ---
+    ga_measurement_id = config["GA_MEASUREMENT_ID"]
+
+    ga_snippet = ""  # Initialize empty
+    if ga_measurement_id and ga_measurement_id != "G-REPLACE-ME-XXXXXX":  # Check against placeholder if using that default
+        logger.info(f"Integrating Google Analytics with Measurement ID: {ga_measurement_id}")
+        ga_snippet = f"""
+        <script async src="https://www.googletagmanager.com/gtag/js?id={ga_measurement_id}"></script>
+        <script>
+          window.dataLayer = window.dataLayer || [];
+          function gtag(){{dataLayer.push(arguments);}}
+          gtag('js', new Date());
+
+          gtag('config', '{ga_measurement_id}');
+          // Note: Cookiebot should handle consent for GA if configured correctly in Cookiebot backend
+        </script>
+        """
+    else:
+         logger.warning("GA_MEASUREMENT_ID not configured or is placeholder. GA snippet omitted.")
+
+    # --- Define the custom HTML structure for Dash ---
+    # PLACE COOKIEBOT *BEFORE* GOOGLE ANALYTICS
+    custom_index_string = f'''
+    <!DOCTYPE html>
+    <html>
+        <head>
+            {{%metas%}}
+            <title>{{%title%}}</title> 
+            {{%favicon%}}
+            {{%css%}}
+
+            {cookiebot_snippet}
+            {ga_snippet}
+            </head>
+        <body>
+            {{%app_entry%}}
+            <footer>
+                {{%config%}}
+                {{%scripts%}}
+                {{%renderer%}}
+            </footer>
+        </body>
+    </html>
+    '''
+
+    # --- Initialize Dash App with the custom index_string ---
     app = Dash(__name__, server=server, external_stylesheets=external_stylesheets,
                assets_folder=os.path.join(os.getcwd(), "assets"),
-               assets_url_path="/assets")
+               assets_url_path="/assets",
+               index_string=custom_index_string
+               )
     app.config.suppress_callback_exceptions = True
 
     def stream_layout():
@@ -1076,9 +1368,14 @@ def create_web_interface(detection_manager):
         """Layout for the gallery page (calls generate_gallery which uses classes)."""
         return generate_gallery()
 
+    # --- App Layout Modification ---
     app.layout = html.Div([
         dcc.Location(id="url", refresh=False),
-        html.Div(id="page-content"),
+        dcc.Store(id='auth-status-store', storage_type='session', data={'authenticated': False}),  # Stores auth flag
+        dcc.Store(id='edit-target-date-store', storage_type='memory'),  # Temp store for target date
+        html.Div(id="page-content"),  # Main page content
+        html.Div(id="modal-container"),  # Container for the password modal
+        # Other stores/hidden divs if needed
         dcc.Store(id="scroll-trigger-store", data=None),
         html.Div(id="dummy-clientside-output-div", style={"display": "none"})
     ])
@@ -1086,6 +1383,106 @@ def create_web_interface(detection_manager):
     # -----------------------------
     # Dash Callbacks
     # -----------------------------
+    # --- ADD Password Modal Structure ---
+    @app.callback(
+        Output("modal-container", "children"),
+        Input("url", "pathname")  # Trigger whenever URL changes to ensure modal is added
+    )
+    def add_password_modal(_):  # We don't need the pathname here, just need to trigger
+        return dbc.Modal(
+            [
+                dbc.ModalHeader(dbc.ModalTitle("Passwort erforderlich")),
+                dbc.ModalBody([
+                    dbc.Alert("Bitte geben Sie das Passwort ein, um diese Seite zu bearbeiten.", color="info", id="password-modal-message"),
+                    dbc.Input(id="password-input", type="password", placeholder="Passwort eingeben..."),
+                ]),
+                dbc.ModalFooter(
+                    dbc.Button("Bestätigen", id="submit-password-button", color="primary", n_clicks=0)
+                ),
+            ],
+            id="password-modal",
+            is_open=False,  # Initially closed
+            backdrop="static",  # Prevent closing by clicking outside
+            keyboard=True,  # Allow closing with Esc key (might want to disable if annoying)
+        )
+
+    # --- Callback to Open Password Modal ---
+    @app.callback(
+        Output("password-modal", "is_open", allow_duplicate=True),
+        Output("edit-target-date-store", "data"),
+        Output("password-modal-message", "children", allow_duplicate=True),
+        Output("password-input", "value"),  # Clear password input
+        Input({'type': 'open-edit-modal-button', 'date': ALL}, 'n_clicks'),
+        prevent_initial_call=True
+    )
+    def open_password_modal(n_clicks):
+        ctx = callback_context
+        if not ctx.triggered or not any(n_clicks) or all(c == 0 for c in n_clicks if c is not None):
+            raise PreventUpdate
+
+        # Get the date from the button that was clicked
+        button_id = ctx.triggered_id
+        if isinstance(button_id, dict) and button_id.get("type") == "open-edit-modal-button":
+            target_date = button_id.get("date")
+            if target_date:
+                # Reset message and open modal
+                message = dbc.Alert("Bitte geben Sie das Passwort ein, um diese Seite zu bearbeiten.", color="info")
+                return True, {'date': target_date}, message, ""  # Open modal, store date, set message, clear input
+
+        raise PreventUpdate
+
+    # --- Callback to Check Password and Redirect (WITH DEBUG LOGGING) ---
+    @app.callback(
+        Output("password-modal", "is_open", allow_duplicate=True),
+        Output("auth-status-store", "data"),
+        Output("url", "pathname"),  # Output to trigger navigation
+        Output("password-modal-message", "children", allow_duplicate=True),  # Show error message
+        Input("submit-password-button", "n_clicks"),
+        State("password-input", "value"),
+        State("edit-target-date-store", "data"),
+        State("auth-status-store", "data"),  # Get current auth status
+        prevent_initial_call=True
+    )
+    def check_password(n_clicks, entered_password, target_date_data, auth_data):
+        if n_clicks == 0 or n_clicks is None:
+            logger.warning("check_password: Callback triggered but n_clicks is 0 or None.")
+            raise PreventUpdate  # No actual click submission
+
+        if not target_date_data:
+            logger.error("check_password: Target date data is missing from store.")
+            # Provide feedback in modal?
+            return True, no_update, no_update, dbc.Alert("Error: Target date not found.", color="danger")
+
+        target_date = target_date_data.get('date')
+        if not target_date:
+             logger.error("check_password: Target date missing within data.")
+             return True, no_update, no_update, dbc.Alert("Error: Target date invalid.", color="danger")
+
+        # Check if password was entered
+        if not entered_password:
+            logger.warning("check_password: No password entered by user.")
+            return True, no_update, no_update, dbc.Alert("Bitte Passwort eingeben.", color="warning")
+
+        # --- Perform the comparison ---
+        # Use .strip() to handle potential accidental whitespace
+        password_match = False
+        if EDIT_PASSWORD and entered_password:
+             password_match = entered_password.strip() == EDIT_PASSWORD.strip()
+
+        if password_match:
+            # Correct password
+            logger.info(f"Password correct for editing date: {target_date}. Redirecting...")
+            new_auth_data = {'authenticated': True}
+            redirect_path = f"/edit/{target_date}"
+            # Close modal, update auth store, redirect, reset message (no_update)
+            return False, new_auth_data, redirect_path, no_update
+        else:
+            # Incorrect password
+            logger.warning(f"Incorrect password entered for editing date: {target_date}")
+            error_message = dbc.Alert("Falsches Passwort!", color="danger")
+            # Keep modal open, don't change auth store, don't redirect, show error
+            return True, no_update, no_update, error_message
+
     @app.callback(
         Output({"type": "daily-fused-agreement-modal", "index": ALL}, "is_open"),
         [Input({'type': 'daily-fused-agreement-thumbnail', 'index': ALL}, 'n_clicks'),
@@ -1182,47 +1579,264 @@ def create_web_interface(detection_manager):
             current_states=current_states
         )
 
+    # --- Callback to Display Page ---
     @app.callback(
         Output("page-content", "children"),
         Output("scroll-trigger-store", "data"),
-        [Input("url", "pathname"), Input("url", "search")],
+        Input("url", "pathname"),
+        Input("url", "search"),
+        State("auth-status-store", "data"), # <-- ADD Auth Status State
         prevent_initial_call=True
     )
-    def display_page(pathname, search):
+    def display_page(pathname, search, auth_data):
         scroll_trigger = no_update
-
         ctx = callback_context
-        # Basic check: Did input 'search' change while on a subgallery path?
-        is_subgallery_page_nav = (
-                pathname.startswith("/gallery/") and
-                ctx.triggered and
-                ctx.triggered[0]['prop_id'] == "url.search"
-        )
+        today_date_iso = datetime.now().strftime("%Y-%m-%d")
 
+        is_subgallery_page_nav = (
+                pathname is not None and pathname.startswith("/gallery/") and
+                ctx.triggered and ctx.triggered[0]['prop_id'] == "url.search"
+        )
         if is_subgallery_page_nav:
-            # Generate a new value (like current time) to trigger clientside callback
             scroll_trigger = time.time()
 
-        if pathname.startswith("/gallery/"):
+        if pathname is not None and pathname.startswith("/edit/"):
+            date_str_iso = pathname.split("/")[-1]
+            if not re.match(r"^\d{4}-\d{2}-\d{2}$", date_str_iso):
+                 return "Invalid date format.", no_update
+
+            # CHECK 1: Authentication
+            if not auth_data or not auth_data.get('authenticated'):
+                logger.warning(f"Unauthorized attempt to access edit page: {pathname}")
+                return dbc.Container([  # Simple access denied page
+                    generate_navbar(),
+                    html.H2("Zugriff verweigert", className="text-danger text-center mt-4"),
+                    html.P("Sie müssen authentifiziert sein, um diese Seite anzuzeigen.", className="text-center"),
+                    dbc.Button("Zurück zur Galerie", href="/gallery", color="primary")
+                ], fluid=True), no_update
+
+            # CHECK 2: Prevent editing today's data
+            if date_str_iso == today_date_iso:
+                logger.warning(f"Authenticated user attempted to access edit page for current day: {date_str_iso}")
+                return dbc.Container([
+                     generate_navbar(), html.H2(f"Edit Bilder vom {date_str_iso}", className="text-center my-3"),
+                     dbc.Alert("Die Bearbeitung der Galerie für den aktuellen Tag ist nicht erlaubt.", color="warning"),
+                     dbc.Button("Back to Subgallery", href=f"/gallery/{date_str_iso}", color="secondary", className="me-2"),
+                     dbc.Button("Back to Main Gallery", href="/gallery", color="secondary"),
+                 ], fluid=True), no_update
+
+            # If authenticated AND not today, generate the edit page
+            logger.info(f"Authorized access to edit page: {pathname}")
+            return generate_edit_page(date_str_iso), no_update
+
+        # --- SUBGALLERY ROUTE ---
+        elif pathname is not None and pathname.startswith("/gallery/"):
             date = pathname.split("/")[-1]
+            if not re.match(r"^\d{4}-\d{2}-\d{2}$", date):
+                 return "Invalid date format.", no_update
             page = 1
             if search:
                 params = parse_qs(search.lstrip('?'))
                 if 'page' in params:
-                    try:
-                        page = int(params['page'][0])
-                    except ValueError:
-                        page = 1
+                    try: page = int(params['page'][0])
+                    except ValueError: page = 1
             content = generate_subgallery(date, page)
             return content, scroll_trigger
-        elif pathname == "/gallery":
-            return generate_gallery(), no_update
-        elif pathname == "/species":
-            return species_summary_layout(), no_update
-        elif pathname == "/" or pathname is None or pathname == "":
-            return stream_layout(), no_update
+        # --- OTHER ROUTES ---
+        elif pathname == "/gallery": return generate_gallery(), no_update
+        elif pathname == "/species": return species_summary_layout(), no_update
+        elif pathname == "/" or pathname is None or pathname == "": return stream_layout(), no_update
+        # --- 404 ---
         else:
-            return "404 Not Found", no_update
+            logger.warning(f"404 Not Found for pathname: {pathname}")
+            return dbc.Container([
+                generate_navbar(), html.H1("404 - Page Not Found", className="text-center text-danger mt-5"),
+                html.P(f"The path '{pathname}' was not recognized.", className="text-center"),
+                dbc.Button("Go to Homepage", href="/", color="primary")
+            ], fluid=True), no_update
+
+    # Callback to update the selected images store based on checkboxes
+    @app.callback(
+        Output('selected-images-store', 'data'),
+        Input({'type': 'edit-image-checkbox', 'index': ALL}, 'value'),  # Triggered by checkbox value changes
+        State({'type': 'edit-image-checkbox', 'index': ALL}, 'id'),
+        prevent_initial_call=True
+    )
+    def update_selected_images(checkbox_values, checkbox_ids):
+        # This callback runs whenever a checkbox's value changes (natively or via JS .click())
+        # print("update_selected_images triggered by checkbox value change")
+        selected_paths = []
+        if not checkbox_ids:
+            return []
+        # checkbox_values and checkbox_ids should correspond index-wise
+        for i, cb_id in enumerate(checkbox_ids):
+            is_checked = checkbox_values[i] if i < len(checkbox_values) else False
+            if is_checked:
+                relative_path = cb_id['index']  # Get the path from the ID
+                selected_paths.append(relative_path)
+        # print(f"Updating selected-images-store with: {selected_paths}")
+        return selected_paths
+
+    # Callback to trigger delete confirmation
+    @app.callback(
+        Output('confirm-delete', 'displayed'),
+        Input('delete-button', 'n_clicks'),
+        Input('delete-button-bottom', 'n_clicks'),  # Trigger from bottom button too
+        prevent_initial_call=True,
+    )
+    def display_delete_confirm(n_clicks_top, n_clicks_bottom):
+        if (n_clicks_top and n_clicks_top > 0) or (n_clicks_bottom and n_clicks_bottom > 0) :
+            return True
+        return False
+
+    # Callback to handle deletion after confirmation
+    @app.callback(
+        Output('edit-status-message', 'children'),
+        Input('confirm-delete', 'submit_n_clicks'),
+        State('selected-images-store', 'data'),
+        State('url', 'pathname'),  # Get the date from the current URL
+        prevent_initial_call=True,
+    )
+    def handle_delete(submit_n_clicks, selected_images, pathname):
+        if not submit_n_clicks or submit_n_clicks == 0:
+            raise PreventUpdate # No submission yet
+
+        if not selected_images:
+            return dbc.Alert("No images selected for deletion.", color="warning"), no_update  # Or just no_update
+
+        # Extract date from pathname like /edit/YYYY-MM-DD
+        match = re.search(r"/edit/(\d{4}-\d{2}-\d{2})", pathname)
+        if not match:
+            return dbc.Alert("Error: Could not determine date from URL.", color="danger"), no_update
+        date_str_iso = match.group(1)
+
+        df = read_csv_for_date(date_str_iso)
+        if df.empty:
+            return dbc.Alert(f"Error: Could not read CSV data for {date_str_iso} to perform deletion.", color="danger"), no_update
+
+        # Identify rows to keep
+        # We stored relative paths (folder/file) in selected_images
+        # Need to match based on the filename part
+        selected_filenames = {os.path.basename(p) for p in selected_images}
+        df_to_keep = df[~df['optimized_name'].isin(selected_filenames)]
+
+        # Write the filtered DataFrame back
+        success_csv = write_csv_for_date(date_str_iso, df_to_keep)
+
+        deleted_files_count = 0
+        error_messages = []
+
+        # Delete image files
+        for relative_path in selected_images:
+            if not delete_image_files(relative_path):
+                 error_messages.append(f"Failed to delete one or more files for {os.path.basename(relative_path)}")
+
+        # --- Feedback Message ---
+        status_messages = []
+        if success_csv:
+            status_messages.append(f"Successfully updated CSV for {date_str_iso}.")
+            status_messages.append(f"{len(selected_images)} entries removed.")
+        else:
+             status_messages.append(f"Error updating CSV for {date_str_iso}.")
+
+        if deleted_files_count > 0 or not error_messages :
+             status_messages.append(f"Attempted deletion of files for {len(selected_images)} entries.") # Be slightly vague if some failed
+        if error_messages:
+            status_messages.extend(error_messages)
+
+        alert_color = "success" if success_csv and not error_messages else ("warning" if success_csv else "danger")
+
+        return dbc.Alert(html.Ul([html.Li(msg) for msg in status_messages]), color=alert_color, dismissable=True)
+
+
+    # Callback to handle download request
+    @app.callback(
+        Output('download-zip', 'data'),
+        Output('edit-status-message', 'children', allow_duplicate=True),  # Update status too
+        Input('download-button', 'n_clicks'),
+        Input('download-button-bottom', 'n_clicks'),
+        State('selected-images-store', 'data'),
+        State('url', 'pathname'),
+        prevent_initial_call=True,
+    )
+    def handle_download(n_clicks_top, n_clicks_bottom, selected_images, pathname):
+        triggered = callback_context.triggered_id == 'download-button' or callback_context.triggered_id == 'download-button-bottom'
+        if not triggered:
+             raise PreventUpdate
+
+        if not selected_images:
+            return no_update, dbc.Alert("No images selected for download.", color="warning", dismissable=True)
+
+        # Extract date from pathname
+        match = re.search(r"/edit/(\d{4}-\d{2}-\d{2})", pathname)
+        if not match:
+            return no_update, dbc.Alert("Error: Could not determine date from URL.", color="danger", dismissable=True)
+        date_str_iso = match.group(1)
+
+        df = read_csv_for_date(date_str_iso)
+        if df.empty:
+             return no_update, dbc.Alert(f"Error: Could not read CSV data for {date_str_iso} to perform download.", color="danger", dismissable=True)
+
+        # --- 1. Update CSV ---
+        download_timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        selected_filenames = {os.path.basename(p) for p in selected_images}
+
+        # Ensure the column exists
+        if 'downloaded_timestamp' not in df.columns:
+            df['downloaded_timestamp'] = ''
+            df['downloaded_timestamp'] = df['downloaded_timestamp'].astype(str)
+
+
+        # Update rows - use .loc for safer assignment
+        rows_to_update = df['optimized_name'].isin(selected_filenames)
+        df.loc[rows_to_update, 'downloaded_timestamp'] = download_timestamp
+
+        success_csv = write_csv_for_date(date_str_iso, df)
+
+        # --- 2. Create Zip ---
+        zip_buffer = io.BytesIO()
+        errors_zipping = []
+        files_added = 0
+        with zipfile.ZipFile(zip_buffer, 'a', zipfile.ZIP_DEFLATED, False) as zip_file:
+            for relative_path in selected_images:
+                # We want the ORIGINAL file for download
+                original_relative_path = relative_path.replace("_optimized", "_original")
+                absolute_original_path = os.path.join(output_dir, original_relative_path)
+                if os.path.exists(absolute_original_path):
+                    try:
+                        # Add file to zip, using the original filename as the archive name
+                        zip_file.write(absolute_original_path, arcname=os.path.basename(original_relative_path))
+                        files_added += 1
+                    except Exception as e:
+                        logger.error(f"Error adding {absolute_original_path} to zip: {e}")
+                        errors_zipping.append(os.path.basename(original_relative_path))
+                else:
+                     logger.warning(f"Original file not found for download: {absolute_original_path}")
+                     errors_zipping.append(os.path.basename(original_relative_path) + " (Not Found)")
+
+        zip_buffer.seek(0)
+
+        # --- 3. Prepare Download Data ---
+        zip_data = base64.b64encode(zip_buffer.read()).decode('utf-8')
+        download_filename = f"watchmybirds_{date_str_iso.replace('-','')}_download.zip"
+        download_dict = dict(content=zip_data, filename=download_filename, base64=True, type='application/zip')
+
+        # --- 4. Prepare Status Message ---
+        status_messages = []
+        if success_csv:
+            status_messages.append(f"Marked {len(selected_images)} images as downloaded in CSV for {date_str_iso}.")
+        else:
+            status_messages.append(f"Error updating CSV for {date_str_iso}.")
+
+        if files_added > 0:
+             status_messages.append(f"Prepared {files_added} original images for download.")
+        if errors_zipping:
+            status_messages.append(f"Could not add {len(errors_zipping)} files to the zip: {', '.join(errors_zipping[:3])}{'...' if len(errors_zipping)>3 else ''}")
+
+        alert_color = "success" if success_csv and files_added > 0 and not errors_zipping else "warning"
+
+        # Send download data and status message
+        return download_dict, dbc.Alert(html.Ul([html.Li(msg) for msg in status_messages]), color=alert_color, dismissable=True)
 
     def _toggle_modal_generic(
             # Pass the specific types expected for this modal group
@@ -1374,7 +1988,7 @@ def create_web_interface(detection_manager):
     # Function to Start the Web Interface
     # -----------------------------
     def run(debug=False, host="0.0.0.0", port=8050):
+        logger.info(f"Starting Dash server on http://{host}:{port}")
         app.run_server(host=host, port=port, debug=debug)
 
     return {"app": app, "server": server, "run": run}
-

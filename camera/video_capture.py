@@ -462,14 +462,7 @@ class VideoCapture:
                 padding_x = int(img_width * padding_x_percent)
                 padding_y = int(img_height * padding_y_percent)
 
-                # ----- Dynamically scale the font size -----
-                scaled_font_size = max(min_font_size, int(img_height * min_font_size_percent))
-
-                try:
-                    custom_font = ImageFont.truetype("assets/WRP_cruft.ttf", scaled_font_size)
-                except IOError:
-                    custom_font = ImageFont.load_default()
-                # -------------------------------------------
+                custom_font = ImageFont.load_default()
 
                 # Prepare timestamp text
                 timestamp_text = time.strftime("%Y-%m-%d %H:%M:%S")
@@ -507,11 +500,7 @@ class VideoCapture:
                 padding_x = int(img_width * padding_x_percent)
                 padding_y = int(img_height * padding_y_percent)
 
-                scaled_font_size = max(min_font_size, int(img_height * min_font_size_percent))
-                try:
-                    custom_font = ImageFont.truetype("assets/WRP_cruft.ttf", scaled_font_size)
-                except IOError:
-                    custom_font = ImageFont.load_default()
+                custom_font = ImageFont.load_default()
 
                 timestamp_text = time.strftime("%Y-%m-%d %H:%M:%S")
                 bbox = draw.textbbox((0, 0), timestamp_text, font=custom_font)

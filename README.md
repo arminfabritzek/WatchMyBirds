@@ -1,4 +1,4 @@
-# WatchMyBirds
+# WatchMyBirds - Real-time object detection and classification
 
 [![Build and Push Docker Image](https://github.com/arminfabritzek/WatchMyBirds/actions/workflows/docker.yml/badge.svg)](https://github.com/arminfabritzek/WatchMyBirds/actions/workflows/docker.yml) ![Python](https://img.shields.io/badge/python-3.10+-blue.svg)
 

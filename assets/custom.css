@@ -148,3 +148,35 @@
     background-color: #f0f0f0;
     border: 1px solid #ccc;
 }
+
+.edit-tile {
+    position: relative;
+}
+
+.edit-checkbox {
+    position: absolute;
+    top: 5px;
+    left: 5px;
+    z-index: 10;
+    background-color: rgba(255, 255, 255, 0.7);
+    border-radius: 3px;
+    padding: 2px;
+}
+
+.info-download-status {
+    display: block;
+    font-weight: bold;
+    margin-top: 3px;
+}
+
+.gallery-tile.downloaded-image .thumbnail-button {
+    border: 3px solid #28a745;
+    padding: 1px;
+    box-shadow: 0 0 5px rgba(40, 167, 69, 0.5);
+}
+
+.gallery-tile.edit-tile.downloaded-image .thumbnail-image {
+    border: 3px solid #28a745;
+    box-shadow: 0 0 5px rgba(40, 167, 69, 0.5);
+    box-sizing: border-box;
+}

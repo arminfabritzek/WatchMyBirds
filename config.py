@@ -45,6 +45,7 @@ def load_config():
 
         # Model and Classifier Settings
         "CLASSIFIER_MODEL": classifier_model,
+        "CLASSIFIER_BASE_PATH": os.getenv("CLASSIFIER_BASE_PATH", f"models"),
         "CLASSIFIER_IMAGE_SIZE": classifier_image_size,
         "CLASSIFIER_MODEL_PATH": os.getenv("CLASSIFIER_MODEL_PATH", f"models/classifier_best_{classifier_model}.onnx"),
         "CLASSIFIER_CLASSES_PATH": os.getenv("CLASSIFIER_CLASSES_PATH", f"models/classifier_classes_{classifier_model}.txt"),
@@ -67,6 +68,12 @@ def load_config():
 
         # Telegram Notification Settings
         "TELEGRAM_COOLDOWN": float(os.getenv("TELEGRAM_COOLDOWN", 5)),  # seconds between alerts
+
+        # GA + Cookiebot
+        "GA_MEASUREMENT_ID": os.getenv("GA_MEASUREMENT_ID", "G-REPLACE-ME-XXXXXX"),
+        "COOKIEBOT_CBID": os.getenv("COOKIEBOT_CBID", None),
+
+        "EDIT_PASSWORD": os.getenv("EDIT_PASSWORD", None),
     }
     return config
 
