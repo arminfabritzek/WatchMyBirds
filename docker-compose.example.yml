@@ -23,6 +23,7 @@
          - TELEGRAM_CHAT_ID=YOUR_CHAT_ID  # Telegram chat ID to send detection alerts to.
          - DAY_AND_NIGHT_CAPTURE=False  # Set to "True" to allow detection at night; "False" stops detection at night.
          - DAY_AND_NIGHT_CAPTURE_LOCATION="Berlin"  # The location to determine daylight hours (used for night mode).
+         - LOCATION_DATA="52.516, 13.377"  # The location to determine daylight hours (used for night mode).
          - CPU_LIMIT=1  # Limit the container to use only 1 CPU core to optimize resource usage.
          - TELEGRAM_COOLDOWN=5  # Delay Telegram Notifications in seconds
        volumes:
