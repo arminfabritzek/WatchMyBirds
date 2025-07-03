@@ -19,13 +19,13 @@ def load_config():
     }
     classifier_image_size = model_sizes.get(classifier_model, 224)
 
-    location_str = os.getenv("LOCATION_DATA", "52.646,13.377")
+    location_str = os.getenv("LOCATION_DATA", "52.516, 13.377")
     try:
         lat_str, lon_str = location_str.split(",")
         LOCATION_DATA = {"latitude": float(lat_str), "longitude": float(lon_str)}
     except Exception:
         # Fallback to defaults if parsing fails
-        LOCATION_DATA = {"latitude": 52.646, "longitude": 13.377}
+        LOCATION_DATA = {"latitude": 52.516, "longitude": 13.377}
 
     config = {
         # General Settings
@@ -39,9 +39,9 @@ def load_config():
         # Model and Detection Settings
         "DETECTOR_MODEL_CHOICE": os.getenv("DETECTOR_MODEL_CHOICE", "yolo"),  # Only "yolo" supported for now
         "DETECTOR_MODEL_PATH": os.getenv("DETECTOR_MODEL_PATH", "/models/best.onnx"),
-        "CONFIDENCE_THRESHOLD_DETECTION": float(os.getenv("CONFIDENCE_THRESHOLD_DETECTION", 0.8)),
-        "SAVE_THRESHOLD": float(os.getenv("SAVE_THRESHOLD", 0.8)),
-        "MAX_FPS_DETECTION": float(os.getenv("MAX_FPS_DETECTION", 1.0)),
+        "CONFIDENCE_THRESHOLD_DETECTION": float(os.getenv("CONFIDENCE_THRESHOLD_DETECTION", 0.55)),
+        "SAVE_THRESHOLD": float(os.getenv("SAVE_THRESHOLD", 0.55)),
+        "MAX_FPS_DETECTION": float(os.getenv("MAX_FPS_DETECTION", 0.5)),
 
         # Model and Classifier Settings
         "CLASSIFIER_MODEL": classifier_model,
@@ -49,7 +49,7 @@ def load_config():
         "CLASSIFIER_IMAGE_SIZE": classifier_image_size,
         "CLASSIFIER_MODEL_PATH": os.getenv("CLASSIFIER_MODEL_PATH", f"/models/classifier_best_{classifier_model}.onnx"),
         "CLASSIFIER_CLASSES_PATH": os.getenv("CLASSIFIER_CLASSES_PATH", f"/models/classifier_classes_{classifier_model}.txt"),
-        "CLASSIFIER_CONFIDENCE_THRESHOLD": float(os.getenv("CLASSIFIER_CONFIDENCE_THRESHOLD", 0.8)),
+        "CLASSIFIER_CONFIDENCE_THRESHOLD": float(os.getenv("CLASSIFIER_CONFIDENCE_THRESHOLD", 0.55)),
         "CLASSIFIER_DOWNLOAD_LATEST_MODEL": os.getenv("CLASSIFIER_DOWNLOAD_LATEST_MODEL", "True").lower() == "true",
 
         # Results Settings
@@ -64,7 +64,7 @@ def load_config():
         "DAY_AND_NIGHT_CAPTURE_LOCATION": os.getenv("DAY_AND_NIGHT_CAPTURE_LOCATION", "Berlin"),
 
         # CPU and Resource Management
-        "CPU_LIMIT": int(float(os.getenv("CPU_LIMIT", 2))),
+        "CPU_LIMIT": int(float(os.getenv("CPU_LIMIT", 1))),
 
         # Telegram Notification Settings
         "TELEGRAM_COOLDOWN": float(os.getenv("TELEGRAM_COOLDOWN", 5)),  # seconds between alerts
@@ -73,7 +73,7 @@ def load_config():
         "GA_MEASUREMENT_ID": os.getenv("GA_MEASUREMENT_ID", "G-REPLACE-ME-XXXXXX"),
         "COOKIEBOT_CBID": os.getenv("COOKIEBOT_CBID", None),
 
-        "EDIT_PASSWORD": os.getenv("EDIT_PASSWORD", None),
+        "EDIT_PASSWORD": os.getenv("EDIT_PASSWORD", "SECRET_PASSWORD"),
     }
     return config
 
