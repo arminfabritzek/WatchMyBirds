@@ -17,7 +17,7 @@
 
 ## ⚡ Quickstart
 - You must create the "output" and "models" folders.
-- Models for OD and classification will be downloaded automatically. You can manually specify the models versions in the config.
+- Models for OD and classification are downloaded automatically from Hugging Face. You can manually specify the model versions in the config.
 ```bash
 git clone https://github.com/arminfabritzek/WatchMyBirds.git
 cd WatchMyBirds
