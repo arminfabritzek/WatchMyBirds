@@ -20,6 +20,7 @@ def load_config():
     config = {
         # General Settings
         "DEBUG_MODE": os.getenv("DEBUG_MODE", "False").lower() == "true",
+        # Absolute standard paths for Docker consistency
         "OUTPUT_DIR": os.getenv("OUTPUT_DIR", "/output"),
         "VIDEO_SOURCE": os.getenv("VIDEO_SOURCE", "0"),
 
@@ -31,7 +32,7 @@ def load_config():
         "CONFIDENCE_THRESHOLD_DETECTION": float(os.getenv("CONFIDENCE_THRESHOLD_DETECTION", 0.55)),
         "SAVE_THRESHOLD": float(os.getenv("SAVE_THRESHOLD", 0.55)),
         "MAX_FPS_DETECTION": float(os.getenv("MAX_FPS_DETECTION", 0.5)),
-        "MODEL_BASE_PATH": os.getenv("MODEL_BASE_PATH", "models"),
+        "MODEL_BASE_PATH": os.getenv("MODEL_BASE_PATH", "/models"),
 
         # Model and Classifier Settings
         "CLASSIFIER_CONFIDENCE_THRESHOLD": float(os.getenv("CLASSIFIER_CONFIDENCE_THRESHOLD", 0.55)),
