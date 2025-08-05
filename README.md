@@ -173,18 +173,22 @@ For a webcam connected via USB use:
    For an RTSP stream, use:
    ```plaintext
    VIDEO_SOURCE=rtsp://user:password@192.168.0.2:554/1
+   VIDEO_SOURCE=rtsp://user:password@192.168.0.2:8554/stream1
+   ```
+
+5. **Start the Application**:
+   ```bash
+   python main.py
    ```
 
 
-
 ## 📺 Usage
+   The livestream will be available at:
+   - Local: `http://localhost:8050`
+   - Remote: `http://<your-server-ip>:8050`
 
-- **Livestream**: `http://<your-server-ip>:8050` displays a real-time video and latest birds.
-- **Saved Frames**: Frames with objects exceeding the confidence threshold are saved in the `output/` directory.
 
 ---
-
-
 
 
 
