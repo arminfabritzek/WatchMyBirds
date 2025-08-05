@@ -3,7 +3,8 @@ name: Build and Push Docker Image
 on:
   push:
     branches:
-      - main  # Trigger the workflow when a commit is pushed to the main branch
+      - main
+  workflow_dispatch: # Manual trigger for any branch/tag
 
 jobs:
   build:
@@ -22,15 +23,25 @@ jobs:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 
-      - name: Set Build Timestamp
-        run: echo "BUILD_TIMESTAMP=$(date +'%Y-%m-%d %H:%M:%S')" >> $GITHUB_ENV
-
       - name: Build and Push Docker Image
         uses: docker/build-push-action@v4
         with:
           context: .
           push: true
-          tags: starminworks/watchmybirds:latest
           platforms: linux/amd64
+          cache-from: type=registry,ref=starminworks/watchmybirds:cache
+          cache-to: type=registry,ref=starminworks/watchmybirds:cache,mode=max
+          tags: |
+            ${{ github.ref == 'refs/heads/main' && 'starminworks/watchmybirds:latest' || format('starminworks/watchmybirds:{0}', github.ref_name) }}
+            ${{ github.ref == 'refs/heads/main' && 'starminworks/watchmybirds:main' || '' }}
           build-args: |
-            BUILD_TIMESTAMP=${BUILD_TIMESTAMP}
+            BUILD_DATE=${{ github.event.head_commit.timestamp }}
+            GIT_COMMIT=${{ github.sha }}
+            VERSION=${{ github.ref_name }}
+
+  cleanup:
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - name: Prune old images
+        run: docker system prune -af
