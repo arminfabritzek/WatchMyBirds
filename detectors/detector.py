@@ -3,17 +3,47 @@
 # detectors/detector.py
 # ------------------------------------------------------------------------------
 from config import load_config
+
 config = load_config()
 from logging_config import get_logger
+
 logger = get_logger(__name__)
 import os
+import time
 import cv2
 import numpy as np
 import onnxruntime
 import requests
-import hashlib
 import json
 from PIL import Image, ImageDraw, ImageFont
+
+HF_BASE_URL = "https://huggingface.co/arminfabritzek/WatchMyBirds-Models/resolve/main/object_detection"
+LATEST_MODELS_URL = f"{HF_BASE_URL}/latest_models.json"
+
+
+def _download_file(url: str, dest: str, retries: int = 3, timeout: int = 60) -> bool:
+    """Lädt eine Datei mit Wiederholungen von einer URL herunter."""
+    if os.path.exists(dest):
+        logger.debug(f"Datei existiert bereits und wird übersprungen: {dest}")
+        return True
+    for attempt in range(1, retries + 1):
+        try:
+            response = requests.get(url, stream=True, timeout=timeout)
+            response.raise_for_status()
+            os.makedirs(os.path.dirname(dest), exist_ok=True)
+            with open(dest, "wb") as f:
+                for chunk in response.iter_content(chunk_size=8192):
+                    f.write(chunk)
+            logger.info(f"Datei heruntergeladen: {dest}")
+            return True
+        except requests.RequestException as e:
+            logger.warning(
+                f"Download-Versuch {attempt}/{retries} für {url} fehlgeschlagen: {e}"
+            )
+            if attempt < retries:
+                time.sleep(1)
+    logger.error(f"Download endgültig fehlgeschlagen für {url}")
+    return False
 
 
 # ------------------------------------------------------------------------------
@@ -40,40 +70,40 @@ class ONNXDetectionModel(BaseDetectionModel):
         model_env = config["DETECTOR_MODEL_PATH"]  # Use ONNX model path.
         self.model_path = model_env if model_env else "models/best.onnx"
         os.makedirs(os.path.dirname(self.model_path), exist_ok=True)
+        self.labels_path = os.path.join(os.path.dirname(self.model_path), "labels.json")
 
-        # Check if the model file exists; if not, download it.
-        if not os.path.exists(self.model_path):
-            logger.info(f"Model file not found at {self.model_path}. Downloading...")
-            self.download_best_model()
-            self.download_latest_labels()
-        else:
-            logger.debug(f"Model file found at {self.model_path}. Skipping download.")
+        # Ensure model and labels are present
+        self._ensure_model_files()
 
         # Initialize ONNX Runtime session.  Handles potential errors.
         try:
             self.session = onnxruntime.InferenceSession(
-                self.model_path, providers=['CPUExecutionProvider'])
+                self.model_path, providers=["CPUExecutionProvider"]
+            )
             self.input_name = self.session.get_inputs()[0].name
-            logger.info(f"ONNX model loaded from {self.model_path} using CPUExecutionProvider")
+            logger.info(
+                f"ONNX model loaded from {self.model_path} using CPUExecutionProvider"
+            )
         except Exception as e:
             logger.error(f"Failed to load ONNX model: {e}", exc_info=True)
             raise
 
         self.input_size = ONNXDetectionModel.get_model_input_size(self.session)
 
-        # Set the labels paths
-        labels_json_path = os.path.join(os.path.dirname(self.model_path), "labels.json")
-
         # Now load the class names from the JSON file.
-        if os.path.exists(labels_json_path):
+        if os.path.exists(self.labels_path):
             try:
-                with open(labels_json_path, "r") as f:
+                with open(self.labels_path, "r") as f:
                     self.class_names = json.load(f)
             except Exception as e:
-                logger.error(f"Error loading labels from {labels_json_path}: {e}", exc_info=True)
+                logger.error(
+                    f"Error loading labels from {self.labels_path}: {e}", exc_info=True
+                )
                 self.class_names = {}
         else:
-            logger.warning(f"Label JSON file not found at {labels_json_path}. Using default class name.")
+            logger.warning(
+                f"Label JSON file not found at {self.labels_path}. Using default class name."
+            )
             self.class_names = {}
 
         self.inference_error_count = 0
@@ -95,71 +125,37 @@ class ONNXDetectionModel(BaseDetectionModel):
         input_shape = session.get_inputs()[0].shape
         return (input_shape[2], input_shape[3])
 
-    def download_best_model(self):
-        """
-        Download the latest best.onnx model from GitHub, handling hash comparison.
-        """
-        # URL pointing to the ONNX model
-        model_url = "https://raw.githubusercontent.com/arminfabritzek/WatchMyBirds-Train-YOLO/main/best_model/weights/best.onnx"
-        dest_path = self.model_path
-        os.makedirs(os.path.dirname(dest_path), exist_ok=True)
-
-        response = requests.get(model_url, stream=True)
-        if response.status_code != 200:
-            logger.error(
-                f"Failed to download model. Status code: {response.status_code}")
+    def _ensure_model_files(self) -> None:
+        """Stellt sicher, dass aktuelles Modell und Labels vorhanden sind."""
+        try:
+            response = requests.get(LATEST_MODELS_URL, timeout=10)
+            response.raise_for_status()
+            data = response.json()
+        except requests.RequestException as e:
+            logger.error(f"Fehler beim Abrufen von {LATEST_MODELS_URL}: {e}")
+            if not (
+                os.path.exists(self.model_path) and os.path.exists(self.labels_path)
+            ):
+                raise
             return
 
-        downloaded_data = response.content
-        downloaded_hash = hashlib.sha256(downloaded_data).hexdigest()
-        logger.info(f"Downloaded model hash: {downloaded_hash}")
-
-        if os.path.exists(dest_path):
-            with open(dest_path, "rb") as f:
-                local_data = f.read()
-            local_hash = hashlib.sha256(local_data).hexdigest()
-            logger.info(f"Local model hash: {local_hash}")
-        else:
-            local_hash = None
-
-        if local_hash != downloaded_hash:
-            with open(dest_path, "wb") as f:
-                f.write(downloaded_data)
-            logger.info(f"Best model updated at {dest_path}")
-        else:
-            logger.info("Local model is already up-to-date.")
-
-    def download_latest_labels(self):
-        """
-        Download the latest labels.json file from GitHub and store it next to the model.
-        """
-        labels_url = "https://raw.githubusercontent.com/arminfabritzek/WatchMyBirds-Train-YOLO/main/best_model/weights/labels.json"
-        labels_dest_path = os.path.join(os.path.dirname(self.model_path), "labels.json")
-        os.makedirs(os.path.dirname(labels_dest_path), exist_ok=True)
-
-        response = requests.get(labels_url, stream=True)
-        if response.status_code != 200:
-            logger.error(f"Failed to download labels.json. Status code: {response.status_code}")
+        weights_path = data.get("weights_path_onnx")
+        labels_path = data.get("labels_path")
+        if not weights_path or not labels_path:
+            logger.error(f"Ungültige Daten in {LATEST_MODELS_URL}: {data}")
+            if not (
+                os.path.exists(self.model_path) and os.path.exists(self.labels_path)
+            ):
+                raise ValueError("Fehlende Pfade in latest_models.json")
             return
 
-        downloaded_data = response.content
-        downloaded_hash = hashlib.sha256(downloaded_data).hexdigest()
-        logger.info(f"Downloaded labels.json hash: {downloaded_hash}")
+        model_url = f"{HF_BASE_URL}/{weights_path}"
+        labels_url = f"{HF_BASE_URL}/{labels_path}"
 
-        if os.path.exists(labels_dest_path):
-            with open(labels_dest_path, "rb") as f:
-                local_data = f.read()
-            local_hash = hashlib.sha256(local_data).hexdigest()
-            logger.info(f"Local labels.json hash: {local_hash}")
-        else:
-            local_hash = None
-
-        if local_hash != downloaded_hash:
-            with open(labels_dest_path, "wb") as f:
-                f.write(downloaded_data)
-            logger.info(f"labels.json updated at {labels_dest_path}")
-        else:
-            logger.info("Local labels.json is already up-to-date.")
+        if not os.path.exists(self.model_path):
+            _download_file(model_url, self.model_path)
+        if not os.path.exists(self.labels_path):
+            _download_file(labels_url, self.labels_path)
 
     def preprocess_image(self, img):
         original_image = img.copy()
@@ -170,13 +166,19 @@ class ONNXDetectionModel(BaseDetectionModel):
         resized_height = int(h * ratio)
 
         # Resize the image
-        resized_image = cv2.resize(original_image, (resized_width, resized_height), interpolation=cv2.INTER_LINEAR)
+        resized_image = cv2.resize(
+            original_image,
+            (resized_width, resized_height),
+            interpolation=cv2.INTER_LINEAR,
+        )
 
         # Create a padded image with fill value 114
         padded_image = np.full((input_height, input_width, 3), 114, dtype=np.uint8)
         dw = (input_width - resized_width) // 2
         dh = (input_height - resized_height) // 2
-        padded_image[dh:dh + resized_height, dw:dw + resized_width, :] = resized_image
+        padded_image[dh : dh + resized_height, dw : dw + resized_width, :] = (
+            resized_image
+        )
 
         # Convert from BGR to RGB, normalize and change shape from HWC to CHW
         image_data = cv2.cvtColor(padded_image, cv2.COLOR_BGR2RGB)
@@ -184,7 +186,16 @@ class ONNXDetectionModel(BaseDetectionModel):
         image_data = np.expand_dims(image_data, axis=0)
         return image_data, original_image, ratio, dw, dh
 
-    def postprocess_output(self, output, ratio, dw, dh, original_width, original_height, conf_threshold=0.25):
+    def postprocess_output(
+        self,
+        output,
+        ratio,
+        dw,
+        dh,
+        original_width,
+        original_height,
+        conf_threshold=0.25,
+    ):
         # Remove batch dimension
         predictions = np.squeeze(output[0])
 
@@ -219,50 +230,71 @@ class ONNXDetectionModel(BaseDetectionModel):
             x1_val, x2_val = min(x1_val, x2_val), max(x1_val, x2_val)
             y1_val, y2_val = min(y1_val, y2_val), max(y1_val, y2_val)
 
-            detections.append({
-                "class_name": self.class_names.get(str(int(cls)), str(int(cls))),
-                "confidence": float(conf),
-                "x1": x1_val,
-                "y1": y1_val,
-                "x2": x2_val,
-                "y2": y2_val,
-                "class": int(cls)
-            })
+            detections.append(
+                {
+                    "class_name": self.class_names.get(str(int(cls)), str(int(cls))),
+                    "confidence": float(conf),
+                    "x1": x1_val,
+                    "y1": y1_val,
+                    "x2": x2_val,
+                    "y2": y2_val,
+                    "class": int(cls),
+                }
+            )
         return detections
 
     def detect(self, frame, confidence_threshold):
         detection_info_list = []
         try:
             # Preprocess the frame and retrieve ratio and padding info
-            processed_image, original_image, ratio, dw, dh = self.preprocess_image(frame)
-            original_width, original_height = original_image.shape[1], original_image.shape[0]
+            processed_image, original_image, ratio, dw, dh = self.preprocess_image(
+                frame
+            )
+            original_width, original_height = (
+                original_image.shape[1],
+                original_image.shape[0],
+            )
 
             # Run inference using ONNX Runtime
             inputs = {self.input_name: processed_image}
             outputs = self.session.run(None, inputs)
 
             # Postprocess to get final detections
-            detections = self.postprocess_output(outputs, ratio, dw, dh, original_width, original_height, confidence_threshold)
+            detections = self.postprocess_output(
+                outputs,
+                ratio,
+                dw,
+                dh,
+                original_width,
+                original_height,
+                confidence_threshold,
+            )
             self.inference_error_count = 0  # Reset error count on success
 
             # Build detection info and annotate the frame
             for detection in detections:
-                class_id = detection['class']
+                class_id = detection["class"]
                 label = self.class_names.get(str(int(class_id)), "unknown")
-                detection_info_list.append({
-                    "class_name": label,
-                    "confidence": detection['confidence'],
-                    "x1": int(detection['x1']),
-                    "y1": int(detection['y1']),
-                    "x2": int(detection['x2']),
-                    "y2": int(detection['y2']),
-                })
+                detection_info_list.append(
+                    {
+                        "class_name": label,
+                        "confidence": detection["confidence"],
+                        "x1": int(detection["x1"]),
+                        "y1": int(detection["y1"]),
+                        "x2": int(detection["x2"]),
+                        "y2": int(detection["y2"]),
+                    }
+                )
 
         except Exception as e:
             self.inference_error_count += 1
-            logger.debug(f"Error during ONNX inference: {e} (Error count: {self.inference_error_count})")
+            logger.debug(
+                f"Error during ONNX inference: {e} (Error count: {self.inference_error_count})"
+            )
             if self.inference_error_count >= 3:
-                logger.error("Persistent inference errors encountered. Consider restarting the application.")
+                logger.error(
+                    "Persistent inference errors encountered. Consider restarting the application."
+                )
                 return frame, []  # Return the original frame
             return frame, []  # Return the original frame
 
@@ -290,8 +322,8 @@ class Detector:
         Returns a tuple: (object_detected, original_frame, detection_info_list)
         """
         original_frame = frame.copy()
-        detection_info_list = self.model.detect(
-            frame, confidence_threshold)
+        detection_info_list = self.model.detect(frame, confidence_threshold)
         object_detected = any(
-            det["confidence"] >= save_threshold for det in detection_info_list)
+            det["confidence"] >= save_threshold for det in detection_info_list
+        )
         return object_detected, original_frame, detection_info_list

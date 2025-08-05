@@ -2,6 +2,8 @@
 
 ## Aktueller Stand
 
+- Modelle werden nun automatisch aus dem Hugging-Face-Repository geladen.
+
 ---
 
 ## Aktuelle Phase
@@ -13,6 +15,7 @@
 ---
 
 ## Letzte Änderungen
+- 2025-08-05: Umstellung der Modell-Downloads auf Hugging Face.
 - 2025-07-28: Branch erstellt.
 
 ---
