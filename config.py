@@ -9,16 +9,6 @@ def load_config():
     """
     Loads configuration from environment variables and returns a dictionary.
     """
-    # Determine the image size based on the classifier model
-    classifier_model = os.getenv("CLASSIFIER_MODEL", "efficientnet_b0")
-    model_sizes = {
-        "efficientnet_b0": 224,
-        "efficientnet_b1": 240,
-        "efficientnet_b2": 256,
-        "efficientnet_b3": 288
-    }
-    classifier_image_size = model_sizes.get(classifier_model, 224)
-
     location_str = os.getenv("LOCATION_DATA", "52.516, 13.377")
     try:
         lat_str, lon_str = location_str.split(",")
@@ -44,8 +34,6 @@ def load_config():
         "MODEL_BASE_PATH": os.getenv("MODEL_BASE_PATH", "models"),
 
         # Model and Classifier Settings
-        "CLASSIFIER_MODEL": classifier_model,
-        "CLASSIFIER_IMAGE_SIZE": classifier_image_size,
         "CLASSIFIER_CONFIDENCE_THRESHOLD": float(os.getenv("CLASSIFIER_CONFIDENCE_THRESHOLD", 0.55)),
 
         # Results Settings

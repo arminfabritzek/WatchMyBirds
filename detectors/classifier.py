@@ -38,7 +38,19 @@ class ImageClassifier:
             logger.error(f"Konnte ONNX-Modell nicht laden: {exc}")
             raise
         self.classes: List[str] = self._load_classes()
-        self.CLASSIFIER_IMAGE_SIZE = self.config.get("CLASSIFIER_IMAGE_SIZE", 224)
+        # Dynamically detect image size from model input
+        try:
+            input_shape = self.ort_session.get_inputs()[0].shape
+            self.CLASSIFIER_IMAGE_SIZE = int(input_shape[2])
+            logger.info(
+                f"Ermittelte Modell-Eingabegröße: {self.CLASSIFIER_IMAGE_SIZE}x{input_shape[3]}"
+            )
+        except Exception as exc:
+            logger.warning(
+                f"Konnte Eingabegröße nicht automatisch bestimmen ({exc}), nutze Fallback 224"
+            )
+            self.CLASSIFIER_IMAGE_SIZE = 224
+
         self.transform = self._get_transform()
 
     def _load_classes(self) -> List[str]:

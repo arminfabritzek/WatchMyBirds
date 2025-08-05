@@ -11,12 +11,10 @@
          - DEBUG_MODE=False  # Set to "True" for additional logging output for debugging.
 
 
-         # (optional) - DETECTOR_MODEL_CHOICE="yolo"  # The object detection model to use (e.g., yolo, pytorch_ssd).
          # (optional) - CONFIDENCE_THRESHOLD_DETECTION=0.55  # Minimum confidence score for an object to be considered detected.
          # (optional) - SAVE_THRESHOLD=0.55  # Minimum confidence score for saving an image of a detected object.
          # (optional) - MAX_FPS_DETECTION=1  # Limit detection FPS to reduce CPU/GPU usage (higher values increase load).
          # (optional) - MODEL_BASE_PATH="models"  # Base directory for cached models.
-         # (optional) - CLASSIFIER_MODEL=efficientnet_b2
          # (optional) - STREAM_FPS=3  # Maximum FPS for the video stream output.
          # (optional) - STREAM_WIDTH_OUTPUT_RESIZE=800  # Resize the output stream width to optimize performance.
          # (optional) - TELEGRAM_BOT_TOKEN=YOUR_BOT_TOKEN  # Token for Telegram bot notifications (replace with your actual bot token).
