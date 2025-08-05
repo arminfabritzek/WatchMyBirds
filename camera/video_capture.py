@@ -165,7 +165,11 @@ class VideoCapture:
             output = subprocess.check_output(ffprobe_cmd, stderr=subprocess.STDOUT, timeout=30).decode().strip()
             logger.debug(f"FFprobe output: {output}")
             # Parse the FFprobe output
-            width, height = map(int, output.split('\n'))
+            try:
+                width, height = map(int, output.split('\n'))
+            except (ValueError, Exception):
+                logger.warning("FFprobe failed to detect resolution. Falling back to default 640x480.")
+                width, height = 640, 480
             logger.debug(f"Detected stream resolution: {width}x{height}")
 
             # Set the resolution as instance attributes

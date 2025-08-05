@@ -9,16 +9,6 @@ def load_config():
     """
     Loads configuration from environment variables and returns a dictionary.
     """
-    # Determine the image size based on the classifier model
-    classifier_model = os.getenv("CLASSIFIER_MODEL", "efficientnet_b0")
-    model_sizes = {
-        "efficientnet_b0": 224,
-        "efficientnet_b1": 240,
-        "efficientnet_b2": 256,
-        "efficientnet_b3": 288
-    }
-    classifier_image_size = model_sizes.get(classifier_model, 224)
-
     location_str = os.getenv("LOCATION_DATA", "52.516, 13.377")
     try:
         lat_str, lon_str = location_str.split(",")
@@ -30,6 +20,7 @@ def load_config():
     config = {
         # General Settings
         "DEBUG_MODE": os.getenv("DEBUG_MODE", "False").lower() == "true",
+        # Absolute standard paths for Docker consistency
         "OUTPUT_DIR": os.getenv("OUTPUT_DIR", "/output"),
         "VIDEO_SOURCE": os.getenv("VIDEO_SOURCE", "0"),
 
@@ -37,20 +28,14 @@ def load_config():
         "LOCATION_DATA": LOCATION_DATA,
 
         # Model and Detection Settings
-        "DETECTOR_MODEL_CHOICE": os.getenv("DETECTOR_MODEL_CHOICE", "yolo"),  # Only "yolo" supported for now
-        "DETECTOR_MODEL_PATH": os.getenv("DETECTOR_MODEL_PATH", "/models/best.onnx"),
+        "DETECTOR_MODEL_CHOICE": os.getenv("DETECTOR_MODEL_CHOICE", "yolo"),
         "CONFIDENCE_THRESHOLD_DETECTION": float(os.getenv("CONFIDENCE_THRESHOLD_DETECTION", 0.55)),
         "SAVE_THRESHOLD": float(os.getenv("SAVE_THRESHOLD", 0.55)),
         "MAX_FPS_DETECTION": float(os.getenv("MAX_FPS_DETECTION", 0.5)),
+        "MODEL_BASE_PATH": os.getenv("MODEL_BASE_PATH", "/models"),
 
         # Model and Classifier Settings
-        "CLASSIFIER_MODEL": classifier_model,
-        "CLASSIFIER_BASE_PATH": os.getenv("CLASSIFIER_BASE_PATH", f"/models"),
-        "CLASSIFIER_IMAGE_SIZE": classifier_image_size,
-        "CLASSIFIER_MODEL_PATH": os.getenv("CLASSIFIER_MODEL_PATH", f"/models/classifier_best_{classifier_model}.onnx"),
-        "CLASSIFIER_CLASSES_PATH": os.getenv("CLASSIFIER_CLASSES_PATH", f"/models/classifier_classes_{classifier_model}.txt"),
         "CLASSIFIER_CONFIDENCE_THRESHOLD": float(os.getenv("CLASSIFIER_CONFIDENCE_THRESHOLD", 0.55)),
-        "CLASSIFIER_DOWNLOAD_LATEST_MODEL": os.getenv("CLASSIFIER_DOWNLOAD_LATEST_MODEL", "True").lower() == "true",
 
         # Results Settings
         "FUSION_ALPHA": float(os.getenv("FUSION_ALPHA", 0.5)),
@@ -77,8 +62,10 @@ def load_config():
     }
     return config
 
+
 if __name__ == "__main__":
     # For testing purposes, print the configuration
     config = load_config()
     from pprint import pprint
+
     pprint(config)
