@@ -23,6 +23,14 @@ ENV MPLCONFIGDIR=/tmp/matplotlib \
 # Set the working directory
 WORKDIR /app
 
+# OCI image labels
+LABEL org.opencontainers.image.title="WatchMyBirds" \
+      org.opencontainers.image.description="Bird detection and classification application" \
+      org.opencontainers.image.source="https://github.com/arminfabritzek/WatchMyBirds" \
+      org.opencontainers.image.version="${VERSION}" \
+      org.opencontainers.image.revision="${GIT_COMMIT}" \
+      org.opencontainers.image.created="${BUILD_DATE}"
+
 # Copy only requirements.txt first to leverage Docker cache for dependency installation
 COPY requirements.txt /app/requirements.txt
 
