@@ -15,10 +15,8 @@
          # (optional) - CONFIDENCE_THRESHOLD_DETECTION=0.55  # Minimum confidence score for an object to be considered detected.
          # (optional) - SAVE_THRESHOLD=0.55  # Minimum confidence score for saving an image of a detected object.
          # (optional) - MAX_FPS_DETECTION=1  # Limit detection FPS to reduce CPU/GPU usage (higher values increase load).
-         # (optional) - DETECTOR_MODEL_PATH="models/best.onnx"  # The object detection model path.
+         # (optional) - MODEL_BASE_PATH="models"  # Base directory for cached models.
          # (optional) - CLASSIFIER_MODEL=efficientnet_b2
-         # (optional) - CLASSIFIER_MODEL_PATH="models/classifier_best.onnx"  # The classifier model.
-         # (optional) - CLASSIFIER_CLASSES_PATH="models/classifier_classes.txt"  # The classifier model classes file.
          # (optional) - STREAM_FPS=3  # Maximum FPS for the video stream output.
          # (optional) - STREAM_WIDTH_OUTPUT_RESIZE=800  # Resize the output stream width to optimize performance.
          # (optional) - TELEGRAM_BOT_TOKEN=YOUR_BOT_TOKEN  # Token for Telegram bot notifications (replace with your actual bot token).

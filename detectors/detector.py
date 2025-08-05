@@ -3,47 +3,19 @@
 # detectors/detector.py
 # ------------------------------------------------------------------------------
 from config import load_config
-
-config = load_config()
 from logging_config import get_logger
-
-logger = get_logger(__name__)
+from utils.model_downloader import ensure_model_files
 import os
-import time
 import cv2
 import numpy as np
 import onnxruntime
-import requests
 import json
 from PIL import Image, ImageDraw, ImageFont
 
+config = load_config()
+logger = get_logger(__name__)
+
 HF_BASE_URL = "https://huggingface.co/arminfabritzek/WatchMyBirds-Models/resolve/main/object_detection"
-LATEST_MODELS_URL = f"{HF_BASE_URL}/latest_models.json"
-
-
-def _download_file(url: str, dest: str, retries: int = 3, timeout: int = 60) -> bool:
-    """Lädt eine Datei mit Wiederholungen von einer URL herunter."""
-    if os.path.exists(dest):
-        logger.debug(f"Datei existiert bereits und wird übersprungen: {dest}")
-        return True
-    for attempt in range(1, retries + 1):
-        try:
-            response = requests.get(url, stream=True, timeout=timeout)
-            response.raise_for_status()
-            os.makedirs(os.path.dirname(dest), exist_ok=True)
-            with open(dest, "wb") as f:
-                for chunk in response.iter_content(chunk_size=8192):
-                    f.write(chunk)
-            logger.info(f"Datei heruntergeladen: {dest}")
-            return True
-        except requests.RequestException as e:
-            logger.warning(
-                f"Download-Versuch {attempt}/{retries} für {url} fehlgeschlagen: {e}"
-            )
-            if attempt < retries:
-                time.sleep(1)
-    logger.error(f"Download endgültig fehlgeschlagen für {url}")
-    return False
 
 
 # ------------------------------------------------------------------------------
@@ -67,13 +39,10 @@ class ONNXDetectionModel(BaseDetectionModel):
         Initialize the ONNX Runtime model.
         """
         self.debug = debug
-        model_env = config["DETECTOR_MODEL_PATH"]  # Use ONNX model path.
-        self.model_path = model_env if model_env else "models/best.onnx"
-        os.makedirs(os.path.dirname(self.model_path), exist_ok=True)
-        self.labels_path = os.path.join(os.path.dirname(self.model_path), "labels.json")
-
-        # Ensure model and labels are present
-        self._ensure_model_files()
+        model_dir = os.path.join(config["MODEL_BASE_PATH"], "object_detection")
+        self.model_path, self.labels_path = ensure_model_files(
+            HF_BASE_URL, model_dir, "weights_path_onnx", "labels_path"
+        )
 
         # Initialize ONNX Runtime session.  Handles potential errors.
         try:
@@ -125,37 +94,6 @@ class ONNXDetectionModel(BaseDetectionModel):
         input_shape = session.get_inputs()[0].shape
         return (input_shape[2], input_shape[3])
 
-    def _ensure_model_files(self) -> None:
-        """Stellt sicher, dass aktuelles Modell und Labels vorhanden sind."""
-        try:
-            response = requests.get(LATEST_MODELS_URL, timeout=10)
-            response.raise_for_status()
-            data = response.json()
-        except requests.RequestException as e:
-            logger.error(f"Fehler beim Abrufen von {LATEST_MODELS_URL}: {e}")
-            if not (
-                os.path.exists(self.model_path) and os.path.exists(self.labels_path)
-            ):
-                raise
-            return
-
-        weights_path = data.get("weights_path_onnx")
-        labels_path = data.get("labels_path")
-        if not weights_path or not labels_path:
-            logger.error(f"Ungültige Daten in {LATEST_MODELS_URL}: {data}")
-            if not (
-                os.path.exists(self.model_path) and os.path.exists(self.labels_path)
-            ):
-                raise ValueError("Fehlende Pfade in latest_models.json")
-            return
-
-        model_url = f"{HF_BASE_URL}/{weights_path}"
-        labels_url = f"{HF_BASE_URL}/{labels_path}"
-
-        if not os.path.exists(self.model_path):
-            _download_file(model_url, self.model_path)
-        if not os.path.exists(self.labels_path):
-            _download_file(labels_url, self.labels_path)
 
     def preprocess_image(self, img):
         original_image = img.copy()
