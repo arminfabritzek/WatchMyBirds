@@ -48,11 +48,12 @@ class VideoCapture:
         self.stream_type = self._detect_stream_type()
         self.reinit_lock = threading.Lock()
         self.consecutive_none_frames = 0
-        self.max_none_frames_before_reconnect = 10
+        self.max_none_frames_before_reconnect = 50
 
         self.failed_reads = 0
         self.last_codec_switch_time = 0
         self.codec_switch_cooldown = 10  # seconds between codec switch attempts
+        self.backend_switch_cooldown = 15  # seconds between backend switches
 
         logger.debug(
             f"Initialized VideoCapture with source: {self.source}, stream_type: {self.stream_type}"
@@ -94,15 +95,13 @@ class VideoCapture:
         logger.debug("Setting up video capture...")
         if self.stream_type == self.RTSP:
             try:
-                self._setup_opencv_rtsp()
-                self.backend = self.BACKEND_OPENCV
-                logger.info("Using OpenCV VideoCapture backend successfully.")
-            except Exception as e:
-                logger.warning(
-                    f"OpenCV RTSP capture failed: {e}. Falling back to FFmpeg."
-                )
                 self._setup_ffmpeg()
                 self.backend = self.BACKEND_FFMPEG
+                logger.info("Using FFmpeg backend successfully.")
+            except Exception as e:
+                logger.warning(f"FFmpeg capture failed: {e}. Falling back to OpenCV.")
+                self._setup_opencv_rtsp()
+                self.backend = self.BACKEND_OPENCV
         elif self.stream_type == self.HTTP:
             self._setup_http()
             self.backend = self.BACKEND_OPENCV
@@ -112,6 +111,34 @@ class VideoCapture:
         else:
             raise ValueError(f"Unsupported stream type: {self.stream_type}")
         logger.debug("Video capture setup completed.")
+
+        test_frame = None
+        try:
+            if self.backend == self.BACKEND_FFMPEG:
+                test_frame = self._read_ffmpeg_frame()
+            elif self.cap and self.cap.isOpened():
+                ret, frame = self.cap.read()
+                test_frame = frame if ret else None
+        except Exception as e:
+            logger.warning(f"Error testing frame availability: {e}")
+
+        if test_frame is None:
+            now = time.time()
+            if now - self.last_codec_switch_time < self.backend_switch_cooldown:
+                logger.info("Backend switch cooldown active, skipping immediate switch.")
+                return
+            logger.warning("No frame received during initial test. Falling back to other backend.")
+            if self.backend == self.BACKEND_FFMPEG:
+                if self.cap:
+                    self.cap.release()
+                self._setup_opencv_rtsp()
+                self.backend = self.BACKEND_OPENCV
+            else:
+                if self.cap:
+                    self.cap.release()
+                self._setup_ffmpeg()
+                self.backend = self.BACKEND_FFMPEG
+            self.last_codec_switch_time = now
 
     def _setup_opencv_rtsp(self):
         """Try to initialize RTSP stream with OpenCV."""
@@ -220,7 +247,7 @@ class VideoCapture:
         try:
             output = (
                 subprocess.check_output(
-                    ffprobe_cmd, stderr=subprocess.STDOUT, timeout=30
+                    ffprobe_cmd, stderr=subprocess.STDOUT, timeout=5
                 )
                 .decode()
                 .strip()
@@ -476,6 +503,10 @@ class VideoCapture:
 
     def _switch_to_ffmpeg(self):
         """Releases OpenCV backend and initializes FFmpeg."""
+        now = time.time()
+        if now - self.last_codec_switch_time < self.backend_switch_cooldown:
+            logger.info("Backend switch cooldown active, skipping FFmpeg switch.")
+            return
         try:
             if self.cap:
                 self.cap.release()
@@ -483,6 +514,7 @@ class VideoCapture:
             self.backend = self.BACKEND_FFMPEG
             self._setup_ffmpeg()
             logger.info("Successfully switched to FFmpeg backend.")
+            self.last_codec_switch_time = now
         except Exception as e:
             logger.error(f"Failed to switch to FFmpeg: {e}")
 
