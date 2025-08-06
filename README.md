@@ -68,8 +68,11 @@ docker-compose up -d
   - Telegram alerts for detections  
 
 
-- **State-of-the-Art AI Models**  
+- **State-of-the-Art AI Models**
   - Pre-trained models including `yolov11`, `EfficientNet`
+
+- **Modular Capture Pipeline**
+  - Explicit start/stop control via `VideoCapture` and timestamped streaming through `FrameGenerator`
 
 
 ---
