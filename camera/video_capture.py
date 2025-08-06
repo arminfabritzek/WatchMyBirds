@@ -397,7 +397,7 @@ class VideoCapture:
                     read_counter += 1
 
                     # Periodically log diagnostic information
-                    if time.time() - last_log_time >= 5:
+                    if time.time() - last_log_time >= 15:
                         logger.debug(f"Diagnostics: {read_counter} reads in last 5s, last read duration={duration:.4f}s")
                         read_counter = 0
                         last_log_time = time.time()
