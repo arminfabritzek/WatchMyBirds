@@ -30,7 +30,7 @@ class VideoCapture:
     BACKEND_OPENCV = "opencv"
     BACKEND_FFMPEG = "ffmpeg"
 
-    def __init__(self, source, debug=False):
+    def __init__(self, source, debug=False, auto_start=True):
         """
         Initializes the VideoCapture object and detects the stream type.
         """
@@ -58,6 +58,8 @@ class VideoCapture:
         logger.debug(
             f"Initialized VideoCapture with source: {self.source}, stream_type: {self.stream_type}"
         )
+        if auto_start:
+            self.start()
 
     def start(self):
         """Startet den Videostream und die Hintergrund-Threads."""
@@ -115,7 +117,13 @@ class VideoCapture:
         test_frame = None
         try:
             if self.backend == self.BACKEND_FFMPEG:
-                test_frame = self._read_ffmpeg_frame()
+                logger.info("Waiting up to 5s for FFmpeg to produce the first frame...")
+                for _ in range(10):
+                    test_frame = self._read_ffmpeg_frame()
+                    if test_frame is not None:
+                        logger.info("Received initial frame from FFmpeg.")
+                        break
+                    time.sleep(0.5)
             elif self.cap and self.cap.isOpened():
                 ret, frame = self.cap.read()
                 test_frame = frame if ret else None
@@ -127,7 +135,7 @@ class VideoCapture:
             if now - self.last_codec_switch_time < self.backend_switch_cooldown:
                 logger.info("Backend switch cooldown active, skipping immediate switch.")
                 return
-            logger.warning("No frame received during initial test. Falling back to other backend.")
+            logger.warning("Initial test frame still missing. Proceeding anyway to allow stream startup on slow devices (e.g., NAS).")
             if self.backend == self.BACKEND_FFMPEG:
                 if self.cap:
                     self.cap.release()
@@ -139,6 +147,7 @@ class VideoCapture:
                 self._setup_ffmpeg()
                 self.backend = self.BACKEND_FFMPEG
             self.last_codec_switch_time = now
+
 
     def _setup_opencv_rtsp(self):
         """Try to initialize RTSP stream with OpenCV."""
@@ -247,7 +256,7 @@ class VideoCapture:
         try:
             output = (
                 subprocess.check_output(
-                    ffprobe_cmd, stderr=subprocess.STDOUT, timeout=5
+                    ffprobe_cmd, stderr=subprocess.STDOUT, timeout=30
                 )
                 .decode()
                 .strip()
@@ -395,7 +404,7 @@ class VideoCapture:
                                 reason="RTSP FFmpeg subprocess terminated unexpectedly."
                             )
                         else:
-                            if time.time() - self.last_frame_time > 5:
+                            if time.time() - self.last_frame_time > 10:
                                 logger.error(
                                     "No frame received for over 5 seconds; triggering reinitialization."
                                 )
