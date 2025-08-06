@@ -1,96 +1,96 @@
 # AGENTS.md – Guidelines for Codex and Agents
 
-> **Zweck:** Sicherstellen, dass alle Agenten (einschließlich Codex) Codequalität und Dokumentation konsistent pflegen.
+> **Purpose**: Ensure that all agents (including Codex) consistently maintain code quality and documentation
 
 ---
 
-1. Installationshinweise
-- Fehlende Python-Pakete installieren:  
+1. Installation Instructions
+- Install missing Python packages:  
   ```bash
   pip install -r requirements.txt
 
 	•	Python-Version: 3.11+
-	•	Bei neuen Abhängigkeiten: requirements.txt aktualisieren und dokumentieren.
+	•	For new dependencies: update requirements.txt and document them.
 
 ⸻
 
-2. Code-Style-Regeln
+2. Code Style Rules
 
 Sprache	Formatter / Linter	Besondere Regeln
-Python	Black (88 Zeichen), UTF-8	Keine from … import *
-JavaScript (ES6)	ESLint (airbnb-base)	Dateien nur in static/ verwenden
+Python	Black (88 Zeichen), UTF-8	Do not use from … import *
+JavaScript (ES6)	ESLint (airbnb-base)	Use files only inside static/
 
-2.1 Namenskonventionen
-	•	snake_case für Variablen und Funktionen
-	•	PascalCase für Klassen
-	•	Boolesche Variablen: is_…, has_…, should_…
-	•	Schleifen-Indizes i/j nur in sehr kurzen Schleifen (< 5 Zeilen)
-	•	Keine kryptischen Abkürzungen (df → pandas_dataframe)
+2.1 Naming Conventions
+	•	snake_case for variables and functions
+	•	PascalCase for classes
+	•	Boolean variables: is_…, has_…, should_…
+	•	Loop indices i/j only in very short loops (< 5 lines)
+	•	No cryptic abbreviations (df → pandas_dataframe)
 
 2.2 Docstrings
-	•	Triple-quoted """ direkt unter der Definition.
-	•	Erste Zeile: Verb in 3. Person Singular (Deutsch).
-	•	Mehrzeilig bei komplexen Funktionen:
+	•	Triple-quoted """ directly below the definition.
+	•	First line: verb in 3rd person singular (German).
+	•	Multiline for complex functions:
 
 Args:
-    name (type): Beschreibung.
+    name (type): Description.
 Returns:
-    type: Beschreibung.
+    type: Description.
 Raises:
-    ErrorType: Wann der Fehler auftritt.
+    ErrorType: When the error occurs.
 
-	•	Beispiel:
+	•	Example:
 
 def lade_daten(pfad: str) -> pd.DataFrame:
     """Lädt Daten aus einer CSV-Datei."""
 
 ⸻
 
-3. Commit-Nachrichten
+3. Commit Messages
 
-	•	Format: <type>: <kurze Zusammenfassung>
-	•	Typen: feat, fix, refactor, docs, style, test, build, ci
-	•	Beispiel:
+	•	Format: <type>: <short summary>
+	•	Types: feat, fix, refactor, docs, style, test, build, ci
+	•	Example:
 
 feat: add hyperparameter tuning with Optuna
 
 ⸻
 
-4. Sicherheitsrichtlinien
-	•	Änderungen nur an produktiven Skripten; keine Modifikation von legacy/.
-	•	Tests (pytest) müssen bestehen, bevor Änderungen gemergt werden.
+4. Security Guidelines
+	•	Only modify production scripts; do not change files in legacy/.
+	•	Tests (pytest) must pass before merging changes.
 
 ⸻
 
-5. Dokumentation
-	•	Nach jeder Codeänderung muss im selben Commit auch die Dokumentation aktualisiert werden:
+5. Documentation
+	•	Every code change must update documentation in the same commit:
 	•	PROJECT_STATUS
-	•	ggf. neue Konfigurationsparameter ergänzen
+	•	Add new configuration parameters if applicable.
 
 
 ⸻
 
-6. Konsistenz mit CODEX.md
-	•	Alle Agenten müssen vor Ausführung:
-	•	CODEX.md lesen (für Projektregeln)
-	•	AGENTS.md lesen (für Arbeitsrichtlinien)
-	•	Anweisungen aus beiden Dateien haben höchste Priorität.
+6. Consistency with CODEX.md
+	•	All agents must, before execution:
+	•	Read CODEX.md (project rules)
+	•	Read AGENTS.md (work guidelines)
+	•	Instructions from both files have the highest priority.
 
 ⸻
 
-7. CI/CD und Automatisierung
-	•	GitHub Actions oder andere Automatisierungen dürfen nur laufen, wenn:
-	•	Doku-Dateien aktuell sind.
-	•	Tests erfolgreich sind.
-	•	Bei fehlschlagenden Tests → Änderungen nicht automatisch mergen.
+7. CI/CD and Automation
+	•	GitHub Actions or other automation must only run if:
+	•	Documentation files are up to date.
+	•	Tests are successful.
+	•	If tests fail → do not automatically merge changes.
 
 ⸻
 
-🔑 Wichtig:
-	•	Dokumentationspflege ist ein fester Bestandteil jeder Entwicklungsaufgabe.
-	•	Codex darf Änderungen nicht ohne diese Updates abschließen.
-	•	Lies vor jedem Commit **PROJECT_STATUS.md** und **CODEX.md**, um die aktuelle Phase und Ziele zu kennen.
-	•	Änderungen an der Codebasis müssen diese Ziele umsetzen.
+🔑 Important:
+	•	Maintaining documentation is a fixed part of every development task.
+	•	Codex must not finalize changes without these updates.
+	•	Before every commit, read **PROJECT_STATUS.md** and **CODEX.md** to know the current phase and objectives.
+	•	Changes to the codebase must implement these objectives.
 
 ---
 
