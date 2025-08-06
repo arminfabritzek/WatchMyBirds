@@ -47,6 +47,8 @@ class VideoCapture:
         self.retry_count = 0
         self.stream_type = self._detect_stream_type()
         self.reinit_lock = threading.Lock()
+        self.consecutive_none_frames = 0
+        self.max_none_frames_before_reconnect = 10
 
         logger.debug(
             f"Initialized VideoCapture with source: {self.source}, stream_type: {self.stream_type}"
@@ -385,13 +387,26 @@ class VideoCapture:
         """
         logger.info("Reader thread is running.")
         try:
+            read_counter = 0
+            last_log_time = time.time()
             while not self.stop_event.is_set():
+                start_read = time.time()
                 try:
                     frame = self._read_frame()
+                    duration = time.time() - start_read
+                    read_counter += 1
+
+                    # Periodically log diagnostic information
+                    if time.time() - last_log_time >= 5:
+                        logger.debug(f"Diagnostics: {read_counter} reads in last 5s, last read duration={duration:.4f}s")
+                        read_counter = 0
+                        last_log_time = time.time()
+
                     if self.stop_event.is_set():
                         logger.info("Stop event set. Reader thread is terminating.")
                         break
                     if frame is not None:
+                        self.consecutive_none_frames = 0
                         try:
                             self.q.put(frame, block=False)
                         except queue.Full:
@@ -404,8 +419,15 @@ class VideoCapture:
                             except queue.Full:
                                 pass
                     else:
-                        logger.info("Frame not available, triggering reinitialization.")
-                        self._reinitialize_camera(reason="Received None frame.")
+                        self.consecutive_none_frames += 1
+                        logger.warning(f"Frame not available. Consecutive count: {self.consecutive_none_frames}")
+                        if self.stream_type == self.RTSP and self.consecutive_none_frames >= self.max_none_frames_before_reconnect:
+                            logger.info("Exceeded max consecutive None frames. Attempting codec switch recovery.")
+                            self._handle_codec_switch()
+                            self.consecutive_none_frames = 0
+                        elif self.stream_type != self.RTSP and self.consecutive_none_frames >= self.max_none_frames_before_reconnect:
+                            self._reinitialize_camera(reason="Multiple None frames received.")
+                            self.consecutive_none_frames = 0
                 except Exception as e:
                     logger.error(f"Error reading frame: {e}")
                     if self.stop_event.is_set():
