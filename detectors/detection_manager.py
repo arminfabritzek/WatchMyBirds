@@ -295,6 +295,15 @@ class DetectionManager:
                     self.latest_raw_frame = frame.copy()
                     self.latest_raw_timestamp = time.time()
             else:
+                # If no new frame for more than 5 seconds, mark it as unavailable
+                if time.time() - self.latest_raw_timestamp > 5:
+                    with self.frame_lock:
+                        if self.latest_raw_frame is not None:
+                            logger.warning(
+                                "No new frames received for over 5 seconds. "
+                                "Clearing latest_raw_frame to trigger placeholder display."
+                            )
+                        self.latest_raw_frame = None
                 logger.debug("No frame available from VideoCapture in frame updater.")
                 time.sleep(0.1)
 
