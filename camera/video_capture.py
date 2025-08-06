@@ -436,6 +436,10 @@ class VideoCapture:
                     duration = time.time() - start_read
                     read_counter += 1
 
+                    # Slow down reading to match configured STREAM_FPS
+                    if hasattr(config, "STREAM_FPS") and config["STREAM_FPS"] > 0:
+                        time.sleep(1.0 / config["STREAM_FPS"])
+
                     # Periodically log diagnostic information
                     if time.time() - last_log_time >= 15:
                         logger.debug(f"Diagnostics: {read_counter} reads in last 5s, last read duration={duration:.4f}s")
