@@ -1757,49 +1757,7 @@ def create_web_interface(detection_manager):
     # -------------------------------------
     external_stylesheets = [dbc.themes.BOOTSTRAP]
 
-    # --- Cookiebot Integration ---
-    cookiebot_cbid = config["COOKIEBOT_CBID"]
-
-    cookiebot_snippet = ""  # Initialize empty
-    if cookiebot_cbid:
-        logger.info(f"Integrating Cookiebot with CBID: {cookiebot_cbid}")
-        cookiebot_snippet = f"""
-        <script id="Cookiebot" src="https://consent.cookiebot.com/uc.js" data-cbid="{cookiebot_cbid}" type="text/javascript" async></script>
-        """
-    else:
-        logger.warning(
-            "COOKIEBOT_CBID not found in config. Cookiebot snippet will NOT be included."
-        )
-        # cookiebot_snippet = ""  # Optional comment
-
-    # --- Google Analytics Integration ---
-    ga_measurement_id = config["GA_MEASUREMENT_ID"]
-
-    ga_snippet = ""  # Initialize empty
-    if (
-        ga_measurement_id and ga_measurement_id != "G-REPLACE-ME-XXXXXX"
-    ):  # Check against placeholder if using that default
-        logger.info(
-            f"Integrating Google Analytics with Measurement ID: {ga_measurement_id}"
-        )
-        ga_snippet = f"""
-        <script async src="https://www.googletagmanager.com/gtag/js?id={ga_measurement_id}"></script>
-        <script>
-          window.dataLayer = window.dataLayer || [];
-          function gtag(){{dataLayer.push(arguments);}}
-          gtag('js', new Date());
-
-          gtag('config', '{ga_measurement_id}');
-          // Note: Cookiebot should handle consent for GA if configured correctly in Cookiebot backend
-        </script>
-        """
-    else:
-        logger.warning(
-            "GA_MEASUREMENT_ID not configured or is placeholder. GA snippet omitted."
-        )
-
     # --- Define the custom HTML structure for Dash ---
-    # PLACE COOKIEBOT *BEFORE* GOOGLE ANALYTICS
     custom_index_string = f"""
     <!DOCTYPE html>
     <html>
@@ -1808,9 +1766,6 @@ def create_web_interface(detection_manager):
             <title>{{%title%}}</title> 
             {{%favicon%}}
             {{%css%}}
-
-            {cookiebot_snippet}
-            {ga_snippet}
             </head>
         <body>
             {{%app_entry%}}
