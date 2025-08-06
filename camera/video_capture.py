@@ -71,23 +71,39 @@ class VideoCapture:
         logger.error(error_msg)
         raise ValueError(f"Unable to determine stream type for source: {self.source}")
 
-
     def _setup_capture(self):
-        """
-        Sets up the video capture based on the detected stream type.
-        """
         logger.debug("Setting up video capture...")
         if self.stream_type == "rtsp":
-            self._setup_ffmpeg()
+            try:
+                self._setup_opencv_rtsp()
+                self.backend = "opencv"
+                logger.info("Using OpenCV VideoCapture backend successfully.")
+            except Exception as e:
+                logger.warning(f"OpenCV RTSP capture failed: {e}. Falling back to FFmpeg.")
+                self._setup_ffmpeg()
+                self.backend = "ffmpeg"
         elif self.stream_type == "http":
             self._setup_http()
+            self.backend = "opencv"
         elif self.stream_type == "webcam":
             self._setup_webcam()
+            self.backend = "opencv"
         else:
-            error_msg = f"Unsupported stream type: {self.stream_type}"
-            logger.error(error_msg)
             raise ValueError(f"Unsupported stream type: {self.stream_type}")
         logger.debug("Video capture setup completed.")
+
+    def _setup_opencv_rtsp(self):
+        """Try to initialize RTSP stream with OpenCV."""
+        logger.info("Trying OpenCV backend for RTSP stream...")
+        self.cap = cv2.VideoCapture(self.source, cv2.CAP_FFMPEG)
+        if not self.cap.isOpened():
+            raise RuntimeError("OpenCV could not open RTSP stream")
+
+        self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 3)
+        self.stream_width = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        self.stream_height = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        logger.info(f"OpenCV RTSP setup successful: {self.stream_width}x{self.stream_height}")
+        self.backend = "opencv"
 
     def _setup_ffmpeg(self):
         ffmpeg_cmd = [
@@ -163,6 +179,10 @@ class VideoCapture:
 
         try:
             output = subprocess.check_output(ffprobe_cmd, stderr=subprocess.STDOUT, timeout=30).decode().strip()
+            # Insert fallback for 0x0 result
+            if output == "0\n0" or output == "0":
+                logger.warning("FFprobe returned 0x0 resolution. Falling back to default 640x480.")
+                output = "640\n480"
             logger.debug(f"FFprobe output: {output}")
             # Parse the FFprobe output
             try:
@@ -315,31 +335,122 @@ class VideoCapture:
         logger.info("Reader thread has exited.")
 
     def _read_frame(self):
-        if self.stream_type == "rtsp":
+        if self.stream_type == "rtsp" and self.backend == "ffmpeg":
             return self._read_ffmpeg_frame()
         elif self.cap and self.cap.isOpened():
             ret, frame = self.cap.read()
             if ret:
+                self.failed_reads = 0
                 return frame
             else:
-                logger.error("HTTP capture failed to read frame.")
-                self._reinitialize_camera(reason="HTTP capture failed to read frame.")
+                self.failed_reads += 1
+                logger.warning(f"OpenCV failed to read frame ({self.failed_reads} consecutive failures)")
+                if self.failed_reads > 5:
+                    logger.error("Too many OpenCV read failures, switching to FFmpeg fallback.")
+                    self._switch_to_ffmpeg()
                 return None
         else:
-            logger.error("HTTP capture is not opened.")
-            self._reinitialize_camera(reason="HTTP capture not opened.")
+            logger.error("HTTP/RTSP capture not opened.")
+            # If RTSP stream, handle possible codec switch gracefully
+            if self.stream_type == "rtsp":
+                logger.info("Attempting fast codec switch recovery in _read_frame.")
+                self._handle_codec_switch()
+            else:
+                self._reinitialize_camera(reason="Capture not opened.")
             return None
+
+    def _switch_to_ffmpeg(self):
+        """Releases OpenCV backend and initializes FFmpeg."""
+        try:
+            if self.cap:
+                self.cap.release()
+            self.cap = None
+            self.backend = "ffmpeg"
+            self._setup_ffmpeg()
+            logger.info("Successfully switched to FFmpeg backend.")
+        except Exception as e:
+            logger.error(f"Failed to switch to FFmpeg: {e}")
+
+    def _handle_codec_switch(self):
+        """
+        Handles RTSP codec switches gracefully without triggering full reinitialization loops.
+        """
+        logger.info("Detected potential codec switch. Attempting fast reconnection...")
+        try:
+            # Release resources
+            if self.cap:
+                self.cap.release()
+            if self.ffmpeg_process:
+                self.ffmpeg_process.terminate()
+                try:
+                    self.ffmpeg_process.wait(timeout=3)
+                except subprocess.TimeoutExpired:
+                    self.ffmpeg_process.kill()
+
+            self.cap = None
+            self.ffmpeg_process = None
+
+            # Short pause to let codec change settle
+            time.sleep(1)
+
+            # Re-detect resolution
+            try:
+                self._get_stream_resolution_ffprobe()
+            except Exception as e:
+                logger.warning(f"FFprobe failed during codec switch: {e}")
+
+            # Reconnect quickly
+            self._setup_capture()
+            self._start_reader_thread()
+            logger.info("Fast reconnection after codec switch successful.")
+        except Exception as e:
+            logger.error(f"Codec switch handling failed: {e}")
+            self._reinitialize_camera(reason="Codec switch recovery failed")
 
     def _read_ffmpeg_frame(self):
         frame_size = self.stream_width * self.stream_height * 3  # For bgr24 (3 bytes per pixel)
-
         try:
             raw_frame = self.ffmpeg_process.stdout.read(frame_size)
             if len(raw_frame) != frame_size:
-                logger.error(f"FFmpeg produced incomplete frame: expected {frame_size} bytes, got {len(raw_frame)} bytes.")
-                return None  # Skip incomplete frames
-            frame = np.frombuffer(raw_frame, np.uint8).reshape((self.stream_height, self.stream_width, 3))
-            self.last_frame_time = time.time()  # Update timestamp on successful frame read
+                actual_size = len(raw_frame)
+                # New block: handle empty frame
+                if actual_size == 0:
+                    logger.warning("Empty frame detected - possible codec switch.")
+                    self._handle_codec_switch()
+                    return None
+                logger.warning(
+                    f"FFmpeg produced incomplete frame: expected {frame_size} bytes, got {actual_size} bytes."
+                )
+                # Try to infer resolution from actual bytes if possible
+                if actual_size % 3 == 0:
+                    pixels = actual_size // 3
+                    new_height = int(np.sqrt(pixels))
+                    new_width = pixels // new_height if new_height else self.stream_width
+                    if new_width > 0 and new_height > 0 and (
+                        new_width != self.stream_width or new_height != self.stream_height
+                    ):
+                        logger.info(
+                            f"Adjusting resolution dynamically from {self.stream_width}x{self.stream_height} "
+                            f"to {new_width}x{new_height} based on FFmpeg output."
+                        )
+                        self.stream_width = new_width
+                        self.stream_height = new_height
+                        frame_size = actual_size
+                        try:
+                            frame = np.frombuffer(raw_frame, np.uint8).reshape(
+                                (self.stream_height, self.stream_width, 3)
+                            )
+                            self.last_frame_time = time.time()
+                            return frame
+                        except Exception as reshape_err:
+                            logger.error(
+                                f"Failed to reshape frame with inferred resolution {new_width}x{new_height}: {reshape_err}"
+                            )
+                return None
+            frame = np.frombuffer(raw_frame, np.uint8).reshape(
+                (self.stream_height, self.stream_width, 3)
+            )
+            self.last_frame_time = time.time()
             return frame
         except Exception as e:
             logger.error(f"Error reading frame from FFmpeg: {e}")
