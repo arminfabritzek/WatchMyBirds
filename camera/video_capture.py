@@ -50,6 +50,10 @@ class VideoCapture:
         self.consecutive_none_frames = 0
         self.max_none_frames_before_reconnect = 10
 
+        self.failed_reads = 0
+        self.last_codec_switch_time = 0
+        self.codec_switch_cooldown = 10  # seconds between codec switch attempts
+
         logger.debug(
             f"Initialized VideoCapture with source: {self.source}, stream_type: {self.stream_type}"
         )
@@ -364,9 +368,9 @@ class VideoCapture:
                                 reason="RTSP FFmpeg subprocess terminated unexpectedly."
                             )
                         else:
-                            if time.time() - self.last_frame_time > 10:
+                            if time.time() - self.last_frame_time > 5:
                                 logger.error(
-                                    "No frame received for over 10 seconds; triggering reinitialization."
+                                    "No frame received for over 5 seconds; triggering reinitialization."
                                 )
                                 self._reinitialize_camera(reason="RTSP stream stale.")
                 elif self.stream_type == self.HTTP:
@@ -422,8 +426,13 @@ class VideoCapture:
                         self.consecutive_none_frames += 1
                         logger.warning(f"Frame not available. Consecutive count: {self.consecutive_none_frames}")
                         if self.stream_type == self.RTSP and self.consecutive_none_frames >= self.max_none_frames_before_reconnect:
-                            logger.info("Exceeded max consecutive None frames. Attempting codec switch recovery.")
-                            self._handle_codec_switch()
+                            now = time.time()
+                            if now - self.last_codec_switch_time > self.codec_switch_cooldown:
+                                logger.info("Exceeded max consecutive None frames. Attempting codec switch recovery.")
+                                self._handle_codec_switch()
+                                self.last_codec_switch_time = now
+                            else:
+                                logger.info("Skipping codec switch, still in cooldown period.")
                             self.consecutive_none_frames = 0
                         elif self.stream_type != self.RTSP and self.consecutive_none_frames >= self.max_none_frames_before_reconnect:
                             self._reinitialize_camera(reason="Multiple None frames received.")
@@ -449,7 +458,7 @@ class VideoCapture:
                 logger.warning(
                     f"OpenCV failed to read frame ({self.failed_reads} consecutive failures)"
                 )
-                if self.failed_reads > 5:
+                if self.failed_reads >= 3:
                     logger.error(
                         "Too many OpenCV read failures, switching to FFmpeg fallback."
                     )
@@ -523,8 +532,13 @@ class VideoCapture:
                 actual_size = len(raw_frame)
                 # New block: handle empty frame
                 if actual_size == 0:
-                    logger.warning("Empty frame detected - possible codec switch.")
-                    self._handle_codec_switch()
+                    now = time.time()
+                    if now - self.last_codec_switch_time > self.codec_switch_cooldown:
+                        logger.warning("Empty frame detected - possible codec switch.")
+                        self._handle_codec_switch()
+                        self.last_codec_switch_time = now
+                    else:
+                        logger.info("Skipping codec switch on empty frame, still in cooldown period.")
                     return None
                 logger.warning(
                     f"FFmpeg produced incomplete frame: expected {frame_size} bytes, got {actual_size} bytes."
