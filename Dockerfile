@@ -10,6 +10,7 @@ RUN apt-get update && apt-get install -y \
     libavcodec-extra \
     libopenjp2-7 \
     ffmpeg \
+    curl \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Securely install gosu from upstream to avoid Go CVEs
@@ -34,6 +35,10 @@ ENV MPLCONFIGDIR=/tmp/matplotlib \
 
 # Set the working directory
 WORKDIR /app
+
+ARG GIT_COMMIT
+ARG BUILD_DATE
+ARG VERSION
 
 # OCI image labels
 LABEL org.opencontainers.image.title="WatchMyBirds" \
