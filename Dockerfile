@@ -2,16 +2,22 @@
 FROM python:3.12-slim-bookworm
 
 # Install system dependencies
-RUN apt-get update && apt-get install -y \
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+    ffmpeg \
     libglib2.0-0 \
     libsm6 \
     libxext6 \
-    libxrender-dev \
-    libavcodec-extra \
+    libxrender1 \
+    libavcodec-dev \
+    libavformat-dev \
+    libswscale-dev \
     libopenjp2-7 \
-    ffmpeg \
     curl \
-    && apt-get clean && rm -rf /var/lib/apt/lists/*
+    libxml2 \
+    libxslt1.1 && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
 
 # Securely install gosu from upstream to avoid Go CVEs
 RUN set -eux; \
@@ -19,11 +25,6 @@ RUN set -eux; \
     curl -fsSL -o /usr/local/bin/gosu "https://github.com/tianon/gosu/releases/download/1.16/gosu-${ARCH}"; \
     chmod +x /usr/local/bin/gosu; \
     gosu --version
-
-# Upgrade vulnerable libraries to fix CVEs
-RUN apt-get update && \
-    apt-get install --only-upgrade -y libxml2 libxslt1.1 && \
-    rm -rf /var/lib/apt/lists/*
 
 # Set environment variables
 ENV MPLCONFIGDIR=/tmp/matplotlib \
