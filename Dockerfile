@@ -6,17 +6,18 @@ RUN apt-get update && apt-get install -y \
     libglib2.0-0 \
     libsm6 \
     libxext6 \
-    libavcodec-extra \
     libxrender-dev \
-    libavformat58 \
-    libavfilter7 \
-    libswscale5 \
-    libavutil56 \
-    libavdevice58 \
+    libavcodec-extra \
     libopenjp2-7 \
     ffmpeg \
-    gosu \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# Securely install gosu from upstream to avoid Go CVEs
+RUN set -eux; \
+    ARCH="$(dpkg --print-architecture)"; \
+    curl -fsSL -o /usr/local/bin/gosu "https://github.com/tianon/gosu/releases/download/1.16/gosu-${ARCH}"; \
+    chmod +x /usr/local/bin/gosu; \
+    gosu --version
 
 # Upgrade vulnerable libraries to fix CVEs
 RUN apt-get update && \
