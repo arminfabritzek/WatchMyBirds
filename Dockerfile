@@ -7,8 +7,6 @@ RUN apt-get update && \
     ffmpeg \
     libglib2.0-0 \
     libsm6 \
-    libxext6 \
-    libxrender1 \
     libavcodec-dev \
     libavformat-dev \
     libswscale-dev \
