@@ -68,6 +68,7 @@ class VideoCapture:
             return
         if self.stream_type == self.RTSP:
             self._get_stream_resolution_ffprobe()
+            logger.info(f"Initial resolution: {self.resolution}")
         self._setup_capture()
         self._start_reader_thread()
         self._start_health_check_thread()
@@ -261,42 +262,55 @@ class VideoCapture:
                 .decode()
                 .strip()
             )
-            # Insert fallback for 0x0 result
-            if output == "0\n0" or output == "0":
-                logger.warning(
-                    "FFprobe returned 0x0 resolution. Falling back to default 640x480."
-                )
-                output = "640\n480"
             logger.debug(f"FFprobe output: {output}")
-            # Parse the FFprobe output
-            try:
-                width, height = map(int, output.split("\n"))
-            except (ValueError, Exception):
-                logger.warning(
-                    "FFprobe failed to detect resolution. Falling back to default 640x480."
-                )
-                width, height = 640, 480
-            logger.debug(f"Detected stream resolution: {width}x{height}")
-
-            # Set the resolution as instance attributes
+            width, height = map(int, output.split("\n"))
             self.stream_width = width
             self.stream_height = height
+            logger.debug(f"Detected stream resolution via FFprobe: {width}x{height}")
+            return
+        except Exception as ffprobe_error:
+            logger.warning(f"FFprobe failed: {ffprobe_error}. Falling back to FFmpeg stderr parsing.")
 
-        except subprocess.TimeoutExpired:
-            logger.warning("FFprobe timed out. Stream may be unreachable.")
-            raise RuntimeError("FFprobe could not retrieve stream resolution within 60 seconds.")
-        except subprocess.CalledProcessError as e:
-            error_output = e.output.decode().strip()
-            logger.debug(f"FFprobe failed with error: {error_output}")
-            raise RuntimeError("Failed to get stream resolution using FFprobe.")
-        except ValueError as ve:
-            logger.debug(f"Error parsing FFprobe output: {ve}")
-            raise RuntimeError("Failed to parse stream resolution from FFprobe output.")
-        except Exception as e:
-            logger.debug(f"Unexpected error during FFprobe: {e}")
-            raise RuntimeError(
-                "An unexpected error occurred while getting stream resolution."
+        # Fallback: use ffmpeg to parse stderr for resolution
+        ffmpeg_cmd = [
+            "ffmpeg",
+            "-rtsp_transport",
+            "tcp",
+            "-i",
+            self.source,
+            "-t",
+            "1",
+            "-f",
+            "null",
+            "-",
+        ]
+
+        logger.debug(f"Running FFmpeg command for resolution fallback: {' '.join(ffmpeg_cmd)}")
+
+        try:
+            result = subprocess.run(
+                ffmpeg_cmd,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+                timeout=60,
+                check=True,
             )
+            stderr_output = result.stderr.decode()
+            logger.debug(f"FFmpeg stderr output:\n{stderr_output}")
+
+            # Parse resolution from stderr
+            import re
+            match = re.search(r"(\d{2,5})x(\d{2,5})", stderr_output)
+            if match:
+                self.stream_width = int(match.group(1))
+                self.stream_height = int(match.group(2))
+                logger.info(f"FFmpeg fallback successfully detected resolution: {self.stream_width}x{self.stream_height}")
+                logger.debug(f"Detected stream resolution via FFmpeg fallback: {self.stream_width}x{self.stream_height}")
+            else:
+                raise RuntimeError("FFmpeg did not return a parsable resolution.")
+        except Exception as ffmpeg_error:
+            logger.error(f"Failed to get stream resolution using FFmpeg fallback: {ffmpeg_error}")
+            raise RuntimeError("Unable to determine stream resolution using ffprobe or ffmpeg.")
 
     def _setup_http(self):
         """
