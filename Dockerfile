@@ -14,7 +14,8 @@ RUN apt-get update && \
     curl \
     libxml2 \
     libxslt1.1 && \
-    apt-get clean && \
+    apt-get autoremove -y && \
+    apt-get autoclean -y && \
     rm -rf /var/lib/apt/lists/*
 
 # Securely install gosu from upstream to avoid Go CVEs
