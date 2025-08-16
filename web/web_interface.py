@@ -343,7 +343,7 @@ def create_web_interface(detection_manager):
         )  # We need this formatted for consistency later, even if not displayed directly in Classifier line
 
         common_name_display = (
-            COMMON_NAMES.get(best_class, best_class_sci) if best_class else "Unbekannt"
+            COMMON_NAMES.get(best_class, best_class_sci) if best_class else "Unknown"
         )
 
         return html.Div(
@@ -399,7 +399,7 @@ def create_web_interface(detection_manager):
                 ),
                 # Show the combined score prominently
                 html.Span(
-                    f"Produkt: {combined_score_percent}%",
+                    f"Product: {combined_score_percent}%",
                     className="info-combined-conf",
                 ),
                 # Optionally show original scores for context (smaller font?)
@@ -444,7 +444,7 @@ def create_web_interface(detection_manager):
                 ),
                 # Show the combined score prominently
                 html.Span(
-                    f"Gewichtet: {combined_score_percent}%",
+                    f"Weighted: {combined_score_percent}%",
                     className="info-combined-conf",
                 ),
                 html.Span(
@@ -522,7 +522,7 @@ def create_web_interface(detection_manager):
         if not summary_data:
             # Return placeholder component
             return html.P(
-                f"Keine übereinstimmenden Erkennungen für {date_str_iso} gefunden.",
+                f"No matching detections found for {date_str_iso}.",
                 className="text-center text-muted small",
             )
 
@@ -607,7 +607,7 @@ def create_web_interface(detection_manager):
         if not summary_data:
             # Return placeholder and empty list for modals
             return html.P(
-                f"Keine gewichteten Erkennungen für {date_str_iso} gefunden.",
+                f"No weighted detections found for {date_str_iso}.",
                 className="text-center text-muted small",
             )
 
@@ -695,7 +695,7 @@ def create_web_interface(detection_manager):
         gallery_items, modals = [], []
         if not all_time_unique_detector:
             return html.P(
-                f"Keine Arten (Detector) über Schwellenwert ({int(CONFIDENCE_THRESHOLD_DETECTION * 100)}%) bisher erfasst.",
+                f"No species (Detector) detected above threshold ({int(CONFIDENCE_THRESHOLD_DETECTION * 100)}%) yet.",
                 className="text-center text-muted",
             )
 
@@ -761,7 +761,7 @@ def create_web_interface(detection_manager):
         gallery_items, modals = [], []
         if not all_time_unique_classifier:
             return html.P(
-                f"Keine Arten (Classifier) bisher erfasst (Schwelle: {int(CLASSIFIER_CONFIDENCE_THRESHOLD * 100)}%).",
+                f"No species (Classifier) detected yet (Threshold: {int(CLASSIFIER_CONFIDENCE_THRESHOLD * 100)}%).",
                 className="text-center text-muted",
             )
 
@@ -841,7 +841,7 @@ def create_web_interface(detection_manager):
         modals = []
         if not summary_data:
             return html.P(
-                "Keine übereinstimmenden Erkennungen über Schwellenwerten gefunden.",
+                "No matching detections found above thresholds.",
                 className="text-center text-muted",
             )
 
@@ -928,7 +928,7 @@ def create_web_interface(detection_manager):
         modals = []
         if not summary_data:
             return html.P(
-                "Keine Erkennungen über Schwellenwerten für gewichtete Bewertung gefunden.",
+                "No detections found above thresholds for weighted evaluation.",
                 className="text-center text-muted",
             )
 
@@ -977,18 +977,18 @@ def create_web_interface(detection_manager):
         return dbc.Container(
             [
                 generate_navbar(),  # Include navbar
-                html.H1("Artenübersicht (Alle Tage)", className="text-center my-3"),
+                html.H1("Species Summary (All Days)", className="text-center my-3"),
                 # --- Section 1: Best Detector ---
                 dbc.Row(
                     [
                         dbc.Col(
                             [
                                 html.H3(
-                                    "Beste Detektion pro Art",
+                                    "Best Detection per Species",
                                     className="text-center mt-4 mb-3",
                                 ),
                                 html.P(
-                                    f"Zeigt das Bild mit der höchsten Detector-Konfidenz (>= {int(CONFIDENCE_THRESHOLD_DETECTION*100)}%) für jede klassifizierte Art.",
+                                    f"Shows the image with the highest detector confidence (>= {int(CONFIDENCE_THRESHOLD_DETECTION*100)}%) for each classified species.",
                                     className="text-center text-muted small mb-3",
                                 ),
                                 detector_summary,
@@ -1004,11 +1004,11 @@ def create_web_interface(detection_manager):
                         dbc.Col(
                             [
                                 html.H3(
-                                    "Beste Klassifizierung pro Art",
+                                    "Best Classification per Species",
                                     className="text-center mt-4 mb-3",
                                 ),
                                 html.P(
-                                    f"Zeigt das Bild mit der höchsten Classifier-Konfidenz (>= {int(CLASSIFIER_CONFIDENCE_THRESHOLD*100)}%) für jede klassifizierte Art.",
+                                    f"Shows the image with the highest classifier confidence (>= {int(CLASSIFIER_CONFIDENCE_THRESHOLD*100)}%) for each classified species.",
                                     className="text-center text-muted small mb-3",
                                 ),
                                 classifier_summary,
@@ -1024,11 +1024,11 @@ def create_web_interface(detection_manager):
                         dbc.Col(
                             [
                                 html.H3(
-                                    "Agreement & Produkt-Score",
+                                    "Agreement & Product Score",
                                     className="text-center mt-4 mb-3",
                                 ),
                                 html.P(
-                                    f"Zeigt das Bild mit dem höchsten Produkt-Score (Detektor x Classifier), nur wenn beide Modelle zustimmen und über ihren Schwellenwerten liegen (Det >= {int(CONFIDENCE_THRESHOLD_DETECTION*100)}%, Cls >= {int(CLASSIFIER_CONFIDENCE_THRESHOLD*100)}%).",
+                                    f"Shows the image with the highest product score (Detector x Classifier), only if both models agree and are above their thresholds (Det >= {int(CONFIDENCE_THRESHOLD_DETECTION*100)}%, Cls >= {int(CLASSIFIER_CONFIDENCE_THRESHOLD*100)}%).",
                                     className="text-center text-muted small mb-3",
                                 ),
                                 fused_agreement_summary,
@@ -1044,11 +1044,11 @@ def create_web_interface(detection_manager):
                         dbc.Col(
                             [
                                 html.H3(
-                                    f"Gewichteter Score, α={FUSION_ALPHA}",
+                                    f"Weighted Score, α={FUSION_ALPHA}",
                                     className="text-center mt-4 mb-3",
                                 ),
                                 html.P(
-                                    f"Zeigt das Bild mit dem höchsten gewichteten Score ({FUSION_ALPHA*100:.0f}% Detektor + { (1-FUSION_ALPHA)*100:.0f}% Classifier), wenn beide Modelle über ihren Schwellenwerten liegen. Bei Uneinigkeit wird die Klasse des Classifiers verwendet.",
+                                    f"Shows the image with the highest weighted score ({FUSION_ALPHA*100:.0f}% Detector + { (1-FUSION_ALPHA)*100:.0f}% Classifier), if both models are above their thresholds. In case of disagreement, the classifier's class is used.",
                                     className="text-center text-muted small mb-3",
                                 ),
                                 fused_weighted_summary,
@@ -1072,7 +1072,7 @@ def create_web_interface(detection_manager):
                 [
                     generate_navbar(),
                     html.H2(
-                        f"Edit Bilder vom {date_str_iso}", className="text-center my-3"
+                        f"Edit Images from {date_str_iso}", className="text-center my-3"
                     ),
                     dbc.Alert(
                         f"No images found or error reading data for {date_str_iso}.",
@@ -1251,10 +1251,10 @@ def create_web_interface(detection_manager):
             children=[
                 dbc.NavItem(dbc.NavLink("Live Stream", href="/", className="mx-auto")),
                 dbc.NavItem(
-                    dbc.NavLink("Galerie", href="/gallery", className="mx-auto")
+                    dbc.NavLink("Gallery", href="/gallery", className="mx-auto")
                 ),
                 dbc.NavItem(
-                    dbc.NavLink("Artenübersicht", href="/species", className="mx-auto")
+                    dbc.NavLink("Species Summary", href="/species", className="mx-auto")
                 ),
             ],
             color="primary",
@@ -1274,7 +1274,7 @@ def create_web_interface(detection_manager):
         if not sorted_dates:
             grid_items.append(
                 html.P(
-                    "Bisher keine Bilder in der Galerie.",
+                    "No images in the gallery yet.",
                     className="text-center text-muted mt-5",
                 )
             )
@@ -1310,7 +1310,7 @@ def create_web_interface(detection_manager):
         return dbc.Container(
             [
                 generate_navbar(),
-                html.H1("Galerie", className="text-center my-3"),
+                html.H1("Gallery", className="text-center my-3"),
                 content,  # Add the container with grid items
             ],
             fluid=True,
@@ -1337,10 +1337,10 @@ def create_web_interface(detection_manager):
             return dbc.Container(
                 [
                     generate_navbar(),
-                    html.H2(f"Bilder vom {date}", className="text-center"),
-                    dbc.Alert(f"Keine Bilder für den {date} gefunden.", color="info"),
+                    html.H2(f"Images from {date}", className="text-center"),
+                    dbc.Alert(f"No images found for {date}.", color="info"),
                     dbc.Button(
-                        "Zurück zur Galerieübersicht",
+                        "Back to Gallery Overview",
                         href="/gallery",
                         color="secondary",
                         outline=True,
@@ -1404,7 +1404,7 @@ def create_web_interface(detection_manager):
         if page_df.empty:
             gallery_items.append(
                 html.P(
-                    f"Keine Bilder für den {date} auf dieser Seite gefunden.",
+                    f"No images found for {date} on this page.",
                     className="text-center text-muted mt-4 mb-4",
                 )
             )
@@ -1485,7 +1485,7 @@ def create_web_interface(detection_manager):
                 # Button triggers modal, ID includes the date
                 header_buttons.append(
                     dbc.Button(
-                        "Diesen Tag bearbeiten",
+                        "Edit This Day",
                         id={
                             "type": "open-edit-modal-button",
                             "date": date,
@@ -1499,7 +1499,7 @@ def create_web_interface(detection_manager):
             else:
                 header_buttons.append(
                     dbc.Button(
-                        "Bearbeiten (Nur vergangene Tage)",
+                        "Edit (Past Days Only)",
                         color="warning",
                         size="sm",
                         className="mb-3 mt-3",
@@ -1509,11 +1509,11 @@ def create_web_interface(detection_manager):
             container_elements.append(html.Div(header_buttons))
 
             container_elements.append(
-                html.H2(f"Bilder vom {date}", className="text-center")
+                html.H2(f"Images from {date}", className="text-center")
             )
             container_elements.append(
                 html.P(
-                    f"Seite {page} von {total_pages} ({total_images} Bilder insgesamt)",
+                    f"Page {page} of {total_pages} ({total_images} images total)",
                     className="text-center text-muted small",
                 )
             )
@@ -1530,12 +1530,12 @@ def create_web_interface(detection_manager):
                 [
                     html.Hr(),
                     html.H4(
-                        "Tagesübersicht: Agreement & Produkt-Score",
+                        "Daily Summary: Agreement & Product Score",
                         className="text-center mt-4",
                     ),
                     agreement_summary_content,
                     html.H4(
-                        f"Tagesübersicht: Gewichteter Score, α={FUSION_ALPHA}",
+                        f"Daily Summary: Weighted Score, α={FUSION_ALPHA}",
                         className="text-center mt-4",
                     ),
                     weighted_summary_content,
@@ -1639,6 +1639,10 @@ def create_web_interface(detection_manager):
                 time.sleep(desired_frame_time - elapsed)
 
     def generate_hourly_detection_plot():
+        """
+        Generates a Plotly bar plot showing number of detections per hour for today.
+        Handles empty data gracefully and is compatible with Plotly.
+        """
         # Get all captured images
         all_images = get_captured_images()
         today_str = datetime.now().strftime("%Y%m%d")
@@ -1647,8 +1651,8 @@ def create_web_interface(detection_manager):
         counts = {f"{hour:02d}": 0 for hour in range(24)}
 
         # Count detections per hour for today
-        for ts, _, _, _, _, _ in all_images:
-            if ts.startswith(today_str):
+        for ts, *_ in all_images:
+            if ts and ts.startswith(today_str):
                 # Assuming timestamp format "YYYYMMDD_HHMMSS"
                 hour = ts[9:11]
                 if hour in counts:
@@ -1662,13 +1666,13 @@ def create_web_interface(detection_manager):
         fig = px.bar(
             x=hours,
             y=values,
-            labels={"x": "Stunde des Tages", "y": "Anzahl Beobachtungen"},
+            labels={"x": "Hour of the Day", "y": "Number of Observations"},
             color_discrete_sequence=["#B5EAD7"],
         )
 
         fig.update_layout(
             title={
-                "text": "Heutige Beobachtungen pro Stunde",
+                "text": "Today's Observations per Hour",
                 "y": 0.95,
                 "x": 0.5,
                 "xanchor": "center",
@@ -1704,7 +1708,7 @@ def create_web_interface(detection_manager):
 
         # Customize hover text
         fig.update_traces(
-            hovertemplate="<b>Stunde %{x}</b><br>Beobachtungen: %{y}<extra></extra>"
+            hovertemplate="<b>Hour %{x}</b><br>Observations: %{y}<extra></extra>"
         )
 
         # Add a simple check for no data
@@ -1714,11 +1718,13 @@ def create_web_interface(detection_manager):
                 yaxis_showticklabels=False,
                 annotations=[
                     dict(
-                        text="Noch keine Beobachtungen heute",
+                        text="No observations today yet",
                         xref="paper",
                         yref="paper",
                         showarrow=False,
                         font=dict(size=16, color="#888888"),
+                        x=0.5,
+                        y=0.5,
                     )
                 ],
             )
@@ -1837,7 +1843,7 @@ def create_web_interface(detection_manager):
             dbc.Row(
                 dbc.Col(
                     html.H2(
-                        "Tagesübersicht: Agreement & Produkt-Score",
+                        "Daily Summary: Agreement & Product Score",
                         className="text-center",
                     ),
                     width=12,
@@ -1853,7 +1859,7 @@ def create_web_interface(detection_manager):
             dbc.Row(
                 dbc.Col(
                     html.H2(
-                        f"Tagesübersicht: Gewichteter Score, α={FUSION_ALPHA}",
+                        f"Daily Summary: Weighted Score, α={FUSION_ALPHA}",
                         className="text-center",
                     ),
                     width=12,
@@ -1871,7 +1877,7 @@ def create_web_interface(detection_manager):
             ),
             dbc.Row(
                 dbc.Col(
-                    html.H2("Alle heutigen Bilder", className="text-center mt-4"),
+                    html.H2("All of Today's Images", className="text-center mt-4"),
                     width=12,
                 )
             ),
@@ -1918,24 +1924,24 @@ def create_web_interface(detection_manager):
     def add_password_modal(_):  # We don't need the pathname here, just need to trigger
         return dbc.Modal(
             [
-                dbc.ModalHeader(dbc.ModalTitle("Passwort erforderlich")),
+                dbc.ModalHeader(dbc.ModalTitle("Password Required")),
                 dbc.ModalBody(
                     [
                         dbc.Alert(
-                            "Bitte geben Sie das Passwort ein, um diese Seite zu bearbeiten.",
+                            "Please enter the password to edit this page.",
                             color="info",
                             id="password-modal-message",
                         ),
                         dbc.Input(
                             id="password-input",
                             type="password",
-                            placeholder="Passwort eingeben...",
+                            placeholder="Enter password...",
                         ),
                     ]
                 ),
                 dbc.ModalFooter(
                     dbc.Button(
-                        "Bestätigen",
+                        "Confirm",
                         id="submit-password-button",
                         color="primary",
                         n_clicks=0,
@@ -1976,7 +1982,7 @@ def create_web_interface(detection_manager):
             if target_date:
                 # Reset message and open modal
                 message = dbc.Alert(
-                    "Bitte geben Sie das Passwort ein, um diese Seite zu bearbeiten.",
+                    "Please enter the password to edit this page.",
                     color="info",
                 )
                 return (
@@ -2036,7 +2042,7 @@ def create_web_interface(detection_manager):
                 True,
                 no_update,
                 no_update,
-                dbc.Alert("Bitte Passwort eingeben.", color="warning"),
+                dbc.Alert("Please enter a password.", color="warning"),
             )
 
         # --- Perform the comparison ---
@@ -2059,7 +2065,7 @@ def create_web_interface(detection_manager):
             logger.warning(
                 f"Incorrect password entered for editing date: {target_date}"
             )
-            error_message = dbc.Alert("Falsches Passwort!", color="danger")
+            error_message = dbc.Alert("Incorrect password!", color="danger")
             # Keep modal open, don't change auth store, don't redirect, show error
             return True, no_update, no_update, error_message
 
@@ -2246,15 +2252,15 @@ def create_web_interface(detection_manager):
                         [  # Simple access denied page
                             generate_navbar(),
                             html.H2(
-                                "Zugriff verweigert",
+                                "Access Denied",
                                 className="text-danger text-center mt-4",
                             ),
                             html.P(
-                                "Sie müssen authentifiziert sein, um diese Seite anzuzeigen.",
+                                "You must be authenticated to view this page.",
                                 className="text-center",
                             ),
                             dbc.Button(
-                                "Zurück zur Galerie", href="/gallery", color="primary"
+                                "Back to Gallery", href="/gallery", color="primary"
                             ),
                         ],
                         fluid=True,
@@ -2272,11 +2278,11 @@ def create_web_interface(detection_manager):
                         [
                             generate_navbar(),
                             html.H2(
-                                f"Edit Bilder vom {date_str_iso}",
+                                f"Edit Images from {date_str_iso}",
                                 className="text-center my-3",
                             ),
                             dbc.Alert(
-                                "Die Bearbeitung der Galerie für den aktuellen Tag ist nicht erlaubt.",
+                                "Editing the gallery for the current day is not allowed.",
                                 color="warning",
                             ),
                             dbc.Button(

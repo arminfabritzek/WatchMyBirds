@@ -1,43 +1,43 @@
 # Codex Project Instructions - WatchMyBirds Inference App
 
 ## 1. Code Guidelines
-- Verwende die Richtlinien aus AGENTS.md.
+- Use the guidelines from AGENTS.md.
 
 
 ## 2. Interaction with Codex
-- Codex muss:
-  - Immer diese Datei und `AGENTS.md` beachten.
-  - Nur produktive Skripte ändern, nie Dateien in `legacy/`.
-  - Nach **jeder** Codeänderung automatisch die Dokumentation gemäß Abschnitt 8 aktualisieren.
-- Bei Unsicherheit TODO-Kommentare hinzufügen.
+- Codex must:
+  - Always consider this file and `AGENTS.md`.
+  - Only modify production scripts, never files in `legacy/`.
+  - Automatically update the documentation according to Section 8 after **every** code change.
+- Add TODO comments if uncertain.
 
 ---
 
 ## 7. Dependencies
 - Python 3.11+
-- Abhängigkeiten in `requirements.txt`.
-- Bei neuen Paketen Datei aktualisieren und dokumentieren.
+- Dependencies in `requirements.txt`.
+- Update and document the file for new packages.
 
 ---
 
 ## 8. Documentation Maintenance Policy
-- **Dokumentation muss nach jeder Codeänderung aktualisiert werden.**
+- **Documentation must be updated after every code change.**
 
 ---
 
 
-### Pflicht-Updates
-1. **README.md** und **PROJECT_STATUS.md**
-   - Ordnerstruktur, Config-Keys und Anweisungen synchronisieren.  
-   - Test- und Nutzungshinweise ergänzen, falls geändert.  
+### Mandatory Updates
+1. **README.md** and **PROJECT_STATUS.md**
+   - Synchronize folder structure, config keys, and instructions.  
+   - Add test and usage notes if changed.  
 
-### Regeln
-- Dokumentationsänderungen müssen **im selben Commit** wie Codeänderungen erfolgen.
-- Keine veralteten Informationen in diesen Dateien belassen (aktualisieren).
-- Bei Unklarheit → Datei komplett mit aktuellem Stand neu generieren.
+### Rules
+- Documentation changes must be made **in the same commit** as code changes.
+- Do not leave outdated information in these files (update).
+- If unclear → completely regenerate the file with the current state.
 
 ---
 
 ### Additional Notes
-- `README.md` und `PROJECT_STATUS.md` muss jederzeit den tatsächlichen Stand der Pipeline widerspiegeln.
-- Dokumentationspflege ist Teil jedes Entwicklungs-Tasks.
+- `README.md` and `PROJECT_STATUS.md` must always reflect the actual state of the pipeline.
+- Documentation maintenance is part of every development task.

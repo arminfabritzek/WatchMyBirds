@@ -62,7 +62,7 @@ class VideoCapture:
             self.start()
 
     def start(self):
-        """Startet den Videostream und die Hintergrund-Threads."""
+        """Starts the video stream and background threads."""
         if self.is_running():
             logger.info("VideoCapture already running.")
             return
@@ -74,11 +74,11 @@ class VideoCapture:
         self._start_health_check_thread()
 
     def is_running(self):
-        """Prüft, ob der Leser-Thread aktiv ist."""
+        """Checks if the reader thread is active."""
         return self.reader_thread is not None and self.reader_thread.is_alive()
 
     def _detect_stream_type(self):
-        """Ermittelt den Stream-Typ anhand der Quelle."""
+        """Determines the stream type based on the source."""
         logger.debug("Detect stream type...")
         if isinstance(self.source, str):
             if self.source.startswith("rtsp://"):
@@ -708,7 +708,7 @@ class VideoCapture:
             return None
 
     def stop(self):
-        """Beendet den Videostream und gibt Ressourcen frei."""
+        """Stops the video stream and releases resources."""
         logger.info("Releasing resources...")
         self.stop_event.set()
         self.stop_flag = True
@@ -762,5 +762,5 @@ class VideoCapture:
 
     @property
     def resolution(self):
-        """Gibt die Auflösung des Video-Streams zurück."""
+        """Returns the resolution of the video stream."""
         return (self.stream_width, self.stream_height)

@@ -1,4 +1,4 @@
-"""Hilfsfunktionen für das Herunterladen und Cachen von Modellen."""
+"""Helper functions for downloading and caching models."""
 
 import json
 import os
@@ -46,9 +46,9 @@ def _normalize_rel_path(base_url: str, rel: str) -> str:
 
 
 def _download_file(url: str, dest: str, retries: int = 3, timeout: int = 60) -> bool:
-    """Lädt eine Datei von einer URL herunter."""
+    """Downloads a file from a URL."""
     if os.path.exists(dest):
-        logger.debug(f"Datei existiert bereits und wird übersprungen: {dest}")
+        logger.debug(f"File already exists and will be skipped: {dest}")
         return True
     for attempt in range(1, retries + 1):
         try:
@@ -58,20 +58,20 @@ def _download_file(url: str, dest: str, retries: int = 3, timeout: int = 60) -> 
             with open(dest, "wb") as file:
                 for chunk in response.iter_content(chunk_size=8192):
                     file.write(chunk)
-            logger.info(f"Datei heruntergeladen: {dest}")
+            logger.info(f"File downloaded: {dest}")
             return True
         except requests.RequestException as exc:
             logger.warning(
-                f"Download-Versuch {attempt}/{retries} für {url} fehlgeschlagen: {exc}"
+                f"Download attempt {attempt}/{retries} for {url} failed: {exc}"
             )
             if attempt < retries:
                 time.sleep(1)
-    logger.error(f"Download endgültig fehlgeschlagen für {url}")
+    logger.error(f"Download failed permanently for {url}")
     return False
 
 
 def fetch_latest_json(base_url: str, cache_dir: str) -> Dict[str, str]:
-    """Lädt *latest_models.json* und legt sie im Cache ab."""
+    """Downloads *latest_models.json* and stores it in the cache."""
     latest_url = f"{base_url}/latest_models.json"
     local_path = os.path.join(cache_dir, "latest_models.json")
     try:
@@ -81,12 +81,12 @@ def fetch_latest_json(base_url: str, cache_dir: str) -> Dict[str, str]:
         os.makedirs(cache_dir, exist_ok=True)
         with open(local_path, "w", encoding="utf-8") as file:
             json.dump(data, file)
-        logger.info(f"Aktualisierte {local_path}")
+        logger.info(f"Updated {local_path}")
         return data
     except requests.RequestException as exc:
-        logger.warning(f"Fehler beim Abrufen von {latest_url}: {exc}")
+        logger.warning(f"Error fetching {latest_url}: {exc}")
         if os.path.exists(local_path):
-            logger.info(f"Verwende lokalen Cache {local_path}")
+            logger.info(f"Using local cache {local_path}")
             with open(local_path, "r", encoding="utf-8") as file:
                 return json.load(file)
         raise
@@ -95,7 +95,7 @@ def fetch_latest_json(base_url: str, cache_dir: str) -> Dict[str, str]:
 def ensure_model_files(
     base_url: str, model_dir: str, weights_key: str, labels_key: str
 ) -> Tuple[str, str]:
-    """Stellt sicher, dass Gewichte und Labels lokal vorhanden sind."""
+    """Ensures that weights and labels are available locally."""
     data = fetch_latest_json(base_url, model_dir)
     # Resolve weights path using provided key or common alternates
     weights_rel: Optional[str] = _first_present(
@@ -106,7 +106,7 @@ def ensure_model_files(
         data, (labels_key, "labels_path", "labels", "classes_path")
     )
     if not weights_rel:
-        raise ValueError("latest_models.json enthält keinen gültigen Pfad für Gewichte.")
+        raise ValueError("latest_models.json does not contain a valid path for weights.")
 
     # Normalize and try to infer labels if missing
     weights_rel_norm = _normalize_rel_path(base_url, weights_rel)
@@ -115,10 +115,10 @@ def ensure_model_files(
         if guessed:
             labels_rel = guessed
             logger.warning(
-                f"{labels_key} fehlt. Rate Labels aus Gewichten: {labels_rel}"
+                f"{labels_key} is missing. Guessing labels from weights: {labels_rel}"
             )
     if not labels_rel:
-        raise ValueError("latest_models.json enthält nicht alle erforderlichen Pfade.")
+        raise ValueError("latest_models.json does not contain all required paths.")
     labels_rel_norm = _normalize_rel_path(base_url, labels_rel)
 
     weights_path = os.path.join(model_dir, os.path.basename(weights_rel_norm))
@@ -126,16 +126,16 @@ def ensure_model_files(
 
     if not os.path.exists(weights_path):
         url = f"{base_url}/{weights_rel_norm}"
-        logger.debug(f"Lade Gewichte von {url} nach {weights_path}")
+        logger.debug(f"Downloading weights from {url} to {weights_path}")
         _download_file(url, weights_path)
     else:
-        logger.debug(f"Verwende vorhandene Gewichte {weights_path}")
+        logger.debug(f"Using existing weights {weights_path}")
 
     if not os.path.exists(labels_path):
         url = f"{base_url}/{labels_rel_norm}"
-        logger.debug(f"Lade Labels von {url} nach {labels_path}")
+        logger.debug(f"Downloading labels from {url} to {labels_path}")
         _download_file(url, labels_path)
     else:
-        logger.debug(f"Verwende vorhandene Labels {labels_path}")
+        logger.debug(f"Using existing labels {labels_path}")
 
     return weights_path, labels_path

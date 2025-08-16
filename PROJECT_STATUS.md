@@ -1,28 +1,28 @@
 # WatchMyBirds Pipeline - Migration Status
 
-## Aktueller Stand
+## Current Status
 
-- Modelle werden nun automatisch aus dem Hugging-Face-Repository geladen.
-
----
-
-## Aktuelle Phase
+- Models are now automatically loaded from the Hugging Face repository.
 
 ---
 
-## Nächste Schritte
+## Current Phase
 
 ---
 
-## Letzte Änderungen
-- 2025-08-05: Einführung von MODEL_BASE_PATH für einheitliche Modellablage.
-- 2025-08-05: Umstellung der Modell-Downloads auf Hugging Face.
-- 2025-07-28: Branch erstellt.
-- 2025-08-06: VideoCapture-Lebenszyklus überarbeitet und FrameGenerator hinzugefügt.
+## Next Steps
 
 ---
 
-## Hinweise für Codex
-- Immer zuerst diese Datei lesen, um aktuelle Phase und Historie zu erkennen.
-- Dokumentation in `README.md` und `PROJECT_STATUS.md` aktuell halten.
-- Status nach jeder Phase hier aktualisieren.
+## Recent Changes
+- 2025-08-05: Introduction of MODEL_BASE_PATH for unified model storage.
+- 2025-08-05: Migration of model downloads to Hugging Face.
+- 2025-07-28: Branch created.
+- 2025-08-06: Revised VideoCapture lifecycle and added FrameGenerator.
+
+---
+
+## Notes for Codex
+- Always read this file first to understand the current phase and history.
+- Keep documentation in `README.md` and `PROJECT_STATUS.md` up to date.
+- Update status here after each phase.

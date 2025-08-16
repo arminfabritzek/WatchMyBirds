@@ -23,7 +23,7 @@ HF_BASE_URL = (
 
 class ImageClassifier:
     def __init__(self) -> None:
-        """Initialisiert den Bildklassifikator und lädt das Modell."""
+        """Initializes the image classifier and loads the model."""
         self.config = load_config()
         model_dir = os.path.join(self.config["MODEL_BASE_PATH"], "classifier")
         self.model_path, self.class_path = ensure_model_files(
@@ -33,9 +33,9 @@ class ImageClassifier:
             self.ort_session = ort.InferenceSession(
                 self.model_path, providers=["CPUExecutionProvider"]
             )
-            logger.info(f"ONNX-Modell geladen: {self.model_path}")
+            logger.info(f"ONNX model loaded: {self.model_path}")
         except Exception as exc:  # pragma: no cover - ausführliches Logging
-            logger.error(f"Konnte ONNX-Modell nicht laden: {exc}")
+            logger.error(f"Could not load ONNX model: {exc}")
             raise
         self.classes: List[str] = self._load_classes()
         # Dynamically detect image size from model input
@@ -43,21 +43,21 @@ class ImageClassifier:
             input_shape = self.ort_session.get_inputs()[0].shape
             self.CLASSIFIER_IMAGE_SIZE = int(input_shape[2])
             logger.info(
-                f"Ermittelte Modell-Eingabegröße: {self.CLASSIFIER_IMAGE_SIZE}x{input_shape[3]}"
+                f"Detected model input size: {self.CLASSIFIER_IMAGE_SIZE}x{input_shape[3]}"
             )
         except Exception as exc:
             logger.warning(
-                f"Konnte Eingabegröße nicht automatisch bestimmen ({exc}), nutze Fallback 224"
+                f"Could not automatically determine input size ({exc}), using fallback 224"
             )
             self.CLASSIFIER_IMAGE_SIZE = 224
 
         self.transform = self._get_transform()
 
     def _load_classes(self) -> List[str]:
-        """Lädt Klassenbezeichnungen aus der lokalen Datei."""
+        """Loads class labels from the local file."""
         if not self.class_path or not os.path.exists(self.class_path):
             logger.warning(
-                "Klassen-Datei nicht gefunden. Verwende Index als Klassennamen."
+                "Class file not found. Using index as class names."
             )
             return self._get_default_class_names()
         try:
@@ -65,26 +65,26 @@ class ImageClassifier:
                 classes = [line.strip() for line in file if line.strip()]
             if not classes:
                 logger.warning(
-                    f"Klassen-Datei {self.class_path} ist leer. Verwende Index als Klassennamen."
+                    f"Class file {self.class_path} is empty. Using index as class names."
                 )
                 return self._get_default_class_names()
-            logger.debug(f"{len(classes)} Klassen geladen.")
+            logger.debug(f"{len(classes)} classes loaded.")
             return classes
         except Exception as exc:  # pragma: no cover - ausführliches Logging
-            logger.error(f"Fehler beim Laden der Klassen: {exc}")
+            logger.error(f"Error loading classes: {exc}")
             return self._get_default_class_names()
 
     def _get_default_class_names(self) -> List[str]:
-        """Erzeugt Standardklassennamen anhand der Modell-Ausgabegröße."""
+        """Generates default class names based on the model output size."""
         try:
             num_outputs = int(self.ort_session.get_outputs()[0].shape[-1])
             return [str(i) for i in range(num_outputs)]
         except Exception:  # pragma: no cover - nur Fallback
-            logger.warning("Nutze Fallback mit 1000 Klassen.")
+            logger.warning("Using fallback with 1000 classes.")
             return [str(i) for i in range(1000)]
 
     def _get_transform(self) -> transforms.Compose:
-        """Definiert die Bildvorverarbeitung."""
+        """Defines the image preprocessing."""
         mean = [0.485, 0.456, 0.406]
         std = [0.229, 0.224, 0.225]
         return transforms.Compose(
@@ -98,16 +98,16 @@ class ImageClassifier:
         )
 
     def predict(self, image_path: str, top_k: int = 5) -> Tuple[np.ndarray, np.ndarray, str, float]:
-        """Führt Inferenz auf einem Bildpfad aus."""
+        """Runs inference on an image path."""
         if not os.path.exists(image_path):
-            raise FileNotFoundError(f"Bild nicht gefunden: {image_path}")
+            raise FileNotFoundError(f"Image not found: {image_path}")
         image = Image.open(image_path).convert("RGB")
         return self.predict_from_image(image, top_k=top_k)
 
     def predict_from_image(
         self, image, top_k: int = 5
     ) -> Tuple[np.ndarray, np.ndarray, str, float]:
-        """Führt Inferenz auf einem PIL- oder NumPy-Bild aus."""
+        """Runs inference on a PIL or NumPy image."""
         if isinstance(image, np.ndarray):
             image = Image.fromarray(image)
         image = image.convert("RGB")

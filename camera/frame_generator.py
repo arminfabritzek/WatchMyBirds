@@ -12,14 +12,14 @@ logger = get_logger(__name__)
 
 
 class FrameGenerator:
-    """Erzeugt JPEG-kodierte Frames mit Zeitstempel."""
+    """Generates JPEG-encoded frames with timestamps."""
 
     def __init__(self, video_capture):
-        """Speichert eine Referenz auf die VideoCapture-Instanz."""
+        """Stores a reference to the VideoCapture instance."""
         self.video_capture = video_capture
 
     def _draw_timestamp(self, image, padding_x_percent, padding_y_percent):
-        """Fügt dem Bild einen Zeitstempel hinzu."""
+        """Adds a timestamp to the image."""
         pil_image = Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
         draw = ImageDraw.Draw(pil_image)
         img_width, img_height = pil_image.size
@@ -36,7 +36,7 @@ class FrameGenerator:
         return cv2.cvtColor(np.array(pil_image), cv2.COLOR_RGB2BGR)
 
     def _generate_placeholder(self, placeholder, padding_x_percent, padding_y_percent):
-        """Erzeugt einen Platzhalter mit Rauschen und Zeitstempel."""
+        """Generates a placeholder with noise and a timestamp."""
         placeholder_copy = placeholder.copy()
         noise = np.random.randint(-100, 20, placeholder_copy.shape, dtype=np.int16)
         placeholder_copy = np.clip(
@@ -47,7 +47,7 @@ class FrameGenerator:
         )
 
     def generate_frames(self, output_resize_width, stream_fps):
-        """Liefert fortlaufend JPEG-kodierte Frames."""
+        """Continuously yields JPEG-encoded frames."""
         static_placeholder_path = "assets/static_placeholder.jpg"
         if os.path.exists(static_placeholder_path):
             static_placeholder = cv2.imread(static_placeholder_path)
