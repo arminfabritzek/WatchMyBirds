@@ -256,7 +256,7 @@ class VideoCapture:
         try:
             output = (
                 subprocess.check_output(
-                    ffprobe_cmd, stderr=subprocess.STDOUT, timeout=30
+                    ffprobe_cmd, stderr=subprocess.STDOUT, timeout=60
                 )
                 .decode()
                 .strip()
@@ -283,10 +283,8 @@ class VideoCapture:
             self.stream_height = height
 
         except subprocess.TimeoutExpired:
-            logger.debug("FFprobe command timed out. Cannot reach the RTSP stream.")
-            raise RuntimeError(
-                "FFprobe timed out while trying to get stream resolution."
-            )
+            logger.warning("FFprobe timed out. Stream may be unreachable.")
+            raise RuntimeError("FFprobe could not retrieve stream resolution within 60 seconds.")
         except subprocess.CalledProcessError as e:
             error_output = e.output.decode().strip()
             logger.debug(f"FFprobe failed with error: {error_output}")
