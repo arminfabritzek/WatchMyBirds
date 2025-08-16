@@ -8,6 +8,12 @@ RUN apt-get update && apt-get install -y \
     libxext6 \
     libavcodec-extra \
     libxrender-dev \
+    libavformat58 \
+    libavfilter7 \
+    libswscale5 \
+    libavutil56 \
+    libavdevice58 \
+    libopenjp2-7 \
     ffmpeg \
     gosu \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
