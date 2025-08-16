@@ -1,5 +1,5 @@
 # Use a slim base image
-FROM python:3.12-bullseye
+FROM python:3.12-slim-bookworm
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
@@ -11,6 +11,11 @@ RUN apt-get update && apt-get install -y \
     ffmpeg \
     gosu \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# Upgrade vulnerable libraries to fix CVEs
+RUN apt-get update && \
+    apt-get install --only-upgrade -y libxml2 libxslt1.1 && \
+    rm -rf /var/lib/apt/lists/*
 
 # Set environment variables
 ENV MPLCONFIGDIR=/tmp/matplotlib \
