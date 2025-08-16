@@ -11,19 +11,12 @@ RUN apt-get update && \
     libavformat-dev \
     libswscale-dev \
     libopenjp2-7 \
-    curl \
+    gosu \
     libxml2 \
     libxslt1.1 && \
     apt-get autoremove -y && \
     apt-get autoclean -y && \
     rm -rf /var/lib/apt/lists/*
-
-# Securely install gosu from upstream to avoid Go CVEs
-RUN set -eux; \
-    ARCH="$(dpkg --print-architecture)"; \
-    curl -fsSL -o /usr/local/bin/gosu "https://github.com/tianon/gosu/releases/download/1.16/gosu-${ARCH}"; \
-    chmod +x /usr/local/bin/gosu; \
-    gosu --version
 
 # Set environment variables
 ENV MPLCONFIGDIR=/tmp/matplotlib \
@@ -71,6 +64,10 @@ COPY web ./web
 # Add the entrypoint script
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
+
+# Clean up Python cache and compiled files
+RUN find /usr/local/lib/python3.12 -type d -name '__pycache__' -exec rm -rf {} + && \
+    find /usr/local/lib/python3.12 -type f -name '*.pyc' -delete
 
 # Expose the port used by your app
 EXPOSE 8050
