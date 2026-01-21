@@ -1,0 +1,28 @@
+{% extends 'base.html' %}
+
+{% block title %}Gallery - WatchMyBirds{% endblock %}
+
+{% block content %}
+<h1 class="text-center my-3">Gallery</h1>
+
+{% if days %}
+<div class="gallery-grid-container">
+    {% for day in days %}
+    <div class="main-gallery-item">
+        <a href="/gallery/{{ day.date }}">
+            <div
+                style="width: {{ image_width }}px; height: {{ image_width }}px; overflow: hidden; position: relative; border-radius: 8px;">
+                <img src="{{ day.cover_path }}" alt="Cover {{ day.date }}"
+                    style="width: 100%; height: 100%; object-fit: cover; border-radius: 8px;">
+                <span class="badge bg-dark text-white"
+                    style="position: absolute; top: 8px; right: 8px; font-size: 0.8rem;">{{ day.count }}</span>
+            </div>
+        </a>
+        <p class="main-gallery-date">{{ day.date }}</p>
+    </div>
+    {% endfor %}
+</div>
+{% else %}
+<p class="text-center text-muted mt-5">No images in the gallery yet.</p>
+{% endif %}
+{% endblock %}

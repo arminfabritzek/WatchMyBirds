@@ -1,0 +1,24 @@
+# Python bytecode
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Runtime data (not needed in image)
+output/
+models/
+ingest/
+ignore/
+tmp/
+*.log
+
+
+# Node.js (Analytics frontend)
+analytics/node_modules/
+analytics/dist/
+
+# Git metadata
+.git
+
+# Docker files (not needed inside image)
+docker-compose*.yml

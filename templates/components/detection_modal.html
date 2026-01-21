@@ -1,0 +1,69 @@
+{% macro render_modal(det, group_id) %}
+{#
+Renders a unified Detection Detail Modal.
+
+Args:
+det (dict): The detection object containing:
+- detection_id, formatted_date, formatted_time
+- common_name, latin_name (optional), cls/od_class_name
+- full_path, original_path
+- od_confidence, cls_confidence
+- gallery_date (for species view link)
+group_id (str): A unique string to identify the modal group (e.g. 'latest', 'today', 'main').
+Used for unique IDs and navigation isolation.
+#}
+<div class="modal gallery-modal" id="modal-{{ group_id }}-{{ det.detection_id }}" tabindex="-1" aria-hidden="true"
+    data-modal-group="{{ group_id }}">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">
+                    {{ det.formatted_date }} {{ det.formatted_time }} - {{ det.common_name }}
+                    {% if det.latin_name or det.cls_class_name or det.od_class_name %}
+                    - <em>{{ (det.latin_name or det.cls_class_name or det.od_class_name) | replace('_', ' ') }}</em>
+                    {% endif %}
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body text-center">
+                <img src="{{ det.full_path }}" alt="{{ det.common_name }}" class="modal-image img-fluid"
+                    style="max-height: 80vh; cursor: pointer;" role="button" data-bs-dismiss="modal" aria-label="Close"
+                    title="Click image to close">
+                <div class="small text-muted mt-2 text-center">
+                    <div>Detection: <em>{{ det.od_class_name | replace('_', ' ') }}</em> ({{
+                        "%.0f"|format(det.od_confidence * 100) }}%)</div>
+                    <div>Classification:
+                        {% if det.cls_class_name %}
+                        <em>{{ det.cls_class_name | replace('_', ' ') }}</em> ({{ "%.0f"|format(det.cls_confidence *
+                        100) }}%)
+                        {% else %}
+                        —
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer justify-content-between">
+                <div>
+                    {# Navigation Buttons - JS handles actual navigation based on data-modal-group #}
+                    <button type="button" class="btn btn-outline-primary prev-btn me-2"
+                        onclick="navigateModal(this, 'prev')">&laquo; Prev</button>
+                    <button type="button" class="btn btn-outline-primary next-btn"
+                        onclick="navigateModal(this, 'next')">Next &raquo;</button>
+                </div>
+                <div>
+                    <button type="button" class="btn btn-outline-danger me-2"
+                        onclick="deleteDetection(event, {{ det.detection_id }})">Trash</button>
+                    <a href="{{ det.original_path }}" download class="btn btn-secondary me-2">Download</a>
+
+                    {# Optional "Go to Day" link if gallery_date is present (used in species view) #}
+                    {% if det.gallery_date %}
+                    <a href="/gallery/{{ det.gallery_date }}" class="btn btn-info btn-outline me-2">Go to Day</a>
+                    {% endif %}
+
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endmacro %}

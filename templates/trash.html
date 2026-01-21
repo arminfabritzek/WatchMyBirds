@@ -1,0 +1,220 @@
+{% extends 'base.html' %}
+
+{% block title %}Trash - WatchMyBirds{% endblock %}
+
+{% block content %}
+<div class="container-fluid mt-4">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2>Trash Bin <span class="badge bg-secondary fs-6">{{ total_items }} items</span></h2>
+        <div>
+            <button id="restore-selected-btn" class="btn btn-success me-2" disabled>Restore Selected</button>
+            <button id="purge-selected-btn" class="btn btn-danger me-2" disabled>Delete Forever</button>
+            <button id="empty-trash-btn" class="btn btn-outline-danger">Empty Trash</button>
+        </div>
+    </div>
+
+    {% if items %}
+    <div class="gallery-grid-container">
+        {% for item in items %}
+        <div class="gallery-tile trash-tile" data-id="{{ item.detection_id }}" data-index="{{ loop.index0 }}">
+            <div style="position: relative; width: {{ image_width }}px; height: {{ image_width }}px;">
+                <img src="{{ item.display_path }}" alt="{{ item.common_name }}"
+                    style="width: 100%; height: 100%; object-fit: cover; border-radius: 8px; opacity: 0.7;">
+                <div class="form-check" style="position: absolute; top: 10px; right: 10px; transform: scale(1.5);">
+                    <input class="form-check-input trash-checkbox" type="checkbox" value="{{ item.detection_id }}"
+                        data-index="{{ loop.index0 }}">
+                </div>
+            </div>
+            <div class="thumbnail-info mt-2">
+                <span class="info-common-name d-block text-truncate">{{ item.common_name }}</span>
+                <small class="text-muted d-block">{{ item.formatted_time }}</small>
+                <div class="mt-2 text-center">
+                    <button class="btn btn-sm btn-outline-success restore-single"
+                        data-id="{{ item.detection_id }}">Restore</button>
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+
+    <!-- Pagination -->
+    {% if total_pages > 1 %}
+    <nav aria-label="Trash pagination" class="d-flex justify-content-center my-4">
+        <ul class="pagination">
+            {% if page > 1 %}
+            <li class="page-item">
+                <a class="page-link" href="/trash?page={{ page - 1 }}">&laquo;</a>
+            </li>
+            {% endif %}
+
+            {% for p in range(1, total_pages + 1) %}
+            {# Simple pagination logic for now #}
+            {% if p == page %}
+            <li class="page-item active"><span class="page-link">{{ p }}</span></li>
+            {% elif p <= 3 or p> total_pages - 3 or (p >= page - 2 and p <= page + 2) %} <li class="page-item">
+                    <a class="page-link" href="/trash?page={{ p }}">{{ p }}</a>
+                    </li>
+                    {% elif p == 4 or p == total_pages - 3 %}
+                    <li class="page-item disabled"><span class="page-link">...</span></li>
+                    {% endif %}
+                    {% endfor %}
+
+                    {% if page < total_pages %} <li class="page-item">
+                        <a class="page-link" href="/trash?page={{ page + 1 }}">&raquo;</a>
+                        </li>
+                        {% endif %}
+        </ul>
+    </nav>
+    {% endif %}
+
+    {% else %}
+    <div class="text-center mt-5">
+        <p class="text-muted fs-4">Trash is empty.</p>
+        <a href="/gallery" class="btn btn-primary">Back to Gallery</a>
+    </div>
+    {% endif %}
+</div>
+
+<style>
+    .trash-tile {
+        cursor: pointer;
+    }
+
+    .trash-tile .form-check,
+    .trash-tile .restore-single {
+        cursor: default;
+    }
+</style>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    document.addEventListener('DOMContentLoaded', function () {
+        const checkboxes = document.querySelectorAll('.trash-checkbox');
+        const restoreBtn = document.getElementById('restore-selected-btn');
+        const purgeBtn = document.getElementById('purge-selected-btn');
+        const emptyBtn = document.getElementById('empty-trash-btn');
+        let lastClickedIndex = null;
+
+        // Update button state
+        function updateButtons() {
+            const checked = document.querySelectorAll('.trash-checkbox:checked').length;
+            restoreBtn.disabled = checked === 0;
+            purgeBtn.disabled = checked === 0;
+            if (restoreBtn.disabled) {
+                restoreBtn.textContent = "Restore Selected";
+                purgeBtn.textContent = "Delete Forever";
+            } else {
+                restoreBtn.textContent = `Restore Selected (${checked})`;
+                purgeBtn.textContent = `Delete Forever (${checked})`;
+            }
+        }
+
+        function toggleRange(start, end, checked) {
+            const min = Math.min(start, end);
+            const max = Math.max(start, end);
+            for (let i = min; i <= max; i++) {
+                checkboxes[i].checked = checked;
+            }
+        }
+
+        document.querySelectorAll('.trash-tile').forEach(tile => {
+            tile.addEventListener('click', (event) => {
+                if (event.target.closest('.form-check') || event.target.closest('.restore-single')) return;
+
+                const checkbox = tile.querySelector('.trash-checkbox');
+                if (!checkbox) return;
+
+                checkbox.checked = !checkbox.checked;
+                const currentIndex = Number(checkbox.dataset.index);
+
+                if (event.shiftKey && lastClickedIndex !== null) {
+                    toggleRange(lastClickedIndex, currentIndex, checkbox.checked);
+                }
+
+                lastClickedIndex = currentIndex;
+                updateButtons();
+            });
+        });
+
+        checkboxes.forEach(cb => cb.addEventListener('change', updateButtons));
+
+        // Action Handlers
+        async function performAction(action, ids) {
+            if (!confirm(`Are you sure you want to ${action} ${ids.length} items?`)) return;
+
+            try {
+                const response = await fetch(`/api/trash/${action}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ ids: ids })
+                });
+
+                if (response.ok) {
+                    const payload = await response.json();
+                    const result = payload && payload.result ? payload.result : null;
+                    if (result) {
+                        const lines = [
+                            `Rows deleted: ${result.rows_deleted ?? result.count ?? 0}`,
+                            `Files deleted: ${result.files_deleted ?? 0}`,
+                            `Files missing: ${result.files_missing ?? 0}`,
+                            `Files failed: ${result.files_failed ?? 0}`
+                        ];
+                        alert(lines.join('\n'));
+                    }
+                    location.reload();
+                } else {
+                    const data = await response.json().catch(() => ({}));
+                    alert('Action failed: ' + (data.message || data.error || 'Unknown error'));
+                }
+            } catch (e) {
+                console.error(e);
+                alert('Error performing action');
+            }
+        }
+
+        restoreBtn.addEventListener('click', () => {
+            const ids = Array.from(document.querySelectorAll('.trash-checkbox:checked')).map(cb => parseInt(cb.value));
+            performAction('restore', ids);
+        });
+
+        purgeBtn.addEventListener('click', () => {
+            const ids = Array.from(document.querySelectorAll('.trash-checkbox:checked')).map(cb => parseInt(cb.value));
+            performAction('purge', ids);
+        });
+
+        if (emptyBtn) {
+            emptyBtn.addEventListener('click', async () => {
+                if (!confirm('This will permanently delete ALL items in the trash. This cannot be undone. Are you sure?')) return;
+                try {
+                    const response = await fetch('/api/trash/empty', { method: 'POST' });
+                    if (response.ok) {
+                        const payload = await response.json();
+                        const result = payload && payload.result ? payload.result : null;
+                        if (result) {
+                            const lines = [
+                                `Rows deleted: ${result.rows_deleted ?? result.count ?? 0}`,
+                                `Files deleted: ${result.files_deleted ?? 0}`,
+                                `Files missing: ${result.files_missing ?? 0}`,
+                                `Files failed: ${result.files_failed ?? 0}`
+                            ];
+                            alert(lines.join('\n'));
+                        }
+                        location.reload();
+                    } else {
+                        const data = await response.json().catch(() => ({}));
+                        alert('Failed to empty trash: ' + (data.message || data.error || 'Unknown error'));
+                    }
+                } catch (e) { console.error(e); }
+            });
+        }
+
+        // Single restore buttons
+        document.querySelectorAll('.restore-single').forEach(btn => {
+            btn.addEventListener('click', () => {
+                performAction('restore', [parseInt(btn.getAttribute('data-id'))]);
+            });
+        });
+    });
+</script>
+{% endblock %}

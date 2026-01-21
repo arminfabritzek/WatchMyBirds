@@ -1,0 +1,57 @@
+{% extends 'base.html' %}
+{% import 'partials/thumbnail.html' as thumb %}
+
+{% block title %}Species Summary - WatchMyBirds{% endblock %}
+
+{% block content %}
+<h1 class="text-center my-3">Species Summary</h1>
+
+<div class="row">
+    <div class="col-12">
+        <h3 class="text-center mt-4 mb-3">Best Observation per Species</h3>
+        <p class="text-center text-muted small mb-3">
+            Shows the image with the highest Primary Score for each species.
+        </p>
+
+        {% if detections %}
+        <div class="gallery-grid-container" id="species-gallery-grid">
+            {% for det in detections %}
+            <div class="gallery-tile">
+                <button type="button" class="thumbnail-button" data-bs-toggle="modal"
+                    data-bs-target="#modal-species_summary-{{ det.detection_id }}">
+                    <div
+                        style="width: {{ image_width }}px; height: {{ image_width }}px; overflow: hidden; position: relative; border-radius: 8px;">
+                        <img src="{{ det.display_path }}" alt=""
+                            style="width: 100%; height: 100%; object-fit: cover; border-radius: 8px;">
+                    </div>
+                </button>
+
+                <div class="thumbnail-info">
+                    <span class="info-common-name">{{ det.common_name }}</span>
+                    {% if det.cls_class_name or det.od_class_name %}
+                    <span class="info-scientific-name"><em>{{ (det.cls_class_name or det.od_class_name) | replace('_', '
+                            ') }}</em></span>
+                    {% endif %}
+                    <span class="score-value score-value--prominent">{{ "%.2f"|format(det.score) }}</span>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+        {% else %}
+        <p class="text-center text-muted">No observations found.</p>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}
+
+{% block modals %}
+{% from "components/detection_modal.html" import render_modal %}
+
+{% for det in detections %}
+{{ render_modal(det, 'species_summary') }}
+{% endfor %}
+{% endblock %}
+
+{% block scripts %}
+<script src="/assets/js/gallery_utils.js"></script>
+{% endblock %}

@@ -1,0 +1,136 @@
+{% extends 'base.html' %}
+
+{% block title %}{{ date }} - Gallery - WatchMyBirds{% endblock %}
+
+{% block content %}
+<h2 class="text-center my-3">Images from {{ date }}</h2>
+<p class="text-center text-muted small">Page {{ page }} of {{ total_pages }} ({{ total_items }} items)</p>
+
+{# Sort and Edit Controls #}
+<div class="d-flex justify-content-center align-items-center gap-3 mb-4">
+    <div class="d-flex align-items-center">
+        <label for="sort-select" class="me-2">Sort by:</label>
+        <select id="sort-select" class="form-select" style="width: 200px;" onchange="updateSort(this.value)">
+            <option value="time_desc" {% if sort_by=='time_desc' %}selected{% endif %}>Newest</option>
+            <option value="time_asc" {% if sort_by=='time_asc' %}selected{% endif %}>Oldest</option>
+            <option value="score" {% if sort_by=='score' %}selected{% endif %}>Best Score</option>
+            <option value="species" {% if sort_by=='species' %}selected{% endif %}>Species</option>
+        </select>
+    </div>
+    <a href="/edit/{{ date }}" class="btn btn-warning btn-sm btn-outline">Edit This Day</a>
+</div>
+
+{# Species of the Day (Page 1 only) #}
+{% if page == 1 and species_of_day %}
+<div class="mb-4">
+    <h4 class="text-center mt-4">Species of the Day</h4>
+    <div class="gallery-grid-container">
+        {% for det in species_of_day %}
+        <div class="gallery-tile">
+            <button type="button" class="thumbnail-button" data-bs-toggle="modal"
+                data-bs-target="#modal-species-{{ det.detection_id }}">
+                <div
+                    style="width: {{ image_width }}px; height: {{ image_width }}px; overflow: hidden; position: relative; border-radius: 8px;">
+                    <img src="{{ det.display_url }}" alt=""
+                        style="width: 100%; height: 100%; object-fit: cover; border-radius: 8px;">
+                </div>
+            </button>
+            <div class="thumbnail-info">
+                <span class="info-common-name">{{ det.common_name }}</span>
+                {% if det.cls_class_name or det.od_class_name %}
+                <span class="info-scientific-name"><em>{{ (det.cls_class_name or det.od_class_name) | replace('_', ' ')
+                        }}</em></span>
+                {% endif %}
+                <span class="score-value score-value--prominent">{{ "%.2f"|format(det.score) }}</span>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+{% endif %}
+
+{# Main Gallery Grid #}
+<h4 class="text-center mt-4">All Observations</h4>
+<div class="gallery-grid-container" id="subgallery-grid">
+    {% for det in detections %}
+    <div class="gallery-tile">
+        <button type="button" class="thumbnail-button" data-bs-toggle="modal"
+            data-bs-target="#modal-main-{{ det.detection_id }}">
+            <div
+                style="width: {{ image_width }}px; height: {{ image_width }}px; overflow: hidden; position: relative; border-radius: 8px;">
+                <img src="{{ det.display_url }}" alt=""
+                    style="width: 100%; height: 100%; object-fit: cover; border-radius: 8px;">
+            </div>
+        </button>
+        <div class="thumbnail-info">
+            <span class="info-common-name">{{ det.common_name }}</span>
+            {% if det.cls_class_name or det.od_class_name %}
+            <span class="info-scientific-name"><em>{{ (det.cls_class_name or det.od_class_name) | replace('_', ' ')
+                    }}</em></span>
+            {% endif %}
+            <span class="score-value score-value--prominent">{{ "%.2f"|format(det.score) }}</span>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+
+{# Pagination #}
+{% if total_pages > 1 %}
+<nav aria-label="Gallery pagination" class="d-flex justify-content-center my-4">
+    <ul class="pagination">
+        {% if page > 1 %}
+        <li class="page-item">
+            <a class="page-link" href="/gallery/{{ date }}?page={{ page - 1 }}&sort={{ sort_by }}">&laquo;</a>
+        </li>
+        {% endif %}
+
+        {% for p in pagination_range %}
+        {% if p == '...' %}
+        <li class="page-item disabled"><span class="page-link">...</span></li>
+        {% elif p == page %}
+        <li class="page-item active"><span class="page-link">{{ p }}</span></li>
+        {% else %}
+        <li class="page-item">
+            <a class="page-link" href="/gallery/{{ date }}?page={{ p }}&sort={{ sort_by }}">{{ p }}</a>
+        </li>
+        {% endif %}
+        {% endfor %}
+
+        {% if page < total_pages %} <li class="page-item">
+            <a class="page-link" href="/gallery/{{ date }}?page={{ page + 1 }}&sort={{ sort_by }}">&raquo;</a>
+            </li>
+            {% endif %}
+    </ul>
+</nav>
+{% endif %}
+
+<div class="text-center mb-4">
+    <a href="/gallery" class="btn btn-secondary">Back to Gallery</a>
+</div>
+{% endblock %}
+
+{% block modals %}
+{% from "components/detection_modal.html" import render_modal %}
+
+{# Species of the Day Modals #}
+{% for det in species_of_day %}
+{{ render_modal(det, 'species') }}
+{% endfor %}
+
+{# Main Detections Modals #}
+{% for det in detections %}
+{{ render_modal(det, 'main') }}
+{% endfor %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+    function updateSort(value) {
+        const url = new URL(window.location.href);
+        url.searchParams.set('sort', value);
+        url.searchParams.set('page', '1');
+        window.location.href = url.toString();
+    }
+</script>
+<script src="/assets/js/gallery_utils.js"></script>
+{% endblock %}

@@ -1,0 +1,41 @@
+<!-- Navbar Partial - matches Dash generate_navbar() output -->
+<nav class="navbar navbar-expand-lg custom-navbar">
+    <div class="container-fluid">
+        <a class="navbar-brand d-flex align-items-center" href="/">
+            <img src="/assets/WatchMyBirds.png" alt="WatchMyBirds Logo" class="round-logo me-2"
+                style="width: 40px; height: 40px; min-width: 40px;">
+            <span>WatchMyBirds</span>
+        </a>
+
+        <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+            <span class="navbar-toggler-icon"></span>
+        </button>
+
+        <div class="collapse navbar-collapse" id="navbarNav">
+            <ul class="navbar-nav ms-auto">
+                <li class="nav-item">
+                    <a class="nav-link{% if current_path == '/' %} active{% endif %}" href="/">Live</a>
+                </li>
+                <li class="nav-item">
+                    <a class="nav-link{% if current_path and current_path.startswith('/gallery') %} active{% endif %}"
+                        href="/gallery">Gallery</a>
+                </li>
+                <li class="nav-item">
+                    <a class="nav-link{% if current_path == '/species' %} active{% endif %}" href="/species">Species</a>
+                </li>
+                <li class="nav-item">
+                    <a class="nav-link{% if current_path == '/trash' %} active{% endif %}" href="/trash">
+                        Trash
+                        {% if trash_count and trash_count > 0 %}
+                        <span class="badge bg-secondary ms-1">{{ trash_count }}</span>
+                        {% endif %}
+                    </a>
+                </li>
+                <li class="nav-item">
+                    <a class="nav-link{% if current_path == '/settings' %} active{% endif %}"
+                        href="/settings">Settings</a>
+                </li>
+            </ul>
+        </div>
+    </div>
+</nav>

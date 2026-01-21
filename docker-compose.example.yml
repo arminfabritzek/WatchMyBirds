@@ -1,0 +1,42 @@
+version: "3"
+services:
+  watchmybirds:
+    image: starminworks/watchmybirds:latest
+    container_name: watchmybirds
+    environment:
+      - VIDEO_SOURCE=rtsp://user:password@192.168.0.2:554/1 # Required: camera source (int for webcam or RTSP/HTTP URL)
+      - OUTPUT_DIR=/output # Where images and images.db are stored (match the volume mount)
+      - INGEST_DIR=/ingest # Source directory for bulk ingestion (match the volume mount)
+      - MODEL_BASE_PATH=/models # Where models are cached
+      - PUID=1000 # UID for file ownership inside the container
+      - PGID=1000 # GID for file ownership inside the container
+      - TZ=Europe/Berlin # Timezone for timestamps
+      - DEBUG_MODE=False # Set True for verbose logging
+      # Optional tuning
+      - STREAM_WIDTH_OUTPUT_RESIZE=640 # Preview width for live stream
+      - STREAM_FPS=0 # UI MJPEG throttle (0 = no throttle)
+      - STREAM_FPS_CAPTURE=0 # Capture throttle (0 = no throttle)
+      - CONFIDENCE_THRESHOLD_DETECTION=0.55 # Detector display threshold
+      - SAVE_THRESHOLD=0.55 # Detector save threshold
+      - DETECTION_INTERVAL_SECONDS=2.0 # Pause between detection cycles
+      - CLASSIFIER_CONFIDENCE_THRESHOLD=0.55 # Classifier display threshold
+      - FUSION_ALPHA=0.5 # Fusion weight detector vs classifier
+      - DAY_AND_NIGHT_CAPTURE=True # Daylight gating
+      - DAY_AND_NIGHT_CAPTURE_LOCATION=Berlin # City name for daylight check
+      - LOCATION_DATA="52.516, 13.377" # GPS for EXIF (lat, lon)
+      - CPU_LIMIT=1 # CPU affinity cap (<=0 disables)
+      - TELEGRAM_COOLDOWN=5 # Seconds between Telegram alerts
+      - TELEGRAM_ENABLED=True # Gate sending; tokens/chat IDs remain env-only
+      - EDIT_PASSWORD=SECRET_PASSWORD # Password for edit page
+      # Telegram credentials (required if Telegram enabled)
+      - TELEGRAM_BOT_TOKEN=your_token_here
+      - TELEGRAM_CHAT_ID=your_chat_id_here
+      # Model choice (currently yolo)
+      - DETECTOR_MODEL_CHOICE=yolo
+    volumes:
+      - /your_path/output:/output # Must match OUTPUT_DIR
+      - /your_path/ingest:/ingest # Must match INGEST_DIR
+      - /your_path/models:/models # Must match MODEL_BASE_PATH
+    ports:
+      - "8050:8050" # Web UI
+    restart: unless-stopped

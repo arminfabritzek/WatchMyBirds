@@ -1,0 +1,45 @@
+{% extends 'base.html' %}
+
+{% block title %}Login - WatchMyBirds{% endblock %}
+
+{% block content %}
+<div class="container mt-5">
+    <div class="row justify-content-center">
+        <div class="col-md-6 col-lg-4">
+            <div class="card shadow-sm">
+                <div class="card-header bg-primary text-white text-center">
+                    <h4 class="mb-0">🔐 Login Required</h4>
+                </div>
+                <div class="card-body">
+                    {% if error %}
+                    <div class="alert alert-danger" role="alert">
+                        {{ error }}
+                    </div>
+                    {% endif %}
+
+                    <p class="text-muted text-center mb-4">
+                        Enter the edit password to access protected pages.
+                    </p>
+
+                    <form method="POST" action="/login">
+                        <input type="hidden" name="next" value="{{ next_url or '/gallery' }}">
+
+                        <div class="mb-3">
+                            <label for="password" class="form-label">Password</label>
+                            <input type="password" class="form-control" id="password" name="password"
+                                placeholder="Enter password" required autofocus>
+                        </div>
+
+                        <div class="d-grid">
+                            <button type="submit" class="btn btn-primary">Login</button>
+                        </div>
+                    </form>
+                </div>
+                <div class="card-footer text-center">
+                    <a href="/gallery" class="text-muted">← Back to Gallery</a>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

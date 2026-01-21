@@ -1,0 +1,106 @@
+{#
+Thumbnail Macro - Reusable gallery thumbnail component
+
+Parameters:
+- image_path: relative path to image (e.g., "20260118/image_optimized.jpg")
+- bbox: tuple (x, y, w, h) for CSS clipping, or None for full image
+- index: unique index for this thumbnail
+- od_class: Object detection class name
+- od_conf: Object detection confidence (0-1)
+- cls_class: Classification class name
+- cls_conf: Classification confidence (0-1)
+- score: Combined score
+- common_name: Human-readable species name
+- image_width: thumbnail width in pixels (default 150)
+- is_thumb: whether image is pre-cropped thumbnail
+- show_checkbox: whether to show selection checkbox
+- detection_id: ID for checkbox value
+#}
+
+{% macro thumbnail(image_path, bbox=None, index=0, od_class='', od_conf=0, cls_class='', cls_conf=0, score=0,
+common_name='', image_width=150, is_thumb=False, show_checkbox=False, detection_id='') %}
+<div class="gallery-tile{% if show_checkbox %} edit-tile{% endif %}">
+
+    {% if show_checkbox %}
+    <div class="edit-checkbox-wrapper">
+        <input type="checkbox" class="form-check-input edit-checkbox" name="selected_detections"
+            value="{{ detection_id }}" id="check-{{ detection_id }}">
+    </div>
+    {% endif %}
+
+    <button type="button" class="thumbnail-button" data-bs-toggle="modal" data-bs-target="#modal-{{ index }}"
+        data-image-path="{{ image_path }}">
+        {% if is_thumb or bbox is none %}
+        <img src="{{ image_path }}" alt="{{ common_name or cls_class or 'Detection' }}" class="thumbnail-image"
+            width="{{ image_width }}" style="object-fit: cover; height: {{ image_width }}px;">
+        {% else %}
+        {# CSS clipping for bbox - calculate percentages #}
+        {% set clip_left = (bbox[0] / 100) * 100 %}
+        {% set clip_top = (bbox[1] / 100) * 100 %}
+        {% set clip_right = 100 - ((bbox[0] + bbox[2]) / 100) * 100 %}
+        {% set clip_bottom = 100 - ((bbox[1] + bbox[3]) / 100) * 100 %}
+        <div style="width: {{ image_width }}px; height: {{ image_width }}px; overflow: hidden; position: relative;">
+            <img src="{{ image_path }}" alt="{{ common_name or cls_class or 'Detection' }}" class="thumbnail-image"
+                style="position: absolute; 
+                        width: auto; 
+                        height: auto;
+                        min-width: 100%;
+                        min-height: 100%;
+                        object-fit: cover;
+                        object-position: {{ bbox[0] }}% {{ bbox[1] }}%;">
+        </div>
+        {% endif %}
+    </button>
+
+    <div class="thumbnail-info">
+        {% if common_name %}
+        <span class="info-common-name">{{ common_name }}</span>
+        {% endif %}
+
+        {% if cls_class or od_class %}
+        <span class="info-scientific-name"><em>{{ (cls_class or od_class) | replace('_', ' ') }}</em></span>
+        {% endif %}
+
+        {% if score %}
+        <span class="score-value">{{ "%.2f" | format(score) }}</span>
+        {% endif %}
+    </div>
+</div>
+{% endmacro %}
+
+
+{# Gallery Grid Macro - renders a collection of thumbnails #}
+{% macro gallery_grid(detections, id_prefix='gallery', image_width=150, show_checkboxes=False, common_names={}) %}
+<div class="gallery-grid-container" id="{{ id_prefix }}-grid">
+    {% for det in detections %}
+    {% set common_name = common_names.get(det.cls_class_name, det.cls_class_name | default('') | replace('_', ' ')) %}
+
+    {# URL Construction logic #}
+    {% set thumb_virt = det.thumbnail_path_virtual %}
+    {% set rel_path = det.relative_path or det.optimized_name_virtual %}
+    {% if thumb_virt %}
+    {% set img_url = '/uploads/derivatives/thumbs/' ~ thumb_virt %}
+    {% set is_t = True %}
+    {% else %}
+    {% set img_url = '/uploads/derivatives/optimized/' ~ rel_path %}
+    {% set is_t = False %}
+    {% endif %}
+
+    {{ thumbnail(
+    image_path=img_url,
+    bbox=(det.bbox_x, det.bbox_y, det.bbox_w, det.bbox_h) if det.bbox_x is defined else None,
+    index=loop.index0,
+    od_class=det.od_class_name,
+    od_conf=det.od_confidence,
+    cls_class=det.cls_class_name,
+    cls_conf=det.cls_confidence,
+    score=det.score,
+    common_name=common_name,
+    image_width=image_width,
+    is_thumb=is_t,
+    show_checkbox=show_checkbox,
+    detection_id=det.detection_id
+    ) }}
+    {% endfor %}
+</div>
+{% endmacro %}

@@ -1,0 +1,270 @@
+{% extends 'base.html' %}
+
+{% block title %}Edit Detections - {{ date_iso }} - WatchMyBirds{% endblock %}
+
+{% block content %}
+<div class="container-fluid mt-4">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2>Edit Detections for {{ date_iso }}</h2>
+        <div class="btn-group">
+            <a href="/gallery/{{ date_iso }}" class="btn btn-outline-secondary">Back to Subgallery</a>
+            <a href="/gallery" class="btn btn-outline-secondary">Back to Gallery</a>
+        </div>
+    </div>
+
+    <!-- Filter Section -->
+    <div class="card shadow-sm mb-4">
+        <div class="card-body">
+            <form method="GET" class="row g-3 align-items-end">
+                <div class="col-md-3">
+                    <label for="status" class="form-label fw-bold">Download Status</label>
+                    <select name="status" id="status" class="form-select" onchange="this.form.submit()">
+                        <option value="all" {% if filters.status=='all' %}selected{% endif %}>All</option>
+                        <option value="downloaded" {% if filters.status=='downloaded' %}selected{% endif %}>Downloaded
+                            Only</option>
+                        <option value="not_downloaded" {% if filters.status=='not_downloaded' %}selected{% endif %}>Not
+                            Downloaded</option>
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <label for="species" class="form-label fw-bold">Species</label>
+                    <select name="species" id="species" class="form-select" onchange="this.form.submit()">
+                        <option value="all" {% if filters.species=='all' %}selected{% endif %}>All Species</option>
+                        {% for sp in species_list %}
+                        <option value="{{ sp }}" {% if filters.species==sp %}selected{% endif %}>{{ sp }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-2">
+                    <label for="sort" class="form-label fw-bold">Sort By</label>
+                    <select name="sort" id="sort" class="form-select" onchange="this.form.submit()">
+                        <option value="time_desc" {% if filters.sort=='time_desc' %}selected{% endif %}>Latest First
+                        </option>
+                        <option value="time_asc" {% if filters.sort=='time_asc' %}selected{% endif %}>Oldest First
+                        </option>
+                        <option value="score" {% if filters.sort=='score' %}selected{% endif %}>Highest Score</option>
+                        <option value="confidence" {% if filters.sort=='confidence' %}selected{% endif %}>Highest
+                            Confidence</option>
+                    </select>
+                </div>
+                <div class="col-md-2">
+                    <label for="min_conf" class="form-label fw-bold">Min Confidence</label>
+                    <input type="number" step="0.05" min="0" max="1" name="min_conf" id="min_conf" class="form-control"
+                        value="{{ filters.min_conf }}" placeholder="0.0">
+                </div>
+                <div class="col-md-2 d-flex gap-2">
+                    <button type="submit" class="btn btn-primary flex-grow-1">Apply</button>
+                    <a href="/edit/{{ date_iso }}" class="btn btn-outline-secondary">Reset</a>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Main Action Form -->
+    <form id="edit-actions-form" method="POST" action="/api/edit/actions">
+        <input type="hidden" name="date_iso" value="{{ date_iso }}">
+
+        <div class="d-flex justify-content-between align-items-center mb-3">
+            <div class="d-flex align-items-center gap-3">
+                <div class="form-check">
+                    <input class="form-check-input" type="checkbox" id="select-all" onclick="toggleSelectAll(this)">
+                    <label class="form-check-label fw-bold" for="select-all">Select All</label>
+                </div>
+                <span class="text-muted" id="selected-counter">0 items selected</span>
+            </div>
+        </div>
+
+        <!-- Grid Container -->
+        {% if detections %}
+        <div class="gallery-grid-container">
+            {% for det in detections %}
+            <div class="gallery-tile edit-tile" id="tile-{{ det.detection_id }}" data-index="{{ loop.index0 }}">
+                <div class="edit-checkbox-wrapper">
+                    <input class="form-check-input edit-checkbox" type="checkbox" name="ids"
+                        data-index="{{ loop.index0 }}" value="{{ det.detection_id }}" onchange="updateCounter()">
+                </div>
+
+                <!-- Use the same thumbnail logic as gallery -->
+                <div class="thumbnail-wrapper">
+                    <img src="{{ det.display_path }}" class="img-fluid rounded shadow-sm" loading="lazy"
+                        alt="{{ det.cls_class_name or det.od_class_name }}" style="max-width: {{ image_width }}px;">
+                </div>
+
+                <div class="thumbnail-info-box mt-2 small text-center">
+                    <div class="info-common-name fw-bold">{{ det.common_name }}</div>
+                    {% if det.latin_name %}
+                    <div class="info-scientific-name"><em>{{ det.latin_name | replace('_', ' ') }}</em></div>
+                    {% endif %}
+                    <div class="score-value score-value--prominent">{{ "%.2f"|format(det.score or 0.0) }}</div>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+
+        <!-- Pagination -->
+        {% if pagination.total_pages > 1 %}
+        <nav aria-label="Page navigation" class="mt-4 mb-5">
+            <ul class="pagination justify-content-center">
+                <li class="page-item {% if not pagination.has_prev %}disabled{% endif %}">
+                    <!-- Preserve filters by submitting form or constructing link. 
+                         Since we use GET params, links are easiest but we must keep other params. 
+                         Let's use a helper macro or manual construction. 
+                         Current filters are in 'filters' dict. -->
+                    <a class="page-link"
+                        href="{{ url_for('edit_page', date_iso=date_iso, page=pagination.prev_num, **filters) }}"
+                        tabindex="-1">Previous</a>
+                </li>
+
+                <!-- Simple "Page X of Y" style for now to avoid complex range logic in Jinja without macro -->
+                <li class="page-item disabled">
+                    <span class="page-link text-muted">Page {{ pagination.page }} of {{ pagination.total_pages }}</span>
+                </li>
+
+                <li class="page-item {% if not pagination.has_next %}disabled{% endif %}">
+                    <a class="page-link"
+                        href="{{ url_for('edit_page', date_iso=date_iso, page=pagination.next_num, **filters) }}">Next</a>
+                </li>
+            </ul>
+        </nav>
+        {% endif %}
+
+        {% else %}
+        <div class="alert alert-info py-5 text-center">
+            <h4>No detections match your filters.</h4>
+            <p>Try broadening your search or resetting filters.</p>
+        </div>
+        {% endif %}
+
+        <!-- Sticky Footer for Actions -->
+        <div class="sticky-action-footer py-3 bg-light border-top shadow-lg">
+            <div class="container-fluid d-flex justify-content-center gap-3">
+                <button type="submit" name="action" value="reject" class="btn btn-danger px-4"
+                    onclick="return confirmReject()">
+                    <i class="bi bi-trash"></i> Move to Trash
+                </button>
+                <button type="submit" name="action" value="download" class="btn btn-success px-4">
+                    <i class="bi bi-download"></i> Download Selected (ZIP)
+                </button>
+            </div>
+        </div>
+    </form>
+</div>
+
+<style>
+    .gallery-grid-container {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+        gap: 1.5rem;
+        padding-bottom: 100px;
+    }
+
+    .edit-tile {
+        position: relative;
+        border: 1px solid #dee2e6;
+        padding: 10px;
+        border-radius: 8px;
+        transition: transform 0.2s;
+    }
+
+    .edit-tile:hover {
+        transform: translateY(-5px);
+        box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
+    }
+
+    .edit-checkbox-wrapper {
+        position: absolute;
+        top: 15px;
+        left: 15px;
+        z-index: 10;
+        background: rgba(255, 255, 255, 0.8);
+        padding: 5px;
+        border-radius: 4px;
+        box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
+    }
+
+    .edit-checkbox {
+        width: 1.2rem;
+        height: 1.2rem;
+        cursor: pointer;
+    }
+
+    .sticky-action-footer {
+        position: fixed;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        z-index: 1000;
+    }
+
+    .thumbnail-wrapper img {
+        width: 100%;
+        height: auto;
+        object-fit: cover;
+    }
+
+    .edit-tile {
+        cursor: pointer;
+    }
+
+    .edit-checkbox-wrapper {
+        cursor: default;
+    }
+</style>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    let lastClickedIndex = null;
+
+    function toggleRange(checkboxes, start, end, checked) {
+        const min = Math.min(start, end);
+        const max = Math.max(start, end);
+        for (let i = min; i <= max; i++) {
+            checkboxes[i].checked = checked;
+        }
+    }
+
+    document.querySelectorAll('.edit-tile').forEach((tile) => {
+        tile.addEventListener('click', (event) => {
+            if (event.target.closest('.edit-checkbox-wrapper')) return;
+
+            const checkbox = tile.querySelector('.edit-checkbox');
+            if (!checkbox) return;
+
+            checkbox.checked = !checkbox.checked;
+
+            const checkboxes = Array.from(document.querySelectorAll('.edit-checkbox'));
+            const currentIndex = Number(checkbox.dataset.index);
+
+            if (event.shiftKey && lastClickedIndex !== null) {
+                toggleRange(checkboxes, lastClickedIndex, currentIndex, checkbox.checked);
+            }
+
+            lastClickedIndex = currentIndex;
+            updateCounter();
+        });
+    });
+
+    function toggleSelectAll(source) {
+        const checkboxes = document.querySelectorAll('.edit-checkbox');
+        for (var i = 0; i < checkboxes.length; i++) {
+            checkboxes[i].checked = source.checked;
+        }
+        updateCounter();
+    }
+
+    function updateCounter() {
+        const count = document.querySelectorAll('.edit-checkbox:checked').length;
+        document.getElementById('selected-counter').innerText = count + ' items selected';
+    }
+
+    function confirmReject() {
+        const count = document.querySelectorAll('.edit-checkbox:checked').length;
+        if (count === 0) {
+            alert('Please select items to reject.');
+            return false;
+        }
+        return confirm('Are you sure you want to move ' + count + ' items to the trash?');
+    }
+</script>
+{% endblock %}

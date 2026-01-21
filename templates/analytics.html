@@ -1,0 +1,10 @@
+{% extends 'base.html' %}
+
+{% block title %}Analytics - WatchMyBirds{% endblock %}
+
+{% block content %}
+{# Minimal mount point for Svelte Analytics Dashboard #}
+<div data-analytics-dashboard></div>
+<link rel="stylesheet" href="/assets/analytics/style.css?v=20260121_1045">
+<script type="module" src="/assets/analytics/analytics-dashboard.js?v=20260121_1045"></script>
+{% endblock %}
