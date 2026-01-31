@@ -2,15 +2,17 @@
 # Detector Module for Object Detection (Modularized, ONNX Runtime)
 # detectors/detector.py
 # ------------------------------------------------------------------------------
-from config import get_config
-from logging_config import get_logger
-from utils.model_downloader import ensure_model_files, load_latest_identifier
+import json
 import os
+
 import cv2
 import numpy as np
 import onnxruntime
-import json
-from PIL import Image, ImageDraw, ImageFont
+
+from config import get_config
+from logging_config import get_logger
+from utils.model_downloader import ensure_model_files, load_latest_identifier
+
 
 config = get_config()
 logger = get_logger(__name__)
@@ -64,7 +66,7 @@ class ONNXDetectionModel(BaseDetectionModel):
         # Now load the class names from the JSON file.
         if os.path.exists(self.labels_path):
             try:
-                with open(self.labels_path, "r") as f:
+                with open(self.labels_path) as f:
                     self.class_names = json.load(f)
             except Exception as e:
                 logger.error(
@@ -95,7 +97,6 @@ class ONNXDetectionModel(BaseDetectionModel):
         """Gets the model's expected input size from the ONNX session."""
         input_shape = session.get_inputs()[0].shape
         return (input_shape[2], input_shape[3])
-
 
     def preprocess_image(self, img):
         original_image = img.copy()

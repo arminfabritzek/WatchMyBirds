@@ -1,0 +1,59 @@
+{% macro render_orphan_modal(orphan) %}
+{#
+Renders a review modal for an image in the Review Queue.
+
+Args:
+orphan (dict): The image object containing:
+- filename, formatted_date
+- thumb_url, full_url
+- review_reason, reason_label
+- max_od_conf
+#}
+<div class="modal gallery-modal" id="modal-review-{{ orphan.filename|replace('.', '_') }}" tabindex="-1"
+    aria-hidden="true" data-modal-group="review">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <div>
+                    <h5 class="modal-title">
+                        {{ orphan.formatted_date }}
+                    </h5>
+                    <span
+                        class="badge {% if orphan.review_reason == 'orphan' %}bg-warning text-dark{% else %}bg-info{% endif %} ms-2">
+                        {{ orphan.reason_label }}
+                    </span>
+                </div>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body text-center" style="background: #f8f9fa;">
+                <img src="{{ orphan.full_url }}" alt="{{ orphan.filename }}" class="modal-image img-fluid"
+                    style="max-height: 70vh;" onerror="this.src='{{ orphan.thumb_url }}';">
+            </div>
+            <div class="modal-footer justify-content-between">
+                <div>
+                    {# Navigation Buttons - JS handles actual navigation based on data-modal-group #}
+                    <button type="button" class="btn btn-outline-primary prev-btn me-2"
+                        onclick="navigateModal(this, 'prev')">&laquo; Prev</button>
+                    <button type="button" class="btn btn-outline-primary next-btn"
+                        onclick="navigateModal(this, 'next')">Next &raquo;</button>
+                </div>
+                <div class="d-flex gap-2">
+                    {# Review Actions #}
+                    <button type="button" class="btn btn-success"
+                        onclick="modalAction('{{ orphan.filename }}', 'confirm')">
+                        <i class="bi bi-check-circle"></i> Bird Present
+                    </button>
+                    <button type="button" class="btn btn-outline-secondary"
+                        onclick="modalAction('{{ orphan.filename }}', 'skip')">
+                        <i class="bi bi-arrow-right-circle"></i> Skip
+                    </button>
+                    <button type="button" class="btn btn-danger"
+                        onclick="modalAction('{{ orphan.filename }}', 'no_bird')">
+                        <i class="bi bi-x-circle"></i> No Bird
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endmacro %}

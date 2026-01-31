@@ -1,0 +1,126 @@
+name: Build Golden Image
+
+on:
+
+  workflow_dispatch:
+
+jobs:
+  build-golden:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y xz-utils parted qemu-user-static
+
+      - name: Download Raspberry Pi OS Lite (Bookworm 64-bit)
+        run: |
+          wget -O rpios.img.xz https://downloads.raspberrypi.com/raspios_lite_arm64/images/raspios_lite_arm64-2025-05-13/2025-05-13-raspios-bookworm-arm64-lite.img.xz
+          unxz rpios.img.xz
+          mv *.img golden.img
+
+      - name: Expand Image (+4GB)
+        run: dd if=/dev/zero bs=1M count=4096 >> golden.img
+
+      - name: Resize Partition
+        run: sudo parted -s golden.img resizepart 2 100%
+
+      - name: Resize Filesystem
+        run: |
+          LOOP_DEV=$(sudo losetup --find --show --partscan golden.img)
+          sudo e2fsck -f -p ${LOOP_DEV}p2
+          sudo resize2fs ${LOOP_DEV}p2
+          sudo losetup -d $LOOP_DEV
+
+      - name: Mount and Harden Image
+        run: |
+          set -ex
+          mkdir -p mount_point
+          LOOP_DEV=$(sudo losetup --find --show --partscan golden.img)
+          
+          sudo mount ${LOOP_DEV}p2 mount_point
+          sudo mount ${LOOP_DEV}p1 mount_point/boot/firmware
+
+          # ---------------------------------------------------------
+          # PREPARE CHROOT
+          # ---------------------------------------------------------
+          
+          # Copy QEMU Static
+          sudo cp /usr/bin/qemu-aarch64-static mount_point/usr/bin/
+          
+          # Copy Hardening Assets
+          sudo cp rpi/harden.sh mount_point/tmp/
+          sudo mkdir -p mount_point/tmp/first-boot mount_point/tmp/systemd mount_point/tmp/ap mount_point/tmp/setup-server/templates
+          sudo cp rpi/first-boot/first-boot.sh mount_point/tmp/first-boot/
+          sudo cp rpi/first-boot/setup_wifi.sh mount_point/tmp/first-boot/
+          sudo cp rpi/systemd/wmb-first-boot.service mount_point/tmp/systemd/
+          sudo cp rpi/systemd/wmb-wifi-setup.service mount_point/tmp/systemd/
+          sudo cp rpi/systemd/wmb-wifi-setup.path mount_point/tmp/systemd/
+          sudo cp rpi/systemd/wmb-setup-server.service mount_point/tmp/systemd/
+          sudo cp rpi/systemd/wmb-wifi-watchdog.sh mount_point/tmp/systemd/
+          sudo cp rpi/systemd/wmb-wifi-watchdog.service mount_point/tmp/systemd/
+          sudo cp rpi/systemd/wmb-wifi-watchdog.timer mount_point/tmp/systemd/
+          sudo cp rpi/systemd/wmb-boot-diag.service mount_point/tmp/systemd/
+          sudo cp rpi/systemd/wmb-boot-diag.sh mount_point/tmp/systemd/
+          sudo cp rpi/ap/hostapd.conf.template mount_point/tmp/ap/
+          sudo cp rpi/ap/dnsmasq.conf.template mount_point/tmp/ap/
+          sudo cp rpi/setup-server/setup_server.py mount_point/tmp/setup-server/
+          sudo cp rpi/setup-server/templates/setup.html mount_point/tmp/setup-server/templates/
+          
+          sudo chmod +x mount_point/tmp/harden.sh
+
+          # Bind Mounts for Chroot
+          sudo mount --bind /dev mount_point/dev
+          sudo mount --bind /dev/pts mount_point/dev/pts
+          sudo mount --bind /sys mount_point/sys
+          sudo mount --bind /proc mount_point/proc
+          # Necessary for DNS/Apt in chroot
+          sudo mount --bind /etc/resolv.conf mount_point/etc/resolv.conf
+
+          # ---------------------------------------------------------
+          # EXECUTE HARDENING
+          # ---------------------------------------------------------
+          
+          sudo chroot mount_point /bin/bash -c "/tmp/harden.sh"
+
+          # ---------------------------------------------------------
+          # CLEANUP
+          # ---------------------------------------------------------
+          
+          # Remove QEMU & Tmp files
+          sudo rm mount_point/usr/bin/qemu-aarch64-static
+          sudo rm -f mount_point/tmp/harden.sh
+          sudo rm -rf mount_point/tmp/first-boot
+          sudo rm -rf mount_point/tmp/systemd
+          sudo rm -rf mount_point/tmp/ap
+          sudo rm -rf mount_point/tmp/setup-server
+          
+          # Unmount
+          sudo umount mount_point/etc/resolv.conf
+          sudo umount mount_point/proc
+          sudo umount mount_point/sys
+          sudo umount mount_point/dev/pts || true
+          sudo umount mount_point/dev
+          
+          sudo umount mount_point/boot/firmware
+          sudo umount mount_point
+          sudo losetup -d $LOOP_DEV
+
+      - name: Compress Golden Image
+        run: xz -z -1 -T0 golden.img
+
+      - name: Get Date
+        id: date
+        run: echo "date=$(date +'%Y-%m-%d')" >> $GITHUB_OUTPUT
+
+      - name: Upload Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: golden-bookworm-${{ steps.date.outputs.date }}-${{ github.sha }}
+          files: golden.img.xz
+          name: Golden Image (${{ steps.date.outputs.date }})
+          prerelease: true

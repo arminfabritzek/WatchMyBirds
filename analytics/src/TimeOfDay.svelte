@@ -31,8 +31,8 @@
 
                 // Beautiful gradient for the area
                 const gradient = ctx.createLinearGradient(0, 0, 0, 400);
-                gradient.addColorStop(0, "rgba(46, 204, 113, 0.4)");
-                gradient.addColorStop(1, "rgba(46, 204, 113, 0.05)");
+                gradient.addColorStop(0, "rgba(76, 175, 80, 0.4)");
+                gradient.addColorStop(1, "rgba(76, 175, 80, 0.05)");
 
                 chart = new Chart(canvas, {
                     type: "scatter", // Base type, datasets override
@@ -42,7 +42,7 @@
                                 type: "line",
                                 label: "Activity Density",
                                 data: points,
-                                borderColor: "#27ae60",
+                                borderColor: "#2e7d32",
                                 borderWidth: 3,
                                 backgroundColor: gradient,
                                 fill: true,
@@ -57,7 +57,7 @@
                                     x: h.x,
                                     y: h.y,
                                 })),
-                                backgroundColor: "rgba(52, 152, 219, 0.2)",
+                                backgroundColor: "rgba(2, 136, 209, 0.2)",
                                 barPercentage: 1.0,
                                 categoryPercentage: 1.0,
                                 xAxisID: "x",
@@ -82,7 +82,12 @@
                             },
                         },
                         layout: {
-                            padding: { top: 12, right: 16, bottom: 10, left: 10 },
+                            padding: {
+                                top: 12,
+                                right: 16,
+                                bottom: 10,
+                                left: 10,
+                            },
                         },
                         scales: {
                             x: {
@@ -151,8 +156,8 @@
         position: absolute;
         top: 0;
         right: 0;
-        background: rgba(46, 204, 113, 0.1);
-        color: #27ae60;
+        background: rgba(76, 175, 80, 0.1);
+        color: #2e7d32;
         font-size: 0.75rem;
         font-weight: 600;
         padding: 0.25rem 0.75rem;
@@ -173,7 +178,7 @@
         width: 24px;
         height: 24px;
         border: 2px solid #e0e0e0;
-        border-top-color: #2ecc71;
+        border-top-color: #4caf50;
         border-radius: 50%;
         animation: spin 1s linear infinite;
     }

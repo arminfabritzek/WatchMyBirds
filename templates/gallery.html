@@ -2,27 +2,99 @@
 
 {% block title %}Gallery - WatchMyBirds{% endblock %}
 
+{% block head %}
+<style>
+    .date-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+        gap: var(--space-md);
+    }
+
+    .date-card {
+        background: var(--color-surface);
+        border: 1px solid var(--color-border);
+        border-radius: var(--radius-lg);
+        overflow: hidden;
+        transition: all var(--transition-fast);
+        text-decoration: none;
+    }
+
+    .date-card:hover {
+        border-color: var(--color-primary);
+        transform: translateY(-2px);
+        box-shadow: var(--shadow-md);
+    }
+
+    .date-card__image {
+        position: relative;
+        aspect-ratio: 1;
+        overflow: hidden;
+    }
+
+    .date-card__image img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        display: block;
+    }
+
+    .date-card__count {
+        position: absolute;
+        top: var(--space-sm);
+        right: var(--space-sm);
+        background: var(--color-surface);
+        color: var(--color-accent);
+        padding: var(--space-xs) var(--space-sm);
+        border-radius: var(--radius-sm);
+        font-size: var(--font-size-sm);
+        font-weight: 600;
+    }
+
+    .date-card__label {
+        padding: var(--space-sm);
+        text-align: center;
+        font-size: var(--font-size-sm);
+        color: var(--color-text);
+        font-weight: 500;
+    }
+
+    .empty-state {
+        text-align: center;
+        padding: var(--space-3xl);
+        color: var(--color-text-muted);
+    }
+
+    .empty-state__icon {
+        font-size: 4rem;
+        opacity: 0.4;
+        margin-bottom: var(--space-lg);
+    }
+</style>
+{% endblock %}
+
 {% block content %}
-<h1 class="text-center my-3">Gallery</h1>
+{# Page Header #}
+<div class="page__header">
+    <h1 class="page__title">Gallery</h1>
+</div>
 
 {% if days %}
-<div class="gallery-grid-container">
+<div class="date-grid">
     {% for day in days %}
-    <div class="main-gallery-item">
-        <a href="/gallery/{{ day.date }}">
-            <div
-                style="width: {{ image_width }}px; height: {{ image_width }}px; overflow: hidden; position: relative; border-radius: 8px;">
-                <img src="{{ day.cover_path }}" alt="Cover {{ day.date }}"
-                    style="width: 100%; height: 100%; object-fit: cover; border-radius: 8px;">
-                <span class="badge bg-dark text-white"
-                    style="position: absolute; top: 8px; right: 8px; font-size: 0.8rem;">{{ day.count }}</span>
-            </div>
-        </a>
-        <p class="main-gallery-date">{{ day.date }}</p>
-    </div>
+    <a href="/gallery/{{ day.date }}" class="date-card">
+        <div class="date-card__image">
+            <img src="{{ day.cover_path }}" alt="{{ day.date }}">
+            <span class="date-card__count">{{ day.count }}</span>
+        </div>
+        <div class="date-card__label">{{ day.date }}</div>
+    </a>
     {% endfor %}
 </div>
 {% else %}
-<p class="text-center text-muted mt-5">No images in the gallery yet.</p>
+<div class="empty-state">
+    <div class="empty-state__icon">📷</div>
+    <p>No images in the gallery yet.</p>
+    <p class="text-sm">Detections will appear here automatically.</p>
+</div>
 {% endif %}
 {% endblock %}

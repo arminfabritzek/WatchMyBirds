@@ -1,0 +1,203 @@
+name: Build Release Image
+
+on:
+  workflow_dispatch:
+  # Auto-build disabled during dev phase - use rsync to update RPi
+  # Re-enable for production releases:
+  # push:
+  #   branches:
+  #     - main
+
+  workflow_run:
+    workflows: ["Build Golden Image"]
+    types:
+      - completed
+
+jobs:
+  build-release:
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout App Code
+        uses: actions/checkout@v4
+        with:
+          path: app_code
+
+
+      - name: Download Configured Golden Image
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Find latest Release matching 'golden-bookworm'
+          # We sort by created at desc to get the true latest even if prerelease
+          LATEST_TAG=$(gh release list --repo ${{ github.repository }} --limit 10 --json tagName,isPrerelease,createdAt --jq 'sort_by(.createdAt) | reverse | .[] | select(.tagName | startswith("golden-bookworm")) | .tagName' | head -n 1)
+          
+          if [ -z "$LATEST_TAG" ]; then
+            echo "::error::No Golden Image Release found!"
+            exit 1
+          fi
+          
+          echo "Downloading Golden Image: $LATEST_TAG"
+          gh release download "$LATEST_TAG" --repo ${{ github.repository }} --pattern "golden.img.xz"
+
+      - name: Decompress Image
+        run: |
+          if [ -f golden.img.xz ]; then
+            unxz golden.img.xz
+          else
+            echo "::error::Golden Image file missing!"
+            exit 1
+          fi
+
+      - name: Create Wheelhouse (Host)
+        run: |
+          mkdir -p wheelhouse
+          # Download wheels for ARM64/Python3.11 (Bookworm standard)
+          # We use --only-binary=:all: to ensure we don't get source tarballs that need compiling
+          pip download \
+            -r app_code/requirements.txt \
+            --dest ./wheelhouse \
+            --platform manylinux2014_aarch64 \
+            --python-version 3.11 \
+            --only-binary=:all: \
+            --extra-index-url https://www.piwheels.org/simple
+
+      - name: Install QEMU
+        run: sudo apt-get update && sudo apt-get install -y qemu-user-static
+
+      - name: Mount and Inject App
+        run: |
+          set -euo pipefail
+          
+          mkdir -p mount_point
+          LOOP_DEV=$(sudo losetup --find --show --partscan golden.img)
+          
+          sudo mount ${LOOP_DEV}p2 mount_point
+          sudo mount ${LOOP_DEV}p1 mount_point/boot/firmware
+
+          # ---------------------------------------------------------
+          # PREPARE CHROOT & INJECTION
+          # ---------------------------------------------------------
+
+          # Copy QEMU
+          sudo cp /usr/bin/qemu-aarch64-static mount_point/usr/bin/
+
+          # Inject App Code
+          sudo mkdir -p mount_point/opt/app
+          # Sync code (excluding git)
+          sudo rsync -av --delete --exclude='.git' --exclude='.github' app_code/ mount_point/opt/app/
+          
+          # Inject Wheelhouse
+          sudo mkdir -p mount_point/opt/wheelhouse
+          sudo cp -r wheelhouse/* mount_point/opt/wheelhouse/
+
+          # Write Version Metadata
+          echo "main-${{ github.sha }}" | sudo tee mount_point/opt/app/version.txt
+          echo "${{ github.sha }}" | sudo tee mount_point/opt/app/commit.txt
+          
+          # Fix Permissions (Resolve user inside chroot)
+          sudo chroot mount_point chown -R watchmybirds:watchmybirds /opt/app
+
+          sudo cp mount_point/opt/app/systemd/app.service mount_point/etc/systemd/system/
+          sudo ln -sf /etc/systemd/system/app.service mount_point/etc/systemd/system/multi-user.target.wants/app.service
+
+          # Update First-Boot Script & Service (ensure latest version from repo is used)
+          sudo cp mount_point/opt/app/rpi/first-boot/first-boot.sh mount_point/usr/local/bin/wmb-first-boot.sh
+          sudo chmod 755 mount_point/usr/local/bin/wmb-first-boot.sh
+          sudo cp mount_point/opt/app/rpi/systemd/wmb-first-boot.service mount_point/etc/systemd/system/
+          sudo ln -sf /etc/systemd/system/wmb-first-boot.service mount_point/etc/systemd/system/multi-user.target.wants/wmb-first-boot.service
+
+          # Install WiFi Setup System (Path Unit + Script)
+          sudo cp mount_point/opt/app/rpi/first-boot/setup_wifi.sh mount_point/usr/local/bin/wmb-setup-wifi.sh
+          sudo chmod 755 mount_point/usr/local/bin/wmb-setup-wifi.sh
+          
+          sudo cp mount_point/opt/app/rpi/systemd/wmb-wifi-setup.service mount_point/etc/systemd/system/
+          sudo cp mount_point/opt/app/rpi/systemd/wmb-wifi-setup.path mount_point/etc/systemd/system/
+          sudo cp mount_point/opt/app/rpi/systemd/wmb-setup-server.service mount_point/etc/systemd/system/
+
+          # Install Setup Server assets (AP-only UI)
+          sudo cp mount_point/opt/app/rpi/setup-server/setup_server.py mount_point/usr/local/bin/wmb-setup-server.py
+          sudo chmod 755 mount_point/usr/local/bin/wmb-setup-server.py
+          sudo mkdir -p mount_point/usr/local/share/watchmybirds/setup/templates
+          sudo cp mount_point/opt/app/rpi/setup-server/templates/setup.html mount_point/usr/local/share/watchmybirds/setup/templates/setup.html
+          
+          # Enable Path Unit
+          sudo ln -sf /etc/systemd/system/wmb-wifi-setup.path mount_point/etc/systemd/system/multi-user.target.wants/wmb-wifi-setup.path
+
+          # ---------------------------------------------------------
+          # INSTALL DEPENDENCIES (Offline Chroot)
+          # ---------------------------------------------------------
+          
+          # Bind mounts for virtual environment creation
+          sudo mount --bind /dev mount_point/dev
+          sudo mount --bind /dev/pts mount_point/dev/pts
+          sudo mount --bind /proc mount_point/proc
+          sudo mount --bind /sys mount_point/sys
+          
+          sudo chroot mount_point /bin/bash -c "
+            set -ex
+            
+            # Create Venv
+            python3 -m venv /opt/app/.venv
+            
+            # Upgrade pip (using wheelhouse if available, or just use system pip to install? 
+            # Ideally we have pip wheel in wheelhouse too. If not, use ensurepip version)
+            
+            # Install Requirements from Wheelhouse
+            /opt/app/.venv/bin/pip install --no-index --find-links /opt/wheelhouse -r /opt/app/requirements.txt
+            
+            # Cleanup Wheelhouse (Crucial for image size)
+            rm -rf /opt/wheelhouse
+          "
+          
+          # ---------------------------------------------------------
+          # CLEANUP
+          # ---------------------------------------------------------
+          sudo umount mount_point/sys
+          sudo umount mount_point/proc
+          sudo umount mount_point/dev/pts || true
+          sudo umount mount_point/dev
+          sudo rm mount_point/usr/bin/qemu-aarch64-static
+          
+          sudo umount mount_point/boot/firmware
+          sudo umount mount_point
+          sudo losetup -d $LOOP_DEV
+
+      - name: Rename Image
+        run: |
+          DATE=$(date +%Y-%m-%d)
+          SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-8)
+          mv golden.img watchmybirds-release-${DATE}-${SHORT_SHA}.img
+
+      - name: Compress Release Image
+        run: |
+          DATE=$(date +%Y-%m-%d)
+          SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-8)
+          xz -z -1 -T0 watchmybirds-release-${DATE}-${SHORT_SHA}.img
+
+      - name: Create Release and Upload
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          DATE=$(date +%Y-%m-%d)
+          SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-8)
+          TAG="release-${DATE}-${SHORT_SHA}"
+          IMG_FILE="watchmybirds-release-${DATE}-${SHORT_SHA}.img.xz"
+          
+          # Create Release if not exists
+          gh release view "$TAG" --repo "${{ github.repository }}" >/dev/null 2>&1 || \
+            gh release create "$TAG" \
+              --repo "${{ github.repository }}" \
+              --title "Release ${DATE}" \
+              --notes "Release build for commit ${{ github.sha }}" \
+              --latest
+
+          # Upload Asset
+          echo "Uploading $IMG_FILE to release $TAG..."
+          gh release upload "$TAG" \
+            "$IMG_FILE" \
+            --repo "${{ github.repository }}" \
+            --clobber

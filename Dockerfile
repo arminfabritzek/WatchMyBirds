@@ -10,7 +10,7 @@ RUN npm run build
 
 
 # ---------- Stage 2: Python runtime ----------
-FROM python:3.12-slim-bookworm
+FROM python:3.11-slim-bookworm
 
 # Install system dependencies
 RUN apt-get update && \
@@ -48,11 +48,6 @@ LABEL org.opencontainers.image.title="WatchMyBirds" \
     org.opencontainers.image.revision="${GIT_COMMIT}" \
     org.opencontainers.image.created="${BUILD_DATE}"
 
-# Going for CPU-only for now
-RUN pip install --no-cache-dir \
-    --index-url https://download.pytorch.org/whl/cpu \
-    torch==2.9.1 torchvision==0.24.1
-
 COPY requirements.txt /app/requirements.txt
 
 # Install Python dependencies (upgrade pip, setuptools, and wheel first)
@@ -85,7 +80,12 @@ RUN chmod +x /entrypoint.sh
 # Expose the port used by your app
 EXPOSE 8050
 
-# Use the entrypoint to dynamically handle users and permissions
+# Set runtime path defaults to match Docker mount convention
+ENV OUTPUT_DIR="/output"
+ENV INGEST_DIR="/ingest"
+ENV MODEL_BASE_PATH="/models"
+
+# Use entrypoint script to handle user permissions
 ENTRYPOINT ["/entrypoint.sh"]
 
 # Set the command to run your app

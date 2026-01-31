@@ -1,0 +1,185 @@
+{% extends "base.html" %}
+
+{% block title %}System Logs - WatchMyBirds{% endblock %}
+
+{% block head %}
+<style>
+    .log-viewer {
+        background: var(--color-bg);
+        border: 1px solid var(--color-border);
+        border-radius: var(--radius-lg);
+        padding: var(--space-md);
+        font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+        font-size: 12px;
+        line-height: 1.6;
+        overflow-y: auto;
+        max-height: 70vh;
+        white-space: pre-wrap;
+        word-wrap: break-word;
+        color: var(--color-text-muted);
+    }
+
+    .log-viewer div {
+        padding: 2px 0;
+        border-bottom: 1px solid var(--color-surface-2);
+    }
+
+    .log-viewer div:last-child {
+        border-bottom: none;
+    }
+
+    .log-info {
+        color: #58a6ff;
+    }
+
+    .log-warning {
+        color: #d29922;
+    }
+
+    .log-error {
+        color: #f85149;
+        font-weight: 600;
+    }
+
+    .log-timestamp {
+        color: var(--color-text-subtle);
+    }
+
+    .log-name {
+        color: #7ee787;
+    }
+
+    /* Scrollbar */
+    .log-viewer::-webkit-scrollbar {
+        width: 8px;
+    }
+
+    .log-viewer::-webkit-scrollbar-track {
+        background: var(--color-surface);
+        border-radius: var(--radius-sm);
+    }
+
+    .log-viewer::-webkit-scrollbar-thumb {
+        background: var(--color-border);
+        border-radius: var(--radius-sm);
+    }
+
+    .log-viewer::-webkit-scrollbar-thumb:hover {
+        background: var(--color-border-light);
+    }
+
+    .filter-btn {
+        padding: var(--space-xs) var(--space-sm);
+        border-radius: var(--radius-sm);
+        font-size: var(--font-size-xs);
+        font-weight: 500;
+        border: 1px solid var(--color-border);
+        background: transparent;
+        color: var(--color-text-muted);
+        cursor: pointer;
+        transition: all var(--transition-fast);
+    }
+
+    .filter-btn.active {
+        background: var(--color-surface-2);
+        color: var(--color-text);
+        border-color: var(--color-border-light);
+    }
+
+    .filter-btn[data-level="INFO"]:hover,
+    .filter-btn[data-level="INFO"].active {
+        color: #58a6ff;
+        border-color: #58a6ff;
+    }
+
+    .filter-btn[data-level="WARNING"]:hover,
+    .filter-btn[data-level="WARNING"].active {
+        color: #d29922;
+        border-color: #d29922;
+    }
+
+    .filter-btn[data-level="ERROR"]:hover,
+    .filter-btn[data-level="ERROR"].active {
+        color: #f85149;
+        border-color: #f85149;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+{# Page Header #}
+<div class="page__header">
+    <h1 class="page__title">System Logs</h1>
+    <div class="page__actions">
+        <button onclick="window.location.reload()" class="btn btn--secondary">Refresh</button>
+    </div>
+</div>
+
+{# Log Card #}
+<div class="card">
+    <div class="card__header" style="display: flex; justify-content: space-between; align-items: center;">
+        <span class="font-mono text-sm text-muted">/var/lib/watchmybirds/logs/app.log</span>
+        <div id="filter-controls" style="display: flex; gap: var(--space-xs);">
+            <button class="filter-btn active" data-level="INFO">INFO</button>
+            <button class="filter-btn active" data-level="WARNING">WARN</button>
+            <button class="filter-btn active" data-level="ERROR">ERROR</button>
+        </div>
+    </div>
+    <div class="card__body" style="padding: 0;">
+        <pre id="log-content" class="log-viewer">{{ logs }}</pre>
+    </div>
+    <div class="card__footer" style="display: flex; justify-content: space-between;">
+        <span class="text-sm text-muted">Showing last 200 lines</span>
+        <span id="line-count" class="text-sm text-muted"></span>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    document.addEventListener('DOMContentLoaded', function () {
+        const logContent = document.getElementById('log-content');
+        const originalLogs = logContent.textContent;
+        const lines = originalLogs.split('\n');
+
+        function processLogs() {
+            let html = '';
+            let count = 0;
+
+            const activeLevels = Array.from(document.querySelectorAll('.filter-btn.active'))
+                .map(btn => btn.getAttribute('data-level'));
+
+            lines.forEach(line => {
+                if (!line.trim()) return;
+
+                let level = 'INFO';
+                if (line.includes(' - WARNING - ')) level = 'WARNING';
+                else if (line.includes(' - ERROR - ')) level = 'ERROR';
+                else if (line.includes(' - DEBUG - ')) level = 'DEBUG';
+
+                if (activeLevels.includes(level) || (level === 'DEBUG' && activeLevels.includes('INFO'))) {
+                    let formatted = line
+                        .replace(/[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2},[0-9]{3}/, '<span class="log-timestamp">$&</span>')
+                        .replace(new RegExp(` - ${level} - `), ` - <span class="log-${level.toLowerCase()}">${level}</span> - `);
+
+                    html += `<div>${formatted}</div>`;
+                    count++;
+                }
+            });
+
+            logContent.innerHTML = html || '<div class="text-muted">No logs found matching filters.</div>';
+            document.getElementById('line-count').textContent = count + ' lines displayed';
+            logContent.scrollTop = logContent.scrollHeight;
+        }
+
+        document.querySelectorAll('.filter-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                btn.classList.toggle('active');
+                processLogs();
+            });
+        });
+
+        processLogs();
+    });
+</script>
+{% endblock %}

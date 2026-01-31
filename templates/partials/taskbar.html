@@ -1,0 +1,125 @@
+{# Sticky Bottom Taskbar - sitewide navigation and status #}
+
+<nav id="taskbar" class="navbar fixed-bottom py-1 shadow-lg modern-taskbar">
+    <div class="container-fluid d-flex justify-content-between align-items-center">
+
+        {# Navigation Icons (Left) #}
+        <div class="d-flex align-items-center gap-2">
+            <a href="/" class="btn btn-sm {{ 'btn-light' if request.path == '/' else 'btn-outline-light' }}"
+                title="Home">
+                <span class="d-none d-md-inline">Home</span><span class="d-md-none">H</span>
+            </a>
+            <a href="/gallery"
+                class="btn btn-sm {{ 'btn-light' if '/gallery' in request.path else 'btn-outline-light' }}"
+                title="Gallery">
+                <span class="d-none d-md-inline">Gallery</span><span class="d-md-none">G</span>
+            </a>
+            <a href="/species"
+                class="btn btn-sm {{ 'btn-light' if '/species' in request.path else 'btn-outline-light' }}"
+                title="Species">
+                <span class="d-none d-md-inline">Species</span><span class="d-md-none">S</span>
+            </a>
+            <a href="/settings"
+                class="btn btn-sm {{ 'btn-light' if '/settings' in request.path else 'btn-outline-light' }}"
+                title="Settings">
+                <span class="d-none d-md-inline">Settings</span><span class="d-md-none">⋯</span>
+            </a>
+        </div>
+
+        {# System Stats (Center) #}
+        <div id="taskbar-stats" class="d-flex align-items-center gap-3 text-light small">
+            {# CPU #}
+            <div class="d-flex align-items-center gap-1">
+                <span class="text-white-50" style="font-size: 0.7rem;">CPU</span>
+                <div class="progress bg-white-25" style="width: 40px; height: 5px;">
+                    <div id="taskbar-cpu-bar" class="progress-bar bg-success" style="width: 0%;"></div>
+                </div>
+                <span id="taskbar-cpu-val" style="min-width: 28px; font-size: 0.75rem;">--%</span>
+            </div>
+            {# RAM #}
+            <div class="d-flex align-items-center gap-1">
+                <span class="text-white-50" style="font-size: 0.7rem;">RAM</span>
+                <div class="progress bg-white-25" style="width: 40px; height: 5px;">
+                    <div id="taskbar-ram-bar" class="progress-bar bg-success" style="width: 0%;"></div>
+                </div>
+                <span id="taskbar-ram-val" style="min-width: 28px; font-size: 0.75rem;">--%</span>
+            </div>
+            {# Temperature #}
+            <div class="d-flex align-items-center gap-1 d-none d-sm-flex">
+                <span id="taskbar-temp-val" style="font-size: 0.75rem;">--°C</span>
+            </div>
+        </div>
+
+        {# Quick Stats (Right) #}
+        <div class="d-flex align-items-center gap-2 text-light small">
+            {# Detection Status #}
+            <div id="taskbar-detection-status" class="d-flex align-items-center gap-1">
+                <span id="taskbar-detection-dot" class="rounded-circle bg-success"
+                    style="width: 8px; height: 8px;"></span>
+                <span class="d-none d-lg-inline" style="font-size: 0.75rem;">Detection</span>
+            </div>
+            {# Today's Count #}
+            <div class="badge bg-white text-primary" title="Today's Detections">
+                <span id="taskbar-today-count">0</span> today
+            </div>
+        </div>
+
+    </div>
+</nav>
+
+{# Add bottom padding to body to prevent content overlap #}
+<style>
+    body {
+        padding-bottom: 50px;
+    }
+
+    .modern-taskbar {
+        z-index: 1050;
+        background: linear-gradient(135deg, #0d9488 0%, #0284c7 50%, #2563eb 100%);
+        box-shadow: 0 -4px 20px rgba(13, 148, 136, 0.3);
+    }
+
+    .bg-white-25 {
+        background-color: rgba(255, 255, 255, 0.25) !important;
+    }
+</style>
+
+<script>
+    (function () {
+        // Update taskbar stats from main stats polling
+        function updateTaskbarStats() {
+            fetch('/api/system/stats')
+                .then(r => r.json())
+                .then(data => {
+                    if (data.status === 'success') {
+                        const cpu = Math.round(data.cpu);
+                        const ram = Math.round(data.ram);
+
+                        // Update values
+                        document.getElementById('taskbar-cpu-val').textContent = cpu + '%';
+                        document.getElementById('taskbar-ram-val').textContent = ram + '%';
+
+                        // Update bars
+                        const cpuBar = document.getElementById('taskbar-cpu-bar');
+                        const ramBar = document.getElementById('taskbar-ram-bar');
+                        cpuBar.style.width = cpu + '%';
+                        ramBar.style.width = ram + '%';
+
+                        // Color coding
+                        cpuBar.className = 'progress-bar ' + (cpu < 50 ? 'bg-success' : cpu < 80 ? 'bg-warning' : 'bg-danger');
+                        ramBar.className = 'progress-bar ' + (ram < 50 ? 'bg-success' : ram < 80 ? 'bg-warning' : 'bg-danger');
+
+                        // Temperature
+                        if (data.temp !== undefined) {
+                            document.getElementById('taskbar-temp-val').textContent = Math.round(data.temp) + '°C';
+                        }
+                    }
+                })
+                .catch(() => { });
+        }
+
+        // Initial + polling
+        updateTaskbarStats();
+        setInterval(updateTaskbarStats, 2000);
+    })();
+</script>

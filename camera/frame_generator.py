@@ -2,11 +2,15 @@ from __future__ import annotations
 
 import os
 import time
+from datetime import datetime
+
 import cv2
 import numpy as np
+import pytz
 from PIL import Image, ImageDraw, ImageFont
 
 from logging_config import get_logger
+
 
 logger = get_logger(__name__)
 
@@ -26,7 +30,8 @@ class FrameGenerator:
         padding_x = int(img_width * padding_x_percent)
         padding_y = int(img_height * padding_y_percent)
         custom_font = ImageFont.load_default()
-        timestamp_text = time.strftime("%Y-%m-%d %H:%M:%S")
+        now = datetime.now(pytz.timezone("Europe/Berlin"))
+        timestamp_text = now.strftime("%Y-%m-%d %H:%M:%S")
         bbox = draw.textbbox((0, 0), timestamp_text, font=custom_font)
         text_width = bbox[2] - bbox[0]
         text_height = bbox[3] - bbox[1]

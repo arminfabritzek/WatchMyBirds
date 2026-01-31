@@ -1,0 +1,12 @@
+[Unit]
+Description=WatchMyBirds First Boot Setup
+After=network.target
+ConditionPathExists=/usr/local/bin/wmb-first-boot.sh
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/wmb-first-boot.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

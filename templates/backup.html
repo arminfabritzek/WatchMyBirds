@@ -1,0 +1,353 @@
+{% extends 'base.html' %}
+
+{% block title %}Backup - WatchMyBirds{% endblock %}
+
+{% block content %}
+{# Page Header #}
+<div class="page__header">
+    <h1 class="page__title">Backup & Migration</h1>
+    <div class="page__actions">
+        <a href="/settings" class="btn btn--secondary">Settings</a>
+    </div>
+</div>
+
+{# Combined Info Card #}
+<div class="card mb-lg">
+    <div class="card__body" style="padding: var(--space-md) var(--space-lg);">
+        <div style="display: flex; flex-direction: column; gap: var(--space-sm);">
+            <div style="display: flex; align-items: center; gap: var(--space-sm);">
+                <span>⏸️</span>
+                <span>Detection wird während des Backups automatisch pausiert</span>
+            </div>
+            <div style="display: flex; align-items: center; gap: var(--space-sm);">
+                <span>📦</span>
+                <span>Download startet sofort als <code>.tar.gz</code> – kein Archiv auf dem Gerät</span>
+            </div>
+            <div style="display: flex; align-items: center; gap: var(--space-sm);">
+                <span>🔐</span>
+                <span><strong>Enthält Tokens & Passwörter</strong> – sicher aufbewahren!</span>
+            </div>
+        </div>
+    </div>
+</div>
+
+{# Stats Card #}
+<div class="card mb-lg">
+    <div class="card__header">
+        <h3 class="card__title">📊 Statistiken</h3>
+    </div>
+    <div class="card__body" id="statsPanel">
+        <div class="text-center p-xl">
+            <span class="animate-spin" style="font-size: 2rem; display: inline-block;">⟳</span>
+            <div class="text-muted mt-md">Lade Statistiken...</div>
+        </div>
+    </div>
+</div>
+
+{# Backup Options #}
+<div class="card mb-lg">
+    <div class="card__header">
+        <h3 class="card__title">📦 Backup-Inhalt auswählen</h3>
+    </div>
+    <div class="card__body">
+        {# Database #}
+        <div class="backup-option selected" onclick="toggleOption(this, 'include_db')">
+            <input type="checkbox" id="include_db" checked>
+            <div class="backup-option__content">
+                <div class="backup-option__title">Datenbank (images.db)</div>
+                <div class="backup-option__size" id="dbSize">-</div>
+            </div>
+            <div class="backup-option__desc">Enthält alle Detektionen, Klassifizierungen und Metadaten.</div>
+        </div>
+
+        {# Originals #}
+        <div class="backup-option selected" onclick="toggleOption(this, 'include_originals')">
+            <input type="checkbox" id="include_originals" checked>
+            <div class="backup-option__content">
+                <div class="backup-option__title">Originalbilder</div>
+                <div class="backup-option__size" id="originalsSize">-</div>
+            </div>
+            <div class="backup-option__desc">Alle gespeicherten Originalbilder im JPEG-Format.</div>
+        </div>
+
+        {# Settings #}
+        <div class="backup-option selected" onclick="toggleOption(this, 'include_settings')">
+            <input type="checkbox" id="include_settings" checked>
+            <div class="backup-option__content">
+                <div class="backup-option__title">Einstellungen (settings.yaml)</div>
+                <div class="backup-option__size" id="settingsSize">-</div>
+            </div>
+            <div class="backup-option__desc">Alle Konfigurationseinstellungen.</div>
+        </div>
+
+        {# Derivatives #}
+        <div class="backup-option" onclick="toggleOption(this, 'include_derivatives')">
+            <input type="checkbox" id="include_derivatives">
+            <div class="backup-option__content">
+                <div class="backup-option__title">Derivate (Thumbs & Optimized)</div>
+                <div class="backup-option__size" id="derivativesSize">-</div>
+            </div>
+            <div class="backup-option__desc">Thumbnails und optimierte Versionen. Können regeneriert werden.</div>
+        </div>
+    </div>
+</div>
+
+{# Total Size #}
+<div class="total-size-bar mb-lg">
+    <span>Geschätzte Archivgröße:</span>
+    <span class="total-size-value" id="totalSize">-</span>
+</div>
+
+{# Download Button #}
+<button id="downloadBtn" class="btn btn--primary btn--lg btn--block" onclick="startBackup()">
+    <span id="downloadBtnText">📥 Backup herunterladen</span>
+    <span id="downloadSpinner" class="animate-spin hidden" style="margin-left: 8px;">⟳</span>
+</button>
+
+{# Progress #}
+<div id="downloadProgress" class="mt-lg hidden">
+    <div class="alert alert--info animate-pulse">
+        <strong>⏳ Download läuft...</strong><br>
+        <small>Das Archiv wird gestreamt. Bitte Fenster nicht schließen.</small>
+    </div>
+</div>
+
+{# Error #}
+<div id="backupError" class="alert alert--danger mt-lg hidden"></div>
+{% endblock %}
+
+{% block head %}
+<style>
+    .backup-option {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: flex-start;
+        gap: var(--space-sm);
+        padding: var(--space-md);
+        background: var(--color-surface-2);
+        border: 2px solid var(--color-border);
+        border-radius: var(--radius-lg);
+        margin-bottom: var(--space-md);
+        cursor: pointer;
+        transition: all var(--transition-fast);
+    }
+
+    .backup-option:hover {
+        border-color: var(--color-border-light);
+    }
+
+    .backup-option.selected {
+        border-color: var(--color-primary);
+        background: rgba(47, 111, 62, 0.1);
+    }
+
+    .backup-option input[type="checkbox"] {
+        width: 20px;
+        height: 20px;
+        accent-color: var(--color-primary);
+        cursor: pointer;
+    }
+
+    .backup-option__content {
+        flex: 1;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+
+    .backup-option__title {
+        font-weight: 600;
+        color: var(--color-text);
+    }
+
+    .backup-option__size {
+        font-family: 'SF Mono', monospace;
+        font-size: var(--font-size-sm);
+        color: var(--color-text-muted);
+    }
+
+    .backup-option__desc {
+        width: 100%;
+        font-size: var(--font-size-sm);
+        color: var(--color-text-muted);
+        padding-left: 28px;
+    }
+
+    .total-size-bar {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: var(--space-md) var(--space-lg);
+        background: var(--color-primary);
+        color: white;
+        border-radius: var(--radius-lg);
+        font-weight: 500;
+    }
+
+    .total-size-value {
+        font-size: var(--font-size-xl);
+        font-weight: 700;
+        font-family: 'SF Mono', monospace;
+    }
+
+    .stat-row {
+        display: flex;
+        justify-content: space-between;
+        padding: var(--space-sm) 0;
+        border-bottom: 1px solid var(--color-border);
+    }
+
+    .stat-row:last-child {
+        border-bottom: none;
+    }
+
+    .stat-row__label {
+        color: var(--color-text-muted);
+    }
+
+    .stat-row__value {
+        font-weight: 500;
+        color: var(--color-text);
+    }
+</style>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    let stats = {};
+
+    document.addEventListener('DOMContentLoaded', function () {
+        loadStats();
+        // No longer need to check detection status - backup auto-pauses
+    });
+
+    async function loadStats() {
+        try {
+            const response = await fetch('/api/backup/stats');
+            stats = await response.json();
+
+            document.getElementById('dbSize').textContent = formatMB(stats.db_size_mb);
+            document.getElementById('originalsSize').textContent =
+                `${stats.originals_count} Dateien (${formatMB(stats.originals_size_mb)})`;
+            document.getElementById('derivativesSize').textContent =
+                `${stats.derivatives_count} Dateien (${formatMB(stats.derivatives_size_mb)})`;
+            document.getElementById('settingsSize').textContent =
+                stats.settings_exists ? formatBytes(stats.settings_size_bytes) : 'Nicht vorhanden';
+
+            document.getElementById('statsPanel').innerHTML = `
+                <div class="stat-row">
+                    <span class="stat-row__label">Datenbank</span>
+                    <span class="stat-row__value">${formatMB(stats.db_size_mb)}</span>
+                </div>
+                <div class="stat-row">
+                    <span class="stat-row__label">Originalbilder</span>
+                    <span class="stat-row__value">${stats.originals_count} Dateien • ${formatMB(stats.originals_size_mb)}</span>
+                </div>
+                <div class="stat-row">
+                    <span class="stat-row__label">Derivate</span>
+                    <span class="stat-row__value">${stats.derivatives_count} Dateien • ${formatMB(stats.derivatives_size_mb)}</span>
+                </div>
+                <div class="stat-row">
+                    <span class="stat-row__label">Einstellungen</span>
+                    <span class="stat-row__value">${stats.settings_exists ? '✓ Vorhanden' : '✗ Nicht vorhanden'}</span>
+                </div>
+            `;
+
+            updateTotalSize();
+        } catch (err) {
+            document.getElementById('statsPanel').innerHTML =
+                '<div class="alert alert--danger">Fehler beim Laden der Statistiken.</div>';
+        }
+    }
+
+    function formatMB(mb) {
+        if (mb < 1) return (mb * 1024).toFixed(0) + ' KB';
+        if (mb >= 1024) return (mb / 1024).toFixed(2) + ' GB';
+        return mb.toFixed(2) + ' MB';
+    }
+
+    function formatBytes(bytes) {
+        if (bytes < 1024) return bytes + ' B';
+        if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+        return (bytes / (1024 * 1024)).toFixed(2) + ' MB';
+    }
+
+    function toggleOption(element, checkboxId) {
+        const checkbox = document.getElementById(checkboxId);
+        checkbox.checked = !checkbox.checked;
+        element.classList.toggle('selected', checkbox.checked);
+        updateTotalSize();
+    }
+
+    function updateTotalSize() {
+        let totalBytes = 0;
+        if (document.getElementById('include_db').checked) totalBytes += stats.db_size_bytes || 0;
+        if (document.getElementById('include_originals').checked) totalBytes += stats.originals_size_bytes || 0;
+        if (document.getElementById('include_derivatives').checked) totalBytes += stats.derivatives_size_bytes || 0;
+        if (document.getElementById('include_settings').checked) totalBytes += stats.settings_size_bytes || 0;
+
+        const estimated = totalBytes * 0.85;
+        document.getElementById('totalSize').textContent = '~' + formatBytes(estimated);
+    }
+
+    async function startBackup() {
+        const btn = document.getElementById('downloadBtn');
+        const btnText = document.getElementById('downloadBtnText');
+        const spinner = document.getElementById('downloadSpinner');
+        const progress = document.getElementById('downloadProgress');
+        const errorDiv = document.getElementById('backupError');
+
+        const options = {
+            include_db: document.getElementById('include_db').checked,
+            include_originals: document.getElementById('include_originals').checked,
+            include_derivatives: document.getElementById('include_derivatives').checked,
+            include_settings: document.getElementById('include_settings').checked
+        };
+
+        btn.disabled = true;
+        btnText.textContent = 'Erstelle Backup...';
+        spinner.classList.remove('hidden');
+        progress.classList.remove('hidden');
+        errorDiv.classList.add('hidden');
+
+        try {
+            const response = await fetch('/api/backup/create', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(options)
+            });
+
+            if (!response.ok) {
+                const data = await response.json();
+                throw new Error(data.error || 'Backup fehlgeschlagen');
+            }
+
+            const disposition = response.headers.get('Content-Disposition');
+            let filename = 'watchmybirds_backup.tar.gz';
+            if (disposition) {
+                const match = disposition.match(/filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/);
+                if (match && match[1]) filename = match[1].replace(/['"]/g, '');
+            }
+
+            const blob = await response.blob();
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename;
+            a.click();
+            URL.revokeObjectURL(url);
+
+            progress.innerHTML = '<div class="alert alert--success">✅ Backup erfolgreich heruntergeladen!</div>';
+
+        } catch (err) {
+            progress.classList.add('hidden');
+            errorDiv.textContent = '❌ ' + err.message;
+            errorDiv.classList.remove('hidden');
+        } finally {
+            btn.disabled = false;
+            btnText.textContent = '📥 Backup herunterladen';
+            spinner.classList.add('hidden');
+        }
+    }
+</script>
+{% endblock %}

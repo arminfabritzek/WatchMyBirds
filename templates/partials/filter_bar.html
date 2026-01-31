@@ -1,0 +1,133 @@
+{# Minimal Filter Bar - include on gallery pages #}
+{# Variables: current_threshold (float 0-1), sort_by (string), show_sort (bool, default true) #}
+
+{% set threshold = current_threshold|default(0) %}
+{% set sort = sort_by|default('score') %}
+{% set enable_sort = show_sort|default(true) %}
+
+<div class="filter-bar-container">
+    <div class="filter-pill">
+        {# Score Slider Group #}
+        <div class="filter-group">
+            <button type="button" id="filter-btn-minus" class="filter-btn-mini">−</button>
+            <input type="range" class="slider-minimal" id="filter-score-slider" min="0" max="1" step="0.05"
+                value="{{ threshold }}">
+            <button type="button" id="filter-btn-plus" class="filter-btn-mini">+</button>
+            <span id="filter-score-display" class="score-badge-pill">
+                {{ "%.0f"|format(threshold * 100) }}%
+            </span>
+            <button type="button" id="filter-set-default" class="filter-btn-mini" title="Set as default">
+                ★
+            </button>
+        </div>
+
+        {% if enable_sort %}
+        {# Sort Dropdown #}
+        <select id="filter-sort-select" class="sort-select-minimal">
+            <option value="score" {% if sort=='score' %}selected{% endif %}>Best Score</option>
+            <option value="time_desc" {% if sort=='time_desc' %}selected{% endif %}>Newest</option>
+            <option value="time_asc" {% if sort=='time_asc' %}selected{% endif %}>Oldest</option>
+            <option value="species" {% if sort=='species' %}selected{% endif %}>Species</option>
+        </select>
+        {% endif %}
+    </div>
+</div>
+
+<script>
+    (function () {
+        const STORAGE_KEY = 'wmb_filter_default_score';
+        const slider = document.getElementById('filter-score-slider');
+        const display = document.getElementById('filter-score-display');
+        const sortSelect = document.getElementById('filter-sort-select');
+        const btnMinus = document.getElementById('filter-btn-minus');
+        const btnPlus = document.getElementById('filter-btn-plus');
+        const btnSetDefault = document.getElementById('filter-set-default');
+
+        if (!slider) return;
+
+        // On page load: if no min_score in URL, use localStorage default (or 0)
+        const url = new URL(window.location);
+        if (!url.searchParams.has('min_score')) {
+            const savedDefault = localStorage.getItem(STORAGE_KEY);
+            if (savedDefault !== null) {
+                slider.value = parseFloat(savedDefault);
+            }
+        }
+
+        let debounceTimer;
+        const step = 0.05;
+
+        function updateDisplay() {
+            display.textContent = Math.round(slider.value * 100) + '%';
+            const val = (slider.value - slider.min) / (slider.max - slider.min);
+            const percent = val * 100;
+            slider.style.background = `linear-gradient(to right, var(--color-primary-dark) 0%, var(--color-primary-dark) ${percent}%, var(--color-surface-2) ${percent}%, var(--color-surface-2) 100%)`;
+
+            // Highlight star if current value matches saved default
+            const savedDefault = localStorage.getItem(STORAGE_KEY);
+            if (savedDefault !== null && Math.abs(parseFloat(savedDefault) - parseFloat(slider.value)) < 0.01) {
+                btnSetDefault.classList.add('active');
+            } else {
+                btnSetDefault.classList.remove('active');
+            }
+        }
+
+        function adjustSlider(delta) {
+            let newVal = parseFloat(slider.value) + delta;
+            newVal = Math.max(0, Math.min(1, newVal));
+            newVal = Math.round(newVal * 20) / 20;
+            slider.value = newVal;
+            updateDisplay();
+            clearTimeout(debounceTimer);
+            debounceTimer = setTimeout(() => applyFilters(), 400);
+        }
+
+        slider.addEventListener('input', updateDisplay);
+        slider.addEventListener('change', function () {
+            clearTimeout(debounceTimer);
+            debounceTimer = setTimeout(() => applyFilters(), 200);
+        });
+
+        btnMinus.addEventListener('click', () => adjustSlider(-step));
+        btnPlus.addEventListener('click', () => adjustSlider(step));
+
+        // Set current value as user's default
+        btnSetDefault.addEventListener('click', function () {
+            localStorage.setItem(STORAGE_KEY, slider.value);
+            btnSetDefault.classList.add('active');
+            // Brief visual feedback
+            btnSetDefault.style.transform = 'scale(1.2)';
+            setTimeout(() => btnSetDefault.style.transform = '', 150);
+        });
+
+        if (sortSelect) {
+            sortSelect.addEventListener('change', applyFilters);
+        }
+
+        function applyFilters() {
+            const url = new URL(window.location);
+            url.searchParams.set('min_score', parseFloat(slider.value).toFixed(2));
+            if (sortSelect) url.searchParams.set('sort', sortSelect.value);
+            url.searchParams.set('page', '1');
+            window.location.href = url.toString();
+        }
+
+        updateDisplay();
+    })();
+</script>
+
+<style>
+    #filter-set-default {
+        color: var(--color-text-muted);
+        font-size: 0.9rem;
+        transition: color var(--transition-fast), transform var(--transition-fast);
+    }
+
+    #filter-set-default:hover {
+        color: var(--color-warning);
+    }
+
+    #filter-set-default.active {
+        color: var(--color-warning);
+    }
+</style>

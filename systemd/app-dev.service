@@ -1,0 +1,49 @@
+[Unit]
+Description=WatchMyBirds Main Application (DEV MODE)
+After=network-online.target
+Wants=network-online.target
+[Service]
+User=watchmybirds
+StateDirectory=watchmybirds
+LogsDirectory=app
+WorkingDirectory=/var/lib/watchmybirds
+EnvironmentFile=-/etc/app/app.env
+Environment=HOME=/var/lib/watchmybirds
+Environment=PORT=8050
+Environment=OUTPUT_DIR=/var/lib/watchmybirds/output
+Environment=INGEST_DIR=/var/lib/watchmybirds/ingest
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=PYTHONUNBUFFERED=1
+Environment=MODEL_BASE_PATH=/var/lib/watchmybirds/models
+# Force WiFi unblock on every start (runs as root via +). Sleep to avoid NM race.
+ExecStartPre=+/bin/sleep 2
+ExecStartPre=+/usr/sbin/rfkill unblock wifi
+ExecStart=/opt/app/.venv/bin/python /opt/app/main.py
+
+Restart=always
+RestartSec=5
+
+# DEV MODE: Relaxed security for rsync updates and debugging
+# ProtectSystem=strict  # DISABLED for dev - allows /opt/app writes via rsync
+# ReadWritePaths=/var/lib/watchmybirds /var/log/app /opt/app
+PrivateTmp=true
+# Power actions use logind/polkit (same as production). NNP relaxed for dev flexibility.
+NoNewPrivileges=false
+ProtectHome=yes
+# Kernel protection relaxed for dev:
+# ProtectKernelTunables=true
+# ProtectKernelModules=true
+# ProtectKernelLogs=true
+# ProtectControlGroups=true
+# ProtectClock=true
+# These are relaxed for dev debugging (can cause issues with some dev tools):
+# RestrictNamespaces=true
+# MemoryDenyWriteExecute=true
+# LockPersonality=true
+# RestrictRealtime=true
+# DEV: Allow sudo fallback if needed for debugging
+RestrictSUIDSGID=false
+# SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

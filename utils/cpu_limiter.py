@@ -1,12 +1,16 @@
 # utils/cpu_limiter.py
-import os
-import psutil
 import multiprocessing
+import os
 import platform
+
+import psutil
+
 from config import get_config
 from logging_config import get_logger
 
+
 logger = get_logger(__name__)
+
 
 def restrict_to_cpus(cpu_limit=None):
     """
@@ -27,6 +31,8 @@ def restrict_to_cpus(cpu_limit=None):
             p.cpu_affinity(allowed_cpus)
             logger.info(f"Restricted process to CPUs: {allowed_cpus}")
         else:
-            logger.debug(f"CPU affinity is not supported on {platform.system()}. Skipping restriction.")
+            logger.debug(
+                f"CPU affinity is not supported on {platform.system()}. Skipping restriction."
+            )
     except Exception as e:
         logger.warning(f"Could not set CPU affinity: {e}")

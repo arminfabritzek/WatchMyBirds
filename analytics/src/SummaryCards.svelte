@@ -12,7 +12,7 @@
 >
     <!-- Total Detections -->
     <div
-        style="background: white; border-radius: 12px; padding: 1.25rem; box-shadow: 0 2px 8px rgba(0,0,0,0.06); border-left: 4px solid #2ecc71;"
+        style="background: white; border-radius: 12px; padding: 1.25rem; box-shadow: 0 2px 8px rgba(0,0,0,0.06); border-left: 4px solid #4caf50;"
     >
         <div style="font-size: 2rem; font-weight: 700; color: #1a202c;">
             {formatNumber(summary?.total_detections)}
@@ -24,7 +24,7 @@
 
     <!-- Species -->
     <div
-        style="background: white; border-radius: 12px; padding: 1.25rem; box-shadow: 0 2px 8px rgba(0,0,0,0.06); border-left: 4px solid #3498db;"
+        style="background: white; border-radius: 12px; padding: 1.25rem; box-shadow: 0 2px 8px rgba(0,0,0,0.06); border-left: 4px solid #0288d1;"
     >
         <div style="font-size: 2rem; font-weight: 700; color: #1a202c;">
             {summary?.total_species || 0}
@@ -36,7 +36,7 @@
 
     <!-- First Detection -->
     <div
-        style="background: white; border-radius: 12px; padding: 1.25rem; box-shadow: 0 2px 8px rgba(0,0,0,0.06); border-left: 4px solid #9b59b6;"
+        style="background: white; border-radius: 12px; padding: 1.25rem; box-shadow: 0 2px 8px rgba(0,0,0,0.06); border-left: 4px solid #00897b;"
     >
         <div style="font-size: 1.1rem; font-weight: 700; color: #1a202c;">
             {summary?.date_range?.first || "—"}
@@ -48,7 +48,7 @@
 
     <!-- Last Detection -->
     <div
-        style="background: white; border-radius: 12px; padding: 1.25rem; box-shadow: 0 2px 8px rgba(0,0,0,0.06); border-left: 4px solid #e67e22;"
+        style="background: white; border-radius: 12px; padding: 1.25rem; box-shadow: 0 2px 8px rgba(0,0,0,0.06); border-left: 4px solid #ff9800;"
     >
         <div style="font-size: 1.1rem; font-weight: 700; color: #1a202c;">
             {summary?.date_range?.last || "—"}

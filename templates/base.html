@@ -4,35 +4,32 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="description" content="WatchMyBirds - Vogelbeobachtung mit KI">
+    <meta name="description" content="WatchMyBirds - AI-powered Bird Monitoring">
+    <meta name="theme-color" content="#0f1a12">
     <title>{% block title %}WatchMyBirds{% endblock %}</title>
 
-    <!-- Bootstrap CSS -->
+    <!-- Google Fonts: Inter -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+    <!-- Bootstrap CSS (for grid utilities and components) -->
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
 
-    <!-- Custom CSS -->
-    <link rel="stylesheet" href="/assets/custom.css">
+    <!-- Design System (Source of Truth for all styling) -->
+    <link rel="stylesheet" href="/assets/design-system.css">
 
     {% block head %}{% endblock %}
-
-    <style>
-        /* Base styles matching Dash loading overlay */
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-        }
-
-        /* Ensure consistent navbar height */
-        .custom-navbar .navbar-brand img {
-            height: 40px;
-        }
-    </style>
 </head>
 
 <body>
-    {% include 'partials/navbar.html' %}
+    {# Single App Bar - no duplicates #}
+    {% include 'partials/appbar.html' %}
 
-    <main class="container-fluid py-3">
-        {% block content %}{% endblock %}
+    <main class="page">
+        <div class="container">
+            {% block content %}{% endblock %}
+        </div>
     </main>
 
     {% block modals %}{% endblock %}

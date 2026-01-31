@@ -75,13 +75,13 @@
                                 <path
                                     d={generateSparkline(item.points)}
                                     fill="none"
-                                    stroke="#2ecc71"
+                                    stroke="#4caf50"
                                     stroke-width="1.5"
                                     vector-effect="non-scaling-stroke"
                                 />
                                 <path
                                     d={`${generateSparkline(item.points)} L 200 30 L 0 30 Z`}
-                                    fill="#2ecc71"
+                                    fill="#4caf50"
                                     fill-opacity="0.1"
                                     stroke="none"
                                 />
@@ -107,7 +107,7 @@
         font-size: 0.85rem;
         font-weight: 700;
         font-weight: 700;
-        color: #2ecc71;
+        color: #4caf50;
         text-transform: uppercase;
         letter-spacing: 0.05em;
         margin-bottom: 1.5rem;
@@ -138,7 +138,7 @@
         font-size: 0.75rem;
         text-transform: uppercase;
         text-transform: uppercase;
-        border-bottom: 2px solid #2ecc71;
+        border-bottom: 2px solid #4caf50;
         margin-bottom: 0.5rem;
         background-color: #f8fafc; /* visual check */
     }

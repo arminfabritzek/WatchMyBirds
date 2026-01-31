@@ -1,0 +1,7 @@
+[Unit]
+Description=WatchMyBirds WiFi Setup Service
+ConditionPathExists=/var/lib/watchmybirds/pending_wifi.conf
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/wmb-setup-wifi.sh

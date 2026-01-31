@@ -1,0 +1,64 @@
+{#
+Detection Info Component
+
+Shows detection/classification details.
+For multi-detection images, shows all siblings as cards.
+
+Args:
+det (dict): Current detection with od_class_name, cls_class_name, confidences
+siblings (list): List of sibling detections (if multi-detection image)
+sibling_count (int): Total number of detections on this image
+#}
+{% macro render_detection_info(det, siblings=none, sibling_count=1) %}
+<div class="detection-info small text-muted mt-2 text-center">
+    {% if sibling_count and sibling_count > 1 and siblings %}
+    {# Multiple detections on same image #}
+    <div class="mb-2">
+        <strong>{{ sibling_count }} detections on this image:</strong>
+    </div>
+    <div class="sibling-cards"
+        style="display: flex; flex-wrap: wrap; justify-content: center; gap: 0.5rem; max-width: 100%;">
+        {% for sib in siblings %}
+        <div class="sibling-card" data-detection-id="{{ sib.detection_id }}" style="
+                min-width: 160px; 
+                max-width: 200px; 
+                padding: 0.5rem; 
+                border: 1px solid var(--color-border, #dee2e6); 
+                border-radius: 0.375rem;
+                text-align: left;
+                {% if sib.detection_id == det.detection_id %}
+                background: rgba(13, 110, 253, 0.1); 
+                border-color: #0d6efd;
+                {% endif %}
+             ">
+            {% if sib.thumb_url %}
+            <img src="{{ sib.thumb_url }}" alt="{{ sib.common_name }}"
+                style="width: 36px; height: 36px; object-fit: cover; border-radius: 4px; float: left; margin-right: 8px;">
+            {% endif %}
+            <div style="font-weight: 600; font-size: 0.8rem;">{{ sib.common_name }}</div>
+            <div style="font-size: 0.7rem; color: var(--color-text-muted, #6c757d);">
+                {{ "%.0f"|format(sib.od_confidence * 100) }}%
+                {% if sib.cls_class_name %} / {{ "%.0f"|format(sib.cls_confidence * 100) }}%{% endif %}
+            </div>
+            <div style="clear: both;"></div>
+        </div>
+        {% endfor %}
+    </div>
+    {% else %}
+    {# Single detection #}
+    <div>
+        Detection: <em>{{ det.od_class_name | replace('_', ' ') }}</em>
+        ({{ "%.0f"|format(det.od_confidence * 100) }}%)
+    </div>
+    <div>
+        Classification:
+        {% if det.cls_class_name %}
+        <em>{{ det.cls_class_name | replace('_', ' ') }}</em>
+        ({{ "%.0f"|format(det.cls_confidence * 100) }}%)
+        {% else %}
+        —
+        {% endif %}
+    </div>
+    {% endif %}
+</div>
+{% endmacro %}

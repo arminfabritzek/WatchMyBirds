@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>WatchMyBirds Setup</title>
+    <style>
+        :root {
+            color-scheme: light;
+        }
+        body {
+            margin: 0;
+            font-family: Arial, Helvetica, sans-serif;
+            background: #f4f6f8;
+            color: #1b1f23;
+        }
+        .wrap {
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 24px;
+        }
+        .card {
+            width: 100%;
+            max-width: 440px;
+            background: #ffffff;
+            border-radius: 12px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.08);
+            padding: 24px;
+        }
+        h1 {
+            font-size: 20px;
+            margin: 0 0 8px;
+        }
+        p {
+            margin: 0 0 16px;
+            color: #4b5563;
+            font-size: 14px;
+        }
+        label {
+            display: block;
+            font-size: 12px;
+            color: #6b7280;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+            margin-bottom: 6px;
+        }
+        input,
+        select {
+            width: 100%;
+            padding: 10px 12px;
+            border: 1px solid #d1d5db;
+            border-radius: 8px;
+            font-size: 14px;
+            margin-bottom: 12px;
+            background: #ffffff;
+        }
+        button {
+            width: 100%;
+            padding: 12px;
+            border: 0;
+            border-radius: 8px;
+            background: #0f766e;
+            color: #ffffff;
+            font-weight: 600;
+            cursor: pointer;
+        }
+        .status {
+            padding: 10px 12px;
+            border-radius: 8px;
+            margin-bottom: 12px;
+            font-size: 14px;
+        }
+        .status.error {
+            background: #fee2e2;
+            color: #991b1b;
+        }
+        .status.success {
+            background: #dcfce7;
+            color: #166534;
+        }
+        .hint {
+            font-size: 12px;
+            color: #6b7280;
+            margin-top: 8px;
+        }
+    </style>
+</head>
+<body>
+    <div class="wrap">
+        <div class="card">
+            <h1>WatchMyBirds Setup</h1>
+            <p>WLAN-Zugangsdaten eintragen und speichern.</p>
+
+            {% if error %}
+            <div class="status error">{{ error }}</div>
+            {% endif %}
+
+            {% if success %}
+            <div class="status success">Gespeichert. Das Geraet startet jetzt neu.</div>
+            <p class="hint">Bitte mit dem neuen WLAN verbinden und anschliessend die App aufrufen.</p>
+            {% else %}
+            <form method="POST" action="/">
+                <label for="ssid">SSID</label>
+                {% if ssids and ssids|length > 0 %}
+                <select id="ssid" name="ssid" required autofocus>
+                    <option value="" disabled {% if not ssid %}selected{% endif %}>Bitte waehlen</option>
+                    {% for item in ssids %}
+                    <option value="{{ item }}" {% if ssid == item %}selected{% endif %}>{{ item }}</option>
+                    {% endfor %}
+                </select>
+                {% else %}
+                <input type="text" id="ssid" name="ssid" value="{{ ssid|default('') }}" required autofocus>
+                <p class="hint">Keine SSIDs gefunden. Bitte manuell eingeben.</p>
+                {% endif %}
+
+                <label for="password">Passwort</label>
+                <input type="password" id="password" name="password" required>
+
+                <button type="submit">Speichern</button>
+                <p class="hint">Die Einrichtung ist nur im AP-Modus erreichbar.</p>
+            </form>
+            {% endif %}
+        </div>
+    </div>
+</body>
+</html>

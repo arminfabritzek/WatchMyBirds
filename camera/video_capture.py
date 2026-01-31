@@ -5,23 +5,26 @@
 # video_capture.py
 from config import get_config
 
+
 config = get_config()
 
-import subprocess
-import cv2
-import queue
-import threading
-from threading import Event
-import time
-import numpy as np
-import os
-import signal
-import sys
 import atexit
-import weakref
 import json
+import os
+import queue
+import signal
+import subprocess
+import threading
+import time
+import weakref
 from pathlib import Path
+from threading import Event
+
+import cv2
+import numpy as np
+
 from logging_config import get_logger
+
 
 logger = get_logger(__name__)
 
@@ -168,7 +171,9 @@ class VideoCapture:
         test_frame = None
         try:
             if self.backend == self.BACKEND_FFMPEG:
-                logger.debug("Waiting up to 5s for FFmpeg to produce the first frame...")
+                logger.debug(
+                    "Waiting up to 5s for FFmpeg to produce the first frame..."
+                )
                 for _ in range(10):
                     test_frame = self._read_ffmpeg_frame()
                     if test_frame is not None:
@@ -184,9 +189,13 @@ class VideoCapture:
         if test_frame is None:
             now = time.time()
             if now - self.last_codec_switch_time < self.backend_switch_cooldown:
-                logger.debug("Backend switch cooldown active, skipping immediate switch.")
+                logger.debug(
+                    "Backend switch cooldown active, skipping immediate switch."
+                )
                 return
-            logger.warning("Initial test frame still missing. Proceeding anyway to allow stream startup on slow devices (e.g., NAS).")
+            logger.warning(
+                "Initial test frame still missing. Proceeding anyway to allow stream startup on slow devices (e.g., NAS)."
+            )
             if self.backend == self.BACKEND_FFMPEG:
                 self._terminate_ffmpeg_process(
                     reason="switching backend after missing initial frame"
@@ -201,7 +210,6 @@ class VideoCapture:
                 self._setup_ffmpeg()
                 self.backend = self.BACKEND_FFMPEG
             self.last_codec_switch_time = now
-
 
     def _setup_opencv_rtsp(self):
         """Try to initialize RTSP stream with OpenCV."""
@@ -341,9 +349,10 @@ class VideoCapture:
     def _stream_settings_path(self):
         """Returns the path for persisted stream settings."""
         try:
-            output_dir = Path(config.get("OUTPUT_DIR", "/output"))
+            output_dir = Path(config["OUTPUT_DIR"])
         except Exception:
-            output_dir = Path("/output")
+            # Should practically never happen with new strict config
+            output_dir = Path("data/output")
         return output_dir / "stream_settings.json"
 
     def _get_ffmpeg_version(self):
@@ -420,10 +429,7 @@ class VideoCapture:
         try:
             prev_width, prev_height = self.stream_width, self.stream_height
             self._get_stream_resolution_ffprobe()
-            if (
-                self.stream_width != prev_width
-                or self.stream_height != prev_height
-            ):
+            if self.stream_width != prev_width or self.stream_height != prev_height:
                 logger.debug(
                     f"Stream settings cache updated after resolution change: "
                     f"{prev_width}x{prev_height} -> {self.stream_width}x{self.stream_height}"
@@ -517,15 +523,32 @@ class VideoCapture:
         try:
             for line in iter(process.stderr.readline, b""):
                 if line:
-                    line_str = line.decode('utf-8', errors='replace').strip()
+                    line_str = line.decode("utf-8", errors="replace").strip()
                     # Filter out progress noise and version banner
                     prefixes_to_ignore = [
-                        "frame=", "size=", "ffmpeg version", "built with", "configuration:",
-                        "libavutil", "libavcodec", "libavformat", "libavdevice",
-                        "libavfilter", "libswscale", "libswresample", "libpostproc",
-                        "  libavutil", "  libavcodec", "  libavformat", "  libavdevice",
-                        "  libavfilter", "  libswscale", "  libswresample", "  libpostproc",
-                        "  built with", "  configuration:"
+                        "frame=",
+                        "size=",
+                        "ffmpeg version",
+                        "built with",
+                        "configuration:",
+                        "libavutil",
+                        "libavcodec",
+                        "libavformat",
+                        "libavdevice",
+                        "libavfilter",
+                        "libswscale",
+                        "libswresample",
+                        "libpostproc",
+                        "  libavutil",
+                        "  libavcodec",
+                        "  libavformat",
+                        "  libavdevice",
+                        "  libavfilter",
+                        "  libswscale",
+                        "  libswresample",
+                        "  libpostproc",
+                        "  built with",
+                        "  configuration:",
                     ]
                     if not any(line_str.startswith(p) for p in prefixes_to_ignore):
                         if line_str != self._last_logged_ffmpeg_line:
@@ -586,7 +609,9 @@ class VideoCapture:
             "-",
         ]
 
-        logger.debug(f"Running FFmpeg command for resolution fallback: {' '.join(ffmpeg_cmd)}")
+        logger.debug(
+            f"Running FFmpeg command for resolution fallback: {' '.join(ffmpeg_cmd)}"
+        )
 
         try:
             result = subprocess.run(
@@ -601,18 +626,27 @@ class VideoCapture:
 
             # Parse resolution from stderr
             import re
+
             match = re.search(r"(\d{2,5})x(\d{2,5})", stderr_output)
             if match:
                 self.stream_width = int(match.group(1))
                 self.stream_height = int(match.group(2))
-                logger.debug(f"FFmpeg fallback successfully detected resolution: {self.stream_width}x{self.stream_height}")
-                logger.debug(f"Detected stream resolution via FFmpeg fallback: {self.stream_width}x{self.stream_height}")
+                logger.debug(
+                    f"FFmpeg fallback successfully detected resolution: {self.stream_width}x{self.stream_height}"
+                )
+                logger.debug(
+                    f"Detected stream resolution via FFmpeg fallback: {self.stream_width}x{self.stream_height}"
+                )
                 self._persist_stream_settings()
             else:
                 raise RuntimeError("FFmpeg did not return a parsable resolution.")
         except Exception as ffmpeg_error:
-            logger.debug(f"FFmpeg fallback failed for resolution detection: {ffmpeg_error}")
-            raise RuntimeError("Unable to determine stream resolution using probe or fallback.")
+            logger.debug(
+                f"FFmpeg fallback failed for resolution detection: {ffmpeg_error}"
+            )
+            raise RuntimeError(
+                "Unable to determine stream resolution using probe or fallback."
+            ) from ffmpeg_error
 
     def _setup_http(self):
         """
@@ -731,7 +765,9 @@ class VideoCapture:
                                 self._reinitialize_camera(reason="RTSP stream stale.")
                             else:
                                 if self._health_check_error_state:
-                                    logger.debug("RTSP stream recovered (frames flowing).")
+                                    logger.debug(
+                                        "RTSP stream recovered (frames flowing)."
+                                    )
                                     self._health_check_error_state = False
                 elif self.stream_type == self.HTTP:
                     if not self.cap or not self.cap.isOpened():
@@ -759,40 +795,71 @@ class VideoCapture:
         try:
             read_counter = 0
             last_log_time = time.time()
+            skipped_counter = 0
+
             while not self.stop_event.is_set():
                 start_read = time.time()
+
+                # ---------------------------------------------------------
+                # LAG FIX + CPU OPTIMIZATION
+                # ---------------------------------------------------------
+                # 1. Determine if we NEED this frame (for throttling)
                 try:
-                    frame = self._read_frame()
+                    capture_fps = float(config.get("STREAM_FPS_CAPTURE", 0))
+                except Exception:
+                    capture_fps = 0.0
+
+                should_decode = True
+                if capture_fps > 0:
+                    min_interval = 1.0 / capture_fps
+                    if not hasattr(self, "last_enqueued_time"):
+                        self.last_enqueued_time = 0
+                    if (time.time() - self.last_enqueued_time) < min_interval:
+                        should_decode = False
+
+                # 2. Read Frame (with optimization: skip decode if possible)
+                try:
+                    frame = self._read_frame(decode=should_decode)
                     duration = time.time() - start_read
                     read_counter += 1
 
-                    # Slow down reading to match configured STREAM_FPS_CAPTURE (0 disables throttling)
-                    try:
-                        capture_fps = float(config.get("STREAM_FPS_CAPTURE", 0))
-                    except Exception:
-                        capture_fps = 0.0
-                    if capture_fps > 0:
-                        time.sleep(1.0 / capture_fps)
+                    if not should_decode:
+                        skipped_counter += 1
 
                     # Periodically log diagnostic information
                     if time.time() - last_log_time >= 60:
-                        logger.debug(f"Diagnostics: {read_counter} reads in last 60s, last read duration={duration:.4f}s")
+                        logger.debug(
+                            f"Diagnostics: {read_counter} reads in last 60s "
+                            f"(Skipped Decode: {skipped_counter}), last read duration={duration:.4f}s"
+                        )
                         read_counter = 0
+                        skipped_counter = 0
                         last_log_time = time.time()
 
                     if self.stop_event.is_set():
-                        logger.debug("Stop event set. Reader thread is terminating.")
                         break
+
+                    # Handle Frame Result
                     if frame is not None:
+                        # "SKIPPED" indicates successful grab but no decode
+                        if isinstance(frame, str) and frame == "SKIPPED":
+                            self.consecutive_none_frames = 0
+                            continue
+
                         if self._last_frame_drop_logged:
                             logger.debug("Stream stabilized (receiving frames).")
                             self._last_frame_drop_logged = False
-                        
+
                         if self._last_read_error_logged:
-                            logger.debug("Frame read recovered (no longer throwing exceptions).")
+                            logger.debug(
+                                "Frame read recovered (no longer throwing exceptions)."
+                            )
                             self._last_read_error_logged = False
-                            
+
                         self.consecutive_none_frames = 0
+
+                        # We have a real decoded frame, enqueue it
+                        self.last_enqueued_time = time.time()
                         try:
                             self.q.put(frame, block=False)
                         except queue.Full:
@@ -805,30 +872,53 @@ class VideoCapture:
                             except queue.Full:
                                 pass
                     else:
+                        # Frame error (None)
                         self.consecutive_none_frames += 1
-                        # Only warn on significant persistent drops (e.g. 50 frames ~ 1.5s at 30fps)
+                        # Same error handling logic as before...
                         if self.consecutive_none_frames == 50:
-                            logger.warning("Significant frame drop detected (50 consecutive None frames). Stream may be unstable.")
+                            logger.warning(
+                                "Significant frame drop detected (50 consecutive None frames). Stream may be unstable."
+                            )
                             self._last_frame_drop_logged = True
-                        
-                        if self.stream_type == self.RTSP and self.consecutive_none_frames >= self.max_none_frames_before_reconnect:
+
+                        if (
+                            self.stream_type == self.RTSP
+                            and self.consecutive_none_frames
+                            >= self.max_none_frames_before_reconnect
+                        ):
                             now = time.time()
-                            if now - self.last_codec_switch_time > self.codec_switch_cooldown:
-                                logger.debug("Exceeded max consecutive None frames. Attempting codec switch recovery.")
+                            if (
+                                now - self.last_codec_switch_time
+                                > self.codec_switch_cooldown
+                            ):
+                                logger.debug(
+                                    "Exceeded max consecutive None frames. Attempting codec switch recovery."
+                                )
                                 self._handle_codec_switch()
                                 self.last_codec_switch_time = now
                                 self._last_codec_switch_skip_logged = False
                             else:
                                 if not self._last_codec_switch_skip_logged:
-                                    logger.debug("Skipping codec switch, still in cooldown period.")
+                                    logger.debug(
+                                        "Skipping codec switch, still in cooldown period."
+                                    )
                                     self._last_codec_switch_skip_logged = True
                             self.consecutive_none_frames = 0
-                        elif self.stream_type != self.RTSP and self.consecutive_none_frames >= self.max_none_frames_before_reconnect:
-                            self._reinitialize_camera(reason="Multiple None frames received.")
+                        elif (
+                            self.stream_type != self.RTSP
+                            and self.consecutive_none_frames
+                            >= self.max_none_frames_before_reconnect
+                        ):
+                            self._reinitialize_camera(
+                                reason="Multiple None frames received."
+                            )
                             self.consecutive_none_frames = 0
+
                 except Exception as e:
                     if not self._last_read_error_logged:
-                        logger.error(f"Error reading frame: {e} (Entering wait state for reconnection).")
+                        logger.error(
+                            f"Error reading frame: {e} (Entering wait state for reconnection)."
+                        )
                         self._last_read_error_logged = True
                     if self.stop_event.is_set():
                         break
@@ -836,25 +926,41 @@ class VideoCapture:
         finally:
             logger.debug("Reader thread has exited.")
 
-    def _read_frame(self):
+    def _read_frame(self, decode=True):
         if self.stream_type == self.RTSP and self.backend == self.BACKEND_FFMPEG:
+            # FFmpeg always decodes; we must read to drain pipe regardless of 'decode' flag.
             return self._read_ffmpeg_frame()
         elif self.cap and self.cap.isOpened():
-            ret, frame = self.cap.read()
-            if ret:
-                self.failed_reads = 0
-                return frame
+            if not decode:
+                # OPTIMIZATION: Just grab the frame (drain buffer) without decoding (save CPU)
+                ret = self.cap.grab()
+                if ret:
+                    self.failed_reads = 0
+                    return "SKIPPED"
+                else:
+                    self.failed_reads += 1
+                    # Treat failed grab same as failed read
+                    if self.failed_reads >= 3:
+                        logger.error(
+                            f"OpenCV failed to grab {self.failed_reads} consecutive frames."
+                        )
+                    return None
             else:
-                self.failed_reads += 1
-                if self.failed_reads >= 3:
-                    logger.error(
-                        f"OpenCV failed to read {self.failed_reads} consecutive frames. Switching to FFmpeg backend."
-                    )
-                    self._switch_to_ffmpeg()
-                return None
+                # Full read (grab + retrieve)
+                ret, frame = self.cap.read()
+                if ret:
+                    self.failed_reads = 0
+                    return frame
+                else:
+                    self.failed_reads += 1
+                    if self.failed_reads >= 3:
+                        logger.error(
+                            f"OpenCV failed to read {self.failed_reads} consecutive frames. Switching to FFmpeg backend."
+                        )
+                        self._switch_to_ffmpeg()
+                    return None
         else:
             logger.error("HTTP/RTSP capture not opened.")
-            # If RTSP stream, handle possible codec switch gracefully
             if self.stream_type == self.RTSP:
                 logger.debug("Attempting fast codec switch recovery in _read_frame.")
                 self._handle_codec_switch()
@@ -901,7 +1007,9 @@ class VideoCapture:
             try:
                 self._get_stream_resolution_ffprobe()
             except Exception:
-                logger.warning("Stream resolution detection failed during reconnection (Probe/Fallback unreachable).")
+                logger.warning(
+                    "Stream resolution detection failed during reconnection (Probe/Fallback unreachable)."
+                )
 
             # Reconnect quickly
             self._setup_capture()
@@ -919,13 +1027,17 @@ class VideoCapture:
             logger.debug("Skipping runtime resolution change handling during shutdown.")
             return
         if not self.runtime_resolution_lock.acquire(blocking=False):
-            logger.debug("Skipping runtime resolution change handling (already running).")
+            logger.debug(
+                "Skipping runtime resolution change handling (already running)."
+            )
             return
         try:
             # If we lack explicit new dimensions, re-probe with ffprobe.
             if new_width is None or new_height is None:
                 try:
-                    logger.debug("Runtime resolution change detected; re-probing stream resolution via ffprobe.")
+                    logger.debug(
+                        "Runtime resolution change detected; re-probing stream resolution via ffprobe."
+                    )
                     self._get_stream_resolution_ffprobe()
                     new_width = self.stream_width
                     new_height = self.stream_height
@@ -967,10 +1079,12 @@ class VideoCapture:
         process = self.ffmpeg_process
         if not process or process.poll() is not None:
             if self._ffmpeg_last_availability:
-                logger.warning("FFmpeg process unavailable (Entering wait state for stream reconnection).")
+                logger.warning(
+                    "FFmpeg process unavailable (Entering wait state for stream reconnection)."
+                )
                 self._ffmpeg_last_availability = False
             return None
-        
+
         if not self._ffmpeg_last_availability:
             logger.debug("FFmpeg process recovered (receiving data).")
             self._ffmpeg_last_availability = True
@@ -990,7 +1104,9 @@ class VideoCapture:
                         self._last_codec_switch_skip_logged = False
                     else:
                         if not self._last_codec_switch_skip_logged:
-                            logger.debug("Skipping codec switch on empty frame, still in cooldown period.")
+                            logger.debug(
+                                "Skipping codec switch on empty frame, still in cooldown period."
+                            )
                             self._last_codec_switch_skip_logged = True
                     return None
                 logger.warning(
@@ -1149,7 +1265,9 @@ class VideoCapture:
 
                 signal.signal(sig, handler)
             except Exception as signal_error:
-                logger.debug(f"Could not register shutdown handler for {sig}: {signal_error}")
+                logger.debug(
+                    f"Could not register shutdown handler for {sig}: {signal_error}"
+                )
 
     @classmethod
     def _terminate_all_instances(cls):
@@ -1158,7 +1276,9 @@ class VideoCapture:
             try:
                 instance._terminate_ffmpeg_process(reason="shutdown hook")
             except Exception as cleanup_error:
-                logger.debug(f"Failed to terminate FFmpeg during shutdown: {cleanup_error}")
+                logger.debug(
+                    f"Failed to terminate FFmpeg during shutdown: {cleanup_error}"
+                )
 
     def _make_ffmpeg_preexec_fn(self):
         """

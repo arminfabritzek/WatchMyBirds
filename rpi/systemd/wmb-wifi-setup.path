@@ -1,0 +1,8 @@
+[Unit]
+Description=Watch for WatchMyBirds WiFi Pending Config
+
+[Path]
+PathExists=/var/lib/watchmybirds/pending_wifi.conf
+
+[Install]
+WantedBy=multi-user.target

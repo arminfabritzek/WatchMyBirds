@@ -17,16 +17,12 @@ if ! id -u appuser > /dev/null 2>&1; then
     useradd -u $PUID -g $PGID -m -s /bin/bash appuser 2>/dev/null || true
 fi
 
-# Ensure proper ownership and permissions for OUTPUT_DIR
-mkdir -p "$OUTPUT_DIR"
-chown -R $PUID:$PGID "$OUTPUT_DIR"
-chown -R $PUID:$PGID /app/assets  # Ensure `appuser` owns the assets folder
-mkdir -p "$MODEL_BASE_PATH"
-chown -R $PUID:$PGID "$MODEL_BASE_PATH"  # Ensure `appuser` owns the models folder
-mkdir -p /app/output
-chown -R $PUID:$PGID /app/output  # Ensure `appuser` owns the models folder
-mkdir -p "$INGEST_DIR"
-chown -R $PUID:$PGID "$INGEST_DIR"
+# Ensure proper ownership for mounted volumes (if they exist)
+# Directories are created by App if missing, but Chown handles permissions for Docker mounts
+[ -d "$OUTPUT_DIR" ] && chown -R $PUID:$PGID "$OUTPUT_DIR"
+chown -R $PUID:$PGID /app/assets || true
+[ -d "$MODEL_BASE_PATH" ] && chown -R $PUID:$PGID "$MODEL_BASE_PATH"
+[ -d "$INGEST_DIR" ] && chown -R $PUID:$PGID "$INGEST_DIR"
 
 # Switch to the user and execute the CMD
 exec gosu $PUID:$PGID "$@"

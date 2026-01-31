@@ -1,6 +1,6 @@
-import cv2
-import numpy as np
 from pathlib import Path
+
+import cv2
 
 
 def create_square_crop(image, bbox, margin_percent=0.2, pad_color=(0, 0, 0)):
@@ -50,16 +50,18 @@ def create_square_crop(image, bbox, margin_percent=0.2, pad_color=(0, 0, 0)):
     return square_crop
 
 
-def generate_preview_thumbnail(original_path: str, output_path: str, size: int = 256) -> bool:
+def generate_preview_thumbnail(
+    original_path: str, output_path: str, size: int = 256
+) -> bool:
     """
     Generates a center-cropped square preview thumbnail.
     Used for orphan images without detection bounding boxes.
-    
+
     Args:
         original_path: Absolute path to original image
         output_path: Absolute path to save the thumbnail
         size: Output thumbnail size in pixels (default 256)
-    
+
     Returns:
         True if successful, False otherwise
     """
@@ -67,21 +69,21 @@ def generate_preview_thumbnail(original_path: str, output_path: str, size: int =
         image = cv2.imread(original_path)
         if image is None:
             return False
-        
+
         h, w = image.shape[:2]
-        
+
         # Center crop to square
         side = min(h, w)
         x1 = (w - side) // 2
         y1 = (h - side) // 2
-        square = image[y1:y1+side, x1:x1+side]
-        
+        square = image[y1 : y1 + side, x1 : x1 + side]
+
         # Resize to target size
         thumb = cv2.resize(square, (size, size), interpolation=cv2.INTER_AREA)
-        
+
         # Ensure output directory exists
         Path(output_path).parent.mkdir(parents=True, exist_ok=True)
-        
+
         # Save as WebP
         cv2.imwrite(output_path, thumb, [int(cv2.IMWRITE_WEBP_QUALITY), 80])
         return True

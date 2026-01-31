@@ -20,5 +20,33 @@ analytics/dist/
 # Git metadata
 .git
 
+# Secrets
+.env
+.env.*
+
+# System files
+.DS_Store
+Thumbs.db
+
+# Large data files
+*.csv
+nas_file_index.csv
+raw_input_index.csv
+
+# IDE & Tools
+.idea/
+.vscode/
+*.swp
+*.swo
+
 # Docker files (not needed inside image)
 docker-compose*.yml
+
+# Unrelated project folders
+rpi/
+debuglogs/
+docs/
+private_docs/
+.github/
+.venv/
+systemd/

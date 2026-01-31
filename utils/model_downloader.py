@@ -3,7 +3,6 @@
 import json
 import os
 import time
-from typing import Dict, Tuple, Optional
 
 import requests
 
@@ -12,18 +11,22 @@ from logging_config import get_logger
 
 logger = get_logger(__name__)
 
-def _first_present(d: Dict[str, str], keys: Tuple[str, ...]) -> Optional[str]:
+
+def _first_present(d: dict[str, str], keys: tuple[str, ...]) -> str | None:
     for k in keys:
         v = d.get(k)
         if isinstance(v, str) and v.strip():
             return v
     return None
 
-def _guess_labels_from_weights(weights_name: str) -> Optional[str]:
+
+def _guess_labels_from_weights(weights_name: str) -> str | None:
     name = os.path.basename(weights_name)
     if "_best." in name:
         # map TIMESTAMP_best.onnx or TIMESTAMP_best.pt -> TIMESTAMP_labels.json
-        return name.replace("_best.onnx", "_labels.json").replace("_best.pt", "_labels.json")
+        return name.replace("_best.onnx", "_labels.json").replace(
+            "_best.pt", "_labels.json"
+        )
     return None
 
 
@@ -37,11 +40,11 @@ def _normalize_rel_path(base_url: str, rel: str) -> str:
         return rel
     rel = rel.lstrip("/")
     if rel.startswith("model_registry/"):
-        rel = rel[len("model_registry/"):]
+        rel = rel[len("model_registry/") :]
     # derive the last path segment of the base URL (expected: 'classifier' or 'object_detection')
     subdir = base_url.rstrip("/").split("/")[-1]
     if rel.startswith(f"{subdir}/"):
-        rel = rel[len(subdir) + 1:]
+        rel = rel[len(subdir) + 1 :]
     return rel
 
 
@@ -70,7 +73,7 @@ def _download_file(url: str, dest: str, retries: int = 3, timeout: int = 60) -> 
     return False
 
 
-def fetch_latest_json(base_url: str, cache_dir: str) -> Dict[str, str]:
+def fetch_latest_json(base_url: str, cache_dir: str) -> dict[str, str]:
     """Downloads *latest_models.json* and stores it in the cache."""
     latest_url = f"{base_url}/latest_models.json"
     local_path = os.path.join(cache_dir, "latest_models.json")
@@ -87,7 +90,7 @@ def fetch_latest_json(base_url: str, cache_dir: str) -> Dict[str, str]:
         logger.warning(f"Error fetching {latest_url}: {exc}")
         if os.path.exists(local_path):
             logger.info(f"Using local cache {local_path}")
-            with open(local_path, "r", encoding="utf-8") as file:
+            with open(local_path, encoding="utf-8") as file:
                 return json.load(file)
         raise
 
@@ -101,7 +104,7 @@ def load_latest_identifier(model_dir: str) -> str:
     if not os.path.exists(latest_path):
         return ""
     try:
-        with open(latest_path, "r", encoding="utf-8") as file:
+        with open(latest_path, encoding="utf-8") as file:
             data = json.load(file)
         latest = data.get("latest")
         return latest if isinstance(latest, str) else ""
@@ -111,19 +114,21 @@ def load_latest_identifier(model_dir: str) -> str:
 
 def ensure_model_files(
     base_url: str, model_dir: str, weights_key: str, labels_key: str
-) -> Tuple[str, str]:
+) -> tuple[str, str]:
     """Ensures that weights and labels are available locally."""
     data = fetch_latest_json(base_url, model_dir)
     # Resolve weights path using provided key or common alternates
-    weights_rel: Optional[str] = _first_present(
+    weights_rel: str | None = _first_present(
         data, (weights_key, "weights_path", "onnx_path", "model", "path")
     )
     # Resolve labels/classes using provided key or common alternates
-    labels_rel: Optional[str] = _first_present(
+    labels_rel: str | None = _first_present(
         data, (labels_key, "labels_path", "labels", "classes_path")
     )
     if not weights_rel:
-        raise ValueError("latest_models.json does not contain a valid path for weights.")
+        raise ValueError(
+            "latest_models.json does not contain a valid path for weights."
+        )
 
     # Normalize and try to infer labels if missing
     weights_rel_norm = _normalize_rel_path(base_url, weights_rel)

@@ -1,0 +1,26 @@
+[Unit]
+Description=WatchMyBirds Setup Server (AP Only)
+After=network.target
+
+[Service]
+Type=simple
+User=watchmybirds
+WorkingDirectory=/opt/app
+StateDirectory=watchmybirds
+Environment=PYTHONUNBUFFERED=1
+Environment=SETUP_PORT=80
+Environment=SETUP_TEMPLATE_DIR=/usr/local/share/watchmybirds/setup/templates
+Environment=OUTPUT_DIR=/var/lib/watchmybirds/output
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/opt/app/.venv/bin/python /usr/local/bin/wmb-setup-server.py
+Restart=on-failure
+RestartSec=2
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/watchmybirds
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,43 @@
+{#
+Page Control Bar - Unified navigation/action bar component
+
+Parameters:
+- title: Page title (required)
+- badge: Optional badge count (e.g., total items)
+- show_select_all: Whether to show Select All checkbox (default: false)
+- item_count: Total items for Select All logic (default: 0)
+- selected_count: For "X items selected" display
+
+Caller blocks:
+- center_content: Filter controls, sliders, etc.
+- right_content: Action buttons
+#}
+
+{% macro page_control_bar(title, badge=None, show_select_all=false, item_count=0, selected_count=0) %}
+<nav class="page-control-bar" role="navigation" aria-label="{{ title }} controls">
+    <div class="page-control-bar__left">
+        <span class="page-control-bar__title">{{ title }}</span>
+        {% if badge is not none %}
+        <span class="page-control-bar__badge">{{ badge }}</span>
+        {% endif %}
+
+        {% if show_select_all %}
+        <label class="page-control-bar__select-all">
+            <input type="checkbox" id="select-all-checkbox" class="page-control-bar__checkbox" {% if item_count==0
+                %}disabled{% endif %} aria-label="Select all items">
+            <span class="page-control-bar__select-label">Select All</span>
+        </label>
+        {% endif %}
+    </div>
+
+    {% if caller %}
+    {{ caller() }}
+    {% endif %}
+
+    {% if selected_count > 0 or show_select_all %}
+    <div class="page-control-bar__meta">
+        <span id="selected-counter">{{ selected_count }} items selected</span>
+    </div>
+    {% endif %}
+</nav>
+{% endmacro %}

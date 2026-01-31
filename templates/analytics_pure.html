@@ -1,0 +1,392 @@
+{% extends 'base.html' %}
+
+{% block title %}Analytics - WatchMyBirds{% endblock %}
+
+{% block head %}
+<style>
+    /* Analytics Dashboard - Pure CSS/Jinja2 Implementation */
+    .analytics-dashboard {
+        max-width: 1200px;
+        margin: 0 auto;
+    }
+
+    .dashboard-header {
+        text-align: center;
+        margin-bottom: var(--space-xl);
+        padding: var(--space-lg);
+        background: linear-gradient(135deg, var(--color-primary) 0%, var(--color-primary-dark) 100%);
+        border-radius: var(--radius-xl);
+        color: white;
+        box-shadow: 0 4px 20px rgba(76, 175, 80, 0.3);
+    }
+
+    .dashboard-header__title {
+        margin: 0;
+        font-size: var(--font-size-3xl);
+        font-weight: 700;
+        letter-spacing: -0.5px;
+        color: white;
+    }
+
+    .dashboard-header__subtitle {
+        margin: var(--space-xs) 0 0;
+        opacity: 0.9;
+        font-size: var(--font-size-md);
+        font-weight: 400;
+    }
+
+    /* Summary Cards Grid */
+    .summary-grid {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: var(--space-md);
+        margin-bottom: var(--space-xl);
+    }
+
+    @media (max-width: 992px) {
+        .summary-grid {
+            grid-template-columns: repeat(2, 1fr);
+        }
+    }
+
+    @media (max-width: 480px) {
+        .summary-grid {
+            grid-template-columns: 1fr;
+        }
+    }
+
+    .summary-card {
+        background: var(--color-surface);
+        border-radius: var(--radius-lg);
+        padding: var(--space-lg);
+        box-shadow: var(--shadow-sm);
+        border-left: 4px solid var(--color-primary);
+        transition: all var(--transition-fast);
+    }
+
+    .summary-card:hover {
+        box-shadow: var(--shadow-md);
+        transform: translateY(-2px);
+    }
+
+    .summary-card--accent {
+        border-left-color: var(--color-accent);
+    }
+
+    .summary-card--secondary {
+        border-left-color: var(--color-secondary);
+    }
+
+    .summary-card--warning {
+        border-left-color: var(--color-warning);
+    }
+
+    .summary-card__value {
+        font-size: var(--font-size-2xl);
+        font-weight: 800;
+        color: var(--color-text);
+        line-height: 1.1;
+    }
+
+    .summary-card__label {
+        font-size: var(--font-size-xs);
+        color: var(--color-text-muted);
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        margin-top: var(--space-2xs);
+    }
+
+    /* Chart Cards */
+    .chart-card {
+        background: var(--color-surface);
+        border-radius: var(--radius-xl);
+        box-shadow: var(--shadow-sm);
+        padding: var(--space-lg);
+        margin-bottom: var(--space-xl);
+        transition: all var(--transition-fast);
+    }
+
+    .chart-card:hover {
+        box-shadow: var(--shadow-md);
+        transform: translateY(-2px);
+    }
+
+    .chart-card__title {
+        margin: 0 0 var(--space-md) 0;
+        font-size: var(--font-size-md);
+        font-weight: 600;
+        color: var(--color-text);
+        padding-bottom: var(--space-sm);
+        border-bottom: 2px solid var(--color-border-light);
+    }
+
+    .chart-card__badge {
+        float: right;
+        background: rgba(76, 175, 80, 0.1);
+        color: var(--color-primary-dark);
+        font-size: var(--font-size-xs);
+        font-weight: 600;
+        padding: var(--space-2xs) var(--space-sm);
+        border-radius: var(--radius-full);
+    }
+
+    /* Pure CSS Time-of-Day Histogram */
+    .histogram {
+        display: flex;
+        align-items: flex-end;
+        height: 200px;
+        gap: 2px;
+        padding: var(--space-md) 0;
+    }
+
+    .histogram__bar {
+        flex: 1;
+        background: linear-gradient(to top, var(--color-primary), var(--color-primary-light));
+        border-radius: 2px 2px 0 0;
+        min-height: 4px;
+        transition: all var(--transition-fast);
+        position: relative;
+    }
+
+    .histogram__bar:hover {
+        background: linear-gradient(to top, var(--color-primary-dark), var(--color-primary));
+    }
+
+    .histogram__bar:hover::after {
+        content: attr(data-count);
+        position: absolute;
+        bottom: 100%;
+        left: 50%;
+        transform: translateX(-50%);
+        background: var(--color-text);
+        color: white;
+        padding: 2px 6px;
+        border-radius: 4px;
+        font-size: 10px;
+        white-space: nowrap;
+    }
+
+    .histogram__labels {
+        display: flex;
+        justify-content: space-between;
+        padding-top: var(--space-xs);
+        border-top: 1px solid var(--color-border);
+    }
+
+    .histogram__label {
+        font-size: var(--font-size-xs);
+        color: var(--color-text-muted);
+    }
+
+    /* Species Activity Table */
+    .species-table {
+        width: 100%;
+        border-collapse: collapse;
+    }
+
+    .species-table__header {
+        display: flex;
+        padding: var(--space-sm) var(--space-md);
+        font-weight: 600;
+        color: var(--color-text-muted);
+        font-size: var(--font-size-xs);
+        text-transform: uppercase;
+        border-bottom: 2px solid var(--color-primary);
+        margin-bottom: var(--space-xs);
+        background: var(--color-bg);
+    }
+
+    .species-table__row {
+        display: flex;
+        align-items: center;
+        padding: var(--space-xs) var(--space-md);
+        border-radius: var(--radius-sm);
+        background: var(--color-surface);
+        margin-bottom: 2px;
+        transition: background var(--transition-fast);
+    }
+
+    .species-table__row:hover {
+        background: var(--color-surface-2);
+    }
+
+    .species-table__col-name {
+        width: 180px;
+        flex-shrink: 0;
+        font-weight: 500;
+        color: var(--color-text);
+        font-style: italic;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .species-table__col-graph {
+        flex: 1;
+        height: 30px;
+        margin: 0 var(--space-md);
+    }
+
+    .species-table__col-peak {
+        width: 60px;
+        flex-shrink: 0;
+        text-align: right;
+        font-family: 'SF Mono', 'Fira Code', monospace;
+        color: var(--color-text-muted);
+        font-size: var(--font-size-sm);
+    }
+
+    .species-table__col-count {
+        width: 50px;
+        flex-shrink: 0;
+        text-align: right;
+        font-weight: 600;
+        color: var(--color-primary-dark);
+    }
+
+    /* Sparkline SVG */
+    .sparkline {
+        width: 100%;
+        height: 30px;
+        display: block;
+    }
+
+    /* Empty State */
+    .empty-state {
+        text-align: center;
+        padding: var(--space-3xl);
+        color: var(--color-text-muted);
+    }
+
+    .empty-state__message {
+        font-size: var(--font-size-md);
+        font-style: italic;
+    }
+
+    /* Loading State */
+    .loading-container {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        padding: var(--space-3xl);
+        background: var(--color-surface);
+        border-radius: var(--radius-xl);
+        box-shadow: var(--shadow-sm);
+    }
+
+    .spinner {
+        width: 40px;
+        height: 40px;
+        border: 3px solid var(--color-border);
+        border-top-color: var(--color-primary);
+        border-radius: 50%;
+        animation: spin 1s linear infinite;
+        margin-bottom: var(--space-md);
+    }
+
+    @keyframes spin {
+        to {
+            transform: rotate(360deg);
+        }
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="analytics-dashboard">
+    {# Dashboard Header #}
+    <header class="dashboard-header">
+        <h1 class="dashboard-header__title">Analytics</h1>
+        <p class="dashboard-header__subtitle">All-Time Detection Statistics</p>
+    </header>
+
+    {# Summary Cards #}
+    <div class="summary-grid">
+        <div class="summary-card">
+            <div class="summary-card__value">{{ summary.total_detections | default(0) }}</div>
+            <div class="summary-card__label">Total Detections</div>
+        </div>
+        <div class="summary-card summary-card--accent">
+            <div class="summary-card__value">{{ summary.total_species | default(0) }}</div>
+            <div class="summary-card__label">Species Detected</div>
+        </div>
+        <div class="summary-card summary-card--secondary">
+            <div class="summary-card__value">{{ summary.date_range.first | default('—') }}</div>
+            <div class="summary-card__label">First Detection</div>
+        </div>
+        <div class="summary-card summary-card--warning">
+            <div class="summary-card__value">{{ summary.date_range.last | default('—') }}</div>
+            <div class="summary-card__label">Last Detection</div>
+        </div>
+    </div>
+
+    {# Activity by Time of Day #}
+    <div class="chart-card">
+        <h3 class="chart-card__title">
+            Activity by Time of Day
+            {% if time_of_day.peak_hour is not none %}
+            <span class="chart-card__badge">Peak: {{ time_of_day.peak_hour_formatted }}</span>
+            {% endif %}
+        </h3>
+
+        {% if time_of_day.histogram %}
+        <div class="histogram">
+            {% for bar in time_of_day.histogram %}
+            <div class="histogram__bar" style="height: {{ bar.height_pct }}%;"
+                data-count="{{ bar.count }} ({{ bar.hour }}:00)" title="{{ bar.hour }}:00 - {{ bar.count }} detections">
+            </div>
+            {% endfor %}
+        </div>
+        <div class="histogram__labels">
+            <span class="histogram__label">00:00</span>
+            <span class="histogram__label">06:00</span>
+            <span class="histogram__label">12:00</span>
+            <span class="histogram__label">18:00</span>
+            <span class="histogram__label">24:00</span>
+        </div>
+        {% else %}
+        <div class="empty-state">
+            <p class="empty-state__message">No activity data available yet.</p>
+        </div>
+        {% endif %}
+    </div>
+
+    {# Species Activity Table #}
+    <div class="chart-card">
+        <h3 class="chart-card__title">Activity Patterns by Species</h3>
+
+        {% if species_activity %}
+        <div class="species-table__header">
+            <div class="species-table__col-name">Species</div>
+            <div class="species-table__col-graph">Activity Pattern (24h)</div>
+            <div class="species-table__col-peak">Peak</div>
+            <div class="species-table__col-count">Count</div>
+        </div>
+
+        {% for species in species_activity %}
+        <div class="species-table__row">
+            <div class="species-table__col-name" title="{{ species.species }}">
+                {{ species.species | replace('_', ' ') }}
+            </div>
+            <div class="species-table__col-graph">
+                <svg class="sparkline" viewBox="0 0 200 30" preserveAspectRatio="none">
+                    <path d="{{ species.sparkline_path }}" fill="none" stroke="var(--color-primary)" stroke-width="1.5"
+                        vector-effect="non-scaling-stroke" />
+                    <path d="{{ species.sparkline_path }} L 200 30 L 0 30 Z" fill="var(--color-primary)"
+                        fill-opacity="0.1" stroke="none" />
+                </svg>
+            </div>
+            <div class="species-table__col-peak">{{ species.peak_hour_formatted }}</div>
+            <div class="species-table__col-count">{{ species.count }}</div>
+        </div>
+        {% endfor %}
+        {% else %}
+        <div class="empty-state">
+            <p class="empty-state__message">No species activity data available yet.</p>
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

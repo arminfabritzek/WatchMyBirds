@@ -1,0 +1,129 @@
+# =============================================================================
+# WatchMyBirds - Python Project Configuration
+# =============================================================================
+# This file centralizes all tool configurations.
+# No separate config files for individual tools.
+# =============================================================================
+
+[project]
+name = "watchmybirds"
+version = "0.1.0"
+description = "AI-powered bird detection and classification from live camera streams"
+readme = "README.md"
+license = {text = "Apache-2.0"}
+requires-python = ">=3.11"
+
+# =============================================================================
+# Black - Code Formatter
+# =============================================================================
+# Autoformats code to consistent style. No manual style decisions needed.
+# Run: black .
+
+[tool.black]
+line-length = 88
+target-version = ["py311"]
+include = '\.pyi?$'
+exclude = '''
+/(
+    \.git
+  | \.venv
+  | venv
+  | __pycache__
+  | \.pytest_cache
+  | node_modules
+  | analytics/node_modules
+  | ignore
+)/
+'''
+
+# =============================================================================
+# Ruff - Fast Python Linter (replaces flake8, isort, pyupgrade)
+# =============================================================================
+# Catches real bugs, not style nitpicks.
+# Run: ruff check .
+# Run with autofix: ruff check --fix .
+
+[tool.ruff]
+line-length = 88
+target-version = "py311"
+
+# Rule groups:
+# F  = Pyflakes (real bugs: undefined names, unused imports)
+# E  = pycodestyle errors (basic style)
+# W  = pycodestyle warnings
+# B  = flake8-bugbear (dangerous patterns, gotchas)
+# I  = isort (import sorting)
+# UP = pyupgrade (use modern Python syntax)
+
+[tool.ruff.lint]
+select = ["F", "E", "W", "B", "I", "UP"]
+
+# Ignore rules that are too pedantic or handled by black
+ignore = [
+    "E501",   # Line too long - black handles this
+    "E731",   # Lambda assignment - sometimes useful
+    "B008",   # Function call in default argument - Flask patterns use this
+    "E402",   # Module level import not at top of file - Needed for config/logging order
+]
+
+# Allow autofix for all enabled rules
+fixable = ["ALL"]
+unfixable = []
+
+# Exclude directories
+exclude = [
+    ".git",
+    ".venv",
+    "venv",
+    "__pycache__",
+    ".pytest_cache",
+    "node_modules",
+    "analytics/node_modules",
+    "ignore",
+    "*.pyc",
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["camera", "detectors", "utils", "web"]
+force-single-line = false
+lines-after-imports = 2
+
+[tool.ruff.lint.per-file-ignores]
+# Allow unused imports in __init__.py (re-exports)
+"__init__.py" = ["F401"]
+# Tests can have assertions and unused variables  
+"test_*.py" = ["B011", "F841"]
+
+# =============================================================================
+# Pytest - Testing Framework
+# =============================================================================
+# Run: pytest
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_functions = ["test_*"]
+addopts = "-v --tb=short"
+filterwarnings = [
+    "ignore::DeprecationWarning",
+]
+
+# =============================================================================
+# MyPy - Type Checking (Optional, pragmatic mode)
+# =============================================================================
+# Not enforced yet. Enable gradually per module.
+# Run: mypy .
+
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = false
+warn_unused_ignores = true
+ignore_missing_imports = true
+# Start permissive, tighten later
+check_untyped_defs = false
+disallow_untyped_defs = false
+
+# Strict checking for core modules (enable when ready)
+# [[tool.mypy.overrides]]
+# module = ["utils.*", "detectors.*"]
+# disallow_untyped_defs = true

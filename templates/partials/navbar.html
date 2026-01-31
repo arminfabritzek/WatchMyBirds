@@ -1,41 +1,137 @@
-<!-- Navbar Partial - matches Dash generate_navbar() output -->
-<nav class="navbar navbar-expand-lg custom-navbar">
+<!-- Navbar Partial - Modern Dark Glassmorphism Style -->
+<nav class="navbar navbar-expand-lg navbar-dark modern-navbar">
     <div class="container-fluid">
         <a class="navbar-brand d-flex align-items-center" href="/">
             <img src="/assets/WatchMyBirds.png" alt="WatchMyBirds Logo" class="round-logo me-2"
                 style="width: 40px; height: 40px; min-width: 40px;">
-            <span>WatchMyBirds</span>
+            <span class="fw-bold">WatchMyBirds</span>
         </a>
 
-        <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+        <button class="navbar-toggler border-0" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
             <span class="navbar-toggler-icon"></span>
         </button>
 
         <div class="collapse navbar-collapse" id="navbarNav">
-            <ul class="navbar-nav ms-auto">
+            <ul class="navbar-nav ms-auto gap-1">
                 <li class="nav-item">
-                    <a class="nav-link{% if current_path == '/' %} active{% endif %}" href="/">Live</a>
+                    <a class="nav-link{% if current_path == '/' %} active{% endif %}" href="/">
+                        Live
+                    </a>
                 </li>
                 <li class="nav-item">
                     <a class="nav-link{% if current_path and current_path.startswith('/gallery') %} active{% endif %}"
-                        href="/gallery">Gallery</a>
+                        href="/gallery">
+                        Gallery
+                    </a>
                 </li>
                 <li class="nav-item">
-                    <a class="nav-link{% if current_path == '/species' %} active{% endif %}" href="/species">Species</a>
+                    <a class="nav-link{% if current_path == '/analytics' %} active{% endif %}" href="/analytics">
+                        Analytics
+                    </a>
+                </li>
+                <li class="nav-item">
+                    <a class="nav-link{% if current_path == '/species' %} active{% endif %}" href="/species">
+                        Species
+                    </a>
+                </li>
+                <li class="nav-item">
+                    <a class="nav-link{% if current_path == '/admin/review' %} active{% endif %}" href="/admin/review">
+                        Untagged
+                        {% if untagged_count and untagged_count > 0 %}
+                        <span class="badge bg-warning text-dark ms-1">{{ untagged_count }}</span>
+                        {% endif %}
+                    </a>
                 </li>
                 <li class="nav-item">
                     <a class="nav-link{% if current_path == '/trash' %} active{% endif %}" href="/trash">
                         Trash
                         {% if trash_count and trash_count > 0 %}
-                        <span class="badge bg-secondary ms-1">{{ trash_count }}</span>
+                        <span class="badge bg-danger ms-1">{{ trash_count }}</span>
                         {% endif %}
                     </a>
                 </li>
                 <li class="nav-item">
-                    <a class="nav-link{% if current_path == '/settings' %} active{% endif %}"
-                        href="/settings">Settings</a>
+                    <a class="nav-link{% if current_path == '/settings' %} active{% endif %}" href="/settings">
+                        Settings
+                    </a>
+                </li>
+                <li class="nav-item">
+                    <a class="nav-link{% if current_path == '/inbox' %} active{% endif %}" href="/inbox">
+                        📥 Inbox
+                    </a>
+                </li>
+
+                <li class="nav-item">
+                    <a class="nav-link{% if current_path == '/logs' %} active{% endif %}" href="/logs">
+                        Logs
+                    </a>
                 </li>
             </ul>
         </div>
     </div>
 </nav>
+
+<style>
+    .modern-navbar {
+        background: linear-gradient(135deg, #0d9488 0%, #0284c7 50%, #2563eb 100%);
+        box-shadow: 0 4px 20px rgba(13, 148, 136, 0.3);
+        padding: 0.75rem 1.5rem;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    }
+
+    .modern-navbar .navbar-brand {
+        color: #ffffff;
+        font-size: 1.25rem;
+        font-weight: 500;
+        transition: all 0.3s ease;
+    }
+
+    .modern-navbar .navbar-brand:hover {
+        transform: scale(1.02);
+    }
+
+    .modern-navbar .nav-link {
+        color: rgba(255, 255, 255, 0.85) !important;
+        padding: 0.6rem 1rem !important;
+        border-radius: 8px;
+        transition: all 0.2s ease;
+        font-size: 1rem;
+        font-weight: 450;
+        display: flex;
+        align-items: center;
+        gap: 0.35rem;
+    }
+
+    .modern-navbar .nav-link:hover {
+        color: #ffffff !important;
+        background: rgba(255, 255, 255, 0.1);
+        transform: translateY(-1px);
+    }
+
+    .modern-navbar .nav-link.active {
+        color: #ffffff !important;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
+    }
+
+    .modern-navbar .nav-icon {
+        font-size: 0.85rem;
+    }
+
+    .modern-navbar .badge {
+        font-size: 0.65rem;
+        padding: 0.2rem 0.4rem;
+    }
+
+    /* Mobile improvements */
+    @media (max-width: 991px) {
+        .modern-navbar {
+            padding: 0.75rem 1rem;
+        }
+
+        .modern-navbar .nav-link {
+            padding: 0.75rem 1rem !important;
+            margin: 0.15rem 0;
+        }
+    }
+</style>

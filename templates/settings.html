@@ -16,7 +16,7 @@
         <select name="{{ key }}" id="{{ key }}" class="form-select">
             <option value="true" {% if meta.value %}selected{% endif %}>true</option>
             <option value="false" {% if not meta.value %}selected{% endif %}>false</option>
-        </select>
+        </select>‚
         {% elif key in number_keys %}
         {# Define defaults #}
         {% set step = 1 %}
@@ -40,7 +40,7 @@
         {% elif key in ['STREAM_FPS', 'STREAM_FPS_CAPTURE'] %}
         {% set step = 1 %}
         {% set min_val = 1 %}
-        {% set max_val = 30 %}
+        {% set max_val = 15 %}
         {% endif %}
 
         {# Format value: force integer for integer fields to avoid '5,0' #}
@@ -50,6 +50,16 @@
         {% endif %}
 
         <input type="text" name="{{ key }}" id="{{ key }}" class="form-control" value="{{ display_value }}">
+        {% elif key == 'LOCATION_DATA' %}
+        {# Format dict to string for display #}
+        {% set loc_val = meta.value %}
+        {% if loc_val is mapping and 'latitude' in loc_val %}
+        {% set loc_str = loc_val.latitude ~ ', ' ~ loc_val.longitude %}
+        <input type="text" name="{{ key }}" id="{{ key }}" class="form-control" value="{{ loc_str }}"
+            placeholder="lat, lon">
+        {% else %}
+        <input type="text" name="{{ key }}" id="{{ key }}" class="form-control" value="{{ meta.value }}">
+        {% endif %}
         {% else %}
         <input type="text" name="{{ key }}" id="{{ key }}" class="form-control" value="{{ meta.value }}">
         {% endif %}
@@ -82,70 +92,326 @@
     {% endwith %}
 
     <!-- Main Settings Form -->
-    <form method="POST" action="{{ url_for('update_settings_route') }}">
+    <form method="POST" action="{{ url_for('update_settings_route') }}" onsubmit="prepareFormSubmission()">
 
-        <!-- Runtime Settings -->
-        <h4 class="mt-4 mb-3">Runtime Settings</h4>
-        <div class="table-responsive">
-            <table class="table table-striped table-hover table-bordered">
-                <thead class="table-light">
-                    <tr>
-                        <th>Key</th>
-                        <th>Value</th>
-                        <th>Default</th>
-                        <th>Source</th>
-                        <th>Restart</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for key in runtime_keys %}
-                    {% if key in payload and key not in advanced_keys %}
-                    {{ render_setting_row(key, payload[key]) }}
-                    {% endif %}
-                    {% endfor %}
-                </tbody>
-            </table>
-        </div>
+        <!-- 1. Stream & Performance -->
+        <div class="card mb-4">
+            <div class="card-header bg-primary text-white fw-bold">1. Stream & Performance</div>
+            <div class="card-body">
 
-        <!-- Advanced Settings (Accordion) -->
-        <div class="accordion my-4" id="accordionAdvanced">
-            <div class="accordion-item">
-                <h2 class="accordion-header" id="headingAdvanced">
-                    <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse"
-                        data-bs-target="#collapseAdvanced" aria-expanded="false" aria-controls="collapseAdvanced">
-                        Advanced Settings (Developer only)
-                    </button>
-                </h2>
-                <div id="collapseAdvanced" class="accordion-collapse collapse" aria-labelledby="headingAdvanced"
-                    data-bs-parent="#accordionAdvanced">
-                    <div class="accordion-body p-0">
-                        <div class="table-responsive">
-                            <table class="table table-striped table-hover table-bordered mb-0">
-                                <thead class="table-light">
-                                    <tr>
-                                        <th>Key</th>
-                                        <th>Value</th>
-                                        <th>Default</th>
-                                        <th>Source</th>
-                                        <th>Restart</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    {% for key in runtime_keys %}
-                                    {% if key in payload and key in advanced_keys %}
-                                    {{ render_setting_row(key, payload[key]) }}
-                                    {% endif %}
-                                    {% endfor %}
-                                </tbody>
-                            </table>
+                <!-- Video Source Toggle -->
+                <div class="mb-4">
+                    <label class="form-label fw-bold">Video Source</label>
+                    <div class="d-flex gap-4 mb-2">
+                        <div class="form-check">
+                            <input class="form-check-input" type="radio" name="sourceType" id="sourceTypeUSB"
+                                value="usb" onchange="toggleSourceInput()" checked>
+                            <label class="form-check-label" for="sourceTypeUSB">USB Camera</label>
+                        </div>
+                        <div class="form-check">
+                            <input class="form-check-input" type="radio" name="sourceType" id="sourceTypeStream"
+                                value="stream" onchange="toggleSourceInput()">
+                            <label class="form-check-label" for="sourceTypeStream">Network Stream (RTSP/HTTP)</label>
+                        </div>
+                    </div>
+
+                    <!-- Hidden Real Field -->
+                    <input type="hidden" name="VIDEO_SOURCE" id="VIDEO_SOURCE"
+                        value="{{ payload['VIDEO_SOURCE'].value }}">
+
+                    <!-- USB Input -->
+                    <div id="usbInputGroup">
+                        <label class="small text-muted">Camera Index (0 = Default)</label>
+                        <select id="usbIndexSelect" class="form-select" onchange="updateRealSource()">
+                            <option value="0">Camera 0 (Default)</option>
+                            <option value="1">Camera 1</option>
+                            <option value="2">Camera 2</option>
+                        </select>
+                    </div>
+
+                    <!-- Stream Input -->
+                    <div id="streamInputGroup" class="d-none">
+                        <label class="small text-muted">Stream URL (rtsp://... or http://...)</label>
+                        <input type="text" id="streamUrlInput" class="form-control"
+                            placeholder="rtsp://user:pass@ip:554/stream" onchange="updateRealSource()">
+                    </div>
+                </div>
+
+                <div class="row g-3">
+                    <div class="col-md-4">
+                        <label for="STREAM_FPS_CAPTURE" class="form-label fw-bold">Capture FPS (Throttling)</label>
+                        <input type="number" name="STREAM_FPS_CAPTURE" id="STREAM_FPS_CAPTURE" class="form-control"
+                            value="{{ payload['STREAM_FPS_CAPTURE'].value }}" min="1" max="60">
+                        <div class="form-text text-success"><small><strong>Low (1-5):</strong> Saves CPU. Good for
+                                monitoring.</small></div>
+                        <div class="form-text text-danger"><small><strong>High (20+):</strong> High CPU usage.</small>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <label for="STREAM_FPS" class="form-label fw-bold">Live View FPS</label>
+                        <input type="number" name="STREAM_FPS" id="STREAM_FPS" class="form-control"
+                            value="{{ payload['STREAM_FPS'].value }}" min="1" max="30">
+                        <div class="form-text text-muted"><small>Browser refresh rate. Lower = Less bandwidth.</small>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <label for="STREAM_WIDTH_OUTPUT_RESIZE" class="form-label fw-bold">Live View Width</label>
+                        <input type="number" name="STREAM_WIDTH_OUTPUT_RESIZE" id="STREAM_WIDTH_OUTPUT_RESIZE"
+                            class="form-control" value="{{ payload['STREAM_WIDTH_OUTPUT_RESIZE'].value }}">
+                        <div class="form-text text-muted"><small>Resize width (e.g., 640). Leave empty for full.</small>
                         </div>
                     </div>
                 </div>
             </div>
         </div>
 
-        <button type="submit" class="btn btn-primary btn-lg">Apply Changes</button>
+        <!-- 2. Detection Settings -->
+        <div class="card mb-4">
+            <div class="card-header bg-light fw-bold">2. Detection Logic</div>
+            <div class="card-body">
+                <div class="row g-3">
+                    <div class="col-md-6">
+                        <label for="CONFIDENCE_THRESHOLD_DETECTION" class="form-label fw-bold">Detection
+                            Sensitivity</label>
+                        <input type="number" step="0.05" name="CONFIDENCE_THRESHOLD_DETECTION"
+                            id="CONFIDENCE_THRESHOLD_DETECTION" class="form-control"
+                            value="{{ payload['CONFIDENCE_THRESHOLD_DETECTION'].value }}">
+                        <div class="form-text">0.1 (Sensitive) to 0.9 (Strict). Default: 0.5</div>
+                    </div>
+                    <div class="col-md-6">
+                        <label for="SAVE_THRESHOLD" class="form-label fw-bold">Save Threshold</label>
+                        <input type="number" step="0.05" name="SAVE_THRESHOLD" id="SAVE_THRESHOLD" class="form-control"
+                            value="{{ payload['SAVE_THRESHOLD'].value }}">
+                        <div class="form-text">Minimum score to save image to disk.</div>
+                    </div>
+                    <div class="col-md-6">
+                        <label for="DETECTION_INTERVAL_SECONDS" class="form-label fw-bold">Detection Interval
+                            (s)</label>
+                        <input type="number" name="DETECTION_INTERVAL_SECONDS" id="DETECTION_INTERVAL_SECONDS"
+                            class="form-control" value="{{ payload['DETECTION_INTERVAL_SECONDS'].value }}">
+                        <div class="form-text">Seconds to wait between detections.</div>
+                    </div>
+                    <div class="col-md-6">
+                        <label for="DAY_AND_NIGHT_CAPTURE" class="form-label fw-bold">Night Mode Capture</label>
+                        <select name="DAY_AND_NIGHT_CAPTURE" id="DAY_AND_NIGHT_CAPTURE" class="form-select">
+                            <option value="true" {% if payload['DAY_AND_NIGHT_CAPTURE'].value %}selected{% endif %}>
+                                Enabled (Capture 24/7)</option>
+                            <option value="false" {% if not payload['DAY_AND_NIGHT_CAPTURE'].value %}selected{% endif
+                                %}>Disabled (Daylight Only)</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 3. Notifications -->
+        <div class="card mb-4">
+            <div class="card-header bg-light fw-bold">3. Notifications (Telegram)</div>
+            <div class="card-body">
+                <div class="mb-3">
+                    <label for="TELEGRAM_ENABLED" class="form-label fw-bold">Telegram Enabled</label>
+                    <select name="TELEGRAM_ENABLED" id="TELEGRAM_ENABLED" class="form-select w-auto">
+                        <option value="true" {% if payload['TELEGRAM_ENABLED'].value %}selected{% endif %}>Yes</option>
+                        <option value="false" {% if not payload['TELEGRAM_ENABLED'].value %}selected{% endif %}>No
+                        </option>
+                    </select>
+                </div>
+                <div class="row g-3">
+                    <div class="col-md-6">
+                        <label for="TELEGRAM_BOT_TOKEN" class="form-label">Bot Token</label>
+                        <input type="text" name="TELEGRAM_BOT_TOKEN" id="TELEGRAM_BOT_TOKEN" class="form-control"
+                            value="{{ payload['TELEGRAM_BOT_TOKEN'].value }}">
+                    </div>
+                    <div class="col-md-6">
+                        <label for="TELEGRAM_CHAT_ID" class="form-label">Chat ID</label>
+                        <input type="text" name="TELEGRAM_CHAT_ID" id="TELEGRAM_CHAT_ID" class="form-control"
+                            value="{{ payload['TELEGRAM_CHAT_ID'].value }}">
+                    </div>
+                    <div class="col-md-12">
+                        <label for="TELEGRAM_COOLDOWN" class="form-label">Cooldown (Seconds)</label>
+                        <input type="number" name="TELEGRAM_COOLDOWN" id="TELEGRAM_COOLDOWN" class="form-control w-auto"
+                            value="{{ payload['TELEGRAM_COOLDOWN'].value }}">
+                        <div class="form-text">Minimum time between messages.</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 4. System & Location -->
+        <div class="card mb-4">
+            <div class="card-header bg-light fw-bold">4. System & Location</div>
+            <div class="card-body">
+                <!-- Location Logic -->
+                <div class="mb-3">
+                    <label class="form-label fw-bold">Location (GPS)</label>
+                    <input type="hidden" name="LOCATION_DATA" id="LOCATION_DATA"
+                        value="{{ payload['LOCATION_DATA'].value if payload['LOCATION_DATA'].value is string else '' }}">
+                    <!-- We need to safely parse the existing dict if it comes rendered as text or check payload type -->
+
+                    <div class="row g-3">
+                        <div class="col-sm-6">
+                            <label class="small text-muted">Latitude</label>
+                            <input type="text" id="locLat" class="form-control" placeholder="52.5200"
+                                onchange="updateLocationJson()">
+                        </div>
+                        <div class="col-sm-6">
+                            <label class="small text-muted">Longitude</label>
+                            <input type="text" id="locLon" class="form-control" placeholder="13.4050"
+                                onchange="updateLocationJson()">
+                        </div>
+                    </div>
+                </div>
+
+                <div class="row g-3">
+                    <div class="col-md-6">
+                        <label for="EXIF_GPS_ENABLED" class="form-label">Write GPS to Metadata</label>
+                        <select name="EXIF_GPS_ENABLED" id="EXIF_GPS_ENABLED" class="form-select">
+                            <option value="true" {% if payload['EXIF_GPS_ENABLED'].value %}selected{% endif %}>Yes
+                            </option>
+                            <option value="false" {% if not payload['EXIF_GPS_ENABLED'].value %}selected{% endif %}>No
+                            </option>
+                        </select>
+                    </div>
+                    <div class="col-md-6">
+                        <label for="DEBUG_MODE" class="form-label">Debug Mode</label>
+                        <select name="DEBUG_MODE" id="DEBUG_MODE" class="form-select">
+                            <option value="true" {% if payload['DEBUG_MODE'].value %}selected{% endif %}>Enabled
+                                (Verbose Logs)</option>
+                            <option value="false" {% if not payload['DEBUG_MODE'].value %}selected{% endif %}>Disabled
+                            </option>
+                        </select>
+                    </div>
+                    <div class="col-md-12">
+                        <label for="EDIT_PASSWORD" class="form-label">Settings Password (Optional)</label>
+                        <input type="text" name="EDIT_PASSWORD" id="EDIT_PASSWORD" class="form-control"
+                            value="{{ payload['EDIT_PASSWORD'].value }}">
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <button type="submit" class="btn btn-primary btn-lg w-100 mb-5">Apply & Restart Services</button>
     </form>
+
+    <!-- JS Logic for Source and Location -->
+    <script>
+        // Init logic on load
+        document.addEventListener('DOMContentLoaded', function () {
+            initVideoSource();
+            initLocation();
+            loadSystemVersions();
+        });
+
+        function loadSystemVersions() {
+            fetch('/api/system/versions')
+                .then(res => res.json())
+                .then(data => {
+                    document.getElementById('si-app').innerText = data.app_version || 'N/A';
+                    document.getElementById('si-kernel').innerText = data.kernel || 'N/A';
+                    document.getElementById('si-os').innerText = data.os || 'N/A';
+                    document.getElementById('si-boot').innerText = data.bootloader || 'N/A';
+                })
+                .catch(err => {
+                    console.error("Failed to load versions", err);
+                });
+        }
+
+        // --- Video Source Logic ---
+        function initVideoSource() {
+            const currentVal = document.getElementById('VIDEO_SOURCE').value;
+            const isDigit = /^\d+$/.test(currentVal);
+
+            if (isDigit) {
+                document.getElementById('sourceTypeUSB').checked = true;
+                // Try to match select
+                const select = document.getElementById('usbIndexSelect');
+                if ([...select.options].some(o => o.value === currentVal)) {
+                    select.value = currentVal;
+                } else {
+                    // Fallback if odd index
+                    select.value = "0";
+                }
+            } else {
+                document.getElementById('sourceTypeStream').checked = true;
+                document.getElementById('streamUrlInput').value = currentVal;
+            }
+            toggleSourceInput();
+        }
+
+        function toggleSourceInput() {
+            const isUsb = document.getElementById('sourceTypeUSB').checked;
+            if (isUsb) {
+                document.getElementById('usbInputGroup').classList.remove('d-none');
+                document.getElementById('streamInputGroup').classList.add('d-none');
+            } else {
+                document.getElementById('usbInputGroup').classList.add('d-none');
+                document.getElementById('streamInputGroup').classList.remove('d-none');
+            }
+            updateRealSource();
+        }
+
+        function updateRealSource() {
+            const isUsb = document.getElementById('sourceTypeUSB').checked;
+            const hidden = document.getElementById('VIDEO_SOURCE');
+            if (isUsb) {
+                hidden.value = document.getElementById('usbIndexSelect').value;
+            } else {
+                hidden.value = document.getElementById('streamUrlInput').value;
+            }
+        }
+
+        // --- Location Logic ---
+        function initLocation() {
+            // Backend renders dictionary usually, but templates typically stringify it.
+            // Check how payload['LOCATION_DATA'].value is passed.
+            // It's likely a python dict or a string representation of it.
+            // In the previous code there was a raw input.
+            // We'll read the macro logic: it accessed meta.value directly.
+
+            // We need to parse the initial value from server rendered JS variable if possible, 
+            // or parse the value attribute of the hidden field.
+
+            // Let's pass the raw values safely via data-attributes or JS
+            const rawLat = "{{ payload['LOCATION_DATA'].value.get('latitude', '') if payload['LOCATION_DATA'].value is mapping else '' }}";
+            const rawLon = "{{ payload['LOCATION_DATA'].value.get('longitude', '') if payload['LOCATION_DATA'].value is mapping else '' }}";
+
+            document.getElementById('locLat').value = rawLat;
+            document.getElementById('locLon').value = rawLon;
+        }
+
+        function updateLocationJson() {
+            const lat = document.getElementById('locLat').value.trim();
+            const lon = document.getElementById('locLon').value.trim();
+
+            // Simple validation helper
+            if (!lat || !lon) {
+                // If empty, maybe send empty? Or keep previous? 
+                // Let's assume user wants to clear if both empty.
+                if (!lat && !lon) {
+                    document.getElementById('LOCATION_DATA').value = "";
+                    return;
+                }
+            }
+
+            // Construct JSON-like object but unfortunately the backend expects... what?
+            // The backend likely expects a JSON string OR handles a dict form object?
+            // Existing backend `update_settings_route` usually gets raw form values. 
+            // If we send a string "{'latitude': ...}", the backend config loader (dynaconf/dotenv) needs to handle it.
+            // Wait, standard .env is string. Complex types in .env are tricky.
+            // Let's look at how it was displayed previously:
+            // "loc_val.latitude ~ ', ' ~ loc_val.longitude" was displayed.
+
+            // Format as "lat, lon" expected by backend config.py
+            document.getElementById('LOCATION_DATA').value = `${lat}, ${lon}`;
+        }
+
+        function prepareFormSubmission() {
+            // Ensure final sync
+            updateRealSource();
+            updateLocationJson();
+            return true;
+        }
+    </script>
 
     <hr class="my-5">
 
@@ -164,44 +430,111 @@
         </div>
     </div>
 
-    <!-- Trash UI Link -->
+    <!-- Backup & Migration -->
     <div class="card mb-4">
-        <div class="card-header bg-light fw-bold">Trash</div>
+        <div class="card-header bg-light fw-bold">💾 Backup & Migration</div>
         <div class="card-body">
-            <div class="d-flex align-items-center justify-content-between">
-                <div>
-                    <p class="mb-0">Manage rejected detections.</p>
-                    <small class="text-muted">Contains {{ trash_count }} items.</small>
-                </div>
-                <a href="/trash" class="btn btn-secondary">View Trash</a>
-            </div>
+            <p class="card-text">Create a full backup of your database, images, and settings.
+                Detection is automatically paused during backup.</p>
+            <a href="/backup" class="btn btn-primary">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                    style="margin-right: 6px; vertical-align: -2px;">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                    <polyline points="7 10 12 15 17 10" />
+                    <line x1="12" y1="15" x2="12" y2="3" />
+                </svg>
+                Open Backup &amp; Migration
+            </a>
         </div>
     </div>
 
-    <!-- Analytics Link -->
-    <div class="card mb-4">
-        <div class="card-header bg-light fw-bold">Analytics</div>
-        <div class="card-body">
-            <div class="d-flex align-items-center justify-content-between">
-                <div>
-                    <p class="mb-0">View all-time detection statistics and trends.</p>
-                    <small class="text-muted">Species counts, score distributions, and more.</small>
-                </div>
-                <a href="/analytics" class="btn btn-success">View Analytics</a>
-            </div>
-        </div>
-    </div>
 
-    <!-- Orphan Images (Maintenance) -->
+
+
+
+
+
+    <script>
+        function confirmShutdown() {
+            if (confirm("Are you sure you want to SHUT DOWN the Raspberry Pi? The system will be unreachable until manually turned on again.")) {
+                fetch('/api/system/shutdown', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    }
+                })
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.status === 'success') {
+                            alert("Shutdown initiated. System will power off in a few seconds.");
+                        } else {
+                            alert("Shutdown failed: " + data.message);
+                        }
+                    })
+                    .catch(error => {
+                        console.error('Error:', error);
+                        alert("An error occurred while contacting the server.");
+                    });
+            }
+        }
+
+        function confirmRestart() {
+            if (confirm("Are you sure you want to RESTART the Raspberry Pi? The system will be unavailable for about a minute.")) {
+                fetch('/api/system/restart', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    }
+                })
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.status === 'success') {
+                            alert("Restart initiated. Please refresh the page in a minute.");
+                        } else {
+                            alert("Restart failed: " + data.message);
+                        }
+                    })
+                    .catch(error => {
+                        console.error('Error:', error);
+                        alert("An error occurred while contacting the server.");
+                    });
+            }
+        }
+
+        function copyRsync() {
+            var copyText = document.getElementById("rsyncCommand");
+            copyText.select();
+            copyText.setSelectionRange(0, 99999); // For mobile devices
+            navigator.clipboard.writeText(copyText.value).then(function () {
+                // visual feedback could be added here
+                alert("Command copied to clipboard: " + copyText.value);
+            }, function (err) {
+                console.error('Async: Could not copy text: ', err);
+            });
+        }
+    </script>
+
+    <!-- System Information (Dynamic) -->
+    <h4 class="mt-5 mb-3">System Information</h4>
     <div class="card mb-4">
-        <div class="card-header bg-light fw-bold">Orphan Images</div>
         <div class="card-body">
-            <div class="d-flex align-items-center justify-content-between">
-                <div>
-                    <p class="mb-0">Manage images with no active detections.</p>
-                    <small class="text-muted">Review and delete orphan files to free up disk space.</small>
+            <div class="row g-3" id="sysInfoContainer">
+                <div class="col-6 col-md-3">
+                    <small class="text-muted d-block">WatchMyBirds</small>
+                    <span class="fw-bold" id="si-app">Loading...</span>
                 </div>
-                <a href="/admin/orphans" class="btn btn-warning">Orphan Images</a>
+                <div class="col-6 col-md-3">
+                    <small class="text-muted d-block">Kernel</small>
+                    <span class="font-monospace" id="si-kernel">Loading...</span>
+                </div>
+                <div class="col-6 col-md-3">
+                    <small class="text-muted d-block">OS</small>
+                    <span class="font-monospace" id="si-os">Loading...</span>
+                </div>
+                <div class="col-6 col-md-3">
+                    <small class="text-muted d-block">Bootloader</small>
+                    <span class="font-monospace" id="si-boot">Loading...</span>
+                </div>
             </div>
         </div>
     </div>
@@ -235,6 +568,46 @@
         </table>
     </div>
 
+
+    <!-- Danger Zone (Shutdown) -->
+    <div class="card mb-4 border-danger">
+        <div class="card-header bg-danger text-white fw-bold">Danger Zone</div>
+        <div class="card-body">
+            <!-- Developer Sync -->
+            <div class="mb-3 border-bottom pb-3">
+                <div class="d-flex align-items-center justify-content-between">
+                    <div>
+                        <p class="mb-0 fw-bold">Developer Sync</p>
+                        <small class="text-muted">Push code from host (Dev Mode only):</small>
+                    </div>
+                    <div class="input-group" style="max-width: 400px;">
+                        <input type="text" class="form-control font-monospace form-control-sm"
+                            value="./ignore/sync_to_rpi.sh {{ request.host.split(':')[0] }}" readonly id="rsyncCommand">
+                        <button class="btn btn-outline-secondary btn-sm" type="button"
+                            onclick="copyRsync()">Copy</button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="d-flex align-items-center justify-content-between">
+                <div>
+                    <p class="mb-0">System Power Management</p>
+                    <small class="text-muted">Safely restart or shut down the Raspberry Pi.</small>
+                </div>
+                <div class="d-flex flex-column align-items-end">
+                    <span class="badge bg-warning text-dark mb-1">MAINTENANCE</span>
+                    <div class="btn-group">
+                        <button type="button" class="btn btn-outline-warning" onclick="confirmRestart()">
+                            Restart
+                        </button>
+                        <button type="button" class="btn btn-outline-danger" onclick="confirmShutdown()">
+                            Shutdown
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
 </div>
 
 {% endblock %}

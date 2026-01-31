@@ -271,7 +271,7 @@ function Ar(i) {
   ), T, L, R;
   return {
     c() {
-      t = E("div"), e = E("div"), s = E("div"), o = ut(n), r = tt(), a = E("div"), a.textContent = "Total Detections", l = tt(), c = E("div"), h = E("div"), f = ut(d), u = tt(), g = E("div"), g.textContent = "Species Detected", p = tt(), m = E("div"), b = E("div"), y = ut(_), v = tt(), x = E("div"), x.textContent = "First Detection", S = tt(), k = E("div"), w = E("div"), T = ut(P), L = tt(), R = E("div"), R.textContent = "Last Detection", A(s, "font-size", "2rem"), A(s, "font-weight", "700"), A(s, "color", "#1a202c"), A(a, "font-size", "0.85rem"), A(a, "color", "#718096"), A(a, "margin-top", "0.25rem"), A(e, "background", "white"), A(e, "border-radius", "12px"), A(e, "padding", "1.25rem"), A(e, "box-shadow", "0 2px 8px rgba(0,0,0,0.06)"), A(e, "border-left", "4px solid #2ecc71"), A(h, "font-size", "2rem"), A(h, "font-weight", "700"), A(h, "color", "#1a202c"), A(g, "font-size", "0.85rem"), A(g, "color", "#718096"), A(g, "margin-top", "0.25rem"), A(c, "background", "white"), A(c, "border-radius", "12px"), A(c, "padding", "1.25rem"), A(c, "box-shadow", "0 2px 8px rgba(0,0,0,0.06)"), A(c, "border-left", "4px solid #3498db"), A(b, "font-size", "1.1rem"), A(b, "font-weight", "700"), A(b, "color", "#1a202c"), A(x, "font-size", "0.85rem"), A(x, "color", "#718096"), A(x, "margin-top", "0.25rem"), A(m, "background", "white"), A(m, "border-radius", "12px"), A(m, "padding", "1.25rem"), A(m, "box-shadow", "0 2px 8px rgba(0,0,0,0.06)"), A(m, "border-left", "4px solid #9b59b6"), A(w, "font-size", "1.1rem"), A(w, "font-weight", "700"), A(w, "color", "#1a202c"), A(R, "font-size", "0.85rem"), A(R, "color", "#718096"), A(R, "margin-top", "0.25rem"), A(k, "background", "white"), A(k, "border-radius", "12px"), A(k, "padding", "1.25rem"), A(k, "box-shadow", "0 2px 8px rgba(0,0,0,0.06)"), A(k, "border-left", "4px solid #e67e22"), A(t, "display", "grid"), A(t, "grid-template-columns", "repeat(4, 1fr)"), A(t, "gap", "1rem"), A(t, "margin-bottom", "1.5rem"), C(t, "class", "svelte-qy1gjj");
+      t = E("div"), e = E("div"), s = E("div"), o = ut(n), r = tt(), a = E("div"), a.textContent = "Total Detections", l = tt(), c = E("div"), h = E("div"), f = ut(d), u = tt(), g = E("div"), g.textContent = "Species Detected", p = tt(), m = E("div"), b = E("div"), y = ut(_), v = tt(), x = E("div"), x.textContent = "First Detection", S = tt(), k = E("div"), w = E("div"), T = ut(P), L = tt(), R = E("div"), R.textContent = "Last Detection", A(s, "font-size", "2rem"), A(s, "font-weight", "700"), A(s, "color", "#1a202c"), A(a, "font-size", "0.85rem"), A(a, "color", "#718096"), A(a, "margin-top", "0.25rem"), A(e, "background", "white"), A(e, "border-radius", "12px"), A(e, "padding", "1.25rem"), A(e, "box-shadow", "0 2px 8px rgba(0,0,0,0.06)"), A(e, "border-left", "4px solid #4caf50"), A(h, "font-size", "2rem"), A(h, "font-weight", "700"), A(h, "color", "#1a202c"), A(g, "font-size", "0.85rem"), A(g, "color", "#718096"), A(g, "margin-top", "0.25rem"), A(c, "background", "white"), A(c, "border-radius", "12px"), A(c, "padding", "1.25rem"), A(c, "box-shadow", "0 2px 8px rgba(0,0,0,0.06)"), A(c, "border-left", "4px solid #0288d1"), A(b, "font-size", "1.1rem"), A(b, "font-weight", "700"), A(b, "color", "#1a202c"), A(x, "font-size", "0.85rem"), A(x, "color", "#718096"), A(x, "margin-top", "0.25rem"), A(m, "background", "white"), A(m, "border-radius", "12px"), A(m, "padding", "1.25rem"), A(m, "box-shadow", "0 2px 8px rgba(0,0,0,0.06)"), A(m, "border-left", "4px solid #00897b"), A(w, "font-size", "1.1rem"), A(w, "font-weight", "700"), A(w, "color", "#1a202c"), A(R, "font-size", "0.85rem"), A(R, "color", "#718096"), A(R, "margin-top", "0.25rem"), A(k, "background", "white"), A(k, "border-radius", "12px"), A(k, "padding", "1.25rem"), A(k, "box-shadow", "0 2px 8px rgba(0,0,0,0.06)"), A(k, "border-left", "4px solid #ff9800"), A(t, "display", "grid"), A(t, "grid-template-columns", "repeat(4, 1fr)"), A(t, "gap", "1rem"), A(t, "margin-bottom", "1.5rem"), C(t, "class", "svelte-qy1gjj");
     },
     m(H, ht) {
       Q(H, t, ht), D(t, e), D(e, s), D(s, o), D(e, r), D(e, a), D(t, l), D(t, c), D(c, h), D(h, f), D(c, u), D(c, g), D(t, p), D(t, m), D(m, b), D(b, y), D(m, v), D(m, x), D(t, S), D(t, k), D(k, w), D(w, T), D(k, L), D(k, R);
@@ -9473,7 +9473,7 @@ function Vd(i) {
   );
   return {
     c() {
-      n && n.c(), t = tt(), e = E("div"), s = E("canvas"), C(e, "class", "canvas-container svelte-69w2mr");
+      n && n.c(), t = tt(), e = E("div"), s = E("canvas"), C(e, "class", "canvas-container svelte-3r4dde");
     },
     m(o, r) {
       n && n.m(o, r), Q(o, t, r), Q(o, e, r), D(e, s), i[4](s);
@@ -9494,7 +9494,7 @@ function Wd(i) {
       t = E("div"), e = ut(
         /*error*/
         i[2]
-      ), C(t, "class", "error svelte-69w2mr");
+      ), C(t, "class", "error svelte-3r4dde");
     },
     m(s, n) {
       Q(s, t, n), D(t, e);
@@ -9516,7 +9516,7 @@ function Nd(i) {
   let t;
   return {
     c() {
-      t = E("div"), t.innerHTML = '<div class="spinner-small svelte-69w2mr"></div>', C(t, "class", "loading svelte-69w2mr");
+      t = E("div"), t.innerHTML = '<div class="spinner-small svelte-3r4dde"></div>', C(t, "class", "loading svelte-3r4dde");
     },
     m(e, s) {
       Q(e, t, s);
@@ -9534,7 +9534,7 @@ function oo(i) {
       t = E("div"), e = ut("Peak Activity: "), s = ut(
         /*peakHour*/
         i[3]
-      ), C(t, "class", "info-badge svelte-69w2mr");
+      ), C(t, "class", "info-badge svelte-3r4dde");
     },
     m(n, o) {
       Q(n, t, o), D(t, e), D(t, s);
@@ -9566,7 +9566,7 @@ function Hd(i) {
   let s = e(i), n = s(i);
   return {
     c() {
-      t = E("div"), n.c(), C(t, "class", "chart-wrapper svelte-69w2mr");
+      t = E("div"), n.c(), C(t, "class", "chart-wrapper svelte-3r4dde");
     },
     m(o, r) {
       Q(o, t, r), n.m(t, null);
@@ -9596,7 +9596,7 @@ function jd(i, t, e) {
       const h = await c.json(), d = h.points, f = h.histogram || [];
       if (e(3, a = ro(h.peak_hour)), e(1, o = !1), await vr(), s) {
         const g = s.getContext("2d").createLinearGradient(0, 0, 0, 400);
-        g.addColorStop(0, "rgba(46, 204, 113, 0.4)"), g.addColorStop(1, "rgba(46, 204, 113, 0.05)"), n = new At(
+        g.addColorStop(0, "rgba(76, 175, 80, 0.4)"), g.addColorStop(1, "rgba(76, 175, 80, 0.05)"), n = new At(
           s,
           {
             type: "scatter",
@@ -9607,7 +9607,7 @@ function jd(i, t, e) {
                   type: "line",
                   label: "Activity Density",
                   data: d,
-                  borderColor: "#27ae60",
+                  borderColor: "#2e7d32",
                   borderWidth: 3,
                   backgroundColor: g,
                   fill: !0,
@@ -9622,7 +9622,7 @@ function jd(i, t, e) {
                   // Underlying histogram
                   label: "Raw Distribution",
                   data: f.map((p) => ({ x: p.x, y: p.y })),
-                  backgroundColor: "rgba(52, 152, 219, 0.2)",
+                  backgroundColor: "rgba(2, 136, 209, 0.2)",
                   barPercentage: 1,
                   categoryPercentage: 1,
                   xAxisID: "x"
@@ -9706,10 +9706,10 @@ function Yd(i) {
     r[a] = lo(ao(i, o, a));
   return {
     c() {
-      t = E("div"), e = E("div"), e.innerHTML = '<div class="col-name svelte-1dp10gp">Species</div> <div class="col-graph svelte-1dp10gp">Activity Pattern (24h)</div> <div class="col-peak svelte-1dp10gp">Peak</div>', s = tt(), n = E("div");
+      t = E("div"), e = E("div"), e.innerHTML = '<div class="col-name svelte-1alnngh">Species</div> <div class="col-graph svelte-1alnngh">Activity Pattern (24h)</div> <div class="col-peak svelte-1alnngh">Peak</div>', s = tt(), n = E("div");
       for (let a = 0; a < r.length; a += 1)
         r[a].c();
-      C(e, "class", "table-header svelte-1dp10gp"), C(n, "class", "table-body"), C(t, "class", "table-container svelte-1dp10gp");
+      C(e, "class", "table-header svelte-1alnngh"), C(n, "class", "table-body"), C(t, "class", "table-container svelte-1alnngh");
     },
     m(a, l) {
       Q(a, t, l), D(t, e), D(t, s), D(t, n);
@@ -9742,7 +9742,7 @@ function Xd(i) {
   let t;
   return {
     c() {
-      t = E("div"), t.textContent = "No data available", C(t, "class", "message svelte-1dp10gp");
+      t = E("div"), t.textContent = "No data available", C(t, "class", "message svelte-1alnngh");
     },
     m(e, s) {
       Q(e, t, s);
@@ -9760,7 +9760,7 @@ function Ud(i) {
       t = E("div"), e = ut(
         /*error*/
         i[1]
-      ), C(t, "class", "message error svelte-1dp10gp");
+      ), C(t, "class", "message error svelte-1alnngh");
     },
     m(s, n) {
       Q(s, t, n), D(t, e);
@@ -9782,7 +9782,7 @@ function Kd(i) {
   let t;
   return {
     c() {
-      t = E("div"), t.textContent = "Loading...", C(t, "class", "message svelte-1dp10gp");
+      t = E("div"), t.textContent = "Loading...", C(t, "class", "message svelte-1alnngh");
     },
     m(e, s) {
       Q(e, t, s);
@@ -9803,14 +9803,14 @@ function lo(i) {
   ) + "", m, b;
   return {
     c() {
-      t = E("div"), e = E("div"), n = ut(s), r = tt(), a = E("div"), l = Ri("svg"), c = Ri("path"), d = Ri("path"), u = tt(), g = E("div"), m = ut(p), b = tt(), C(e, "class", "col-name svelte-1dp10gp"), C(e, "title", o = /*item*/
+      t = E("div"), e = E("div"), n = ut(s), r = tt(), a = E("div"), l = Ri("svg"), c = Ri("path"), d = Ri("path"), u = tt(), g = E("div"), m = ut(p), b = tt(), C(e, "class", "col-name svelte-1alnngh"), C(e, "title", o = /*item*/
       i[3].species), C(c, "d", h = ii(
         /*item*/
         i[3].points
-      )), C(c, "fill", "none"), C(c, "stroke", "#2ecc71"), C(c, "stroke-width", "1.5"), C(c, "vector-effect", "non-scaling-stroke"), C(d, "d", f = `${ii(
+      )), C(c, "fill", "none"), C(c, "stroke", "#4caf50"), C(c, "stroke-width", "1.5"), C(c, "vector-effect", "non-scaling-stroke"), C(d, "d", f = `${ii(
         /*item*/
         i[3].points
-      )} L 200 30 L 0 30 Z`), C(d, "fill", "#2ecc71"), C(d, "fill-opacity", "0.1"), C(d, "stroke", "none"), C(l, "class", "sparkline svelte-1dp10gp"), C(l, "viewBox", "0 0 200 30"), C(l, "preserveAspectRatio", "none"), C(l, "width", "100%"), C(l, "height", "30"), C(a, "class", "col-graph svelte-1dp10gp"), C(g, "class", "col-peak svelte-1dp10gp"), C(t, "class", "table-row svelte-1dp10gp");
+      )} L 200 30 L 0 30 Z`), C(d, "fill", "#4caf50"), C(d, "fill-opacity", "0.1"), C(d, "stroke", "none"), C(l, "class", "sparkline svelte-1alnngh"), C(l, "viewBox", "0 0 200 30"), C(l, "preserveAspectRatio", "none"), C(l, "width", "100%"), C(l, "height", "30"), C(a, "class", "col-graph svelte-1alnngh"), C(g, "class", "col-peak svelte-1alnngh"), C(t, "class", "table-row svelte-1alnngh");
     },
     m(_, y) {
       Q(_, t, y), D(t, e), D(e, n), D(t, r), D(t, a), D(a, l), D(l, c), D(l, d), D(t, u), D(t, g), D(g, m), D(t, b);
@@ -9856,7 +9856,7 @@ function qd(i) {
   let o = n(i), r = o(i);
   return {
     c() {
-      t = E("div"), e = E("h4"), e.textContent = "Activity Patterns by Species", s = tt(), r.c(), C(e, "class", "alt-header svelte-1dp10gp"), C(t, "class", "alt-view-container svelte-1dp10gp");
+      t = E("div"), e = E("h4"), e.textContent = "Activity Patterns by Species", s = tt(), r.c(), C(e, "class", "alt-header svelte-1alnngh"), C(t, "class", "alt-view-container svelte-1alnngh");
     },
     m(a, l) {
       Q(a, t, l), D(t, e), D(t, s), r.m(t, null);
@@ -9908,7 +9908,7 @@ function Jd(i) {
     i[0]
   ) } }), a = new $d({}), h = new Zd({}), {
     c() {
-      Fi(t.$$.fragment), e = tt(), s = E("div"), n = E("div"), o = E("h3"), o.textContent = "Activity by Time of Day", r = tt(), Fi(a.$$.fragment), l = tt(), c = E("div"), Fi(h.$$.fragment), C(o, "class", "chart-title svelte-1ovc2ja"), C(n, "class", "chart-card chart-card--full svelte-1ovc2ja"), C(c, "class", "chart-card chart-card--full svelte-1ovc2ja"), C(s, "class", "charts-section svelte-1ovc2ja");
+      Fi(t.$$.fragment), e = tt(), s = E("div"), n = E("div"), o = E("h3"), o.textContent = "Activity by Time of Day", r = tt(), Fi(a.$$.fragment), l = tt(), c = E("div"), Fi(h.$$.fragment), C(o, "class", "chart-title svelte-fczub0"), C(n, "class", "chart-card chart-card--full svelte-fczub0"), C(c, "class", "chart-card chart-card--full svelte-fczub0"), C(s, "class", "charts-section svelte-fczub0");
     },
     m(f, u) {
       ni(t, f, u), Q(f, e, u), Q(f, s, u), D(s, n), D(n, o), D(n, r), ni(a, n, null), D(s, l), D(s, c), ni(h, c, null), d = !0;
@@ -9937,7 +9937,7 @@ function Qd(i) {
       t = E("div"), e = E("p"), s = ut(
         /*error*/
         i[2]
-      ), C(t, "class", "error-container svelte-1ovc2ja");
+      ), C(t, "class", "error-container svelte-fczub0");
     },
     m(n, o) {
       Q(n, t, o), D(t, e), D(e, s);
@@ -9961,7 +9961,7 @@ function tf(i) {
   let t;
   return {
     c() {
-      t = E("div"), t.innerHTML = '<div class="spinner svelte-1ovc2ja"></div> <p>Loading analytics...</p>', C(t, "class", "loading-container svelte-1ovc2ja");
+      t = E("div"), t.innerHTML = '<div class="spinner svelte-fczub0"></div> <p>Loading analytics...</p>', C(t, "class", "loading-container svelte-fczub0");
     },
     m(e, s) {
       Q(e, t, s);
@@ -9988,7 +9988,7 @@ function ef(i) {
   }
   return n = c(i), o = l[n] = a[n](i), {
     c() {
-      t = E("div"), e = E("header"), e.innerHTML = '<h1 class="svelte-1ovc2ja">Analytics</h1> <p class="subtitle svelte-1ovc2ja">All-Time Detection Statistics</p>', s = tt(), o.c(), C(e, "class", "dashboard-header svelte-1ovc2ja"), C(t, "class", "analytics-dashboard svelte-1ovc2ja");
+      t = E("div"), e = E("header"), e.innerHTML = '<h1 class="svelte-fczub0">Analytics</h1> <p class="subtitle svelte-fczub0">All-Time Detection Statistics</p>', s = tt(), o.c(), C(e, "class", "dashboard-header svelte-fczub0"), C(t, "class", "analytics-dashboard svelte-fczub0");
     },
     m(h, d) {
       Q(h, t, d), D(t, e), D(t, s), l[n].m(t, null), r = !0;

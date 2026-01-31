@@ -1,6 +1,5 @@
-import os
 from pathlib import Path
-from typing import Dict, Any
+from typing import Any
 
 import yaml
 
@@ -8,11 +7,13 @@ import yaml
 def get_settings_path(output_dir: str = None) -> Path:
     """Gibt den Pfad zur settings.yaml-Datei zurück."""
     if output_dir is None:
-        output_dir = os.getenv("OUTPUT_DIR", "/output")
+        from config import get_config
+
+        output_dir = get_config()["OUTPUT_DIR"]
     return Path(output_dir) / "settings.yaml"
 
 
-def load_settings_yaml(output_dir: str = None) -> Dict[str, Any]:
+def load_settings_yaml(output_dir: str = None) -> dict[str, Any]:
     """Lädt Laufzeit-Settings aus YAML; erstellt Datei falls fehlend."""
     settings_path = get_settings_path(output_dir)
     settings_path.parent.mkdir(parents=True, exist_ok=True)
@@ -29,7 +30,7 @@ def load_settings_yaml(output_dir: str = None) -> Dict[str, Any]:
         return {}
 
 
-def save_settings_yaml(settings_dict: Dict[str, Any], output_dir: str = None) -> None:
+def save_settings_yaml(settings_dict: dict[str, Any], output_dir: str = None) -> None:
     """Speichert Laufzeit-Settings als YAML (nur gegebene Keys)."""
     settings_path = get_settings_path(output_dir)
     settings_path.parent.mkdir(parents=True, exist_ok=True)

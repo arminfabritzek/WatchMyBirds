@@ -1,0 +1,48 @@
+[Unit]
+Description=WatchMyBirds Main Application
+After=network-online.target
+Wants=network-online.target
+[Service]
+User=watchmybirds
+# Standard Systemd State/Logs management
+StateDirectory=watchmybirds
+LogsDirectory=app
+WorkingDirectory=/var/lib/watchmybirds
+EnvironmentFile=-/etc/app/app.env
+Environment=HOME=/var/lib/watchmybirds
+Environment=PORT=8050
+Environment=OUTPUT_DIR=/var/lib/watchmybirds/output
+Environment=INGEST_DIR=/var/lib/watchmybirds/ingest
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=PYTHONUNBUFFERED=1
+Environment=MODEL_BASE_PATH=/var/lib/watchmybirds/models
+# Force WiFi unblock on every start (runs as root via +). Sleep to avoid NM race.
+ExecStartPre=+/bin/sleep 2
+ExecStartPre=+/usr/sbin/rfkill unblock wifi
+ExecStart=/opt/app/.venv/bin/python /opt/app/main.py
+
+Restart=always
+RestartSec=5
+
+# Security Hardening (strict sandboxing)
+ProtectSystem=strict
+ReadWritePaths=/var/lib/watchmybirds /var/log/app
+PrivateTmp=true
+# Power actions use logind/polkit; keep NNP enabled to block SUID escalation.
+NoNewPrivileges=true
+ProtectHome=yes
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+# Hardening: These flags are safe with logind/polkit power management (no sudo needed)
+RestrictNamespaces=true
+MemoryDenyWriteExecute=true
+LockPersonality=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+# SystemCallArchitectures=native  # Commented: Implicitly sets NoNewPrivileges, breaking sudo
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,261 @@
+{% extends 'base.html' %}
+
+{% block title %}Bilder hochladen - WatchMyBirds{% endblock %}
+
+{% block content %}
+{# Simple Header #}
+<div class="page__header">
+    <h1 class="page__title">📷 Bilder hochladen</h1>
+</div>
+
+{# Upload Dropzone - Clean & Simple #}
+<div class="card">
+    <div class="card__body">
+        <div class="dropzone" id="dropzone" onclick="document.getElementById('fileInput').click()">
+            <div class="dropzone__icon">📷</div>
+            <div class="dropzone__text">Bilder hierher ziehen</div>
+            <div class="dropzone__hint">oder klicken zum Auswählen</div>
+        </div>
+        <input type="file" id="fileInput" multiple accept=".jpg,.jpeg,.png" style="display: none">
+
+        <div id="fileList" class="mt-md"></div>
+
+        <button id="uploadBtn" class="btn btn--primary btn--lg btn--block mt-md hidden">
+            <span id="uploadBtnText">⬆️ Hochladen</span>
+            <span id="uploadSpinner" class="animate-spin hidden" style="margin-left: 8px;">⟳</span>
+        </button>
+
+        <div id="uploadResult" class="mt-md hidden"></div>
+    </div>
+</div>
+
+{# Status - Compact #}
+<div id="statusSection" class="mt-lg">
+    <div class="grid grid--2">
+        <div class="stat-card">
+            <div class="stat-card__value" id="pendingCount">-</div>
+            <div class="stat-card__label">Wartend</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-card__value" id="processedToday">-</div>
+            <div class="stat-card__label">Verarbeitet</div>
+        </div>
+    </div>
+</div>
+
+{# Process Button - only if there are pending files #}
+<div id="processSection" class="mt-lg hidden">
+    <button id="processBtn" class="btn btn--accent btn--lg btn--block" onclick="startProcessing()">
+        <span id="processBtnText">✨ Jetzt verarbeiten</span>
+    </button>
+    <p id="processHint" class="text-center text-muted text-sm mt-sm"></p>
+    <div id="processResult" class="mt-md"></div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    let selectedFiles = [];
+
+    document.addEventListener('DOMContentLoaded', function () {
+        initDropzone();
+        updateStatus();
+        setInterval(updateStatus, 5000);
+    });
+
+    function initDropzone() {
+        const dropzone = document.getElementById('dropzone');
+        const fileInput = document.getElementById('fileInput');
+
+        ['dragenter', 'dragover'].forEach(evt => {
+            dropzone.addEventListener(evt, e => {
+                e.preventDefault();
+                dropzone.classList.add('active');
+            });
+        });
+
+        ['dragleave', 'drop'].forEach(evt => {
+            dropzone.addEventListener(evt, e => {
+                e.preventDefault();
+                dropzone.classList.remove('active');
+            });
+        });
+
+        dropzone.addEventListener('drop', e => handleFiles(e.dataTransfer.files));
+        fileInput.addEventListener('change', e => handleFiles(e.target.files));
+    }
+
+    function handleFiles(fileList) {
+        // No limit - accept ALL files
+        selectedFiles = Array.from(fileList);
+        renderFileList();
+    }
+
+    function renderFileList() {
+        const container = document.getElementById('fileList');
+        const uploadBtn = document.getElementById('uploadBtn');
+
+        if (selectedFiles.length === 0) {
+            container.innerHTML = '';
+            uploadBtn.classList.add('hidden');
+            return;
+        }
+
+        uploadBtn.classList.remove('hidden');
+
+        // Show summary for large batches, details for small
+        if (selectedFiles.length > 20) {
+            const totalSize = selectedFiles.reduce((sum, f) => sum + f.size, 0);
+            container.innerHTML = `
+                <div style="padding: 12px; background: var(--color-surface-2); border-radius: 8px; text-align: center;">
+                    <div style="font-size: 24px; font-weight: 600; color: var(--color-primary);">${selectedFiles.length}</div>
+                    <div style="color: var(--color-text-muted);">Bilder ausgewählt (${formatSize(totalSize)})</div>
+                </div>
+            `;
+        } else {
+            container.innerHTML = selectedFiles.map(file => `
+                <div style="display: flex; justify-content: space-between; padding: 8px 12px; background: var(--color-surface-2); border-radius: 8px; margin-bottom: 4px;">
+                    <span style="font-size: 14px;">${file.name}</span>
+                    <span style="color: var(--color-text-muted); font-size: 13px;">${formatSize(file.size)}</span>
+                </div>
+            `).join('');
+        }
+    }
+
+    function formatSize(bytes) {
+        if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(0) + ' KB';
+        return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+    }
+
+    document.getElementById('uploadBtn').addEventListener('click', startUpload);
+
+    // Chunked upload - 50 files per request
+    const CHUNK_SIZE = 50;
+
+    async function startUpload() {
+        if (selectedFiles.length === 0) return;
+
+        const btn = document.getElementById('uploadBtn');
+        const btnText = document.getElementById('uploadBtnText');
+        const spinner = document.getElementById('uploadSpinner');
+        const result = document.getElementById('uploadResult');
+
+        btn.disabled = true;
+        spinner.classList.remove('hidden');
+        result.classList.add('hidden');
+
+        // Split into chunks
+        const chunks = [];
+        for (let i = 0; i < selectedFiles.length; i += CHUNK_SIZE) {
+            chunks.push(selectedFiles.slice(i, i + CHUNK_SIZE));
+        }
+
+        let totalUploaded = 0;
+        let totalSkipped = 0;
+        let totalErrors = 0;
+
+        try {
+            for (let i = 0; i < chunks.length; i++) {
+                btnText.textContent = `Batch ${i + 1}/${chunks.length}...`;
+
+                const formData = new FormData();
+                chunks[i].forEach(file => formData.append('files[]', file));
+
+                const response = await fetch('/api/inbox', { method: 'POST', body: formData });
+                const data = await response.json();
+
+                if (response.ok) {
+                    totalUploaded += data.uploaded?.length || 0;
+                    totalSkipped += data.skipped_count || 0;
+                    totalErrors += data.errors?.length || 0;
+                } else {
+                    totalErrors += chunks[i].length;
+                }
+            }
+
+            // Build result message
+            let msg = `✅ ${totalUploaded} Bild(er) hochgeladen!`;
+            if (totalSkipped > 0) {
+                msg += ` (${totalSkipped} übersprungen - bereits vorhanden)`;
+            }
+            if (totalErrors > 0) {
+                msg += ` (${totalErrors} Fehler)`;
+            }
+            result.innerHTML = `<div class="alert alert--success">${msg}</div>`;
+            result.classList.remove('hidden');
+
+            selectedFiles = [];
+            renderFileList();
+            updateStatus();
+
+        } catch (err) {
+            result.innerHTML = `<div class="alert alert--danger">❌ Verbindungsfehler</div>`;
+            result.classList.remove('hidden');
+        } finally {
+            btn.disabled = false;
+            btnText.textContent = '⬆️ Hochladen';
+            spinner.classList.add('hidden');
+        }
+    }
+
+    async function updateStatus() {
+        try {
+            const response = await fetch('/api/inbox/status');
+            const data = await response.json();
+
+            document.getElementById('pendingCount').textContent = data.pending_count ?? 0;
+            document.getElementById('processedToday').textContent = data.processed_today ?? 0;
+
+            const processSection = document.getElementById('processSection');
+            const processBtn = document.getElementById('processBtn');
+            const processBtnText = document.getElementById('processBtnText');
+            const processHint = document.getElementById('processHint');
+
+            if ((data.pending_count ?? 0) > 0) {
+                processSection.classList.remove('hidden');
+
+                if (data.processing) {
+                    processBtn.disabled = true;
+                    processBtnText.textContent = '⏳ Wird verarbeitet...';
+                } else {
+                    processBtn.disabled = false;
+                    processBtn.onclick = startProcessing;
+                    processBtnText.textContent = '✨ Jetzt verarbeiten';
+                }
+            } else {
+                processSection.classList.add('hidden');
+            }
+        } catch (err) {
+            console.error('Status error:', err);
+        }
+    }
+
+    async function startProcessing() {
+        const btn = document.getElementById('processBtn');
+        const text = document.getElementById('processBtnText');
+        const result = document.getElementById('processResult');
+
+        btn.disabled = true;
+        text.textContent = '⏳ Startet...';
+        result.innerHTML = '';
+
+        try {
+            const response = await fetch('/api/inbox/process', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
+            });
+            const data = await response.json();
+
+            if (response.ok) {
+                result.innerHTML = `<div class="alert alert--success">✅ Verarbeitung gestartet!</div>`;
+            } else {
+                result.innerHTML = `<div class="alert alert--danger">❌ ${data.error || 'Fehler'}</div>`;
+            }
+        } catch (err) {
+            result.innerHTML = `<div class="alert alert--danger">❌ Verbindungsfehler</div>`;
+        } finally {
+            updateStatus();
+        }
+    }
+</script>
+{% endblock %}

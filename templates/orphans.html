@@ -1,79 +1,105 @@
 {% extends 'base.html' %}
 
-{% block title %}Orphan Images - WatchMyBirds{% endblock %}
+{% block title %}Review Queue - WatchMyBirds{% endblock %}
 
 {% block content %}
-<div class="container-fluid mt-4">
-    <div class="d-flex justify-content-between align-items-center mb-4">
-        <div>
-            <h2>Orphan Images</h2>
-            <p class="text-muted mb-0">Images with no active detections ({{ orphans|length }} total)</p>
-        </div>
-        <a href="/settings" class="btn btn-outline-secondary">Back to Settings</a>
+{# Page Control Bar - Unified Design #}
+<nav class="page-control-bar" role="navigation" aria-label="Review Queue controls">
+    <div class="page-control-bar__left">
+        <span class="page-control-bar__title">Review Queue</span>
+        <span class="page-control-bar__badge">{{ orphans|length }}</span>
+        {% if orphans %}
+        <label class="page-control-bar__select-all">
+            <input type="checkbox" id="select-all" class="page-control-bar__checkbox" onclick="toggleSelectAll(this)" {%
+                if orphans|length==0 %}disabled{% endif %} aria-label="Select all items">
+            <span class="page-control-bar__select-label">Select All</span>
+        </label>
+        {% endif %}
     </div>
+    <div class="page-control-bar__meta">
+        <span id="selected-counter">0 items selected</span>
+    </div>
+    <div class="page-control-bar__right">
+        {% if orphans %}
+        <button type="button" class="btn btn--primary" onclick="bulkAction('confirm')" id="btn-bird-present"
+            aria-label="Bird Present">
+            <span aria-hidden="true">✓</span> <span class="btn__label">Bird Present</span>
+        </button>
+        <button type="button" class="btn btn--secondary" onclick="bulkAction('skip')" id="btn-skip" aria-label="Skip">
+            <span aria-hidden="true">→</span> <span class="btn__label">Skip</span>
+        </button>
+        <button type="button" class="btn btn--danger" onclick="bulkAction('no_bird')" id="btn-no-bird"
+            aria-label="No Bird">
+            <span aria-hidden="true">✗</span> <span class="btn__label">No Bird</span>
+        </button>
+        {% endif %}
+        <a href="/" class="btn btn--secondary">← Stream</a>
+    </div>
+</nav>
 
-    <!-- Flash Messages -->
-    {% with messages = get_flashed_messages(with_categories=true) %}
-    {% if messages %}
-    {% for category, message in messages %}
-    <div class="alert alert-{{ category if category != 'error' else 'danger' }} alert-dismissible fade show"
-        role="alert">
-        {{ message }}
-        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+<!-- Flash Messages -->
+{% with messages = get_flashed_messages(with_categories=true) %}
+{% if messages %}
+{% for category, message in messages %}
+<div class="alert alert-{{ category if category != 'error' else 'danger' }} alert-dismissible fade show" role="alert">
+    {{ message }}
+    <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+</div>
+{% endfor %}
+{% endif %}
+{% endwith %}
+
+{% if orphans %}
+<div class="orphan-grid">
+    {% for img in orphans %}
+    <div class="orphan-tile" data-filename="{{ img.filename }}">
+        <div class="orphan-checkbox-wrapper">
+            <input class="form-check-input orphan-checkbox" type="checkbox" value="{{ img.filename }}"
+                onchange="updateCounter()">
+        </div>
+        <!-- Reason Badge -->
+        <div class="orphan-reason-badge">
+            <span class="badge {% if img.review_reason == 'orphan' %}bg-warning text-dark{% else %}bg-info{% endif %}">
+                {{ img.reason_label }}
+            </span>
+        </div>
+        <div class="orphan-thumb">
+            <button type="button" class="btn btn-link p-0 w-100 orphan-thumb-btn" data-bs-toggle="modal"
+                data-bs-target="#modal-review-{{ img.filename|replace('.', '_') }}" style="border: none;">
+                <img src="{{ img.thumb_url }}" alt="{{ img.filename }}"
+                    onerror="this.src='/assets/placeholder.svg'; this.onerror=null;">
+            </button>
+        </div>
+        <div class="orphan-info">
+            <div class="orphan-date">{{ img.formatted_date }}</div>
+            <div class="orphan-filename text-truncate" title="{{ img.filename }}">{{ img.filename }}</div>
+            <div class="orphan-size text-muted">{{ img.file_size_str }}</div>
+        </div>
+        <!-- Per-Tile Actions -->
+        <div class="orphan-tile-actions mt-2 d-flex gap-1 justify-content-center">
+            <button type="button" class="btn btn-sm btn-success" onclick="singleAction('{{ img.filename }}', 'confirm')"
+                title="Bird Present">
+                <i class="bi bi-check"></i>
+            </button>
+            <button type="button" class="btn btn-sm btn-outline-secondary"
+                onclick="singleAction('{{ img.filename }}', 'skip')" title="Skip">
+                <i class="bi bi-arrow-right"></i>
+            </button>
+            <button type="button" class="btn btn-sm btn-danger" onclick="singleAction('{{ img.filename }}', 'no_bird')"
+                title="No Bird">
+                <i class="bi bi-x"></i>
+            </button>
+        </div>
     </div>
     {% endfor %}
-    {% endif %}
-    {% endwith %}
-
-    {% if orphans %}
-    <form id="orphans-form" method="POST" action="/admin/orphans/delete">
-        <div class="d-flex justify-content-between align-items-center mb-3">
-            <div class="d-flex align-items-center gap-3">
-                <div class="form-check">
-                    <input class="form-check-input" type="checkbox" id="select-all" onclick="toggleSelectAll(this)">
-                    <label class="form-check-label fw-bold" for="select-all">Select All</label>
-                </div>
-                <span class="text-muted" id="selected-counter">0 items selected</span>
-            </div>
-            <div class="d-flex gap-2">
-                <button type="submit" name="action" value="delete_selected" class="btn btn-danger"
-                    onclick="return confirmDeleteSelected()">
-                    Delete Selected
-                </button>
-                <button type="submit" name="action" value="delete_all" class="btn btn-outline-danger"
-                    onclick="return confirmDeleteAll()">
-                    Delete All Orphans
-                </button>
-            </div>
-        </div>
-
-        <div class="orphan-grid">
-            {% for img in orphans %}
-            <div class="orphan-tile" data-filename="{{ img.filename }}">
-                <div class="orphan-checkbox-wrapper">
-                    <input class="form-check-input orphan-checkbox" type="checkbox" name="filenames"
-                        value="{{ img.filename }}" onchange="updateCounter()">
-                </div>
-                <div class="orphan-thumb">
-                    <img src="{{ img.thumb_url }}" alt="{{ img.filename }}"
-                        onerror="this.src='/assets/placeholder.svg'; this.onerror=null;">
-                </div>
-                <div class="orphan-info">
-                    <div class="orphan-date">{{ img.formatted_date }}</div>
-                    <div class="orphan-filename text-truncate" title="{{ img.filename }}">{{ img.filename }}</div>
-                    <div class="orphan-size text-muted">{{ img.file_size_str }}</div>
-                </div>
-            </div>
-            {% endfor %}
-        </div>
-    </form>
-    {% else %}
-    <div class="alert alert-success py-5 text-center">
-        <h4>No orphan images found!</h4>
-        <p>All images have active detections.</p>
-    </div>
-    {% endif %}
 </div>
+{% else %}
+<div class="empty-state">
+    <div class="empty-state__icon">🎉</div>
+    <h4>Review Queue Empty!</h4>
+    <p>All images have been reviewed. Good job!</p>
+</div>
+{% endif %}
 
 <style>
     .orphan-grid {
@@ -113,6 +139,13 @@
         cursor: pointer;
     }
 
+    .orphan-reason-badge {
+        position: absolute;
+        top: 15px;
+        right: 15px;
+        z-index: 10;
+    }
+
     .orphan-thumb {
         width: 100%;
         aspect-ratio: 1;
@@ -145,11 +178,32 @@
     .orphan-size {
         font-size: 0.75rem;
     }
+
+    .orphan-tile-actions .btn {
+        padding: 0.25rem 0.5rem;
+    }
+
+    .review-action-bar {
+        position: sticky;
+        top: 0;
+        z-index: 100;
+    }
 </style>
 {% endblock %}
 
+{% block modals %}
+{% from "components/orphan_modal.html" import render_orphan_modal %}
+{% for img in orphans %}
+{{ render_orphan_modal(img) }}
+{% endfor %}
+{% endblock %}
+
 {% block scripts %}
+<script src="/assets/js/gallery_utils.js"></script>
 <script>
+    // Track if user has confirmed "No Bird" action once this session
+    let noBirdConfirmed = localStorage.getItem('noBirdConfirmed') === 'true';
+
     function toggleSelectAll(source) {
         const checkboxes = document.querySelectorAll('.orphan-checkbox');
         checkboxes.forEach(cb => cb.checked = source.checked);
@@ -161,28 +215,171 @@
         document.getElementById('selected-counter').innerText = count + ' items selected';
     }
 
-    function confirmDeleteSelected() {
-        const count = document.querySelectorAll('.orphan-checkbox:checked').length;
-        if (count === 0) {
-            alert('Please select images to delete.');
+    function getSelectedFilenames() {
+        const checkboxes = document.querySelectorAll('.orphan-checkbox:checked');
+        return Array.from(checkboxes).map(cb => cb.value);
+    }
+
+    async function sendReviewDecision(filenames, action) {
+        try {
+            const response = await fetch('/api/review/decision', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ filenames, action })
+            });
+
+            const data = await response.json();
+            if (data.status === 'success') {
+                // Remove processed tiles from DOM
+                filenames.forEach(fn => {
+                    const tile = document.querySelector(`.orphan-tile[data-filename="${fn}"]`);
+                    if (tile) {
+                        tile.style.transition = 'opacity 0.3s, transform 0.3s';
+                        tile.style.opacity = '0';
+                        tile.style.transform = 'scale(0.8)';
+                        setTimeout(() => tile.remove(), 300);
+                    }
+                    // Also close any open modals for this file (using new ID format with underscores)
+                    const safeFilename = fn.replace(/\./g, '_');
+                    const modal = document.getElementById(`modal-review-${safeFilename}`);
+                    if (modal) {
+                        const bsModal = bootstrap.Modal.getInstance(modal);
+                        if (bsModal) bsModal.hide();
+                    }
+                });
+
+                // Update counter after DOM changes
+                setTimeout(() => {
+                    updateCounter();
+                    // Update the total count in header
+                    const remaining = document.querySelectorAll('.orphan-tile').length;
+                    const subtitle = document.querySelector('.text-muted.mb-0');
+                    if (subtitle) {
+                        subtitle.textContent = `Images waiting for your decision (${remaining} total)`;
+                    }
+                    // Show empty state if no more items
+                    if (remaining === 0) {
+                        location.reload();
+                    }
+                }, 350);
+
+                return true;
+            } else {
+                alert('Error: ' + (data.message || 'Unknown error'));
+                return false;
+            }
+        } catch (error) {
+            console.error('Review decision error:', error);
+            alert('Network error. Please try again.');
             return false;
         }
-        return confirm('Are you sure you want to permanently delete ' + count + ' orphan image(s)?\n\nThis cannot be undone.');
     }
 
-    function confirmDeleteAll() {
-        const total = {{ orphans| length
-    }};
-    return confirm('Are you sure you want to permanently delete ALL ' + total + ' orphan image(s)?\n\nThis cannot be undone.');
+    function bulkAction(action) {
+        const filenames = getSelectedFilenames();
+        if (filenames.length === 0) {
+            alert('Please select images first.');
+            return;
+        }
+
+        // One-time confirmation for "No Bird"
+        if (action === 'no_bird' && !noBirdConfirmed) {
+            if (!confirm('Mark ' + filenames.length + ' image(s) as "No Bird"?\n\nThese will be moved to Trash (recoverable). Files are NOT deleted.\n\n(This confirmation won\'t show again this session)')) {
+                return;
+            }
+            noBirdConfirmed = true;
+            localStorage.setItem('noBirdConfirmed', 'true');
+        }
+
+        sendReviewDecision(filenames, action);
     }
 
-    // Click on tile to toggle checkbox
+    function singleAction(filename, action) {
+        // One-time confirmation for "No Bird"
+        if (action === 'no_bird' && !noBirdConfirmed) {
+            if (!confirm('Mark this image as "No Bird"?\n\nIt will be moved to Trash (recoverable). File is NOT deleted.\n\n(This confirmation won\'t show again this session)')) {
+                return;
+            }
+            noBirdConfirmed = true;
+            localStorage.setItem('noBirdConfirmed', 'true');
+        }
+
+        sendReviewDecision([filename], action);
+    }
+
+    // Handle modal actions - close current modal and navigate to next
+    async function modalAction(filename, action) {
+        const safeFilename = filename.replace(/\./g, '_');
+        const currentModal = document.getElementById(`modal-review-${safeFilename}`);
+
+        // Find next modal before we process
+        const allModals = Array.from(document.querySelectorAll('.modal[data-modal-group="review"]'));
+        const currentIndex = allModals.findIndex(m => m.id === `modal-review-${safeFilename}`);
+        const nextModal = allModals[currentIndex + 1] || allModals[0]; // Loop to first if at end
+
+        // Process the decision
+        const success = await sendReviewDecision([filename], action);
+
+        if (success && nextModal && nextModal.id !== `modal-review-${safeFilename}`) {
+            // Close current and open next
+            if (currentModal) {
+                const bsCurrentModal = bootstrap.Modal.getInstance(currentModal);
+                if (bsCurrentModal) bsCurrentModal.hide();
+            }
+
+            // Wait for hide animation, then show next
+            setTimeout(() => {
+                // Check if next modal still exists (wasn't also removed)
+                if (document.getElementById(nextModal.id)) {
+                    const bsNextModal = new bootstrap.Modal(nextModal);
+                    bsNextModal.show();
+                }
+            }, 350);
+        }
+    }
+
+    // Shift+Click range selection support
+    let lastClickedCheckbox = null;
+
+    function handleCheckboxClick(checkbox, shiftKey) {
+        const allCheckboxes = Array.from(document.querySelectorAll('.orphan-checkbox'));
+
+        if (shiftKey && lastClickedCheckbox && lastClickedCheckbox !== checkbox) {
+            // Range select
+            const currentIndex = allCheckboxes.indexOf(checkbox);
+            const lastIndex = allCheckboxes.indexOf(lastClickedCheckbox);
+
+            const start = Math.min(currentIndex, lastIndex);
+            const end = Math.max(currentIndex, lastIndex);
+
+            // Set all checkboxes in range to match the target state
+            const targetState = checkbox.checked;
+            for (let i = start; i <= end; i++) {
+                allCheckboxes[i].checked = targetState;
+            }
+        }
+
+        lastClickedCheckbox = checkbox;
+        updateCounter();
+    }
+
+    // Attach click handlers to checkboxes for shift+click
+    document.querySelectorAll('.orphan-checkbox').forEach(checkbox => {
+        checkbox.addEventListener('click', (e) => {
+            handleCheckboxClick(checkbox, e.shiftKey);
+        });
+    });
+
+    // Click on tile to toggle checkbox, but ignore clicks on checkbox itself, thumbnail button, or action buttons
     document.querySelectorAll('.orphan-tile').forEach(tile => {
         tile.addEventListener('click', (e) => {
             if (e.target.closest('.orphan-checkbox-wrapper')) return;
+            if (e.target.closest('.orphan-thumb-btn')) return;
+            if (e.target.closest('.orphan-tile-actions')) return;
+
             const checkbox = tile.querySelector('.orphan-checkbox');
             checkbox.checked = !checkbox.checked;
-            updateCounter();
+            handleCheckboxClick(checkbox, e.shiftKey);
         });
     });
 </script>

@@ -1,9 +1,8 @@
 astral==3.2
 flask==3.1.2
-numpy==2.2.6
-onnxruntime==1.23.2
-opencv-python==4.12.0.88
-pandas==2.3.3
+numpy<2
+onnxruntime==1.16.0
+opencv-python-headless==4.10.0.84
 piexif==1.1.3
 pillow==12.0.0
 psutil==7.1.3
@@ -11,6 +10,4 @@ python-dotenv==1.2.1
 pytz==2025.2
 pyyaml==6.0.3
 requests==2.32.5
-# Going for CPU-only for now: torch==2.9.1
-# Going for CPU-only for now: torchvision==0.24.1
 waitress==3.0.2

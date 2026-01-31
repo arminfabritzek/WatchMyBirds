@@ -1,0 +1,64 @@
+{#
+Modal Action Bar Component
+
+Compact single-row footer using Design System buttons (pill style).
+Matches the visual style of page header actions (Edit, ← Gallery).
+#}
+{% macro render_action_bar(
+detection_id,
+original_url=none,
+bbox=none,
+siblings=none,
+show_nav=true,
+show_bbox_toggle=true,
+show_trash=true,
+show_download=true,
+gallery_date=none
+) %}
+<div class="modal-action-bar">
+    {# Left: Actions #}
+    <div class="modal-action-bar__group">
+        {% if show_bbox_toggle %}
+        <button type="button" class="btn btn--secondary btn--sm bbox-toggle" onclick="toggleBboxOverlay(this)"
+            data-detection-id="{{ detection_id }}" data-siblings='{{ (siblings | default([])) | tojson }}'
+            data-current-bbox='{{ (bbox | default({})) | tojson }}'>Boxes</button>
+        {% endif %}
+        {% if show_download and original_url %}
+        <a href="{{ original_url }}" download class="btn btn--secondary btn--sm">DL</a>
+        {% endif %}
+        {% if show_trash %}
+        <button type="button" class="btn btn--danger btn--sm"
+            onclick="deleteDetection(event, {{ detection_id }})">🗑</button>
+        {% endif %}
+    </div>
+
+    {# Right: Navigation + Close #}
+    <div class="modal-action-bar__group">
+        {% if show_nav %}
+        <button type="button" class="btn btn--secondary btn--sm prev-btn"
+            onclick="navigateModal(this, 'prev')">←</button>
+        <button type="button" class="btn btn--secondary btn--sm next-btn"
+            onclick="navigateModal(this, 'next')">→</button>
+        {% endif %}
+        <button type="button" class="btn btn--primary btn--sm" data-bs-dismiss="modal">Close</button>
+    </div>
+</div>
+
+<style>
+    .modal-action-bar {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: var(--space-sm) var(--space-md);
+        background: var(--color-surface);
+        border-top: 1px solid var(--color-border-light);
+        gap: var(--space-sm);
+    }
+
+    .modal-action-bar__group {
+        display: flex;
+        align-items: center;
+        gap: var(--space-xs);
+    }
+</style>
+{% endmacro %}

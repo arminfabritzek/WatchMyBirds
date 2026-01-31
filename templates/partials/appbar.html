@@ -1,0 +1,149 @@
+{# App Bar - Navigation Only (STICKY) #}
+<header class="app-bar" id="appBar">
+    {# Brand #}
+    <a class="app-bar__brand" href="/">
+        <img src="/assets/WatchMyBirds.png" alt="Logo">
+        <span>WatchMyBirds</span>
+    </a>
+
+    {# Mobile Toggle #}
+    <button class="app-bar__toggle" onclick="toggleNav()" aria-label="Toggle menu">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M3 12h18M3 6h18M3 18h18" />
+        </svg>
+    </button>
+
+    {# Navigation Links - Primary + Secondary hierarchy #}
+    <nav class="app-bar__nav" id="appBarNav">
+        {# PRIMARY: Core user actions #}
+        <a class="app-bar__link app-bar__link--primary{% if current_path == '/' %} active{% endif %}" href="/">
+            Live
+        </a>
+        <a class="app-bar__link app-bar__link--primary{% if current_path and current_path.startswith('/gallery') %} active{% endif %}"
+            href="/gallery">
+            Gallery
+        </a>
+        <a class="app-bar__link app-bar__link--primary{% if current_path == '/analytics' %} active{% endif %}"
+            href="/analytics">
+            Analytics
+        </a>
+
+        {# Spacer for visual separation #}
+        <span class="app-bar__spacer"></span>
+
+        {# SECONDARY: Admin/utility actions (muted) #}
+        <a class="app-bar__link app-bar__link--secondary{% if current_path == '/species' %} active{% endif %}"
+            href="/species">
+            Species
+        </a>
+        <a class="app-bar__link app-bar__link--secondary{% if current_path == '/admin/review' %} active{% endif %}"
+            href="/admin/review">
+            Review
+            {% if untagged_count and untagged_count > 0 %}
+            <span class="app-bar__badge app-bar__badge--warning">{{ untagged_count }}</span>
+            {% endif %}
+        </a>
+        <a class="app-bar__link app-bar__link--secondary{% if current_path == '/inbox' %} active{% endif %}"
+            href="/inbox">
+            Inbox
+        </a>
+
+        <a class="app-bar__link app-bar__link--secondary{% if current_path == '/trash' %} active{% endif %}"
+            href="/trash">
+            Trash
+            {% if trash_count and trash_count > 0 %}
+            <span class="app-bar__badge">{{ trash_count }}</span>
+            {% endif %}
+        </a>
+        <a class="app-bar__link app-bar__link--secondary{% if current_path == '/settings' %} active{% endif %}"
+            href="/settings">
+            Settings
+        </a>
+        <a class="app-bar__link app-bar__link--secondary{% if current_path == '/logs' %} active{% endif %}"
+            href="/logs">
+            Logs
+        </a>
+    </nav>
+</header>
+
+{# Status Bar - Minimal, muted (NOT STICKY) #}
+<div class="status-bar" id="statusBar">
+    <div class="status-bar__item" title="CPU Usage">
+        <span class="status-bar__label">CPU</span>
+        <span class="status-bar__value" id="statusCpuVal">--%</span>
+    </div>
+    <div class="status-bar__item" title="Temperature">
+        <span class="status-bar__value" id="statusTempVal">--°C</span>
+    </div>
+    <div class="status-bar__item" title="Free Disk Space">
+        <span class="status-bar__value" id="statusDiskVal">-- GB</span>
+    </div>
+</div>
+
+<script>
+    (function () {
+        function updateStatus() {
+            fetch('/api/system/stats')
+                .then(r => r.json())
+                .then(data => {
+                    if (data.status === 'success') {
+                        const cpu = Math.round(data.cpu);
+                        const cpuEl = document.getElementById('statusCpuVal');
+                        cpuEl.textContent = cpu + '%';
+                        // Only color when critical
+                        cpuEl.className = 'status-bar__value' + (cpu >= 85 ? ' status-bar__value--danger' : cpu >= 70 ? ' status-bar__value--warning' : '');
+
+                        if (data.temp !== undefined) {
+                            const temp = Math.round(data.temp);
+                            const tempEl = document.getElementById('statusTempVal');
+                            tempEl.textContent = temp + '°C';
+                            tempEl.className = 'status-bar__value' + (temp >= 70 ? ' status-bar__value--danger' : temp >= 60 ? ' status-bar__value--warning' : '');
+                        }
+
+                        if (data.disk !== undefined) {
+                            const diskEl = document.getElementById('statusDiskVal');
+                            diskEl.textContent = data.disk.free_gb + ' GB';
+                            // Use absolute threshold: green if ≥100GB free, otherwise percent-based
+                            let diskClass = 'status-bar__value';
+                            if (data.disk.free_gb < 100) {
+                                // Low absolute space - use percent thresholds
+                                if (data.disk.percent >= 90) {
+                                    diskClass += ' status-bar__value--danger';
+                                } else if (data.disk.percent >= 75) {
+                                    diskClass += ' status-bar__value--warning';
+                                }
+                            }
+                            // If ≥100GB free, stays default (green) regardless of percent
+                            diskEl.className = diskClass;
+                        }
+                    }
+                })
+                .catch(() => { });
+        }
+
+        updateStatus();
+        setInterval(updateStatus, 3000);
+    })();
+
+    function toggleNav() {
+        const nav = document.getElementById('appBarNav');
+        if (nav) nav.classList.toggle('open');
+    }
+
+    document.addEventListener('DOMContentLoaded', function () {
+        document.querySelectorAll('.app-bar__nav .app-bar__link').forEach(link => {
+            link.addEventListener('click', () => {
+                const nav = document.getElementById('appBarNav');
+                if (nav) nav.classList.remove('open');
+            });
+        });
+
+        document.addEventListener('click', function (e) {
+            const nav = document.getElementById('appBarNav');
+            const toggle = document.querySelector('.app-bar__toggle');
+            if (nav && nav.classList.contains('open') && !nav.contains(e.target) && !toggle.contains(e.target)) {
+                nav.classList.remove('open');
+            }
+        });
+    });
+</script>

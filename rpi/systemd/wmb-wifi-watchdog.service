@@ -1,0 +1,7 @@
+[Unit]
+Description=WatchMyBirds WiFi Connection Watchdog
+After=network.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/wmb-wifi-watchdog.sh

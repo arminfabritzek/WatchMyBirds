@@ -2,126 +2,297 @@
 
 {% block title %}Live Stream - WatchMyBirds{% endblock %}
 
+{% block head %}
+<style>
+    /* Stream Container - Full-width, centered, prominent */
+    .stream-wrapper {
+        margin-bottom: var(--space-xl);
+    }
+
+    .stream-container {
+        position: relative;
+        max-width: 1000px;
+        margin: 0 auto;
+        border-radius: var(--radius-xl);
+        overflow: hidden;
+        border: 1px solid var(--color-border);
+        background: #000;
+    }
+
+    .stream-video {
+        width: 100%;
+        display: block;
+        background: #000;
+    }
+
+    /* Timestamp Overlay */
+    .stream-timestamp {
+        position: absolute;
+        top: var(--space-md);
+        right: var(--space-md);
+        padding: var(--space-xs) var(--space-sm);
+        background: rgba(0, 0, 0, 0.7);
+        border-radius: var(--radius-sm);
+        font-size: var(--font-size-xs);
+        color: var(--color-text-muted);
+        font-family: 'SF Mono', 'Fira Code', monospace;
+        backdrop-filter: blur(4px);
+    }
+
+    /* PTZ Overlay */
+    .ptz-overlay {
+        position: absolute;
+        bottom: var(--space-md);
+        left: 50%;
+        transform: translateX(-50%);
+        display: flex;
+        gap: var(--space-sm);
+        padding: var(--space-sm) var(--space-md);
+        background: rgba(0, 0, 0, 0.7);
+        border-radius: var(--radius-lg);
+        backdrop-filter: blur(10px);
+        opacity: 0;
+        transition: opacity var(--transition-normal);
+    }
+
+    .stream-container:hover .ptz-overlay {
+        opacity: 1;
+    }
+
+    .ptz-btn {
+        width: 32px;
+        height: 32px;
+        border: none;
+        border-radius: var(--radius-full);
+        background: rgba(255, 255, 255, 0.15);
+        color: white;
+        font-size: 14px;
+        cursor: pointer;
+        transition: all var(--transition-fast);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+
+    .ptz-btn:hover {
+        background: rgba(255, 255, 255, 0.3);
+        transform: scale(1.1);
+    }
+
+    .ptz-btn:active {
+        transform: scale(0.95);
+    }
+
+    .ptz-btn:disabled {
+        opacity: 0.3;
+        cursor: not-allowed;
+    }
+
+    /* D-Pad */
+    .ptz-dpad {
+        display: grid;
+        grid-template-columns: repeat(3, 24px);
+        grid-template-rows: repeat(3, 24px);
+        gap: 2px;
+    }
+
+    .ptz-dpad .ptz-btn {
+        width: 24px;
+        height: 24px;
+        font-size: 10px;
+    }
+
+    .ptz-dpad .center-btn {
+        background: rgba(255, 255, 255, 0.05);
+    }
+
+    /* Zoom */
+    .ptz-zoom {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+    }
+
+    .ptz-zoom input[type="range"] {
+        width: 50px;
+        height: 4px;
+        cursor: pointer;
+        accent-color: var(--color-accent);
+    }
+
+    /* Species Summary Cards */
+    .species-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+        gap: var(--space-md);
+    }
+
+    .species-card {
+        background: var(--color-surface);
+        border: 1px solid var(--color-border);
+        border-radius: var(--radius-lg);
+        overflow: hidden;
+        transition: all var(--transition-fast);
+        cursor: pointer;
+    }
+
+    .species-card:hover {
+        border-color: var(--color-primary);
+        transform: translateY(-2px);
+        box-shadow: var(--shadow-md);
+    }
+
+    .species-card__image {
+        width: 100%;
+        aspect-ratio: 1;
+        object-fit: cover;
+        display: block;
+    }
+
+    .species-card__count {
+        position: absolute;
+        top: var(--space-sm);
+        right: var(--space-sm);
+        min-width: 24px;
+        height: 24px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: var(--color-primary);
+        color: white;
+        border-radius: var(--radius-full);
+        font-size: var(--font-size-xs);
+        font-weight: 600;
+    }
+
+    .species-card__info {
+        padding: var(--space-sm);
+        text-align: center;
+    }
+
+    .species-card__name {
+        font-size: var(--font-size-sm);
+        font-weight: 600;
+        color: var(--color-text);
+        margin-bottom: 2px;
+    }
+
+    .species-card__latin {
+        font-size: var(--font-size-xs);
+        color: var(--color-text-muted);
+        font-style: italic;
+    }
+
+    .empty-state {
+        text-align: center;
+        padding: var(--space-2xl);
+        color: var(--color-text-muted);
+    }
+
+    .empty-state__icon {
+        font-size: 3rem;
+        opacity: 0.5;
+        margin-bottom: var(--space-md);
+    }
+</style>
+{% endblock %}
+
 {% block content %}
-<h1 class="text-center my-3">{{ title }}</h1>
-
-{# Video Feed #}
-<div class="row my-3">
-    <div class="col-12 text-center">
-        <div class="d-flex justify-content-center">
-            <img id="video-feed" src="/video_feed" class="img-fluid video-feed-image"
-                style="max-height: 600px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
-        </div>
-    </div>
+{# Page Header #}
+<div class="page__header">
+    <h1 class="page__title">{{ title }}</h1>
 </div>
 
-{# Latest Detections #}
-<div class="row my-4">
-    <div class="col-12">
-        <h4 class="text-center mb-3">Latest Detections (Top 5)</h4>
-        {% if latest_detections %}
-        <div class="gallery-grid-container d-flex flex-wrap justify-content-center gap-3">
-            {% for det in latest_detections %}
-            <div class="gallery-tile" style="width: {{ image_width }}px;">
-                <button type="button" class="thumbnail-button p-0 border-0 bg-transparent" data-bs-toggle="modal"
-                    data-bs-target="#modal-latest-{{ det.detection_id }}">
-                    <div
-                        style="width: {{ image_width }}px; height: {{ image_width }}px; overflow: hidden; position: relative; border-radius: 8px;">
-                        <img src="{{ det.display_path }}" alt=""
-                            style="width: 100%; height: 100%; object-fit: cover; border-radius: 8px;">
-                    </div>
-                </button>
-                <div class="thumbnail-info mt-1 text-center">
-                    <div class="info-common-name fw-bold">{{ det.common_name }}</div>
-                    {% if det.latin_name %}
-                    <div class="info-scientific-name"><em>{{ det.latin_name | replace('_', ' ') }}</em></div>
-                    {% endif %}
-                    <div class="small text-muted">{{ det.formatted_time }}</div>
-                    <div class="score-value score-value--prominent small">{{ "%.2f"|format(det.score) }}</div>
-                </div>
+{# Live Stream #}
+<div class="stream-wrapper">
+    <div class="stream-container">
+        <img id="video-feed" src="/video_feed" class="stream-video" alt="Live Stream">
+
+        {# Redundant timestamp removed to prevent overlap with camera overlay #}
+
+        {# PTZ Controls (on hover) #}
+        <div class="ptz-overlay">
+            <div class="ptz-dpad">
+                <div></div>
+                <button class="ptz-btn" id="ptz-up" title="Tilt Up" disabled>▲</button>
+                <div></div>
+                <button class="ptz-btn" id="ptz-left" title="Pan Left" disabled>◀</button>
+                <button class="ptz-btn center-btn" id="ptz-home" title="Home" disabled>⌂</button>
+                <button class="ptz-btn" id="ptz-right" title="Pan Right" disabled>▶</button>
+                <div></div>
+                <button class="ptz-btn" id="ptz-down" title="Tilt Down" disabled>▼</button>
+                <div></div>
             </div>
-            {% endfor %}
-        </div>
-        {% else %}
-        <p class="text-center text-muted">{{ empty_latest_message }}</p>
-        {% endif %}
-    </div>
-</div>
 
-{# Today's Visual Summary (Best per Species) #}
-<div class="row my-4">
-    <div class="col-12">
-        <h4 class="text-center mb-3">Today's Summary</h4>
-        {% if visual_summary %}
-        <div class="gallery-grid-container d-flex flex-wrap justify-content-center gap-3">
-            {% for det in visual_summary %}
-            <div class="gallery-tile" style="width: {{ image_width }}px;">
-                <button type="button" class="thumbnail-button p-0 border-0 bg-transparent" data-bs-toggle="modal"
-                    data-bs-target="#modal-summary-{{ det.detection_id }}">
-                    <div
-                        style="width: {{ image_width }}px; height: {{ image_width }}px; overflow: hidden; position: relative; border-radius: 8px;">
-                        <img src="{{ det.display_path }}" alt=""
-                            style="width: 100%; height: 100%; object-fit: cover; border-radius: 8px;">
-                    </div>
-                </button>
-                <div class="thumbnail-info mt-1 text-center">
-                    <div class="info-common-name fw-bold">{{ det.common_name }}</div>
-                    {% if det.latin_name %}
-                    <div class="info-scientific-name"><em>{{ det.latin_name | replace('_', ' ') }}</em></div>
-                    {% endif %}
-                    <div class="score-value score-value--prominent">{{ "%.2f"|format(det.score) }}</div>
-                </div>
+            <div class="ptz-zoom">
+                <button class="ptz-btn" id="ptz-zoom-out" title="Zoom Out" disabled>−</button>
+                <input type="range" id="ptz-zoom-slider" min="1" max="10" value="1" disabled>
+                <button class="ptz-btn" id="ptz-zoom-in" title="Zoom In" disabled>+</button>
             </div>
-            {% endfor %}
+
+            <button class="ptz-btn" id="ptz-snapshot" title="Snapshot">📷</button>
+            <button class="ptz-btn" id="ptz-fullscreen" title="Fullscreen">⛶</button>
         </div>
-        {% else %}
-        <p class="text-center text-muted">No detections for summary yet.</p>
-        {% endif %}
     </div>
 </div>
 
-{# Today's Species Summary Table #}
-<div class="row my-4">
-    <div class="col-12">
-        <h4 class="text-center mb-3">Today's Species Summary</h4>
-        {% if species_summary %}
-        <div class="table-responsive d-flex justify-content-center">
-            <table class="table table-striped table-bordered table-hover table-sm w-auto">
-                <thead>
-                    <tr>
-                        <th>Name</th>
-                        <th>Latin name</th>
-                        <th>Count</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for item in species_summary %}
-                    <tr>
-                        <td>{{ item.common_name }}</td>
-                        <td><em>{{ item.species | replace('_', ' ') }}</em></td>
-                        <td>{{ item.count }}</td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
-        </div>
-        {% else %}
-        <p class="text-center text-muted">No species detected yet today.</p>
-        {% endif %}
+{# Dashboard Stats Row - Engagement Elements #}
+{% if dashboard_stats %}
+<div class="stats-row">
+    <div class="stat-item">
+        <div class="stat-item__value">{{ dashboard_stats.total_detections | default(0) }}</div>
+        <div class="stat-item__label">Total Detections</div>
+    </div>
+    <div class="stat-item stat-item--accent">
+        <div class="stat-item__value">{{ dashboard_stats.total_species | default(0) }}</div>
+        <div class="stat-item__label">Species Detected</div>
+    </div>
+    <div class="stat-item stat-item--secondary">
+        <div class="stat-item__value">{{ dashboard_stats.today_count | default(0) }}</div>
+        <div class="stat-item__label">Today's Count</div>
+    </div>
+    <div class="stat-item stat-item--warning">
+        <div class="stat-item__value">{{ dashboard_stats.first_date | default('—') }}</div>
+        <div class="stat-item__label">Monitoring Since</div>
     </div>
 </div>
+{% endif %}
 
+{# Today's Summary - British Bird Humor when empty #}
+<section class="section">
+    {% if visual_summary %}
+    <h2 class="section__title">Today's Summary</h2>
+    <div class="species-grid">
+        {% for det in visual_summary %}
+        <div class="species-card" data-bs-toggle="modal" data-bs-target="#modal-summary-{{ det.detection_id }}">
+            <div style="position: relative;">
+                <img src="{{ det.display_path }}" alt="{{ det.common_name }}" class="species-card__image">
+                {% if det.count %}
+                <span class="species-card__count">{{ det.count }}</span>
+                {% endif %}
+            </div>
+            <div class="species-card__info">
+                <div class="species-card__name">{{ det.common_name }}</div>
+                {% if det.latin_name %}
+                <div class="species-card__latin">{{ det.latin_name | replace('_', ' ') }}</div>
+                {% endif %}
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    {% else %}
+    <h2 class="section__title">A Rather Quiet Day at the Feeder</h2>
+    <div class="empty-state">
+        <p class="empty-state__message">The birds appear to be having a lie-in today.</p>
+        <p class="empty-state__message">In the meantime, <a href="/species">browse past visitors</a> — we're always
+            happy to see whatever pops by!</p>
+    </div>
+    {% endif %}
+</section>
 {% endblock %}
 
 {% block modals %}
 {% from "components/detection_modal.html" import render_modal %}
-
-{# Latest Detections Modals #}
-{% for det in latest_detections %}
-{{ render_modal(det, 'latest') }}
-{% endfor %}
-
-{# Visual Summary Modals #}
 {% for det in visual_summary %}
 {{ render_modal(det, 'summary') }}
 {% endfor %}
@@ -129,4 +300,30 @@
 
 {% block scripts %}
 <script src="/assets/js/gallery_utils.js"></script>
+<script>
+    (function () {
+        // Snapshot
+        document.getElementById('ptz-snapshot').addEventListener('click', function () {
+            const filename = 'snapshot_' + new Date().toISOString().slice(0, 19).replace(/:/g, '-') + '.jpg';
+            fetch('/api/snapshot')
+                .then(r => r.blob())
+                .then(blob => {
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = filename;
+                    a.click();
+                    URL.revokeObjectURL(url);
+                })
+                .catch(() => alert('Snapshot failed'));
+        });
+
+        // Fullscreen
+        document.getElementById('ptz-fullscreen').addEventListener('click', function () {
+            const el = document.querySelector('.stream-container');
+            if (el.requestFullscreen) el.requestFullscreen();
+            else if (el.webkitRequestFullscreen) el.webkitRequestFullscreen();
+        });
+    })();
+</script>
 {% endblock %}

@@ -3,31 +3,44 @@
 # detectors/detection_manager.py
 # ------------------------------------------------------------------------------
 
+import logging
 import time
+
 from config import get_config
 
+
 config = get_config()
-import re
+import hashlib
+import json
+import os
+import queue
 import threading
-from datetime import datetime, timezone
+from datetime import UTC, datetime
+
 import cv2
-import pytz
-from astral.geocoder import database, lookup
-from astral.sun import sun
 import piexif
 import piexif.helper
-from detectors.detector import Detector
-from detectors.classifier import ImageClassifier
+import pytz
+from astral import Observer
+from astral.geocoder import database, lookup
+from astral.sun import sun
+
 from camera.video_capture import VideoCapture
-from utils.telegram_notifier import send_telegram_message
+from detectors.classifier import ImageClassifier
+from detectors.detector import Detector
+from detectors.motion_detector import MotionDetector
 from logging_config import get_logger
-import os
-import json
-import hashlib
-import queue
-from utils.db import get_connection, insert_image, insert_detection, insert_classification, get_or_create_default_source
+from utils.db import (
+    get_connection,
+    get_or_create_default_source,
+    insert_classification,
+    insert_detection,
+    insert_image,
+)
 from utils.image_ops import create_square_crop
 from utils.path_manager import get_path_manager
+from utils.telegram_notifier import send_telegram_message
+
 
 """
 This module defines the DetectionManager class, which orchestrates video frame acquisition,
@@ -96,7 +109,7 @@ def add_exif_metadata(image_path, capture_time, location_config=None):
                     "E" if lon >= 0 else "W"
                 )
                 exif_dict["GPS"][piexif.GPSIFD.GPSLongitude] = gps_longitude
-                utc_now = datetime.now(timezone.utc)
+                utc_now = datetime.now(UTC)
                 exif_dict["GPS"][piexif.GPSIFD.GPSDateStamp] = utc_now.strftime(
                     "%Y:%m:%d"
                 )
@@ -167,6 +180,7 @@ class DetectionManager:
         self.model_choice = self.config["DETECTOR_MODEL_CHOICE"]
         self.video_source = self.config["VIDEO_SOURCE"]
         self.location_config = self.config.get("LOCATION_DATA")
+        self.exif_gps_enabled = self.config.get("EXIF_GPS_ENABLED", True)
         self.debug = self.config["DEBUG_MODE"]
         self.SAVE_RESOLUTION_CROP = (
             512  # Resolution for crop images, may be used for reclassification.
@@ -175,17 +189,24 @@ class DetectionManager:
         # Initializes the classifier.
         self.classifier = ImageClassifier()
         # self.classifier_model_id will be populated lazily during processing loop
-        self.classifier_model_id = "" 
+        self.classifier_model_id = ""
         logger.debug("Classifier created (model will be lazy-loaded on first use).")
-        
+
         # Load common names for Telegram notifications
-        common_names_file = os.path.join(os.getcwd(), "assets", "common_names_DE.json")
+        # Use project root (not CWD) - consistent with web_interface.py
+        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        common_names_file = os.path.join(project_root, "assets", "common_names_DE.json")
         try:
-            with open(common_names_file, "r", encoding="utf-8") as f:
+            with open(common_names_file, encoding="utf-8") as f:
                 self.common_names = json.load(f)
         except Exception as e:
             logger.warning(f"Could not load common names: {e}")
             self.common_names = {}
+
+        # Initialize Motion Detector
+        self.motion_detector = MotionDetector(
+            sensitivity=self.config.get("MOTION_SENSITIVITY", 500), debug=self.debug
+        )
 
         # Locks for thread-safe operations.
         self.frame_lock = threading.Lock()  # Protects raw frame and timestamp.
@@ -206,12 +227,12 @@ class DetectionManager:
         self.last_notification_time = time.time()
         self.detection_counter = 0
         self.detection_classes_agg = set()
-        
+
         # Buffer for collecting species during cooldown
         # Dict: species_latin -> {"common": str, "score": float, "image_path": str}
         self.pending_species = {}
         self.pending_species_lock = threading.Lock()
-        
+
         # Resource control flags
         self.paused = False
         self.last_detection_had_frame = True
@@ -256,27 +277,77 @@ class DetectionManager:
             target=self._processing_loop, daemon=True
         )
 
+        # Initialization Backoff State
+        self.initialization_retry_count = 0
+
     def _is_daytime(self, city_name):
-        """Determines daylight using Astral with a cached result (sun-position basis)."""
+        """
+        Determines daylight using Astral.
+        Prioritizes self.location_config (Lat/Lon) if available.
+        Fallbacks to city_name lookup or Berlin default.
+        """
         try:
             now_ts = time.time()
             cache = self._daytime_cache
-            if (
-                cache["city"] == city_name
-                and (now_ts - cache["ts"]) < self._daytime_ttl
-            ):
+
+            # Check cache validity (City AND Coordinates consistency implied by cache clearing on config update)
+            if cache["ts"] is not None and (now_ts - cache["ts"]) < self._daytime_ttl:
                 return cache["value"]
 
-            city = lookup(city_name, database())
-            tz = pytz.timezone(city.timezone)
+            # Determine Observer
+            observer = None
+            if isinstance(self.location_config, dict):
+                try:
+                    lat = float(self.location_config.get("latitude"))
+                    lon = float(self.location_config.get("longitude"))
+                    observer = Observer(latitude=lat, longitude=lon)
+                except Exception:
+                    pass
+
+            if observer is None:
+                # Fallback to City Name Lookup
+                try:
+                    city = lookup(city_name, database())
+                    observer = city.observer
+                    # Set TZ from city, otherwise default?
+                    # The logic below uses datetime.now(tz)
+                    tz = pytz.timezone(city.timezone)
+                except Exception:
+                    # Safety Fallback: Berlin
+                    observer = Observer(latitude=52.52, longitude=13.40)
+                    tz = pytz.timezone("Europe/Berlin")
+            else:
+                # If using Coordinates, what TZ?
+                # ideally we infer tz from coords or use config.
+                # For simplicity/safety in this refactor without timezone-finder dep:
+                # We use the timezone of the 'city_name' fallback if provided,
+                # or UTC/Local?
+                # 'city_name' comes from config DAY_AND_NIGHT_CAPTURE_LOCATION (default Berlin).
+                # So we can try to get TZ from that setting as a proxy for the TZ of the user.
+                try:
+                    # Attempt to get timezone from the configured city name string
+                    # This allows users to set "New_York" to get US/Eastern even if they provide specific coords
+                    city_obj = lookup(city_name, database())
+                    tz = pytz.timezone(city_obj.timezone)
+                except Exception:
+                    tz = pytz.timezone("Europe/Berlin")
+
             now = datetime.now(tz)
             dawn_depression = 12
-            s = sun(
-                city.observer, date=now, tzinfo=tz, dawn_dusk_depression=dawn_depression
-            )
+
+            # Astral sun() call requires observer
+            s = sun(observer, date=now, tzinfo=tz, dawn_dusk_depression=dawn_depression)
+
             value = s["dawn"] < now < s["dusk"]
-            cache.update({"city": city_name, "value": value, "ts": now_ts})
+
+            # Update Cache
+            self._daytime_cache = {
+                "city": city_name,  # Stored but less relevant now, mainly for cache key structure
+                "value": value,
+                "ts": now_ts,
+            }
             return value
+
         except Exception as e:
             logger.error(f"Error determining daylight status: {e}")
             return True  # Defaults to daytime (per existing behavior)
@@ -316,6 +387,103 @@ class DetectionManager:
 
         return self.video_capture is not None and self.detector_instance is not None
 
+    def update_source(self, new_source):
+        """
+        Updates the video source at runtime.
+        Stops the current capture, updates config, and loops will auto-reinitialize.
+        """
+        logger.info(f"Updating video source to: {new_source}")
+
+        # Update internal config reference
+        self.video_source = new_source
+        self.config["VIDEO_SOURCE"] = new_source  # Sync local config ref
+
+        # Stop current capture
+        if self.video_capture:
+            logger.info("Stopping current VideoCapture...")
+            try:
+                self.video_capture.stop_flag = True
+                self.video_capture.stop_event.set()
+                # We don't wait for join here to avoid deadlock if called from web thread
+                # The _frame_update_loop will detect stop_event? No, we shouldn't kill the manager loop.
+                # We want to kill the CAPTURE instance.
+
+                # VideoCapture doesn't have a clean "shutdown and stay alive" mode, it has a reader thread.
+                # If we set self.video_capture to None, the manager loop will create a NEW one.
+                # But we must ensure the OLD one releases resources (RTSP connection/threads).
+
+                # Best way: explicit release/stop method on VideoCapture?
+                # VideoCapture has stop_event.
+
+                # Let's forcefully release resources
+                self.video_capture.stop_event.set()
+                if self.video_capture.cap:
+                    self.video_capture.cap.release()
+                if self.video_capture.ffmpeg_process:
+                    self.video_capture._terminate_ffmpeg_process()
+            except Exception as e:
+                logger.error(f"Error stopping video capture: {e}")
+
+            # Setting to None triggers _initialize_components to create a new one next loop
+            self.video_capture = None
+            logger.info(
+                "Video capture instance cleared. Manager will re-initialize on next cycle."
+            )
+
+    def update_configuration(self, changes: dict):
+        """
+        Handles runtime config changes for managed components.
+        Centralizes logic for which components need updates or restarts.
+        """
+        # 1. Video Source Update
+        if "VIDEO_SOURCE" in changes:
+            self.update_source(changes["VIDEO_SOURCE"])
+
+        # 2. Debug Mode Propagation
+        if "DEBUG_MODE" in changes:
+            new_debug = changes["DEBUG_MODE"]
+            logger.info(f"Updating DEBUG_MODE to {new_debug}")
+            self.debug = new_debug
+            # Sync config local reference if strictly needed, though get_config() is global
+            self.config["DEBUG_MODE"] = new_debug
+
+            # Propagate to sub-components if they exist
+            if self.motion_detector:
+                self.motion_detector.debug = new_debug
+
+            if self.video_capture:
+                if hasattr(self.video_capture, "debug"):
+                    self.video_capture.debug = new_debug
+
+            if self.detector_instance:
+                if hasattr(self.detector_instance, "debug"):
+                    self.detector_instance.debug = new_debug
+
+            # Root Logger Level Update
+            logging.getLogger().setLevel(logging.DEBUG if new_debug else logging.INFO)
+
+        # 3. Location Data & Exif Settings
+        if "LOCATION_DATA" in changes:
+            logger.info("Updating LOCATION_DATA and invalidating sun event cache.")
+            self.location_config = changes["LOCATION_DATA"]
+            # Invalidate Cache to force re-calc with new coords
+            self._daytime_cache = {"city": None, "value": True, "ts": 0.0}
+            # Sync config
+            self.config["LOCATION_DATA"] = self.location_config
+
+        if "EXIF_GPS_ENABLED" in changes:
+            new_val = changes["EXIF_GPS_ENABLED"]
+            logger.info(f"Updating EXIF_GPS_ENABLED to {new_val}")
+            self.exif_gps_enabled = new_val
+            self.config["EXIF_GPS_ENABLED"] = new_val
+
+        if "MOTION_SENSITIVITY" in changes:
+            new_sens = changes["MOTION_SENSITIVITY"]
+            logger.info(f"Updating MOTION_SENSITIVITY to {new_sens}")
+            self.config["MOTION_SENSITIVITY"] = new_sens
+            if self.motion_detector:
+                self.motion_detector.sensitivity = new_sens
+
     def _frame_update_loop(self):
         """
         Continuously updates the latest raw frame from VideoCapture.
@@ -342,7 +510,7 @@ class DetectionManager:
                 with self.frame_lock:
                     self.latest_raw_frame = frame.copy()
                     self.latest_raw_timestamp = time.time()
-                
+
                 # Recovery Check
                 if self._no_frame_log_state:
                     logger.debug("Frames received again (stream recovered).")
@@ -352,9 +520,11 @@ class DetectionManager:
                 if time.time() - self.latest_raw_timestamp > 5:
                     with self.frame_lock:
                         if self.latest_raw_frame is not None:
-                            logger.info("No new frames received for over 5 seconds. Clearing buffer.")
+                            logger.info(
+                                "No new frames received for over 5 seconds. Clearing buffer."
+                            )
                         self.latest_raw_frame = None
-                    
+
                     if not self._no_frame_log_state:
                         logger.warning(
                             "No new frames received for over 5 seconds. "
@@ -362,8 +532,6 @@ class DetectionManager:
                         )
                         self._no_frame_log_state = True
                 time.sleep(0.1)
-
-
 
     def _detection_loop(self):
         """
@@ -383,12 +551,33 @@ class DetectionManager:
                 continue
 
             if not self._initialize_components():
+                self.initialization_retry_count += 1
+                # Exponential backoff: 2s, 4s, 8s... max 60s
+                # We start at 2s because 1s (previous default) was too aggressive for hardware failures
+                backoff_time = min(60, 2**self.initialization_retry_count)
+
                 if self._last_components_ready_state:
-                    logger.debug("Components not ready yet (Entering wait state).")
+                    logger.warning(
+                        f"Components not ready (e.g. Camera missing). "
+                        f"Retrying in {backoff_time}s... (Attempt {self.initialization_retry_count})"
+                    )
                     self._last_components_ready_state = False
-                time.sleep(1)
+                else:
+                    logger.debug(
+                        f"Initialization retry {self.initialization_retry_count} failed. "
+                        f"Backing off for {backoff_time}s."
+                    )
+
+                # Use wait instead of sleep to allow immediate shutdown
+                if self.stop_event.wait(timeout=backoff_time):
+                    break
                 continue
-            
+
+            # Reset backoff counters on success
+            if self.initialization_retry_count > 0:
+                logger.info("Components recovered successfully.")
+                self.initialization_retry_count = 0
+
             self._last_components_ready_state = True
             raw_frame = None
             capture_time_precise = datetime.now()
@@ -398,13 +587,15 @@ class DetectionManager:
                     raw_frame = self.latest_raw_frame.copy()
             if raw_frame is None:
                 if self.last_detection_had_frame:
-                    logger.debug("No raw frame available for detection (Entering wait state).")
+                    logger.debug(
+                        "No raw frame available for detection (Entering wait state)."
+                    )
                     self.last_detection_had_frame = False
                 self.previous_frame_hash = None
                 self.consecutive_identical_frames = 0
                 time.sleep(0.1)
                 continue
-            
+
             self.last_detection_had_frame = True
 
             try:
@@ -414,9 +605,9 @@ class DetectionManager:
                     and current_frame_hash == self.previous_frame_hash
                 ):
                     self.consecutive_identical_frames += 1
-                    if self.consecutive_identical_frames == 30: # ~3 seconds at 10fps
+                    if self.consecutive_identical_frames == 30:  # ~3 seconds at 10fps
                         logger.warning(
-                            f"Identical frames detected (30 consecutive). Processing might be stale."
+                            "Identical frames detected (30 consecutive). Processing might be stale."
                         )
                         self._last_frame_was_stale = True
                     self.previous_frame_hash = current_frame_hash
@@ -442,6 +633,16 @@ class DetectionManager:
                 time.sleep(60)
                 continue
 
+            # --- Motion Detection Gate ---
+            if self.config.get("MOTION_DETECTION_ENABLED", True):
+                if not self.motion_detector.detect(raw_frame):
+                    # No motion detected - skip heavy inference
+                    # We still need to respect the loop timing roughly or just sleep short?
+                    # Sleep short to save CPU is the goal.
+                    time.sleep(0.1)
+                    continue
+            # -----------------------------
+
             start_time = time.time()
             try:
                 object_detected, original_frame, detection_info_list = (
@@ -460,19 +661,23 @@ class DetectionManager:
                         f"Inference error detected: {e}. Reinitializing detector..."
                     )
                     self._inference_error_state = True
-                
+
                 with self.detector_lock:
                     try:
                         self.detector_instance = Detector(
                             model_choice=self.model_choice, debug=self.debug
                         )
                         model_id = getattr(self.detector_instance, "model_id", "") or ""
-                        if not model_id and hasattr(self.detector_instance, "model_path"):
-                            model_id = os.path.basename(self.detector_instance.model_path)
+                        if not model_id and hasattr(
+                            self.detector_instance, "model_path"
+                        ):
+                            model_id = os.path.basename(
+                                self.detector_instance.model_path
+                            )
                         self.detector_model_id = model_id
                     except Exception as e2:
-                        # Re-init errors might be frequent, but if the main loop error is once-per-state, 
-                        # we can log this as separate error or rely on the main flag. 
+                        # Re-init errors might be frequent, but if the main loop error is once-per-state,
+                        # we can log this as separate error or rely on the main flag.
                         # Let's log it only if it's a DIFFERENT error or we want detailed debug.
                         # For policy compliance, we stick to the main flag or Debug.
                         logger.debug(f"Detector reinitialization failed: {e2}")
@@ -505,17 +710,17 @@ class DetectionManager:
                         "sleep_time_ms": int(sleep_time * 1000),
                     }
                 )
-            
+
             # Only log [DET] when no object was detected
             # When object IS detected, [DET+CLS] will be logged from processing loop
             # To be precise, we want to see [DET] duration even if object is found?
             # User wants: "ob es nur eine det durchgeführt wurde und die zeit dafür. wenn eine det+cls gemacht wurde das gleiche."
-            
+
             # If object detected -> Processing loop handles logging final stats.
             # But the detection loop finishes here.
             # Let's log [DET] here IF no object.
             # If object, let's include the DET time in the job, and log the full [DET+CLS] later.
-            
+
             if not object_detected:
                 logger.info(
                     f"[DET] {int(detection_time * 1000)}ms | sleep {int(sleep_time * 1000)}ms"
@@ -564,19 +769,36 @@ class DetectionManager:
 
             # Ensure Directories
             self.path_mgr.ensure_date_structure(date_str)
-            
+
             # Paths
             original_path = self.path_mgr.get_original_path(base_filename)
-            optimized_path = self.path_mgr.get_derivative_path(base_filename, "optimized")
+            optimized_path = self.path_mgr.get_derivative_path(
+                base_filename, "optimized"
+            )
 
             # --- Save Original & Optimized ---
             try:
                 # 1. Save Original
                 if cv2.imwrite(str(original_path), original_frame):
-                    add_exif_metadata(str(original_path), capture_time_precise, self.location_config)
+                    # Privacy Check for GPS
+                    if self.exif_gps_enabled:
+                        add_exif_metadata(
+                            str(original_path),
+                            capture_time_precise,
+                            self.location_config,
+                        )
+                    else:
+                        # Still add DateTimeOriginal (basic EXIF), but NO GPS.
+                        # Helper reuse: pass None as location_config to add_exif_metadata to skip GPS but keep Time?
+                        # Let's check add_exif_metadata signature.
+                        # It takes location_config. If None, it skips GPS.
+                        # Ideally we always want DateTime.
+                        add_exif_metadata(
+                            str(original_path), capture_time_precise, None
+                        )
                 else:
                     logger.error(f"Failed to save original image: {original_path}")
-                    continue # abort if original fails
+                    continue  # abort if original fails
 
                 # 2. Save Optimized (WebP, resized if huge)
                 # Using WebP for derivatives as per plan implication (or user request for optimized)
@@ -589,9 +811,13 @@ class DetectionManager:
                     optimized_frame = cv2.resize(original_frame, (1920, new_h))
                 else:
                     optimized_frame = original_frame
-                
+
                 # Save as WebP
-                cv2.imwrite(str(optimized_path), optimized_frame, [int(cv2.IMWRITE_WEBP_QUALITY), 80])
+                cv2.imwrite(
+                    str(optimized_path),
+                    optimized_frame,
+                    [int(cv2.IMWRITE_WEBP_QUALITY), 80],
+                )
                 # EXIF is lost in WebP usually or harder to handle, skipping for optimized/thumbs logic for now
                 # (Original has it, that's what counts)
 
@@ -606,43 +832,54 @@ class DetectionManager:
                     self.db_conn,
                     {
                         "filename": base_filename,
-                        "timestamp": timestamp_str, # keeping precise ts
-                        "coco_json": None, # Dropped legacy COCO
+                        "timestamp": timestamp_str,  # keeping precise ts
+                        "coco_json": None,  # Dropped legacy COCO
                         "downloaded_timestamp": "",
                         "detector_model_id": self.detector_model_id,
-                        "classifier_model_id": getattr(self.classifier, "model_id", "") or self.classifier_model_id,
+                        "classifier_model_id": getattr(self.classifier, "model_id", "")
+                        or self.classifier_model_id,
                         "source_id": self.current_source_id,
-                        "content_hash": None, # Could calculate if needed
+                        "content_hash": None,  # Could calculate if needed
                     },
                 )
                 image_persisted = True
             except Exception as e:
                 logger.error(f"Error persisting image record: {e}")
-            
+
             if not image_persisted:
                 continue
 
             # --- Process Detections ---
             img_h, img_w = original_frame.shape[:2]
-            created_at_iso = datetime.now(timezone.utc).isoformat()
-            
+            created_at_iso = datetime.now(UTC).isoformat()
+
             enriched_detections = []
-            
+
             # Detection Loop & Classification
             cls_start_time = time.time()
             for i, det in enumerate(detection_info_list, start=1):
                 # Classification logic
                 cls_name = ""
                 cls_conf = 0.0
-                
+
                 x1, y1, x2, y2 = det["x1"], det["y1"], det["x2"], det["y2"]
                 bbox_tuple = (x1, y1, x2, y2)
 
                 try:
-                    crop = create_square_crop(original_frame, bbox_tuple, margin_percent=0.1)
+                    crop = create_square_crop(
+                        original_frame, bbox_tuple, margin_percent=0.1
+                    )
                     if crop is not None and crop.size > 0:
-                         crop_rgb = cv2.cvtColor(cv2.resize(crop, (self.SAVE_RESOLUTION_CROP, self.SAVE_RESOLUTION_CROP)), cv2.COLOR_BGR2RGB)
-                         _, _, cls_name, cls_conf = self.classifier.predict_from_image(crop_rgb)
+                        crop_rgb = cv2.cvtColor(
+                            cv2.resize(
+                                crop,
+                                (self.SAVE_RESOLUTION_CROP, self.SAVE_RESOLUTION_CROP),
+                            ),
+                            cv2.COLOR_BGR2RGB,
+                        )
+                        _, _, cls_name, cls_conf = self.classifier.predict_from_image(
+                            crop_rgb
+                        )
                 except Exception as e:
                     logger.error(f"Error classifying detection: {e}")
 
@@ -650,16 +887,16 @@ class DetectionManager:
                 # Naming Convention: {basename_no_ext}_crop_{i}.webp
                 # path_mgr doesn't officially support 'custom' suffixes easily in get_derivative_path without modification
                 # BUT, I can construct the filename manually and ask path_mgr for the dir
-                
+
                 base_name_no_ext = os.path.splitext(base_filename)[0]
                 thumb_filename = f"{base_name_no_ext}_crop_{i}.webp"
-                
+
                 # We need the dir. path_mgr.get_derivative_path uses filename to find date folder.
                 # So we can pass the thumb_filename to it!
-                # get_derivative_path extracts date from 'YYYYMMDD_...' part. 
+                # get_derivative_path extracts date from 'YYYYMMDD_...' part.
                 # Our thumb_filename starts with base_filename which has the date. Perfect.
                 thumb_path = self.path_mgr.get_derivative_path(thumb_filename, "thumb")
-                
+
                 try:
                     # Crop Logic for Thumbnail (Edge-Shifted Square)
                     TARGET_THUMB_SIZE = 256
@@ -668,20 +905,36 @@ class DetectionManager:
                     bbox_h = y2 - y1
                     side = int(max(bbox_w, bbox_h) * (1 + EXPANSION_PERCENT))
                     cx, cy = (x1 + x2) / 2, (y1 + y2) / 2
-                    sq_x1, sq_y1 = int(cx - side/2), int(cy - side/2)
+                    sq_x1, sq_y1 = int(cx - side / 2), int(cy - side / 2)
                     sq_x2, sq_y2 = sq_x1 + side, sq_y1 + side
-                    
+
                     # Clamp/Shift
-                    if sq_x1 < 0: sq_x2 -= sq_x1; sq_x1 = 0
-                    if sq_y1 < 0: sq_y2 -= sq_y1; sq_y1 = 0
-                    if sq_x2 > img_w: sq_x1 -= (sq_x2 - img_w); sq_x2 = img_w
-                    if sq_y2 > img_h: sq_y1 -= (sq_y2 - img_h); sq_y2 = img_h
-                    
+                    if sq_x1 < 0:
+                        sq_x2 -= sq_x1
+                        sq_x1 = 0
+                    if sq_y1 < 0:
+                        sq_y2 -= sq_y1
+                        sq_y1 = 0
+                    if sq_x2 > img_w:
+                        sq_x1 -= sq_x2 - img_w
+                        sq_x2 = img_w
+                    if sq_y2 > img_h:
+                        sq_y1 -= sq_y2 - img_h
+                        sq_y2 = img_h
+
                     if sq_x2 > sq_x1 and sq_y2 > sq_y1:
                         thumb_crop = original_frame[sq_y1:sq_y2, sq_x1:sq_x2]
                         if thumb_crop.size > 0:
-                            thumb_img = cv2.resize(thumb_crop, (TARGET_THUMB_SIZE, TARGET_THUMB_SIZE), interpolation=cv2.INTER_AREA)
-                            cv2.imwrite(str(thumb_path), thumb_img, [int(cv2.IMWRITE_WEBP_QUALITY), 80])
+                            thumb_img = cv2.resize(
+                                thumb_crop,
+                                (TARGET_THUMB_SIZE, TARGET_THUMB_SIZE),
+                                interpolation=cv2.INTER_AREA,
+                            )
+                            cv2.imwrite(
+                                str(thumb_path),
+                                thumb_img,
+                                [int(cv2.IMWRITE_WEBP_QUALITY), 80],
+                            )
                 except Exception as e:
                     logger.error(f"Error generating thumbnail {thumb_filename}: {e}")
 
@@ -693,16 +946,18 @@ class DetectionManager:
                 else:
                     score = od_conf
                     agreement = od_conf
-                
-                enriched_detections.append({
-                    "det": det,
-                    "cls_name": cls_name,
-                    "cls_conf": cls_conf,
-                    "score": score,
-                    "agreement": agreement,
-                    "thumb_filename": thumb_filename
-                })
-            
+
+                enriched_detections.append(
+                    {
+                        "det": det,
+                        "cls_name": cls_name,
+                        "cls_conf": cls_conf,
+                        "score": score,
+                        "agreement": agreement,
+                        "thumb_filename": thumb_filename,
+                    }
+                )
+
             cls_duration_ms = int((time.time() - cls_start_time) * 1000)
 
             # --- DB INSERT: Detections ---
@@ -712,7 +967,7 @@ class DetectionManager:
                     det_id = insert_detection(
                         self.db_conn,
                         {
-                            "image_filename": base_filename, # FK
+                            "image_filename": base_filename,  # FK
                             "bbox_x": det["x1"] / img_w,
                             "bbox_y": det["y1"] / img_h,
                             "bbox_w": (det["x2"] - det["x1"]) / img_w,
@@ -728,11 +983,11 @@ class DetectionManager:
                             "classifier_model_name": "classifier",
                             "classifier_model_version": self.classifier_model_id,
                             "thumbnail_path": item["thumb_filename"],
-                        }
+                        },
                     )
-                    
+
                     if item["cls_name"]:
-                         insert_classification(
+                        insert_classification(
                             self.db_conn,
                             {
                                 "detection_id": det_id,
@@ -740,7 +995,7 @@ class DetectionManager:
                                 "cls_confidence": item["cls_conf"],
                                 "cls_model_id": self.classifier_model_id,
                                 "created_at": created_at_iso,
-                            }
+                            },
                         )
                 except Exception as e:
                     logger.error(f"Error inserting detection: {e}")
@@ -749,80 +1004,99 @@ class DetectionManager:
             self.detection_occurred = True
             current_time = time.time()
             cooldown = self.config.get("TELEGRAM_COOLDOWN", 60)
-            
+
             # Collect species info for this detection
             if self.config.get("TELEGRAM_ENABLED", True):
                 best_det = enriched_detections[0]
-                species_latin = best_det.get('cls_name') or 'Unknown'
-                species_common = self.common_names.get(species_latin, species_latin.replace('_', ' '))
-                score = best_det.get('score', 0.0)
-                
+                species_latin = best_det.get("cls_name") or "Unknown"
+                species_common = self.common_names.get(
+                    species_latin, species_latin.replace("_", " ")
+                )
+                score = best_det.get("score", 0.0)
+
                 # Use thumbnail (crop) instead of full image
-                thumb_filename = best_det.get('thumb_filename')
+                thumb_filename = best_det.get("thumb_filename")
                 if thumb_filename:
-                    thumb_path = self.path_mgr.get_derivative_path(thumb_filename, "thumb")
+                    thumb_path = self.path_mgr.get_derivative_path(
+                        thumb_filename, "thumb"
+                    )
                     image_for_telegram = str(thumb_path)
                 else:
                     image_for_telegram = str(optimized_path)
-                
+
                 with self.pending_species_lock:
                     # Only update if this detection has a higher score for this species
-                    if species_latin not in self.pending_species or score > self.pending_species[species_latin]['score']:
+                    if (
+                        species_latin not in self.pending_species
+                        or score > self.pending_species[species_latin]["score"]
+                    ):
                         self.pending_species[species_latin] = {
-                            'common': species_common,
-                            'score': score,
-                            'image_path': image_for_telegram
+                            "common": species_common,
+                            "score": score,
+                            "image_path": image_for_telegram,
                         }
-            
+
             # Check if cooldown has expired - send summary
-            if (current_time - self.last_notification_time >= cooldown) and self.config.get("TELEGRAM_ENABLED", True):
+            if (
+                current_time - self.last_notification_time >= cooldown
+            ) and self.config.get("TELEGRAM_ENABLED", True):
                 with self.telegram_lock:
                     # Double check locking
-                    if (current_time - self.last_notification_time >= cooldown):
+                    if current_time - self.last_notification_time >= cooldown:
                         try:
                             with self.pending_species_lock:
                                 if self.pending_species:
                                     # Build summary message - unified format for 1 or more species
                                     species_count = len(self.pending_species)
-                                    
+
                                     sorted_species = sorted(
                                         self.pending_species.items(),
-                                        key=lambda x: x[1]['score'],
-                                        reverse=True
+                                        key=lambda x: x[1]["score"],
+                                        reverse=True,
                                     )
-                                    
+
                                     # Format: "🐦 X Art(en) erkannt:" + list with common + latin names
                                     art_text = "Art" if species_count == 1 else "Arten"
                                     species_lines = []
                                     for species_latin, info in sorted_species:
-                                        latin_formatted = species_latin.replace('_', ' ')
-                                        species_lines.append(f"• {info['common']} ({latin_formatted})")
-                                    
-                                    message = f"🐦 {species_count} {art_text} erkannt:\n" + "\n".join(species_lines)
-                                    
-                                    # Use image of highest scoring species
-                                    image_path = sorted_species[0][1]['image_path']
-                                    
-                                    send_telegram_message(
-                                        text=message,
-                                        photo_path=image_path
+                                        latin_formatted = species_latin.replace(
+                                            "_", " "
+                                        )
+                                        species_lines.append(
+                                            f"• {info['common']} ({latin_formatted})"
+                                        )
+
+                                    message = (
+                                        f"🐦 {species_count} {art_text} erkannt:\n"
+                                        + "\n".join(species_lines)
                                     )
-                                    
+
+                                    # Use image of highest scoring species
+                                    image_path = sorted_species[0][1]["image_path"]
+
+                                    send_telegram_message(
+                                        text=message, photo_path=image_path
+                                    )
+
                                     # Clear pending buffer
                                     self.pending_species.clear()
-                                    
+
                             self.last_notification_time = current_time
                         except Exception as e:
                             logger.error(f"Telegram failed: {e}")
-            
+
             # LOGGING: [DET+CLS]
             # DET time is from detection loop. CLS time is measured above.
             total_pipeline_ms = detection_time_ms + cls_duration_ms
-            logger.debug(f"[DET+CLS] Total={total_pipeline_ms}ms (DET={detection_time_ms}ms, CLS={cls_duration_ms}ms) | Objects={len(detection_info_list)} | sleep {sleep_time_ms}ms")
+            logger.info(
+                f"[DET+CLS] Total={total_pipeline_ms}ms (DET={detection_time_ms}ms, CLS={cls_duration_ms}ms) | Objects={len(detection_info_list)} | sleep {sleep_time_ms}ms"
+            )
 
         logger.info("Processing loop stopped.")
 
-    def start_user_ingest(self, folder_path="/ingest"):
+    def start_user_ingest(self, folder_path=None):
+        if folder_path is None:
+            folder_path = self.config["INGEST_DIR"]
         """
         Orchestrates the User Ingest process:
         1. Parse Ingest Source (User Import).
@@ -833,23 +1107,25 @@ class DetectionManager:
         try:
             logger.info("Initiating User Ingest. Pausing detection...")
             self.paused = True
-            
+
             # Wait briefly for loops to sleep
-            time.sleep(2) 
-            
+            time.sleep(2)
+
             # 1. Get Source ID
             from utils.db import get_or_create_user_import_source
+
             source_id = get_or_create_user_import_source(self.db_conn)
-            
+
             # 2. Run Ingest
             from utils.ingest import ingest_folder
+
             if os.path.exists(folder_path):
                 logger.info(f"Running ingest on {folder_path}...")
                 ingest_folder(folder_path, source_id, move_files=True)
                 logger.info("User Ingest complete.")
             else:
                 logger.error(f"Ingest folder not found: {folder_path}")
-                
+
         except Exception as e:
             logger.error(f"Error during User Ingest: {e}", exc_info=True)
         finally:

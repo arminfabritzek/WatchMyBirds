@@ -1,6 +1,5 @@
-import os
 from pathlib import Path
-from datetime import datetime
+
 
 # Directory structure:
 # data/
@@ -15,6 +14,7 @@ from datetime import datetime
 #         └── YYYY-MM-DD/
 #             └── filename
 
+
 class PathManager:
     def __init__(self, base_dir: str):
         self.base_dir = Path(base_dir)
@@ -22,6 +22,66 @@ class PathManager:
         self.derivatives_dir = self.base_dir / "derivatives"
         self.thumbs_dir = self.derivatives_dir / "thumbs"
         self.optimized_dir = self.derivatives_dir / "optimized"
+        # Inbox directories (for web upload ingest)
+        self.inbox_dir = self.base_dir / "inbox"
+        self.inbox_pending_dir = self.inbox_dir / "pending"
+        self.inbox_error_dir = self.inbox_dir / "error"
+        # Backup directory
+        self.backup_dir = self.base_dir / "backup"
+
+    # -------------------------------------------------------------------------
+    # Inbox Path Methods
+    # -------------------------------------------------------------------------
+    def get_inbox_root_dir(self) -> Path:
+        """Returns the inbox root directory."""
+        self.inbox_dir.mkdir(parents=True, exist_ok=True)
+        return self.inbox_dir
+
+    def get_inbox_pending_dir(self) -> Path:
+        """Returns the inbox/pending directory, creates if needed."""
+        self.inbox_pending_dir.mkdir(parents=True, exist_ok=True)
+        return self.inbox_pending_dir
+
+    def get_inbox_processed_dir(self, date_str: str) -> Path:
+        """
+        Returns inbox/processed/YYYYMMDD directory.
+        date_str should be in YYYYMMDD format.
+        """
+        processed_dir = self.inbox_dir / "processed" / date_str
+        processed_dir.mkdir(parents=True, exist_ok=True)
+        return processed_dir
+
+    def get_inbox_skipped_dir(self, date_str: str) -> Path:
+        """
+        Returns inbox/skipped/YYYYMMDD directory.
+        date_str should be in YYYYMMDD format.
+        """
+        skipped_dir = self.inbox_dir / "skipped" / date_str
+        skipped_dir.mkdir(parents=True, exist_ok=True)
+        return skipped_dir
+
+    def get_inbox_error_dir(self) -> Path:
+        """Returns the inbox/error directory, creates if needed."""
+        self.inbox_error_dir.mkdir(parents=True, exist_ok=True)
+        return self.inbox_error_dir
+
+    # -------------------------------------------------------------------------
+    # Backup Path Methods
+    # -------------------------------------------------------------------------
+    def get_backup_dir(self) -> Path:
+        """Returns the backup directory, creates if needed."""
+        self.backup_dir.mkdir(parents=True, exist_ok=True)
+        return self.backup_dir
+
+    def get_backup_tmp_db_path(self) -> Path:
+        """
+        Returns a unique temp DB path for backup operations.
+        Format: backup/tmp_db_YYYYMMDD_HHMMSS.db
+        """
+        from datetime import datetime
+
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        return self.get_backup_dir() / f"tmp_db_{timestamp}.db"
 
     def get_date_folder(self, date_str: str) -> str:
         """Returns the YYYY-MM-DD folder name from various inputs."""
@@ -85,14 +145,18 @@ class PathManager:
         # For robustness, try to parse
         return "unknown_date"
 
+
 # Global Instance - to be initialized by app with config["OUTPUT_DIR"]
 _instance = None
+
 
 def get_path_manager(output_dir: str = None) -> PathManager:
     global _instance
     if _instance is None:
         if output_dir is None:
-             # Default fallback if called before init
-             output_dir = "/output" 
+            # Default fallback if called before init
+            from config import get_config
+
+            output_dir = get_config()["OUTPUT_DIR"]
         _instance = PathManager(output_dir)
     return _instance

@@ -60,7 +60,7 @@
     padding: 1.5rem;
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
       sans-serif;
-    background: linear-gradient(135deg, #f8faf9 0%, #eef5f0 100%);
+    background: linear-gradient(135deg, #f8faf9 0%, #edf2ef 100%);
     min-height: 100vh;
   }
 
@@ -68,10 +68,10 @@
     text-align: center;
     margin-bottom: 2rem;
     padding: 1.5rem;
-    background: linear-gradient(135deg, #2ecc71 0%, #27ae60 100%);
+    background: linear-gradient(135deg, #4caf50 0%, #2e7d32 100%);
     border-radius: 16px;
     color: white;
-    box-shadow: 0 4px 20px rgba(46, 204, 113, 0.3);
+    box-shadow: 0 4px 20px rgba(76, 175, 80, 0.3);
   }
 
   .dashboard-header h1 {
@@ -104,7 +104,7 @@
     width: 40px;
     height: 40px;
     border: 3px solid #e0e0e0;
-    border-top-color: #2ecc71;
+    border-top-color: #4caf50;
     border-radius: 50%;
     animation: spin 1s linear infinite;
     margin-bottom: 1rem;
