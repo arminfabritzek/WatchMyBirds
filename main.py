@@ -4,12 +4,10 @@
 # ------------------------------------------------------------------------------
 from config import ensure_app_directories, get_config
 
-
 config = get_config()
 # Ensure directories exist before anything else (especially logging)
 ensure_app_directories(config)
 from logging_config import get_logger
-
 
 logger = get_logger(__name__)
 import json
@@ -18,7 +16,6 @@ import os
 from utils.cpu_limiter import restrict_to_cpus  # Import CPU limiter
 from utils.system_monitor import SystemMonitor  # System vitals for crash diagnosis
 from utils.telegram_notifier import send_telegram_message
-
 
 # Apply CPU restriction before starting any threads for slow systems
 restrict_to_cpus()
@@ -53,7 +50,6 @@ import threading
 
 from detectors.detection_manager import DetectionManager
 
-
 # Create a DetectionManager instance.
 detection_manager = DetectionManager()
 
@@ -62,7 +58,6 @@ threading.Thread(target=detection_manager.start, daemon=True).start()
 
 # Register the cleanup function
 import atexit
-
 
 atexit.register(detection_manager.stop)
 
@@ -77,7 +72,6 @@ atexit.register(system_monitor.stop)
 # Import and Run the Web Interface
 # -----------------------------
 from web.web_interface import create_web_interface
-
 
 # Expose the Flask server as the WSGI app for Waitress.
 app = create_web_interface(detection_manager)

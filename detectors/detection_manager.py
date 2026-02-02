@@ -8,7 +8,6 @@ import time
 
 from config import get_config
 
-
 config = get_config()
 import hashlib
 import json
@@ -40,7 +39,6 @@ from utils.db import (
 from utils.image_ops import create_square_crop
 from utils.path_manager import get_path_manager
 from utils.telegram_notifier import send_telegram_message
-
 
 """
 This module defines the DetectionManager class, which orchestrates video frame acquisition,

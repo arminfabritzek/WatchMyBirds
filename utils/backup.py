@@ -18,7 +18,6 @@ from utils.db import _get_db_path as get_db_path
 from utils.path_manager import get_path_manager
 from utils.settings import get_settings_path
 
-
 logger = logging.getLogger(__name__)
 
 

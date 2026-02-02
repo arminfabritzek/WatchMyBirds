@@ -14,10 +14,11 @@ license = {text = "Apache-2.0"}
 requires-python = ">=3.11"
 
 # =============================================================================
-# Black - Code Formatter
+# Black - Code Formatter (DEPRECATED - use `ruff format` instead)
 # =============================================================================
-# Autoformats code to consistent style. No manual style decisions needed.
-# Run: black .
+# Kept for backwards compatibility. Prefer `ruff format .` to avoid
+# import-sorting conflicts between Black and Ruff's isort.
+# Legacy: black .
 
 [tool.black]
 line-length = 88
@@ -86,13 +87,27 @@ exclude = [
 [tool.ruff.lint.isort]
 known-first-party = ["camera", "detectors", "utils", "web"]
 force-single-line = false
-lines-after-imports = 2
+# lines-after-imports: let ruff format decide (1 line, Black-compatible)
 
 [tool.ruff.lint.per-file-ignores]
 # Allow unused imports in __init__.py (re-exports)
 "__init__.py" = ["F401"]
 # Tests can have assertions and unused variables  
 "test_*.py" = ["B011", "F841"]
+
+# =============================================================================
+# Ruff Format - Code Formatter (replaces Black)
+# =============================================================================
+# Ruff's formatter is Black-compatible but stays in sync with Ruff's linting.
+# This avoids conflicts between isort and Black's import formatting.
+# Run: ruff format .
+# Check: ruff format --check .
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"
 
 # =============================================================================
 # Pytest - Testing Framework

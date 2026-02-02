@@ -13,7 +13,6 @@ from config import get_config
 from logging_config import get_logger
 from utils.model_downloader import ensure_model_files, load_latest_identifier
 
-
 config = get_config()
 logger = get_logger(__name__)
 

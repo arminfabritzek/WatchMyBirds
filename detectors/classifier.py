@@ -9,7 +9,6 @@ from config import get_config
 from logging_config import get_logger
 from utils.model_downloader import ensure_model_files, load_latest_identifier
 
-
 logger = get_logger(__name__)
 
 HF_BASE_URL = (

@@ -59,7 +59,6 @@ from utils.db import (
 from utils.file_gc import hard_delete_detections
 from utils.path_manager import get_path_manager
 
-
 config = get_config()
 db_conn = get_connection()
 
@@ -974,7 +973,8 @@ def create_web_interface(detection_manager):
 
                     centers = (edges[:-1] + edges[1:]) / 2
                     points = [
-                        {"x": float(x), "y": float(y)} for x, y in zip(centers, hist, strict=False)
+                        {"x": float(x), "y": float(y)}
+                        for x, y in zip(centers, hist, strict=False)
                     ]
                     peak = centers[np.argmax(hist)]
                 else:
@@ -1000,7 +1000,8 @@ def create_web_interface(detection_manager):
 
                     centers = (edges[:-1] + edges[1:]) / 2
                     points = [
-                        {"x": float(x), "y": float(y)} for x, y in zip(centers, smooth, strict=False)
+                        {"x": float(x), "y": float(y)}
+                        for x, y in zip(centers, smooth, strict=False)
                     ]
                     peak = centers[np.argmax(smooth)]
 
@@ -1529,7 +1530,7 @@ def create_web_interface(detection_manager):
                             zf.write(abs_path, arcname=arcname)
 
                 zip_buffer.seek(0)
-                download_name = f"watchmybirds_{date_iso.replace('-','')}_download.zip"
+                download_name = f"watchmybirds_{date_iso.replace('-', '')}_download.zip"
                 return send_file(
                     zip_buffer,
                     mimetype="application/zip",
@@ -2963,8 +2964,12 @@ def create_web_interface(detection_manager):
         try:
             # Block during restore
             from utils.restore import is_restore_active
+
             if is_restore_active():
-                return jsonify({"error": "Upload blocked during restore operation"}), 409
+                return (
+                    jsonify({"error": "Upload blocked during restore operation"}),
+                    409,
+                )
 
             if "files[]" not in request.files:
                 return jsonify({"error": "No files provided"}), 400
@@ -3101,8 +3106,14 @@ def create_web_interface(detection_manager):
         try:
             # Block during restore
             from utils.restore import is_restore_active
+
             if is_restore_active():
-                return jsonify({"error": "Inbox processing blocked during restore operation"}), 409
+                return (
+                    jsonify(
+                        {"error": "Inbox processing blocked during restore operation"}
+                    ),
+                    409,
+                )
 
             # Check 1: Already processing?
             with _inbox_processing["lock"]:
@@ -3179,15 +3190,17 @@ def create_web_interface(detection_manager):
         """
         try:
             from utils.restore import is_restart_required
-            
+
             output_dir = config.get("OUTPUT_DIR", "./data/output")
             pm = get_path_manager(output_dir)
-            
-            return jsonify({
-                "detection_paused": detection_manager.paused,
-                "detection_running": not detection_manager.paused,
-                "restart_required": is_restart_required(pm),
-            })
+
+            return jsonify(
+                {
+                    "detection_paused": detection_manager.paused,
+                    "detection_running": not detection_manager.paused,
+                    "restart_required": is_restart_required(pm),
+                }
+            )
         except Exception as e:
             logger.error(f"Status API error: {e}")
             return jsonify({"error": str(e)}), 500
@@ -3198,18 +3211,22 @@ def create_web_interface(detection_manager):
         """Pauses the detection loop."""
         try:
             if detection_manager.paused:
-                return jsonify({
-                    "status": "paused",
-                    "message": "Detection was already paused",
-                })
+                return jsonify(
+                    {
+                        "status": "paused",
+                        "message": "Detection was already paused",
+                    }
+                )
 
             detection_manager.paused = True
             logger.info("Detection paused via API")
 
-            return jsonify({
-                "status": "success",
-                "message": "Detection paused",
-            })
+            return jsonify(
+                {
+                    "status": "success",
+                    "message": "Detection paused",
+                }
+            )
 
         except Exception as e:
             logger.error(f"Detection pause error: {e}")
@@ -3222,24 +3239,32 @@ def create_web_interface(detection_manager):
         try:
             # Block during restore
             from utils.restore import is_restore_active
+
             if is_restore_active():
-                return jsonify({
-                    "error": "Cannot resume detection during restore operation"
-                }), 409
+                return (
+                    jsonify(
+                        {"error": "Cannot resume detection during restore operation"}
+                    ),
+                    409,
+                )
 
             if not detection_manager.paused:
-                return jsonify({
-                    "status": "running",
-                    "message": "Detection was already running",
-                })
+                return jsonify(
+                    {
+                        "status": "running",
+                        "message": "Detection was already running",
+                    }
+                )
 
             detection_manager.paused = False
             logger.info("Detection resumed via API")
 
-            return jsonify({
-                "status": "success",
-                "message": "Detection resumed",
-            })
+            return jsonify(
+                {
+                    "status": "success",
+                    "message": "Detection resumed",
+                }
+            )
 
         except Exception as e:
             logger.error(f"Detection resume error: {e}")
@@ -3293,14 +3318,14 @@ def create_web_interface(detection_manager):
                 """Generator that auto-pauses detection during backup streaming."""
                 # Store previous state to restore correctly
                 was_paused = detection_manager.paused
-                
+
                 try:
                     # Pause detection if not already paused
                     if not was_paused:
                         logger.info("Backup: Pausing detection for backup...")
                         detection_manager.paused = True
                         time.sleep(1)  # Brief wait for detection loop to pause
-                    
+
                     yield from stream_backup_archive(
                         include_db=include_db,
                         include_originals=include_originals,
@@ -3349,14 +3374,16 @@ def create_web_interface(detection_manager):
         Returns path to uploaded file for subsequent analyze/apply.
         """
         from werkzeug.utils import secure_filename
-        from utils.restore import is_restore_active, MAX_ARCHIVE_SIZE_BYTES
+
+        from utils.restore import MAX_ARCHIVE_SIZE_BYTES, is_restore_active
 
         try:
             # Check if restore is already active
             if is_restore_active():
-                return jsonify({
-                    "error": "Another restore operation is in progress"
-                }), 409
+                return (
+                    jsonify({"error": "Another restore operation is in progress"}),
+                    409,
+                )
 
             # Get uploaded file
             if "file" not in request.files:
@@ -3369,9 +3396,12 @@ def create_web_interface(detection_manager):
             # Validate filename
             filename = secure_filename(file.filename)
             if not filename.endswith(".tar.gz") and not filename.endswith(".tgz"):
-                return jsonify({
-                    "error": "Invalid file type. Only .tar.gz archives allowed."
-                }), 400
+                return (
+                    jsonify(
+                        {"error": "Invalid file type. Only .tar.gz archives allowed."}
+                    ),
+                    400,
+                )
 
             # Get path manager
             pm = get_path_manager()
@@ -3390,10 +3420,15 @@ def create_web_interface(detection_manager):
                     if total_size > MAX_ARCHIVE_SIZE_BYTES:
                         f.close()
                         upload_path.unlink(missing_ok=True)
-                        return jsonify({
-                            "error": f"File too large. Maximum size: "
-                                     f"{MAX_ARCHIVE_SIZE_BYTES // (1024**3)} GB"
-                        }), 413
+                        return (
+                            jsonify(
+                                {
+                                    "error": f"File too large. Maximum size: "
+                                    f"{MAX_ARCHIVE_SIZE_BYTES // (1024**3)} GB"
+                                }
+                            ),
+                            413,
+                        )
                     f.write(chunk)
 
             # Validate magic header (gzip)
@@ -3401,18 +3436,23 @@ def create_web_interface(detection_manager):
                 magic = f.read(2)
                 if magic != b"\x1f\x8b":
                     upload_path.unlink(missing_ok=True)
-                    return jsonify({
-                        "error": "Invalid archive format (not a valid gzip file)"
-                    }), 400
+                    return (
+                        jsonify(
+                            {"error": "Invalid archive format (not a valid gzip file)"}
+                        ),
+                        400,
+                    )
 
             logger.info(f"Restore: Uploaded archive {filename} ({total_size} bytes)")
 
-            return jsonify({
-                "status": "success",
-                "filename": filename,
-                "path": str(upload_path),
-                "size_bytes": total_size,
-            })
+            return jsonify(
+                {
+                    "status": "success",
+                    "filename": filename,
+                    "path": str(upload_path),
+                    "size_bytes": total_size,
+                }
+            )
 
         except Exception as e:
             logger.error(f"Restore upload error: {e}", exc_info=True)
@@ -3441,10 +3481,12 @@ def create_web_interface(detection_manager):
             # Perform analysis
             analysis = analyze_backup_archive(path)
 
-            return jsonify({
-                "status": "success",
-                "analysis": analysis,
-            })
+            return jsonify(
+                {
+                    "status": "success",
+                    "analysis": analysis,
+                }
+            )
 
         except Exception as e:
             logger.error(f"Restore analyze error: {e}", exc_info=True)
@@ -3458,9 +3500,9 @@ def create_web_interface(detection_manager):
         Single-runner lock prevents concurrent restores.
         """
         from utils.restore import (
+            analyze_backup_archive,
             is_restore_active,
             restore_from_archive,
-            analyze_backup_archive,
         )
 
         nonlocal _restore_progress
@@ -3468,9 +3510,10 @@ def create_web_interface(detection_manager):
         try:
             # Check if restore is already active
             if is_restore_active() or _restore_progress["active"]:
-                return jsonify({
-                    "error": "Another restore operation is in progress"
-                }), 409
+                return (
+                    jsonify({"error": "Another restore operation is in progress"}),
+                    409,
+                )
 
             # Auto-pause detection (like backup)
             was_paused = detection_manager.paused
@@ -3501,10 +3544,15 @@ def create_web_interface(detection_manager):
                 # Resume detection if we paused it
                 if not was_paused:
                     detection_manager.paused = False
-                return jsonify({
-                    "error": "Archive has blockers",
-                    "blockers": analysis["blockers"],
-                }), 400
+                return (
+                    jsonify(
+                        {
+                            "error": "Archive has blockers",
+                            "blockers": analysis["blockers"],
+                        }
+                    ),
+                    400,
+                )
 
             # Parse options
             include_db = data.get("include_db", True)
@@ -3556,29 +3604,33 @@ def create_web_interface(detection_manager):
                     if not was_paused:
                         detection_manager.paused = False
                         logger.info("Restore: Detection resumed after restore")
-                    
+
                     # Cleanup: Delete uploaded archive after restore (success or failure)
                     try:
                         if path.exists():
                             path.unlink()
                             logger.info(f"Restore: Deleted uploaded archive {path}")
                     except Exception as cleanup_err:
-                        logger.warning(f"Restore: Could not delete archive {path}: {cleanup_err}")
+                        logger.warning(
+                            f"Restore: Could not delete archive {path}: {cleanup_err}"
+                        )
 
             thread = threading.Thread(target=run_restore, daemon=True)
             thread.start()
 
             logger.info("Restore: Started restore process in background")
 
-            return jsonify({
-                "status": "started",
-                "message": "Restore process started",
-                "detection_auto_paused": not was_paused,
-            })
+            return jsonify(
+                {
+                    "status": "started",
+                    "message": "Restore process started",
+                    "detection_auto_paused": not was_paused,
+                }
+            )
 
         except Exception as e:
             # Resume detection on error if we paused it
-            if 'was_paused' in locals() and not was_paused:
+            if "was_paused" in locals() and not was_paused:
                 detection_manager.paused = False
             logger.error(f"Restore apply error: {e}", exc_info=True)
             return jsonify({"error": str(e)}), 500
@@ -3589,10 +3641,12 @@ def create_web_interface(detection_manager):
         """Returns the current status of the restore operation."""
         nonlocal _restore_progress
 
-        return jsonify({
-            "active": _restore_progress["active"],
-            "progress": _restore_progress.get("progress"),
-        })
+        return jsonify(
+            {
+                "active": _restore_progress["active"],
+                "progress": _restore_progress.get("progress"),
+            }
+        )
 
     @server.route("/api/restore/cleanup", methods=["POST"])
     @login_required

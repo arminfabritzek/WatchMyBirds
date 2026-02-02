@@ -4,7 +4,6 @@ from logging.handlers import RotatingFileHandler
 
 from config import get_config
 
-
 config = get_config()
 DEBUG_MODE = config["DEBUG_MODE"]
 

@@ -5,7 +5,6 @@ from dotenv import load_dotenv
 
 from utils.settings import load_settings_yaml, save_settings_yaml
 
-
 # Load environment variables from .env file once.
 load_dotenv()
 

@@ -5,7 +5,6 @@ from typing import Any
 
 from config import get_config
 
-
 DB_FILENAME = "images.db"
 
 

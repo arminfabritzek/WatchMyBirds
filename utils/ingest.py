@@ -19,7 +19,6 @@ from utils.db import (
 from utils.image_ops import create_square_crop
 from utils.path_manager import get_path_manager
 
-
 # Setup Logging
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO

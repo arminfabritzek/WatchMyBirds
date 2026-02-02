@@ -6,7 +6,6 @@ import requests
 
 from config import get_config
 
-
 # Read the debug flag from the environment variable (default: False)
 # This is mainly for initial module-level logging setup.
 _debug = os.getenv("DEBUG_MODE", "False").lower() == "true"

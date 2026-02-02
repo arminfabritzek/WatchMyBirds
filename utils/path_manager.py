@@ -1,6 +1,5 @@
 from pathlib import Path
 
-
 # Directory structure:
 # data/
 # ├── originals/

@@ -5,7 +5,6 @@
 # video_capture.py
 from config import get_config
 
-
 config = get_config()
 
 import atexit
@@ -24,7 +23,6 @@ import cv2
 import numpy as np
 
 from logging_config import get_logger
-
 
 logger = get_logger(__name__)
 

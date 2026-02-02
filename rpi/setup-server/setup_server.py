@@ -11,7 +11,6 @@ import os
 
 from flask import Flask, render_template, request
 
-
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("wmb-setup")
 
