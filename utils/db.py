@@ -624,7 +624,7 @@ def fetch_detection_species_summary(
     # If a detection has no classification, it will be skipped by inner join, or become 'Unclassified' via Left Join logic.
     # Let's count explicitly identified species via Classification first.
 
-    # The requirement is: "Species = cls_class_name (wenn vorhanden), sonst 'Unclassified' "
+    # The requirement is: "Species = cls_class_name (if present), otherwise 'Unclassified' "
 
     cur = conn.execute(
         """

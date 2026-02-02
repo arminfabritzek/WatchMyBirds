@@ -1,11 +1,11 @@
 {% extends 'base.html' %}
 
-{% block title %}Bilder hochladen - WatchMyBirds{% endblock %}
+{% block title %}Upload Images - WatchMyBirds{% endblock %}
 
 {% block content %}
 {# Simple Header #}
 <div class="page__header">
-    <h1 class="page__title">📷 Bilder hochladen</h1>
+    <h1 class="page__title">📷 Upload Images</h1>
 </div>
 
 {# Upload Dropzone - Clean & Simple #}
@@ -13,15 +13,15 @@
     <div class="card__body">
         <div class="dropzone" id="dropzone" onclick="document.getElementById('fileInput').click()">
             <div class="dropzone__icon">📷</div>
-            <div class="dropzone__text">Bilder hierher ziehen</div>
-            <div class="dropzone__hint">oder klicken zum Auswählen</div>
+            <div class="dropzone__text">Drag images here</div>
+            <div class="dropzone__hint">or click to select</div>
         </div>
         <input type="file" id="fileInput" multiple accept=".jpg,.jpeg,.png" style="display: none">
 
         <div id="fileList" class="mt-md"></div>
 
         <button id="uploadBtn" class="btn btn--primary btn--lg btn--block mt-md hidden">
-            <span id="uploadBtnText">⬆️ Hochladen</span>
+            <span id="uploadBtnText">⬆️ Upload</span>
             <span id="uploadSpinner" class="animate-spin hidden" style="margin-left: 8px;">⟳</span>
         </button>
 
@@ -34,11 +34,11 @@
     <div class="grid grid--2">
         <div class="stat-card">
             <div class="stat-card__value" id="pendingCount">-</div>
-            <div class="stat-card__label">Wartend</div>
+            <div class="stat-card__label">Pending</div>
         </div>
         <div class="stat-card">
             <div class="stat-card__value" id="processedToday">-</div>
-            <div class="stat-card__label">Verarbeitet</div>
+            <div class="stat-card__label">Processed</div>
         </div>
     </div>
 </div>
@@ -46,7 +46,7 @@
 {# Process Button - only if there are pending files #}
 <div id="processSection" class="mt-lg hidden">
     <button id="processBtn" class="btn btn--accent btn--lg btn--block" onclick="startProcessing()">
-        <span id="processBtnText">✨ Jetzt verarbeiten</span>
+        <span id="processBtnText">✨ Process Now</span>
     </button>
     <p id="processHint" class="text-center text-muted text-sm mt-sm"></p>
     <div id="processResult" class="mt-md"></div>
@@ -109,7 +109,7 @@
             container.innerHTML = `
                 <div style="padding: 12px; background: var(--color-surface-2); border-radius: 8px; text-align: center;">
                     <div style="font-size: 24px; font-weight: 600; color: var(--color-primary);">${selectedFiles.length}</div>
-                    <div style="color: var(--color-text-muted);">Bilder ausgewählt (${formatSize(totalSize)})</div>
+                    <div style="color: var(--color-text-muted);">images selected (${formatSize(totalSize)})</div>
                 </div>
             `;
         } else {
@@ -174,12 +174,12 @@
             }
 
             // Build result message
-            let msg = `✅ ${totalUploaded} Bild(er) hochgeladen!`;
+            let msg = `✅ ${totalUploaded} image(s) uploaded!`;
             if (totalSkipped > 0) {
-                msg += ` (${totalSkipped} übersprungen - bereits vorhanden)`;
+                msg += ` (${totalSkipped} skipped - already exists)`;
             }
             if (totalErrors > 0) {
-                msg += ` (${totalErrors} Fehler)`;
+                msg += ` (${totalErrors} error(s))`;
             }
             result.innerHTML = `<div class="alert alert--success">${msg}</div>`;
             result.classList.remove('hidden');
@@ -189,11 +189,11 @@
             updateStatus();
 
         } catch (err) {
-            result.innerHTML = `<div class="alert alert--danger">❌ Verbindungsfehler</div>`;
+            result.innerHTML = `<div class="alert alert--danger">❌ Connection error</div>`;
             result.classList.remove('hidden');
         } finally {
             btn.disabled = false;
-            btnText.textContent = '⬆️ Hochladen';
+            btnText.textContent = '⬆️ Upload';
             spinner.classList.add('hidden');
         }
     }
@@ -216,11 +216,11 @@
 
                 if (data.processing) {
                     processBtn.disabled = true;
-                    processBtnText.textContent = '⏳ Wird verarbeitet...';
+                    processBtnText.textContent = '⏳ Processing...';
                 } else {
                     processBtn.disabled = false;
                     processBtn.onclick = startProcessing;
-                    processBtnText.textContent = '✨ Jetzt verarbeiten';
+                    processBtnText.textContent = '✨ Process Now';
                 }
             } else {
                 processSection.classList.add('hidden');
@@ -236,7 +236,7 @@
         const result = document.getElementById('processResult');
 
         btn.disabled = true;
-        text.textContent = '⏳ Startet...';
+        text.textContent = '⏳ Starting...';
         result.innerHTML = '';
 
         try {
@@ -247,12 +247,12 @@
             const data = await response.json();
 
             if (response.ok) {
-                result.innerHTML = `<div class="alert alert--success">✅ Verarbeitung gestartet!</div>`;
+                result.innerHTML = `<div class="alert alert--success">✅ Processing started!</div>`;
             } else {
-                result.innerHTML = `<div class="alert alert--danger">❌ ${data.error || 'Fehler'}</div>`;
+                result.innerHTML = `<div class="alert alert--danger">❌ ${data.error || 'Error'}</div>`;
             }
         } catch (err) {
-            result.innerHTML = `<div class="alert alert--danger">❌ Verbindungsfehler</div>`;
+            result.innerHTML = `<div class="alert alert--danger">❌ Connection error</div>`;
         } finally {
             updateStatus();
         }

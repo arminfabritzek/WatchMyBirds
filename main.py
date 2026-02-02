@@ -95,7 +95,14 @@ if __name__ == "__main__":
     try:
         # threads=8 because /video_feed holds connections open indefinitely (streaming),
         # which can exhaust the default 4 threads and block normal page requests.
-        serve(app, host=host, port=port, threads=8)
+        # max_request_body_size=10GB to allow large backup uploads (default is 1GB)
+        serve(
+            app,
+            host=host,
+            port=port,
+            threads=8,
+            max_request_body_size=10 * 1024 * 1024 * 1024,  # 10 GB
+        )
     except KeyboardInterrupt:
         logger.info("KeyboardInterrupt received. Shutting down detection manager...")
         detection_manager.stop()

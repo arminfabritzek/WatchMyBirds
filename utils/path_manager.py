@@ -83,6 +83,35 @@ class PathManager:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         return self.get_backup_dir() / f"tmp_db_{timestamp}.db"
 
+    # -------------------------------------------------------------------------
+    # Restore Path Methods
+    # -------------------------------------------------------------------------
+    def get_restore_tmp_dir(self) -> Path:
+        """Returns restore temp directory, creates if needed."""
+        restore_tmp = self.base_dir / "restore_tmp"
+        restore_tmp.mkdir(parents=True, exist_ok=True)
+        return restore_tmp
+
+    def get_restore_upload_path(self, filename: str) -> Path:
+        """Returns path for uploaded restore archive."""
+        return self.get_restore_tmp_dir() / filename
+
+    def get_backup_before_restore_dir(self) -> Path:
+        """
+        Returns directory for pre-restore backups (rollback safety).
+        Creates if needed.
+        """
+        backup_before = self.base_dir / "backup_before_restore"
+        backup_before.mkdir(parents=True, exist_ok=True)
+        return backup_before
+
+    def get_restart_required_marker(self) -> Path:
+        """
+        Returns path to the restart-required marker file.
+        This file is created when a restore operation requires a restart.
+        """
+        return self.base_dir / ".restart_required"
+
     def get_date_folder(self, date_str: str) -> str:
         """Returns the YYYY-MM-DD folder name from various inputs."""
         # Assume input is either YYYY-MM-DD or YYYYMMDD prefix

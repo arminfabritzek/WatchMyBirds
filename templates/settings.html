@@ -418,17 +418,30 @@
     <!-- Tools Section -->
     <h4 class="mb-3">Tools</h4>
 
-    <!-- Ingest UI -->
-    <div class="card mb-4">
-        <div class="card-header bg-light fw-bold">Image Ingest</div>
-        <div class="card-body">
-            <p class="card-text">Import images from the mounted <code>/ingest</code> folder. This will pause the live
-                stream momentarily.</p>
-            <form method="POST" action="{{ url_for('ingest_route') }}">
-                <button type="submit" class="btn btn-info text-white">Start Ingest from /ingest</button>
-            </form>
+    <!-- Advanced Section (collapsed by default) -->
+    <details class="mb-4">
+        <summary class="card-header bg-secondary text-white fw-bold"
+            style="cursor: pointer; list-style: none; padding: 0.75rem 1rem; border-radius: 0.25rem;">
+            ⚙️ Advanced
+        </summary>
+
+        <!-- Ingest UI (legacy - for Docker mounts) -->
+        <div class="card mt-2">
+            <div class="card-header bg-light fw-bold">Image Ingest (Legacy)</div>
+            <div class="card-body">
+                <p class="card-text text-muted">
+                    <small>For Docker deployments: Import images from the mounted <code>/ingest</code>
+                        folder.</small>
+                </p>
+                <p class="card-text text-muted">
+                    <small>💡 For normal uploads, use the <a href="/inbox">Inbox</a>.</small>
+                </p>
+                <form method="POST" action="{{ url_for('ingest_route') }}">
+                    <button type="submit" class="btn btn-secondary btn-sm">Start Ingest from /ingest</button>
+                </form>
+            </div>
         </div>
-    </div>
+    </details>
 
     <!-- Backup & Migration -->
     <div class="card mb-4">
@@ -436,15 +449,26 @@
         <div class="card-body">
             <p class="card-text">Create a full backup of your database, images, and settings.
                 Detection is automatically paused during backup.</p>
-            <a href="/backup" class="btn btn-primary">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-                    style="margin-right: 6px; vertical-align: -2px;">
-                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                    <polyline points="7 10 12 15 17 10" />
-                    <line x1="12" y1="15" x2="12" y2="3" />
-                </svg>
-                Open Backup &amp; Migration
-            </a>
+            <div class="d-flex gap-2 flex-wrap">
+                <a href="/backup" class="btn btn-primary">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                        style="margin-right: 6px; vertical-align: -2px;">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                        <polyline points="7 10 12 15 17 10" />
+                        <line x1="12" y1="15" x2="12" y2="3" />
+                    </svg>
+                    Create Backup
+                </a>
+                <a href="/restore" class="btn btn-outline-primary">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                        style="margin-right: 6px; vertical-align: -2px;">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                        <polyline points="17 8 12 3 7 8" />
+                        <line x1="12" y1="3" x2="12" y2="15" />
+                    </svg>
+                    Import Backup
+                </a>
+            </div>
         </div>
     </div>
 
@@ -501,17 +525,6 @@
             }
         }
 
-        function copyRsync() {
-            var copyText = document.getElementById("rsyncCommand");
-            copyText.select();
-            copyText.setSelectionRange(0, 99999); // For mobile devices
-            navigator.clipboard.writeText(copyText.value).then(function () {
-                // visual feedback could be added here
-                alert("Command copied to clipboard: " + copyText.value);
-            }, function (err) {
-                console.error('Async: Could not copy text: ', err);
-            });
-        }
     </script>
 
     <!-- System Information (Dynamic) -->
@@ -573,21 +586,6 @@
     <div class="card mb-4 border-danger">
         <div class="card-header bg-danger text-white fw-bold">Danger Zone</div>
         <div class="card-body">
-            <!-- Developer Sync -->
-            <div class="mb-3 border-bottom pb-3">
-                <div class="d-flex align-items-center justify-content-between">
-                    <div>
-                        <p class="mb-0 fw-bold">Developer Sync</p>
-                        <small class="text-muted">Push code from host (Dev Mode only):</small>
-                    </div>
-                    <div class="input-group" style="max-width: 400px;">
-                        <input type="text" class="form-control font-monospace form-control-sm"
-                            value="./ignore/sync_to_rpi.sh {{ request.host.split(':')[0] }}" readonly id="rsyncCommand">
-                        <button class="btn btn-outline-secondary btn-sm" type="button"
-                            onclick="copyRsync()">Copy</button>
-                    </div>
-                </div>
-            </div>
 
             <div class="d-flex align-items-center justify-content-between">
                 <div>

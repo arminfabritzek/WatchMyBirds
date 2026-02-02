@@ -17,15 +17,15 @@
         <div style="display: flex; flex-direction: column; gap: var(--space-sm);">
             <div style="display: flex; align-items: center; gap: var(--space-sm);">
                 <span>⏸️</span>
-                <span>Detection wird während des Backups automatisch pausiert</span>
+                <span>Detection is automatically paused during backup</span>
             </div>
             <div style="display: flex; align-items: center; gap: var(--space-sm);">
                 <span>📦</span>
-                <span>Download startet sofort als <code>.tar.gz</code> – kein Archiv auf dem Gerät</span>
+                <span>Download starts immediately as <code>.tar.gz</code> – no archive remains on device</span>
             </div>
             <div style="display: flex; align-items: center; gap: var(--space-sm);">
                 <span>🔐</span>
-                <span><strong>Enthält Tokens & Passwörter</strong> – sicher aufbewahren!</span>
+                <span><strong>Contains Tokens & Passwords</strong> – keep safe!</span>
             </div>
         </div>
     </div>
@@ -34,12 +34,12 @@
 {# Stats Card #}
 <div class="card mb-lg">
     <div class="card__header">
-        <h3 class="card__title">📊 Statistiken</h3>
+        <h3 class="card__title">📊 Statistics</h3>
     </div>
     <div class="card__body" id="statsPanel">
         <div class="text-center p-xl">
             <span class="animate-spin" style="font-size: 2rem; display: inline-block;">⟳</span>
-            <div class="text-muted mt-md">Lade Statistiken...</div>
+            <div class="text-muted mt-md">Loading statistics...</div>
         </div>
     </div>
 </div>
@@ -47,68 +47,68 @@
 {# Backup Options #}
 <div class="card mb-lg">
     <div class="card__header">
-        <h3 class="card__title">📦 Backup-Inhalt auswählen</h3>
+        <h3 class="card__title">📦 Select Backup Content</h3>
     </div>
     <div class="card__body">
         {# Database #}
         <div class="backup-option selected" onclick="toggleOption(this, 'include_db')">
             <input type="checkbox" id="include_db" checked>
             <div class="backup-option__content">
-                <div class="backup-option__title">Datenbank (images.db)</div>
+                <div class="backup-option__title">Database (images.db)</div>
                 <div class="backup-option__size" id="dbSize">-</div>
             </div>
-            <div class="backup-option__desc">Enthält alle Detektionen, Klassifizierungen und Metadaten.</div>
+            <div class="backup-option__desc">Contains all detections, classifications, and metadata.</div>
         </div>
 
         {# Originals #}
         <div class="backup-option selected" onclick="toggleOption(this, 'include_originals')">
             <input type="checkbox" id="include_originals" checked>
             <div class="backup-option__content">
-                <div class="backup-option__title">Originalbilder</div>
+                <div class="backup-option__title">Original Images</div>
                 <div class="backup-option__size" id="originalsSize">-</div>
             </div>
-            <div class="backup-option__desc">Alle gespeicherten Originalbilder im JPEG-Format.</div>
+            <div class="backup-option__desc">All saved original images in JPEG format.</div>
         </div>
 
         {# Settings #}
         <div class="backup-option selected" onclick="toggleOption(this, 'include_settings')">
             <input type="checkbox" id="include_settings" checked>
             <div class="backup-option__content">
-                <div class="backup-option__title">Einstellungen (settings.yaml)</div>
+                <div class="backup-option__title">Settings (settings.yaml)</div>
                 <div class="backup-option__size" id="settingsSize">-</div>
             </div>
-            <div class="backup-option__desc">Alle Konfigurationseinstellungen.</div>
+            <div class="backup-option__desc">All configuration settings.</div>
         </div>
 
         {# Derivatives #}
         <div class="backup-option" onclick="toggleOption(this, 'include_derivatives')">
             <input type="checkbox" id="include_derivatives">
             <div class="backup-option__content">
-                <div class="backup-option__title">Derivate (Thumbs & Optimized)</div>
+                <div class="backup-option__title">Derivatives (Thumbs & Optimized)</div>
                 <div class="backup-option__size" id="derivativesSize">-</div>
             </div>
-            <div class="backup-option__desc">Thumbnails und optimierte Versionen. Können regeneriert werden.</div>
+            <div class="backup-option__desc">Thumbnails and optimized versions. Can be regenerated.</div>
         </div>
     </div>
 </div>
 
 {# Total Size #}
 <div class="total-size-bar mb-lg">
-    <span>Geschätzte Archivgröße:</span>
+    <span>Estimated archive size:</span>
     <span class="total-size-value" id="totalSize">-</span>
 </div>
 
 {# Download Button #}
 <button id="downloadBtn" class="btn btn--primary btn--lg btn--block" onclick="startBackup()">
-    <span id="downloadBtnText">📥 Backup herunterladen</span>
+    <span id="downloadBtnText">📥 Download Backup</span>
     <span id="downloadSpinner" class="animate-spin hidden" style="margin-left: 8px;">⟳</span>
 </button>
 
 {# Progress #}
 <div id="downloadProgress" class="mt-lg hidden">
     <div class="alert alert--info animate-pulse">
-        <strong>⏳ Download läuft...</strong><br>
-        <small>Das Archiv wird gestreamt. Bitte Fenster nicht schließen.</small>
+        <strong>⏳ Download in progress...</strong><br>
+        <small>The archive is being streamed. Please do not close the window.</small>
     </div>
 </div>
 
@@ -228,35 +228,35 @@
 
             document.getElementById('dbSize').textContent = formatMB(stats.db_size_mb);
             document.getElementById('originalsSize').textContent =
-                `${stats.originals_count} Dateien (${formatMB(stats.originals_size_mb)})`;
+                `${stats.originals_count} files (${formatMB(stats.originals_size_mb)})`;
             document.getElementById('derivativesSize').textContent =
-                `${stats.derivatives_count} Dateien (${formatMB(stats.derivatives_size_mb)})`;
+                `${stats.derivatives_count} files (${formatMB(stats.derivatives_size_mb)})`;
             document.getElementById('settingsSize').textContent =
-                stats.settings_exists ? formatBytes(stats.settings_size_bytes) : 'Nicht vorhanden';
+                stats.settings_exists ? formatBytes(stats.settings_size_bytes) : 'Not available';
 
             document.getElementById('statsPanel').innerHTML = `
                 <div class="stat-row">
-                    <span class="stat-row__label">Datenbank</span>
+                    <span class="stat-row__label">Database</span>
                     <span class="stat-row__value">${formatMB(stats.db_size_mb)}</span>
                 </div>
                 <div class="stat-row">
-                    <span class="stat-row__label">Originalbilder</span>
-                    <span class="stat-row__value">${stats.originals_count} Dateien • ${formatMB(stats.originals_size_mb)}</span>
+                    <span class="stat-row__label">Original Images</span>
+                    <span class="stat-row__value">${stats.originals_count} files • ${formatMB(stats.originals_size_mb)}</span>
                 </div>
                 <div class="stat-row">
-                    <span class="stat-row__label">Derivate</span>
-                    <span class="stat-row__value">${stats.derivatives_count} Dateien • ${formatMB(stats.derivatives_size_mb)}</span>
+                    <span class="stat-row__label">Derivatives</span>
+                    <span class="stat-row__value">${stats.derivatives_count} files • ${formatMB(stats.derivatives_size_mb)}</span>
                 </div>
                 <div class="stat-row">
-                    <span class="stat-row__label">Einstellungen</span>
-                    <span class="stat-row__value">${stats.settings_exists ? '✓ Vorhanden' : '✗ Nicht vorhanden'}</span>
+                    <span class="stat-row__label">Settings</span>
+                    <span class="stat-row__value">${stats.settings_exists ? '✓ Available' : '✗ Not available'}</span>
                 </div>
             `;
 
             updateTotalSize();
         } catch (err) {
             document.getElementById('statsPanel').innerHTML =
-                '<div class="alert alert--danger">Fehler beim Laden der Statistiken.</div>';
+                '<div class="alert alert--danger">Error loading statistics.</div>';
         }
     }
 
@@ -305,7 +305,7 @@
         };
 
         btn.disabled = true;
-        btnText.textContent = 'Erstelle Backup...';
+        btnText.textContent = 'Creating Backup...';
         spinner.classList.remove('hidden');
         progress.classList.remove('hidden');
         errorDiv.classList.add('hidden');
@@ -319,7 +319,7 @@
 
             if (!response.ok) {
                 const data = await response.json();
-                throw new Error(data.error || 'Backup fehlgeschlagen');
+                throw new Error(data.error || 'Backup failed');
             }
 
             const disposition = response.headers.get('Content-Disposition');
@@ -337,7 +337,7 @@
             a.click();
             URL.revokeObjectURL(url);
 
-            progress.innerHTML = '<div class="alert alert--success">✅ Backup erfolgreich heruntergeladen!</div>';
+            progress.innerHTML = '<div class="alert alert--success">✅ Backup successfully downloaded!</div>';
 
         } catch (err) {
             progress.classList.add('hidden');
@@ -345,7 +345,7 @@
             errorDiv.classList.remove('hidden');
         } finally {
             btn.disabled = false;
-            btnText.textContent = '📥 Backup herunterladen';
+            btnText.textContent = '📥 Download Backup';
             spinner.classList.add('hidden');
         }
     }

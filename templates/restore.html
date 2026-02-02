@@ -1,0 +1,844 @@
+{% extends 'base.html' %}
+
+{% block title %}Restore - WatchMyBirds{% endblock %}
+
+{% block content %}
+{# Page Header #}
+<div class="page__header">
+    <h1 class="page__title">Import Backup</h1>
+    <div class="page__actions">
+        <a href="/backup" class="btn btn--secondary">Create Backup</a>
+        <a href="/settings" class="btn btn--secondary">Settings</a>
+    </div>
+</div>
+
+{# Warning Box #}
+<div class="card mb-lg" id="warningBox">
+    <div class="card__body" style="padding: var(--space-md) var(--space-lg);">
+        <div style="display: flex; flex-direction: column; gap: var(--space-sm);">
+            <div style="display: flex; align-items: center; gap: var(--space-sm);">
+                <span>🔒</span>
+                <span>A rollback backup is created automatically</span>
+            </div>
+            <div style="display: flex; align-items: center; gap: var(--space-sm);">
+                <span>📦</span>
+                <span>Only supports <code>.tar.gz</code> backups from WatchMyBirds</span>
+            </div>
+        </div>
+    </div>
+</div>
+
+
+{# Restart Required Banner (persistent across reloads) #}
+<div id="restartBanner" class="alert alert--warning mb-lg hidden">
+    <strong>⚠️ Restart Required</strong><br>
+    <small>A previous import requires a system restart for all changes to take effect.</small>
+</div>
+
+{# Upload Zone #}
+<div class="card mb-lg" id="uploadCard">
+    <div class="card__header">
+        <h3 class="card__title">📤 Upload Backup File</h3>
+    </div>
+    <div class="card__body">
+        <div class="upload-zone" id="uploadZone" onclick="document.getElementById('fileInput').click()">
+            <div class="upload-zone__content">
+                <span style="font-size: 3rem;">📁</span>
+                <div class="upload-zone__text">
+                    Click or drag a <code>.tar.gz</code> file here
+                </div>
+                <div class="upload-zone__hint">
+                    Maximum size: 10 GB
+                </div>
+            </div>
+            <input type="file" id="fileInput" accept=".tar.gz,.tgz" style="display: none;">
+        </div>
+
+        {# Upload Progress #}
+        <div id="uploadProgress" class="hidden mt-md">
+            <div class="progress-bar">
+                <div class="progress-bar__fill" id="uploadProgressFill" style="width: 0%"></div>
+            </div>
+            <div class="text-center text-muted mt-sm" id="uploadProgressText">Uploading...</div>
+        </div>
+    </div>
+</div>
+
+{# Analysis Results (hidden initially) #}
+<div class="card mb-lg hidden" id="analysisCard">
+    <div class="card__header">
+        <h3 class="card__title">📊 Archive Analysis</h3>
+    </div>
+    <div class="card__body" id="analysisBody">
+        {# Content populated by JS #}
+    </div>
+</div>
+
+{# Import Options (hidden initially) #}
+<div class="card mb-lg hidden" id="optionsCard">
+    <div class="card__header">
+        <h3 class="card__title">⚙️ Import Options</h3>
+    </div>
+    <div class="card__body">
+        {# Database Option #}
+        <div class="restore-option selected" id="optDb" onclick="toggleRestoreOption('optDb', 'include_db')">
+            <input type="checkbox" id="include_db" checked>
+            <div class="restore-option__content">
+                <div class="restore-option__title">Import Database</div>
+                <div class="restore-option__size" id="dbInfo">-</div>
+            </div>
+            <div class="restore-option__desc">
+                Detections, classifications, and metadata.
+            </div>
+        </div>
+
+        {# DB Strategy (only visible when DB is selected) #}
+        <div class="db-strategy-box mb-md" id="dbStrategyBox">
+            <div class="db-strategy-title">Database Strategy:</div>
+            <div class="db-strategy-options">
+                <label class="db-strategy-option selected" id="strategyMerge">
+                    <input type="radio" name="db_strategy" value="merge" checked onchange="updateStrategy()">
+                    <span class="db-strategy-option__title">🔀 Merge</span>
+                    <span class="db-strategy-option__desc">Add data to existing DB. Duplicates are skipped.</span>
+                </label>
+                <label class="db-strategy-option" id="strategyReplace">
+                    <input type="radio" name="db_strategy" value="replace" onchange="updateStrategy()">
+                    <span class="db-strategy-option__title">🔄 Replace</span>
+                    <span class="db-strategy-option__desc">Replace existing DB. <strong>Requires
+                            restart!</strong></span>
+                </label>
+            </div>
+        </div>
+
+        {# Originals Option #}
+        <div class="restore-option selected" id="optOriginals"
+            onclick="toggleRestoreOption('optOriginals', 'include_originals')">
+            <input type="checkbox" id="include_originals" checked>
+            <div class="restore-option__content">
+                <div class="restore-option__title">Import Original Images</div>
+                <div class="restore-option__size" id="originalsInfo">-</div>
+            </div>
+            <div class="restore-option__desc">
+                All original JPEG files from the backup.
+            </div>
+        </div>
+
+        {# Derivatives Option #}
+        <div class="restore-option" id="optDerivatives"
+            onclick="toggleRestoreOption('optDerivatives', 'include_derivatives')">
+            <input type="checkbox" id="include_derivatives">
+            <div class="restore-option__content">
+                <div class="restore-option__title">Import Derivatives</div>
+                <div class="restore-option__size" id="derivativesInfo">-</div>
+            </div>
+            <div class="restore-option__desc">
+                Thumbnails and optimized versions. Can be regenerated.
+            </div>
+        </div>
+
+        {# Settings Option #}
+        <div class="restore-option" id="optSettings" onclick="toggleRestoreOption('optSettings', 'include_settings')">
+            <input type="checkbox" id="include_settings">
+            <div class="restore-option__content">
+                <div class="restore-option__title">Import Settings</div>
+                <div class="restore-option__size" id="settingsInfo">-</div>
+            </div>
+            <div class="restore-option__desc">
+                Configuration. <strong>Secret keys are displayed masked.</strong>
+            </div>
+        </div>
+
+        {# Settings Preview (only visible when settings selected) #}
+        <div class="settings-preview-box hidden" id="settingsPreviewBox">
+            <div class="settings-preview-title">📋 Settings Preview:</div>
+            <div class="settings-preview-content" id="settingsPreviewContent">
+                {# Populated by JS #}
+            </div>
+        </div>
+    </div>
+</div>
+
+{# Blockers/Warnings (hidden initially) #}
+<div id="blockersBox" class="alert alert--danger mb-lg hidden">
+    <strong>❌ Blockers:</strong>
+    <ul id="blockersList"></ul>
+</div>
+
+<div id="warningsBox" class="alert alert--warning mb-lg hidden">
+    <strong>⚠️ Warnings:</strong>
+    <ul id="warningsList"></ul>
+</div>
+
+{# Start Restore Button #}
+<button id="restoreBtn" class="btn btn--primary btn--lg btn--block hidden" onclick="startRestore()">
+    <span id="restoreBtnText">▶️ Start Import</span>
+    <span id="restoreSpinner" class="animate-spin hidden" style="margin-left: 8px;">⟳</span>
+</button>
+
+{# Progress Display #}
+<div id="restoreProgress" class="card mt-lg hidden">
+    <div class="card__header">
+        <h3 class="card__title">📥 Import Progress</h3>
+    </div>
+    <div class="card__body">
+        <div class="progress-stage" id="progressStage">Initializing...</div>
+        <div class="progress-bar mt-md">
+            <div class="progress-bar__fill" id="restoreProgressFill" style="width: 0%"></div>
+        </div>
+        <div class="progress-message mt-sm" id="progressMessage">-</div>
+
+        {# Conflicts #}
+        <div id="conflictsBox" class="mt-md hidden">
+            <div class="conflicts-title">⚠️ Conflicts (renamed):</div>
+            <ul id="conflictsList" class="conflicts-list"></ul>
+        </div>
+    </div>
+</div>
+
+{# Result Display #}
+<div id="restoreResult" class="mt-lg hidden"></div>
+
+{% endblock %}
+
+{% block head %}
+<style>
+    .upload-zone {
+        border: 2px dashed var(--color-border);
+        border-radius: var(--radius-lg);
+        padding: var(--space-xl);
+        text-align: center;
+        cursor: pointer;
+        transition: all var(--transition-fast);
+        background: var(--color-surface-2);
+    }
+
+    .upload-zone:hover,
+    .upload-zone.drag-over {
+        border-color: var(--color-primary);
+        background: rgba(47, 111, 62, 0.1);
+    }
+
+    .upload-zone__text {
+        font-size: var(--font-size-lg);
+        font-weight: 500;
+        margin-top: var(--space-md);
+    }
+
+    .upload-zone__hint {
+        font-size: var(--font-size-sm);
+        color: var(--color-text-muted);
+        margin-top: var(--space-sm);
+    }
+
+    .progress-bar {
+        height: 8px;
+        background: var(--color-surface-2);
+        border-radius: 4px;
+        overflow: hidden;
+    }
+
+    .progress-bar__fill {
+        height: 100%;
+        background: var(--color-primary);
+        transition: width 0.3s ease;
+    }
+
+    .restore-option {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: flex-start;
+        gap: var(--space-sm);
+        padding: var(--space-md);
+        background: var(--color-surface-2);
+        border: 2px solid var(--color-border);
+        border-radius: var(--radius-lg);
+        margin-bottom: var(--space-md);
+        cursor: pointer;
+        transition: all var(--transition-fast);
+    }
+
+    .restore-option:hover {
+        border-color: var(--color-border-light);
+    }
+
+    .restore-option.selected {
+        border-color: var(--color-primary);
+        background: rgba(47, 111, 62, 0.1);
+    }
+
+    .restore-option input[type="checkbox"] {
+        width: 20px;
+        height: 20px;
+        accent-color: var(--color-primary);
+        cursor: pointer;
+    }
+
+    .restore-option__content {
+        flex: 1;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+
+    .restore-option__title {
+        font-weight: 600;
+        color: var(--color-text);
+    }
+
+    .restore-option__size {
+        font-family: 'SF Mono', monospace;
+        font-size: var(--font-size-sm);
+        color: var(--color-text-muted);
+    }
+
+    .restore-option__desc {
+        width: 100%;
+        font-size: var(--font-size-sm);
+        color: var(--color-text-muted);
+        padding-left: 28px;
+    }
+
+    .db-strategy-box {
+        margin-left: 28px;
+        padding: var(--space-md);
+        background: var(--color-surface-1);
+        border-radius: var(--radius-md);
+    }
+
+    .db-strategy-title {
+        font-weight: 500;
+        margin-bottom: var(--space-sm);
+    }
+
+    .db-strategy-options {
+        display: flex;
+        flex-direction: column;
+        gap: var(--space-sm);
+    }
+
+    .db-strategy-option {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: flex-start;
+        gap: var(--space-sm);
+        padding: var(--space-sm) var(--space-md);
+        border: 1px solid var(--color-border);
+        border-radius: var(--radius-md);
+        cursor: pointer;
+    }
+
+    .db-strategy-option.selected {
+        border-color: var(--color-primary);
+        background: rgba(47, 111, 62, 0.05);
+    }
+
+    .db-strategy-option__title {
+        font-weight: 500;
+    }
+
+    .db-strategy-option__desc {
+        width: 100%;
+        font-size: var(--font-size-sm);
+        color: var(--color-text-muted);
+        padding-left: 24px;
+    }
+
+    .settings-preview-box {
+        margin-left: 28px;
+        padding: var(--space-md);
+        background: var(--color-surface-1);
+        border-radius: var(--radius-md);
+        margin-top: var(--space-md);
+    }
+
+    .settings-preview-title {
+        font-weight: 500;
+        margin-bottom: var(--space-sm);
+    }
+
+    .settings-preview-content {
+        font-family: 'SF Mono', monospace;
+        font-size: var(--font-size-sm);
+        max-height: 200px;
+        overflow-y: auto;
+    }
+
+    .settings-preview-content .key {
+        color: var(--color-primary);
+    }
+
+    .settings-preview-content .masked {
+        color: var(--color-danger);
+    }
+
+    .progress-stage {
+        font-size: var(--font-size-lg);
+        font-weight: 600;
+    }
+
+    .progress-message {
+        font-size: var(--font-size-sm);
+        color: var(--color-text-muted);
+    }
+
+    .conflicts-title {
+        font-weight: 500;
+        color: var(--color-warning);
+        margin-bottom: var(--space-sm);
+    }
+
+    .conflicts-list {
+        font-size: var(--font-size-sm);
+        font-family: 'SF Mono', monospace;
+        max-height: 150px;
+        overflow-y: auto;
+        padding-left: var(--space-md);
+    }
+
+    .stat-row {
+        display: flex;
+        justify-content: space-between;
+        padding: var(--space-sm) 0;
+        border-bottom: 1px solid var(--color-border);
+    }
+
+    .stat-row:last-child {
+        border-bottom: none;
+    }
+
+    .stat-row__label {
+        color: var(--color-text-muted);
+    }
+
+    .stat-row__value {
+        font-weight: 500;
+        color: var(--color-text);
+    }
+</style>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    let uploadedArchivePath = null;
+    let analysisData = null;
+    let pollInterval = null;
+
+    document.addEventListener('DOMContentLoaded', function () {
+        checkDetectionStatus();
+        setupDragDrop();
+        setupFileInput();
+    });
+
+    function checkDetectionStatus() {
+        fetch('/api/status')
+            .then(r => r.json())
+            .then(data => {
+                const restartBanner = document.getElementById('restartBanner');
+
+                // Handle persistent restart_required status
+                if (data.restart_required) {
+                    restartBanner.classList.remove('hidden');
+                } else {
+                    restartBanner.classList.add('hidden');
+                }
+            })
+            .catch(err => console.error('Status check failed:', err));
+    }
+
+
+    function setupDragDrop() {
+        const zone = document.getElementById('uploadZone');
+
+        zone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            zone.classList.add('drag-over');
+        });
+
+        zone.addEventListener('dragleave', () => {
+            zone.classList.remove('drag-over');
+        });
+
+        zone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            zone.classList.remove('drag-over');
+            const files = e.dataTransfer.files;
+            if (files.length > 0) {
+                handleFile(files[0]);
+            }
+        });
+    }
+
+    function setupFileInput() {
+        document.getElementById('fileInput').addEventListener('change', (e) => {
+            if (e.target.files.length > 0) {
+                handleFile(e.target.files[0]);
+            }
+        });
+    }
+
+    async function handleFile(file) {
+        if (!file.name.endsWith('.tar.gz') && !file.name.endsWith('.tgz')) {
+            alert('Only .tar.gz files are supported.');
+            return;
+        }
+
+        // Show progress
+        document.getElementById('uploadProgress').classList.remove('hidden');
+        const progressFill = document.getElementById('uploadProgressFill');
+        const progressText = document.getElementById('uploadProgressText');
+
+        const formData = new FormData();
+        formData.append('file', file);
+
+        try {
+            const xhr = new XMLHttpRequest();
+
+            xhr.upload.addEventListener('progress', (e) => {
+                if (e.lengthComputable) {
+                    const pct = Math.round((e.loaded / e.total) * 100);
+                    progressFill.style.width = pct + '%';
+                    progressText.textContent = `${pct}% uploaded (${formatBytes(e.loaded)} / ${formatBytes(e.total)})`;
+                }
+            });
+
+            xhr.onload = function () {
+                if (xhr.status === 200) {
+                    const resp = JSON.parse(xhr.responseText);
+                    uploadedArchivePath = resp.path;
+                    progressText.textContent = '✅ Upload complete';
+                    analyzeArchive();
+                } else {
+                    const err = JSON.parse(xhr.responseText);
+                    progressText.textContent = '❌ ' + (err.error || 'Upload failed');
+                }
+            };
+
+            xhr.onerror = function () {
+                progressText.textContent = '❌ Network error';
+            };
+
+            xhr.open('POST', '/api/restore/upload');
+            xhr.send(formData);
+
+        } catch (err) {
+            progressText.textContent = '❌ ' + err.message;
+        }
+    }
+
+    async function analyzeArchive() {
+        try {
+            const resp = await fetch('/api/restore/analyze', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ path: uploadedArchivePath })
+            });
+
+            const data = await resp.json();
+            if (data.status !== 'success') {
+                alert('Analysis failed: ' + (data.error || 'Unknown error'));
+                return;
+            }
+
+            analysisData = data.analysis;
+            displayAnalysis(analysisData);
+
+        } catch (err) {
+            alert('Analysis error: ' + err.message);
+        }
+    }
+
+    function displayAnalysis(analysis) {
+        const card = document.getElementById('analysisCard');
+        const body = document.getElementById('analysisBody');
+
+        body.innerHTML = `
+            <div class="stat-row">
+                <span class="stat-row__label">Database (images.db)</span>
+                <span class="stat-row__value">${analysis.has_db ? '✓ ' + formatBytes(analysis.db_size_bytes) : '✗ Not available'}</span>
+            </div>
+            <div class="stat-row">
+                <span class="stat-row__label">Original Images</span>
+                <span class="stat-row__value">${analysis.has_originals ? '✓ ' + analysis.originals_count + ' files' : '✗ None'}</span>
+            </div>
+            <div class="stat-row">
+                <span class="stat-row__label">Derivatives</span>
+                <span class="stat-row__value">${analysis.has_derivatives ? '✓ ' + analysis.derivatives_count + ' files' : '✗ None'}</span>
+            </div>
+            <div class="stat-row">
+                <span class="stat-row__label">Settings</span>
+                <span class="stat-row__value">${analysis.has_settings ? '✓ ' + formatBytes(analysis.settings_size_bytes) : '✗ None'}</span>
+            </div>
+            <div class="stat-row">
+                <span class="stat-row__label">Manifest</span>
+                <span class="stat-row__value">${analysis.has_manifest ? '✓ Available' : '✗ Not available'}</span>
+            </div>
+            <div class="stat-row">
+                <span class="stat-row__label">Total Size (uncompressed)</span>
+                <span class="stat-row__value">${formatBytes(analysis.total_size_bytes)}</span>
+            </div>
+        `;
+
+        card.classList.remove('hidden');
+
+        // Update option info
+        document.getElementById('dbInfo').textContent = analysis.has_db
+            ? formatBytes(analysis.db_size_bytes)
+            : 'Not available';
+        document.getElementById('originalsInfo').textContent = analysis.has_originals
+            ? analysis.originals_count + ' files'
+            : 'None';
+        document.getElementById('derivativesInfo').textContent = analysis.has_derivatives
+            ? analysis.derivatives_count + ' files'
+            : 'None';
+        document.getElementById('settingsInfo').textContent = analysis.has_settings
+            ? formatBytes(analysis.settings_size_bytes)
+            : 'None';
+
+        // Show settings preview if available
+        if (analysis.has_settings && analysis.settings_preview) {
+            const previewContent = document.getElementById('settingsPreviewContent');
+            let html = '';
+            for (const [key, value] of Object.entries(analysis.settings_preview)) {
+                const isMasked = value === '********';
+                html += `<div><span class="key">${key}:</span> <span class="${isMasked ? 'masked' : ''}">${value}</span></div>`;
+            }
+            previewContent.innerHTML = html;
+        }
+
+        // Handle blockers
+        if (analysis.blockers && analysis.blockers.length > 0) {
+            const box = document.getElementById('blockersBox');
+            const list = document.getElementById('blockersList');
+            list.innerHTML = analysis.blockers.map(b => `<li>${b}</li>`).join('');
+            box.classList.remove('hidden');
+            // Don't show restore button if blockers
+        } else {
+            document.getElementById('blockersBox').classList.add('hidden');
+            document.getElementById('optionsCard').classList.remove('hidden');
+            document.getElementById('restoreBtn').classList.remove('hidden');
+        }
+
+        // Handle warnings
+        if (analysis.warnings && analysis.warnings.length > 0) {
+            const box = document.getElementById('warningsBox');
+            const list = document.getElementById('warningsList');
+            list.innerHTML = analysis.warnings.map(w => `<li>${w}</li>`).join('');
+            box.classList.remove('hidden');
+        } else {
+            document.getElementById('warningsBox').classList.add('hidden');
+        }
+
+        // Disable options for missing content
+        if (!analysis.has_db) disableOption('optDb', 'include_db');
+        if (!analysis.has_originals) disableOption('optOriginals', 'include_originals');
+        if (!analysis.has_derivatives) disableOption('optDerivatives', 'include_derivatives');
+        if (!analysis.has_settings) disableOption('optSettings', 'include_settings');
+    }
+
+    function disableOption(optId, checkboxId) {
+        const opt = document.getElementById(optId);
+        const checkbox = document.getElementById(checkboxId);
+        opt.classList.remove('selected');
+        opt.style.opacity = '0.5';
+        opt.style.pointerEvents = 'none';
+        checkbox.checked = false;
+        checkbox.disabled = true;
+    }
+
+    function toggleRestoreOption(optId, checkboxId) {
+        const opt = document.getElementById(optId);
+        const checkbox = document.getElementById(checkboxId);
+        if (checkbox.disabled) return;
+
+        checkbox.checked = !checkbox.checked;
+        opt.classList.toggle('selected', checkbox.checked);
+
+        // Toggle DB strategy visibility
+        if (checkboxId === 'include_db') {
+            document.getElementById('dbStrategyBox').style.display =
+                checkbox.checked ? 'block' : 'none';
+        }
+
+        // Toggle settings preview visibility
+        if (checkboxId === 'include_settings') {
+            document.getElementById('settingsPreviewBox').classList.toggle('hidden', !checkbox.checked);
+        }
+    }
+
+    function updateStrategy() {
+        const mergeOpt = document.getElementById('strategyMerge');
+        const replaceOpt = document.getElementById('strategyReplace');
+
+        if (document.querySelector('input[name="db_strategy"]:checked').value === 'merge') {
+            mergeOpt.classList.add('selected');
+            replaceOpt.classList.remove('selected');
+        } else {
+            mergeOpt.classList.remove('selected');
+            replaceOpt.classList.add('selected');
+        }
+    }
+
+    async function startRestore() {
+        const btn = document.getElementById('restoreBtn');
+        const btnText = document.getElementById('restoreBtnText');
+        const spinner = document.getElementById('restoreSpinner');
+        const progressCard = document.getElementById('restoreProgress');
+
+        // Confirm if replace strategy
+        const strategy = document.querySelector('input[name="db_strategy"]:checked').value;
+        if (strategy === 'replace') {
+            if (!confirm('WARNING: The existing database will be replaced! This requires a restart. Continue?')) {
+                return;
+            }
+        }
+
+        btn.disabled = true;
+        btnText.textContent = 'Import running...';
+        spinner.classList.remove('hidden');
+        progressCard.classList.remove('hidden');
+
+        const options = {
+            path: uploadedArchivePath,
+            include_db: document.getElementById('include_db').checked,
+            include_originals: document.getElementById('include_originals').checked,
+            include_derivatives: document.getElementById('include_derivatives').checked,
+            include_settings: document.getElementById('include_settings').checked,
+            db_strategy: strategy,
+        };
+
+        try {
+            const resp = await fetch('/api/restore/apply', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(options)
+            });
+
+            const data = await resp.json();
+            if (resp.status !== 200) {
+                throw new Error(data.error || 'Restore failed');
+            }
+
+            // Start polling for progress
+            startProgressPolling();
+
+        } catch (err) {
+            btn.disabled = false;
+            btnText.textContent = '▶️ Start Import';
+            spinner.classList.add('hidden');
+            alert('Error: ' + err.message);
+        }
+    }
+
+    function startProgressPolling() {
+        pollInterval = setInterval(async () => {
+            try {
+                const resp = await fetch('/api/restore/status');
+                const data = await resp.json();
+
+                if (data.progress) {
+                    updateProgressDisplay(data.progress);
+
+                    if (data.progress.completed) {
+                        clearInterval(pollInterval);
+                        showResult(data.progress);
+                    }
+                }
+
+                if (!data.active && !data.progress?.completed) {
+                    clearInterval(pollInterval);
+                }
+
+            } catch (err) {
+                console.error('Progress poll error:', err);
+            }
+        }, 500);
+    }
+
+    function updateProgressDisplay(progress) {
+        const stageName = {
+            'preflight': '🔍 Preparation',
+            'extract': '📦 Extracting',
+            'settings': '⚙️ Settings',
+            'originals': '🖼️ Original Images',
+            'derivatives': '📐 Derivatives',
+            'database': '🗄️ Database',
+            'cleanup': '🧹 Cleanup',
+            'complete': '✅ Completed',
+            'error': '❌ Error',
+        };
+
+        document.getElementById('progressStage').textContent =
+            stageName[progress.stage] || progress.stage;
+
+        if (progress.total > 0) {
+            const pct = Math.round((progress.progress / progress.total) * 100);
+            document.getElementById('restoreProgressFill').style.width = pct + '%';
+        }
+
+        document.getElementById('progressMessage').textContent = progress.message;
+
+        // Update conflicts display
+        if (progress.conflicts && progress.conflicts.length > 0) {
+            const box = document.getElementById('conflictsBox');
+            const list = document.getElementById('conflictsList');
+            list.innerHTML = progress.conflicts.map(c =>
+                `<li>${c.original} → ${c.renamed_to}</li>`
+            ).join('');
+            box.classList.remove('hidden');
+        }
+    }
+
+    function showResult(progress) {
+        const btn = document.getElementById('restoreBtn');
+        const resultDiv = document.getElementById('restoreResult');
+
+        btn.disabled = false;
+        document.getElementById('restoreBtnText').textContent = '▶️ Start Import';
+        document.getElementById('restoreSpinner').classList.add('hidden');
+
+        if (progress.error) {
+            resultDiv.innerHTML = `
+                <div class="alert alert--danger">
+                    <strong>❌ Import failed</strong><br>
+                    <p>${progress.error}</p>
+                </div>
+            `;
+        } else {
+            let html = `
+                <div class="alert alert--success">
+                    <strong>✅ Import successful!</strong><br>
+                    <p>${progress.message}</p>
+            `;
+
+            if (progress.requires_restart) {
+                html += `
+                    <p class="mt-md"><strong>⚠️ Restart required!</strong><br>
+                    Please restart the application to apply the changes.</p>
+                `;
+            }
+
+            if (progress.warnings && progress.warnings.length > 0) {
+                html += `
+                    <div class="mt-md">
+                        <strong>Warnings:</strong>
+                        <ul>${progress.warnings.map(w => `<li>${w}</li>`).join('')}</ul>
+                    </div>
+                `;
+            }
+
+            html += `</div>`;
+
+            resultDiv.innerHTML = html;
+        }
+
+        resultDiv.classList.remove('hidden');
+    }
+
+    function formatBytes(bytes) {
+        if (bytes < 1024) return bytes + ' B';
+        if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+        if (bytes < 1024 * 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(2) + ' MB';
+        return (bytes / (1024 * 1024 * 1024)).toFixed(2) + ' GB';
+    }
+</script>
+{% endblock %}

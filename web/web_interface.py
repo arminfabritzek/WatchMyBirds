@@ -94,6 +94,15 @@ def create_web_interface(detection_manager):
             "EDIT_PASSWORD not set securely in .env or settings.yaml. Access might be restricted or insecure."
         )
 
+    # Clear restart-required marker on fresh app start
+    try:
+        from utils.restore import clear_restart_required
+
+        pm = get_path_manager(output_dir)
+        clear_restart_required(pm)
+    except Exception as e:
+        logger.debug(f"Could not clear restart marker: {e}")
+
     IMAGE_WIDTH = 150
     PAGE_SIZE = 50
 
@@ -309,30 +318,30 @@ def create_web_interface(detection_manager):
                         custom_font = ImageFont.load_default()
 
             # Classic top-right timestamp (Mac style)
-            # German weekday/month names
-            weekdays_de = ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"]
-            months_de = [
+            # English weekday/month names
+            weekdays_en = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+            months_en = [
                 "",
                 "Jan",
                 "Feb",
-                "Mär",
+                "Mar",
                 "Apr",
-                "Mai",
+                "May",
                 "Jun",
                 "Jul",
                 "Aug",
                 "Sep",
-                "Okt",
+                "Oct",
                 "Nov",
-                "Dez",
+                "Dec",
             ]
 
             now = datetime.now()
-            weekday = weekdays_de[now.weekday()]
-            month = months_de[now.month]
+            weekday = weekdays_en[now.weekday()]
+            month = months_en[now.month]
 
-            # Single line: "Fr 30. Jan 22:25:45"
-            timestamp_text = f"{weekday} {now.day}. {month} {now.strftime('%H:%M:%S')}"
+            # Single line: "Fri Jan 30 22:25:45"
+            timestamp_text = f"{weekday} {month} {now.day} {now.strftime('%H:%M:%S')}"
 
             # Position: top-right
             bbox = draw.textbbox((0, 0), timestamp_text, font=custom_font)
@@ -413,6 +422,9 @@ def create_web_interface(detection_manager):
     template_folder = os.path.join(project_root, "templates")
     assets_folder = os.path.join(project_root, "assets")
     server = Flask(__name__, template_folder=template_folder)
+
+    # Configure Flask for large file uploads (backups can be several GB)
+    server.config["MAX_CONTENT_LENGTH"] = 10 * 1024 * 1024 * 1024  # 10 GB
 
     # Configure Flask Session for server-side auth
     server.secret_key = os.environ.get(
@@ -2707,10 +2719,12 @@ def create_web_interface(detection_manager):
             "bootloader": "Unknown",
         }
 
-        # 1. App Version
+        # 1. App Version (from APP_VERSION file in app directory)
         try:
-            if os.path.exists("version.txt"):
-                with open("version.txt") as f:
+            app_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            version_file = os.path.join(app_dir, "APP_VERSION")
+            if os.path.exists(version_file):
+                with open(version_file) as f:
                     data["app_version"] = f.read().strip()
         except Exception:
             pass
@@ -2947,6 +2961,11 @@ def create_web_interface(detection_manager):
         Max 20 files, max 50MB each.
         """
         try:
+            # Block during restore
+            from utils.restore import is_restore_active
+            if is_restore_active():
+                return jsonify({"error": "Upload blocked during restore operation"}), 409
+
             if "files[]" not in request.files:
                 return jsonify({"error": "No files provided"}), 400
 
@@ -3080,6 +3099,11 @@ def create_web_interface(detection_manager):
         Returns 409 if detection running or processing already active.
         """
         try:
+            # Block during restore
+            from utils.restore import is_restore_active
+            if is_restore_active():
+                return jsonify({"error": "Inbox processing blocked during restore operation"}), 409
+
             # Check 1: Already processing?
             with _inbox_processing["lock"]:
                 if _inbox_processing["active"]:
@@ -3140,6 +3164,85 @@ def create_web_interface(detection_manager):
 
         except Exception as e:
             logger.error(f"Inbox process error: {e}")
+            return jsonify({"error": str(e)}), 500
+
+    # ==========================================================================
+    # DETECTION CONTROL ROUTES
+    # ==========================================================================
+
+    @server.route("/api/status", methods=["GET"])
+    @login_required
+    def api_status():
+        """
+        Returns general system status including detection state.
+        Used by various pages to check detection status.
+        """
+        try:
+            from utils.restore import is_restart_required
+            
+            output_dir = config.get("OUTPUT_DIR", "./data/output")
+            pm = get_path_manager(output_dir)
+            
+            return jsonify({
+                "detection_paused": detection_manager.paused,
+                "detection_running": not detection_manager.paused,
+                "restart_required": is_restart_required(pm),
+            })
+        except Exception as e:
+            logger.error(f"Status API error: {e}")
+            return jsonify({"error": str(e)}), 500
+
+    @server.route("/api/detection/pause", methods=["POST"])
+    @login_required
+    def detection_pause():
+        """Pauses the detection loop."""
+        try:
+            if detection_manager.paused:
+                return jsonify({
+                    "status": "paused",
+                    "message": "Detection was already paused",
+                })
+
+            detection_manager.paused = True
+            logger.info("Detection paused via API")
+
+            return jsonify({
+                "status": "success",
+                "message": "Detection paused",
+            })
+
+        except Exception as e:
+            logger.error(f"Detection pause error: {e}")
+            return jsonify({"error": str(e)}), 500
+
+    @server.route("/api/detection/resume", methods=["POST"])
+    @login_required
+    def detection_resume():
+        """Resumes the detection loop."""
+        try:
+            # Block during restore
+            from utils.restore import is_restore_active
+            if is_restore_active():
+                return jsonify({
+                    "error": "Cannot resume detection during restore operation"
+                }), 409
+
+            if not detection_manager.paused:
+                return jsonify({
+                    "status": "running",
+                    "message": "Detection was already running",
+                })
+
+            detection_manager.paused = False
+            logger.info("Detection resumed via API")
+
+            return jsonify({
+                "status": "success",
+                "message": "Detection resumed",
+            })
+
+        except Exception as e:
+            logger.error(f"Detection resume error: {e}")
             return jsonify({"error": str(e)}), 500
 
     # ==========================================================================
@@ -3222,6 +3325,287 @@ def create_web_interface(detection_manager):
 
         except Exception as e:
             logger.error(f"Backup create error: {e}")
+            return jsonify({"error": str(e)}), 500
+
+    # ==========================================================================
+    # RESTORE/IMPORT ROUTES (Backup Import)
+    # ==========================================================================
+
+    # Global restore progress tracking
+    _restore_progress = {"active": False, "progress": None}
+
+    @server.route("/restore")
+    @login_required
+    def restore_page():
+        """Serves the restore/import page."""
+        return render_template("restore.html")
+
+    @server.route("/api/restore/upload", methods=["POST"])
+    @login_required
+    def restore_upload():
+        """
+        Uploads a backup archive for restore.
+        Validates extension, magic header, and max size.
+        Returns path to uploaded file for subsequent analyze/apply.
+        """
+        from werkzeug.utils import secure_filename
+        from utils.restore import is_restore_active, MAX_ARCHIVE_SIZE_BYTES
+
+        try:
+            # Check if restore is already active
+            if is_restore_active():
+                return jsonify({
+                    "error": "Another restore operation is in progress"
+                }), 409
+
+            # Get uploaded file
+            if "file" not in request.files:
+                return jsonify({"error": "No file uploaded"}), 400
+
+            file = request.files["file"]
+            if not file or file.filename == "":
+                return jsonify({"error": "No file selected"}), 400
+
+            # Validate filename
+            filename = secure_filename(file.filename)
+            if not filename.endswith(".tar.gz") and not filename.endswith(".tgz"):
+                return jsonify({
+                    "error": "Invalid file type. Only .tar.gz archives allowed."
+                }), 400
+
+            # Get path manager
+            pm = get_path_manager()
+            upload_path = pm.get_restore_upload_path(filename)
+
+            # Stream to file while checking size
+            total_size = 0
+            chunk_size = 8192
+
+            with open(upload_path, "wb") as f:
+                while True:
+                    chunk = file.stream.read(chunk_size)
+                    if not chunk:
+                        break
+                    total_size += len(chunk)
+                    if total_size > MAX_ARCHIVE_SIZE_BYTES:
+                        f.close()
+                        upload_path.unlink(missing_ok=True)
+                        return jsonify({
+                            "error": f"File too large. Maximum size: "
+                                     f"{MAX_ARCHIVE_SIZE_BYTES // (1024**3)} GB"
+                        }), 413
+                    f.write(chunk)
+
+            # Validate magic header (gzip)
+            with open(upload_path, "rb") as f:
+                magic = f.read(2)
+                if magic != b"\x1f\x8b":
+                    upload_path.unlink(missing_ok=True)
+                    return jsonify({
+                        "error": "Invalid archive format (not a valid gzip file)"
+                    }), 400
+
+            logger.info(f"Restore: Uploaded archive {filename} ({total_size} bytes)")
+
+            return jsonify({
+                "status": "success",
+                "filename": filename,
+                "path": str(upload_path),
+                "size_bytes": total_size,
+            })
+
+        except Exception as e:
+            logger.error(f"Restore upload error: {e}", exc_info=True)
+            return jsonify({"error": str(e)}), 500
+
+    @server.route("/api/restore/analyze", methods=["POST"])
+    @login_required
+    def restore_analyze():
+        """
+        Analyzes an uploaded backup archive without extracting.
+        Returns contents, warnings, and blockers.
+        """
+        from utils.restore import analyze_backup_archive
+
+        try:
+            data = request.get_json(silent=True) or {}
+            archive_path = data.get("path")
+
+            if not archive_path:
+                return jsonify({"error": "No archive path provided"}), 400
+
+            path = Path(archive_path)
+            if not path.exists():
+                return jsonify({"error": "Archive file not found"}), 404
+
+            # Perform analysis
+            analysis = analyze_backup_archive(path)
+
+            return jsonify({
+                "status": "success",
+                "analysis": analysis,
+            })
+
+        except Exception as e:
+            logger.error(f"Restore analyze error: {e}", exc_info=True)
+            return jsonify({"error": str(e)}), 500
+
+    @server.route("/api/restore/apply", methods=["POST"])
+    @login_required
+    def restore_apply():
+        """
+        Starts the restore process in background.
+        Single-runner lock prevents concurrent restores.
+        """
+        from utils.restore import (
+            is_restore_active,
+            restore_from_archive,
+            analyze_backup_archive,
+        )
+
+        nonlocal _restore_progress
+
+        try:
+            # Check if restore is already active
+            if is_restore_active() or _restore_progress["active"]:
+                return jsonify({
+                    "error": "Another restore operation is in progress"
+                }), 409
+
+            # Auto-pause detection (like backup)
+            was_paused = detection_manager.paused
+            if not was_paused:
+                logger.info("Restore: Auto-pausing detection")
+                detection_manager.paused = True
+
+            # Parse request
+            data = request.get_json(silent=True) or {}
+            archive_path = data.get("path")
+
+            if not archive_path:
+                # Resume detection if we paused it
+                if not was_paused:
+                    detection_manager.paused = False
+                return jsonify({"error": "No archive path provided"}), 400
+
+            path = Path(archive_path)
+            if not path.exists():
+                # Resume detection if we paused it
+                if not was_paused:
+                    detection_manager.paused = False
+                return jsonify({"error": "Archive file not found"}), 404
+
+            # Validate before starting
+            analysis = analyze_backup_archive(path)
+            if analysis["blockers"]:
+                # Resume detection if we paused it
+                if not was_paused:
+                    detection_manager.paused = False
+                return jsonify({
+                    "error": "Archive has blockers",
+                    "blockers": analysis["blockers"],
+                }), 400
+
+            # Parse options
+            include_db = data.get("include_db", True)
+            include_originals = data.get("include_originals", True)
+            include_derivatives = data.get("include_derivatives", False)
+            include_settings = data.get("include_settings", False)
+            db_strategy = data.get("db_strategy", "merge")
+
+            if db_strategy not in ("merge", "replace"):
+                # Resume detection if we paused it
+                if not was_paused:
+                    detection_manager.paused = False
+                return jsonify({"error": "Invalid db_strategy"}), 400
+
+            # Start restore in background thread
+            import threading
+
+            def run_restore():
+                nonlocal _restore_progress
+                _restore_progress = {"active": True, "progress": None}
+
+                try:
+                    for progress in restore_from_archive(
+                        path,
+                        include_db=include_db,
+                        include_originals=include_originals,
+                        include_derivatives=include_derivatives,
+                        include_settings=include_settings,
+                        db_strategy=db_strategy,
+                    ):
+                        _restore_progress["progress"] = progress
+
+                        if progress.get("completed"):
+                            break
+
+                except Exception as e:
+                    logger.error(f"Restore thread error: {e}", exc_info=True)
+                    _restore_progress["progress"] = {
+                        "stage": "error",
+                        "progress": 0,
+                        "total": 1,
+                        "message": str(e),
+                        "completed": True,
+                        "error": str(e),
+                    }
+                finally:
+                    _restore_progress["active"] = False
+                    # Resume detection if we paused it
+                    if not was_paused:
+                        detection_manager.paused = False
+                        logger.info("Restore: Detection resumed after restore")
+                    
+                    # Cleanup: Delete uploaded archive after restore (success or failure)
+                    try:
+                        if path.exists():
+                            path.unlink()
+                            logger.info(f"Restore: Deleted uploaded archive {path}")
+                    except Exception as cleanup_err:
+                        logger.warning(f"Restore: Could not delete archive {path}: {cleanup_err}")
+
+            thread = threading.Thread(target=run_restore, daemon=True)
+            thread.start()
+
+            logger.info("Restore: Started restore process in background")
+
+            return jsonify({
+                "status": "started",
+                "message": "Restore process started",
+                "detection_auto_paused": not was_paused,
+            })
+
+        except Exception as e:
+            # Resume detection on error if we paused it
+            if 'was_paused' in locals() and not was_paused:
+                detection_manager.paused = False
+            logger.error(f"Restore apply error: {e}", exc_info=True)
+            return jsonify({"error": str(e)}), 500
+
+    @server.route("/api/restore/status", methods=["GET"])
+    @login_required
+    def restore_status():
+        """Returns the current status of the restore operation."""
+        nonlocal _restore_progress
+
+        return jsonify({
+            "active": _restore_progress["active"],
+            "progress": _restore_progress.get("progress"),
+        })
+
+    @server.route("/api/restore/cleanup", methods=["POST"])
+    @login_required
+    def restore_cleanup():
+        """Cleans up the restore temp directory."""
+        from utils.restore import cleanup_restore_tmp
+
+        try:
+            pm = get_path_manager()
+            cleanup_restore_tmp(pm)
+            return jsonify({"status": "success"})
+        except Exception as e:
+            logger.error(f"Restore cleanup error: {e}")
             return jsonify({"error": str(e)}), 500
 
     # -----------------------------

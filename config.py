@@ -116,7 +116,7 @@ BOOT_KEYS = set(DEFAULTS.keys()) - RUNTIME_KEYS
 
 
 def _load_config():
-    """Lädt Konfiguration aus Umgebungsvariablen und YAML."""
+    """Loads configuration from environment variables and YAML."""
     config = dict(DEFAULTS)
 
     # Env overrides
@@ -234,7 +234,7 @@ def ensure_app_directories(config_dict=None):
 
 
 def get_config():
-    """Gibt die einmal geladene Konfiguration zurück."""
+    """Returns the loaded configuration."""
     global _CONFIG
     if _CONFIG is None:
         _CONFIG = _load_config()
@@ -242,7 +242,7 @@ def get_config():
 
 
 def _coerce_config_types(config):
-    """Validiert und erzwingt erwartete Typen für zentrale Keys."""
+    """Validates and enforces expected types for core keys."""
     # Booleans
     for key in (
         "DEBUG_MODE",
@@ -341,7 +341,7 @@ def _coerce_bool(value):
 
 
 def get_settings_payload():
-    """Liefert Settings inkl. Metadaten für UI/API."""
+    """Provides settings including metadata for UI/API."""
     cfg = get_config()
     yaml_settings = load_settings_yaml(str(cfg["OUTPUT_DIR"]))
     env_overrides = {key for key in DEFAULTS if os.getenv(key) is not None}
@@ -363,7 +363,7 @@ def get_settings_payload():
 
 
 def validate_runtime_updates(updates):
-    """Validiert Laufzeit-Updates und gibt (valid, errors) zurück."""
+    """Validates runtime updates and returns (valid, errors)."""
     valid = {}
     errors = {}
     for key, value in updates.items():
@@ -378,7 +378,7 @@ def validate_runtime_updates(updates):
 
 
 def update_runtime_settings(updates):
-    """Speichert Laufzeit-Settings und aktualisiert die laufende Konfiguration."""
+    """Saves runtime settings and updates the running configuration."""
     cfg = get_config()
     yaml_settings = load_settings_yaml(str(cfg["OUTPUT_DIR"]))
     for key, value in updates.items():
@@ -499,7 +499,7 @@ def _validate_value(key, value):
 
 # Backward-compatible alias
 def load_config():
-    """Alias für Alt-Code; liefert die geteilte Konfiguration."""
+    """Alias for legacy code; returns the shared configuration."""
     return get_config()
 
 
