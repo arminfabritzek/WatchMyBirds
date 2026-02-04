@@ -2,6 +2,671 @@
 
 {% block title %}Settings - WatchMyBirds{% endblock %}
 
+{% block modals %}
+<!-- ONVIF Credentials Modal (UI_STANDARD.md: wm-modal--form) -->
+<div class="modal fade wm-modal wm-modal--form" id="onvifModal" tabindex="-1" data-bs-backdrop="static"
+    aria-hidden="true">
+
+    <div class="modal-dialog modal-lg modal-dialog-centered wm-modal__dialog">
+        <div class="modal-content wm-modal__content">
+
+            <div class="modal-header wm-modal__header">
+                <div class="wm-modal__title">
+                    <span class="wm-modal__title-text">ONVIF Camera Credentials</span>
+                    <span class="wm-modal__title-sub" id="modalCamInfo"></span>
+                </div>
+                <button type="button" class="btn-close wm-modal__close" data-bs-dismiss="modal"></button>
+            </div>
+
+            <div class="wm-modal__body">
+                <div class="wm-modal__fields">
+                    <input type="hidden" id="modalCamIp">
+                    <input type="hidden" id="modalCamPort">
+
+                    <div class="mb-3">
+                        <label for="onvifUser" class="form-label">Username</label>
+                        <input type="text" class="form-control" id="onvifUser" placeholder="admin">
+                    </div>
+                    <div class="mb-3">
+                        <label for="onvifPass" class="form-label">Password</label>
+                        <input type="password" class="form-control" id="onvifPass" placeholder="••••••••">
+                    </div>
+                    <div class="alert alert-danger py-2 mb-0 d-none" id="onvifModalError">
+                        <small>Failed to retrieve stream. Check credentials.</small>
+                    </div>
+                </div>
+            </div>
+
+            <div class="wm-modal__action wm-modal__action--form">
+                <div class="wm-modal__actions">
+                    <button type="button" class="btn btn--secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" class="btn btn--primary" onclick="confirmOnvifCredentials()">
+                        <span id="onvifModalSpinner" class="spinner-border spinner-border-sm d-none"></span>
+                        Connect & Get Stream
+                    </button>
+                </div>
+            </div>
+
+        </div>
+    </div>
+</div>
+
+<!-- Add Camera Modal (UI_STANDARD.md: wm-modal--form) -->
+<div class="modal fade wm-modal wm-modal--form" id="addCameraModal" tabindex="-1" data-bs-backdrop="static"
+    data-bs-keyboard="false" aria-hidden="true">
+
+    <div class="modal-dialog modal-lg modal-dialog-centered wm-modal__dialog">
+        <div class="modal-content wm-modal__content">
+
+            <div class="modal-header wm-modal__header">
+                <div class="wm-modal__title">
+                    <span class="wm-modal__title-text">Add Camera</span>
+                    <span class="wm-modal__title-sub">Add a new IP camera to your saved cameras</span>
+                </div>
+                <button type="button" class="btn-close wm-modal__close" data-bs-dismiss="modal"></button>
+            </div>
+
+            <div class="wm-modal__body">
+                <div class="wm-modal__fields">
+                    <div class="mb-3">
+                        <label for="addCamName" class="form-label">Camera Name</label>
+                        <input type="text" class="form-control" id="addCamName" placeholder="e.g., Garden Camera">
+                    </div>
+                    <div class="row mb-3">
+                        <div class="col-8">
+                            <label for="addCamIp" class="form-label">IP Address <span
+                                    class="text-danger">*</span></label>
+                            <input type="text" class="form-control" id="addCamIp" placeholder="192.168.1.100" required>
+                        </div>
+                        <div class="col-4">
+                            <label for="addCamPort" class="form-label">Port</label>
+                            <input type="number" class="form-control" id="addCamPort" value="80">
+                        </div>
+                    </div>
+                    <div class="mb-3">
+                        <label for="addCamUser" class="form-label">Username</label>
+                        <input type="text" class="form-control" id="addCamUser" placeholder="admin">
+                    </div>
+                    <div class="mb-3">
+                        <label for="addCamPass" class="form-label">Password</label>
+                        <input type="password" class="form-control" id="addCamPass" placeholder="••••••••">
+                    </div>
+                    <div class="alert alert-danger py-2 mb-0 d-none" id="addCameraError"></div>
+                    <div class="alert alert-success py-2 mb-0 d-none" id="addCameraSuccess"></div>
+                </div>
+            </div>
+
+            <div class="wm-modal__action wm-modal__action--form">
+                <div class="wm-modal__actions">
+                    <button type="button" class="btn btn--secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" class="btn btn--primary" onclick="saveNewCamera()">
+                        <span id="addCameraSpinner" class="spinner-border spinner-border-sm d-none"></span>
+                        Save Camera
+                    </button>
+                </div>
+            </div>
+
+        </div>
+    </div>
+</div>
+
+<!-- Edit Camera Modal (UI_STANDARD.md: wm-modal--form) -->
+<div class="modal fade wm-modal wm-modal--form" id="editCameraModal" tabindex="-1" aria-hidden="true">
+
+    <div class="modal-dialog modal-lg modal-dialog-centered wm-modal__dialog">
+        <div class="modal-content wm-modal__content">
+
+            <div class="modal-header wm-modal__header">
+                <div class="wm-modal__title">
+                    <span class="wm-modal__title-text">Edit Camera</span>
+                    <span class="wm-modal__title-sub">Update camera settings</span>
+                </div>
+                <button type="button" class="btn-close wm-modal__close" data-bs-dismiss="modal"></button>
+            </div>
+
+            <div class="wm-modal__body">
+                <div class="wm-modal__fields">
+                    <input type="hidden" id="editCamId">
+                    <div class="mb-3">
+                        <label for="editCamName" class="form-label">Camera Name</label>
+                        <input type="text" class="form-control" id="editCamName">
+                    </div>
+                    <div class="row mb-3">
+                        <div class="col-8">
+                            <label for="editCamIp" class="form-label">IP Address</label>
+                            <input type="text" class="form-control" id="editCamIp">
+                        </div>
+                        <div class="col-4">
+                            <label for="editCamPort" class="form-label">Port</label>
+                            <input type="number" class="form-control" id="editCamPort">
+                        </div>
+                    </div>
+                    <div class="mb-3">
+                        <label for="editCamUser" class="form-label">Username</label>
+                        <input type="text" class="form-control" id="editCamUser">
+                    </div>
+                    <div class="mb-3">
+                        <label for="editCamPass" class="form-label">Password <small class="text-muted">(leave blank to
+                                keep)</small></label>
+                        <input type="password" class="form-control" id="editCamPass" placeholder="••••••••">
+                    </div>
+                    <div class="alert alert-danger py-2 mb-0 d-none" id="editCameraError"></div>
+                </div>
+            </div>
+
+            <div class="wm-modal__action wm-modal__action--form">
+                <div class="wm-modal__actions">
+                    <button type="button" class="btn btn--secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" class="btn btn--primary" onclick="updateCamera()">
+                        <span id="editCameraSpinner" class="spinner-border spinner-border-sm d-none"></span>
+                        Update Camera
+                    </button>
+                </div>
+            </div>
+
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    // --- ONVIF Discovery Logic ---
+    function startOnvifDiscovery() {
+        const resultsDiv = document.getElementById('onvifResults');
+        const listGroup = document.getElementById('onvifCameraList');
+        const loading = document.getElementById('onvifLoading');
+        const btn = document.getElementById('btnScanOnvif');
+
+        resultsDiv.classList.remove('d-none');
+        listGroup.innerHTML = '';
+        loading.classList.remove('d-none');
+        btn.disabled = true;
+
+        fetch('/api/v1/onvif/discover')
+            .then(res => res.json())
+            .then(data => {
+                loading.classList.add('d-none');
+                btn.disabled = false;
+
+                if (data.status === 'success' && data.cameras.length > 0) {
+                    data.cameras.forEach(cam => {
+                        const item = document.createElement('button');
+                        item.type = "button";
+                        item.className = "list-group-item list-group-item-action d-flex justify-content-between align-items-center";
+                        item.style.fontSize = "0.85rem";
+                        item.innerHTML = `
+                                <div>
+                                    <div class="fw-bold">${cam.name || 'Generic ONVIF'}</div>
+                                    <div class="text-muted small">${cam.ip}:${cam.port}</div>
+                                </div>
+                                <span class="badge bg-primary rounded-pill">Select</span>
+                            `;
+                        item.onclick = () => showOnvifConfigModal(cam);
+                        listGroup.appendChild(item);
+                    });
+                } else {
+                    listGroup.innerHTML = '<div class="p-3 text-center text-muted small">No ONVIF cameras found on your network.</div>';
+                }
+            })
+            .catch(err => {
+                loading.classList.add('d-none');
+                btn.disabled = false;
+                listGroup.innerHTML = '<div class="p-3 text-center text-danger small">Discovery failed. Check network connection.</div>';
+                console.error("Discovery error:", err);
+            });
+    }
+
+    function showOnvifConfigModal(cam) {
+        document.getElementById('modalCamInfo').innerText = `Configuring: ${cam.name || 'Unknown Camera'} (${cam.ip}:${cam.port})`;
+        document.getElementById('modalCamIp').value = cam.ip;
+        document.getElementById('modalCamPort').value = cam.port;
+
+        // Clear previous errors
+        document.getElementById('onvifModalError').classList.add('d-none');
+
+        const modal = new bootstrap.Modal(document.getElementById('onvifModal'));
+        modal.show();
+    }
+
+    function confirmOnvifCredentials() {
+        const ip = document.getElementById('modalCamIp').value;
+        const port = document.getElementById('modalCamPort').value;
+        const username = document.getElementById('onvifUser').value;
+        const password = document.getElementById('onvifPass').value;
+        const spinner = document.getElementById('onvifModalSpinner');
+        const errorDiv = document.getElementById('onvifModalError');
+
+        spinner.classList.remove('d-none');
+        errorDiv.classList.add('d-none');
+
+        fetch('/api/v1/onvif/get_stream_uri', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ip, port, username, password })
+        })
+            .then(res => res.json())
+            .then(data => {
+                spinner.classList.add('d-none');
+                if (data.status === 'success') {
+                    // Success! Fill the RTSP URL
+                    document.getElementById('streamUrlInput').value = data.uri;
+                    updateRealSource(data.uri);
+
+                    // Close modal
+                    const modalEl = document.getElementById('onvifModal');
+                    const modal = bootstrap.Modal.getInstance(modalEl);
+                    modal.hide();
+
+                    // Hide results
+                    document.getElementById('onvifResults').classList.add('d-none');
+                } else {
+                    errorDiv.classList.remove('d-none');
+                    errorDiv.innerText = data.message || "Failed to get stream URI.";
+                }
+            })
+            .catch(err => {
+                spinner.classList.add('d-none');
+                errorDiv.classList.remove('d-none');
+                errorDiv.innerText = "Connection error. Ensure camera is reachable.";
+                console.error("Stream URI error:", err);
+            });
+    }
+
+    function toggleUrlVisibility() {
+        const input = document.getElementById('streamUrlInput');
+        const btn = document.getElementById('btnToggleUrl');
+        if (input.type === 'password') {
+            input.type = 'text';
+            btn.innerHTML = '🔒';
+        } else {
+            input.type = 'password';
+            btn.innerHTML = '👁';
+        }
+    }
+
+    // --- Camera Management Logic ---
+    function loadSavedCameras() {
+        const container = document.getElementById('savedCamerasList');
+        if (!container) return;
+
+        container.innerHTML = '<div class="text-center p-3"><div class="spinner-border spinner-border-sm"></div></div>';
+
+        fetch('/api/v1/cameras')
+            .then(res => res.json())
+            .then(data => {
+                if (data.status === 'success' && data.cameras.length > 0) {
+                    container.innerHTML = '';
+                    data.cameras.forEach(cam => {
+                        const statusBadge = cam.last_test_success === true
+                            ? '<span class="badge bg-success">✓ Connected</span>'
+                            : cam.last_test_success === false
+                                ? '<span class="badge bg-danger">✗ Failed</span>'
+                                : '<span class="badge bg-secondary">Not Tested</span>';
+
+                        const item = document.createElement('div');
+                        item.className = 'list-group-item d-flex justify-content-between align-items-center';
+                        item.innerHTML = `
+                            <div>
+                                <div class="fw-bold">${cam.name || 'Camera ' + (cam.id + 1)}</div>
+                                <div class="text-muted small">${cam.ip}:${cam.port}</div>
+                                ${cam.manufacturer ? `<div class="text-muted small">${cam.manufacturer} ${cam.model || ''}</div>` : ''}
+                            </div>
+                            <div class="d-flex align-items-center gap-2">
+                                ${statusBadge}
+                                <div class="btn-group btn-group-sm">
+                                    <button type="button" class="btn btn-outline-primary" onclick="testCamera(${cam.id})" title="Test Connection">
+                                        <span id="testSpinner${cam.id}" class="spinner-border spinner-border-sm d-none"></span>
+                                        🔌 Test
+                                    </button>
+                                    <button type="button" class="btn btn-outline-success" onclick="useCamera(${cam.id})" title="Activate this camera as video source">📹 Use</button>
+                                    <button type="button" class="btn btn-outline-secondary" onclick="editCamera(${cam.id})" title="Edit camera settings">✏️</button>
+                                    <button type="button" class="btn btn-outline-danger" onclick="deleteCamera(${cam.id})" title="Delete camera">🗑️</button>
+                                </div>
+                            </div>
+                        `;
+                        container.appendChild(item);
+                    });
+                } else {
+                    container.innerHTML = '<div class="text-center text-muted p-3">No cameras saved. Use "Scan Network" or "Add Camera" to add one.</div>';
+                }
+            })
+            .catch(err => {
+                container.innerHTML = '<div class="text-center text-danger p-3">Failed to load cameras.</div>';
+                console.error('Load cameras error:', err);
+            });
+    }
+
+    function showAddCameraModal() {
+        // Reset form
+        document.getElementById('addCamName').value = '';
+        document.getElementById('addCamIp').value = '';
+        document.getElementById('addCamPort').value = '80';
+        document.getElementById('addCamUser').value = '';
+        document.getElementById('addCamPass').value = '';
+        document.getElementById('addCameraError').classList.add('d-none');
+        document.getElementById('addCameraSuccess').classList.add('d-none');
+
+        const modal = new bootstrap.Modal(document.getElementById('addCameraModal'));
+        modal.show();
+    }
+
+    function saveNewCamera() {
+        const spinner = document.getElementById('addCameraSpinner');
+        const errorDiv = document.getElementById('addCameraError');
+        const successDiv = document.getElementById('addCameraSuccess');
+
+        const payload = {
+            name: document.getElementById('addCamName').value,
+            ip: document.getElementById('addCamIp').value,
+            port: parseInt(document.getElementById('addCamPort').value) || 80,
+            username: document.getElementById('addCamUser').value,
+            password: document.getElementById('addCamPass').value
+        };
+
+        if (!payload.ip) {
+            errorDiv.innerText = 'IP address is required.';
+            errorDiv.classList.remove('d-none');
+            return;
+        }
+
+        spinner.classList.remove('d-none');
+        errorDiv.classList.add('d-none');
+
+        fetch('/api/v1/cameras', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        })
+            .then(res => res.json())
+            .then(data => {
+                spinner.classList.add('d-none');
+                if (data.status === 'success') {
+                    successDiv.innerText = 'Camera saved successfully!';
+                    successDiv.classList.remove('d-none');
+                    loadSavedCameras();
+                    setTimeout(() => {
+                        const modal = bootstrap.Modal.getInstance(document.getElementById('addCameraModal'));
+                        modal.hide();
+                    }, 1000);
+                } else {
+                    errorDiv.innerText = data.message || 'Failed to save camera.';
+                    errorDiv.classList.remove('d-none');
+                }
+            })
+            .catch(err => {
+                spinner.classList.add('d-none');
+                errorDiv.innerText = 'Connection error.';
+                errorDiv.classList.remove('d-none');
+                console.error('Save camera error:', err);
+            });
+    }
+
+    function testCamera(camId) {
+        const spinner = document.getElementById('testSpinner' + camId);
+        if (spinner) spinner.classList.remove('d-none');
+
+        fetch(`/api/v1/cameras/${camId}/test`, { method: 'POST' })
+            .then(res => res.json())
+            .then(data => {
+                if (spinner) spinner.classList.add('d-none');
+                if (data.status === 'success') {
+                    alert(`✅ Connection successful!\n\nManufacturer: ${data.details.manufacturer || 'N/A'}\nModel: ${data.details.model || 'N/A'}\nPTZ Support: ${data.details.has_ptz ? 'Yes' : 'No'}`);
+                } else {
+                    alert(`❌ Connection failed: ${data.message}`);
+                }
+                loadSavedCameras(); // Refresh to show status badge
+            })
+            .catch(err => {
+                if (spinner) spinner.classList.add('d-none');
+                alert('Connection test failed. Network error.');
+                console.error('Test camera error:', err);
+            });
+    }
+
+    function editCamera(camId) {
+        fetch('/api/v1/cameras')
+            .then(res => res.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    const cam = data.cameras.find(c => c.id === camId);
+                    if (cam) {
+                        document.getElementById('editCamId').value = cam.id;
+                        document.getElementById('editCamName').value = cam.name || '';
+                        document.getElementById('editCamIp').value = cam.ip || '';
+                        document.getElementById('editCamPort').value = cam.port || 80;
+                        document.getElementById('editCamUser').value = cam.username || '';
+                        document.getElementById('editCamPass').value = '';
+                        document.getElementById('editCameraError').classList.add('d-none');
+
+                        const modal = new bootstrap.Modal(document.getElementById('editCameraModal'));
+                        modal.show();
+                    }
+                }
+            });
+    }
+
+    function updateCamera() {
+        const camId = document.getElementById('editCamId').value;
+        const spinner = document.getElementById('editCameraSpinner');
+        const errorDiv = document.getElementById('editCameraError');
+
+        const payload = {
+            name: document.getElementById('editCamName').value,
+            ip: document.getElementById('editCamIp').value,
+            port: parseInt(document.getElementById('editCamPort').value) || 80,
+            username: document.getElementById('editCamUser').value
+        };
+
+        // Only include password if provided
+        const pass = document.getElementById('editCamPass').value;
+        if (pass) payload.password = pass;
+
+        spinner.classList.remove('d-none');
+
+        fetch(`/api/v1/cameras/${camId}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        })
+            .then(res => res.json())
+            .then(data => {
+                spinner.classList.add('d-none');
+                if (data.status === 'success') {
+                    const modal = bootstrap.Modal.getInstance(document.getElementById('editCameraModal'));
+                    modal.hide();
+                    loadSavedCameras();
+                } else {
+                    errorDiv.innerText = data.message || 'Failed to update camera.';
+                    errorDiv.classList.remove('d-none');
+                }
+            })
+            .catch(err => {
+                spinner.classList.add('d-none');
+                errorDiv.innerText = 'Connection error.';
+                errorDiv.classList.remove('d-none');
+            });
+    }
+
+    function deleteCamera(camId) {
+        if (!confirm('Are you sure you want to delete this camera?')) return;
+
+        fetch(`/api/v1/cameras/${camId}`, { method: 'DELETE' })
+            .then(res => res.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    loadSavedCameras();
+                } else {
+                    alert('Failed to delete camera: ' + (data.message || 'Unknown error'));
+                }
+            })
+            .catch(err => {
+                alert('Connection error while deleting camera.');
+                console.error('Delete camera error:', err);
+            });
+    }
+
+    function useCamera(camId) {
+        // Call backend to use camera with stored credentials
+        const btn = (typeof event !== 'undefined' && event && event.target)
+            ? event.target.closest('button')
+            : null;
+        const originalHtml = btn ? btn.innerHTML : null;
+        if (btn) {
+            btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+            btn.disabled = true;
+        }
+
+        fetch(`/api/v1/cameras/${camId}/use`, { method: 'POST' })
+            .then(res => res.json())
+            .then(data => {
+                if (btn) {
+                    btn.innerHTML = originalHtml;
+                    btn.disabled = false;
+                }
+
+                if (data.status === 'success') {
+                    // Show success feedback
+                    alert(`✅ ${data.message}\n\nVideo source has been updated. The stream will switch shortly.`);
+                    // Reload page to reflect new VIDEO_SOURCE
+                    window.location.reload();
+                } else {
+                    alert(`❌ Failed to activate camera: ${data.message}`);
+                }
+            })
+            .catch(err => {
+                if (btn) {
+                    btn.innerHTML = originalHtml;
+                    btn.disabled = false;
+                }
+                alert('Connection error while activating camera.');
+                console.error('Use camera error:', err);
+            });
+    }
+
+    // Discovery for Camera Management Section
+    function startOnvifDiscoveryCamSection() {
+        const resultsDiv = document.getElementById('camSectionDiscoveryResults');
+        const listGroup = document.getElementById('camSectionDiscoveryList');
+        const loading = document.getElementById('camSectionDiscoveryLoading');
+
+        resultsDiv.classList.remove('d-none');
+        listGroup.innerHTML = '';
+        loading.classList.remove('d-none');
+
+        fetch('/api/v1/onvif/discover')
+            .then(res => res.json())
+            .then(data => {
+                loading.classList.add('d-none');
+
+                if (data.status === 'success' && data.cameras.length > 0) {
+                    data.cameras.forEach(cam => {
+                        const item = document.createElement('div');
+                        item.className = 'list-group-item d-flex justify-content-between align-items-center';
+
+                        // Escape special characters for safe inline onclick
+                        const safeName = (cam.name || 'ONVIF Camera').replace(/'/g, "\\'").replace(/"/g, '&quot;');
+                        const safeManufacturer = (cam.manufacturer || '').replace(/'/g, "\\'").replace(/"/g, '&quot;');
+
+                        item.innerHTML = `
+                            <div>
+                                <div class="fw-bold">${cam.name || 'ONVIF Camera'}</div>
+                                <div class="text-muted small">${cam.ip}:${cam.port}</div>
+                                ${cam.manufacturer ? `<div class="text-muted small">${cam.manufacturer}</div>` : ''}
+                            </div>
+                            <button type="button" class="btn btn-sm btn-primary" onclick="addDiscoveredCamera('${cam.ip}', ${cam.port}, '${safeName}', '${safeManufacturer}')">
+                                ➕ Add
+                            </button>
+                        `;
+                        listGroup.appendChild(item);
+                    });
+                } else {
+                    listGroup.innerHTML = '<div class="text-center text-muted p-3">No ONVIF cameras found on the network.</div>';
+                }
+            })
+            .catch(err => {
+                loading.classList.add('d-none');
+                listGroup.innerHTML = '<div class="text-center text-danger p-3">Discovery failed. Check network connection.</div>';
+                console.error('Discovery error:', err);
+            });
+    }
+
+    function addDiscoveredCamera(ip, port, name, manufacturer) {
+        // Pre-fill the Add Camera modal with discovered camera info
+        document.getElementById('addCamName').value = name || 'Camera';
+        document.getElementById('addCamIp').value = ip;
+        document.getElementById('addCamPort').value = port || 80;
+        document.getElementById('addCamUser').value = '';
+        document.getElementById('addCamPass').value = '';
+        document.getElementById('addCameraError').classList.add('d-none');
+        document.getElementById('addCameraSuccess').classList.add('d-none');
+
+        const modal = new bootstrap.Modal(document.getElementById('addCameraModal'));
+        modal.show();
+    }
+
+    // Initialize on page load
+    document.addEventListener('DOMContentLoaded', function () {
+        loadSavedCameras();
+    });
+
+    // Set video source directly via API
+    function setVideoSource(value) {
+        if (!value || value.trim() === '') {
+            alert('Please enter a valid video source');
+            return;
+        }
+
+        const trimmed = value.trim();
+        updateRealSource(trimmed);
+
+        // Show loading feedback
+        const btn = (typeof event !== 'undefined' && event && event.target)
+            ? event.target
+            : null;
+        const originalText = btn ? btn.textContent : null;
+        if (btn) {
+            btn.textContent = '...';
+            btn.disabled = true;
+        }
+
+        // Update via settings API
+        fetch('/api/v1/settings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ VIDEO_SOURCE: trimmed })
+        })
+            .then(res => {
+                if (!res.ok) {
+                    return res.json().then(err => { throw new Error(err.message || err.errors || 'API Error'); });
+                }
+                return res.json();
+            })
+            .then(data => {
+                // Success! API returns {"status": "success"} on success
+                if (data.status === 'success') {
+                    alert(`✅ Video source updated!\n\nNew source: ${value.trim()}\n\nPage will reload.`);
+                    window.location.reload();
+                } else {
+                    alert(`❌ Failed: ${data.message || 'Unexpected response'}`);
+                    if (btn) {
+                        btn.textContent = originalText;
+                        btn.disabled = false;
+                    }
+                }
+            })
+            .catch(err => {
+                alert(`❌ Error: ${err.message || 'Connection failed'}`);
+                console.error(err);
+                if (btn) {
+                    btn.textContent = originalText;
+                    btn.disabled = false;
+                }
+            });
+    }
+</script>
+{% endblock %}
+
 {% block content %}
 <!-- Macros for Settings Rows -->
 {% macro render_setting_row(key, meta) %}
@@ -99,41 +764,50 @@
             <div class="card-header bg-primary text-white fw-bold">1. Stream & Performance</div>
             <div class="card-body">
 
-                <!-- Video Source Toggle -->
+                <!-- Video Source - SIMPLIFIED -->
                 <div class="mb-4">
                     <label class="form-label fw-bold">Video Source</label>
-                    <div class="d-flex gap-4 mb-2">
-                        <div class="form-check">
-                            <input class="form-check-input" type="radio" name="sourceType" id="sourceTypeUSB"
-                                value="usb" onchange="toggleSourceInput()" checked>
-                            <label class="form-check-label" for="sourceTypeUSB">USB Camera</label>
-                        </div>
-                        <div class="form-check">
-                            <input class="form-check-input" type="radio" name="sourceType" id="sourceTypeStream"
-                                value="stream" onchange="toggleSourceInput()">
-                            <label class="form-check-label" for="sourceTypeStream">Network Stream (RTSP/HTTP)</label>
-                        </div>
+
+                    <!-- Current Active Source Display -->
+                    <div class="alert alert-info py-2 mb-3">
+                        <strong>🎥 Active:</strong>
+                        <code id="currentSourceDisplay">{{ payload['VIDEO_SOURCE'].value }}</code>
                     </div>
 
                     <!-- Hidden Real Field -->
                     <input type="hidden" name="VIDEO_SOURCE" id="VIDEO_SOURCE"
                         value="{{ payload['VIDEO_SOURCE'].value }}">
 
-                    <!-- USB Input -->
-                    <div id="usbInputGroup">
-                        <label class="small text-muted">Camera Index (0 = Default)</label>
-                        <select id="usbIndexSelect" class="form-select" onchange="updateRealSource()">
-                            <option value="0">Camera 0 (Default)</option>
-                            <option value="1">Camera 1</option>
-                            <option value="2">Camera 2</option>
-                        </select>
+                    <!-- Simple Input Options -->
+                    <div class="row g-2">
+                        <!-- USB Camera Quick Select -->
+                        <div class="col-md-3">
+                            <label class="small text-muted">USB Camera</label>
+                            <div class="input-group input-group-sm">
+                                <select id="usbIndexSelect" class="form-select form-select-sm">
+                                    <option value="0">Camera 0</option>
+                                    <option value="1">Camera 1</option>
+                                    <option value="2">Camera 2</option>
+                                </select>
+                                <button type="button" class="btn btn-primary btn-sm"
+                                    onclick="setVideoSource(document.getElementById('usbIndexSelect').value)">Set</button>
+                            </div>
+                        </div>
+
+                        <!-- Manual Stream URL -->
+                        <div class="col-md-9">
+                            <label class="small text-muted">Stream URL (rtsp:// or http://)</label>
+                            <div class="input-group input-group-sm">
+                                <input type="text" id="streamUrlInput" class="form-control form-control-sm"
+                                    placeholder="rtsp://user:pass@192.168.1.100:554/stream">
+                                <button type="button" class="btn btn-primary btn-sm"
+                                    onclick="setVideoSource(document.getElementById('streamUrlInput').value)">Apply</button>
+                            </div>
+                        </div>
                     </div>
 
-                    <!-- Stream Input -->
-                    <div id="streamInputGroup" class="d-none">
-                        <label class="small text-muted">Stream URL (rtsp://... or http://...)</label>
-                        <input type="text" id="streamUrlInput" class="form-control"
-                            placeholder="rtsp://user:pass@ip:554/stream" onchange="updateRealSource()">
+                    <div class="form-text text-muted mt-2">
+                        💡 Use "📹 Use" button on saved cameras below to activate them directly.
                     </div>
                 </div>
 
@@ -161,6 +835,42 @@
                         <div class="form-text text-muted"><small>Resize width (e.g., 640). Leave empty for full.</small>
                         </div>
                     </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Camera Management Section -->
+        <div class="card mb-4">
+            <div class="card-header bg-info text-white fw-bold d-flex justify-content-between align-items-center">
+                📷 Camera Management
+                <div class="btn-group btn-group-sm">
+                    <button type="button" class="btn btn-light btn-sm" onclick="startOnvifDiscoveryCamSection()">
+                        🔍 Scan Network
+                    </button>
+                    <button type="button" class="btn btn-light btn-sm" onclick="showAddCameraModal()">
+                        ➕ Add Camera
+                    </button>
+                </div>
+            </div>
+            <div class="card-body">
+                <p class="text-muted small mb-3">
+                    Manage ONVIF cameras. Add cameras manually or scan the network to discover them automatically.
+                </p>
+
+                <!-- Saved Cameras List -->
+                <h6 class="fw-bold mb-2">Saved Cameras</h6>
+                <div id="savedCamerasList" class="list-group mb-3">
+                    <div class="text-center text-muted p-3">Loading...</div>
+                </div>
+
+                <!-- Discovery Results (hidden by default) -->
+                <div id="camSectionDiscoveryResults" class="d-none">
+                    <h6 class="fw-bold mb-2">Discovered Cameras</h6>
+                    <div id="camSectionDiscoveryLoading" class="text-center p-2 d-none">
+                        <div class="spinner-border spinner-border-sm text-info"></div>
+                        <span class="ms-1 small">Scanning network...</span>
+                    </div>
+                    <div id="camSectionDiscoveryList" class="list-group mb-3"></div>
                 </div>
             </div>
         </div>
@@ -303,7 +1013,7 @@
         });
 
         function loadSystemVersions() {
-            fetch('/api/system/versions')
+            fetch('/api/v1/system/versions')
                 .then(res => res.json())
                 .then(data => {
                     document.getElementById('si-app').innerText = data.app_version || 'N/A';
@@ -317,46 +1027,35 @@
         }
 
         // --- Video Source Logic ---
+        function updateRealSource(forceValue) {
+            const hidden = document.getElementById('VIDEO_SOURCE');
+            if (!hidden) return;
+
+            const streamInput = document.getElementById('streamUrlInput');
+            const usbSelect = document.getElementById('usbIndexSelect');
+
+            const streamVal = streamInput ? streamInput.value.trim() : '';
+            const usbVal = usbSelect ? usbSelect.value.trim() : '';
+
+            let nextVal = '';
+            if (forceValue !== undefined && forceValue !== null) {
+                nextVal = String(forceValue).trim();
+            } else {
+                nextVal = streamVal || usbVal;
+            }
+
+            if (!nextVal) return;
+
+            hidden.value = nextVal;
+            const display = document.getElementById('currentSourceDisplay');
+            if (display) display.textContent = nextVal;
+        }
+
         function initVideoSource() {
             const currentVal = document.getElementById('VIDEO_SOURCE').value;
-            const isDigit = /^\d+$/.test(currentVal);
-
-            if (isDigit) {
-                document.getElementById('sourceTypeUSB').checked = true;
-                // Try to match select
-                const select = document.getElementById('usbIndexSelect');
-                if ([...select.options].some(o => o.value === currentVal)) {
-                    select.value = currentVal;
-                } else {
-                    // Fallback if odd index
-                    select.value = "0";
-                }
-            } else {
-                document.getElementById('sourceTypeStream').checked = true;
+            // Prefill stream URL input if current source is a URL
+            if (currentVal && !(/^\d+$/.test(currentVal))) {
                 document.getElementById('streamUrlInput').value = currentVal;
-            }
-            toggleSourceInput();
-        }
-
-        function toggleSourceInput() {
-            const isUsb = document.getElementById('sourceTypeUSB').checked;
-            if (isUsb) {
-                document.getElementById('usbInputGroup').classList.remove('d-none');
-                document.getElementById('streamInputGroup').classList.add('d-none');
-            } else {
-                document.getElementById('usbInputGroup').classList.add('d-none');
-                document.getElementById('streamInputGroup').classList.remove('d-none');
-            }
-            updateRealSource();
-        }
-
-        function updateRealSource() {
-            const isUsb = document.getElementById('sourceTypeUSB').checked;
-            const hidden = document.getElementById('VIDEO_SOURCE');
-            if (isUsb) {
-                hidden.value = document.getElementById('usbIndexSelect').value;
-            } else {
-                hidden.value = document.getElementById('streamUrlInput').value;
             }
         }
 
@@ -485,19 +1184,34 @@
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json'
-                    }
+                    },
+                    credentials: 'same-origin'
                 })
-                    .then(response => response.json())
+                    .then(response => {
+                        // Check if redirected to login
+                        if (response.redirected || response.url.includes('/login')) {
+                            throw new Error('Session expired. Please refresh and login again.');
+                        }
+                        if (!response.ok) {
+                            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                        }
+                        // Check content type before parsing
+                        const contentType = response.headers.get('content-type');
+                        if (!contentType || !contentType.includes('application/json')) {
+                            throw new Error('Invalid response from server (not JSON)');
+                        }
+                        return response.json();
+                    })
                     .then(data => {
                         if (data.status === 'success') {
                             alert("Shutdown initiated. System will power off in a few seconds.");
                         } else {
-                            alert("Shutdown failed: " + data.message);
+                            alert("Shutdown failed: " + (data.message || 'Unknown error'));
                         }
                     })
                     .catch(error => {
-                        console.error('Error:', error);
-                        alert("An error occurred while contacting the server.");
+                        console.error('Shutdown error:', error);
+                        alert("Shutdown failed: " + error.message);
                     });
             }
         }
@@ -508,19 +1222,34 @@
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json'
-                    }
+                    },
+                    credentials: 'same-origin'
                 })
-                    .then(response => response.json())
+                    .then(response => {
+                        // Check if redirected to login
+                        if (response.redirected || response.url.includes('/login')) {
+                            throw new Error('Session expired. Please refresh and login again.');
+                        }
+                        if (!response.ok) {
+                            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                        }
+                        // Check content type before parsing
+                        const contentType = response.headers.get('content-type');
+                        if (!contentType || !contentType.includes('application/json')) {
+                            throw new Error('Invalid response from server (not JSON)');
+                        }
+                        return response.json();
+                    })
                     .then(data => {
                         if (data.status === 'success') {
                             alert("Restart initiated. Please refresh the page in a minute.");
                         } else {
-                            alert("Restart failed: " + data.message);
+                            alert("Restart failed: " + (data.message || 'Unknown error'));
                         }
                     })
                     .catch(error => {
-                        console.error('Error:', error);
-                        alert("An error occurred while contacting the server.");
+                        console.error('Restart error:', error);
+                        alert("Restart failed: " + error.message);
                     });
             }
         }

@@ -30,6 +30,10 @@ gallery_date=none
         <button type="button" class="btn btn--danger btn--sm"
             onclick="deleteDetection(event, {{ detection_id }})">🗑</button>
         {% endif %}
+        {% if gallery_date %}
+        <a href="/gallery/{{ gallery_date }}#detection-{{ detection_id }}" class="btn btn--secondary btn--sm"
+            title="Go to Day">📅</a>
+        {% endif %}
     </div>
 
     {# Right: Navigation + Close #}
@@ -44,21 +48,5 @@ gallery_date=none
     </div>
 </div>
 
-<style>
-    .modal-action-bar {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        padding: var(--space-sm) var(--space-md);
-        background: var(--color-surface);
-        border-top: 1px solid var(--color-border-light);
-        gap: var(--space-sm);
-    }
-
-    .modal-action-bar__group {
-        display: flex;
-        align-items: center;
-        gap: var(--space-xs);
-    }
-</style>
+{# Styles migrated to design-system.css: MODAL ACTION BAR section #}
 {% endmacro %}

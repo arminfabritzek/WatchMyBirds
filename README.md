@@ -17,7 +17,8 @@
 
 <p align="center">
   <a href="https://github.com/arminfabritzek/WatchMyBirds/actions/workflows/docker.yml"><img src="https://github.com/arminfabritzek/WatchMyBirds/actions/workflows/docker.yml/badge.svg" alt="Docker Build"></a>
-  <img src="https://img.shields.io/badge/python-3.11+-blue.svg" alt="Python">
+  <a href="https://github.com/arminfabritzek/WatchMyBirds/releases"><img src="https://github.com/arminfabritzek/WatchMyBirds/actions/workflows/build-release.yml/badge.svg" alt="Raspberry Pi Image"></a>
+  <img src="https://img.shields.io/badge/python-3.11-blue.svg" alt="Python">
   <img src="https://img.shields.io/badge/license-Apache%202.0-green.svg" alt="License">
   <a href="https://github.com/sponsors/arminfabritzek"><img src="https://img.shields.io/badge/Sponsor-GitHub%20Sponsors-ea4aaa?logo=github" alt="Sponsor"></a>
 </p>

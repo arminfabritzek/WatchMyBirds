@@ -25,6 +25,11 @@ class MotionDetector:
         self.previous_frame_gray = None
         self.kernel = np.ones((5, 5), np.uint8)
 
+    def reset(self):
+        """Resets the motion detector state. Call when video source changes."""
+        self.previous_frame_gray = None
+        logger.debug("MotionDetector state reset")
+
     def detect(self, frame):
         """
         Detects motion in the provided frame compared to the previous frame.
@@ -35,6 +40,8 @@ class MotionDetector:
         Returns:
             bool: True if motion is detected, False otherwise.
         """
+        import time
+
         if frame is None:
             return False
 
@@ -45,6 +52,9 @@ class MotionDetector:
         # Initialize previous frame if first run
         if self.previous_frame_gray is None:
             self.previous_frame_gray = gray
+            self._stats_start = time.time()
+            self._stats_motion = 0
+            self._stats_total = 0
             return False  # Can't detect motion on first frame
 
         # Compute absolute difference
@@ -70,14 +80,27 @@ class MotionDetector:
                 motion_detected = True
                 if area > max_area:
                     max_area = area
-                # We can return early if optimization is needed, but finding max area is good for debug
-                # break
 
         # Update previous frame
         self.previous_frame_gray = gray
 
-        if self.debug and motion_detected:
-            # logger.debug(f"Motion detected! Max Area: {max_area}")
-            pass
+        # Periodic logging (every 30 seconds)
+        self._stats_total = getattr(self, "_stats_total", 0) + 1
+        if motion_detected:
+            self._stats_motion = getattr(self, "_stats_motion", 0) + 1
+
+        stats_start = getattr(self, "_stats_start", time.time())
+        if time.time() - stats_start >= 30:
+            ratio = (
+                (self._stats_motion / self._stats_total * 100)
+                if self._stats_total > 0
+                else 0
+            )
+            logger.info(
+                f"[MOTION] {self._stats_motion}/{self._stats_total} frames with motion ({ratio:.0f}%) in last 30s"
+            )
+            self._stats_start = time.time()
+            self._stats_motion = 0
+            self._stats_total = 0
 
         return motion_detected

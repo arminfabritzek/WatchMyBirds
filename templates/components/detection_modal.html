@@ -1,5 +1,5 @@
 {#
-Detection Detail Modal
+Detection Detail Modal (UI_STANDARD.md compliant)
 
 Combines reusable components for consistent modal rendering.
 Used in gallery views to show detection details.
@@ -13,57 +13,62 @@ group_id (str): Modal group for navigation isolation
 {% from "components/modal_detection_info.html" import render_detection_info %}
 
 {% macro render_modal(det, group_id) %}
-<div class="modal gallery-modal" id="modal-{{ group_id }}-{{ det.detection_id }}" tabindex="-1" aria-hidden="true"
-    data-modal-group="{{ group_id }}">
-    <div class="modal-dialog modal-lg">
-        <div class="modal-content">
-            {# Header #}
-            <div class="modal-header py-2">
-                <h6 class="modal-title mb-0">
-                    {{ det.formatted_date }} {{ det.formatted_time }} -
-                    <strong>{{ det.common_name }}</strong>
-                    {% if det.cls_class_name or det.od_class_name %}
-                    <em class="text-muted">{{ (det.cls_class_name or det.od_class_name) | replace('_', ' ') }}</em>
-                    {% endif %}
-                </h6>
-                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+<div class="modal fade gallery-modal wm-modal" id="modal-{{ group_id }}-{{ det.detection_id }}" tabindex="-1"
+    aria-hidden="true" data-modal-group="{{ group_id }}" data-image-path="{{ det.full_path }}">
+
+    <div
+        class="modal-dialog modal-xl modal-dialog-centered modal-dialog-scrollable modal-fullscreen-md-down wm-modal__dialog">
+        <div class="modal-content wm-modal__content">
+
+            <div class="modal-header wm-modal__header">
+                <div class="wm-modal__title">
+                    <span class="wm-modal__title-text">{{ det.common_name }}</span>
+                    <span class="wm-modal__title-sub">{{ det.formatted_date }} {{ det.formatted_time }}{% if
+                        det.cls_class_name or det.od_class_name %} · {{ (det.cls_class_name or det.od_class_name) |
+                        replace('_', ' ') }}{% endif %}</span>
+                </div>
+                <button type="button" class="btn-close wm-modal__close" data-bs-dismiss="modal"></button>
             </div>
 
-            {# Body: Image + Info #}
-            <div class="modal-body text-center py-2">
-                {{ render_image_viewer(
-                image_url=det.full_path,
-                image_alt=det.common_name,
+            <div class="wm-modal__body">
+                <div class="wm-modal__image">
+                    {{ render_image_viewer(
+                    image_url=det.full_path,
+                    image_alt=det.common_name,
+                    detection_id=det.detection_id,
+                    dismissable=true
+                    ) }}
+                </div>
+                <div class="wm-modal__info">
+                    {{ render_detection_info(
+                    det=det,
+                    siblings=det.siblings,
+                    sibling_count=det.sibling_count
+                    ) }}
+                </div>
+            </div>
+
+            <div class="wm-modal__action">
+                {{ render_action_bar(
                 detection_id=det.detection_id,
-                dismissable=true
-                ) }}
-
-                {{ render_detection_info(
-                det=det,
+                original_url=det.original_path,
+                bbox={
+                'x': det.bbox_x,
+                'y': det.bbox_y,
+                'w': det.bbox_w,
+                'h': det.bbox_h,
+                'name': det.common_name,
+                'id': det.detection_id
+                },
                 siblings=det.siblings,
-                sibling_count=det.sibling_count
+                show_nav=true,
+                show_bbox_toggle=true,
+                show_trash=true,
+                show_download=true,
+                gallery_date=det.gallery_date
                 ) }}
             </div>
 
-            {# Action Bar (replaces footer) #}
-            {{ render_action_bar(
-            detection_id=det.detection_id,
-            original_url=det.original_path,
-            bbox={
-            'x': det.bbox_x,
-            'y': det.bbox_y,
-            'w': det.bbox_w,
-            'h': det.bbox_h,
-            'name': det.common_name,
-            'id': det.detection_id
-            },
-            siblings=det.siblings,
-            show_nav=true,
-            show_bbox_toggle=true,
-            show_trash=true,
-            show_download=true,
-            gallery_date=det.gallery_date
-            ) }}
         </div>
     </div>
 </div>

@@ -3,198 +3,7 @@
 {% block title %}Live Stream - WatchMyBirds{% endblock %}
 
 {% block head %}
-<style>
-    /* Stream Container - Full-width, centered, prominent */
-    .stream-wrapper {
-        margin-bottom: var(--space-xl);
-    }
-
-    .stream-container {
-        position: relative;
-        max-width: 1000px;
-        margin: 0 auto;
-        border-radius: var(--radius-xl);
-        overflow: hidden;
-        border: 1px solid var(--color-border);
-        background: #000;
-    }
-
-    .stream-video {
-        width: 100%;
-        display: block;
-        background: #000;
-    }
-
-    /* Timestamp Overlay */
-    .stream-timestamp {
-        position: absolute;
-        top: var(--space-md);
-        right: var(--space-md);
-        padding: var(--space-xs) var(--space-sm);
-        background: rgba(0, 0, 0, 0.7);
-        border-radius: var(--radius-sm);
-        font-size: var(--font-size-xs);
-        color: var(--color-text-muted);
-        font-family: 'SF Mono', 'Fira Code', monospace;
-        backdrop-filter: blur(4px);
-    }
-
-    /* PTZ Overlay */
-    .ptz-overlay {
-        position: absolute;
-        bottom: var(--space-md);
-        left: 50%;
-        transform: translateX(-50%);
-        display: flex;
-        gap: var(--space-sm);
-        padding: var(--space-sm) var(--space-md);
-        background: rgba(0, 0, 0, 0.7);
-        border-radius: var(--radius-lg);
-        backdrop-filter: blur(10px);
-        opacity: 0;
-        transition: opacity var(--transition-normal);
-    }
-
-    .stream-container:hover .ptz-overlay {
-        opacity: 1;
-    }
-
-    .ptz-btn {
-        width: 32px;
-        height: 32px;
-        border: none;
-        border-radius: var(--radius-full);
-        background: rgba(255, 255, 255, 0.15);
-        color: white;
-        font-size: 14px;
-        cursor: pointer;
-        transition: all var(--transition-fast);
-        display: flex;
-        align-items: center;
-        justify-content: center;
-    }
-
-    .ptz-btn:hover {
-        background: rgba(255, 255, 255, 0.3);
-        transform: scale(1.1);
-    }
-
-    .ptz-btn:active {
-        transform: scale(0.95);
-    }
-
-    .ptz-btn:disabled {
-        opacity: 0.3;
-        cursor: not-allowed;
-    }
-
-    /* D-Pad */
-    .ptz-dpad {
-        display: grid;
-        grid-template-columns: repeat(3, 24px);
-        grid-template-rows: repeat(3, 24px);
-        gap: 2px;
-    }
-
-    .ptz-dpad .ptz-btn {
-        width: 24px;
-        height: 24px;
-        font-size: 10px;
-    }
-
-    .ptz-dpad .center-btn {
-        background: rgba(255, 255, 255, 0.05);
-    }
-
-    /* Zoom */
-    .ptz-zoom {
-        display: flex;
-        align-items: center;
-        gap: 4px;
-    }
-
-    .ptz-zoom input[type="range"] {
-        width: 50px;
-        height: 4px;
-        cursor: pointer;
-        accent-color: var(--color-accent);
-    }
-
-    /* Species Summary Cards */
-    .species-grid {
-        display: grid;
-        grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
-        gap: var(--space-md);
-    }
-
-    .species-card {
-        background: var(--color-surface);
-        border: 1px solid var(--color-border);
-        border-radius: var(--radius-lg);
-        overflow: hidden;
-        transition: all var(--transition-fast);
-        cursor: pointer;
-    }
-
-    .species-card:hover {
-        border-color: var(--color-primary);
-        transform: translateY(-2px);
-        box-shadow: var(--shadow-md);
-    }
-
-    .species-card__image {
-        width: 100%;
-        aspect-ratio: 1;
-        object-fit: cover;
-        display: block;
-    }
-
-    .species-card__count {
-        position: absolute;
-        top: var(--space-sm);
-        right: var(--space-sm);
-        min-width: 24px;
-        height: 24px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        background: var(--color-primary);
-        color: white;
-        border-radius: var(--radius-full);
-        font-size: var(--font-size-xs);
-        font-weight: 600;
-    }
-
-    .species-card__info {
-        padding: var(--space-sm);
-        text-align: center;
-    }
-
-    .species-card__name {
-        font-size: var(--font-size-sm);
-        font-weight: 600;
-        color: var(--color-text);
-        margin-bottom: 2px;
-    }
-
-    .species-card__latin {
-        font-size: var(--font-size-xs);
-        color: var(--color-text-muted);
-        font-style: italic;
-    }
-
-    .empty-state {
-        text-align: center;
-        padding: var(--space-2xl);
-        color: var(--color-text-muted);
-    }
-
-    .empty-state__icon {
-        font-size: 3rem;
-        opacity: 0.5;
-        margin-bottom: var(--space-md);
-    }
-</style>
+{# Styles migrated to design-system.css: STREAM PAGE section #}
 {% endblock %}
 
 {% block content %}
@@ -264,17 +73,23 @@
     <h2 class="section__title">Today's Summary</h2>
     <div class="species-grid">
         {% for det in visual_summary %}
-        <div class="species-card" data-bs-toggle="modal" data-bs-target="#modal-summary-{{ det.detection_id }}">
-            <div style="position: relative;">
-                <img src="{{ det.display_path }}" alt="{{ det.common_name }}" class="species-card__image">
-                {% if det.count %}
-                <span class="species-card__count">{{ det.count }}</span>
-                {% endif %}
-            </div>
-            <div class="species-card__info">
-                <div class="species-card__name">{{ det.common_name }}</div>
+        <div class="wm-tile" data-detection-id="{{ det.detection_id }}">
+            <button type="button" class="wm-tile__button" data-bs-toggle="modal"
+                data-bs-target="#modal-summary-{{ det.detection_id }}">
+
+                <div class="wm-tile__media">
+                    <img class="wm-tile__image" src="{{ det.display_path }}" alt="{{ det.common_name }}">
+
+                    {% if det.count %}
+                    <span class="wm-tile__badge">{{ det.count }}</span>
+                    {% endif %}
+                </div>
+            </button>
+
+            <div class="wm-tile__body">
+                <span class="wm-tile__name">{{ det.common_name }}</span>
                 {% if det.latin_name %}
-                <div class="species-card__latin">{{ det.latin_name | replace('_', ' ') }}</div>
+                <span class="wm-tile__latin">{{ det.latin_name | replace('_', ' ') }}</span>
                 {% endif %}
             </div>
         </div>

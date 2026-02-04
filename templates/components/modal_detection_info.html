@@ -13,23 +13,21 @@ sibling_count (int): Total number of detections on this image
 <div class="detection-info small text-muted mt-2 text-center">
     {% if sibling_count and sibling_count > 1 and siblings %}
     {# Multiple detections on same image #}
-    <div class="mb-2">
-        <strong>{{ sibling_count }} detections on this image:</strong>
-    </div>
     <div class="sibling-cards"
         style="display: flex; flex-wrap: wrap; justify-content: center; gap: 0.5rem; max-width: 100%;">
         {% for sib in siblings %}
-        <div class="sibling-card" data-detection-id="{{ sib.detection_id }}" style="
+        <div class="sibling-card" data-detection-id="{{ sib.detection_id }}" tabindex="-1"
+            data-bbox-x="{{ sib.bbox_x }}" data-bbox-y="{{ sib.bbox_y }}" data-bbox-w="{{ sib.bbox_w }}"
+            data-bbox-h="{{ sib.bbox_h }}" data-bbox-name="{{ sib.common_name }}" onmouseenter="showHoverBbox(this)"
+            onmouseleave="hideHoverBbox(this)" style="
                 min-width: 160px; 
                 max-width: 200px; 
                 padding: 0.5rem; 
                 border: 1px solid var(--color-border, #dee2e6); 
                 border-radius: 0.375rem;
                 text-align: left;
-                {% if sib.detection_id == det.detection_id %}
-                background: rgba(13, 110, 253, 0.1); 
-                border-color: #0d6efd;
-                {% endif %}
+                cursor: pointer;
+                transition: background 0.15s, border-color 0.15s;
              ">
             {% if sib.thumb_url %}
             <img src="{{ sib.thumb_url }}" alt="{{ sib.common_name }}"
@@ -45,19 +43,33 @@ sibling_count (int): Total number of detections on this image
         {% endfor %}
     </div>
     {% else %}
-    {# Single detection #}
-    <div>
-        Detection: <em>{{ det.od_class_name | replace('_', ' ') }}</em>
-        ({{ "%.0f"|format(det.od_confidence * 100) }}%)
-    </div>
-    <div>
-        Classification:
-        {% if det.cls_class_name %}
-        <em>{{ det.cls_class_name | replace('_', ' ') }}</em>
-        ({{ "%.0f"|format(det.cls_confidence * 100) }}%)
-        {% else %}
-        —
-        {% endif %}
+    {# Single detection - same card style as multi-detection #}
+    <div class="sibling-cards"
+        style="display: flex; flex-wrap: wrap; justify-content: center; gap: 0.5rem; max-width: 100%;">
+        <div class="sibling-card" data-detection-id="{{ det.detection_id }}" tabindex="-1"
+            data-bbox-x="{{ det.bbox_x }}" data-bbox-y="{{ det.bbox_y }}" data-bbox-w="{{ det.bbox_w }}"
+            data-bbox-h="{{ det.bbox_h }}" data-bbox-name="{{ det.common_name }}" onmouseenter="showHoverBbox(this)"
+            onmouseleave="hideHoverBbox(this)" style="
+                min-width: 160px; 
+                max-width: 200px; 
+                padding: 0.5rem; 
+                border: 1px solid var(--color-border, #dee2e6); 
+                border-radius: 0.375rem;
+                text-align: left;
+                cursor: pointer;
+                transition: background 0.15s, border-color 0.15s;
+             ">
+            {% if det.display_path %}
+            <img src="{{ det.display_path }}" alt="{{ det.common_name }}"
+                style="width: 36px; height: 36px; object-fit: cover; border-radius: 4px; float: left; margin-right: 8px;">
+            {% endif %}
+            <div style="font-weight: 600; font-size: 0.8rem;">{{ det.common_name }}</div>
+            <div style="font-size: 0.7rem; color: var(--color-text-muted, #6c757d);">
+                {{ "%.0f"|format(det.od_confidence * 100) }}%
+                {% if det.cls_class_name %} / {{ "%.0f"|format(det.cls_confidence * 100) }}%{% endif %}
+            </div>
+            <div style="clear: both;"></div>
+        </div>
     </div>
     {% endif %}
 </div>

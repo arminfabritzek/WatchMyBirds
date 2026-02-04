@@ -13,20 +13,37 @@ function navigateModal(btn, direction) {
     const group = currentModalEl.getAttribute('data-modal-group');
     if (!group) return;
 
+    // Get current image path to skip siblings (multiple detections on same image)
+    const currentImagePath = currentModalEl.getAttribute('data-image-path');
+
     // Find all modals in this group
     const allModals = Array.from(document.querySelectorAll(`.gallery-modal[data-modal-group="${group}"]`));
     const currentIndex = allModals.indexOf(currentModalEl);
 
     if (currentIndex === -1) return;
 
-    // Calculate next index
-    let nextIndex;
-    if (direction === 'next') {
-        nextIndex = currentIndex + 1;
-        if (nextIndex >= allModals.length) nextIndex = 0;
-    } else {
-        nextIndex = currentIndex - 1;
-        if (nextIndex < 0) nextIndex = allModals.length - 1;
+    // Find next modal with a DIFFERENT image path (skip siblings)
+    let nextIndex = currentIndex;
+    const step = direction === 'next' ? 1 : -1;
+    const totalModals = allModals.length;
+
+    // Loop through modals until we find one with a different image
+    for (let i = 0; i < totalModals; i++) {
+        nextIndex = nextIndex + step;
+        // Wrap around
+        if (nextIndex >= totalModals) nextIndex = 0;
+        if (nextIndex < 0) nextIndex = totalModals - 1;
+
+        const candidateModal = allModals[nextIndex];
+        const candidateImagePath = candidateModal.getAttribute('data-image-path');
+
+        // If different image (or no image path set), use this modal
+        if (candidateImagePath !== currentImagePath || !currentImagePath) {
+            break;
+        }
+
+        // Safety: if we've checked all modals without finding different image, stop
+        if (nextIndex === currentIndex) return;
     }
 
     const nextModalEl = allModals[nextIndex];
@@ -260,3 +277,69 @@ window.addEventListener('resize', function () {
         toggleBboxOverlay(btn);
     }
 });
+
+/* =========================================
+   Hover Bounding Box Preview
+   ========================================= */
+
+/**
+ * Show bounding box overlay when hovering over a detection card
+ */
+function showHoverBbox(cardEl) {
+    const modal = cardEl.closest('.modal');
+    if (!modal) return;
+
+    // Add visual highlight to card
+    cardEl.style.background = 'rgba(13, 110, 253, 0.1)';
+    cardEl.style.borderColor = '#0d6efd';
+
+    const container = modal.querySelector('.modal-image-viewer');
+    const canvas = container?.querySelector('.bbox-overlay');
+    const img = container?.querySelector('.bbox-base-image');
+
+    if (!canvas || !img) return;
+
+    // Get bbox data from card
+    const x = parseFloat(cardEl.dataset.bboxX) || 0;
+    const y = parseFloat(cardEl.dataset.bboxY) || 0;
+    const w = parseFloat(cardEl.dataset.bboxW) || 0;
+    const h = parseFloat(cardEl.dataset.bboxH) || 0;
+    const name = cardEl.dataset.bboxName || 'Detection';
+
+    if (!w && !h) return; // No valid bbox
+
+    // Show canvas and draw single bbox
+    canvas.style.display = 'block';
+
+    const box = { x, y, w, h, name, isCurrent: true };
+    drawBoundingBoxes(canvas, img, [box], null);
+}
+
+/**
+ * Hide bounding box overlay when mouse leaves detection card
+ */
+function hideHoverBbox(cardEl) {
+    const modal = cardEl.closest('.modal');
+    if (!modal) return;
+
+    // Remove visual highlight from card
+    cardEl.style.background = '';
+    cardEl.style.borderColor = '';
+
+    const container = modal.querySelector('.modal-image-viewer');
+    const canvas = container?.querySelector('.bbox-overlay');
+
+    if (!canvas) return;
+
+    // Check if the "Boxes" toggle is active - if so, don't hide
+    const btn = modal.querySelector('.bbox-toggle.active');
+    if (btn) {
+        // Redraw all boxes instead of hiding
+        toggleBboxOverlay(btn);
+        canvas.style.display = 'block';
+        return;
+    }
+
+    // Hide canvas
+    canvas.style.display = 'none';
+}

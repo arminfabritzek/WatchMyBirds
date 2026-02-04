@@ -78,24 +78,27 @@
         {% if detections %}
         <div class="gallery-grid-container">
             {% for det in detections %}
-            <div class="gallery-tile edit-tile" id="tile-{{ det.detection_id }}" data-index="{{ loop.index0 }}">
-                <div class="edit-checkbox-wrapper">
-                    <input class="form-check-input edit-checkbox" type="checkbox" name="ids"
+            <div class="wm-tile wm-tile--bbox wm-tile--selectable" id="tile-{{ det.detection_id }}"
+                data-index="{{ loop.index0 }}" data-detection-id="{{ det.detection_id }}" {% if det.bbox_x
+                %}data-bbox-x="{{ det.bbox_x }}" data-bbox-y="{{ det.bbox_y }}" data-bbox-w="{{ det.bbox_w }}"
+                data-bbox-h="{{ det.bbox_h }}" {% endif %}>
+
+                <div class="wm-tile__select">
+                    <input class="form-check-input wm-tile__checkbox" type="checkbox" name="ids"
                         data-index="{{ loop.index0 }}" value="{{ det.detection_id }}" onchange="updateCounter()">
                 </div>
 
-                <!-- Use the same thumbnail logic as gallery -->
-                <div class="thumbnail-wrapper">
-                    <img src="{{ det.display_path }}" class="img-fluid rounded shadow-sm" loading="lazy"
-                        alt="{{ det.cls_class_name or det.od_class_name }}" style="max-width: {{ image_width }}px;">
+                <div class="wm-tile__media wm-tile__media--bbox">
+                    <img class="wm-tile__image wm-tile__image--bbox" src="{{ det.display_path }}"
+                        alt="{{ det.cls_class_name or det.od_class_name }}">
                 </div>
 
-                <div class="thumbnail-info-box mt-2 small text-center">
-                    <div class="info-common-name fw-bold">{{ det.common_name }}</div>
+                <div class="wm-tile__body">
+                    <span class="wm-tile__name">{{ det.common_name }}</span>
                     {% if det.latin_name %}
-                    <div class="info-scientific-name"><em>{{ det.latin_name | replace('_', ' ') }}</em></div>
+                    <span class="wm-tile__latin">{{ det.latin_name | replace('_', ' ') }}</span>
                     {% endif %}
-                    <div class="score-value score-value--prominent">{{ "%.2f"|format(det.score or 0.0) }}</div>
+                    <span class="wm-tile__score">{{ "%.2f"|format(det.score or 0.0) }}</span>
                 </div>
             </div>
             {% endfor %}
@@ -150,66 +153,7 @@
     </form>
 </div>
 
-<style>
-    .gallery-grid-container {
-        display: grid;
-        grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
-        gap: 1.5rem;
-        padding-bottom: 100px;
-    }
-
-    .edit-tile {
-        position: relative;
-        border: 1px solid #dee2e6;
-        padding: 10px;
-        border-radius: 8px;
-        transition: transform 0.2s;
-    }
-
-    .edit-tile:hover {
-        transform: translateY(-5px);
-        box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
-    }
-
-    .edit-checkbox-wrapper {
-        position: absolute;
-        top: 15px;
-        left: 15px;
-        z-index: 10;
-        background: rgba(255, 255, 255, 0.8);
-        padding: 5px;
-        border-radius: 4px;
-        box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
-    }
-
-    .edit-checkbox {
-        width: 1.2rem;
-        height: 1.2rem;
-        cursor: pointer;
-    }
-
-    .sticky-action-footer {
-        position: fixed;
-        bottom: 0;
-        left: 0;
-        right: 0;
-        z-index: 1000;
-    }
-
-    .thumbnail-wrapper img {
-        width: 100%;
-        height: auto;
-        object-fit: cover;
-    }
-
-    .edit-tile {
-        cursor: pointer;
-    }
-
-    .edit-checkbox-wrapper {
-        cursor: default;
-    }
-</style>
+{# Styles migrated to design-system.css: EDIT PAGE section #}
 {% endblock %}
 
 {% block scripts %}
@@ -224,16 +168,16 @@
         }
     }
 
-    document.querySelectorAll('.edit-tile').forEach((tile) => {
+    document.querySelectorAll('.wm-tile--bbox').forEach((tile) => {
         tile.addEventListener('click', (event) => {
-            if (event.target.closest('.edit-checkbox-wrapper')) return;
+            if (event.target.closest('.wm-tile__select')) return;
 
-            const checkbox = tile.querySelector('.edit-checkbox');
+            const checkbox = tile.querySelector('.wm-tile__checkbox');
             if (!checkbox) return;
 
             checkbox.checked = !checkbox.checked;
 
-            const checkboxes = Array.from(document.querySelectorAll('.edit-checkbox'));
+            const checkboxes = Array.from(document.querySelectorAll('.wm-tile__checkbox'));
             const currentIndex = Number(checkbox.dataset.index);
 
             if (event.shiftKey && lastClickedIndex !== null) {
@@ -246,7 +190,7 @@
     });
 
     function toggleSelectAll(source) {
-        const checkboxes = document.querySelectorAll('.edit-checkbox');
+        const checkboxes = document.querySelectorAll('.wm-tile__checkbox');
         for (var i = 0; i < checkboxes.length; i++) {
             checkboxes[i].checked = source.checked;
         }
@@ -254,12 +198,12 @@
     }
 
     function updateCounter() {
-        const count = document.querySelectorAll('.edit-checkbox:checked').length;
+        const count = document.querySelectorAll('.wm-tile__checkbox:checked').length;
         document.getElementById('selected-counter').innerText = count + ' items selected';
     }
 
     function confirmReject() {
-        const count = document.querySelectorAll('.edit-checkbox:checked').length;
+        const count = document.querySelectorAll('.wm-tile__checkbox:checked').length;
         if (count === 0) {
             alert('Please select items to reject.');
             return false;

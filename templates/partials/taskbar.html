@@ -67,28 +67,13 @@
     </div>
 </nav>
 
-{# Add bottom padding to body to prevent content overlap #}
-<style>
-    body {
-        padding-bottom: 50px;
-    }
-
-    .modern-taskbar {
-        z-index: 1050;
-        background: linear-gradient(135deg, #0d9488 0%, #0284c7 50%, #2563eb 100%);
-        box-shadow: 0 -4px 20px rgba(13, 148, 136, 0.3);
-    }
-
-    .bg-white-25 {
-        background-color: rgba(255, 255, 255, 0.25) !important;
-    }
-</style>
+{# Styles migrated to design-system.css: TASKBAR section #}
 
 <script>
     (function () {
         // Update taskbar stats from main stats polling
         function updateTaskbarStats() {
-            fetch('/api/system/stats')
+            fetch('/api/v1/system/stats')
                 .then(r => r.json())
                 .then(data => {
                     if (data.status === 'success') {

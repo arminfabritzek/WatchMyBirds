@@ -83,7 +83,7 @@
 <script>
     (function () {
         function updateStatus() {
-            fetch('/api/system/stats')
+            fetch('/api/v1/system/stats')
                 .then(r => r.json())
                 .then(data => {
                     if (data.status === 'success') {

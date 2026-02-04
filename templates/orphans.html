@@ -52,31 +52,32 @@
 {% if orphans %}
 <div class="orphan-grid">
     {% for img in orphans %}
-    <div class="orphan-tile" data-filename="{{ img.filename }}">
-        <div class="orphan-checkbox-wrapper">
-            <input class="form-check-input orphan-checkbox" type="checkbox" value="{{ img.filename }}"
+    <div class="wm-tile wm-tile--review" data-filename="{{ img.filename }}">
+        <div class="wm-tile__select">
+            <input class="form-check-input wm-tile__checkbox" type="checkbox" value="{{ img.filename }}"
                 onchange="updateCounter()">
         </div>
-        <!-- Reason Badge -->
-        <div class="orphan-reason-badge">
-            <span class="badge {% if img.review_reason == 'orphan' %}bg-warning text-dark{% else %}bg-info{% endif %}">
-                {{ img.reason_label }}
-            </span>
-        </div>
-        <div class="orphan-thumb">
-            <button type="button" class="btn btn-link p-0 w-100 orphan-thumb-btn" data-bs-toggle="modal"
-                data-bs-target="#modal-review-{{ img.filename|replace('.', '_') }}" style="border: none;">
-                <img src="{{ img.thumb_url }}" alt="{{ img.filename }}"
+
+        <span
+            class="wm-tile__badge wm-tile__badge--reason {% if img.review_reason == 'orphan' %}bg-warning text-dark{% else %}bg-info{% endif %}">
+            {{ img.reason_label }}
+        </span>
+
+        <button type="button" class="wm-tile__button" data-bs-toggle="modal"
+            data-bs-target="#modal-review-{{ img.filename|replace('.', '_') }}">
+            <div class="wm-tile__media">
+                <img class="wm-tile__image" src="{{ img.thumb_url }}" alt="{{ img.filename }}"
                     onerror="this.src='/assets/placeholder.svg'; this.onerror=null;">
-            </button>
+            </div>
+        </button>
+
+        <div class="wm-tile__body">
+            <span class="wm-tile__meta">{{ img.formatted_date }}</span>
+            <span class="wm-tile__name">{{ img.filename }}</span>
+            <span class="wm-tile__size">{{ img.file_size_str }}</span>
         </div>
-        <div class="orphan-info">
-            <div class="orphan-date">{{ img.formatted_date }}</div>
-            <div class="orphan-filename text-truncate" title="{{ img.filename }}">{{ img.filename }}</div>
-            <div class="orphan-size text-muted">{{ img.file_size_str }}</div>
-        </div>
-        <!-- Per-Tile Actions -->
-        <div class="orphan-tile-actions mt-2 d-flex gap-1 justify-content-center">
+
+        <div class="wm-tile__actions">
             <button type="button" class="btn btn-sm btn-success" onclick="singleAction('{{ img.filename }}', 'confirm')"
                 title="Bird Present">
                 <i class="bi bi-check"></i>
@@ -101,94 +102,7 @@
 </div>
 {% endif %}
 
-<style>
-    .orphan-grid {
-        display: grid;
-        grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-        gap: 1rem;
-    }
-
-    .orphan-tile {
-        position: relative;
-        border: 1px solid #dee2e6;
-        padding: 10px;
-        border-radius: 8px;
-        background: #fff;
-        transition: transform 0.2s, box-shadow 0.2s;
-    }
-
-    .orphan-tile:hover {
-        transform: translateY(-3px);
-        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
-    }
-
-    .orphan-checkbox-wrapper {
-        position: absolute;
-        top: 15px;
-        left: 15px;
-        z-index: 10;
-        background: rgba(255, 255, 255, 0.9);
-        padding: 5px;
-        border-radius: 4px;
-        box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
-    }
-
-    .orphan-checkbox {
-        width: 1.2rem;
-        height: 1.2rem;
-        cursor: pointer;
-    }
-
-    .orphan-reason-badge {
-        position: absolute;
-        top: 15px;
-        right: 15px;
-        z-index: 10;
-    }
-
-    .orphan-thumb {
-        width: 100%;
-        aspect-ratio: 1;
-        overflow: hidden;
-        border-radius: 6px;
-        margin-bottom: 8px;
-    }
-
-    .orphan-thumb img {
-        width: 100%;
-        height: 100%;
-        object-fit: cover;
-    }
-
-    .orphan-info {
-        font-size: 0.85rem;
-    }
-
-    .orphan-date {
-        font-weight: 600;
-        color: #333;
-    }
-
-    .orphan-filename {
-        font-family: monospace;
-        font-size: 0.75rem;
-        color: #666;
-    }
-
-    .orphan-size {
-        font-size: 0.75rem;
-    }
-
-    .orphan-tile-actions .btn {
-        padding: 0.25rem 0.5rem;
-    }
-
-    .review-action-bar {
-        position: sticky;
-        top: 0;
-        z-index: 100;
-    }
-</style>
+{# Styles migrated to design-system.css: ORPHAN GRID section #}
 {% endblock %}
 
 {% block modals %}
@@ -205,18 +119,18 @@
     let noBirdConfirmed = localStorage.getItem('noBirdConfirmed') === 'true';
 
     function toggleSelectAll(source) {
-        const checkboxes = document.querySelectorAll('.orphan-checkbox');
+        const checkboxes = document.querySelectorAll('.wm-tile__checkbox');
         checkboxes.forEach(cb => cb.checked = source.checked);
         updateCounter();
     }
 
     function updateCounter() {
-        const count = document.querySelectorAll('.orphan-checkbox:checked').length;
+        const count = document.querySelectorAll('.wm-tile__checkbox:checked').length;
         document.getElementById('selected-counter').innerText = count + ' items selected';
     }
 
     function getSelectedFilenames() {
-        const checkboxes = document.querySelectorAll('.orphan-checkbox:checked');
+        const checkboxes = document.querySelectorAll('.wm-tile__checkbox:checked');
         return Array.from(checkboxes).map(cb => cb.value);
     }
 
@@ -232,7 +146,7 @@
             if (data.status === 'success') {
                 // Remove processed tiles from DOM
                 filenames.forEach(fn => {
-                    const tile = document.querySelector(`.orphan-tile[data-filename="${fn}"]`);
+                    const tile = document.querySelector(`.wm-tile--review[data-filename="${fn}"]`);
                     if (tile) {
                         tile.style.transition = 'opacity 0.3s, transform 0.3s';
                         tile.style.opacity = '0';
@@ -252,7 +166,7 @@
                 setTimeout(() => {
                     updateCounter();
                     // Update the total count in header
-                    const remaining = document.querySelectorAll('.orphan-tile').length;
+                    const remaining = document.querySelectorAll('.wm-tile--review').length;
                     const subtitle = document.querySelector('.text-muted.mb-0');
                     if (subtitle) {
                         subtitle.textContent = `Images waiting for your decision (${remaining} total)`;
@@ -342,7 +256,7 @@
     let lastClickedCheckbox = null;
 
     function handleCheckboxClick(checkbox, shiftKey) {
-        const allCheckboxes = Array.from(document.querySelectorAll('.orphan-checkbox'));
+        const allCheckboxes = Array.from(document.querySelectorAll('.wm-tile__checkbox'));
 
         if (shiftKey && lastClickedCheckbox && lastClickedCheckbox !== checkbox) {
             // Range select
@@ -364,20 +278,20 @@
     }
 
     // Attach click handlers to checkboxes for shift+click
-    document.querySelectorAll('.orphan-checkbox').forEach(checkbox => {
+    document.querySelectorAll('.wm-tile__checkbox').forEach(checkbox => {
         checkbox.addEventListener('click', (e) => {
             handleCheckboxClick(checkbox, e.shiftKey);
         });
     });
 
     // Click on tile to toggle checkbox, but ignore clicks on checkbox itself, thumbnail button, or action buttons
-    document.querySelectorAll('.orphan-tile').forEach(tile => {
+    document.querySelectorAll('.wm-tile--review').forEach(tile => {
         tile.addEventListener('click', (e) => {
-            if (e.target.closest('.orphan-checkbox-wrapper')) return;
-            if (e.target.closest('.orphan-thumb-btn')) return;
-            if (e.target.closest('.orphan-tile-actions')) return;
+            if (e.target.closest('.wm-tile__select')) return;
+            if (e.target.closest('.wm-tile__button')) return;
+            if (e.target.closest('.wm-tile__actions')) return;
 
-            const checkbox = tile.querySelector('.orphan-checkbox');
+            const checkbox = tile.querySelector('.wm-tile__checkbox');
             checkbox.checked = !checkbox.checked;
             handleCheckboxClick(checkbox, e.shiftKey);
         });

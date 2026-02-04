@@ -24,11 +24,9 @@ from flask import (
     render_template,
     request,
     send_from_directory,
-    session,
     url_for,
 )
 from PIL import Image, ImageDraw, ImageFont
-from werkzeug.utils import secure_filename
 
 from config import (
     get_config,
@@ -36,31 +34,16 @@ from config import (
     update_runtime_settings,
     validate_runtime_updates,
 )
-from utils.db import (
-    fetch_all_detection_times,
-    # Analytics functions
-    fetch_analytics_summary,
-    fetch_daily_covers,
-    fetch_day_count,
-    fetch_detection_species_summary,
-    fetch_detections_for_gallery,
-    fetch_review_queue_count,
-    fetch_species_timestamps,
-    fetch_trash_count,
-    fetch_trash_items,
-    get_connection,
-    reject_detections,
-    restore_detections,
-    restore_no_bird_images,
-    # delete_no_bird_images removed - use file_gc.hard_delete_images instead
-    update_downloaded_timestamp,
-    update_review_status,
+from web.blueprints.auth import auth_bp, login_required
+from web.services import (
+    db_service,
+    gallery_service,
+    onvif_service,
+    path_service,
 )
-from utils.file_gc import hard_delete_detections
-from utils.path_manager import get_path_manager
 
 config = get_config()
-db_conn = get_connection()
+db_conn = db_service.get_connection()
 
 _CACHE_TIMEOUT = 60  # Set cache timeout in seconds
 _cached_images = {"images": None, "timestamp": 0}
@@ -68,12 +51,13 @@ _cached_images = {"images": None, "timestamp": 0}
 _species_summary_cache = {"timestamp": 0, "payload": None}
 
 
-def create_web_interface(detection_manager):
+def create_web_interface(detection_manager, system_monitor=None):
     """
     Creates and returns a Flask web server for the project.
 
     Args:
         detection_manager: The DetectionManager instance for frame access and control.
+        system_monitor: Optional SystemMonitor instance for vitals API.
 
     Configuration is loaded from the global config module.
     """
@@ -95,10 +79,9 @@ def create_web_interface(detection_manager):
 
     # Clear restart-required marker on fresh app start
     try:
-        from utils.restore import clear_restart_required
+        from web.services import backup_restore_service
 
-        pm = get_path_manager(output_dir)
-        clear_restart_required(pm)
+        backup_restore_service.clear_restart_marker(output_dir)
     except Exception as e:
         logger.debug(f"Could not clear restart marker: {e}")
 
@@ -115,7 +98,9 @@ def create_web_interface(detection_manager):
         COMMON_NAMES = {"Cyanistes_caeruleus": "Eurasian blue tit"}
 
     def get_detections_for_date(date_str_iso):
-        rows = fetch_detections_for_gallery(db_conn, date_str_iso)
+        rows = db_service.fetch_detections_for_gallery(
+            db_conn, date_str_iso, order_by="time"
+        )
         # Convert to list of dicts immediately for easier handling
         return [dict(row) for row in rows]
 
@@ -124,7 +109,7 @@ def create_web_interface(detection_manager):
         [SEMANTIC DELETE]
         Rejects specific detections.
         """
-        reject_detections(db_conn, detection_ids)
+        db_service.reject_detections(db_conn, detection_ids)
         return True
 
     def get_all_detections():
@@ -133,7 +118,7 @@ def create_web_interface(detection_manager):
         Returns list of dicts.
         """
         try:
-            rows = fetch_detections_for_gallery(db_conn, order_by="score")
+            rows = db_service.fetch_detections_for_gallery(db_conn, order_by="time")
             return [dict(row) for row in rows]
         except Exception as e:
             logger.error(f"Error reading detections from SQLite: {e}")
@@ -144,7 +129,7 @@ def create_web_interface(detection_manager):
         covers = {}
         gallery_threshold = config.get("GALLERY_DISPLAY_THRESHOLD", 0.7)
         try:
-            rows = fetch_daily_covers(db_conn, min_score=gallery_threshold)
+            rows = db_service.fetch_daily_covers(db_conn, min_score=gallery_threshold)
             for row in rows:
                 date_key = row["date_key"]  # Already YYYY-MM-DD
                 optimized_name = row["optimized_name_virtual"]
@@ -190,7 +175,7 @@ def create_web_interface(detection_manager):
 
         detections = []
         try:
-            rows = fetch_detections_for_gallery(
+            rows = db_service.fetch_detections_for_gallery(
                 db_conn, order_by="time"
             )  # Most recent first
             detections = [dict(row) for row in rows]
@@ -221,7 +206,7 @@ def create_web_interface(detection_manager):
     def get_daily_species_summary(date_iso: str):
         """Returns per-species counts for a given date (YYYY-MM-DD) - always fresh from DB."""
         try:
-            rows = fetch_detection_species_summary(db_conn, date_iso)
+            rows = db_service.fetch_detection_species_summary(db_conn, date_iso)
         except Exception as e:
             logger.error(f"Error fetching daily species summary for {date_iso}: {e}")
             rows = []
@@ -430,6 +415,41 @@ def create_web_interface(detection_manager):
         "FLASK_SECRET_KEY", "watchmybirds-dev-key-change-in-production"
     )
 
+    # Register Blueprints
+    server.register_blueprint(auth_bp)
+
+    # Register API v1 Blueprint
+    from web.blueprints.api_v1 import init_api_v1
+
+    init_api_v1(server, detection_manager, system_monitor=system_monitor)
+
+    # Register Trash Blueprint
+    from web.blueprints.trash import trash_bp
+
+    server.register_blueprint(trash_bp)
+
+    # Register Review Blueprint
+    from web.blueprints.review import review_bp
+
+    server.register_blueprint(review_bp)
+
+    # Register Inbox Blueprint
+    from web.blueprints.inbox import inbox_bp, init_inbox_bp
+
+    init_inbox_bp(detection_manager)
+    server.register_blueprint(inbox_bp)
+
+    # Register Analytics Blueprint
+    from web.blueprints.analytics import analytics_bp
+
+    server.register_blueprint(analytics_bp)
+
+    # Register Backup Blueprint
+    from web.blueprints.backup import backup_bp, init_backup_bp
+
+    init_backup_bp(detection_manager)
+    server.register_blueprint(backup_bp)
+
     # Load version info if available (Only for Dev Sync)
     version_info = ""
     try:
@@ -470,11 +490,11 @@ def create_web_interface(detection_manager):
             if now - inject_counts.cache["time"] < 30:  # 30s cache
                 return inject_counts.cache["data"]
 
-            with get_connection() as conn:
-                counts["trash_count"] = fetch_trash_count(conn)
+            with db_service.get_connection() as conn:
+                counts["trash_count"] = db_service.fetch_trash_count(conn)
                 # Use SAVE_THRESHOLD for Review Queue count
                 save_threshold = config.get("SAVE_THRESHOLD", 0.65)
-                counts["untagged_count"] = fetch_review_queue_count(
+                counts["untagged_count"] = db_service.fetch_review_queue_count(
                     conn, save_threshold
                 )
 
@@ -484,23 +504,10 @@ def create_web_interface(detection_manager):
 
         return counts
 
-    # --- Auth Helper ---
-    def login_required(f):
-        """Decorator to require authentication for Flask routes."""
-        from functools import wraps
-
-        @wraps(f)
-        def decorated_function(*args, **kwargs):
-            from flask import redirect, url_for
-
-            if not session.get("authenticated"):
-                return redirect(url_for("login", next=request.path))
-            return f(*args, **kwargs)
-
-        return decorated_function
+    # Auth helper is now imported from web.blueprints.auth
 
     def setup_web_routes(server):
-        path_mgr = get_path_manager(output_dir)
+        path_mgr = path_service.get_path_manager(output_dir)
 
         # --- Helper for Regeneration ---
         def regenerate_derivative(filename_rel, type="thumb"):
@@ -804,11 +811,258 @@ def create_web_interface(detection_manager):
                 return jsonify({"errors": errors}), 400
             update_runtime_settings(valid)
 
-            # --- Dynamic Reload Logic ---
             # Delegate component updates to DetectionManager (Video Source, Debug Mode, Models, etc.)
             detection_manager.update_configuration(valid)
 
             return jsonify(get_settings_payload())
+
+        # --- ONVIF Discovery API ---
+        @server.route("/api/onvif/discover", methods=["GET"])
+        @login_required
+        def onvif_discover_route():
+            """Scans network for ONVIF cameras and returns results."""
+            try:
+                cameras = onvif_service.discover_cameras(fast=False)
+
+                if not cameras:
+                    # Return empty success list rather than error if just nothing found
+                    return jsonify({"status": "success", "cameras": []})
+
+                return jsonify({"status": "success", "cameras": cameras})
+            except Exception as e:
+                logger.error(f"ONVIF Discovery route failed: {e}")
+                return jsonify({"status": "error", "message": str(e)}), 500
+
+        @server.route("/api/onvif/get_stream_uri", methods=["POST"])
+        @login_required
+        def onvif_get_stream_uri_route():
+            """Retrieves RTSP stream URI for a specific camera with credentials."""
+            try:
+                data = request.get_json() or {}
+                ip = data.get("ip")
+                port = int(data.get("port", 80))
+                user = data.get("username", "")
+                password = data.get("password", "")
+
+                if not ip:
+                    return jsonify(
+                        {"status": "error", "message": "IP is required"}
+                    ), 400
+
+                uri = onvif_service.get_stream_uri(ip, port, user, password)
+
+                if uri:
+                    return jsonify({"status": "success", "uri": uri})
+                else:
+                    return jsonify(
+                        {"status": "error", "message": "Could not retrieve URI"}
+                    ), 404
+            except Exception as e:
+                logger.error(f"ONVIF Stream URI route failed: {e}")
+                return jsonify({"status": "error", "message": str(e)}), 500
+
+        # --- Camera Management API ---
+        @server.route("/api/cameras", methods=["GET"])
+        @login_required
+        def cameras_list_route():
+            """List all saved cameras."""
+            try:
+                cameras = onvif_service.get_saved_cameras()
+                return jsonify({"status": "success", "cameras": cameras})
+            except Exception as e:
+                logger.error(f"Camera list failed: {e}")
+                return jsonify({"status": "error", "message": str(e)}), 500
+
+        @server.route("/api/cameras", methods=["POST"])
+        @login_required
+        def cameras_add_route():
+            """Add a new camera."""
+            try:
+                data = request.get_json() or {}
+                ip = data.get("ip")
+                port = int(data.get("port", 80))
+                username = data.get("username", "")
+                password = data.get("password", "")
+                name = data.get("name", "")
+
+                if not ip:
+                    return jsonify(
+                        {"status": "error", "message": "IP is required"}
+                    ), 400
+
+                result = onvif_service.save_camera(
+                    ip=ip,
+                    port=port,
+                    username=username,
+                    password=password,
+                    name=name,
+                )
+                return jsonify({"status": "success", "camera": result})
+            except ValueError as e:
+                return jsonify({"status": "error", "message": str(e)}), 400
+            except Exception as e:
+                logger.error(f"Camera add failed: {e}")
+                return jsonify({"status": "error", "message": str(e)}), 500
+
+        @server.route("/api/cameras/<int:camera_id>", methods=["DELETE"])
+        @login_required
+        def cameras_delete_route(camera_id: int):
+            """Delete a camera."""
+            try:
+                if onvif_service.delete_camera(camera_id):
+                    return jsonify({"status": "success"})
+                else:
+                    return jsonify(
+                        {"status": "error", "message": "Camera not found"}
+                    ), 404
+            except Exception as e:
+                logger.error(f"Camera delete failed: {e}")
+                return jsonify({"status": "error", "message": str(e)}), 500
+
+        @server.route("/api/cameras/<int:camera_id>", methods=["PUT"])
+        @login_required
+        def cameras_update_route(camera_id: int):
+            """Update a camera."""
+            try:
+                data = request.get_json() or {}
+                if onvif_service.update_camera(
+                    camera_id,
+                    ip=data.get("ip"),
+                    port=data.get("port"),
+                    username=data.get("username"),
+                    password=data.get("password"),
+                    name=data.get("name"),
+                ):
+                    return jsonify({"status": "success"})
+                else:
+                    return jsonify(
+                        {"status": "error", "message": "Camera not found"}
+                    ), 404
+            except Exception as e:
+                logger.error(f"Camera update failed: {e}")
+                return jsonify({"status": "error", "message": str(e)}), 500
+
+        @server.route("/api/cameras/<int:camera_id>/test", methods=["POST"])
+        @login_required
+        def cameras_test_route(camera_id: int):
+            """Test connection to a camera using ONVIF GetDeviceInformation."""
+            try:
+                cam = onvif_service.get_camera(camera_id, include_password=True)
+
+                if not cam:
+                    return jsonify(
+                        {"status": "error", "message": "Camera not found"}
+                    ), 404
+
+                details = onvif_service.get_device_info(
+                    ip=cam["ip"],
+                    port=cam.get("port", 80),
+                    username=cam.get("username", ""),
+                    password=cam.get("password", ""),
+                )
+
+                if details:
+                    # Update test result via service
+                    onvif_service.update_test_result(
+                        camera_id,
+                        success=True,
+                        manufacturer=details.get("manufacturer", ""),
+                        model=details.get("model", ""),
+                    )
+                    return jsonify(
+                        {
+                            "status": "success",
+                            "details": {
+                                "manufacturer": details.get("manufacturer"),
+                                "model": details.get("model"),
+                                "firmware": details.get("firmware"),
+                                "has_ptz": False,
+                            },
+                        }
+                    )
+                else:
+                    onvif_service.update_test_result(camera_id, success=False)
+                    return jsonify(
+                        {"status": "error", "message": "Connection failed."}
+                    ), 400
+            except Exception as e:
+                logger.error(f"Camera test failed: {e}")
+                return jsonify({"status": "error", "message": str(e)}), 500
+
+        @server.route("/api/cameras/<int:camera_id>/use", methods=["POST"])
+        @login_required
+        def cameras_use_route(camera_id: int):
+            """
+            Use a saved camera: Fetches RTSP URI using stored credentials
+            and sets it as the active VIDEO_SOURCE.
+            """
+            try:
+                cam = onvif_service.get_camera(camera_id, include_password=True)
+
+                if not cam:
+                    return jsonify(
+                        {"status": "error", "message": "Camera not found"}
+                    ), 404
+
+                logger.info(
+                    f"Activating camera {camera_id}: {cam.get('name')} @ {cam['ip']}:{cam.get('port', 80)}"
+                )
+
+                # Check if credentials are present
+                if not cam.get("username") or not cam.get("password"):
+                    logger.warning(f"Camera {camera_id} has no credentials stored")
+                    return jsonify(
+                        {
+                            "status": "error",
+                            "message": "No credentials stored for this camera. Please edit the camera and add username/password.",
+                        }
+                    ), 400
+
+                # Get RTSP URI using stored credentials via service
+                try:
+                    uri = onvif_service.get_stream_uri(
+                        camera_ip=cam["ip"],
+                        port=cam.get("port", 80),
+                        username=cam.get("username", ""),
+                        password=cam.get("password", ""),
+                    )
+                    logger.info(f"Retrieved RTSP URI for camera {camera_id}")
+                except Exception as e:
+                    logger.error(
+                        f"Failed to get stream URI for camera {camera_id}: {e}"
+                    )
+                    return jsonify(
+                        {"status": "error", "message": f"ONVIF connection failed: {e}"}
+                    ), 400
+
+                if not uri:
+                    return jsonify(
+                        {
+                            "status": "error",
+                            "message": "Could not retrieve stream URI from camera",
+                        }
+                    ), 400
+
+                # Set as VIDEO_SOURCE and persist
+                logger.info(f"Setting VIDEO_SOURCE to: {uri[:50]}...")
+                update_runtime_settings({"VIDEO_SOURCE": uri})
+                detection_manager.update_configuration({"VIDEO_SOURCE": uri})
+
+                logger.info(
+                    f"Camera {camera_id} activated as VIDEO_SOURCE - saved to settings.yaml"
+                )
+
+                return jsonify(
+                    {
+                        "status": "success",
+                        "message": f"Camera '{cam.get('name', 'Camera')}' is now active",
+                        "uri_set": True,
+                    }
+                )
+
+            except Exception as e:
+                logger.error(f"Camera use failed: {e}", exc_info=True)
+                return jsonify({"status": "error", "message": str(e)}), 500
 
         server.add_url_rule(
             "/video_feed", endpoint="video_feed", view_func=video_feed_route
@@ -832,484 +1086,11 @@ def create_web_interface(detection_manager):
             methods=["POST"],
         )
 
-        # --- Analytics API Routes (All-Time, Read-Only) ---
-        def analytics_summary_route():
-            with get_connection() as conn:
-                summary = fetch_analytics_summary(conn)
-            return jsonify(summary)
+        # --- Analytics API Routes --- MOVED TO web/blueprints/analytics.py ---
 
-        def analytics_time_of_day_route():
-            with get_connection() as conn:
-                rows = fetch_all_detection_times(conn)
+        # --- Phase 5: Trash Routes --- MOVED TO web/blueprints/trash.py ---
 
-            if not rows:
-                return jsonify({"points": [], "peak_hour": None, "histogram": []})
-
-            # 1. Parse Times to Float Hours
-            # HHMMSS -> H + M/60 + S/3600
-            hours_float = []
-            for row in rows:
-                t_str = row["time_str"]  # "HHMMSS"
-                if len(t_str) == 6:
-                    h = int(t_str[0:2])
-                    m = int(t_str[2:4])
-                    s = int(t_str[4:6])
-                    val = h + m / 60.0 + s / 3600.0
-                    hours_float.append(val)
-                elif len(t_str) == 8:  # HH:MM:SS fallback
-                    try:
-                        h = int(t_str[0:2])
-                        m = int(t_str[3:5])
-                        s = int(t_str[6:8])
-                        val = h + m / 60.0 + s / 3600.0
-                        hours_float.append(val)
-                    except Exception:
-                        pass
-
-            if not hours_float:
-                return jsonify({"points": [], "peak_hour": None, "histogram": []})
-
-            # 2. KDE Approximation via Histogram + Gaussian Smoothing
-            # We use 1440 bins (minutes) for high resolution
-            # This avoids adding scipy dependency
-            import numpy as np
-
-            bins = 144
-            hist, bin_edges = np.histogram(
-                hours_float, bins=bins, range=(0, 24), density=True
-            )
-
-            # Simple Gaussian Smoothing (Window size approx 1-2 hours)
-            # Standard deviation for smoothing kernel
-            sigma = 1.6  # Adjust for smoothness vs detail
-            x_vals = np.linspace(-3 * sigma, 3 * sigma, int(6 * sigma) + 1)
-            kernel = np.exp(-(x_vals**2) / (2 * sigma**2))
-            kernel = kernel / np.sum(kernel)
-
-            smooth_density = np.convolve(hist, kernel, mode="same")
-
-            # Normalize peak to 1.0 (relative density) or use probability density?
-            # User asked for "Relative activity density" and "Fläche auf 1".
-            # Density=True in histogram ensures integral is 1.
-            # Convoluting with normalized kernel preserves integral approx 1.
-
-            # Generate Output Points
-            bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
-            points = []
-            max_y = 0
-            peak_hour = 0
-
-            for x, y in zip(bin_centers, smooth_density, strict=False):
-                points.append({"x": round(float(x), 2), "y": float(y)})
-                if y > max_y:
-                    max_y = y
-                    peak_hour = x
-
-            # Subsampled Histogram for "Backdrop" (Optional)
-            # Use coarser bins for the visual histogram (e.g. 24 hours)
-            hist_coarse, edges_coarse = np.histogram(
-                hours_float, bins=48, range=(0, 24), density=True
-            )
-            histogram_points = []
-            for i in range(len(hist_coarse)):
-                histogram_points.append(
-                    {
-                        "x": float((edges_coarse[i] + edges_coarse[i + 1]) / 2),
-                        "y": float(hist_coarse[i]),
-                    }
-                )
-
-            return jsonify(
-                {
-                    "points": points,
-                    "peak_hour": round(float(peak_hour), 2),
-                    "peak_density": float(max_y),
-                    "histogram": histogram_points,
-                }
-            )
-
-        def analytics_species_activity_route():
-            with get_connection() as conn:
-                rows = fetch_species_timestamps(conn)
-
-            import numpy as np
-
-            # Group by species
-            species_times = {}
-            for r in rows:
-                sp = r["species"]
-                t_str = (
-                    r["image_timestamp"][9:15]
-                    if len(r["image_timestamp"]) >= 15
-                    else ""
-                )  # YYYYMMDD_HHMMSS
-                if len(t_str) == 6:
-                    try:
-                        h = (
-                            int(t_str[0:2])
-                            + int(t_str[2:4]) / 60.0
-                            + int(t_str[4:6]) / 3600.0
-                        )
-                        if sp not in species_times:
-                            species_times[sp] = []
-                        species_times[sp].append(h)
-                    except Exception:
-                        pass
-
-            series = []
-            for sp, times in species_times.items():
-                # Rule: n >= 10 for KDE, else Histogram
-                # Max normalization (Ridgeplot style)
-
-                if len(times) < 10:
-                    # Histogram (1h bins)
-                    hist, edges = np.histogram(
-                        times, bins=24, range=(0, 24), density=False
-                    )
-                    # Normalize to max 1.0
-                    max_val = np.max(hist)
-                    if max_val > 0:
-                        hist = hist / max_val
-
-                    centers = (edges[:-1] + edges[1:]) / 2
-                    points = [
-                        {"x": float(x), "y": float(y)}
-                        for x, y in zip(centers, hist, strict=False)
-                    ]
-                    peak = centers[np.argmax(hist)]
-                else:
-                    # Numpy Gaussian Smoothing (Manual KDE)
-                    # 144 bins (10 min)
-                    bins = 144
-                    hist, edges = np.histogram(
-                        times, bins=bins, range=(0, 24), density=True
-                    )
-
-                    # Bandwidth: Explicitly set ~1.5 hours (sigma)
-                    # 1.5h in bins (10m) = 9 bins
-                    sigma = 9
-                    x_vals = np.linspace(-3 * sigma, 3 * sigma, int(6 * sigma) + 1)
-                    kernel = np.exp(-(x_vals**2) / (2 * sigma**2))
-                    kernel = kernel / np.sum(kernel)
-                    smooth = np.convolve(hist, kernel, mode="same")
-
-                    # Max Normalization
-                    max_val = np.max(smooth)
-                    if max_val > 0:
-                        smooth = smooth / max_val
-
-                    centers = (edges[:-1] + edges[1:]) / 2
-                    points = [
-                        {"x": float(x), "y": float(y)}
-                        for x, y in zip(centers, smooth, strict=False)
-                    ]
-                    peak = centers[np.argmax(smooth)]
-
-                series.append(
-                    {
-                        "species": sp,
-                        "points": points,
-                        "peak_hour": float(peak),
-                        "count": len(times),
-                    }
-                )
-
-            # Sort species by Peak Hour (median might be better but peak is requested in prompt context A vs B)
-            # Prompt said: "A. Sortiere Arten nach Median-Aktivitätszeit, nicht Peak."
-            # Let's calculate median for sort.
-            for s in series:
-                sp = s["species"]
-                times = species_times[sp]
-                s["median_hour"] = float(np.median(times))
-
-            series.sort(key=lambda x: x["median_hour"])
-
-            return jsonify(series)
-
-        server.add_url_rule(
-            "/api/analytics/summary",
-            endpoint="analytics_summary",
-            view_func=analytics_summary_route,
-            methods=["GET"],
-        )
-
-        server.add_url_rule(
-            "/api/analytics/time-of-day",
-            endpoint="analytics_time_of_day",
-            view_func=analytics_time_of_day_route,
-            methods=["GET"],
-        )
-        server.add_url_rule(
-            "/api/analytics/species-activity",
-            endpoint="analytics_species_activity",
-            view_func=analytics_species_activity_route,
-            methods=["GET"],
-        )
-
-        # --- Phase 5: Trash Routes (Flask) ---
-        @login_required
-        def trash_route():
-            page = request.args.get("page", 1, type=int)
-            limit = 50
-
-            with get_connection() as conn:
-                items, total_count = fetch_trash_items(conn, page=page, limit=limit)
-
-            processed_items = []
-            for item in items:
-                ts = item.get("image_timestamp", "")
-                trash_type = item.get("trash_type", "detection")
-
-                # Handle display path based on trash type
-                if trash_type == "detection":
-                    # Detection: use thumbnail or optimized image
-                    full_path = item.get("relative_path") or item.get(
-                        "image_optimized", ""
-                    )
-                    thumb_virtual = item.get("thumbnail_path_virtual")
-
-                    if thumb_virtual:
-                        display_path = f"/uploads/derivatives/thumbs/{thumb_virtual}"
-                    else:
-                        display_path = f"/uploads/derivatives/optimized/{full_path}"
-
-                    common_name = (
-                        item.get("cls_class_name")
-                        or item.get("od_class_name")
-                        or "Unknown"
-                    )
-                else:
-                    # Image (no_bird): use on-demand review thumbnail
-                    filename = item.get("filename", "")
-                    display_path = f"/api/review-thumb/{filename}"
-                    common_name = "No Bird"  # Label for no-bird images
-
-                # Format timestamp
-                try:
-                    dt = datetime.strptime(ts, "%Y%m%d_%H%M%S")
-                    formatted_time = dt.strftime("%Y-%m-%d %H:%M:%S")
-                except ValueError:
-                    formatted_time = ts if ts else "Unknown"
-
-                processed_items.append(
-                    {
-                        "trash_type": trash_type,
-                        "item_id": item.get(
-                            "item_id"
-                        ),  # Unified ID (detection_id str or filename)
-                        "detection_id": item.get("detection_id"),  # Only for detections
-                        "filename": item.get("filename"),  # For images
-                        "display_path": display_path,
-                        "common_name": common_name,
-                        "formatted_time": formatted_time,
-                    }
-                )
-
-            total_pages = math.ceil(total_count / limit) if limit > 0 else 1
-
-            return render_template(
-                "trash.html",
-                items=processed_items,
-                page=page,
-                total_pages=total_pages,
-                total_items=total_count,
-                image_width=IMAGE_WIDTH,
-            )
-
-        @login_required
-        def trash_restore_route():
-            """
-            Restores trashed items back to their original state.
-            Accepts: { detection_ids: [...], image_filenames: [...] }
-            OR legacy: { ids: [...] } (treated as detection_ids)
-            """
-            try:
-                data = request.get_json() or {}
-
-                # Support both new format and legacy format
-                detection_ids = data.get("detection_ids", data.get("ids", []))
-                image_filenames = data.get("image_filenames", [])
-
-                restored_count = 0
-
-                with get_connection() as conn:
-                    # Restore detections
-                    if detection_ids:
-                        restore_detections(conn, detection_ids)
-                        restored_count += len(detection_ids)
-
-                    # Restore no_bird images (back to untagged)
-                    if image_filenames:
-                        restored_count += restore_no_bird_images(conn, image_filenames)
-
-                return jsonify(
-                    {"status": "success", "result": {"restored": restored_count}}
-                )
-            except Exception as e:
-                logger.error(f"Error restoring trash: {e}")
-                return jsonify({"status": "error", "message": str(e)}), 500
-
-        @login_required
-        def trash_purge_route():
-            """
-            Permanently deletes trashed items.
-            Accepts: { detection_ids: [...], image_filenames: [...] }
-            OR legacy: { ids: [...] } (treated as detection_ids)
-            """
-            try:
-                data = request.get_json() or {}
-
-                # Support both new format and legacy format
-                detection_ids = data.get("detection_ids", data.get("ids", []))
-                image_filenames = data.get("image_filenames", [])
-
-                det_deleted = 0
-                img_deleted = 0
-                files_deleted = 0
-
-                with get_connection() as conn:
-                    # Purge detections
-                    if detection_ids:
-                        result = hard_delete_detections(
-                            conn, detection_ids=detection_ids
-                        )
-                        det_deleted = result.get("rows_deleted", 0)
-                        files_deleted = result.get("files_deleted", 0)
-
-                    # Purge no_bird images (with full file cleanup)
-                    if image_filenames:
-                        from utils.file_gc import hard_delete_images
-
-                        img_result = hard_delete_images(conn, filenames=image_filenames)
-                        img_deleted = img_result.get("rows_deleted", 0)
-                        files_deleted += img_result.get("files_deleted", 0)
-
-                logger.info(
-                    f"Trash purge: {det_deleted} detections, {img_deleted} images, {files_deleted} files deleted"
-                )
-                return jsonify(
-                    {
-                        "status": "success",
-                        "result": {
-                            "purged": True,
-                            "rows_deleted": det_deleted + img_deleted,
-                            "det_deleted": det_deleted,
-                            "img_deleted": img_deleted,
-                            "files_deleted": files_deleted,
-                        },
-                    }
-                )
-            except Exception as e:
-                logger.error(f"Error purging trash: {e}")
-                return jsonify({"status": "error", "message": str(e)}), 500
-
-        @login_required
-        def trash_empty_route():
-            """Empties entire trash (detections + no_bird images)."""
-            try:
-                det_deleted = 0
-                img_deleted = 0
-                files_deleted = 0
-
-                with get_connection() as conn:
-                    # Empty rejected detections
-                    result = hard_delete_detections(conn, before_date="2099-12-31")
-                    det_deleted = result.get("rows_deleted", 0)
-                    files_deleted = result.get("files_deleted", 0)
-
-                    # Empty no_bird images (with full file cleanup)
-                    from utils.file_gc import hard_delete_images
-
-                    img_result = hard_delete_images(conn, delete_all=True)
-                    img_deleted = img_result.get("rows_deleted", 0)
-                    files_deleted += img_result.get("files_deleted", 0)
-
-                logger.info(
-                    f"Trash emptied: {det_deleted} detections, {img_deleted} images, {files_deleted} files deleted"
-                )
-                return jsonify(
-                    {
-                        "status": "success",
-                        "result": {
-                            "purged": True,
-                            "rows_deleted": det_deleted + img_deleted,
-                            "det_deleted": det_deleted,
-                            "img_deleted": img_deleted,
-                            "files_deleted": files_deleted,
-                        },
-                    }
-                )
-            except Exception as e:
-                logger.error(f"Error emptying trash: {e}")
-                return jsonify({"status": "error", "message": str(e)}), 500
-
-        @login_required
-        def reject_detection_route():
-            data = request.get_json() or {}
-            ids = data.get("ids", [])
-            if not ids:
-                return jsonify({"error": "No IDs provided"}), 400
-            with get_connection() as conn:
-                reject_detections(conn, ids)
-            return jsonify({"status": "success"})
-
-        server.add_url_rule(
-            "/trash", endpoint="trash", view_func=trash_route, methods=["GET"]
-        )
-        server.add_url_rule(
-            "/api/trash/restore",
-            endpoint="trash_restore",
-            view_func=trash_restore_route,
-            methods=["POST"],
-        )
-        server.add_url_rule(
-            "/api/trash/purge",
-            endpoint="trash_purge",
-            view_func=trash_purge_route,
-            methods=["POST"],
-        )
-        server.add_url_rule(
-            "/api/trash/empty",
-            endpoint="trash_empty",
-            view_func=trash_empty_route,
-            methods=["POST"],
-        )
-        server.add_url_rule(
-            "/api/detections/reject",
-            endpoint="reject_detection",
-            view_func=reject_detection_route,
-            methods=["POST"],
-        )
-
-        # --- Auth Routes (Server-Side Session) ---
-        def login_route():
-            error = None
-            next_url = request.args.get("next", "/gallery")
-
-            if request.method == "POST":
-                password = request.form.get("password", "")
-                next_url = request.form.get("next", "/gallery")
-
-                if password == (EDIT_PASSWORD or ""):
-                    session["authenticated"] = True
-                    logger.info("User authenticated successfully.")
-                    return redirect(next_url)
-                else:
-                    error = "Invalid password. Please try again."
-                    logger.warning("Failed login attempt.")
-
-            return render_template("login.html", error=error, next_url=next_url)
-
-        def logout_route():
-            session.pop("authenticated", None)
-            return redirect("/gallery")
-
-        server.add_url_rule(
-            "/login", endpoint="login", view_func=login_route, methods=["GET", "POST"]
-        )
-        server.add_url_rule(
-            "/logout", endpoint="logout", view_func=logout_route, methods=["GET"]
-        )
+        # --- Auth Routes now handled by auth_bp (registered in create_web_interface) ---
 
         # --- Phase 6: Edit Page (server-rendered) ---
         @login_required
@@ -1473,8 +1254,8 @@ def create_web_interface(detection_manager):
             ids_int = [int(i) for i in det_ids]
 
             if action == "reject":
-                with get_connection() as conn:
-                    reject_detections(conn, ids_int)
+                with db_service.get_connection() as conn:
+                    db_service.reject_detections(conn, ids_int)
                 # Reset caches
                 _cached_images["images"] = None
                 # _daily_gallery_summary_cache was removed
@@ -1486,7 +1267,7 @@ def create_web_interface(detection_manager):
 
                 from flask import send_file
 
-                with get_connection() as conn:
+                with db_service.get_connection() as conn:
                     # Resolve IDs to paths
                     placeholders = ",".join("?" for _ in ids_int)
                     query = f"""
@@ -1520,7 +1301,9 @@ def create_web_interface(detection_manager):
                     if files_to_zip:
                         download_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                         filenames = [f[1] for f in files_to_zip]
-                        update_downloaded_timestamp(conn, filenames, download_time)
+                        db_service.update_downloaded_timestamp(
+                            conn, filenames, download_time
+                        )
 
                 # Create Zip
                 zip_buffer = io.BytesIO()
@@ -1553,359 +1336,9 @@ def create_web_interface(detection_manager):
             methods=["POST"],
         )
 
-        # --- Review Queue Page (was Orphan Images Admin Page) ---
-        @login_required
-        def orphans_route():
-            """
-            Review Queue: Images needing user decision.
-            Shows orphans (no detections) AND low-confidence detections.
-            Sorted oldest first.
-            """
-            from utils.db import fetch_review_queue_images
-            from utils.path_manager import get_path_manager
+        # --- Review Queue Routes --- MOVED TO web/blueprints/review.py ---
 
-            output_dir = config.get("OUTPUT_DIR", "output")
-            save_threshold = config.get("SAVE_THRESHOLD", 0.65)
-            pm = get_path_manager(output_dir)
-
-            with get_connection() as conn:
-                rows = fetch_review_queue_images(conn, save_threshold)
-
-            orphans = []
-            for row in rows:
-                filename = row["filename"]
-                timestamp = row["timestamp"] or ""
-                review_reason = row["review_reason"]  # 'orphan' or 'low_confidence'
-                max_od_conf = row["max_od_conf"]
-
-                # Format date/time from timestamp (YYYYMMDD_HHMMSS)
-                formatted_date = ""
-                if len(timestamp) >= 15:
-                    try:
-                        dt = datetime.strptime(timestamp[:15], "%Y%m%d_%H%M%S")
-                        formatted_date = dt.strftime("%Y-%m-%d %H:%M:%S")
-                    except Exception:
-                        formatted_date = timestamp[:15]
-
-                # Resolve paths using path_manager
-                original_path = pm.get_original_path(filename)
-                pm.get_derivative_path(filename, "thumb")
-
-                # Get file size (original)
-                file_size = 0
-                if original_path.exists():
-                    file_size = original_path.stat().st_size
-
-                # Format file size
-                if file_size >= 1024 * 1024:
-                    file_size_str = f"{file_size / (1024 * 1024):.1f} MB"
-                elif file_size >= 1024:
-                    file_size_str = f"{file_size / 1024:.1f} KB"
-                else:
-                    file_size_str = f"{file_size} B"
-
-                # Use on-demand orphan thumbnail endpoint
-                thumb_url = f"/api/review-thumb/{filename}"
-
-                # Construct Full URL for Lightbox
-                # Assuming standard storage: originals/YYYY-MM-DD/filename
-                # Timestamp is YYYYMMDD_HHMMSS
-                full_url = ""
-                if len(timestamp) >= 8:
-                    date_folder_str = (
-                        f"{timestamp[:4]}-{timestamp[4:6]}-{timestamp[6:8]}"
-                    )
-                    full_url = f"/uploads/originals/{date_folder_str}/{filename}"
-
-                # Badge label for review reason
-                if review_reason == "orphan":
-                    reason_label = "No Detection"
-                else:
-                    conf_pct = round((max_od_conf or 0) * 100)
-                    reason_label = f"Low Conf ({conf_pct}%)"
-
-                orphans.append(
-                    {
-                        "filename": filename,
-                        "timestamp": timestamp,
-                        "formatted_date": formatted_date,
-                        "file_size": file_size,
-                        "file_size_str": file_size_str,
-                        "thumb_url": thumb_url,
-                        "full_url": full_url,
-                        "review_reason": review_reason,
-                        "reason_label": reason_label,
-                        "max_od_conf": max_od_conf,
-                    }
-                )
-
-            return render_template(
-                "orphans.html", orphans=orphans, current_path="/admin/review"
-            )
-
-        server.add_url_rule(
-            "/admin/review",
-            endpoint="review_page",
-            view_func=orphans_route,
-            methods=["GET"],
-        )
-        # Note: Legacy delete route removed. Review Queue uses /api/review/decision.
-        # File deletion is handled via Trash tab only (no file deletion in Review Queue).
-
-        # --- Orphan Thumbnail On-Demand Generation ---
-        @login_required
-        def orphan_thumb_route(filename):
-            """On-demand thumbnail generation for orphan images."""
-            from flask import abort, send_file
-
-            from utils.image_ops import generate_preview_thumbnail
-            from utils.path_manager import get_path_manager
-
-            output_dir = config.get("OUTPUT_DIR", "output")
-            pm = get_path_manager(output_dir)
-
-            # Resolve paths via PathManager
-            original_path = pm.get_original_path(filename)
-            preview_path = pm.get_preview_thumb_path(filename)
-
-            # If preview already cached, serve it
-            if preview_path.exists():
-                return send_file(str(preview_path), mimetype="image/webp")
-
-            # Original must exist to generate preview
-            if not original_path.exists():
-                abort(404)
-
-            # Generate preview thumbnail
-            success = generate_preview_thumbnail(
-                str(original_path), str(preview_path), size=256
-            )
-
-            if success and preview_path.exists():
-                return send_file(str(preview_path), mimetype="image/webp")
-            else:
-                abort(500)
-
-        server.add_url_rule(
-            "/api/review-thumb/<filename>",
-            endpoint="review_thumb",
-            view_func=orphan_thumb_route,
-            methods=["GET"],
-        )
-
-        # --- Review Queue API ---
-        @login_required
-        def review_decision_route():
-            """
-            API endpoint for Review Queue decisions.
-            POST /api/review/decision
-            Payload: { filenames: [...], action: "confirm" | "no_bird" | "skip" }
-
-            - confirm -> review_status = 'confirmed_bird'
-            - no_bird -> review_status = 'no_bird' (soft-trash, no file deletion)
-            - skip -> no change
-
-            Only updates images with review_status = 'untagged' (no way back).
-            """
-            try:
-                data = request.get_json() or {}
-                filenames = data.get("filenames", [])
-                action = data.get("action", "")
-
-                if not filenames:
-                    return (
-                        jsonify(
-                            {"status": "error", "message": "No filenames provided"}
-                        ),
-                        400,
-                    )
-
-                if action not in ("confirm", "no_bird", "skip"):
-                    return (
-                        jsonify(
-                            {"status": "error", "message": f"Invalid action: {action}"}
-                        ),
-                        400,
-                    )
-
-                # Skip action: no database change
-                if action == "skip":
-                    return jsonify(
-                        {"status": "success", "updated": 0, "action": "skip"}
-                    )
-
-                # Map action to review_status
-                status_map = {"confirm": "confirmed_bird", "no_bird": "no_bird"}
-                new_status = status_map[action]
-
-                with get_connection() as conn:
-                    updated = update_review_status(conn, filenames, new_status)
-
-                logger.info(f"Review decision: {action} -> {updated} images updated")
-                return jsonify(
-                    {"status": "success", "updated": updated, "action": action}
-                )
-
-            except Exception as e:
-                logger.error(f"Error in review decision: {e}")
-                return jsonify({"status": "error", "message": str(e)}), 500
-
-        server.add_url_rule(
-            "/api/review/decision",
-            endpoint="review_decision",
-            view_func=review_decision_route,
-            methods=["POST"],
-        )
-
-        # --- Analytics Dashboard (Svelte-rendered, read-only) ---
-        def analytics_page_route():
-            """Serves the analytics dashboard page with minimal HTML for Svelte mount."""
-            return render_template("analytics.html")
-
-        server.add_url_rule(
-            "/analytics",
-            endpoint="analytics_page",
-            view_func=analytics_page_route,
-            methods=["GET"],
-        )
-
-        # --- Analytics Dashboard (Pure Jinja2/CSS - No JavaScript) ---
-        def analytics_pure_route():
-            """Server-rendered analytics dashboard without Svelte - pure Jinja2/CSS."""
-            import numpy as np
-
-            # 1. Summary Stats
-            summary = {
-                "total_detections": 0,
-                "total_species": 0,
-                "date_range": {"first": None, "last": None},
-            }
-            try:
-                with get_connection() as conn:
-                    summary = fetch_analytics_summary(conn)
-            except Exception as e:
-                logger.error(f"Error fetching analytics summary: {e}")
-
-            # 2. Time of Day Histogram (24 hourly bins)
-            time_of_day = {
-                "histogram": [],
-                "peak_hour": None,
-                "peak_hour_formatted": "—",
-            }
-            try:
-                with get_connection() as conn:
-                    rows = fetch_all_detection_times(conn)
-
-                hours_float = []
-                for row in rows:
-                    t_str = row["time_str"]
-                    if len(t_str) == 6:
-                        h = int(t_str[0:2])
-                        m = int(t_str[2:4])
-                        hours_float.append(h + m / 60.0)
-
-                if hours_float:
-                    # Create 24 hourly bins
-                    hist, edges = np.histogram(hours_float, bins=24, range=(0, 24))
-                    max_count = max(hist) if max(hist) > 0 else 1
-
-                    histogram_data = []
-                    for i, count in enumerate(hist):
-                        histogram_data.append(
-                            {
-                                "hour": i,
-                                "count": int(count),
-                                "height_pct": (
-                                    round((count / max_count) * 100, 1)
-                                    if max_count > 0
-                                    else 0
-                                ),
-                            }
-                        )
-                    time_of_day["histogram"] = histogram_data
-
-                    # Peak hour
-                    peak_idx = np.argmax(hist)
-                    time_of_day["peak_hour"] = peak_idx
-                    time_of_day["peak_hour_formatted"] = f"{peak_idx:02d}:00"
-            except Exception as e:
-                logger.error(f"Error fetching time of day data: {e}")
-
-            # 3. Species Activity with Sparklines
-            species_activity = []
-            try:
-                with get_connection() as conn:
-                    rows = fetch_species_timestamps(conn)
-
-                # Group by species
-                species_times = {}
-                for r in rows:
-                    sp = r["species"]
-                    t_str = (
-                        r["image_timestamp"][9:15]
-                        if len(r["image_timestamp"]) >= 15
-                        else ""
-                    )
-                    if len(t_str) == 6:
-                        try:
-                            h = int(t_str[0:2]) + int(t_str[2:4]) / 60.0
-                            if sp not in species_times:
-                                species_times[sp] = []
-                            species_times[sp].append(h)
-                        except Exception:
-                            pass
-
-                for sp, times in species_times.items():
-                    if len(times) < 3:
-                        continue  # Skip species with very few detections
-
-                    # Create histogram for sparkline
-                    hist, edges = np.histogram(times, bins=24, range=(0, 24))
-                    max_val = max(hist) if max(hist) > 0 else 1
-                    normalized = hist / max_val
-
-                    # Generate SVG path for sparkline
-                    points = []
-                    for i, y in enumerate(normalized):
-                        x = (i / 23) * 200  # Scale to SVG viewBox width
-                        y_coord = 30 - (y * 28)  # Invert Y, leave some margin
-                        prefix = "M" if i == 0 else "L"
-                        points.append(f"{prefix} {x:.1f} {y_coord:.1f}")
-                    sparkline_path = " ".join(points)
-
-                    # Peak hour
-                    peak_idx = np.argmax(hist)
-                    peak_formatted = f"{peak_idx:02d}:00"
-
-                    species_activity.append(
-                        {
-                            "species": sp,
-                            "count": len(times),
-                            "peak_hour_formatted": peak_formatted,
-                            "sparkline_path": sparkline_path,
-                            "median_hour": float(np.median(times)),
-                        }
-                    )
-
-                # Sort by median activity time
-                species_activity.sort(key=lambda x: x["median_hour"])
-            except Exception as e:
-                logger.error(f"Error fetching species activity: {e}")
-
-            return render_template(
-                "analytics_pure.html",
-                summary=summary,
-                time_of_day=time_of_day,
-                species_activity=species_activity,
-                current_path="/analytics-pure",
-            )
-
-        server.add_url_rule(
-            "/analytics-pure",
-            endpoint="analytics_pure",
-            view_func=analytics_pure_route,
-            methods=["GET"],
-        )
+        # --- Analytics Dashboard Routes --- MOVED TO web/blueprints/analytics.py ---
 
         # --- Phase 2: Species Summary (server-rendered) ---
         def species_route():
@@ -2070,7 +1503,7 @@ def create_web_interface(detection_manager):
 
             # Get query params
             page = request.args.get("page", 1, type=int)
-            sort_by = request.args.get("sort", "score")
+            sort_by = request.args.get("sort", "time_desc")
 
             # Get threshold from query param or config
             try:
@@ -2085,7 +1518,9 @@ def create_web_interface(detection_manager):
 
             # Fetch detections
             sql_order = "time" if sort_by in ("time_asc", "time_desc") else "score"
-            rows = fetch_detections_for_gallery(db_conn, date, order_by=sql_order)
+            rows = db_service.fetch_detections_for_gallery(
+                db_conn, date, order_by=sql_order
+            )
             detections_raw = [dict(row) for row in rows]
 
             # Apply score filter
@@ -2156,9 +1591,9 @@ def create_web_interface(detection_manager):
                 if sibling_count > 1:
                     original_name = det.get("original_name", "")
                     if original_name:
-                        from utils.db import fetch_sibling_detections
-
-                        sibling_rows = fetch_sibling_detections(db_conn, original_name)
+                        sibling_rows = gallery_service.get_sibling_detections(
+                            original_name
+                        )
                         for sib in sibling_rows:
                             sib_species_key = (
                                 sib["cls_class_name"] or sib["od_class_name"] or ""
@@ -2206,6 +1641,7 @@ def create_web_interface(detection_manager):
                     "score": det.get("score", 0.0) or 0.0,
                     "formatted_date": formatted_date,
                     "formatted_time": formatted_time,
+                    "gallery_date": date,  # For "Go to Day" button in modal
                     "sibling_count": sibling_count,
                     "siblings": siblings,
                     "bbox_x": det.get("bbox_x", 0.0) or 0.0,
@@ -2313,8 +1749,8 @@ def create_web_interface(detection_manager):
         # 1. Day Count & Title
         today_count = 0
         try:
-            with get_connection() as conn:
-                today_count = fetch_day_count(conn, today_iso)
+            with db_service.get_connection() as conn:
+                today_count = db_service.fetch_day_count(conn, today_iso)
             title = f"Live Stream (Today's Detections: {today_count})"
         except Exception as e:
             logger.error(f"Error fetching day count: {e}")
@@ -2329,8 +1765,8 @@ def create_web_interface(detection_manager):
             "last_date": None,
         }
         try:
-            with get_connection() as conn:
-                summary = fetch_analytics_summary(conn)
+            with db_service.get_connection() as conn:
+                summary = db_service.fetch_analytics_summary(conn)
                 dashboard_stats["total_detections"] = summary.get("total_detections", 0)
                 dashboard_stats["total_species"] = summary.get("total_species", 0)
                 date_range = summary.get("date_range", {})
@@ -2342,8 +1778,8 @@ def create_web_interface(detection_manager):
         # 2. Latest Detections (Top 5)
         latest_detections = []
         try:
-            with get_connection() as conn:
-                rows = fetch_detections_for_gallery(
+            with db_service.get_connection() as conn:
+                rows = db_service.fetch_detections_for_gallery(
                     conn, today_iso, limit=5, order_by="time"
                 )
                 # Enrich for template
@@ -2401,6 +1837,7 @@ def create_web_interface(detection_manager):
                             "original_path": original_path,
                             "formatted_time": formatted_time,
                             "formatted_date": formatted_date,
+                            "gallery_date": today_iso,  # For "Go to Day" button in modal
                             "sibling_count": det.get("sibling_count", 1) or 1,
                             "siblings": [],  # Stream page doesn't need to load all siblings for now, just prevent crash
                             "bbox_x": det.get("bbox_x", 0.0) or 0.0,
@@ -2416,9 +1853,11 @@ def create_web_interface(detection_manager):
         # Used for "Today's Summary" section - visual grid
         visual_summary = []
         try:
-            with get_connection() as conn:
+            with db_service.get_connection() as conn:
                 # fetch all for today to group by species
-                rows = fetch_detections_for_gallery(conn, today_iso, order_by="score")
+                rows = db_service.fetch_detections_for_gallery(
+                    conn, today_iso, order_by="score"
+                )
                 all_today = [dict(r) for r in rows]
 
                 species_groups = {}
@@ -2633,8 +2072,8 @@ def create_web_interface(detection_manager):
     def settings_route():
         trash_count = 0
         try:
-            with get_connection() as conn:
-                trash_count = fetch_trash_count(conn)
+            with db_service.get_connection() as conn:
+                trash_count = db_service.fetch_trash_count(conn)
         except Exception as e:
             logger.error(f"Failed to fetch trash count: {e}")
 
@@ -2943,239 +2382,8 @@ def create_web_interface(detection_manager):
             return jsonify({"status": "error", "message": str(e)}), 500
 
     # ==========================================================================
-    # INBOX ROUTES (Web Upload with Explicit Processing)
+    # INBOX ROUTES --- MOVED TO web/blueprints/inbox.py ---
     # ==========================================================================
-
-    # Thread state for inbox processing
-    _inbox_processing = {"active": False, "lock": __import__("threading").Lock()}
-
-    @server.route("/inbox")
-    @login_required
-    def inbox_page():
-        return render_template("inbox.html")
-
-    @server.route("/api/inbox", methods=["POST"])
-    @login_required
-    def inbox_upload():
-        """
-        Handle file uploads to inbox/pending.
-        Max 20 files, max 50MB each.
-        """
-        try:
-            # Block during restore
-            from utils.restore import is_restore_active
-
-            if is_restore_active():
-                return (
-                    jsonify({"error": "Upload blocked during restore operation"}),
-                    409,
-                )
-
-            if "files[]" not in request.files:
-                return jsonify({"error": "No files provided"}), 400
-
-            files = request.files.getlist("files[]")
-            if len(files) > 100:
-                return jsonify({"error": "Maximum 100 files allowed per upload"}), 400
-
-            ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png"}
-            MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB
-
-            uploaded = []
-            errors = []
-            skipped = []  # Track duplicates
-
-            # Get path manager
-            output_dir = config.get("OUTPUT_DIR", "./data/output")
-            path_mgr = get_path_manager(output_dir)
-            pending_dir = path_mgr.get_inbox_pending_dir()
-
-            for f in files:
-                if not f or not f.filename:
-                    continue
-
-                # Extension check (Source of Truth)
-                ext = os.path.splitext(f.filename.lower())[1]
-                if ext not in ALLOWED_EXTENSIONS:
-                    errors.append(f"{f.filename}: Ungültiges Format (nur JPG/PNG)")
-                    continue
-
-                # Size check (read first, check size)
-                f.seek(0, 2)  # Seek to end
-                size = f.tell()
-                f.seek(0)  # Reset
-
-                if size > MAX_FILE_SIZE:
-                    errors.append(f"{f.filename}: Datei zu groß (max 50 MB)")
-                    continue
-
-                # Safe filename
-                safe_name = secure_filename(f.filename)
-                if not safe_name:
-                    safe_name = f"upload_{int(time.time() * 1000)}{ext}"
-
-                # SKIP duplicates instead of renaming
-                target_path = pending_dir / safe_name
-                if target_path.exists():
-                    skipped.append(safe_name)
-                    continue  # Skip this file entirely
-
-                try:
-                    f.save(str(target_path))
-                    uploaded.append(safe_name)
-                except Exception as e:
-                    errors.append(f"{f.filename}: Speichern fehlgeschlagen ({e})")
-
-            return (
-                jsonify(
-                    {
-                        "uploaded": uploaded,
-                        "skipped": skipped,
-                        "skipped_count": len(skipped),
-                        "errors": errors,
-                        "pending_count": len(list(pending_dir.iterdir())),
-                    }
-                ),
-                200,
-            )
-
-        except Exception as e:
-            logger.error(f"Inbox upload error: {e}")
-            return jsonify({"error": str(e)}), 500
-
-    @server.route("/api/inbox/status", methods=["GET"])
-    @login_required
-    def inbox_status():
-        """
-        Returns inbox status:
-        - pending_count: files in pending/
-        - processing: bool from thread state
-        - processed_today: files in processed/YYYYMMDD/
-        - skipped_today: files in skipped/YYYYMMDD/
-        - error_count: files in error/
-        - detection_running: whether detection is active
-        """
-        try:
-            today = datetime.now().strftime("%Y%m%d")
-
-            # Get path manager
-            output_dir = config.get("OUTPUT_DIR", "./data/output")
-            path_mgr = get_path_manager(output_dir)
-
-            pending_dir = path_mgr.inbox_pending_dir
-            processed_dir = path_mgr.inbox_dir / "processed" / today
-            skipped_dir = path_mgr.inbox_dir / "skipped" / today
-            error_dir = path_mgr.inbox_error_dir
-
-            pending_count = (
-                len(list(pending_dir.iterdir())) if pending_dir.exists() else 0
-            )
-            processed_today = (
-                len(list(processed_dir.iterdir())) if processed_dir.exists() else 0
-            )
-            skipped_today = (
-                len(list(skipped_dir.iterdir())) if skipped_dir.exists() else 0
-            )
-            error_count = len(list(error_dir.iterdir())) if error_dir.exists() else 0
-
-            # Detection state check
-            detection_running = not detection_manager.paused
-
-            return jsonify(
-                {
-                    "pending_count": pending_count,
-                    "processing": _inbox_processing["active"],
-                    "processed_today": processed_today,
-                    "skipped_today": skipped_today,
-                    "error_count": error_count,
-                    "detection_running": detection_running,
-                }
-            )
-        except Exception as e:
-            logger.error(f"Inbox status error: {e}")
-            return jsonify({"error": str(e)}), 500
-
-    @server.route("/api/inbox/process", methods=["POST"])
-    @login_required
-    def inbox_process():
-        """
-        Start processing of inbox/pending files.
-        Policy: Detection MUST be stopped (paused) before processing.
-        Returns 409 if detection running or processing already active.
-        """
-        try:
-            # Block during restore
-            from utils.restore import is_restore_active
-
-            if is_restore_active():
-                return (
-                    jsonify(
-                        {"error": "Inbox processing blocked during restore operation"}
-                    ),
-                    409,
-                )
-
-            # Check 1: Already processing?
-            with _inbox_processing["lock"]:
-                if _inbox_processing["active"]:
-                    return jsonify({"error": "Verarbeitung läuft bereits"}), 409
-
-            # Note: Detection state no longer blocks import
-            # The ingest process queues files for the detection manager
-
-            # Get path manager
-            output_dir = config.get("OUTPUT_DIR", "./data/output")
-            path_mgr = get_path_manager(output_dir)
-
-            # Take snapshot of pending files
-            pending_dir = path_mgr.get_inbox_pending_dir()
-            snapshot = list(pending_dir.iterdir())
-            file_count = len([f for f in snapshot if f.is_file()])
-
-            if file_count == 0:
-                return (
-                    jsonify({"message": "Keine Dateien zu verarbeiten", "count": 0}),
-                    200,
-                )
-
-            # Start background processing
-            import threading
-
-            def run_inbox_ingest():
-                from utils.ingest import ingest_inbox_folder
-
-                try:
-                    with _inbox_processing["lock"]:
-                        _inbox_processing["active"] = True
-
-                    logger.info(f"Starting inbox ingest for {file_count} files")
-                    ingest_inbox_folder(
-                        str(pending_dir), [str(f) for f in snapshot if f.is_file()]
-                    )
-                    logger.info("Inbox ingest completed")
-
-                except Exception as e:
-                    logger.error(f"Inbox ingest error: {e}", exc_info=True)
-                finally:
-                    with _inbox_processing["lock"]:
-                        _inbox_processing["active"] = False
-
-            t = threading.Thread(target=run_inbox_ingest, daemon=True)
-            t.start()
-
-            return (
-                jsonify(
-                    {
-                        "message": f"Verarbeitung von {file_count} Dateien gestartet",
-                        "count": file_count,
-                    }
-                ),
-                200,
-            )
-
-        except Exception as e:
-            logger.error(f"Inbox process error: {e}")
-            return jsonify({"error": str(e)}), 500
 
     # ==========================================================================
     # DETECTION CONTROL ROUTES
@@ -3189,16 +2397,15 @@ def create_web_interface(detection_manager):
         Used by various pages to check detection status.
         """
         try:
-            from utils.restore import is_restart_required
-
             output_dir = config.get("OUTPUT_DIR", "./data/output")
-            pm = get_path_manager(output_dir)
 
             return jsonify(
                 {
                     "detection_paused": detection_manager.paused,
                     "detection_running": not detection_manager.paused,
-                    "restart_required": is_restart_required(pm),
+                    "restart_required": backup_restore_service.is_restart_required(
+                        output_dir
+                    ),
                 }
             )
         except Exception as e:
@@ -3237,10 +2444,8 @@ def create_web_interface(detection_manager):
     def detection_resume():
         """Resumes the detection loop."""
         try:
-            # Block during restore
-            from utils.restore import is_restore_active
-
-            if is_restore_active():
+            # Block during restore - MIGRATED to service
+            if backup_restore_service.is_restore_active():
                 return (
                     jsonify(
                         {"error": "Cannot resume detection during restore operation"}
@@ -3271,396 +2476,8 @@ def create_web_interface(detection_manager):
             return jsonify({"error": str(e)}), 500
 
     # ==========================================================================
-    # BACKUP ROUTES (Streaming Archive Generation)
+    # BACKUP/RESTORE ROUTES --- MOVED TO web/blueprints/backup.py ---
     # ==========================================================================
-
-    @server.route("/backup")
-    @login_required
-    def backup_page():
-        return render_template("backup.html")
-
-    @server.route("/api/backup/stats", methods=["GET"])
-    @login_required
-    def backup_stats():
-        """Returns statistics about data available for backup."""
-        try:
-            from utils.backup import get_backup_stats
-
-            stats = get_backup_stats()
-            return jsonify(stats)
-        except Exception as e:
-            logger.error(f"Backup stats error: {e}")
-            return jsonify({"error": str(e)}), 500
-
-    @server.route("/api/backup/create", methods=["POST"])
-    @login_required
-    def backup_create():
-        """
-        Create and stream backup archive.
-        Policy: Detection is automatically paused during backup.
-        """
-        try:
-            # Parse options
-            data = request.get_json(silent=True) or {}
-            include_db = data.get("include_db", True)
-            include_originals = data.get("include_originals", True)
-            include_derivatives = data.get("include_derivatives", False)
-            include_settings = data.get("include_settings", True)
-
-            # Generate filename
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename = f"watchmybirds_backup_{timestamp}.tar.gz"
-
-            # Stream the archive with auto-pause/resume
-            from utils.backup import stream_backup_archive
-
-            def generate_with_pause():
-                """Generator that auto-pauses detection during backup streaming."""
-                # Store previous state to restore correctly
-                was_paused = detection_manager.paused
-
-                try:
-                    # Pause detection if not already paused
-                    if not was_paused:
-                        logger.info("Backup: Pausing detection for backup...")
-                        detection_manager.paused = True
-                        time.sleep(1)  # Brief wait for detection loop to pause
-
-                    yield from stream_backup_archive(
-                        include_db=include_db,
-                        include_originals=include_originals,
-                        include_derivatives=include_derivatives,
-                        include_settings=include_settings,
-                    )
-                finally:
-                    # Restore previous state
-                    if not was_paused:
-                        logger.info("Backup: Resuming detection after backup.")
-                        detection_manager.paused = False
-
-            response = Response(
-                generate_with_pause(),
-                mimetype="application/gzip",
-                headers={
-                    "Content-Disposition": f"attachment; filename={filename}",
-                    "Cache-Control": "no-cache",
-                },
-            )
-            return response
-
-        except Exception as e:
-            logger.error(f"Backup create error: {e}")
-            return jsonify({"error": str(e)}), 500
-
-    # ==========================================================================
-    # RESTORE/IMPORT ROUTES (Backup Import)
-    # ==========================================================================
-
-    # Global restore progress tracking
-    _restore_progress = {"active": False, "progress": None}
-
-    @server.route("/restore")
-    @login_required
-    def restore_page():
-        """Serves the restore/import page."""
-        return render_template("restore.html")
-
-    @server.route("/api/restore/upload", methods=["POST"])
-    @login_required
-    def restore_upload():
-        """
-        Uploads a backup archive for restore.
-        Validates extension, magic header, and max size.
-        Returns path to uploaded file for subsequent analyze/apply.
-        """
-        from werkzeug.utils import secure_filename
-
-        from utils.restore import MAX_ARCHIVE_SIZE_BYTES, is_restore_active
-
-        try:
-            # Check if restore is already active
-            if is_restore_active():
-                return (
-                    jsonify({"error": "Another restore operation is in progress"}),
-                    409,
-                )
-
-            # Get uploaded file
-            if "file" not in request.files:
-                return jsonify({"error": "No file uploaded"}), 400
-
-            file = request.files["file"]
-            if not file or file.filename == "":
-                return jsonify({"error": "No file selected"}), 400
-
-            # Validate filename
-            filename = secure_filename(file.filename)
-            if not filename.endswith(".tar.gz") and not filename.endswith(".tgz"):
-                return (
-                    jsonify(
-                        {"error": "Invalid file type. Only .tar.gz archives allowed."}
-                    ),
-                    400,
-                )
-
-            # Get path manager
-            pm = get_path_manager()
-            upload_path = pm.get_restore_upload_path(filename)
-
-            # Stream to file while checking size
-            total_size = 0
-            chunk_size = 8192
-
-            with open(upload_path, "wb") as f:
-                while True:
-                    chunk = file.stream.read(chunk_size)
-                    if not chunk:
-                        break
-                    total_size += len(chunk)
-                    if total_size > MAX_ARCHIVE_SIZE_BYTES:
-                        f.close()
-                        upload_path.unlink(missing_ok=True)
-                        return (
-                            jsonify(
-                                {
-                                    "error": f"File too large. Maximum size: "
-                                    f"{MAX_ARCHIVE_SIZE_BYTES // (1024**3)} GB"
-                                }
-                            ),
-                            413,
-                        )
-                    f.write(chunk)
-
-            # Validate magic header (gzip)
-            with open(upload_path, "rb") as f:
-                magic = f.read(2)
-                if magic != b"\x1f\x8b":
-                    upload_path.unlink(missing_ok=True)
-                    return (
-                        jsonify(
-                            {"error": "Invalid archive format (not a valid gzip file)"}
-                        ),
-                        400,
-                    )
-
-            logger.info(f"Restore: Uploaded archive {filename} ({total_size} bytes)")
-
-            return jsonify(
-                {
-                    "status": "success",
-                    "filename": filename,
-                    "path": str(upload_path),
-                    "size_bytes": total_size,
-                }
-            )
-
-        except Exception as e:
-            logger.error(f"Restore upload error: {e}", exc_info=True)
-            return jsonify({"error": str(e)}), 500
-
-    @server.route("/api/restore/analyze", methods=["POST"])
-    @login_required
-    def restore_analyze():
-        """
-        Analyzes an uploaded backup archive without extracting.
-        Returns contents, warnings, and blockers.
-        """
-        from utils.restore import analyze_backup_archive
-
-        try:
-            data = request.get_json(silent=True) or {}
-            archive_path = data.get("path")
-
-            if not archive_path:
-                return jsonify({"error": "No archive path provided"}), 400
-
-            path = Path(archive_path)
-            if not path.exists():
-                return jsonify({"error": "Archive file not found"}), 404
-
-            # Perform analysis
-            analysis = analyze_backup_archive(path)
-
-            return jsonify(
-                {
-                    "status": "success",
-                    "analysis": analysis,
-                }
-            )
-
-        except Exception as e:
-            logger.error(f"Restore analyze error: {e}", exc_info=True)
-            return jsonify({"error": str(e)}), 500
-
-    @server.route("/api/restore/apply", methods=["POST"])
-    @login_required
-    def restore_apply():
-        """
-        Starts the restore process in background.
-        Single-runner lock prevents concurrent restores.
-        """
-        from utils.restore import (
-            analyze_backup_archive,
-            is_restore_active,
-            restore_from_archive,
-        )
-
-        nonlocal _restore_progress
-
-        try:
-            # Check if restore is already active
-            if is_restore_active() or _restore_progress["active"]:
-                return (
-                    jsonify({"error": "Another restore operation is in progress"}),
-                    409,
-                )
-
-            # Auto-pause detection (like backup)
-            was_paused = detection_manager.paused
-            if not was_paused:
-                logger.info("Restore: Auto-pausing detection")
-                detection_manager.paused = True
-
-            # Parse request
-            data = request.get_json(silent=True) or {}
-            archive_path = data.get("path")
-
-            if not archive_path:
-                # Resume detection if we paused it
-                if not was_paused:
-                    detection_manager.paused = False
-                return jsonify({"error": "No archive path provided"}), 400
-
-            path = Path(archive_path)
-            if not path.exists():
-                # Resume detection if we paused it
-                if not was_paused:
-                    detection_manager.paused = False
-                return jsonify({"error": "Archive file not found"}), 404
-
-            # Validate before starting
-            analysis = analyze_backup_archive(path)
-            if analysis["blockers"]:
-                # Resume detection if we paused it
-                if not was_paused:
-                    detection_manager.paused = False
-                return (
-                    jsonify(
-                        {
-                            "error": "Archive has blockers",
-                            "blockers": analysis["blockers"],
-                        }
-                    ),
-                    400,
-                )
-
-            # Parse options
-            include_db = data.get("include_db", True)
-            include_originals = data.get("include_originals", True)
-            include_derivatives = data.get("include_derivatives", False)
-            include_settings = data.get("include_settings", False)
-            db_strategy = data.get("db_strategy", "merge")
-
-            if db_strategy not in ("merge", "replace"):
-                # Resume detection if we paused it
-                if not was_paused:
-                    detection_manager.paused = False
-                return jsonify({"error": "Invalid db_strategy"}), 400
-
-            # Start restore in background thread
-            import threading
-
-            def run_restore():
-                nonlocal _restore_progress
-                _restore_progress = {"active": True, "progress": None}
-
-                try:
-                    for progress in restore_from_archive(
-                        path,
-                        include_db=include_db,
-                        include_originals=include_originals,
-                        include_derivatives=include_derivatives,
-                        include_settings=include_settings,
-                        db_strategy=db_strategy,
-                    ):
-                        _restore_progress["progress"] = progress
-
-                        if progress.get("completed"):
-                            break
-
-                except Exception as e:
-                    logger.error(f"Restore thread error: {e}", exc_info=True)
-                    _restore_progress["progress"] = {
-                        "stage": "error",
-                        "progress": 0,
-                        "total": 1,
-                        "message": str(e),
-                        "completed": True,
-                        "error": str(e),
-                    }
-                finally:
-                    _restore_progress["active"] = False
-                    # Resume detection if we paused it
-                    if not was_paused:
-                        detection_manager.paused = False
-                        logger.info("Restore: Detection resumed after restore")
-
-                    # Cleanup: Delete uploaded archive after restore (success or failure)
-                    try:
-                        if path.exists():
-                            path.unlink()
-                            logger.info(f"Restore: Deleted uploaded archive {path}")
-                    except Exception as cleanup_err:
-                        logger.warning(
-                            f"Restore: Could not delete archive {path}: {cleanup_err}"
-                        )
-
-            thread = threading.Thread(target=run_restore, daemon=True)
-            thread.start()
-
-            logger.info("Restore: Started restore process in background")
-
-            return jsonify(
-                {
-                    "status": "started",
-                    "message": "Restore process started",
-                    "detection_auto_paused": not was_paused,
-                }
-            )
-
-        except Exception as e:
-            # Resume detection on error if we paused it
-            if "was_paused" in locals() and not was_paused:
-                detection_manager.paused = False
-            logger.error(f"Restore apply error: {e}", exc_info=True)
-            return jsonify({"error": str(e)}), 500
-
-    @server.route("/api/restore/status", methods=["GET"])
-    @login_required
-    def restore_status():
-        """Returns the current status of the restore operation."""
-        nonlocal _restore_progress
-
-        return jsonify(
-            {
-                "active": _restore_progress["active"],
-                "progress": _restore_progress.get("progress"),
-            }
-        )
-
-    @server.route("/api/restore/cleanup", methods=["POST"])
-    @login_required
-    def restore_cleanup():
-        """Cleans up the restore temp directory."""
-        from utils.restore import cleanup_restore_tmp
-
-        try:
-            pm = get_path_manager()
-            cleanup_restore_tmp(pm)
-            return jsonify({"status": "success"})
-        except Exception as e:
-            logger.error(f"Restore cleanup error: {e}")
-            return jsonify({"error": str(e)}), 500
 
     # -----------------------------
     # Function to Start the Web Interface

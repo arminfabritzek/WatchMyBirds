@@ -74,7 +74,7 @@ atexit.register(system_monitor.stop)
 from web.web_interface import create_web_interface
 
 # Expose the Flask server as the WSGI app for Waitress.
-app = create_web_interface(detection_manager)
+app = create_web_interface(detection_manager, system_monitor=system_monitor)
 
 if __name__ == "__main__":
     # Use Waitress instead of Werkzeug dev server.

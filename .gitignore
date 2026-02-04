@@ -261,6 +261,7 @@ ingest/**
 .benchmarks/
 **/*.env
 /debuglogs
+config/cameras.yaml
 
 # Codex agent metadata
 .agent/

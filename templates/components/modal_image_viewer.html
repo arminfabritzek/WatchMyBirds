@@ -1,5 +1,5 @@
 {#
-Modal Image Viewer Component
+Modal Image Viewer Component (UI_STANDARD.md compliant)
 
 Renders an image with optional bounding box overlay canvas.
 Used in detection_modal, orphan_modal, etc.
@@ -8,17 +8,17 @@ Args:
 image_url (str): URL to the optimized/full image
 image_alt (str): Alt text for accessibility
 detection_id (int): Current detection ID
-bbox (dict): Current detection bbox {x, y, w, h}
-siblings (list): List of sibling detections with bbox data
 dismissable (bool): If true, clicking image closes modal
 #}
 {% macro render_image_viewer(image_url, image_alt, detection_id, bbox=none, siblings=none, dismissable=true) %}
-<div class="modal-image-viewer" style="position: relative; display: inline-block; max-width: 100%;">
-    <img src="{{ image_url }}" alt="{{ image_alt }}" class="img-fluid bbox-base-image"
-        style="max-height: 65vh; display: block;" {% if dismissable %} role="button" data-bs-dismiss="modal"
-        aria-label="Close" title="Click to close" {% endif %} data-detection-id="{{ detection_id }}"
-        onload="if(typeof initBboxOverlay==='function')initBboxOverlay(this)">
-    <canvas class="bbox-overlay"
-        style="position: absolute; top: 0; left: 0; pointer-events: none; display: none;"></canvas>
+<div class="modal-image-viewer wm-image-viewer">
+    <img class="wm-image-viewer__img bbox-base-image"
+         src="{{ image_url }}"
+         alt="{{ image_alt }}"
+         data-detection-id="{{ detection_id }}"
+         {% if dismissable %}role="button" data-bs-dismiss="modal" aria-label="Close" title="Click to close"{% endif %}
+         onload="if(typeof initBboxOverlay==='function')initBboxOverlay(this)">
+
+    <canvas class="wm-image-viewer__overlay bbox-overlay"></canvas>
 </div>
 {% endmacro %}

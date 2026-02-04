@@ -3,111 +3,7 @@
 {% block title %}{{ date }} - Gallery - WatchMyBirds{% endblock %}
 
 {% block head %}
-<style>
-    .gallery-grid {
-        display: grid;
-        grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
-        gap: var(--space-md);
-    }
-
-    .gallery-item {
-        background: var(--color-surface);
-        border: 1px solid var(--color-border);
-        border-radius: var(--radius-lg);
-        overflow: hidden;
-        transition: all var(--transition-fast);
-        cursor: pointer;
-    }
-
-    .gallery-item:hover {
-        border-color: var(--color-primary);
-        transform: translateY(-2px);
-        box-shadow: var(--shadow-md);
-    }
-
-    .gallery-item__image {
-        width: 100%;
-        aspect-ratio: 1;
-        object-fit: cover;
-        display: block;
-    }
-
-    .gallery-item__info {
-        padding: var(--space-sm);
-        text-align: center;
-    }
-
-    .gallery-item__name {
-        font-size: var(--font-size-sm);
-        font-weight: 600;
-        color: var(--color-text);
-        margin-bottom: 2px;
-    }
-
-    .gallery-item__latin {
-        font-size: var(--font-size-xs);
-        color: var(--color-text-muted);
-        font-style: italic;
-        margin-bottom: var(--space-xs);
-    }
-
-    .gallery-item__score {
-        font-size: var(--font-size-sm);
-        font-weight: 600;
-        color: var(--color-accent);
-    }
-
-
-
-    /* Pagination */
-    .pagination-wrapper {
-        display: flex;
-        justify-content: center;
-        margin: var(--space-xl) 0;
-    }
-
-    .pagination {
-        display: flex;
-        gap: var(--space-xs);
-        list-style: none;
-        padding: 0;
-        margin: 0;
-    }
-
-    .pagination li a,
-    .pagination li span {
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        min-width: 36px;
-        height: 36px;
-        padding: 0 var(--space-sm);
-        background: var(--color-surface);
-        border: 1px solid var(--color-border);
-        border-radius: var(--radius-md);
-        color: var(--color-text-muted);
-        text-decoration: none;
-        font-size: var(--font-size-sm);
-        transition: all var(--transition-fast);
-    }
-
-    .pagination li a:hover {
-        background: var(--color-surface-2);
-        border-color: var(--color-border-light);
-        color: var(--color-text);
-    }
-
-    .pagination li.active span {
-        background: var(--color-primary);
-        border-color: var(--color-primary);
-        color: white;
-    }
-
-    .pagination li.disabled span {
-        opacity: 0.5;
-        cursor: not-allowed;
-    }
-</style>
+{# Styles migrated to design-system.css: GALLERY GRID and PAGINATION sections #}
 {% endblock %}
 
 {% block content %}
@@ -133,15 +29,21 @@
     <h2 class="section__title">Species of the Day</h2>
     <div class="gallery-grid">
         {% for det in species_of_day %}
-        <div class="gallery-item" data-bs-toggle="modal" data-bs-target="#modal-species-{{ det.detection_id }}">
-            <img src="{{ det.display_url }}" alt="{{ det.common_name }}" class="gallery-item__image">
-            <div class="gallery-item__info">
-                <div class="gallery-item__name">{{ det.common_name }}</div>
-                {% if det.cls_class_name or det.od_class_name %}
-                <div class="gallery-item__latin">{{ (det.cls_class_name or det.od_class_name) | replace('_', ' ') }}
+        <div class="wm-tile" data-detection-id="{{ det.detection_id }}">
+            <button type="button" class="wm-tile__button" data-bs-toggle="modal"
+                data-bs-target="#modal-species-{{ det.detection_id }}">
+
+                <div class="wm-tile__media">
+                    <img class="wm-tile__image" src="{{ det.display_url }}" alt="{{ det.common_name }}">
                 </div>
+            </button>
+
+            <div class="wm-tile__body">
+                <span class="wm-tile__name">{{ det.common_name }}</span>
+                {% if det.cls_class_name or det.od_class_name %}
+                <span class="wm-tile__latin">{{ (det.cls_class_name or det.od_class_name) | replace('_', ' ') }}</span>
                 {% endif %}
-                <div class="gallery-item__score">{{ "%.2f"|format(det.score) }}</div>
+                <span class="wm-tile__score">{{ "%.2f"|format(det.score) }}</span>
             </div>
         </div>
         {% endfor %}
@@ -154,15 +56,21 @@
     <h2 class="section__title">All Observations</h2>
     <div class="gallery-grid" id="subgallery-grid">
         {% for det in detections %}
-        <div class="gallery-item" data-bs-toggle="modal" data-bs-target="#modal-main-{{ det.detection_id }}">
-            <img src="{{ det.display_url }}" alt="{{ det.common_name }}" class="gallery-item__image">
-            <div class="gallery-item__info">
-                <div class="gallery-item__name">{{ det.common_name }}</div>
-                {% if det.cls_class_name or det.od_class_name %}
-                <div class="gallery-item__latin">{{ (det.cls_class_name or det.od_class_name) | replace('_', ' ') }}
+        <div class="wm-tile" id="detection-{{ det.detection_id }}" data-detection-id="{{ det.detection_id }}">
+            <button type="button" class="wm-tile__button" data-bs-toggle="modal"
+                data-bs-target="#modal-main-{{ det.detection_id }}">
+
+                <div class="wm-tile__media">
+                    <img class="wm-tile__image" src="{{ det.display_url }}" alt="{{ det.common_name }}">
                 </div>
+            </button>
+
+            <div class="wm-tile__body">
+                <span class="wm-tile__name">{{ det.common_name }}</span>
+                {% if det.cls_class_name or det.od_class_name %}
+                <span class="wm-tile__latin">{{ (det.cls_class_name or det.od_class_name) | replace('_', ' ') }}</span>
                 {% endif %}
-                <div class="gallery-item__score">{{ "%.2f"|format(det.score) }}</div>
+                <span class="wm-tile__score">{{ "%.2f"|format(det.score) }}</span>
             </div>
         </div>
         {% endfor %}
@@ -214,4 +122,25 @@
 
 {% block scripts %}
 <script src="/assets/js/gallery_utils.js"></script>
+<script>
+    // Scroll to detection if navigated via anchor hash
+    document.addEventListener('DOMContentLoaded', function () {
+        if (window.location.hash) {
+            const targetId = window.location.hash.substring(1);
+            const targetEl = document.getElementById(targetId);
+            if (targetEl) {
+                setTimeout(() => {
+                    targetEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    // Highlight effect
+                    targetEl.style.outline = '3px solid var(--color-primary)';
+                    targetEl.style.outlineOffset = '2px';
+                    setTimeout(() => {
+                        targetEl.style.outline = '';
+                        targetEl.style.outlineOffset = '';
+                    }, 2000);
+                }, 100);
+            }
+        }
+    });
+</script>
 {% endblock %}

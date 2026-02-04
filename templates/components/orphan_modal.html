@@ -1,6 +1,7 @@
 {% macro render_orphan_modal(orphan) %}
 {#
 Renders a review modal for an image in the Review Queue.
+(UI_STANDARD.md compliant)
 
 Args:
 orphan (dict): The image object containing:
@@ -9,50 +10,52 @@ orphan (dict): The image object containing:
 - review_reason, reason_label
 - max_od_conf
 #}
-<div class="modal gallery-modal" id="modal-review-{{ orphan.filename|replace('.', '_') }}" tabindex="-1"
-    aria-hidden="true" data-modal-group="review">
-    <div class="modal-dialog modal-lg">
-        <div class="modal-content">
-            <div class="modal-header">
-                <div>
-                    <h5 class="modal-title">
-                        {{ orphan.formatted_date }}
-                    </h5>
+<div class="modal fade gallery-modal wm-modal" id="modal-review-{{ orphan.filename|replace('.', '_') }}" tabindex="-1"
+    aria-hidden="true" data-modal-group="review" data-image-path="{{ orphan.full_url }}">
+
+    <div
+        class="modal-dialog modal-xl modal-dialog-centered modal-dialog-scrollable modal-fullscreen-md-down wm-modal__dialog">
+        <div class="modal-content wm-modal__content">
+
+            <div class="modal-header wm-modal__header">
+                <div class="wm-modal__title">
+                    <span class="wm-modal__title-text">{{ orphan.formatted_date }}</span>
                     <span
-                        class="badge {% if orphan.review_reason == 'orphan' %}bg-warning text-dark{% else %}bg-info{% endif %} ms-2">
-                        {{ orphan.reason_label }}
-                    </span>
+                        class="wm-modal__title-sub badge {% if orphan.review_reason == 'orphan' %}bg-warning text-dark{% else %}bg-info{% endif %}">{{
+                        orphan.reason_label }}</span>
                 </div>
-                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                <button type="button" class="btn-close wm-modal__close" data-bs-dismiss="modal"></button>
             </div>
-            <div class="modal-body text-center" style="background: #f8f9fa;">
-                <img src="{{ orphan.full_url }}" alt="{{ orphan.filename }}" class="modal-image img-fluid"
-                    style="max-height: 70vh;" onerror="this.src='{{ orphan.thumb_url }}';">
-            </div>
-            <div class="modal-footer justify-content-between">
-                <div>
-                    {# Navigation Buttons - JS handles actual navigation based on data-modal-group #}
-                    <button type="button" class="btn btn-outline-primary prev-btn me-2"
-                        onclick="navigateModal(this, 'prev')">&laquo; Prev</button>
-                    <button type="button" class="btn btn-outline-primary next-btn"
-                        onclick="navigateModal(this, 'next')">Next &raquo;</button>
-                </div>
-                <div class="d-flex gap-2">
-                    {# Review Actions #}
-                    <button type="button" class="btn btn-success"
-                        onclick="modalAction('{{ orphan.filename }}', 'confirm')">
-                        <i class="bi bi-check-circle"></i> Bird Present
-                    </button>
-                    <button type="button" class="btn btn-outline-secondary"
-                        onclick="modalAction('{{ orphan.filename }}', 'skip')">
-                        <i class="bi bi-arrow-right-circle"></i> Skip
-                    </button>
-                    <button type="button" class="btn btn-danger"
-                        onclick="modalAction('{{ orphan.filename }}', 'no_bird')">
-                        <i class="bi bi-x-circle"></i> No Bird
-                    </button>
+
+            <div class="wm-modal__body">
+                <div class="wm-modal__image">
+                    <div class="modal-image-viewer wm-image-viewer">
+                        <img class="wm-image-viewer__img" src="{{ orphan.full_url }}" alt="{{ orphan.filename }}"
+                            onerror="this.src='{{ orphan.thumb_url }}';">
+                    </div>
                 </div>
             </div>
+
+            <div class="wm-modal__action">
+                <div class="modal-action-bar">
+                    <div class="modal-action-bar__group">
+                        <button type="button" class="btn btn--primary btn--sm"
+                            onclick="modalAction('{{ orphan.filename }}', 'confirm')">✓ Bird</button>
+                        <button type="button" class="btn btn--secondary btn--sm"
+                            onclick="modalAction('{{ orphan.filename }}', 'skip')">Skip</button>
+                        <button type="button" class="btn btn--danger btn--sm"
+                            onclick="modalAction('{{ orphan.filename }}', 'no_bird')">✗ No Bird</button>
+                    </div>
+                    <div class="modal-action-bar__group">
+                        <button type="button" class="btn btn--secondary btn--sm prev-btn"
+                            onclick="navigateModal(this, 'prev')">←</button>
+                        <button type="button" class="btn btn--secondary btn--sm next-btn"
+                            onclick="navigateModal(this, 'next')">→</button>
+                        <button type="button" class="btn btn--primary btn--sm" data-bs-dismiss="modal">Close</button>
+                    </div>
+                </div>
+            </div>
+
         </div>
     </div>
 </div>
