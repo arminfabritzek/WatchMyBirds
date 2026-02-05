@@ -189,14 +189,7 @@ jobs:
             gh release create "$TAG" \
               --repo "${{ github.repository }}" \
               --title "🍓 Raspberry Pi Image – ${DATE}" \
-              --notes "## WatchMyBirds Raspberry Pi Appliance Image
-
-**Build Date:** ${DATE}
-**Commit:** ${{ github.sha }}
-
-Flash to SD card with [Raspberry Pi Imager](https://www.raspberrypi.com/software/) and boot on Raspberry Pi 5.
-
-See [Installation Guide](https://github.com/${{ github.repository }}#raspberry-pi-appliance) for setup instructions." \
+              --notes "## WatchMyBirds Raspberry Pi Appliance Image\n\n**Build Date:** ${DATE}\n**Commit:** ${{ github.sha }}\n\nFlash to SD card with [Raspberry Pi Imager](https://www.raspberrypi.com/software/) and boot on Raspberry Pi 5.\n\nSee [Installation Guide](https://github.com/${{ github.repository }}#raspberry-pi-appliance) for setup instructions." \
               --latest
 
           # Upload Asset

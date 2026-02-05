@@ -211,14 +211,7 @@ jobs:
             gh release create "$TAG" \
               --repo "${{ github.repository }}" \
               --title "🍓 Raspberry Pi Dev Image – ${DATE}" \
-              --notes "## WatchMyBirds Raspberry Pi Development Image
-
-**Build Date:** ${DATE}
-**Commit:** ${{ github.sha }}
-
-⚠️ **Development build** – SSH enabled, relaxed security for testing.
-
-Flash to SD card with [Raspberry Pi Imager](https://www.raspberrypi.com/software/) and boot on Raspberry Pi 5." \
+              --notes "## WatchMyBirds Raspberry Pi Development Image\n\n**Build Date:** ${DATE}\n**Commit:** ${{ github.sha }}\n\n⚠️ **Development build** – SSH enabled, relaxed security for testing.\n\nFlash to SD card with [Raspberry Pi Imager](https://www.raspberrypi.com/software/) and boot on Raspberry Pi 5." \
               --prerelease
 
           # Upload Asset
