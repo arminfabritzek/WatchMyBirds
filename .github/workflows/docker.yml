@@ -6,10 +6,18 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Read App Version
+        id: version
+        run: |
+          VERSION=$(cat APP_VERSION 2>/dev/null || echo "0.0.0")
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -29,7 +37,7 @@ jobs:
         with:
           images: starminworks/watchmybirds
           tags: |
-            type=ref,event=branch
+            type=raw,value=${{ steps.version.outputs.version }}
             type=sha
             type=raw,value=latest,enable={{is_default_branch}}
 
@@ -46,4 +54,40 @@ jobs:
           build-args: |
             BUILD_DATE=${{ github.run_started_at }}
             GIT_COMMIT=${{ github.sha }}
-            VERSION=${{ github.ref_name }}
+            VERSION=${{ steps.version.outputs.version }}
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          DATE=$(date +%Y-%m-%d)
+          VERSION="${{ steps.version.outputs.version }}"
+          TAG="docker-${DATE}"
+          
+          # Skip if release already exists
+          if gh release view "$TAG" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            echo "Release $TAG already exists, skipping creation"
+            exit 0
+          fi
+          
+          gh release create "$TAG" \
+            --repo "${{ github.repository }}" \
+            --title "🐳 Docker Image – ${DATE}" \
+            --notes "## WatchMyBirds Docker Image
+
+**Version:** ${VERSION}
+**Build Date:** ${DATE}
+**Commit:** ${{ github.sha }}
+
+### Docker Hub
+\`\`\`bash
+docker pull starminworks/watchmybirds:${VERSION}
+docker pull starminworks/watchmybirds:latest
+\`\`\`
+
+### Platforms
+- \`linux/amd64\` (x86_64)
+- \`linux/arm64\` (Raspberry Pi, Apple Silicon)
+
+See [Docker Setup Guide](https://github.com/${{ github.repository }}#docker) for usage instructions." \
+            --latest
