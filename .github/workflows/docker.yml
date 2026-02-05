@@ -64,30 +64,11 @@ jobs:
           VERSION="${{ steps.version.outputs.version }}"
           TAG="docker-${DATE}"
           
-          # Skip if release already exists
-          if gh release view "$TAG" --repo "${{ github.repository }}" >/dev/null 2>&1; then
-            echo "Release $TAG already exists, skipping creation"
-            exit 0
-          fi
-          
-          gh release create "$TAG" \
-            --repo "${{ github.repository }}" \
-            --title "🐳 Docker Image – ${DATE}" \
-            --notes "## WatchMyBirds Docker Image
+          # Create Release if not exists
+          gh release view "$TAG" --repo "${{ github.repository }}" >/dev/null 2>&1 || \
+            gh release create "$TAG" \
+              --repo "${{ github.repository }}" \
+              --title "🐳 Docker Image – ${DATE}" \
+              --notes "## WatchMyBirds Docker Image\n\n**Build Date:** ${DATE}\n**Commit:** ${{ github.sha }}\n\n### Docker Hub\n\`\`\`bash\ndocker pull starminworks/watchmybirds:${VERSION}\ndocker pull starminworks/watchmybirds:latest\n\`\`\`\n\n### Platforms\n- \`linux/amd64\` (x86_64)\n- \`linux/arm64\` (Raspberry Pi, Apple Silicon)\n\nSee [Docker Setup Guide](https://github.com/${{ github.repository }}#docker) for usage instructions." \
+              --latest
 
-**Version:** ${VERSION}
-**Build Date:** ${DATE}
-**Commit:** ${{ github.sha }}
-
-### Docker Hub
-\`\`\`bash
-docker pull starminworks/watchmybirds:${VERSION}
-docker pull starminworks/watchmybirds:latest
-\`\`\`
-
-### Platforms
-- \`linux/amd64\` (x86_64)
-- \`linux/arm64\` (Raspberry Pi, Apple Silicon)
-
-See [Docker Setup Guide](https://github.com/${{ github.repository }}#docker) for usage instructions." \
-            --latest
