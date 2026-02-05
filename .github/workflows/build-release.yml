@@ -169,30 +169,34 @@ jobs:
       - name: Rename Image
         run: |
           DATE=$(date +%Y-%m-%d)
-          SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-8)
-          mv golden.img watchmybirds-release-${DATE}-${SHORT_SHA}.img
+          mv golden.img watchmybirds-rpi-${DATE}.img
 
       - name: Compress Release Image
         run: |
           DATE=$(date +%Y-%m-%d)
-          SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-8)
-          xz -z -1 -T0 watchmybirds-release-${DATE}-${SHORT_SHA}.img
+          xz -z -1 -T0 watchmybirds-rpi-${DATE}.img
 
       - name: Create Release and Upload
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           DATE=$(date +%Y-%m-%d)
-          SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-8)
-          TAG="release-${DATE}-${SHORT_SHA}"
-          IMG_FILE="watchmybirds-release-${DATE}-${SHORT_SHA}.img.xz"
+          TAG="rpi-${DATE}"
+          IMG_FILE="watchmybirds-rpi-${DATE}.img.xz"
           
           # Create Release if not exists
           gh release view "$TAG" --repo "${{ github.repository }}" >/dev/null 2>&1 || \
             gh release create "$TAG" \
               --repo "${{ github.repository }}" \
-              --title "Release ${DATE}" \
-              --notes "Release build for commit ${{ github.sha }}" \
+              --title "🍓 Raspberry Pi Image – ${DATE}" \
+              --notes "## WatchMyBirds Raspberry Pi Appliance Image
+
+**Build Date:** ${DATE}
+**Commit:** ${{ github.sha }}
+
+Flash to SD card with [Raspberry Pi Imager](https://www.raspberrypi.com/software/) and boot on Raspberry Pi 5.
+
+See [Installation Guide](https://github.com/${{ github.repository }}#raspberry-pi-appliance) for setup instructions." \
               --latest
 
           # Upload Asset

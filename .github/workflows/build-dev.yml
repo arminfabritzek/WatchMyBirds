@@ -191,30 +191,34 @@ jobs:
       - name: Rename Image
         run: |
           DATE=$(date +%Y-%m-%d)
-          SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-8)
-          mv golden.img watchmybirds-dev-${DATE}-${SHORT_SHA}.img
+          mv golden.img watchmybirds-rpi-dev-${DATE}.img
 
       - name: Compress DEV Image
         run: |
           DATE=$(date +%Y-%m-%d)
-          SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-8)
-          xz -z -1 -T0 watchmybirds-dev-${DATE}-${SHORT_SHA}.img
+          xz -z -1 -T0 watchmybirds-rpi-dev-${DATE}.img
 
       - name: Create DEV Release and Upload
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           DATE=$(date +%Y-%m-%d)
-          SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-8)
-          TAG="dev-${DATE}-${SHORT_SHA}"
-          IMG_FILE="watchmybirds-dev-${DATE}-${SHORT_SHA}.img.xz"
+          TAG="rpi-dev-${DATE}"
+          IMG_FILE="watchmybirds-rpi-dev-${DATE}.img.xz"
           
           # Create Release if not exists
           gh release view "$TAG" --repo "${{ github.repository }}" >/dev/null 2>&1 || \
             gh release create "$TAG" \
               --repo "${{ github.repository }}" \
-              --title "DEV Image ${DATE}" \
-              --notes "Automated DEV build for commit ${{ github.sha }}" \
+              --title "🍓 Raspberry Pi Dev Image – ${DATE}" \
+              --notes "## WatchMyBirds Raspberry Pi Development Image
+
+**Build Date:** ${DATE}
+**Commit:** ${{ github.sha }}
+
+⚠️ **Development build** – SSH enabled, relaxed security for testing.
+
+Flash to SD card with [Raspberry Pi Imager](https://www.raspberrypi.com/software/) and boot on Raspberry Pi 5." \
               --prerelease
 
           # Upload Asset
