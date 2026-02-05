@@ -58,6 +58,7 @@ RUN python -m pip install --upgrade pip setuptools wheel && \
 COPY analytics ./analytics
 COPY assets ./assets
 COPY camera ./camera
+COPY core ./core
 COPY detectors ./detectors
 COPY templates ./templates
 COPY utils ./utils
