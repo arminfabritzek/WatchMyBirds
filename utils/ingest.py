@@ -99,7 +99,7 @@ def ingest_folder(folder_path: str, source_id: int, move_files: bool = False):
     det_model_id = getattr(detector, "model_id", "") or "unknown"
     # Basic attempt to split version if model_id looks like "model_v1.onnx" or similar,
     # but strictly speaking we treat the ID as version for now as requested.
-    # The requirement says: "Keine Ableitung aus Dateipfaden... Strings explizit übergeben"
+    # The requirement says: "No derivation from file paths... pass strings explicitly"
     # Since we can't change Detector class interface easily without checking detectors/*,
     # we use the loaded `model_id` as version and the configured name as name.
     det_model_name = config["DETECTOR_MODEL_CHOICE"]

@@ -1239,7 +1239,7 @@ class VideoCapture:
 
     def _register_instance_for_shutdown(self):
         """
-        Registriert Instanz für globale Aufräumroutinen (atexit / Signals).
+        Registers instance for global cleanup routines (atexit / signals).
         """
         VideoCapture._instances.add(self)
         if VideoCapture._shutdown_hooks_registered:
@@ -1269,7 +1269,7 @@ class VideoCapture:
 
     @classmethod
     def _terminate_all_instances(cls):
-        """Räumt alle bekannten FFmpeg-Prozesse auf (z. B. bei atexit)."""
+        """Cleans up all known FFmpeg processes (e.g., at atexit)."""
         for instance in list(cls._instances):
             try:
                 instance._terminate_ffmpeg_process(reason="shutdown hook")
@@ -1280,15 +1280,15 @@ class VideoCapture:
 
     def _make_ffmpeg_preexec_fn(self):
         """
-        Erstellt preexec-Funktion, die eine eigene Session startet und einen
-        Parent-Death-Signal-Handler auf Linux setzt.
+        Creates preexec function that starts its own session and sets a
+        parent-death signal handler on Linux.
         """
         if os.name != "posix":
             return None
 
         def preexec():
             try:
-                os.setsid()  # eigener Prozessgruppe für gezielte Signale
+                os.setsid()  # own process group for targeted signals
             except Exception:
                 pass
             self._set_parent_death_signal()
@@ -1297,8 +1297,8 @@ class VideoCapture:
 
     def _set_parent_death_signal(self):
         """
-        Setzt auf Linux PR_SET_PDEATHSIG, damit FFmpeg beendet wird,
-        wenn der Python-Prozess unerwartet stirbt.
+        Sets PR_SET_PDEATHSIG on Linux so that FFmpeg is terminated
+        if the Python process dies unexpectedly.
         """
         if os.name != "posix":
             return

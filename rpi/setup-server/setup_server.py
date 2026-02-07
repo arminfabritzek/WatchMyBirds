@@ -70,7 +70,7 @@ def _create_app() -> Flask:
             if not ssid or not password:
                 return render_template(
                     "setup.html",
-                    error="SSID und Passwort sind erforderlich.",
+                    error="SSID and password are required.",
                     ssid=ssid,
                     ssids=ssids,
                 )
@@ -83,7 +83,7 @@ def _create_app() -> Flask:
                 logger.exception("Failed to write pending WiFi config.")
                 return render_template(
                     "setup.html",
-                    error=f"Fehler beim Speichern: {exc}",
+                    error=f"Error while saving: {exc}",
                     ssid=ssid,
                     ssids=ssids,
                 )

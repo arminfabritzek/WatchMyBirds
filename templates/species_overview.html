@@ -1,0 +1,96 @@
+{% extends 'base.html' %}
+
+{% block title %}{{ species_common_name }} - Species Overview - WatchMyBirds{% endblock %}
+
+{% block head %}
+{# Uses existing design-system species/tile styles #}
+{% endblock %}
+
+{% block content %}
+<nav class="page-control-bar" role="navigation" aria-label="Species overview controls">
+    <div class="page-control-bar__left">
+        <span class="page-control-bar__title">{{ species_common_name }}</span>
+    </div>
+    <div class="page-control-bar__center">
+        {% set show_sort = false %}
+        {% include 'partials/filter_bar.html' %}
+    </div>
+    <div class="page-control-bar__meta">
+        Page {{ page }} of {{ total_pages }} ({{ total_items }} detections)
+    </div>
+    <div class="page-control-bar__right">
+        <a href="/species" class="btn btn--secondary">← Species</a>
+        <a href="/" class="btn btn--secondary">Live</a>
+    </div>
+</nav>
+
+{% if detections %}
+<div class="species-grid" id="species-overview-grid">
+    {% for det in detections %}
+    <div class="wm-tile" id="detection-{{ det.detection_id }}" data-detection-id="{{ det.detection_id }}">
+        <button type="button" class="wm-tile__button" data-bs-toggle="modal"
+            data-bs-target="#modal-species_overview-{{ det.detection_id }}">
+
+            <div class="wm-tile__media">
+                <img class="wm-tile__image" src="{{ det.display_path }}" alt="{{ det.common_name }}">
+            </div>
+        </button>
+
+        <div class="wm-tile__body">
+            <span class="wm-tile__name">{{ det.common_name }}</span>
+            {% if det.cls_class_name or det.od_class_name %}
+            <span class="wm-tile__latin">{{ (det.cls_class_name or det.od_class_name) | replace('_', ' ') }}</span>
+            {% endif %}
+            <span class="wm-tile__score">{{ "%.2f"|format(det.score) }}</span>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+{% else %}
+<div class="empty-state">
+    <div class="empty-state__icon">🐦</div>
+    <p>No detections found for this species with the current filter.</p>
+</div>
+{% endif %}
+
+{% if total_pages > 1 %}
+<nav class="pagination-wrapper" aria-label="Species overview pagination">
+    <ul class="pagination">
+        {% if page > 1 %}
+        <li><a
+                href="/species/overview?species_key={{ species_key | urlencode }}&page={{ page - 1 }}&min_score={{ current_threshold }}">«</a>
+        </li>
+        {% endif %}
+
+        {% for p in pagination_range %}
+        {% if p == '...' %}
+        <li class="disabled"><span>…</span></li>
+        {% elif p == page %}
+        <li class="active"><span>{{ p }}</span></li>
+        {% else %}
+        <li><a
+                href="/species/overview?species_key={{ species_key | urlencode }}&page={{ p }}&min_score={{ current_threshold }}">{{
+                p }}</a>
+        </li>
+        {% endif %}
+        {% endfor %}
+
+        {% if page < total_pages %} <li><a
+                href="/species/overview?species_key={{ species_key | urlencode }}&page={{ page + 1 }}&min_score={{ current_threshold }}">»</a>
+            </li>
+            {% endif %}
+    </ul>
+</nav>
+{% endif %}
+{% endblock %}
+
+{% block modals %}
+{% from "components/detection_modal.html" import render_modal %}
+{% for det in detections %}
+{{ render_modal(det, 'species_overview') }}
+{% endfor %}
+{% endblock %}
+
+{% block scripts %}
+<script src="/assets/js/gallery_utils.js"></script>
+{% endblock %}

@@ -2,11 +2,9 @@ name: Build Release Image
 
 on:
   workflow_dispatch:
-  # Auto-build disabled during dev phase - use rsync to update RPi
-  # Re-enable for production releases:
-  # push:
-  #   branches:
-  #     - main
+  push:
+    branches:
+      - main
 
   workflow_run:
     workflows: ["Build Golden Image"]

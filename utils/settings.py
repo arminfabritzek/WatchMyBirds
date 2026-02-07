@@ -5,7 +5,7 @@ import yaml
 
 
 def get_settings_path(output_dir: str = None) -> Path:
-    """Gibt den Pfad zur settings.yaml-Datei zurück."""
+    """Returns the path to the settings.yaml file."""
     if output_dir is None:
         from config import get_config
 
@@ -14,7 +14,7 @@ def get_settings_path(output_dir: str = None) -> Path:
 
 
 def load_settings_yaml(output_dir: str = None) -> dict[str, Any]:
-    """Lädt Laufzeit-Settings aus YAML; erstellt Datei falls fehlend."""
+    """Loads runtime settings from YAML; creates file if missing."""
     settings_path = get_settings_path(output_dir)
     settings_path.parent.mkdir(parents=True, exist_ok=True)
     if not settings_path.exists():
@@ -31,7 +31,7 @@ def load_settings_yaml(output_dir: str = None) -> dict[str, Any]:
 
 
 def save_settings_yaml(settings_dict: dict[str, Any], output_dir: str = None) -> None:
-    """Speichert Laufzeit-Settings als YAML (nur gegebene Keys)."""
+    """Saves runtime settings as YAML (only given keys)."""
     settings_path = get_settings_path(output_dir)
     settings_path.parent.mkdir(parents=True, exist_ok=True)
     with settings_path.open("w", encoding="utf-8") as handle:

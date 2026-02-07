@@ -1420,6 +1420,7 @@ def create_web_interface(detection_manager, system_monitor=None):
                 detections.append(
                     {
                         "detection_id": det.get("detection_id"),
+                        "species_key": species,
                         "display_path": display_url,
                         "full_path": full_url,
                         "original_path": original_url,
@@ -1455,6 +1456,149 @@ def create_web_interface(detection_manager, system_monitor=None):
 
         server.add_url_rule(
             "/species", endpoint="species", view_func=species_route, methods=["GET"]
+        )
+
+        def species_overview_route():
+            """Species-specific overview page with all detections for one species."""
+            raw_species_key = request.args.get("species_key", type=str) or ""
+            species_key = raw_species_key.strip().replace(" ", "_")
+            if not species_key:
+                return redirect(url_for("species"))
+
+            page = request.args.get("page", 1, type=int)
+
+            # Get threshold from query param or config (query param overrides)
+            try:
+                min_score_param = request.args.get("min_score", type=float)
+            except (ValueError, TypeError):
+                min_score_param = None
+
+            if min_score_param is not None:
+                current_threshold = min_score_param
+            else:
+                current_threshold = config.get("GALLERY_DISPLAY_THRESHOLD", 0.7)
+
+            all_detections = get_captured_detections()
+
+            filtered = []
+            for det in all_detections:
+                det_species_key = (
+                    det.get("cls_class_name")
+                    or det.get("od_class_name")
+                    or "Unclassified"
+                )
+                if det_species_key != species_key:
+                    continue
+                if (
+                    current_threshold > 0
+                    and (det.get("score") or 0.0) < current_threshold
+                ):
+                    continue
+                filtered.append(det)
+
+            total_items = len(filtered)
+            total_pages = math.ceil(total_items / PAGE_SIZE) or 1
+            page = max(1, min(page, total_pages))
+            start_index = (page - 1) * PAGE_SIZE
+            end_index = page * PAGE_SIZE
+            page_detections_raw = filtered[start_index:end_index]
+
+            detections = []
+            for det in page_detections_raw:
+                full_path = det.get("relative_path") or det.get(
+                    "optimized_name_virtual", ""
+                )
+                thumb_virtual = det.get("thumbnail_path_virtual")
+
+                if thumb_virtual:
+                    display_url = f"/uploads/derivatives/thumbs/{thumb_virtual}"
+                else:
+                    display_url = f"/uploads/derivatives/optimized/{full_path}"
+
+                full_url = f"/uploads/derivatives/optimized/{full_path}"
+                original_url = (
+                    f"/uploads/originals/{full_path.replace('.webp', '.jpg')}"
+                )
+
+                ts = det.get("image_timestamp", "")
+                if len(ts) >= 15:
+                    date_str = ts[:8]
+                    time_str = ts[9:15]
+                    formatted_date = f"{date_str[6:8]}.{date_str[4:6]}.{date_str[0:4]}"
+                    formatted_time = f"{time_str[0:2]}:{time_str[2:4]}:{time_str[4:6]}"
+                    gallery_date = f"{date_str[0:4]}-{date_str[4:6]}-{date_str[6:8]}"
+                else:
+                    formatted_date = ""
+                    formatted_time = ""
+                    gallery_date = ""
+
+                detections.append(
+                    {
+                        "detection_id": det.get("detection_id"),
+                        "species_key": species_key,
+                        "display_path": display_url,
+                        "full_path": full_url,
+                        "original_path": original_url,
+                        "common_name": COMMON_NAMES.get(
+                            species_key, species_key.replace("_", " ")
+                        ),
+                        "od_class_name": det.get("od_class_name", ""),
+                        "od_confidence": det.get("od_confidence", 0.0) or 0.0,
+                        "cls_class_name": det.get("cls_class_name", ""),
+                        "cls_confidence": det.get("cls_confidence", 0.0) or 0.0,
+                        "score": det.get("score", 0.0) or 0.0,
+                        "formatted_date": formatted_date,
+                        "formatted_time": formatted_time,
+                        "gallery_date": gallery_date,
+                        "siblings": [],
+                        "sibling_count": 1,
+                        "bbox_x": det.get("bbox_x", 0.0) or 0.0,
+                        "bbox_y": det.get("bbox_y", 0.0) or 0.0,
+                        "bbox_w": det.get("bbox_w", 0.0) or 0.0,
+                        "bbox_h": det.get("bbox_h", 0.0) or 0.0,
+                    }
+                )
+
+            # Build pagination range
+            window = 2
+            pagination_range = []
+            range_start = max(1, page - window)
+            range_end = min(total_pages, page + window)
+
+            if range_start > 1:
+                pagination_range.append(1)
+                if range_start > 2:
+                    pagination_range.append("...")
+
+            for p in range(range_start, range_end + 1):
+                pagination_range.append(p)
+
+            if range_end < total_pages:
+                if range_end < total_pages - 1:
+                    pagination_range.append("...")
+                pagination_range.append(total_pages)
+
+            return render_template(
+                "species_overview.html",
+                current_path="/species",
+                species_key=species_key,
+                species_common_name=COMMON_NAMES.get(
+                    species_key, species_key.replace("_", " ")
+                ),
+                current_threshold=current_threshold,
+                detections=detections,
+                page=page,
+                total_pages=total_pages,
+                total_items=total_items,
+                pagination_range=pagination_range,
+                image_width=IMAGE_WIDTH,
+            )
+
+        server.add_url_rule(
+            "/species/overview",
+            endpoint="species_overview",
+            view_func=species_overview_route,
+            methods=["GET"],
         )
 
         # --- Phase 3: Gallery Routes (server-rendered) ---
@@ -1911,6 +2055,9 @@ def create_web_interface(detection_manager, system_monitor=None):
                     visual_summary.append(
                         {
                             "detection_id": det.get("detection_id"),
+                            "species_key": det.get("cls_class_name")
+                            or det.get("od_class_name")
+                            or "Unclassified",
                             "common_name": COMMON_NAMES.get(
                                 det.get("cls_class_name") or det.get("od_class_name"),
                                 "Unknown",

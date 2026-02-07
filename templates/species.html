@@ -27,21 +27,20 @@
 <div class="species-grid" id="species-gallery-grid">
     {% for det in detections %}
     <div class="wm-tile" data-detection-id="{{ det.detection_id }}">
-        <button type="button" class="wm-tile__button" data-bs-toggle="modal"
-            data-bs-target="#modal-species_summary-{{ det.detection_id }}">
-
+        <a class="wm-tile__button"
+            href="/species/overview?species_key={{ (det.species_key or 'Unclassified') | urlencode }}&min_score={{ current_threshold }}"
+            style="text-decoration:none;color:inherit;" aria-label="Show all detections: {{ det.common_name }}">
             <div class="wm-tile__media">
                 <img class="wm-tile__image" src="{{ det.display_path }}" alt="{{ det.common_name }}">
             </div>
-        </button>
-
-        <div class="wm-tile__body">
-            <span class="wm-tile__name">{{ det.common_name }}</span>
-            {% if det.cls_class_name or det.od_class_name %}
-            <span class="wm-tile__latin">{{ (det.cls_class_name or det.od_class_name) | replace('_', ' ') }}</span>
-            {% endif %}
-            <span class="wm-tile__score">{{ "%.2f"|format(det.score) }}</span>
-        </div>
+            <div class="wm-tile__body">
+                <span class="wm-tile__name">{{ det.common_name }}</span>
+                {% if det.cls_class_name or det.od_class_name %}
+                <span class="wm-tile__latin">{{ (det.cls_class_name or det.od_class_name) | replace('_', ' ') }}</span>
+                {% endif %}
+                <span class="wm-tile__score">{{ "%.2f"|format(det.score) }}</span>
+            </div>
+        </a>
     </div>
     {% endfor %}
 </div>
@@ -51,15 +50,4 @@
     <p>No observations found matching the filter.</p>
 </div>
 {% endif %}
-{% endblock %}
-
-{% block modals %}
-{% from "components/detection_modal.html" import render_modal %}
-{% for det in detections %}
-{{ render_modal(det, 'species_summary') }}
-{% endfor %}
-{% endblock %}
-
-{% block scripts %}
-<script src="/assets/js/gallery_utils.js"></script>
 {% endblock %}

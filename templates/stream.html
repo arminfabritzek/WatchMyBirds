@@ -74,9 +74,9 @@
     <div class="species-grid">
         {% for det in visual_summary %}
         <div class="wm-tile" data-detection-id="{{ det.detection_id }}">
-            <button type="button" class="wm-tile__button" data-bs-toggle="modal"
-                data-bs-target="#modal-summary-{{ det.detection_id }}">
-
+            <a class="wm-tile__button"
+                href="/species/overview?species_key={{ (det.species_key or det.latin_name or 'Unclassified') | urlencode }}"
+                style="text-decoration:none;color:inherit;" aria-label="Show all detections: {{ det.common_name }}">
                 <div class="wm-tile__media">
                     <img class="wm-tile__image" src="{{ det.display_path }}" alt="{{ det.common_name }}">
 
@@ -84,14 +84,13 @@
                     <span class="wm-tile__badge">{{ det.count }}</span>
                     {% endif %}
                 </div>
-            </button>
-
-            <div class="wm-tile__body">
-                <span class="wm-tile__name">{{ det.common_name }}</span>
-                {% if det.latin_name %}
-                <span class="wm-tile__latin">{{ det.latin_name | replace('_', ' ') }}</span>
-                {% endif %}
-            </div>
+                <div class="wm-tile__body">
+                    <span class="wm-tile__name">{{ det.common_name }}</span>
+                    {% if det.latin_name %}
+                    <span class="wm-tile__latin">{{ det.latin_name | replace('_', ' ') }}</span>
+                    {% endif %}
+                </div>
+            </a>
         </div>
         {% endfor %}
     </div>
@@ -106,15 +105,7 @@
 </section>
 {% endblock %}
 
-{% block modals %}
-{% from "components/detection_modal.html" import render_modal %}
-{% for det in visual_summary %}
-{{ render_modal(det, 'summary') }}
-{% endfor %}
-{% endblock %}
-
 {% block scripts %}
-<script src="/assets/js/gallery_utils.js"></script>
 <script>
     (function () {
         // Snapshot
