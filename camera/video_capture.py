@@ -8,14 +8,17 @@ from config import get_config
 config = get_config()
 
 import atexit
+import itertools
 import json
 import os
 import queue
+import select
 import signal
 import subprocess
 import threading
 import time
 import weakref
+from datetime import datetime
 from pathlib import Path
 from threading import Event
 
@@ -74,9 +77,31 @@ class VideoCapture:
         self._ffmpeg_last_availability = True
         self._last_codec_switch_skip_logged = False
         self._last_frame_drop_logged = False
+        self._last_frame_drop_warn_mono = 0.0
         self._last_read_error_logged = False
         self._health_check_error_state = False
         self._last_logged_ffmpeg_line = None
+        self._preexec_skip_logged = False
+        self._startup_initial_frame_wait_sec = 5.0
+        self._recovery_initial_frame_wait_sec = 12.0
+
+        # -- Recovery Dispatcher Infrastructure (Steps 0-6) --
+        self._recovery_gate = threading.Lock()  # single-flight gate
+        self._recovery_gen = itertools.count(1)  # attempt id generator
+        self._recovery_cooldown_until = 0.0  # earliest next recovery ts
+        self._recovery_cooldown_sec = 5.0  # min gap between recoveries
+        # Circuit breaker (Step 6)
+        self._breaker_timestamps = []  # recent recovery attempt times
+        self._breaker_threshold = 5  # max attempts in window
+        self._breaker_window_sec = 60.0  # window size
+        self._breaker_offline_until = 0.0  # OFFLINE cooldown end
+        self._breaker_offline_sec = 60.0  # OFFLINE duration
+        # Process registry (Step 4)
+        self._child_registry = {}  # pid -> {handle, start_ts, kind, gen}
+        self._child_hard_cap = 4  # max concurrent children
+        # Timer coalescing (Step 5)
+        self._pending_reinit_timer = None  # at most one pending timer
+        self._pending_reinit_lock = threading.Lock()
 
         logger.debug(
             f"Initialized VideoCapture with source: {self.source}, stream_type: {self.stream_type}"
@@ -145,7 +170,7 @@ class VideoCapture:
         logger.error(error_msg)
         raise ValueError(f"Unable to determine stream type for source: {self.source}")
 
-    def _setup_capture(self):
+    def _setup_capture(self, require_initial_frame=False, initial_frame_wait_sec=None):
         logger.debug("Setting up video capture...")
         if self.stream_type == self.RTSP:
             try:
@@ -166,14 +191,23 @@ class VideoCapture:
             raise ValueError(f"Unsupported stream type: {self.stream_type}")
         logger.debug("Video capture setup completed.")
 
+        if initial_frame_wait_sec is None:
+            initial_frame_wait_sec = self._startup_initial_frame_wait_sec
+        try:
+            initial_frame_wait_sec = max(0.5, float(initial_frame_wait_sec))
+        except (TypeError, ValueError):
+            initial_frame_wait_sec = self._startup_initial_frame_wait_sec
+        warmup_attempts = max(1, int(initial_frame_wait_sec / 0.5))
+
         test_frame = None
         try:
             if self.backend == self.BACKEND_FFMPEG:
                 logger.debug(
-                    "Waiting up to 5s for FFmpeg to produce the first frame..."
+                    "Waiting up to "
+                    f"{initial_frame_wait_sec:.1f}s for FFmpeg to produce the first frame..."
                 )
-                for _ in range(10):
-                    test_frame = self._read_ffmpeg_frame()
+                for _ in range(warmup_attempts):
+                    test_frame = self._read_ffmpeg_frame(read_timeout_sec=0.5)
                     if test_frame is not None:
                         logger.debug("Received initial frame from FFmpeg.")
                         break
@@ -185,6 +219,19 @@ class VideoCapture:
             logger.warning(f"Error testing frame availability: {e}")
 
         if test_frame is None:
+            if require_initial_frame:
+                raise RuntimeError(
+                    "Initial test frame missing during strict capture setup "
+                    f"(backend={self.backend}, wait_sec={initial_frame_wait_sec:.1f})."
+                )
+            if self.stream_type == self.RTSP and self.backend == self.BACKEND_FFMPEG:
+                # Keep FFmpeg-first startup path: some cameras need extra warm-up
+                # before the first decodable frame appears.
+                logger.warning(
+                    "Initial test frame missing from FFmpeg. "
+                    "Keeping FFmpeg backend and relying on startup grace/recovery."
+                )
+                return
             now = time.time()
             if now - self.last_codec_switch_time < self.backend_switch_cooldown:
                 logger.debug(
@@ -254,16 +301,21 @@ class VideoCapture:
         for attempt in range(5):  # Retry up to 5 times
             try:
                 logger.debug(f"Starting FFmpeg process (attempt {attempt + 1})...")
-                preexec_fn = self._make_ffmpeg_preexec_fn()
-                self.ffmpeg_process = subprocess.Popen(
-                    ffmpeg_cmd,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    bufsize=10**8,
-                    preexec_fn=preexec_fn,
-                    start_new_session=preexec_fn is None,
-                )
+                popen_kwargs = {
+                    "stdout": subprocess.PIPE,
+                    "stderr": subprocess.PIPE,
+                    "bufsize": 10**8,
+                    "start_new_session": True,
+                }
+                if self._can_use_ffmpeg_preexec_fn():
+                    preexec_fn = self._make_ffmpeg_preexec_fn()
+                    if preexec_fn is not None:
+                        popen_kwargs["preexec_fn"] = preexec_fn
+                        popen_kwargs["start_new_session"] = False
+
+                self.ffmpeg_process = subprocess.Popen(ffmpeg_cmd, **popen_kwargs)
                 self.ffmpeg_pid = self.ffmpeg_process.pid
+                self._register_child(self.ffmpeg_process, kind="ffmpeg")
                 logger.debug(f"FFmpeg process started with pid {self.ffmpeg_pid}.")
                 logger.debug("FFmpeg process started successfully.")
 
@@ -696,7 +748,17 @@ class VideoCapture:
         Ensures only one thread is active at a time to avoid conflicts.
         """
         if self.reader_thread and self.reader_thread.is_alive():
-            logger.debug("Reader thread already running; skipping reinitialization")
+            if self.stop_event.is_set() or self.stop_flag:
+                logger.warning(
+                    "Reader thread still alive while shutdown/restart is in progress; "
+                    "waiting briefly before reusing it."
+                )
+                self.reader_thread.join(timeout=1.5)
+            if self.reader_thread and self.reader_thread.is_alive():
+                logger.warning(
+                    "Reader thread is still alive; skipping new reader startup for now."
+                )
+                return
 
         else:
             # Add a short delay to allow FFmpeg to initialize properly
@@ -743,24 +805,26 @@ class VideoCapture:
                         retcode = self.ffmpeg_process.poll()
                         if retcode is not None:
                             if not self._health_check_error_state:
-                                stderr_output = (
-                                    self.ffmpeg_process.stderr.read().decode().strip()
-                                )
+                                # Step 4 (stderr ownership): Do NOT read stderr here.
+                                # Only _log_ffmpeg_errors is the designated consumer.
                                 logger.error(
-                                    f"FFmpeg subprocess terminated with return code {retcode}. STDERR: {stderr_output}"
+                                    f"FFmpeg subprocess terminated with return code {retcode}."
                                 )
                                 self._health_check_error_state = True
-                            self._reinitialize_camera(
-                                reason="RTSP FFmpeg subprocess terminated unexpectedly."
+                            self.request_recovery(
+                                trigger="health_check",
+                                reason="RTSP FFmpeg subprocess terminated unexpectedly.",
                             )
                         else:
                             if time.time() - self.last_frame_time > 10:
                                 if not self._health_check_error_state:
-                                    logger.error(
-                                        "No frame received for over 5 seconds; triggering reinitialization."
+                                    logger.warning(
+                                        "No frame received for over 10 seconds; triggering reinitialization."
                                     )
                                     self._health_check_error_state = True
-                                self._reinitialize_camera(reason="RTSP stream stale.")
+                                self.request_recovery(
+                                    trigger="health_check", reason="RTSP stream stale."
+                                )
                             else:
                                 if self._health_check_error_state:
                                     logger.debug(
@@ -774,7 +838,9 @@ class VideoCapture:
                                 "HTTP stream is not opened. Triggering reinitialization."
                             )
                             self._health_check_error_state = True
-                        self._reinitialize_camera(reason="HTTP stream not opened.")
+                        self.request_recovery(
+                            trigger="health_check", reason="HTTP stream not opened."
+                        )
                     else:
                         if self._health_check_error_state:
                             logger.debug("HTTP stream recovered.")
@@ -858,6 +924,34 @@ class VideoCapture:
 
                         # We have a real decoded frame, enqueue it
                         self.last_enqueued_time = time.time()
+
+                        # Apply Clock Overlay for visual reference and sync check (P1)
+                        try:
+                            ts_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                            # Bottom-left position, green text with black outline for visibility
+                            cv2.putText(
+                                frame,
+                                ts_str,
+                                (20, frame.shape[0] - 20),
+                                cv2.FONT_HERSHEY_SIMPLEX,
+                                0.8,
+                                (0, 0, 0),
+                                4,
+                                cv2.LINE_AA,
+                            )
+                            cv2.putText(
+                                frame,
+                                ts_str,
+                                (20, frame.shape[0] - 20),
+                                cv2.FONT_HERSHEY_SIMPLEX,
+                                0.8,
+                                (0, 255, 0),
+                                2,
+                                cv2.LINE_AA,
+                            )
+                        except Exception:
+                            pass
+
                         try:
                             self.q.put(frame, block=False)
                         except queue.Full:
@@ -872,12 +966,18 @@ class VideoCapture:
                     else:
                         # Frame error (None)
                         self.consecutive_none_frames += 1
-                        # Same error handling logic as before...
-                        if self.consecutive_none_frames == 50:
-                            logger.warning(
-                                "Significant frame drop detected (50 consecutive None frames). Stream may be unstable."
-                            )
-                            self._last_frame_drop_logged = True
+                        # Time-based log guard: warn at most once per 60s
+                        # (immune to counter resets and object recreation)
+                        if self.consecutive_none_frames >= 50:
+                            now_mono = time.monotonic()
+                            if now_mono - self._last_frame_drop_warn_mono >= 60.0:
+                                logger.warning(
+                                    "Significant frame drop detected "
+                                    f"({self.consecutive_none_frames} consecutive None frames). "
+                                    "Stream may be unstable."
+                                )
+                                self._last_frame_drop_warn_mono = now_mono
+                                self._last_frame_drop_logged = True
 
                         if (
                             self.stream_type == self.RTSP
@@ -892,7 +992,10 @@ class VideoCapture:
                                 logger.debug(
                                     "Exceeded max consecutive None frames. Attempting codec switch recovery."
                                 )
-                                self._handle_codec_switch()
+                                self.request_recovery(
+                                    trigger="reader_codec_switch",
+                                    reason="Exceeded max consecutive None frames",
+                                )
                                 self.last_codec_switch_time = now
                                 self._last_codec_switch_skip_logged = False
                             else:
@@ -907,8 +1010,9 @@ class VideoCapture:
                             and self.consecutive_none_frames
                             >= self.max_none_frames_before_reconnect
                         ):
-                            self._reinitialize_camera(
-                                reason="Multiple None frames received."
+                            self.request_recovery(
+                                trigger="reader_none_frames",
+                                reason="Multiple None frames received.",
                             )
                             self.consecutive_none_frames = 0
 
@@ -920,14 +1024,14 @@ class VideoCapture:
                         self._last_read_error_logged = True
                     if self.stop_event.is_set():
                         break
-                    self._reinitialize_camera()
+                    self.request_recovery(trigger="reader_exception", reason=str(e))
         finally:
             logger.debug("Reader thread has exited.")
 
     def _read_frame(self, decode=True):
         if self.stream_type == self.RTSP and self.backend == self.BACKEND_FFMPEG:
             # FFmpeg always decodes; we must read to drain pipe regardless of 'decode' flag.
-            return self._read_ffmpeg_frame()
+            return self._read_ffmpeg_frame(read_timeout_sec=1.0)
         elif self.cap and self.cap.isOpened():
             if not decode:
                 # OPTIMIZATION: Just grab the frame (drain buffer) without decoding (save CPU)
@@ -960,10 +1064,14 @@ class VideoCapture:
         else:
             logger.error("HTTP/RTSP capture not opened.")
             if self.stream_type == self.RTSP:
-                logger.debug("Attempting fast codec switch recovery in _read_frame.")
-                self._handle_codec_switch()
+                logger.debug("Requesting recovery from _read_frame.")
+                self.request_recovery(
+                    trigger="read_frame_codec", reason="Capture not opened (RTSP)"
+                )
             else:
-                self._reinitialize_camera(reason="Capture not opened.")
+                self.request_recovery(
+                    trigger="read_frame", reason="Capture not opened."
+                )
             return None
 
     def _switch_to_ffmpeg(self):
@@ -986,6 +1094,7 @@ class VideoCapture:
     def _handle_codec_switch(self):
         """
         Handles RTSP codec switches gracefully without triggering full reinitialization loops.
+        Step 3: No ffprobe in hot recovery path - use cached resolution.
         """
         if self.stop_event.is_set() or self.stop_flag:
             logger.debug("Skipping codec switch handling during shutdown.")
@@ -1001,13 +1110,18 @@ class VideoCapture:
             # Short pause to let codec change settle
             time.sleep(1)
 
-            # Re-detect resolution
-            try:
-                self._get_stream_resolution_ffprobe()
-            except Exception:
-                logger.warning(
-                    "Stream resolution detection failed during reconnection (Probe/Fallback unreachable)."
+            # Step 3: Use cached/known resolution - NO ffprobe here
+            if self.stream_width and self.stream_height:
+                logger.debug(
+                    f"Using cached resolution for codec switch recovery: "
+                    f"{self.stream_width}x{self.stream_height}"
                 )
+            else:
+                logger.warning(
+                    "No cached resolution available during codec switch. "
+                    "Failing fast and backing off."
+                )
+                return
 
             # Reconnect quickly
             self._setup_capture()
@@ -1015,11 +1129,12 @@ class VideoCapture:
             logger.debug("Fast reconnection after codec switch successful.")
         except Exception as e:
             logger.error(f"Codec switch handling failed: {e}")
-            self._reinitialize_camera(reason="Codec switch recovery failed")
+            self.request_recovery(trigger="codec_switch_fallback", reason=str(e))
 
     def _handle_runtime_resolution_change(self, new_width, new_height, reason=""):
         """
         Reconnects FFmpeg when runtime resolution changes to keep buffer aligned.
+        Step 3: No ffprobe in hot recovery path.
         """
         if self.stop_event.is_set() or self.stop_flag:
             logger.debug("Skipping runtime resolution change handling during shutdown.")
@@ -1030,21 +1145,17 @@ class VideoCapture:
             )
             return
         try:
-            # If we lack explicit new dimensions, re-probe with ffprobe.
+            # Step 3: If no explicit dimensions, fail fast - NO ffprobe here
             if new_width is None or new_height is None:
-                try:
-                    logger.debug(
-                        "Runtime resolution change detected; re-probing stream resolution via ffprobe."
-                    )
-                    self._get_stream_resolution_ffprobe()
-                    new_width = self.stream_width
-                    new_height = self.stream_height
-                except Exception as probe_error:
-                    logger.error(
-                        f"Failed to re-probe stream resolution after change: {probe_error}"
-                    )
-                    self._invalidate_cache_entry()
-                    return
+                logger.warning(
+                    "Runtime resolution change detected but no dimensions provided. "
+                    "Failing fast (no probe in hot path). Requesting full recovery."
+                )
+                self.request_recovery(
+                    trigger="resolution_change_no_dims",
+                    reason="Resolution changed but no cached dimensions available",
+                )
+                return
 
             reason_suffix = f" ({reason})" if reason else ""
             logger.debug(
@@ -1064,13 +1175,13 @@ class VideoCapture:
                     logger.error(
                         f"Failed to restart FFmpeg after runtime resolution change: {restart_error}"
                     )
-                    self._reinitialize_camera(
-                        reason="FFmpeg restart after resolution change failed"
+                    self.request_recovery(
+                        trigger="resolution_restart_failed", reason=str(restart_error)
                     )
         finally:
             self.runtime_resolution_lock.release()
 
-    def _read_ffmpeg_frame(self):
+    def _read_ffmpeg_frame(self, read_timeout_sec=None):
         frame_size = (
             self.stream_width * self.stream_height * 3
         )  # For bgr24 (3 bytes per pixel)
@@ -1088,6 +1199,20 @@ class VideoCapture:
             self._ffmpeg_last_availability = True
         if self.stop_event.is_set() or self.stop_flag:
             return None
+
+        if read_timeout_sec is not None:
+            try:
+                if not process.stdout:
+                    return None
+                ready, _, _ = select.select(
+                    [process.stdout.fileno()], [], [], read_timeout_sec
+                )
+                if not ready:
+                    return None
+            except Exception as select_error:
+                logger.debug(
+                    f"FFmpeg read readiness check failed; continuing with blocking read: {select_error}"
+                )
         try:
             raw_frame = process.stdout.read(frame_size)
             if len(raw_frame) != frame_size:
@@ -1097,7 +1222,10 @@ class VideoCapture:
                     now = time.time()
                     if now - self.last_codec_switch_time > self.codec_switch_cooldown:
                         logger.warning("Empty frame detected - possible codec switch.")
-                        self._handle_codec_switch()
+                        self.request_recovery(
+                            trigger="ffmpeg_empty_frame",
+                            reason="Empty frame - possible codec switch",
+                        )
                         self.last_codec_switch_time = now
                         self._last_codec_switch_skip_logged = False
                     else:
@@ -1110,9 +1238,8 @@ class VideoCapture:
                 logger.warning(
                     f"FFmpeg produced incomplete frame: expected {frame_size} bytes, got {actual_size} bytes."
                 )
-                self._handle_runtime_resolution_change(
-                    None,
-                    None,
+                self.request_recovery(
+                    trigger="ffmpeg_resolution_mismatch",
                     reason="FFmpeg output size changed",
                 )
                 return None
@@ -1125,20 +1252,163 @@ class VideoCapture:
             logger.error(f"Error reading frame from FFmpeg: {e}")
             return None
 
+    # ------------------------------------------------------------------
+    # Child Process Registry (Step 4)
+    # ------------------------------------------------------------------
+    def _register_child(self, handle, kind="ffmpeg"):
+        """Track a spawned child; enforce hard cap before registering."""
+        self._cleanup_stale_children()
+        if len(self._child_registry) >= self._child_hard_cap:
+            logger.warning(
+                f"event=child_hard_cap_hit count={len(self._child_registry)} "
+                f"cap={self._child_hard_cap} kind={kind}"
+            )
+            # Kill oldest child to make room
+            oldest_pid = min(
+                self._child_registry, key=lambda p: self._child_registry[p]["start_ts"]
+            )
+            self._force_kill_child(oldest_pid, reason="hard cap exceeded")
+        pid = handle.pid
+        self._child_registry[pid] = {
+            "handle": handle,
+            "start_ts": time.time(),
+            "kind": kind,
+        }
+        logger.debug(
+            f"event=child_registered pid={pid} kind={kind} total={len(self._child_registry)}"
+        )
+
+    def _cleanup_stale_children(self):
+        """Remove finished processes from registry."""
+        stale = [
+            pid
+            for pid, info in self._child_registry.items()
+            if info["handle"].poll() is not None
+        ]
+        for pid in stale:
+            del self._child_registry[pid]
+
+    def _force_kill_child(self, pid, reason=""):
+        """Force-terminate a tracked child."""
+        info = self._child_registry.pop(pid, None)
+        if not info:
+            return
+        handle = info["handle"]
+        try:
+            if handle.poll() is None:
+                handle.kill()
+                handle.wait(timeout=3)
+        except Exception as e:
+            logger.debug(f"event=child_kill_failed pid={pid} error={e}")
+        logger.debug(f"event=child_killed pid={pid} reason={reason}")
+
+    def _cleanup_all_children(self):
+        """Terminate all tracked children (shutdown hook)."""
+        for pid in list(self._child_registry):
+            self._force_kill_child(pid, reason="full cleanup")
+
+    # ------------------------------------------------------------------
+    # Recovery Dispatcher (Steps 0-3, 5-6)
+    # ------------------------------------------------------------------
+    def request_recovery(self, trigger, reason=""):
+        """
+        Central recovery entry point.  All hot-path recovery triggers
+        MUST route through here instead of calling recovery actions directly.
+        Enforces: single-flight, cooldown, circuit breaker, timer coalescing.
+        """
+        attempt_id = next(self._recovery_gen)
+        now = time.time()
+
+        # --- Circuit breaker check (Step 6) ---
+        if now < self._breaker_offline_until:
+            remaining = self._breaker_offline_until - now
+            logger.debug(
+                f"event=recovery_blocked_breaker attempt_id={attempt_id} "
+                f"trigger={trigger} offline_remaining={remaining:.1f}s"
+            )
+            return
+        # Prune old timestamps and check threshold
+        self._breaker_timestamps = [
+            t for t in self._breaker_timestamps if now - t < self._breaker_window_sec
+        ]
+        if len(self._breaker_timestamps) >= self._breaker_threshold:
+            self._breaker_offline_until = now + self._breaker_offline_sec
+            logger.warning(
+                f"event=circuit_breaker_tripped attempt_id={attempt_id} "
+                f"trigger={trigger} attempts_in_window={len(self._breaker_timestamps)} "
+                f"offline_sec={self._breaker_offline_sec}"
+            )
+            return
+
+        # --- Cooldown check (Step 2) ---
+        if now < self._recovery_cooldown_until:
+            remaining = self._recovery_cooldown_until - now
+            logger.debug(
+                f"event=recovery_cooldown attempt_id={attempt_id} "
+                f"trigger={trigger} cooldown_remaining={remaining:.1f}s"
+            )
+            return
+
+        # --- Single-flight gate (Step 1) ---
+        if not self._recovery_gate.acquire(blocking=False):
+            logger.debug(
+                f"event=recovery_coalesced attempt_id={attempt_id} trigger={trigger} "
+                f"reason=gate_busy"
+            )
+            return
+
+        # Set cooldown BEFORE execution (Step 2)
+        self._recovery_cooldown_until = now + self._recovery_cooldown_sec
+        self._breaker_timestamps.append(now)
+
+        try:
+            logger.info(
+                f"event=recovery_start attempt_id={attempt_id} trigger={trigger} "
+                f"reason={reason} breaker_count={len(self._breaker_timestamps)}"
+            )
+            self._reinitialize_camera(reason=f"[{trigger}] {reason}")
+            logger.info(
+                f"event=recovery_end attempt_id={attempt_id} trigger={trigger} result=ok"
+            )
+            # Reset breaker on SUCCESS (stable window)
+            self._breaker_timestamps.clear()
+            self._breaker_offline_until = 0.0
+        except Exception as e:
+            logger.warning(
+                f"event=recovery_end attempt_id={attempt_id} trigger={trigger} "
+                f"result=error error={e}"
+            )
+            self._schedule_reinit(reason=f"Failed recovery [{trigger}]: {e}")
+        finally:
+            self._recovery_gate.release()
+
+    # ------------------------------------------------------------------
+    # Timer Coalescing (Step 5)
+    # ------------------------------------------------------------------
     def _schedule_reinit(self, reason):
-        delay = 2**self.retry_count
-        logger.debug(f"Scheduling reinitialization in {delay} seconds due to: {reason}")
-        threading.Timer(
-            delay, self._reinitialize_camera, kwargs={"reason": reason}
-        ).start()
+        """Schedule ONE pending reinit timer (coalesced)."""
+        delay = min(2**self.retry_count, 60)
+        with self._pending_reinit_lock:
+            if self._pending_reinit_timer is not None:
+                self._pending_reinit_timer.cancel()
+                logger.debug("event=reinit_timer_replaced old_timer_cancelled=true")
+            timer = threading.Timer(
+                delay,
+                self.request_recovery,
+                kwargs={"trigger": "scheduled_reinit", "reason": reason},
+            )
+            timer.daemon = True
+            timer.name = "ReinitTimer"
+            self._pending_reinit_timer = timer
+            timer.start()
+        logger.debug(f"event=reinit_scheduled delay={delay}s reason={reason}")
 
     def _reinitialize_camera(self, reason="Unknown"):
         """
-        Attempts to reinitialize the camera after a failure.
-
-        :param reason: The reason triggering reinitialization.
+        Internal recovery action.  Do NOT call directly from hot paths;
+        use request_recovery() instead.
         """
-        # Try to get the lock to avoid parallel reinitializations.
+        # Keep existing reinit_lock for internal reentrancy safety
         if not self.reinit_lock.acquire(blocking=False):
             logger.debug(
                 "Reinitialization is already being performed in another thread."
@@ -1148,17 +1418,9 @@ class VideoCapture:
         try:
             logger.debug(f"Reinitializing camera due to: {reason}")
             if self.retry_count >= 5:
-                logger.debug(
-                    "Maximum retry attempts reached. Scheduling longer delay before next attempt."
-                )
-                # Longer delay before retrying again (e.g. 60 seconds)
-                threading.Timer(
-                    60,
-                    self._reinitialize_camera,
-                    kwargs={"reason": "Retry after long delay"},
-                ).start()
-                # Reset the retry counter after scheduling a longer delay
+                logger.debug("Maximum retry attempts reached. Scheduling longer delay.")
                 self.retry_count = 0
+                self._schedule_reinit(reason="Retry after max attempts")
                 return
 
             self.retry_count += 1
@@ -1169,17 +1431,28 @@ class VideoCapture:
             logger.debug("Waiting 2 seconds before reinitialization attempt.")
             time.sleep(2)
 
-            self.stop_event.clear()  # Reset stop_event for new threads
+            if self.reader_thread and self.reader_thread.is_alive():
+                logger.warning(
+                    "Reader thread is still alive after stop(); retrying later."
+                )
+                self._schedule_reinit(
+                    reason="Reader thread alive after stop during reinit"
+                )
+                return
+
+            self.stop_event.clear()
             self.stop_flag = False
-            self._setup_capture()
+            self._setup_capture(
+                require_initial_frame=True,
+                initial_frame_wait_sec=self._recovery_initial_frame_wait_sec,
+            )
             self._start_reader_thread()
             self._start_health_check_thread()
             logger.debug("Reinitialization successful.")
-            self.retry_count = 0  # Reset retry count on success
+            self.retry_count = 0
         except Exception as e:
             logger.debug(f"Reinitialization failed: {e}")
-            logger.debug("Scheduling next reinitialization attempt.")
-            self._schedule_reinit(reason=f"Failed to reinitialize: {e}")
+            raise  # let request_recovery handle scheduling
         finally:
             self.reinit_lock.release()
 
@@ -1201,6 +1474,16 @@ class VideoCapture:
         logger.debug("Releasing resources...")
         self.stop_event.set()
         self.stop_flag = True
+
+        # Stop FFmpeg first so blocking pipe reads in reader thread are unblocked.
+        self._terminate_ffmpeg_process(reason="stop()")
+        self._cleanup_all_children()
+
+        # Cancel any pending reinit timer (Step 5)
+        with self._pending_reinit_lock:
+            if self._pending_reinit_timer is not None:
+                self._pending_reinit_timer.cancel()
+                self._pending_reinit_timer = None
 
         if self.reader_thread and self.reader_thread.is_alive():
             if self.reader_thread != threading.current_thread():
@@ -1228,12 +1511,13 @@ class VideoCapture:
         else:
             logger.debug("Skipping join on current thread (health check thread).")
 
-        self._terminate_ffmpeg_process(reason="stop()")
-
         if self.cap:
             logger.debug("Releasing OpenCV VideoCapture.")
             self.cap.release()
             self.cap = None
+
+        self.reader_thread = None
+        self.health_check_thread = None
 
         logger.debug("Resources released.")
 
@@ -1269,10 +1553,11 @@ class VideoCapture:
 
     @classmethod
     def _terminate_all_instances(cls):
-        """Cleans up all known FFmpeg processes (e.g., at atexit)."""
+        """Cleans up all known FFmpeg processes and registry children (e.g., at atexit)."""
         for instance in list(cls._instances):
             try:
                 instance._terminate_ffmpeg_process(reason="shutdown hook")
+                instance._cleanup_all_children()
             except Exception as cleanup_error:
                 logger.debug(
                     f"Failed to terminate FFmpeg during shutdown: {cleanup_error}"
@@ -1295,22 +1580,38 @@ class VideoCapture:
 
         return preexec
 
+    def _can_use_ffmpeg_preexec_fn(self):
+        """
+        preexec_fn runs between fork() and exec() and can deadlock in
+        multithreaded Python processes. Only use it in single-thread mode.
+        """
+        if os.name != "posix":
+            return False
+        if threading.active_count() > 1:
+            if not self._preexec_skip_logged:
+                logger.debug(
+                    "Skipping FFmpeg preexec_fn because multiple Python threads are active."
+                )
+                self._preexec_skip_logged = True
+            return False
+        return True
+
     def _set_parent_death_signal(self):
         """
         Sets PR_SET_PDEATHSIG on Linux so that FFmpeg is terminated
         if the Python process dies unexpectedly.
         """
         if os.name != "posix":
-            return
+            return False
         try:
             import ctypes
 
             libc = ctypes.CDLL("libc.so.6")
             PR_SET_PDEATHSIG = 1
             libc.prctl(PR_SET_PDEATHSIG, signal.SIGTERM)
-            logger.debug("Configured PR_SET_PDEATHSIG(SIGTERM) for FFmpeg child.")
-        except Exception as prctl_error:
-            logger.debug(f"Could not set PR_SET_PDEATHSIG: {prctl_error}")
+            return True
+        except Exception:
+            return False
 
     @property
     def resolution(self):

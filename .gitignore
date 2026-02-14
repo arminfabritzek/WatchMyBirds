@@ -266,3 +266,5 @@ config/cameras.yaml
 # Codex agent metadata
 .agent/
 private_docs/
+/_debug_logs
+/data/output
