@@ -2,19 +2,10 @@ name: Build Release Image
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - main
-
-  workflow_run:
-    workflows: ["Build Golden Image"]
-    types:
-      - completed
 
 jobs:
   build-release:
     runs-on: ubuntu-latest
-    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     permissions:
       contents: write
 
@@ -87,6 +78,7 @@ jobs:
           sudo mkdir -p mount_point/opt/app
           # Sync code (excluding git)
           sudo rsync -av --delete --exclude='.git' --exclude='.github' app_code/ mount_point/opt/app/
+          sudo chroot mount_point install -d -o watchmybirds -g watchmybirds -m 0750 /opt/app/data
           
           # Inject Wheelhouse
           sudo mkdir -p mount_point/opt/wheelhouse
@@ -182,12 +174,28 @@ jobs:
           TAG="rpi-${DATE}"
           IMG_FILE="watchmybirds-rpi-${DATE}.img.xz"
           
+          # Create Release Notes File (content at column 0 to avoid Markdown indentation issues)
+          cat > release_notes.md << 'RELEASE_EOF'
+          ## WatchMyBirds Raspberry Pi Appliance Image
+          
+          **Build Date:** PLACEHOLDER_DATE
+          **Commit:** PLACEHOLDER_COMMIT
+          
+          Flash to SD card with [Raspberry Pi Imager](https://www.raspberrypi.com/software/) and boot on Raspberry Pi 5.
+          
+          See [Installation Guide](https://github.com/PLACEHOLDER_REPO#raspberry-pi-appliance) for setup instructions.
+          RELEASE_EOF
+          sed -i "s/PLACEHOLDER_DATE/${DATE}/g" release_notes.md
+          sed -i "s/PLACEHOLDER_COMMIT/${{ github.sha }}/g" release_notes.md
+          sed -i "s|PLACEHOLDER_REPO|${{ github.repository }}|g" release_notes.md
+          
           # Create Release if not exists
           gh release view "$TAG" --repo "${{ github.repository }}" >/dev/null 2>&1 || \
             gh release create "$TAG" \
               --repo "${{ github.repository }}" \
               --title "🍓 Raspberry Pi Image – ${DATE}" \
-              --notes "## WatchMyBirds Raspberry Pi Appliance Image\n\n**Build Date:** ${DATE}\n**Commit:** ${{ github.sha }}\n\nFlash to SD card with [Raspberry Pi Imager](https://www.raspberrypi.com/software/) and boot on Raspberry Pi 5.\n\nSee [Installation Guide](https://github.com/${{ github.repository }}#raspberry-pi-appliance) for setup instructions." \
+              --notes-file release_notes.md \
+              --generate-notes \
               --latest
 
           # Upload Asset

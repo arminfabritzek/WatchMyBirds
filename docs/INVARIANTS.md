@@ -30,3 +30,8 @@
 *   Flask with Jinja2 MUST BE the only supported UI rendering technology for core features.
 *   Legacy Dash components and routes MUST remain deprecated and non-functional.
 *   New UI features MUST BE implemented using Flask routes and templates.
+
+## 7. Cross-Impact Governance (HARD)
+*   If a change affects cross-cutting contracts or operations (for example ports, firewall, service names, env vars, API shape, storage paths, or build/deploy behavior), all required linked updates MUST BE completed in the same task.
+*   If immediate completion is not possible, an explicit delegation entry MUST BE added to `docs/IMPACT_LEDGER.md` before merge.
+*   A task with unresolved cross-impact follow-ups MUST NOT be marked complete without either complete linked updates or a ledger delegation entry.

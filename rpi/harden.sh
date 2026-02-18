@@ -21,8 +21,8 @@ mkdir -p /var/log/journal
 # Use --root to avoid requiring /proc during image build chroot.
 systemd-tmpfiles --root=/ --create --prefix /var/log/journal
 # Force persistence in journald.conf
-sed -i 's/#Storage=auto/Storage=persistent/' /etc/systemd/journald.conf
-sed -i 's/#SystemMaxUse=/SystemMaxUse=100M/' /etc/systemd/journald.conf
+mkdir -p /etc/systemd/journald.conf.d
+printf "[Journal]\nStorage=persistent\nSystemMaxUse=500M\n" > /etc/systemd/journald.conf.d/persistence.conf
 
 # Set Timezone (Default to Berlin for German deployment)
 echo "Europe/Berlin" > /etc/timezone
@@ -38,7 +38,7 @@ APT_OPTIONS="-y -o Dpkg::Options::=--force-confnew -o Dpkg::Options::=--force-co
 # Retry logic
 apt-get $APT_OPTIONS upgrade || (sleep 10 && apt-get $APT_OPTIONS upgrade)
 
-apt-get $APT_OPTIONS install ufw hostapd dnsmasq unattended-upgrades dhcpcd5 libglib2.0-0 ffmpeg v4l-utils policykit-1
+apt-get $APT_OPTIONS install ufw hostapd dnsmasq unattended-upgrades dhcpcd5 libglib2.0-0 ffmpeg v4l-utils policykit-1 curl ca-certificates
 
 # Restrict dhcpcd to wlan0 entirely to avoid race-conditions with NetworkManager on eth0
 echo "allowinterfaces wlan0" >> /etc/dhcpcd.conf
@@ -71,7 +71,7 @@ killall -u pi || true
 deluser --remove-home pi || true
 
 if ! id "watchmybirds" &>/dev/null; then
-    useradd -r -m -d /var/lib/watchmybirds -s /usr/sbin/nologin -G video,gpio,plugdev watchmybirds
+    useradd -r -m -d /opt/app/data -s /usr/sbin/nologin -G video,gpio,plugdev watchmybirds
 fi
 # Sudoers entry handled by Polkit rules below (NoNewPrivileges=true blocks sudo anyway)
 # echo "watchmybirds ALL=(ALL) NOPASSWD: /usr/sbin/shutdown, /usr/sbin/reboot" > /etc/sudoers.d/020_watchmybirds-power
@@ -99,6 +99,32 @@ if ! id "admin" &>/dev/null; then
 fi
 
 passwd -l root
+
+# 2b. Install go2rtc Runtime (native service for relay mode)
+# ----------------------------------------------------------------------
+echo "Installing go2rtc runtime..."
+GO2RTC_VERSION="${GO2RTC_VERSION:-1.9.14}"
+GO2RTC_URL="https://github.com/AlexxIT/go2rtc/releases/download/v${GO2RTC_VERSION}/go2rtc_linux_arm64"
+
+curl -fsSL "${GO2RTC_URL}" -o /usr/local/bin/go2rtc
+chmod 755 /usr/local/bin/go2rtc
+
+# Shared config path used by both app + go2rtc service.
+install -d -o watchmybirds -g watchmybirds -m 0750 /opt/app/data/output
+if [ ! -f /opt/app/data/output/go2rtc.yaml ]; then
+cat > /opt/app/data/output/go2rtc.yaml << 'EOF'
+streams:
+  camera: []
+api:
+  listen: ":1984"
+rtsp:
+  listen: ":8554"
+webrtc:
+  listen: ":8555"
+EOF
+fi
+chown watchmybirds:watchmybirds /opt/app/data/output/go2rtc.yaml
+chmod 640 /opt/app/data/output/go2rtc.yaml
 
 # 3. Network Security (UFW Prep)
 # ----------------------------------------------------------------------
@@ -177,6 +203,32 @@ cp /tmp/setup-server/setup_server.py /usr/local/bin/wmb-setup-server.py
 chmod 755 /usr/local/bin/wmb-setup-server.py
 mkdir -p /usr/local/share/watchmybirds/setup/templates
 cp /tmp/setup-server/templates/setup.html /usr/local/share/watchmybirds/setup/templates/setup.html
+
+# Install go2rtc systemd service
+cat > /etc/systemd/system/go2rtc.service << 'EOF'
+[Unit]
+Description=go2rtc media relay
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=watchmybirds
+Group=watchmybirds
+WorkingDirectory=/opt/app
+ExecStart=/usr/local/bin/go2rtc -config /opt/app/data/output/go2rtc.yaml
+Restart=always
+RestartSec=2
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/opt/app/data/output
+ProtectHome=yes
+
+[Install]
+WantedBy=multi-user.target
+EOF
+chmod 644 /etc/systemd/system/go2rtc.service
+ln -sf /etc/systemd/system/go2rtc.service /etc/systemd/system/multi-user.target.wants/go2rtc.service
 
 # DISABLE AP Services
 rm -f /etc/systemd/system/multi-user.target.wants/hostapd.service

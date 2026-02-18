@@ -67,6 +67,7 @@ COPY config.py ./
 COPY logging_config.py ./
 COPY main.py ./
 COPY README.md ./
+COPY go2rtc.yaml.example ./
 
 # Copy analytics build
 COPY --from=analytics-build /assets/analytics/ /app/assets/analytics/
@@ -90,4 +91,4 @@ ENV MODEL_BASE_PATH="/models"
 ENTRYPOINT ["/entrypoint.sh"]
 
 # Set the command to run your app
-CMD ["waitress-serve", "--listen=0.0.0.0:8050", "main:app"]
+CMD ["python", "main.py"]

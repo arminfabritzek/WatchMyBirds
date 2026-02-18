@@ -6,6 +6,9 @@ serving as an abstraction over utils.db.
 """
 
 from utils.db import (
+    closing_connection as _closing_connection,
+)
+from utils.db import (
     fetch_all_detection_times as _fetch_all_detection_times,
 )
 from utils.db import (
@@ -60,6 +63,11 @@ from utils.db import (
 def get_connection():
     """Get a database connection."""
     return _get_connection()
+
+
+def closing_connection():
+    """Context manager that creates and auto-closes a DB connection."""
+    return _closing_connection()
 
 
 # --- Detection Operations ---

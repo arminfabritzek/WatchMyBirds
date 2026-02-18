@@ -25,6 +25,7 @@ from utils.db.connection import (
     _ensure_column_on_table,
     _get_db_path,
     _init_schema,
+    closing_connection,
     get_connection,
     get_or_create_default_source,
     get_or_create_user_import_source,
@@ -74,6 +75,7 @@ __all__ = [
     # Connection
     "DB_FILENAME",
     "_get_db_path",
+    "closing_connection",
     "get_connection",
     "_init_schema",
     "get_or_create_default_source",

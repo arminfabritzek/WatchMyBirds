@@ -1,9 +1,6 @@
-name: Build and Push Docker Image
+name: Docker
 
 on:
-  push:
-    branches:
-      - main
   workflow_dispatch:
 
 jobs:
@@ -64,14 +61,35 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           DATE=$(date +%Y-%m-%d)
-          VERSION="${{ steps.version.outputs.version }}"
           TAG="docker-${DATE}"
+
+          # Create Release Notes File (content at column 0 to avoid Markdown indentation issues)
+          cat > release_notes.md << 'RELEASE_EOF'
+          ## WatchMyBirds Docker Image
           
+          **Build Date:** PLACEHOLDER_DATE
+          **Commit:** PLACEHOLDER_COMMIT
+          
+          ### Docker Hub
+          ```bash
+          docker pull starminworks/watchmybirds:latest
+          ```
+          
+          ### Platforms
+          - `linux/amd64` (x86_64)
+          - `linux/arm64` (Raspberry Pi, Apple Silicon)
+          
+          See [Docker Setup Guide](https://github.com/PLACEHOLDER_REPO#docker) for usage instructions.
+          RELEASE_EOF
+          sed -i "s/PLACEHOLDER_DATE/${DATE}/g" release_notes.md
+          sed -i "s/PLACEHOLDER_COMMIT/${{ github.sha }}/g" release_notes.md
+          sed -i "s|PLACEHOLDER_REPO|${{ github.repository }}|g" release_notes.md
+
           # Create Release if not exists
           gh release view "$TAG" --repo "${{ github.repository }}" >/dev/null 2>&1 || \
             gh release create "$TAG" \
               --repo "${{ github.repository }}" \
               --title "🐳 Docker Image – ${DATE}" \
-              --notes "## WatchMyBirds Docker Image\n\n**Build Date:** ${DATE}\n**Commit:** ${{ github.sha }}\n\n### Docker Hub\n\`\`\`bash\ndocker pull starminworks/watchmybirds:${VERSION}\ndocker pull starminworks/watchmybirds:latest\n\`\`\`\n\n### Platforms\n- \`linux/amd64\` (x86_64)\n- \`linux/arm64\` (Raspberry Pi, Apple Silicon)\n\nSee [Docker Setup Guide](https://github.com/${{ github.repository }}#docker) for usage instructions." \
+              --notes-file release_notes.md \
+              --generate-notes \
               --latest
-

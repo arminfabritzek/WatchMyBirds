@@ -6,6 +6,7 @@ __pycache__/
 
 # Runtime data (not needed in image)
 output/
+data/
 models/
 ingest/
 ignore/
@@ -50,3 +51,8 @@ private_docs/
 .github/
 .venv/
 systemd/
+tests/
+scripts/
+
+# Go2RTC config (credentials; not used in container image)
+go2rtc.yaml

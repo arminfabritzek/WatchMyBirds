@@ -14,6 +14,11 @@ def get_connection():
     return db_core.get_connection()
 
 
+def closing_connection():
+    """Context manager that creates and auto-closes a DB connection."""
+    return db_core.closing_connection()
+
+
 # --- Detection Operations ---
 
 

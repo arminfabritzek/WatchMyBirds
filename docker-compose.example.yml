@@ -1,42 +1,79 @@
-version: "3"
 services:
+  # One-stack default: start go2rtc + WatchMyBirds together.
+  go2rtc:
+    image: alexxit/go2rtc:latest
+    container_name: go2rtc
+    restart: unless-stopped
+    networks:
+      - wmb_net
+    volumes:
+      # Reuse the existing output folder.
+      # go2rtc reads /config/go2rtc.yaml -> /your_path/output/go2rtc.yaml on host.
+      - /your_path/output:/config
+    ports:
+      - "1984:1984" # go2rtc Web UI
+      - "8554:8554" # RTSP relay
+      - "8555:8555/tcp" # WebRTC (TCP)
+      - "8555:8555/udp" # WebRTC (UDP)
+
   watchmybirds:
     image: starminworks/watchmybirds:latest
     container_name: watchmybirds
+    depends_on:
+      go2rtc:
+        condition: service_started
+    networks:
+      - wmb_net
     environment:
-      - VIDEO_SOURCE=rtsp://user:password@192.168.0.2:554/1 # Required: camera source (int for webcam or RTSP/HTTP URL)
-      - OUTPUT_DIR=/output # Where images and images.db are stored (match the volume mount)
-      - INGEST_DIR=/ingest # Source directory for bulk ingestion (match the volume mount)
-      - MODEL_BASE_PATH=/models # Where models are cached
-      - PUID=1000 # UID for file ownership inside the container
-      - PGID=1000 # GID for file ownership inside the container
-      - TZ=Europe/Berlin # Timezone for timestamps
-      - DEBUG_MODE=False # Set True for verbose logging
+      # Camera source the user provides.
+      - CAMERA_URL=rtsp://user:password@192.168.0.2:554/1
+      # Recommended default: relay when available, direct fallback if not.
+      - STREAM_SOURCE_MODE=auto # auto | relay | direct
+      # Service-DNS access to go2rtc in bridge network.
+      - GO2RTC_API_BASE=http://go2rtc:1984
+      # Keep config in /output so no extra host mount is needed.
+      - GO2RTC_CONFIG_PATH=/output/go2rtc.yaml
+      # Paths
+      - OUTPUT_DIR=/output
+      - INGEST_DIR=/ingest
+      - MODEL_BASE_PATH=/models
+      # System
+      - PUID=1000
+      - PGID=1000
+      - TZ=Europe/Berlin
+      - DEBUG_MODE=False
       # Optional tuning
-      - STREAM_WIDTH_OUTPUT_RESIZE=640 # Preview width for live stream
-      - STREAM_FPS=0 # UI MJPEG throttle (0 = no throttle)
-      - STREAM_FPS_CAPTURE=0 # Capture throttle (0 = no throttle)
-      - CONFIDENCE_THRESHOLD_DETECTION=0.55 # Detector display threshold
-      - SAVE_THRESHOLD=0.55 # Detector save threshold
-      - DETECTION_INTERVAL_SECONDS=2.0 # Pause between detection cycles
-      - CLASSIFIER_CONFIDENCE_THRESHOLD=0.55 # Classifier display threshold
-      - FUSION_ALPHA=0.5 # Fusion weight detector vs classifier
-      - DAY_AND_NIGHT_CAPTURE=True # Daylight gating
-      - DAY_AND_NIGHT_CAPTURE_LOCATION=Berlin # City name for daylight check
-      - LOCATION_DATA="52.516, 13.377" # GPS for EXIF (lat, lon)
-      - CPU_LIMIT=1 # CPU affinity cap (<=0 disables)
-      - TELEGRAM_COOLDOWN=5 # Seconds between Telegram alerts
-      - TELEGRAM_ENABLED=True # Gate sending; tokens/chat IDs remain env-only
-      - EDIT_PASSWORD=SECRET_PASSWORD # Password for edit page
-      # Telegram credentials (required if Telegram enabled)
+      - STREAM_WIDTH_OUTPUT_RESIZE=640
+      - STREAM_FPS=0
+      - STREAM_FPS_CAPTURE=0
+      - CONFIDENCE_THRESHOLD_DETECTION=0.55
+      - SAVE_THRESHOLD=0.55
+      - DETECTION_INTERVAL_SECONDS=2.0
+      - CLASSIFIER_CONFIDENCE_THRESHOLD=0.55
+      - DAY_AND_NIGHT_CAPTURE=True
+      - DAY_AND_NIGHT_CAPTURE_LOCATION=Berlin
+      - LOCATION_DATA="52.516, 13.377"
+      - CPU_LIMIT=0
+      - TELEGRAM_COOLDOWN=5
+      - TELEGRAM_ENABLED=True
+      - EDIT_PASSWORD=SECRET_PASSWORD
+      # Telegram credentials (required if TELEGRAM_ENABLED=True)
       - TELEGRAM_BOT_TOKEN=your_token_here
       - TELEGRAM_CHAT_ID=your_chat_id_here
-      # Model choice (currently yolo)
       - DETECTOR_MODEL_CHOICE=yolo
     volumes:
-      - /your_path/output:/output # Must match OUTPUT_DIR
-      - /your_path/ingest:/ingest # Must match INGEST_DIR
-      - /your_path/models:/models # Must match MODEL_BASE_PATH
+      - /your_path/output:/output
+      - /your_path/ingest:/ingest
+      - /your_path/models:/models
     ports:
       - "8050:8050" # Web UI
     restart: unless-stopped
+
+networks:
+  wmb_net:
+    driver: bridge
+
+# If you intentionally want to run without go2rtc:
+# - Remove go2rtc service.
+# - Remove GO2RTC_API_BASE and GO2RTC_CONFIG_PATH from watchmybirds.
+# - Set STREAM_SOURCE_MODE=direct.

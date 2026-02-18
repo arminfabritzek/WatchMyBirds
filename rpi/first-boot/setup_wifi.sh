@@ -3,10 +3,10 @@ set -e
 
 # ----------------------------------------------------------------------
 # WatchMyBirds WiFi Setup Helper
-# Triggered by systemd path unit when /var/lib/watchmybirds/pending_wifi.conf appears
+# Triggered by systemd path unit when /opt/app/data/pending_wifi.conf appears
 # ----------------------------------------------------------------------
 
-PENDING_FILE="/var/lib/watchmybirds/pending_wifi.conf"
+PENDING_FILE="/opt/app/data/pending_wifi.conf"
 TARGET_CONF="/etc/wpa_supplicant/wpa_supplicant.conf"
 
 if [ ! -f "$PENDING_FILE" ]; then
@@ -32,7 +32,7 @@ chown root:root "$TARGET_CONF"
 chmod 600 "$TARGET_CONF"
 
 # Remove the internal state marker so next boot runs clean
-rm -f "/var/lib/watchmybirds/.first-boot-done"
+rm -f "/opt/app/data/.first-boot-done"
 
 echo "Disabling AP and setup services..."
 systemctl disable --now wmb-setup-server.service || true

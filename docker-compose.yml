@@ -1,0 +1,60 @@
+services:
+  go2rtc:
+    image: alexxit/go2rtc:latest
+    container_name: go2rtc
+    restart: unless-stopped
+    networks:
+      - wmb_net
+    volumes:
+      # Reuse WatchMyBirds output mount for go2rtc config.
+      # go2rtc reads /config/go2rtc.yaml, which maps to ./data/output/go2rtc.yaml.
+      - ./data/output:/config
+    ports:
+      - "1984:1984" # go2rtc Web UI
+      - "8554:8554" # RTSP relay
+      - "8555:8555/tcp" # WebRTC (TCP)
+      - "8555:8555/udp" # WebRTC (UDP)
+
+  watchmybirds:
+    image: starminworks/watchmybirds:latest
+    container_name: watchmybirds
+    depends_on:
+      go2rtc:
+        condition: service_started
+    networks:
+      - wmb_net
+    environment:
+      # Camera source is now CAMERA_URL (user-facing). The resolver derives VIDEO_SOURCE.
+      - CAMERA_URL=rtsp://user:password@192.168.x.x:554/stream1
+      - STREAM_SOURCE_MODE=auto # auto | relay | direct
+      # go2rtc API/RTSP reachable via service DNS in bridge network
+      - GO2RTC_API_BASE=http://go2rtc:1984
+      # Keep config in the existing output volume (no extra mount needed)
+      - GO2RTC_CONFIG_PATH=/output/go2rtc.yaml
+      - OUTPUT_DIR=/output
+      - INGEST_DIR=/ingest
+      - MODEL_BASE_PATH=/models
+      - PUID=1000
+      - PGID=1000
+      - TZ=Europe/Berlin
+      - DEBUG_MODE=False
+      - STREAM_WIDTH_OUTPUT_RESIZE=640
+      - STREAM_FPS=5.0
+      - DETECTION_INTERVAL_SECONDS=2.0
+      - DAY_AND_NIGHT_CAPTURE=True
+      - DAY_AND_NIGHT_CAPTURE_LOCATION=Berlin
+      - LOCATION_DATA="52.516, 13.377"
+      - CPU_LIMIT=0
+      - TELEGRAM_ENABLED=False
+      - EDIT_PASSWORD=watchmybirds
+    volumes:
+      - ./data/output:/output
+      - ./data/ingest:/ingest
+      - ./data/models:/models
+    ports:
+      - "8050:8050" # Web UI
+    restart: unless-stopped
+
+networks:
+  wmb_net:
+    driver: bridge

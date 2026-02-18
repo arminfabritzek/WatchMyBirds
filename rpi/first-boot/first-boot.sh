@@ -33,7 +33,7 @@ ls -la /boot/ || true
 
 # 0. First-Boot Gate (repeatable via trigger)
 # ----------------------------------------------------------------------
-MARKER="/var/lib/watchmybirds/.first-boot-done"
+MARKER="/opt/app/data/.first-boot-done"
 TRIGGER_BOOT="/boot/firmware/wmb-first-boot"
 TRIGGER_BOOT_LEGACY="/boot/wmb-first-boot"
 
@@ -54,6 +54,8 @@ if [ "$TRIGGER_PRESENT" -eq 1 ]; then
 fi
 
 mkdir -p "$(dirname "$MARKER")"
+chown watchmybirds:watchmybirds /opt/app/data || true
+chmod 0750 /opt/app/data || true
 
 # 0. Ingest WiFi Config (Headless Support)
 # ----------------------------------------------------------------------
@@ -269,7 +271,7 @@ else
     ip link set wlan0 up
 
     # Scan for nearby SSIDs (best effort) to prefill setup UI
-    SSID_SCAN_FILE="/var/lib/watchmybirds/ssid_scan.txt"
+    SSID_SCAN_FILE="/opt/app/data/ssid_scan.txt"
     if command -v iw >/dev/null; then
         iw dev wlan0 scan 2>/dev/null | \
             awk -F: '/SSID:/{sub(/^ /,"",$2); if($2!="") print $2}' | \
@@ -340,6 +342,11 @@ if [ "$IS_AP" -eq 1 ]; then
     ufw allow in on wlan0 to any port 53
 else
     ufw allow 8050/tcp comment 'Web Interface'
+    # Go2RTC ports for browser player (1984), RTSP relay (8554), and WebRTC (8555 tcp/udp)
+    ufw allow 1984/tcp comment 'Go2RTC API/Player'
+    ufw allow 8554/tcp comment 'Go2RTC RTSP'
+    ufw allow 8555/tcp comment 'Go2RTC WebRTC TCP'
+    ufw allow 8555/udp comment 'Go2RTC WebRTC UDP'
 fi
 
 # Allow SSH if service is ENABLED (starts on boot) - prevents race condition vs is-active
@@ -429,8 +436,8 @@ echo "--- Critical Systemd Properties ---" > "$DIAG_DIR/systemd_props.txt"
 systemctl show app.service -p StateDirectory,ReadWritePaths,ProtectSystem,WorkingDirectory >> "$DIAG_DIR/systemd_props.txt"
 
 echo "--- Directory Permissions ---" > "$DIAG_DIR/dir_perms.txt"
-ls -ld /var/lib/watchmybirds >> "$DIAG_DIR/dir_perms.txt" 2>&1
-ls -la /var/lib/watchmybirds >> "$DIAG_DIR/dir_perms.txt" 2>&1
+ls -ld /opt/app/data >> "$DIAG_DIR/dir_perms.txt" 2>&1
+ls -la /opt/app/data >> "$DIAG_DIR/dir_perms.txt" 2>&1
 ls -ld /opt/app >> "$DIAG_DIR/dir_perms.txt" 2>&1
 
 echo "--- Kernel Messages (dmesg) ---" > "$DIAG_DIR/dmesg.log"

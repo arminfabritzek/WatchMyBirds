@@ -5,11 +5,16 @@ This module handles SQLite connection creation and schema initialization.
 """
 
 import sqlite3
+from contextlib import contextmanager
 from pathlib import Path
 
 from config import get_config
 
 DB_FILENAME = "images.db"
+
+# Module-level cache: initialize schema once per database path.
+# Tests patch OUTPUT_DIR, so schema init must be keyed by db path (not process-global).
+_schema_initialized_paths: set[Path] = set()
 
 
 def _get_db_path() -> Path:
@@ -20,14 +25,40 @@ def _get_db_path() -> Path:
 
 
 def get_connection() -> sqlite3.Connection:
+    global _schema_initialized_paths
     db_path = _get_db_path()
     conn = sqlite3.connect(db_path, check_same_thread=False)
     conn.execute("PRAGMA journal_mode=WAL;")
     conn.execute("PRAGMA synchronous=NORMAL;")
     conn.execute("PRAGMA foreign_keys=ON;")
-    _init_schema(conn)
+    if db_path not in _schema_initialized_paths:
+        _init_schema(conn)
+        _schema_initialized_paths.add(db_path)
     conn.row_factory = sqlite3.Row
     return conn
+
+
+@contextmanager
+def closing_connection():
+    """Context manager that creates a DB connection and guarantees it is closed.
+
+    IMPORTANT: `with sqlite3.Connection as conn:` only manages transactions
+    (commit/rollback) — it does NOT call conn.close(). This context manager
+    ensures the file descriptor is released when the block exits.
+
+    Usage:
+        with closing_connection() as conn:
+            conn.execute("SELECT ...")
+    """
+    conn = get_connection()
+    try:
+        yield conn
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
 
 
 def _init_schema(conn: sqlite3.Connection) -> None:
@@ -86,6 +117,10 @@ def _init_schema(conn: sqlite3.Connection) -> None:
     )
 
     _ensure_column_on_table(conn, "detections", "status", "TEXT DEFAULT 'active'")
+    _ensure_column_on_table(conn, "detections", "bbox_x", "REAL")
+    _ensure_column_on_table(conn, "detections", "bbox_y", "REAL")
+    _ensure_column_on_table(conn, "detections", "bbox_w", "REAL")
+    _ensure_column_on_table(conn, "detections", "bbox_h", "REAL")
     _ensure_column_on_table(conn, "classifications", "status", "TEXT DEFAULT 'active'")
 
     conn.execute(
@@ -103,6 +138,17 @@ def _init_schema(conn: sqlite3.Connection) -> None:
     _ensure_column_on_table(conn, "detections", "classifier_model_name", "TEXT")
     _ensure_column_on_table(conn, "detections", "classifier_model_version", "TEXT")
     _ensure_column_on_table(conn, "detections", "thumbnail_path", "TEXT")
+
+    # Frame resolution at capture time (tracks camera/resolution changes)
+    _ensure_column_on_table(conn, "detections", "frame_width", "INTEGER")
+    _ensure_column_on_table(conn, "detections", "frame_height", "INTEGER")
+
+
+
+    # Detection Quality Rating (1-5 stars, computed or manual)
+    _ensure_column_on_table(conn, "detections", "rating", "INTEGER")
+    _ensure_column_on_table(conn, "detections", "rating_source", "TEXT DEFAULT 'auto'")
+
 
     conn.execute("""
         CREATE TABLE IF NOT EXISTS sources (
@@ -127,12 +173,68 @@ def _init_schema(conn: sqlite3.Connection) -> None:
         "CREATE INDEX IF NOT EXISTS idx_images_review_status_timestamp ON images(review_status, timestamp);"
     )
 
+    # Deep Scan tracking (additive, no destructive migration)
+    _ensure_column_on_table(conn, "images", "deep_scan_last_attempt_at", "TEXT")
+    _ensure_column_on_table(conn, "images", "deep_scan_last_result", "TEXT")
+    _ensure_column_on_table(conn, "images", "deep_scan_attempt_count", "INTEGER DEFAULT 0")
+
     # 1. Ensure Default Source Exists
     default_source_id = get_or_create_default_source(conn)
     # 2. Backfill existing images
     conn.execute(
         "UPDATE images SET source_id = ? WHERE source_id IS NULL", (default_source_id,)
     )
+
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS species_meta (
+            scientific_name TEXT PRIMARY KEY,
+            image_url TEXT,
+            updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+        );
+    """)
+
+    # Weather History Table
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS weather_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp TEXT NOT NULL,
+            temp_c REAL,
+            precip_mm REAL,
+            wind_kph REAL,
+            condition_code INTEGER,
+            is_day INTEGER,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        );
+        """)
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_weather_ts ON weather_logs(timestamp DESC);"
+    )
+
+    # Inbox ingest audit log (skip reasons, etc.). This must not affect gallery/review.
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS inbox_ingest_events (
+            event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            inbox_filename TEXT NOT NULL,
+            content_hash TEXT,
+            status TEXT NOT NULL,
+            reason TEXT,
+            source_id INTEGER,
+            image_filename TEXT,
+            details_json TEXT
+        );
+        """)
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_inbox_ingest_events_created_at ON inbox_ingest_events(created_at DESC);"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_inbox_ingest_events_status ON inbox_ingest_events(status);"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_inbox_ingest_events_hash ON inbox_ingest_events(content_hash);"
+    )
+
     conn.commit()
 
 

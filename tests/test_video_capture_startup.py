@@ -8,9 +8,7 @@ from camera.video_capture import VideoCapture
 class _FakeCap:
     def __init__(self, ret=True, frame=None):
         self._ret = ret
-        self._frame = (
-            frame if frame is not None else np.zeros((1, 1, 3), dtype=np.uint8)
-        )
+        self._frame = frame if frame is not None else np.zeros((1, 1, 3), dtype=np.uint8)
 
     def isOpened(self):
         return True
@@ -36,12 +34,8 @@ class _FakeThread:
 
 
 def _build_capture(monkeypatch):
-    monkeypatch.setattr(
-        VideoCapture, "_register_instance_for_shutdown", lambda self: None
-    )
-    monkeypatch.setattr(
-        VideoCapture, "_prime_stream_settings_from_cache", lambda self: None
-    )
+    monkeypatch.setattr(VideoCapture, "_register_instance_for_shutdown", lambda self: None)
+    monkeypatch.setattr(VideoCapture, "_prime_stream_settings_from_cache", lambda self: None)
     return VideoCapture("rtsp://example.local/stream", debug=False, auto_start=False)
 
 
@@ -53,9 +47,7 @@ def test_rtsp_ffmpeg_startup_missing_initial_frame_keeps_ffmpeg(monkeypatch):
 
     monkeypatch.setattr(vc_module.time, "sleep", lambda _seconds: None)
     monkeypatch.setattr(cap, "_setup_ffmpeg", lambda: ffmpeg_calls.append("ffmpeg"))
-    monkeypatch.setattr(
-        cap, "_setup_opencv_rtsp", lambda: opencv_calls.append("opencv")
-    )
+    monkeypatch.setattr(cap, "_setup_opencv_rtsp", lambda: opencv_calls.append("opencv"))
     monkeypatch.setattr(cap, "_read_ffmpeg_frame", lambda *args, **kwargs: None)
     monkeypatch.setattr(
         cap, "_terminate_ffmpeg_process", lambda reason="": terminated.append(reason)
@@ -126,7 +118,8 @@ def test_reinitialize_camera_uses_strict_initial_frame_validation(monkeypatch):
 
     assert setup_kwargs["require_initial_frame"] is True
     assert (
-        setup_kwargs["initial_frame_wait_sec"] == cap._recovery_initial_frame_wait_sec
+        setup_kwargs["initial_frame_wait_sec"]
+        == cap._recovery_initial_frame_wait_sec
     )
 
 

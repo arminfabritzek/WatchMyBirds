@@ -1,12 +1,6 @@
 name: Build DEV Image
 
 on:
-  workflow_dispatch:
-    inputs:
-      base_tag:
-        description: 'Golden Image tag to use (e.g. golden-bookworm-v1.0.0)'
-        required: false
-        default: ''
   workflow_run:
     workflows: ["Build Golden Image"]
     types:
@@ -15,7 +9,7 @@ on:
 jobs:
   build-dev:
     runs-on: ubuntu-latest
-    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
     permissions:
       contents: write
 
@@ -40,12 +34,8 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          if [ -n "${{ github.event.inputs.base_tag }}" ]; then
-            LATEST_TAG="${{ github.event.inputs.base_tag }}"
-          else
-            # Get latest Golden Release tag
-            LATEST_TAG=$(gh release list --repo ${{ github.repository }} --limit 10 --json tagName,isPrerelease,createdAt --jq 'sort_by(.createdAt) | reverse | .[] | select(.tagName | startswith("golden-bookworm")) | .tagName' | head -n 1)
-          fi
+          # Get latest Golden Release tag
+          LATEST_TAG=$(gh release list --repo ${{ github.repository }} --limit 10 --json tagName,isPrerelease,createdAt --jq 'sort_by(.createdAt) | reverse | .[] | select(.tagName | startswith("golden-bookworm")) | .tagName' | head -n 1)
           
           if [ -z "$LATEST_TAG" ]; then
             echo "::error::No Golden Image Release found!"
@@ -136,6 +126,7 @@ jobs:
 
           # Fix Permissions (DEV: Give /opt/app to admin for seamless rsync)
           sudo chroot mount_point chown -R admin:admin /opt/app
+          sudo chroot mount_point install -d -o watchmybirds -g watchmybirds -m 0750 /opt/app/data
 
           # Install DEV service (relaxed security)
           sudo cp mount_point/opt/app/systemd/app-dev.service mount_point/etc/systemd/system/app.service
@@ -206,12 +197,27 @@ jobs:
           TAG="rpi-dev-${DATE}"
           IMG_FILE="watchmybirds-rpi-dev-${DATE}.img.xz"
           
+          # Create Release Notes File (content at column 0 to avoid Markdown indentation issues)
+          cat > release_notes.md << 'RELEASE_EOF'
+          ## WatchMyBirds Raspberry Pi Development Image
+          
+          **Build Date:** PLACEHOLDER_DATE
+          **Commit:** PLACEHOLDER_COMMIT
+          
+          ⚠️ **Development build** – SSH enabled, relaxed security for testing.
+          
+          Flash to SD card with [Raspberry Pi Imager](https://www.raspberrypi.com/software/) and boot on Raspberry Pi 5.
+          RELEASE_EOF
+          sed -i "s/PLACEHOLDER_DATE/${DATE}/g" release_notes.md
+          sed -i "s/PLACEHOLDER_COMMIT/${{ github.sha }}/g" release_notes.md
+          
           # Create Release if not exists
           gh release view "$TAG" --repo "${{ github.repository }}" >/dev/null 2>&1 || \
             gh release create "$TAG" \
               --repo "${{ github.repository }}" \
               --title "🍓 Raspberry Pi Dev Image – ${DATE}" \
-              --notes "## WatchMyBirds Raspberry Pi Development Image\n\n**Build Date:** ${DATE}\n**Commit:** ${{ github.sha }}\n\n⚠️ **Development build** – SSH enabled, relaxed security for testing.\n\nFlash to SD card with [Raspberry Pi Imager](https://www.raspberrypi.com/software/) and boot on Raspberry Pi 5." \
+              --notes-file release_notes.md \
+              --generate-notes \
               --prerelease
 
           # Upload Asset

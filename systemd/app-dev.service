@@ -1,23 +1,26 @@
 [Unit]
 Description=WatchMyBirds Main Application (DEV MODE)
-After=network-online.target
-Wants=network-online.target
+After=network-online.target go2rtc.service
+Wants=network-online.target go2rtc.service
 [Service]
 User=watchmybirds
 StateDirectory=watchmybirds
 LogsDirectory=app
-WorkingDirectory=/var/lib/watchmybirds
+WorkingDirectory=/opt/app
 EnvironmentFile=-/etc/app/app.env
-Environment=HOME=/var/lib/watchmybirds
+Environment=HOME=/opt/app/data
 Environment=PORT=8050
-Environment=OUTPUT_DIR=/var/lib/watchmybirds/output
-Environment=INGEST_DIR=/var/lib/watchmybirds/ingest
+Environment=OUTPUT_DIR=/opt/app/data/output
+Environment=INGEST_DIR=/opt/app/data/ingest
 Environment=PYTHONDONTWRITEBYTECODE=1
 Environment=PYTHONUNBUFFERED=1
-Environment=MODEL_BASE_PATH=/var/lib/watchmybirds/models
+Environment=MODEL_BASE_PATH=/opt/app/data/models
+Environment=GO2RTC_CONFIG_PATH=/opt/app/data/output/go2rtc.yaml
 # Force WiFi unblock on every start (runs as root via +). Sleep to avoid NM race.
 ExecStartPre=+/bin/sleep 2
 ExecStartPre=+/usr/sbin/rfkill unblock wifi
+# Ensure app user can update/read go2rtc config after setup/import operations.
+ExecStartPre=+/bin/sh -c 'if [ -f /opt/app/data/output/go2rtc.yaml ]; then chown watchmybirds:watchmybirds /opt/app/data/output/go2rtc.yaml && chmod 640 /opt/app/data/output/go2rtc.yaml; fi'
 ExecStart=/opt/app/.venv/bin/python /opt/app/main.py
 
 Restart=always
@@ -25,7 +28,7 @@ RestartSec=5
 
 # DEV MODE: Relaxed security for rsync updates and debugging
 # ProtectSystem=strict  # DISABLED for dev - allows /opt/app writes via rsync
-# ReadWritePaths=/var/lib/watchmybirds /var/log/app /opt/app
+# ReadWritePaths=/opt/app/data /var/log/app /opt/app
 PrivateTmp=true
 # Power actions use logind/polkit (same as production). NNP relaxed for dev flexibility.
 NoNewPrivileges=false
