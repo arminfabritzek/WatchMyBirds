@@ -26,7 +26,7 @@ services:
       - wmb_net
     environment:
       # Camera source the user provides.
-      - CAMERA_URL=rtsp://user:password@192.168.0.2:554/1
+      - CAMERA_URL=rtsp://user:password@192.168.x.x:554/stream1
       # Recommended default: relay when available, direct fallback if not.
       - STREAM_SOURCE_MODE=auto # auto | relay | direct
       # Service-DNS access to go2rtc in bridge network.

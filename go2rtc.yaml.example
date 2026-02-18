@@ -1,0 +1,31 @@
+# go2rtc.yaml — Example Configuration
+# Copy to go2rtc.yaml and adjust for your environment.
+# ⚠️ go2rtc.yaml is gitignored — never commit credentials!
+
+streams:
+  # Test Stream (public sample video, good for initial setup verification)
+  test:
+    - ffmpeg:http://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4#video=h264#audio=aac
+
+  # RTSP Network Camera (replace with your camera's address and credentials)
+  camera:
+    - rtsp://user:password@192.168.x.x:554/stream1?transport=tcp
+
+api:
+  listen: ":1984"
+  base_path: ""
+  static_dir: ""
+  origin: "*"  # Allow CORS for iframe embedding
+
+rtsp:
+  listen: ":8554"
+
+webrtc:
+  listen: ":8555"
+  candidates:
+    - 192.168.x.x:8555  # Replace with your host IP (advertised to WebRTC clients)
+    - stun:8555
+
+log:
+  level: info
+  format: text

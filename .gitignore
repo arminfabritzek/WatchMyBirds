@@ -262,6 +262,8 @@ ingest/**
 **/*.env
 /debuglogs
 config/cameras.yaml
+# Local Go2RTC runtime config (may contain credentials)
+go2rtc.yaml
 
 # Codex agent metadata
 .agent/
