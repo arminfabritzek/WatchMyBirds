@@ -14,8 +14,8 @@ from flask import Flask, render_template, request
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("wmb-setup")
 
-PENDING_FILE = "/var/lib/watchmybirds/pending_wifi.conf"
-SSID_SCAN_FILE = "/var/lib/watchmybirds/ssid_scan.txt"
+PENDING_FILE = "/opt/app/data/pending_wifi.conf"
+SSID_SCAN_FILE = "/opt/app/data/ssid_scan.txt"
 
 
 def _write_pending_config(ssid: str, password: str) -> None:

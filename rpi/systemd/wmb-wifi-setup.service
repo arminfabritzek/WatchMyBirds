@@ -1,6 +1,6 @@
 [Unit]
 Description=WatchMyBirds WiFi Setup Service
-ConditionPathExists=/var/lib/watchmybirds/pending_wifi.conf
+ConditionPathExists=/opt/app/data/pending_wifi.conf
 
 [Service]
 Type=oneshot
