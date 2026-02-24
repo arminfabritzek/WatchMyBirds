@@ -4,6 +4,129 @@
 
 {% block head %}
 {# Styles migrated to design-system.css: STREAM PAGE section #}
+<style>
+    /* ── Landing Health: compact log strip ─────────────── */
+    .landing-health {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px 12px;
+        margin-bottom: var(--space-md);
+        font-family: 'JetBrains Mono', ui-monospace, monospace;
+        font-size: 0.65rem;
+        color: var(--color-text-muted);
+        opacity: 0.55;
+        transition: opacity 0.2s ease;
+        line-height: 1.6;
+    }
+
+    .landing-health:hover {
+        opacity: 0.85;
+    }
+
+    .landing-health__item {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        white-space: nowrap;
+    }
+
+    .landing-health__item::before {
+        content: '·';
+        color: var(--color-text-muted);
+        opacity: 0.4;
+    }
+
+    .landing-health__item:first-child::before {
+        content: none;
+    }
+
+    .landing-health__label {
+        text-transform: uppercase;
+        font-weight: 600;
+        letter-spacing: 0.04em;
+        color: var(--color-text-muted);
+    }
+
+    .landing-health__value {
+        color: var(--color-text-muted);
+    }
+
+    .landing-health__badge {
+        padding: 1px 5px;
+        border-radius: 3px;
+        font-size: 0.6rem;
+        font-weight: 600;
+        white-space: nowrap;
+    }
+
+    .landing-health__badge--ok {
+        background: rgba(34, 197, 94, 0.15);
+        color: var(--color-success);
+    }
+
+    .landing-health__badge--warn {
+        background: rgba(234, 179, 8, 0.15);
+        color: var(--color-warning);
+    }
+
+    .landing-health__badge--bad {
+        background: rgba(239, 68, 68, 0.15);
+        color: var(--color-danger);
+    }
+
+    .landing-health__badge--neutral {
+        background: rgba(148, 163, 184, 0.1);
+        color: var(--color-text-muted);
+    }
+
+    /* Live Clock Overlay */
+    .stream-clock {
+        position: absolute;
+        top: 50px;
+        left: 15px;
+        background: rgba(0, 0, 0, 0.6);
+        backdrop-filter: blur(5px);
+        color: white;
+        padding: 5px 12px;
+        border-radius: 6px;
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 0.9rem;
+        font-weight: 600;
+        z-index: 10;
+        pointer-events: none;
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+
+    .stream-clock::before {
+        content: "";
+        display: block;
+        width: 8px;
+        height: 8px;
+        background: #ff4d4d;
+        border-radius: 50%;
+        animation: pulse 1s infinite;
+    }
+
+    @keyframes pulse {
+        0% {
+            opacity: 1;
+            transform: scale(1);
+        }
+
+        50% {
+            opacity: 0.5;
+            transform: scale(0.8);
+        }
+
+        100% {
+            opacity: 1;
+            transform: scale(1);
+        }
+    }
+</style>
 {% endblock %}
 
 {% block content %}
@@ -15,121 +138,312 @@
 {# Live Stream #}
 <div class="stream-wrapper">
     <div class="stream-container">
-        <img id="video-feed" src="/video_feed" class="stream-video" alt="Live Stream">
+        <!-- Go2RTC Integration (Junior B) -->
+        <!-- Old MJPEG: <img id="video-feed" src="/video_feed" class="stream-video" alt="Live Stream"> -->
+        <div class="go2rtc-wrapper" style="position: relative; width: 100%; height: 0; padding-bottom: 56.25%;">
+            <iframe id="go2rtc-frame" src="" allow="autoplay; fullscreen"
+                style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; border: 0;">
+            </iframe>
+            <img id="video-feed-fallback" class="stream-video" alt="Live Stream" data-fallback-src="/video_feed"
+                style="display: none; position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: contain;">
+
+            {# Detection overlay intentionally disabled in public backport build. #}
+        </div>
+
+        <script>
+            // Try Go2RTC first and automatically fall back to local MJPEG if unreachable.
+            // Retries once after 1 s to tolerate slow Docker DNS or cold-start delays.
+            (function () {
+                const iframe = document.getElementById('go2rtc-frame');
+                const fallback = document.getElementById('video-feed-fallback');
+                if (!iframe || !fallback) return;
+
+                const host = window.location.hostname;
+                const port = '1984';
+                const streamName = 'camera'; // Must match go2rtc.yaml
+                const mode = 'webrtc'; // 'webrtc', 'mse', 'hls'
+                const go2rtcBase = `http://${host}:${port}`;
+                const streamUrl = `${go2rtcBase}/stream.html?src=${encodeURIComponent(streamName)}&mode=${encodeURIComponent(mode)}`;
+                const preflightUrl = '/api/v1/public/go2rtc/health';
+                const MAX_RETRIES = 1;
+                const RETRY_DELAY_MS = 1000;
+                const FETCH_TIMEOUT_MS = 4000;
+                let fallbackEnabled = false;
+
+                function enableFallback(reason) {
+                    if (fallbackEnabled) return;
+                    fallbackEnabled = true;
+                    iframe.style.display = 'none';
+                    iframe.removeAttribute('src');
+                    fallback.style.display = 'block';
+                    fallback.src = fallback.dataset.fallbackSrc || '/video_feed';
+                    if (reason) {
+                        console.warn(`Go2RTC unavailable, using /video_feed fallback: ${reason}`);
+                    }
+                }
+
+                function enableGo2RTC() {
+                    fallback.style.display = 'none';
+                    iframe.style.display = 'block';
+                    iframe.src = streamUrl;
+                }
+
+                iframe.addEventListener('error', function () {
+                    enableFallback('iframe error');
+                });
+
+                async function checkHealth() {
+                    const controller = new AbortController();
+                    const timeout = setTimeout(function () {
+                        controller.abort();
+                    }, FETCH_TIMEOUT_MS);
+
+                    const resp = await fetch(preflightUrl, {
+                        method: 'GET',
+                        cache: 'no-store',
+                        signal: controller.signal
+                    });
+                    clearTimeout(timeout);
+
+                    if (!resp.ok) {
+                        throw new Error('go2rtc responded with status ' + resp.status);
+                    }
+
+                    const data = await resp.json();
+                    if (!data || typeof data !== 'object') {
+                        throw new Error('go2rtc health returned invalid data');
+                    }
+
+                    if (!data.healthy) {
+                        const detail = data.detail ? ` (${data.detail})` : '';
+                        throw new Error('go2rtc reported unhealthy' + detail);
+                    }
+
+                    return true;
+                }
+
+                (async function preflightGo2RTC() {
+                    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+                        try {
+                            await checkHealth();
+                            enableGo2RTC();
+                            return;
+                        } catch (error) {
+                            const reason = error && error.message ? error.message : 'preflight failed';
+                            if (attempt < MAX_RETRIES) {
+                                console.info(`Go2RTC health attempt ${attempt + 1} failed (${reason}), retrying in ${RETRY_DELAY_MS}ms…`);
+                                await new Promise(r => setTimeout(r, RETRY_DELAY_MS));
+                            } else {
+                                enableFallback(reason);
+                            }
+                        }
+                    }
+                })();
+            })();
+        </script>
 
         {# Redundant timestamp removed to prevent overlap with camera overlay #}
 
+        <div class="stream-clock" id="streamClock">
+            <span id="clockDisplay">--:--:--</span>
+        </div>
+
+        <script>
+            function updateClock() {
+                const clockEl = document.getElementById('clockDisplay');
+                if (!clockEl) return;
+                const now = new Date();
+                clockEl.textContent = now.toLocaleTimeString('de-DE', {
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    second: '2-digit'
+                });
+            }
+            setInterval(updateClock, 1000);
+            updateClock();
+        </script>
+
         {# PTZ Controls (on hover) #}
-        <div class="ptz-overlay">
-            <div class="ptz-dpad">
-                <div></div>
-                <button class="ptz-btn" id="ptz-up" title="Tilt Up" disabled>▲</button>
-                <div></div>
-                <button class="ptz-btn" id="ptz-left" title="Pan Left" disabled>◀</button>
-                <button class="ptz-btn center-btn" id="ptz-home" title="Home" disabled>⌂</button>
-                <button class="ptz-btn" id="ptz-right" title="Pan Right" disabled>▶</button>
-                <div></div>
-                <button class="ptz-btn" id="ptz-down" title="Tilt Down" disabled>▼</button>
-                <div></div>
-            </div>
 
-            <div class="ptz-zoom">
-                <button class="ptz-btn" id="ptz-zoom-out" title="Zoom Out" disabled>−</button>
-                <input type="range" id="ptz-zoom-slider" min="1" max="10" value="1" disabled>
-                <button class="ptz-btn" id="ptz-zoom-in" title="Zoom In" disabled>+</button>
-            </div>
+    </div>
 
-            <button class="ptz-btn" id="ptz-snapshot" title="Snapshot">📷</button>
-            <button class="ptz-btn" id="ptz-fullscreen" title="Fullscreen">⛶</button>
+
+    {# Detection overlay intentionally disabled in public backport build. #}
+
+
+
+    {# Dashboard Stats Row - directly under video #}
+    {% if dashboard_stats %}
+    <div class="stats-row" style="max-width: 1280px; margin-left: auto; margin-right: auto;">
+        <div class="stat-item">
+            <div class="stat-item__value">{{ dashboard_stats.today_visits | default(0) }}</div>
+            <div class="stat-item__label">🐦 Visits Today</div>
         </div>
-    </div>
-</div>
-
-{# Dashboard Stats Row - Engagement Elements #}
-{% if dashboard_stats %}
-<div class="stats-row">
-    <div class="stat-item">
-        <div class="stat-item__value">{{ dashboard_stats.total_detections | default(0) }}</div>
-        <div class="stat-item__label">Total Detections</div>
-    </div>
-    <div class="stat-item stat-item--accent">
-        <div class="stat-item__value">{{ dashboard_stats.total_species | default(0) }}</div>
-        <div class="stat-item__label">Species Detected</div>
-    </div>
-    <div class="stat-item stat-item--secondary">
-        <div class="stat-item__value">{{ dashboard_stats.today_count | default(0) }}</div>
-        <div class="stat-item__label">Today's Count</div>
-    </div>
-    <div class="stat-item stat-item--warning">
-        <div class="stat-item__value">{{ dashboard_stats.first_date | default('—') }}</div>
-        <div class="stat-item__label">Monitoring Since</div>
-    </div>
-</div>
-{% endif %}
-
-{# Today's Summary - British Bird Humor when empty #}
-<section class="section">
-    {% if visual_summary %}
-    <h2 class="section__title">Today's Summary</h2>
-    <div class="species-grid">
-        {% for det in visual_summary %}
-        <div class="wm-tile" data-detection-id="{{ det.detection_id }}">
-            <a class="wm-tile__button"
-                href="/species/overview?species_key={{ (det.species_key or det.latin_name or 'Unclassified') | urlencode }}"
-                style="text-decoration:none;color:inherit;" aria-label="Show all detections: {{ det.common_name }}">
-                <div class="wm-tile__media">
-                    <img class="wm-tile__image" src="{{ det.display_path }}" alt="{{ det.common_name }}">
-
-                    {% if det.count %}
-                    <span class="wm-tile__badge">{{ det.count }}</span>
-                    {% endif %}
-                </div>
-                <div class="wm-tile__body">
-                    <span class="wm-tile__name">{{ det.common_name }}</span>
-                    {% if det.latin_name %}
-                    <span class="wm-tile__latin">{{ det.latin_name | replace('_', ' ') }}</span>
-                    {% endif %}
-                </div>
-            </a>
+        <div class="stat-item stat-item--accent">
+            <div class="stat-item__value">{{ visual_summary | length }}</div>
+            <div class="stat-item__label">🦜 Species Today</div>
         </div>
-        {% endfor %}
-    </div>
-    {% else %}
-    <h2 class="section__title">A Rather Quiet Day at the Feeder</h2>
-    <div class="empty-state">
-        <p class="empty-state__message">The birds appear to be having a lie-in today.</p>
-        <p class="empty-state__message">In the meantime, <a href="/species">browse past visitors</a> — we're always
-            happy to see whatever pops by!</p>
+        <div class="stat-item stat-item--secondary">
+            <div class="stat-item__value">{{ dashboard_stats.today_count | default(0) }}</div>
+            <div class="stat-item__label">📸 Photos Today</div>
+        </div>
+        <div class="stat-item stat-item--warning">
+            <div class="stat-item__value">{{ dashboard_stats.avg_visit_duration_sec | default(0) }}s</div>
+            <div class="stat-item__label">⏱️ Avg. Stay</div>
+        </div>
     </div>
     {% endif %}
-</section>
-{% endblock %}
 
-{% block scripts %}
-<script>
-    (function () {
-        // Snapshot
-        document.getElementById('ptz-snapshot').addEventListener('click', function () {
-            const filename = 'snapshot_' + new Date().toISOString().slice(0, 19).replace(/:/g, '-') + '.jpg';
-            fetch('/api/snapshot')
-                .then(r => r.blob())
-                .then(blob => {
-                    const url = URL.createObjectURL(blob);
-                    const a = document.createElement('a');
-                    a.href = url;
-                    a.download = filename;
-                    a.click();
-                    URL.revokeObjectURL(url);
-                })
-                .catch(() => alert('Snapshot failed'));
-        });
+    {% if landing_status %}
+    <div class="landing-health" aria-label="Live status"
+        style="max-width: 1280px; margin-left: auto; margin-right: auto;">
+        <div class="landing-health__item">
+            <span class="landing-health__label">Stream</span>
+            <span class="landing-health__value">{{ landing_status.stream_detail }}</span>
+            <span class="landing-health__badge landing-health__badge--{{ landing_status.stream_tone }}">{{
+                landing_status.stream_state }}</span>
+        </div>
+    </div>
+    {% endif %}
 
-        // Fullscreen
-        document.getElementById('ptz-fullscreen').addEventListener('click', function () {
-            const el = document.querySelector('.stream-container');
-            if (el.requestFullscreen) el.requestFullscreen();
-            else if (el.webkitRequestFullscreen) el.webkitRequestFullscreen();
-        });
-    })();
-</script>
-{% endblock %}
+    {# ── Unified: Today's Visitors / Species Fallback ──────── #}
+    <section class="section" id="last24hSummarySection"
+        style="max-width: 1280px; margin-left: auto; margin-right: auto;">
+
+        {% if visual_summary %}
+        {# ── Today has detections → show species covers ── #}
+        <div class="quiet-preview" style="max-width: none;">
+            <div class="quiet-preview__head">
+                <h3 class="quiet-preview__title">Today's Visitors</h3>
+                <a class="quiet-preview__all" href="/gallery">Gallery</a>
+            </div>
+
+            <div class="quiet-preview__list" id="summaryGrid">
+                {% for det in visual_summary %}
+                <a class="quiet-preview__item fade-in-item" style="position: relative;"
+                    href="/species/overview?species_key={{ (det.species_key or det.latin_name or 'Unclassified') | urlencode }}"
+                    aria-label="Show all detections: {{ det.common_name }}">
+
+                    <img class="quiet-preview__thumb" loading="lazy" src="{{ det.display_path }}"
+                        alt="{{ det.common_name }}">
+
+                    {% if det.count %}
+                    <span class="wm-tile__badge" style="position: absolute; top: 8px; right: 8px; z-index: 2;">{{
+                        det.count
+                        }}</span>
+                    {% endif %}
+
+                    <div class="quiet-preview__meta">
+                        <span class="quiet-preview__name">{{ det.common_name }}</span>
+                        {% if det.latin_name %}
+                        <span class="quiet-preview__time" style="font-style: italic;">{{ det.latin_name | replace('_', '
+                            ')
+                            }}</span>
+                        {% endif %}
+                    </div>
+                </a>
+                {% endfor %}
+            </div>
+        </div>
+
+        {% else %}
+        {# ── No detections today ── #}
+        <div class="quiet-preview" style="max-width: none;">
+            <div class="quiet-preview__head">
+                <h3 class="quiet-preview__title">Today's Visitors</h3>
+            </div>
+            <p style="color: #666; font-style: italic; padding: 1rem 0;">No birds seen yet today, but the day is
+                still young.</p>
+        </div>
+        {% endif %}
+
+        {# ── Best of Species (always visible) ──────── #}
+        {% if best_species_preview %}
+        <div class="quiet-preview" style="max-width: none; margin-top: 1.5rem;">
+            <div class="quiet-preview__head">
+                <h3 class="quiet-preview__title">Best of Species</h3>
+                <a class="quiet-preview__all" href="/species">All Species</a>
+            </div>
+
+            <div class="quiet-preview__list">
+                {% for det in best_species_preview %}
+                <a class="quiet-preview__item fade-in-item" style="position: relative;"
+                    href="/species/overview?species_key={{ det.species_key | urlencode }}"
+                    aria-label="View species: {{ det.common_name }}">
+
+                    {% if det.display_path %}
+                    <img class="quiet-preview__thumb" loading="lazy" src="{{ det.display_path }}"
+                        alt="{{ det.common_name }}">
+                    {% else %}
+                    <div class="quiet-preview__thumb"
+                        style="display:flex;align-items:center;justify-content:center;background:#eee;">🐦</div>
+                    {% endif %}
+
+                    <span
+                        style="position: absolute; bottom: 8px; right: 8px; font-size: 1.1rem; filter: drop-shadow(0 2px 4px rgba(0,0,0,0.5));">⭐</span>
+
+                    <div class="quiet-preview__meta">
+                        <span class="quiet-preview__name">{{ det.common_name }}</span>
+                    </div>
+                </a>
+                {% endfor %}
+            </div>
+        </div>
+        {% endif %}
+
+    </section>
+
+    {% endblock %}
+
+    {% block modals %}
+    {# Modals removed - navigation now goes to species overview #}
+    {% endblock %}
+
+    {% block scripts %}
+    <script src="/assets/js/gallery_utils.js?v=20260222-authfix"></script>
+    <script>
+        (function () {
+            const SUMMARY_REFRESH_MS = 90 * 1000;
+            let summaryRefreshInFlight = false;
+
+            async function refreshLast24hSummary() {
+                if (summaryRefreshInFlight || document.visibilityState !== 'visible') return;
+
+                const currentSection = document.getElementById('last24hSummarySection');
+                if (!currentSection) return;
+
+                summaryRefreshInFlight = true;
+                try {
+                    const response = await fetch(window.location.pathname, {
+                        credentials: 'same-origin',
+                        cache: 'no-store',
+                        headers: { 'X-Requested-With': 'XMLHttpRequest' }
+                    });
+                    if (!response.ok) return;
+
+                    const html = await response.text();
+                    const parser = new DOMParser();
+                    const doc = parser.parseFromString(html, 'text/html');
+                    const freshSection = doc.getElementById('last24hSummarySection');
+
+                    if (!freshSection) return;
+                    currentSection.replaceWith(freshSection);
+                } catch (err) {
+                    console.debug('Last 24h summary refresh failed:', err);
+                } finally {
+                    summaryRefreshInFlight = false;
+                }
+            }
+
+            // Snapshot
+
+
+            setInterval(refreshLast24hSummary, SUMMARY_REFRESH_MS);
+            document.addEventListener('visibilitychange', () => {
+                if (document.visibilityState === 'visible') {
+                    refreshLast24hSummary();
+                }
+            });
+        })();
+    </script>
+    {% endblock %}

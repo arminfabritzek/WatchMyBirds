@@ -2,9 +2,682 @@
 
 {% block title %}Analytics - WatchMyBirds{% endblock %}
 
+{% block head %}
+{# Styles migrated to design-system.css: ANALYTICS PAGE section #}
+{% endblock %}
+
 {% block content %}
-{# Minimal mount point for Svelte Analytics Dashboard #}
-<div data-analytics-dashboard></div>
-<link rel="stylesheet" href="/assets/analytics/style.css?v=20260121_1045">
-<script type="module" src="/assets/analytics/analytics-dashboard.js?v=20260121_1045"></script>
+<div class="analytics-dashboard">
+    {# Dashboard Header #}
+    <header class="dashboard-header">
+        <h1 class="dashboard-header__title">Analytics</h1>
+        <p class="dashboard-header__subtitle">All-Time Detection Statistics</p>
+    </header>
+
+    {# Summary Cards #}
+    <div class="summary-grid">
+        <div class="summary-card">
+            <div class="summary-card__value">{{ summary.total_detections | default(0) }}</div>
+            <div class="summary-card__label">Total Detections</div>
+        </div>
+        <div class="summary-card summary-card--accent">
+            <div class="summary-card__value">{{ summary.total_species | default(0) }}</div>
+            <div class="summary-card__label">Species Detected</div>
+        </div>
+        <div class="summary-card summary-card--secondary">
+            <div class="summary-card__value">{{ summary.date_range.first | default('—') }}</div>
+            <div class="summary-card__label">First Detection</div>
+        </div>
+        <div class="summary-card summary-card--warning">
+            <div class="summary-card__value">{{ summary.date_range.last | default('—') }}</div>
+            <div class="summary-card__label">Last Detection</div>
+        </div>
+    </div>
+
+    {# Activity by Time of Day #}
+    <div class="chart-card">
+        <h3 class="chart-card__title">
+            Activity by Time of Day
+            {% if time_of_day.peak_hour is not none %}
+            <span class="chart-card__badge">Peak: {{ time_of_day.peak_hour_formatted }}</span>
+            {% endif %}
+        </h3>
+
+        {% if time_of_day.histogram %}
+        <div class="histogram">
+            {% for bar in time_of_day.histogram %}
+            <div class="histogram__bar" style="height: {{ bar.height_pct }}%;"
+                data-count="{{ bar.count }} ({{ bar.hour }}:00)" title="{{ bar.hour }}:00 - {{ bar.count }} detections">
+            </div>
+            {% endfor %}
+        </div>
+        <div class="histogram__labels">
+            <span class="histogram__label">00:00</span>
+            <span class="histogram__label">06:00</span>
+            <span class="histogram__label">12:00</span>
+            <span class="histogram__label">18:00</span>
+            <span class="histogram__label">24:00</span>
+        </div>
+        {% else %}
+        <div class="empty-state">
+            <p class="empty-state__message">No activity data available yet.</p>
+        </div>
+        {% endif %}
+    </div>
+
+    {# Activity by Date (daily detection time series) #}
+    {% if daily_activity and daily_activity.bars %}
+    <div class="chart-card">
+        <div class="chart-card__toolbar">
+            <h3 class="chart-card__title">
+                Activity by Date
+                <span class="chart-card__badge">{{ daily_activity.window_label }} · {{ daily_activity.bar_count }}
+                    bars</span>
+            </h3>
+            <div class="chart-toolbar__controls">
+                <div class="chart-toggle" role="group" aria-label="Activity aggregation">
+                    <a class="chart-toggle__btn {% if activity_granularity == 'daily' %}is-active{% endif %}"
+                        href="{{ url_for('analytics.analytics_page', activity_granularity='daily', activity_days=activity_controls.daily_days, activity_weeks=activity_controls.weekly_weeks, activity_year=activity_controls.monthly_year) }}">Daily</a>
+                    <a class="chart-toggle__btn {% if activity_granularity == 'weekly' %}is-active{% endif %}"
+                        href="{{ url_for('analytics.analytics_page', activity_granularity='weekly', activity_days=activity_controls.daily_days, activity_weeks=activity_controls.weekly_weeks, activity_year=activity_controls.monthly_year) }}">Weekly</a>
+                    <a class="chart-toggle__btn {% if activity_granularity == 'monthly' %}is-active{% endif %}"
+                        href="{{ url_for('analytics.analytics_page', activity_granularity='monthly', activity_days=activity_controls.daily_days, activity_weeks=activity_controls.weekly_weeks, activity_year=activity_controls.monthly_year) }}">Monthly</a>
+                </div>
+
+                {% if activity_granularity == 'daily' %}
+                <div class="chart-toggle" role="group" aria-label="Daily window">
+                    {% for days in activity_controls.daily_options %}
+                    <a class="chart-toggle__btn {% if activity_controls.daily_days == days %}is-active{% endif %}"
+                        href="{{ url_for('analytics.analytics_page', activity_granularity='daily', activity_days=days, activity_weeks=activity_controls.weekly_weeks, activity_year=activity_controls.monthly_year) }}">{{
+                        days }}d</a>
+                    {% endfor %}
+                </div>
+                {% elif activity_granularity == 'weekly' %}
+                <div class="chart-toggle" role="group" aria-label="Weekly window">
+                    {% for weeks in activity_controls.weekly_options %}
+                    <a class="chart-toggle__btn {% if activity_controls.weekly_weeks == weeks %}is-active{% endif %}"
+                        href="{{ url_for('analytics.analytics_page', activity_granularity='weekly', activity_days=activity_controls.daily_days, activity_weeks=weeks, activity_year=activity_controls.monthly_year) }}">{{
+                        weeks }}w</a>
+                    {% endfor %}
+                </div>
+                {% elif activity_granularity == 'monthly' and activity_controls.monthly_year_options %}
+                <div class="chart-toggle" role="group" aria-label="Year selection">
+                    {% for year in activity_controls.monthly_year_options | reverse %}
+                    <a class="chart-toggle__btn {% if activity_controls.monthly_year == year %}is-active{% endif %}"
+                        href="{{ url_for('analytics.analytics_page', activity_granularity='monthly', activity_days=activity_controls.daily_days, activity_weeks=activity_controls.weekly_weeks, activity_year=year) }}">{{
+                        year }}</a>
+                    {% endfor %}
+                </div>
+                {% endif %}
+            </div>
+        </div>
+        <p class="chart-card__meta">
+            Active detection days in dataset: {{ daily_activity.total_days }}
+            {% if daily_activity.window_start and daily_activity.window_end %}
+            · Window: {{ daily_activity.window_start }} to {{ daily_activity.window_end }}
+            {% endif %}
+        </p>
+
+        <div class="weather-timeline">
+            <svg class="weather-timeline__svg" viewBox="0 0 800 120" preserveAspectRatio="none">
+                {% for bar in daily_activity.bars %}
+                <rect class="daily-activity__bar" x="{{ bar.x }}" y="{{ bar.y }}" width="{{ bar.w }}"
+                    height="{{ bar.h }}" rx="1" ry="1">
+                    <title>{{ bar.date_label }}: {{ bar.count }} detections</title>
+                </rect>
+                {% endfor %}
+            </svg>
+            <div class="weather-timeline__y-labels">
+                <span>{{ daily_activity.max_count }}</span>
+                <span>0</span>
+            </div>
+        </div>
+        <div class="histogram__labels">
+            {% for lbl in daily_activity.dates %}
+            <span class="histogram__label">{{ lbl }}</span>
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+
+    {# Species Activity Table #}
+    <div class="chart-card">
+        <h3 class="chart-card__title">Activity Patterns by Species</h3>
+
+        {% if species_activity %}
+        <div class="species-table__header">
+            <div class="species-table__col-name">Species</div>
+            <div class="species-table__col-graph">Activity Pattern (24h)</div>
+            <div class="species-table__col-peak">Peak</div>
+            <div class="species-table__col-count">Count</div>
+        </div>
+
+        {% for species in species_activity %}
+        <div class="species-table__row">
+            <div class="species-table__col-name" title="{{ species.species }}">
+                {{ species.species | replace('_', ' ') }}
+            </div>
+            <div class="species-table__col-graph">
+                <svg class="sparkline" viewBox="0 0 200 30" preserveAspectRatio="none">
+                    <path d="{{ species.sparkline_path }}" fill="none" stroke="var(--color-primary)" stroke-width="1.5"
+                        vector-effect="non-scaling-stroke" />
+                    <path d="{{ species.sparkline_path }} L 200 30 L 0 30 Z" fill="var(--color-primary)"
+                        fill-opacity="0.1" stroke="none" />
+                </svg>
+            </div>
+            <div class="species-table__col-peak">{{ species.peak_hour_formatted }}</div>
+            <div class="species-table__col-count">{{ species.count }}</div>
+        </div>
+        {% endfor %}
+        {% else %}
+        <div class="empty-state">
+            <p class="empty-state__message">No species activity data available yet.</p>
+        </div>
+        {% endif %}
+    </div>
+
+
+
+    {# ═══════════════════════════════════════════════════════════════════
+    WEATHER & ENVIRONMENTAL CONDITIONS
+    ═══════════════════════════════════════════════════════════════════ #}
+
+    {% if weather.has_data %}
+    <div class="section-divider section-divider--weather">
+        <span class="section-divider__icon">🌦️</span>
+        <span class="section-divider__text">Weather & Environment</span>
+    </div>
+
+    {# Weather Summary Cards #}
+    <div class="summary-grid summary-grid--4col">
+        {% if weather.current %}
+        <div class="summary-card summary-card--weather">
+            <div class="summary-card__value">
+                <span class="weather-emoji-lg">{{ weather.current.condition_emoji }}</span>
+                {{ weather.current.temp_c | round(1) }}°C
+            </div>
+            <div class="summary-card__label">Current · {{ weather.current.condition_text }}</div>
+        </div>
+        {% endif %}
+        {% if weather.today %}
+        <div class="summary-card summary-card--weather-temp">
+            <div class="summary-card__value">{{ weather.today.min_temp }}° / {{ weather.today.max_temp }}°</div>
+            <div class="summary-card__label">🌡️ 24h Range (avg {{ weather.today.avg_temp }}°C)</div>
+        </div>
+        <div class="summary-card summary-card--weather-rain">
+            <div class="summary-card__value">{{ weather.today.total_precip }} mm</div>
+            <div class="summary-card__label">🌧️ Precipitation (24h)</div>
+        </div>
+        <div class="summary-card summary-card--weather-wind">
+            <div class="summary-card__value">{{ weather.today.avg_wind }} km/h</div>
+            <div class="summary-card__label">💨 Avg Wind (max {{ weather.today.max_wind }} km/h)</div>
+        </div>
+        {% endif %}
+    </div>
+
+    {# 24h Temperature & Wind Timeline #}
+    {% if weather.temp_svg_path %}
+    <div class="chart-card chart-card--weather">
+        <h3 class="chart-card__title">
+            Temperature & Wind – Last 24 Hours
+            <span class="chart-card__badge chart-card__badge--weather">
+                {{ weather.temp_min }}° – {{ weather.temp_max }}°C
+            </span>
+        </h3>
+
+        {# Legend #}
+        <div class="histogram-legend">
+            <span class="histogram-legend__item">
+                <span class="histogram-legend__swatch histogram-legend__swatch--temp"></span>
+                Temperature
+            </span>
+            <span class="histogram-legend__item">
+                <span class="histogram-legend__swatch histogram-legend__swatch--wind-line"></span>
+                Wind Speed
+            </span>
+            {% if weather.timeline_24h %}
+            <span class="histogram-legend__item">
+                <span class="histogram-legend__swatch histogram-legend__swatch--precip"></span>
+                Precipitation
+            </span>
+            {% endif %}
+        </div>
+
+        <div class="weather-timeline">
+            <svg class="weather-timeline__svg" viewBox="0 0 800 120" preserveAspectRatio="none">
+                {# Precipitation bars (background) #}
+                {% for pt in weather.timeline_24h %}
+                {% if pt.precip_mm > 0 %}
+                <rect x="{{ (loop.index0 / (weather.timeline_24h | length - 1)) * 800 - 4 }}"
+                    y="{{ 120 - pt.precip_height }}" width="8" height="{{ pt.precip_height }}"
+                    fill="var(--color-weather-rain)" opacity="0.35" rx="2" />
+                {% endif %}
+                {% endfor %}
+
+                {# Wind area (subtle fill) #}
+                <path d="{{ weather.wind_svg_area }}" fill="var(--color-weather-wind)" fill-opacity="0.08"
+                    stroke="none" />
+                {# Wind line #}
+                <path d="{{ weather.wind_svg_path }}" fill="none" stroke="var(--color-weather-wind)" stroke-width="1.5"
+                    stroke-dasharray="4 3" vector-effect="non-scaling-stroke" opacity="0.5" />
+
+                {# Temperature area (gradient fill) #}
+                <path d="{{ weather.temp_svg_area }}" fill="url(#tempGradient)" stroke="none" />
+                {# Temperature line #}
+                <path d="{{ weather.temp_svg_path }}" fill="none" stroke="var(--color-weather-temp)" stroke-width="2.5"
+                    vector-effect="non-scaling-stroke" />
+
+                <defs>
+                    <linearGradient id="tempGradient" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0%" stop-color="var(--color-weather-temp)" stop-opacity="0.25" />
+                        <stop offset="100%" stop-color="var(--color-weather-temp)" stop-opacity="0.02" />
+                    </linearGradient>
+                </defs>
+            </svg>
+
+            {# Y-axis labels #}
+            <div class="weather-timeline__y-labels">
+                <span>{{ weather.temp_max }}°</span>
+                <span>{{ weather.temp_min }}°</span>
+            </div>
+        </div>
+
+        {# Time labels #}
+        <div class="histogram__labels">
+            <span class="histogram__label">-24h</span>
+            <span class="histogram__label">-18h</span>
+            <span class="histogram__label">-12h</span>
+            <span class="histogram__label">-6h</span>
+            <span class="histogram__label">Now</span>
+        </div>
+    </div>
+    {% endif %}
+
+    {# Weather Condition Distribution #}
+    {% if weather.condition_distribution %}
+    <div class="chart-card chart-card--weather">
+        <h3 class="chart-card__title">Weather Conditions – Last 7 Days</h3>
+
+        <div class="condition-dist">
+            {% for cond in weather.condition_distribution %}
+            <div class="condition-dist__row">
+                <div class="condition-dist__label">
+                    <span class="condition-dist__emoji">{{ cond.emoji }}</span>
+                    <span class="condition-dist__text">{{ cond.text }}</span>
+                </div>
+                <div class="condition-dist__bar-wrap">
+                    <div class="condition-dist__bar" style="width: {{ cond.bar_width }}%;">
+                        <span class="condition-dist__pct">{{ cond.pct }}%</span>
+                    </div>
+                </div>
+                <div class="condition-dist__count">{{ cond.count }}×</div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+
+    {# 7-Day Weather Summary #}
+    {% if weather.weekly_summary %}
+    <div class="chart-card chart-card--weather">
+        <h3 class="chart-card__title">7-Day Weather Summary</h3>
+
+        <div class="weekly-weather">
+            <div class="weekly-weather__header">
+                <div class="weekly-weather__col-day">Day</div>
+                <div class="weekly-weather__col-temp">Temp Range</div>
+                <div class="weekly-weather__col-bar">Precipitation</div>
+                <div class="weekly-weather__col-wind">Wind</div>
+            </div>
+
+            {% for day in weather.weekly_summary %}
+            <div class="weekly-weather__row">
+                <div class="weekly-weather__col-day">
+                    <span class="weekly-weather__date">{{ day.day_short }}</span>
+                </div>
+                <div class="weekly-weather__col-temp">
+                    <span class="weekly-weather__temp-lo">{{ day.min_temp }}°</span>
+                    <div class="weekly-weather__temp-range">
+                        <div class="weekly-weather__temp-bar"
+                            style="left: {{ ((day.min_temp - weather.temp_min) / (weather.temp_max - weather.temp_min + 0.1)) * 100 }}%;
+                                   width: {{ ((day.max_temp - day.min_temp) / (weather.temp_max - weather.temp_min + 0.1)) * 100 }}%;">
+                        </div>
+                    </div>
+                    <span class="weekly-weather__temp-hi">{{ day.max_temp }}°</span>
+                </div>
+                <div class="weekly-weather__col-bar">
+                    {% if day.total_precip > 0 %}
+                    <div class="weekly-weather__precip-bar-wrap">
+                        <div class="weekly-weather__precip-bar" style="width: {{ day.precip_pct }}%;"></div>
+                    </div>
+                    <span class="weekly-weather__precip-val">{{ day.total_precip }}mm</span>
+                    {% else %}
+                    <span class="weekly-weather__precip-none">—</span>
+                    {% endif %}
+                </div>
+                <div class="weekly-weather__col-wind">{{ day.avg_wind }} km/h</div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+
+    {# Detection vs. Weather Correlation #}
+    {% if weather_correlation %}
+    <div class="chart-card chart-card--weather">
+        <h3 class="chart-card__title">
+            🐦 Bird Activity by Weather Condition
+        </h3>
+        <p class="metric-card__desc" style="margin-bottom: var(--space-md);">
+            How many birds were detected under which weather conditions.
+            Wider bars indicate higher activity during that condition.
+        </p>
+
+        <div class="condition-dist">
+            {% for wc in weather_correlation %}
+            <div class="condition-dist__row">
+                <div class="condition-dist__label">
+                    <span class="condition-dist__emoji">{{ wc.condition_emoji }}</span>
+                    <span class="condition-dist__text">{{ wc.condition_text }}</span>
+                </div>
+                <div class="condition-dist__bar-wrap">
+                    <div class="condition-dist__bar condition-dist__bar--activity" style="width: {{ wc.bar_pct }}%;">
+                        <span class="condition-dist__pct">{{ wc.detection_count }}</span>
+                    </div>
+                </div>
+                <div class="condition-dist__count" title="Avg temp / wind">
+                    {{ wc.avg_temp }}° · {{ wc.avg_wind }} km/h
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+
+    {% endif %}
+
+    {# ═══════════════════════════════════════════════════════════════════
+    SPECIES IMPACT SIMULATION
+    ═══════════════════════════════════════════════════════════════════ #}
+
+    {% if False and simulation and simulation.species_list %}
+    <div class="section-divider section-divider--simulation">
+        <span class="section-divider__icon">🔬</span>
+        <span class="section-divider__text">Species Impact Simulation</span>
+    </div>
+
+    <div class="chart-card chart-card--simulation" id="simulation-section">
+        <h3 class="chart-card__title">
+            What If a Species Disappears?
+            <span class="chart-card__badge chart-card__badge--simulation">What-If Analysis</span>
+        </h3>
+        <p class="sim-description">
+            Select a species to remove from the dataset and observe how biodiversity metrics
+            and daily detection patterns change. This helps assess each species' contribution to
+            local ecosystem health.
+        </p>
+
+        {# Species Selector #}
+        <div class="sim-selector">
+            <label class="sim-selector__label" for="sim-species-select">Remove species:</label>
+            <select id="sim-species-select" class="sim-select">
+                <option value="">— Select a species to exclude —</option>
+                {% for sp in simulation.species_list %}
+                <option value="{{ sp }}">{{ sp | replace('_', ' ') }}</option>
+                {% endfor %}
+            </select>
+            <span id="sim-loading" class="sim-loading" style="display:none;">⏳</span>
+        </div>
+
+        {# Delta Metric Cards #}
+        <div class="sim-delta-grid" id="sim-delta-grid">
+            <div class="sim-delta-card" id="sim-delta-shannon">
+                <div class="sim-delta-card__label">Shannon Index (H')</div>
+                <div class="sim-delta-card__values">
+                    <span class="sim-delta-card__real" id="sim-real-shannon">
+                        {{ "%.3f" | format(simulation.biodiversity_real.shannon | default(0)) }}
+                    </span>
+                    <span class="sim-delta-card__arrow">→</span>
+                    <span class="sim-delta-card__sim" id="sim-sim-shannon">—</span>
+                </div>
+                <div class="sim-delta-card__delta" id="sim-delta-shannon-val">—</div>
+            </div>
+            <div class="sim-delta-card" id="sim-delta-simpson">
+                <div class="sim-delta-card__label">Simpson Diversity (1-D)</div>
+                <div class="sim-delta-card__values">
+                    <span class="sim-delta-card__real" id="sim-real-simpson">
+                        {{ "%.3f" | format(simulation.biodiversity_real.gini_simpson | default(0)) }}
+                    </span>
+                    <span class="sim-delta-card__arrow">→</span>
+                    <span class="sim-delta-card__sim" id="sim-sim-simpson">—</span>
+                </div>
+                <div class="sim-delta-card__delta" id="sim-delta-simpson-val">—</div>
+            </div>
+            <div class="sim-delta-card" id="sim-delta-evenness">
+                <div class="sim-delta-card__label">Pielou's Evenness (J')</div>
+                <div class="sim-delta-card__values">
+                    <span class="sim-delta-card__real" id="sim-real-evenness">
+                        {{ "%.3f" | format(simulation.biodiversity_real.evenness | default(0)) }}
+                    </span>
+                    <span class="sim-delta-card__arrow">→</span>
+                    <span class="sim-delta-card__sim" id="sim-sim-evenness">—</span>
+                </div>
+                <div class="sim-delta-card__delta" id="sim-delta-evenness-val">—</div>
+            </div>
+            <div class="sim-delta-card" id="sim-delta-richness">
+                <div class="sim-delta-card__label">Species Richness (S)</div>
+                <div class="sim-delta-card__values">
+                    <span class="sim-delta-card__real" id="sim-real-richness">
+                        {{ simulation.biodiversity_real.richness | default(0) }}
+                    </span>
+                    <span class="sim-delta-card__arrow">→</span>
+                    <span class="sim-delta-card__sim" id="sim-sim-richness">—</span>
+                </div>
+                <div class="sim-delta-card__delta" id="sim-delta-richness-val">—</div>
+            </div>
+        </div>
+
+        {# Time Series Chart #}
+        <div class="sim-chart-container">
+            <h4 class="sim-chart__subtitle">Daily Detection Count — Real vs. Simulated</h4>
+            <div class="sim-chart-legend">
+                <span class="sim-chart-legend__item">
+                    <span class="sim-chart-legend__swatch sim-chart-legend__swatch--real"></span>
+                    Real (all species)
+                </span>
+                <span class="sim-chart-legend__item">
+                    <span class="sim-chart-legend__swatch sim-chart-legend__swatch--sim"></span>
+                    Simulated (excluded)
+                </span>
+            </div>
+            <div class="sim-timeline" id="sim-timeline">
+                <svg id="sim-chart-svg" class="sim-timeline__svg" viewBox="0 0 800 160" preserveAspectRatio="none">
+                    {# Filled by JavaScript #}
+                </svg>
+                <div class="sim-timeline__y-labels" id="sim-y-labels">
+                    <span id="sim-y-max">—</span>
+                    <span id="sim-y-min">0</span>
+                </div>
+            </div>
+            <div class="histogram__labels" id="sim-x-labels">
+                {# Filled by JavaScript #}
+            </div>
+        </div>
+
+        {# Empty state hint – hidden by default because JS auto-selects a species #}
+        <div id="sim-empty-hint" class="sim-empty-hint" style="display:none;">
+            👆 Select a species above to see the simulation results.
+        </div>
+    </div>
+    {% endif %}
+
+</div>
+
+{# ═══════════════════════════════════════════════════════════════════
+SIMULATION JAVASCRIPT
+═══════════════════════════════════════════════════════════════════ #}
+{% if False and simulation and simulation.species_list %}
+<script>
+    (function () {
+        const select = document.getElementById('sim-species-select');
+        const loading = document.getElementById('sim-loading');
+        const emptyHint = document.getElementById('sim-empty-hint');
+        if (!select) return;
+
+        select.addEventListener('change', async function () {
+            const species = this.value;
+            if (!species) {
+                resetSimulation();
+                return;
+            }
+
+            loading.style.display = 'inline';
+            emptyHint.style.display = 'none';
+
+            try {
+                const resp = await fetch('/api/analytics/simulation?exclude=' + encodeURIComponent(species));
+                const data = await resp.json();
+                updateDeltaCards(data);
+                drawTimeSeries(data.daily_series);
+            } catch (err) {
+                console.error('Simulation fetch failed:', err);
+            } finally {
+                loading.style.display = 'none';
+            }
+        });
+
+        function resetSimulation() {
+            ['shannon', 'simpson', 'evenness', 'richness'].forEach(key => {
+                const simEl = document.getElementById('sim-sim-' + key);
+                const deltaEl = document.getElementById('sim-delta-' + key + '-val');
+                const card = document.getElementById('sim-delta-' + key);
+                if (simEl) simEl.textContent = '—';
+                if (deltaEl) { deltaEl.textContent = '—'; deltaEl.className = 'sim-delta-card__delta'; }
+                if (card) card.className = 'sim-delta-card';
+            });
+            document.getElementById('sim-chart-svg').innerHTML = '';
+            document.getElementById('sim-y-max').textContent = '—';
+            document.getElementById('sim-x-labels').innerHTML = '';
+            emptyHint.style.display = '';
+        }
+
+        function updateDeltaCards(data) {
+            const keyMap = {
+                'shannon': { real: 'shannon', sim: 'shannon', delta: 'shannon' },
+                'simpson': { real: 'gini_simpson', sim: 'gini_simpson', delta: 'gini_simpson' },
+                'evenness': { real: 'evenness', sim: 'evenness', delta: 'evenness' },
+                'richness': { real: 'richness', sim: 'richness', delta: 'richness' },
+            };
+
+            for (const [uiKey, dataKeys] of Object.entries(keyMap)) {
+                const simEl = document.getElementById('sim-sim-' + uiKey);
+                const deltaEl = document.getElementById('sim-delta-' + uiKey + '-val');
+                const card = document.getElementById('sim-delta-' + uiKey);
+
+                const simVal = data.biodiversity_sim[dataKeys.sim];
+                const deltaVal = data.delta[dataKeys.delta];
+
+                if (simEl) simEl.textContent = (typeof simVal === 'number') ? simVal.toFixed(3) : simVal;
+                if (deltaEl) {
+                    const prefix = deltaVal > 0 ? '+' : '';
+                    deltaEl.textContent = prefix + ((typeof deltaVal === 'number') ? deltaVal.toFixed(3) : deltaVal);
+                    deltaEl.className = 'sim-delta-card__delta ' +
+                        (deltaVal < 0 ? 'sim-delta-card__delta--negative' :
+                            deltaVal > 0 ? 'sim-delta-card__delta--positive' : '');
+                }
+                if (card) {
+                    card.className = 'sim-delta-card ' +
+                        (deltaVal < 0 ? 'sim-delta-card--negative' :
+                            deltaVal > 0 ? 'sim-delta-card--positive' : '');
+                }
+            }
+        }
+
+        function drawTimeSeries(series) {
+            const svg = document.getElementById('sim-chart-svg');
+            const yMaxEl = document.getElementById('sim-y-max');
+            const xLabels = document.getElementById('sim-x-labels');
+            svg.innerHTML = '';
+            xLabels.innerHTML = '';
+
+            if (!series || series.length === 0) return;
+
+            const W = 800, H = 160, PAD_T = 15, PAD_B = 5;
+            const usableH = H - PAD_T - PAD_B;
+
+            const maxVal = Math.max(...series.map(d => Math.max(d.real, d.simulated)), 1);
+            yMaxEl.textContent = maxVal;
+
+            // Build paths
+            let realPath = '', simPath = '';
+            let realArea = '', simArea = '';
+            const n = series.length;
+
+            for (let i = 0; i < n; i++) {
+                const x = n > 1 ? (i / (n - 1)) * W : W / 2;
+                const yReal = PAD_T + usableH * (1 - series[i].real / maxVal);
+                const ySim = PAD_T + usableH * (1 - series[i].simulated / maxVal);
+                const cmd = i === 0 ? 'M' : 'L';
+                realPath += `${cmd} ${x.toFixed(1)} ${yReal.toFixed(1)} `;
+                simPath += `${cmd} ${x.toFixed(1)} ${ySim.toFixed(1)} `;
+                realArea += `${cmd} ${x.toFixed(1)} ${yReal.toFixed(1)} `;
+                simArea += `${cmd} ${x.toFixed(1)} ${ySim.toFixed(1)} `;
+            }
+
+            // Real area fill
+            const realAreaFill = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+            realAreaFill.setAttribute('d', realArea + `L ${W} ${H} L 0 ${H} Z`);
+            realAreaFill.setAttribute('fill', 'var(--color-primary)');
+            realAreaFill.setAttribute('fill-opacity', '0.08');
+            realAreaFill.setAttribute('stroke', 'none');
+            svg.appendChild(realAreaFill);
+
+            // Sim area fill
+            const simAreaFill = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+            simAreaFill.setAttribute('d', simArea + `L ${W} ${H} L 0 ${H} Z`);
+            simAreaFill.setAttribute('fill', 'var(--color-sim)');
+            simAreaFill.setAttribute('fill-opacity', '0.08');
+            simAreaFill.setAttribute('stroke', 'none');
+            svg.appendChild(simAreaFill);
+
+            // Real line
+            const realLine = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+            realLine.setAttribute('d', realPath);
+            realLine.setAttribute('fill', 'none');
+            realLine.setAttribute('stroke', 'var(--color-primary)');
+            realLine.setAttribute('stroke-width', '2.5');
+            realLine.setAttribute('vector-effect', 'non-scaling-stroke');
+            svg.appendChild(realLine);
+
+            // Simulated line (dashed)
+            const simLine = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+            simLine.setAttribute('d', simPath);
+            simLine.setAttribute('fill', 'none');
+            simLine.setAttribute('stroke', 'var(--color-sim)');
+            simLine.setAttribute('stroke-width', '2.5');
+            simLine.setAttribute('stroke-dasharray', '8 4');
+            simLine.setAttribute('vector-effect', 'non-scaling-stroke');
+            svg.appendChild(simLine);
+
+            // X-axis labels (first, middle, last date)
+            const dates = series.map(d => d.date);
+            const labelIndices = [0, Math.floor(n / 2), n - 1];
+            const uniqueLabels = [...new Set(labelIndices)];
+            uniqueLabels.forEach(idx => {
+                const span = document.createElement('span');
+                span.className = 'histogram__label';
+                span.textContent = dates[idx] ? dates[idx].slice(5) : '';  // MM-DD
+                xLabels.appendChild(span);
+            });
+        }
+        // Auto-select Columba palumbus on page load (fallback: first species)
+        if (select.options.length > 1) {
+            const preferred = 'Columba_palumbus';
+            const match = Array.from(select.options).findIndex(o => o.value === preferred);
+            select.selectedIndex = match > 0 ? match : 1;
+            select.dispatchEvent(new Event('change'));
+        }
+    })();
+</script>
+{% endif %}
 {% endblock %}

@@ -1,15 +1,4 @@
-# ---------- Stage 1: Build analytics ----------
-FROM --platform=$BUILDPLATFORM node:20-bookworm AS analytics-build
-
-WORKDIR /analytics
-COPY analytics/package.json analytics/package-lock.json ./
-RUN npm ci
-
-COPY analytics/ .
-RUN npm run build
-
-
-# ---------- Stage 2: Python runtime ----------
+# ---------- Python runtime ----------
 FROM python:3.11-slim-bookworm
 
 # Install system dependencies
@@ -55,7 +44,6 @@ RUN python -m pip install --upgrade pip setuptools wheel && \
     pip install --no-cache-dir -r requirements.txt
 
 # Copy the rest of the application source code
-COPY analytics ./analytics
 COPY assets ./assets
 COPY camera ./camera
 COPY core ./core
@@ -70,8 +58,6 @@ COPY README.md ./
 COPY go2rtc.yaml.example ./
 
 # Copy analytics build
-COPY --from=analytics-build /assets/analytics/ /app/assets/analytics/
-
 # Create runtime directories (no model/output copy at build time)
 RUN mkdir -p /models /output /ingest
 

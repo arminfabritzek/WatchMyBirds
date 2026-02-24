@@ -75,16 +75,24 @@ DEFAULTS = {
     "STREAM_WIDTH_OUTPUT_RESIZE": 640,
     "DAY_AND_NIGHT_CAPTURE": True,
     "DAY_AND_NIGHT_CAPTURE_LOCATION": "Berlin",
-    "CPU_LIMIT": 4,
+    "CPU_LIMIT": 0,
     "TELEGRAM_COOLDOWN": 3600.0,
     "EDIT_PASSWORD": "watchmybirds",
     "TELEGRAM_ENABLED": False,
-    "GALLERY_DISPLAY_THRESHOLD": 0.7,
+    "GALLERY_DISPLAY_THRESHOLD": 0.1,
     "TELEGRAM_BOT_TOKEN": "",
     "TELEGRAM_CHAT_ID": "",
+    "TELEGRAM_REPORT_TIME": "21:00",
     "EXIF_GPS_ENABLED": True,
+    "INBOX_REQUIRE_EXIF_DATETIME": True,
+    "INBOX_REQUIRE_EXIF_GPS": True,
     "MOTION_DETECTION_ENABLED": False,
     "MOTION_SENSITIVITY": 500,
+    "CAMERA_URL": "",
+    "STREAM_SOURCE_MODE": "auto",  # "auto", "relay", "direct"
+    "GO2RTC_STREAM_NAME": "camera",
+    "GO2RTC_API_BASE": "http://127.0.0.1:1984",
+    "GO2RTC_CONFIG_PATH": "./go2rtc.yaml",
 }
 
 RUNTIME_KEYS = {
@@ -101,12 +109,17 @@ RUNTIME_KEYS = {
     "TELEGRAM_ENABLED",
     "GALLERY_DISPLAY_THRESHOLD",
     "VIDEO_SOURCE",
+    "CAMERA_URL",
+    "STREAM_SOURCE_MODE",
     # NEW
     "DEBUG_MODE",
     "TELEGRAM_BOT_TOKEN",
     "TELEGRAM_CHAT_ID",
+    "TELEGRAM_REPORT_TIME",
     "LOCATION_DATA",
     "EXIF_GPS_ENABLED",
+    "INBOX_REQUIRE_EXIF_DATETIME",
+    "INBOX_REQUIRE_EXIF_GPS",
     "MOTION_DETECTION_ENABLED",
     "MOTION_SENSITIVITY",
 }
@@ -127,6 +140,16 @@ def _load_config():
         config["INGEST_DIR"] = os.getenv("INGEST_DIR")
     if os.getenv("VIDEO_SOURCE") is not None:
         config["VIDEO_SOURCE"] = os.getenv("VIDEO_SOURCE")
+    if os.getenv("CAMERA_URL") is not None:
+        config["CAMERA_URL"] = os.getenv("CAMERA_URL")
+    if os.getenv("STREAM_SOURCE_MODE") is not None:
+        config["STREAM_SOURCE_MODE"] = os.getenv("STREAM_SOURCE_MODE")
+    if os.getenv("GO2RTC_STREAM_NAME") is not None:
+        config["GO2RTC_STREAM_NAME"] = os.getenv("GO2RTC_STREAM_NAME")
+    if os.getenv("GO2RTC_API_BASE") is not None:
+        config["GO2RTC_API_BASE"] = os.getenv("GO2RTC_API_BASE")
+    if os.getenv("GO2RTC_CONFIG_PATH") is not None:
+        config["GO2RTC_CONFIG_PATH"] = os.getenv("GO2RTC_CONFIG_PATH")
 
     location_str = os.getenv("LOCATION_DATA")
     if location_str:
@@ -149,6 +172,8 @@ def _load_config():
         "STREAM_FPS",
         "STREAM_FPS_CAPTURE",
         "TELEGRAM_COOLDOWN",
+        "GALLERY_DISPLAY_THRESHOLD",
+        "MOTION_SENSITIVITY",
     ):
         if os.getenv(key) is not None:
             config[key] = os.getenv(key)
@@ -157,6 +182,12 @@ def _load_config():
         config["STREAM_WIDTH_OUTPUT_RESIZE"] = os.getenv("STREAM_WIDTH_OUTPUT_RESIZE")
     if os.getenv("DAY_AND_NIGHT_CAPTURE") is not None:
         config["DAY_AND_NIGHT_CAPTURE"] = os.getenv("DAY_AND_NIGHT_CAPTURE")
+    if os.getenv("MOTION_DETECTION_ENABLED") is not None:
+        config["MOTION_DETECTION_ENABLED"] = os.getenv("MOTION_DETECTION_ENABLED")
+    if os.getenv("EXIF_GPS_ENABLED") is not None:
+        config["EXIF_GPS_ENABLED"] = os.getenv("EXIF_GPS_ENABLED")
+    if os.getenv("TELEGRAM_ENABLED") is not None:
+        config["TELEGRAM_ENABLED"] = os.getenv("TELEGRAM_ENABLED")
     if os.getenv("CPU_LIMIT") is not None:
         config["CPU_LIMIT"] = os.getenv("CPU_LIMIT")
 
@@ -165,6 +196,8 @@ def _load_config():
         config["TELEGRAM_BOT_TOKEN"] = os.getenv("TELEGRAM_BOT_TOKEN")
     if os.getenv("TELEGRAM_CHAT_ID") is not None:
         config["TELEGRAM_CHAT_ID"] = os.getenv("TELEGRAM_CHAT_ID")
+    if os.getenv("TELEGRAM_REPORT_TIME") is not None:
+        config["TELEGRAM_REPORT_TIME"] = os.getenv("TELEGRAM_REPORT_TIME")
 
     # YAML runtime overrides
     yaml_settings = load_settings_yaml(str(config["OUTPUT_DIR"]))
@@ -192,6 +225,8 @@ def _load_config():
         except Exception:
             pass
 
+    # One-time migration: derive CAMERA_URL from legacy VIDEO_SOURCE when needed.
+    _migrate_camera_url(config)
     _coerce_config_types(config)
     # Load Persistent Secret Key (Late Binding to use populated config)
     # Allows sessions to survive restarts
@@ -240,6 +275,205 @@ def get_config():
     return _CONFIG
 
 
+def probe_go2rtc(
+    api_base: str = "http://127.0.0.1:1984",
+    timeout_sec: float = 2.0,
+) -> bool:
+    """Return True if go2rtc API responds.
+
+    Default timeout raised to 2.0s to accommodate Docker bridge-network
+    DNS resolution which can take 200-500ms on first lookup.
+    """
+    import logging
+    import urllib.request
+
+    url = f"{api_base.rstrip('/')}/api/streams"
+    try:
+        req = urllib.request.Request(url, method="GET")
+        with urllib.request.urlopen(req, timeout=timeout_sec) as resp:
+            return resp.status == 200
+    except Exception as exc:
+        logging.getLogger(__name__).debug("probe_go2rtc failed for %s: %s", url, exc)
+        return False
+
+
+def verify_go2rtc_stream_ready(
+    api_base: str = "http://127.0.0.1:1984",
+    stream_name: str = "camera",
+    timeout_sec: float = 2.0,
+) -> bool:
+    """
+    Return True when go2rtc has the stream configured.
+
+    This intentionally checks configuration presence, not active producers.
+    """
+    import json
+    import urllib.request
+
+    url = f"{api_base.rstrip('/')}/api/streams"
+    try:
+        req = urllib.request.Request(url, method="GET")
+        with urllib.request.urlopen(req, timeout=timeout_sec) as resp:
+            if resp.status != 200:
+                return False
+            data = json.loads(resp.read().decode("utf-8"))
+            return isinstance(data, dict) and stream_name in data
+    except Exception:
+        return False
+
+
+def resolve_effective_sources(config: dict) -> dict:
+    """
+    Resolve effective runtime source for detection streaming.
+
+    Returns keys: video_source, effective_mode, reason.
+    """
+    camera_url = config.get("CAMERA_URL", "")
+    mode = config.get("STREAM_SOURCE_MODE", "auto")
+    stream_name = config.get("GO2RTC_STREAM_NAME", "camera")
+    api_base = config.get("GO2RTC_API_BASE", "http://127.0.0.1:1984")
+
+    try:
+        from urllib.parse import urlparse
+
+        relay_host = urlparse(api_base).hostname or "127.0.0.1"
+    except Exception:
+        relay_host = "127.0.0.1"
+    relay_url = f"rtsp://{relay_host}:8554/{stream_name}"
+
+    if mode == "relay":
+        return {
+            "video_source": relay_url,
+            "effective_mode": "relay",
+            "reason": "mode=relay (forced)",
+        }
+    if mode == "direct":
+        return {
+            "video_source": camera_url,
+            "effective_mode": "direct",
+            "reason": "mode=direct (forced)",
+        }
+
+    # auto mode
+    if (
+        camera_url
+        and probe_go2rtc(api_base)
+        and verify_go2rtc_stream_ready(api_base, stream_name)
+    ):
+        return {
+            "video_source": relay_url,
+            "effective_mode": "relay",
+            "reason": "mode=auto, go2rtc healthy + stream configured -> relay",
+        }
+
+    if not camera_url:
+        reason = "mode=auto, CAMERA_URL empty -> direct (no source)"
+    elif not probe_go2rtc(api_base):
+        reason = "mode=auto, go2rtc unavailable -> direct"
+    else:
+        reason = "mode=auto, go2rtc stream not configured -> direct"
+
+    return {
+        "video_source": camera_url,
+        "effective_mode": "direct",
+        "reason": reason,
+    }
+
+
+def ensure_go2rtc_stream_synced(config: dict, *, with_retry: bool = False) -> None:
+    """Proactively sync CAMERA_URL into go2rtc before resolving stream sources.
+
+    This breaks the chicken-and-egg problem: ``resolve_effective_sources()``
+    needs go2rtc to have the stream configured, but the old post-resolve sync
+    only ran when the resolver had *already* chosen relay mode – which it
+    never did on a fresh image because go2rtc had an empty source list.
+
+    Safe to call at any point; silently returns when preconditions are not met
+    (no camera URL, mode forced to direct, go2rtc unreachable).
+
+    Args:
+        config: The application config dict (must already be loaded/coerced).
+        with_retry: If True, use retry logic for the reload call (boot path).
+    """
+    import logging
+
+    log = logging.getLogger(__name__)
+
+    camera_url = config.get("CAMERA_URL", "")
+    mode = config.get("STREAM_SOURCE_MODE", "auto")
+
+    # Nothing to sync if there is no camera or the user explicitly wants direct.
+    if not camera_url or mode == "direct":
+        return
+
+    api_base = config.get("GO2RTC_API_BASE", "http://127.0.0.1:1984")
+
+    # Only sync if go2rtc is actually reachable.
+    if not probe_go2rtc(api_base):
+        log.debug("ensure_go2rtc_stream_synced: go2rtc unreachable, skipping")
+        return
+
+    try:
+        from utils.go2rtc_config import (
+            reload_go2rtc_stream,
+            reload_go2rtc_stream_with_retry,
+            sync_camera_stream_source,
+        )
+
+        go2rtc_path = config.get("GO2RTC_CONFIG_PATH", "./go2rtc.yaml")
+        stream_name = config.get("GO2RTC_STREAM_NAME", "camera")
+
+        sync_ok = sync_camera_stream_source(go2rtc_path, camera_url, stream_name)
+        if not sync_ok:
+            log.warning(
+                "go2rtc pre-sync config write returned false (path=%s)",
+                go2rtc_path,
+            )
+
+        # Push the source into the running go2rtc process.
+        if with_retry:
+            reload_go2rtc_stream_with_retry(
+                api_base=api_base,
+                stream_name=stream_name,
+                camera_url=camera_url,
+            )
+        else:
+            reload_go2rtc_stream(
+                api_base=api_base,
+                stream_name=stream_name,
+                camera_url=camera_url,
+            )
+    except Exception as exc:
+        log.warning("go2rtc pre-sync failed: %s", exc)
+
+
+def _migrate_camera_url(config: dict) -> None:
+    """Derive CAMERA_URL from legacy VIDEO_SOURCE when CAMERA_URL is empty."""
+    camera_url = config.get("CAMERA_URL", "")
+    if camera_url:
+        return
+
+    video_source = str(config.get("VIDEO_SOURCE", "0")).strip()
+    if not video_source or video_source == "0":
+        return
+
+    # Legacy relay source; try to read real camera source from go2rtc config.
+    if "127.0.0.1:8554" in video_source or "localhost:8554" in video_source:
+        try:
+            from utils.go2rtc_config import read_camera_stream_source
+
+            go2rtc_path = config.get("GO2RTC_CONFIG_PATH", "./go2rtc.yaml")
+            stream_name = config.get("GO2RTC_STREAM_NAME", "camera")
+            real_url = read_camera_stream_source(go2rtc_path, stream_name)
+            if real_url:
+                config["CAMERA_URL"] = real_url
+        except Exception:
+            pass
+        return
+
+    config["CAMERA_URL"] = video_source
+
+
 def _coerce_config_types(config):
     """Validates and enforces expected types for core keys."""
     # Booleans
@@ -248,6 +482,9 @@ def _coerce_config_types(config):
         "DAY_AND_NIGHT_CAPTURE",
         "TELEGRAM_ENABLED",
         "EXIF_GPS_ENABLED",
+        "INBOX_REQUIRE_EXIF_DATETIME",
+        "INBOX_REQUIRE_EXIF_GPS",
+        "MOTION_DETECTION_ENABLED",
     ):
         if key in config:
             config[key] = _coerce_bool(config.get(key))
@@ -289,24 +526,33 @@ def _coerce_config_types(config):
     except Exception:
         config["STREAM_FPS_CAPTURE"] = 5.0
 
-    # CPU_LIMIT should be positive int; fallback to 1
+    # CPU_LIMIT: 0 = disabled (no cpu pinning), positive int = limit cores
     try:
-        cpu_limit = int(float(config.get("CPU_LIMIT", 1)))
-        config["CPU_LIMIT"] = cpu_limit if cpu_limit > 0 else 1
+        cpu_limit = int(float(config.get("CPU_LIMIT", 0)))
+        config["CPU_LIMIT"] = max(0, cpu_limit)
     except Exception:
-        config["CPU_LIMIT"] = 1
+        config["CPU_LIMIT"] = 0
 
     # Numeric values
     for key in (
         "CONFIDENCE_THRESHOLD_DETECTION",
         "SAVE_THRESHOLD",
         "CLASSIFIER_CONFIDENCE_THRESHOLD",
+        "GALLERY_DISPLAY_THRESHOLD",
     ):
         try:
-            val = float(config.get(key, 0.55))
+            val = float(config.get(key, DEFAULTS.get(key, 0.55)))
             config[key] = max(0.0, min(1.0, val))
         except Exception:
-            config[key] = 0.55
+            config[key] = DEFAULTS.get(key, 0.55)
+
+    # Integer values
+    for key in ("MOTION_SENSITIVITY",):
+        try:
+            val = int(float(config.get(key, DEFAULTS.get(key, 500))))
+            config[key] = max(1, val)
+        except Exception:
+            config[key] = DEFAULTS.get(key, 500)
 
     for key in ("DETECTION_INTERVAL_SECONDS", "TELEGRAM_COOLDOWN"):
         try:
@@ -314,6 +560,23 @@ def _coerce_config_types(config):
             config[key] = val
         except Exception:
             config[key] = DEFAULTS.get(key, 1.0)
+
+    # TELEGRAM_REPORT_TIME: strict HH:MM 24h format.
+    report_time = config.get(
+        "TELEGRAM_REPORT_TIME", DEFAULTS.get("TELEGRAM_REPORT_TIME", "21:00")
+    )
+    if not isinstance(report_time, str):
+        report_time = str(report_time)
+    report_time = report_time.strip()
+    try:
+        hh, mm = report_time.split(":")
+        if not (len(hh) == 2 and len(mm) == 2 and hh.isdigit() and mm.isdigit()):
+            raise ValueError("invalid format")
+        if not (0 <= int(hh) <= 23 and 0 <= int(mm) <= 59):
+            raise ValueError("out of range")
+        config["TELEGRAM_REPORT_TIME"] = f"{int(hh):02d}:{int(mm):02d}"
+    except Exception:
+        config["TELEGRAM_REPORT_TIME"] = DEFAULTS.get("TELEGRAM_REPORT_TIME", "21:00")
 
     # Derive MAX_FPS_DETECTION
     interval = config.get("DETECTION_INTERVAL_SECONDS", 2.0)
@@ -327,6 +590,41 @@ def _coerce_config_types(config):
         )
     except Exception:
         config["STREAM_WIDTH_OUTPUT_RESIZE"] = 640
+
+    # Stream resolver keys
+    camera_url = config.get("CAMERA_URL", "")
+    if camera_url is None:
+        camera_url = ""
+    elif not isinstance(camera_url, str):
+        camera_url = str(camera_url)
+    camera_url = camera_url.strip()
+    if camera_url.lower() in ("none", "null"):
+        camera_url = ""
+    config["CAMERA_URL"] = camera_url
+
+    mode = config.get("STREAM_SOURCE_MODE", "auto")
+    if isinstance(mode, str) and mode.strip().lower() in ("auto", "relay", "direct"):
+        config["STREAM_SOURCE_MODE"] = mode.strip().lower()
+    else:
+        config["STREAM_SOURCE_MODE"] = "auto"
+
+    stream_name = config.get("GO2RTC_STREAM_NAME", "camera")
+    if isinstance(stream_name, str) and stream_name.strip():
+        config["GO2RTC_STREAM_NAME"] = stream_name.strip()
+    else:
+        config["GO2RTC_STREAM_NAME"] = "camera"
+
+    api_base = config.get("GO2RTC_API_BASE", "http://127.0.0.1:1984")
+    if isinstance(api_base, str) and api_base.strip():
+        config["GO2RTC_API_BASE"] = api_base.strip().rstrip("/")
+    else:
+        config["GO2RTC_API_BASE"] = "http://127.0.0.1:1984"
+
+    go2rtc_path = config.get("GO2RTC_CONFIG_PATH", "./go2rtc.yaml")
+    if isinstance(go2rtc_path, str) and go2rtc_path.strip():
+        config["GO2RTC_CONFIG_PATH"] = go2rtc_path.strip()
+    else:
+        config["GO2RTC_CONFIG_PATH"] = "./go2rtc.yaml"
 
 
 def _coerce_bool(value):
@@ -351,13 +649,56 @@ def get_settings_payload():
             source = "yaml"
         elif key in env_overrides:
             source = "env"
+        is_internal = key == "VIDEO_SOURCE"
         payload[key] = {
             "value": cfg.get(key),
             "default": default,
             "source": source,
-            "editable": key in RUNTIME_KEYS,
+            "editable": key in RUNTIME_KEYS and not is_internal,
             "restart_required": key in BOOT_KEYS,
+            "internal": is_internal,
         }
+
+    runtime_video = cfg.get("VIDEO_SOURCE", "")
+    runtime_mode = (
+        "relay"
+        if isinstance(runtime_video, str) and ":8554/" in runtime_video
+        else "direct"
+    )
+    payload["STREAM_SOURCE_RUNTIME_VIDEO"] = {
+        "value": runtime_video,
+        "default": "",
+        "source": "runtime",
+        "editable": False,
+        "restart_required": False,
+        "internal": True,
+    }
+    payload["STREAM_SOURCE_RUNTIME_MODE"] = {
+        "value": runtime_mode,
+        "default": "direct",
+        "source": "runtime",
+        "editable": False,
+        "restart_required": False,
+        "internal": True,
+    }
+
+    resolved = resolve_effective_sources(cfg)
+    payload["STREAM_SOURCE_EFFECTIVE_MODE"] = {
+        "value": resolved.get("effective_mode", "direct"),
+        "default": "direct",
+        "source": "derived",
+        "editable": False,
+        "restart_required": False,
+        "internal": True,
+    }
+    payload["STREAM_SOURCE_REASON"] = {
+        "value": resolved.get("reason", ""),
+        "default": "",
+        "source": "derived",
+        "editable": False,
+        "restart_required": False,
+        "internal": True,
+    }
     return payload
 
 
@@ -397,7 +738,15 @@ def update_runtime_settings(updates):
 
 
 def _validate_value(key, value):
-    if key in ("DAY_AND_NIGHT_CAPTURE", "TELEGRAM_ENABLED"):
+    if key in (
+        "DAY_AND_NIGHT_CAPTURE",
+        "TELEGRAM_ENABLED",
+        "INBOX_REQUIRE_EXIF_DATETIME",
+        "INBOX_REQUIRE_EXIF_GPS",
+        "MOTION_DETECTION_ENABLED",
+        "DEBUG_MODE",
+        "EXIF_GPS_ENABLED",
+    ):
         return True, _coerce_bool(value)
     if key in (
         "CONFIDENCE_THRESHOLD_DETECTION",
@@ -450,13 +799,22 @@ def _validate_value(key, value):
             return True, value
         return False, None
 
-    if key == "DEBUG_MODE":
-        return True, _coerce_bool(value)
-
     if key in ("TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID"):
         if isinstance(value, str):
             return True, value.strip()
         return True, ""  # Empty string fallback (disables feature)
+
+    if key == "TELEGRAM_REPORT_TIME":
+        if not isinstance(value, str):
+            return False, None
+        cleaned = value.strip()
+        if not cleaned:
+            return True, DEFAULTS.get("TELEGRAM_REPORT_TIME", "21:00")
+        import re
+
+        if re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", cleaned):
+            return True, cleaned
+        return False, None
 
     if key == "LOCATION_DATA":
         # Handle "lat, lon" string or dict
@@ -480,18 +838,31 @@ def _validate_value(key, value):
                 pass
         return False, None
 
-    if key == "EXIF_GPS_ENABLED":
-        return True, _coerce_bool(value)
-
-    if key == "MOTION_DETECTION_ENABLED":
-        return True, _coerce_bool(value)
-
     if key == "MOTION_SENSITIVITY":
         try:
             val = int(float(value))
             return True, max(1, val)
         except Exception:
             return False, None
+
+    if key == "CAMERA_URL":
+        if isinstance(value, str):
+            cleaned = value.strip()
+            if cleaned.lower() in ("none", "null"):
+                cleaned = ""
+            return True, cleaned
+        if value is None:
+            return True, ""
+        return True, ""
+
+    if key == "STREAM_SOURCE_MODE":
+        if isinstance(value, str) and value.strip().lower() in (
+            "auto",
+            "relay",
+            "direct",
+        ):
+            return True, value.strip().lower()
+        return False, None
 
     return False, None
 

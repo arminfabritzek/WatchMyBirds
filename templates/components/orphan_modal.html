@@ -8,7 +8,7 @@ orphan (dict): The image object containing:
 - filename, formatted_date
 - thumb_url, full_url
 - review_reason, reason_label
-- max_od_conf
+- max_score
 #}
 <div class="modal fade gallery-modal wm-modal" id="modal-review-{{ orphan.filename|replace('.', '_') }}" tabindex="-1"
     aria-hidden="true" data-modal-group="review" data-image-path="{{ orphan.full_url }}">
@@ -29,9 +29,18 @@ orphan (dict): The image object containing:
 
             <div class="wm-modal__body">
                 <div class="wm-modal__image">
-                    <div class="modal-image-viewer wm-image-viewer">
+                    {% set has_bbox = orphan.review_reason == 'low_score' and orphan.bbox_w and orphan.bbox_h and orphan.bbox_w > 0 and orphan.bbox_h > 0 %}
+                    <div class="modal-image-viewer wm-image-viewer" {% if has_bbox %}
+                        data-bbox-x="{{ orphan.bbox_x }}"
+                        data-bbox-y="{{ orphan.bbox_y }}"
+                        data-bbox-w="{{ orphan.bbox_w }}"
+                        data-bbox-h="{{ orphan.bbox_h }}"
+                        data-bbox-name="Low score candidate" {% endif %}>
                         <img class="wm-image-viewer__img" src="{{ orphan.full_url }}" alt="{{ orphan.filename }}"
-                            onerror="this.src='{{ orphan.thumb_url }}';">
+                            onerror="this.src='{{ orphan.thumb_url }}'; this.closest('.wm-image-viewer').classList.add('wm-image-viewer--fallback');"
+                            onload="if(typeof initBboxOverlay==='function')initBboxOverlay(this);if(typeof initReviewDefaultBboxes==='function')initReviewDefaultBboxes(this);">
+                        <canvas class="wm-image-viewer__overlay bbox-overlay"></canvas>
+                        <span class="wm-image-viewer__fallback-badge">Preview only</span>
                     </div>
                 </div>
             </div>
@@ -39,18 +48,27 @@ orphan (dict): The image object containing:
             <div class="wm-modal__action">
                 <div class="modal-action-bar">
                     <div class="modal-action-bar__group">
+                        {% if orphan.review_reason == 'orphan' %}
+                        <button type="button" class="btn btn--info btn--sm"
+                            id="btn-analyze-modal-{{ orphan.filename|replace('.', '_') }}"
+                            onclick="analyzeAction(event, '{{ orphan.filename }}')">
+                            <i class="bi bi-search"></i> Scan
+                        </button>
+                        {% endif %}
+                        {% if orphan.review_reason != 'orphan' %}
                         <button type="button" class="btn btn--primary btn--sm"
                             onclick="modalAction('{{ orphan.filename }}', 'confirm')">✓ Bird</button>
+                        {% endif %}
                         <button type="button" class="btn btn--secondary btn--sm"
                             onclick="modalAction('{{ orphan.filename }}', 'skip')">Skip</button>
                         <button type="button" class="btn btn--danger btn--sm"
-                            onclick="modalAction('{{ orphan.filename }}', 'no_bird')">✗ No Bird</button>
+                            onclick="modalAction('{{ orphan.filename }}', 'no_bird')">✗ Move to Trash</button>
                     </div>
                     <div class="modal-action-bar__group">
                         <button type="button" class="btn btn--secondary btn--sm prev-btn"
-                            onclick="navigateModal(this, 'prev')">←</button>
+                            onclick="navigateModal(this, 'prev')">← Prev</button>
                         <button type="button" class="btn btn--secondary btn--sm next-btn"
-                            onclick="navigateModal(this, 'next')">→</button>
+                            onclick="navigateModal(this, 'next')">Next →</button>
                         <button type="button" class="btn btn--primary btn--sm" data-bs-dismiss="modal">Close</button>
                     </div>
                 </div>

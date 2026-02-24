@@ -141,6 +141,20 @@ class DetectionService(DetectionInterface):
         """Returns the model identifier."""
         return self._model_id
 
+    def exhaustive_detect(self, frame: np.ndarray) -> list:
+        """
+        Performs exhaustive detection on a frame (tiling + low threshold).
+        Returns a list of detections (dicts).
+        """
+        if not self._ensure_initialized():
+            return []
+
+        try:
+            return self._detector.exhaustive_detect(frame)
+        except Exception as e:
+            logger.error(f"Exhaustive detection error: {e}")
+            return []
+
     def is_ready(self) -> bool:
         """Checks if the detector is ready for inference."""
         return self._initialized and self._detector is not None

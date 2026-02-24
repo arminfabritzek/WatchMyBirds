@@ -9,11 +9,11 @@ from typing import Any
 
 from config import get_config
 from utils.db import (
+    closing_connection,
     fetch_all_detection_times,
     fetch_analytics_summary,
     fetch_day_count,
     fetch_species_timestamps,
-    get_connection,
 )
 
 logger = logging.getLogger(__name__)
@@ -31,7 +31,7 @@ def get_analytics_summary() -> dict[str, Any]:
     Returns:
         Dictionary with analytics summary data
     """
-    with get_connection() as conn:
+    with closing_connection() as conn:
         return fetch_analytics_summary(conn)
 
 
@@ -45,7 +45,7 @@ def get_detection_times(date_iso: str | None = None) -> list[str]:
     Returns:
         List of timestamp strings
     """
-    with get_connection() as conn:
+    with closing_connection() as conn:
         return fetch_all_detection_times(conn, date_iso)
 
 
@@ -59,7 +59,7 @@ def get_species_timestamps(species: str) -> list[dict]:
     Returns:
         List of timestamp dictionaries
     """
-    with get_connection() as conn:
+    with closing_connection() as conn:
         rows = fetch_species_timestamps(conn, species)
         return [dict(row) for row in rows]
 
@@ -71,7 +71,7 @@ def get_day_count() -> int:
     Returns:
         Count of unique detection days
     """
-    with get_connection() as conn:
+    with closing_connection() as conn:
         return fetch_day_count(conn)
 
 

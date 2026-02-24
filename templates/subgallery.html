@@ -15,10 +15,14 @@
         {% include 'partials/filter_bar.html' %}
     </div>
     <div class="page-control-bar__meta">
-        Page {{ page }} of {{ total_pages }} ({{ total_items }} items)
+        Page {{ page }} of {{ total_pages }} ({{ total_items }} visible{% if total_items_unfiltered > total_items %} /
+        {{ total_items_unfiltered }} total{% else %} items{% endif %})
     </div>
     <div class="page-control-bar__right">
-        <a href="/edit/{{ date }}" class="btn btn--secondary">Edit</a>
+        {% include 'partials/thumb_view_toggle.html' %}
+        <button type="button" class="btn btn--secondary inline-edit-toggle" onclick="toggleInlineEdit(this)">✏️
+            Edit</button>
+        <a href="/edit/{{ date }}" class="btn btn--secondary">Batch Edit</a>
         <a href="/gallery" class="btn btn--secondary">← Gallery</a>
     </div>
 </nav>
@@ -29,14 +33,15 @@
     <h2 class="section__title">Species of the Day</h2>
     <div class="gallery-grid">
         {% for det in species_of_day %}
-        <div class="wm-tile" data-detection-id="{{ det.detection_id }}">
-            <button type="button" class="wm-tile__button" data-bs-toggle="modal"
-                data-bs-target="#modal-species-{{ det.detection_id }}">
-
-                <div class="wm-tile__media">
-                    <img class="wm-tile__image" src="{{ det.display_url }}" alt="{{ det.common_name }}">
-                </div>
-            </button>
+        <div class="wm-tile fade-in-item" data-detection-id="{{ det.detection_id }}">
+            <div class="wm-tile__media">
+                <button type="button" class="wm-tile__button" data-bs-toggle="modal"
+                    data-bs-target="#modal-species-{{ det.detection_id }}" style="height:100%; display:block;">
+                    <img class="wm-tile__image" loading="lazy" src="{{ det.display_url }}" alt="{{ det.common_name }}"
+                        data-thumb-src="{{ det.display_url }}" data-full-src="{{ det.full_url }}">
+                </button>
+                {% include 'partials/rating_badge.html' %}
+            </div>
 
             <div class="wm-tile__body">
                 <span class="wm-tile__name">{{ det.common_name }}</span>
@@ -56,14 +61,15 @@
     <h2 class="section__title">All Observations</h2>
     <div class="gallery-grid" id="subgallery-grid">
         {% for det in detections %}
-        <div class="wm-tile" id="detection-{{ det.detection_id }}" data-detection-id="{{ det.detection_id }}">
-            <button type="button" class="wm-tile__button" data-bs-toggle="modal"
-                data-bs-target="#modal-main-{{ det.detection_id }}">
-
-                <div class="wm-tile__media">
-                    <img class="wm-tile__image" src="{{ det.display_url }}" alt="{{ det.common_name }}">
-                </div>
-            </button>
+        <div class="wm-tile fade-in-item" id="detection-{{ det.detection_id }}" data-detection-id="{{ det.detection_id }}">
+            <div class="wm-tile__media">
+                <button type="button" class="wm-tile__button" data-bs-toggle="modal"
+                    data-bs-target="#modal-main-{{ det.detection_id }}" style="height:100%; display:block;">
+                    <img class="wm-tile__image" loading="lazy" src="{{ det.display_url }}" alt="{{ det.common_name }}"
+                        data-thumb-src="{{ det.display_url }}" data-full-src="{{ det.full_url }}">
+                </button>
+                {% include 'partials/rating_badge.html' %}
+            </div>
 
             <div class="wm-tile__body">
                 <span class="wm-tile__name">{{ det.common_name }}</span>
@@ -104,6 +110,8 @@
     </ul>
 </nav>
 {% endif %}
+
+{% include 'partials/inline_edit.html' %}
 {% endblock %}
 
 {% block modals %}
@@ -121,7 +129,7 @@
 {% endblock %}
 
 {% block scripts %}
-<script src="/assets/js/gallery_utils.js"></script>
+<script src="/assets/js/gallery_utils.js?v=test_v3"></script>
 <script>
     // Scroll to detection if navigated via anchor hash
     document.addEventListener('DOMContentLoaded', function () {

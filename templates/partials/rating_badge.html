@@ -1,0 +1,9 @@
+{#
+Favorite Badge - Interactive ⭐ marker on grid tiles.
+Usage: {% include 'partials/rating_badge.html' %}
+Requires: det.is_favorite in scope.
+#}
+<div role="button" class="wm-tile__fav-badge {% if det.is_favorite %}wm-tile__fav-badge--active{% endif %}"
+    title="Toggle Cover Image (Favorite)">
+    {% if det.is_favorite %}⭐{% else %}☆{% endif %}
+</div>

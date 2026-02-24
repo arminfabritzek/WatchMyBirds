@@ -9,10 +9,10 @@ from pathlib import Path
 from typing import Any
 
 from utils.db import (
+    closing_connection,
     fetch_review_queue_count,
     fetch_trash_count,
     fetch_trash_items,
-    get_connection,
 )
 from utils.db import (
     fetch_review_queue_images as db_fetch_review_queue_images,
@@ -47,7 +47,7 @@ def reject_detections(detection_ids: list[int]) -> bool:
     Returns:
         True on success
     """
-    with get_connection() as conn:
+    with closing_connection() as conn:
         db_reject_detections(conn, detection_ids)
     return True
 
@@ -62,7 +62,7 @@ def restore_detections(detection_ids: list[int]) -> bool:
     Returns:
         True on success
     """
-    with get_connection() as conn:
+    with closing_connection() as conn:
         db_restore_detections(conn, detection_ids)
     return True
 
@@ -94,7 +94,7 @@ def update_review_status(
     Returns:
         True on success
     """
-    with get_connection() as conn:
+    with closing_connection() as conn:
         db_update_review_status(conn, detection_id, save_threshold, reviewed)
     return True
 
@@ -106,7 +106,7 @@ def get_trash_items() -> list[dict]:
     Returns:
         List of trash item dictionaries
     """
-    with get_connection() as conn:
+    with closing_connection() as conn:
         rows = fetch_trash_items(conn)
         return [dict(row) for row in rows]
 
@@ -118,22 +118,23 @@ def get_trash_count() -> int:
     Returns:
         Count of trash items
     """
-    with get_connection() as conn:
+    with closing_connection() as conn:
         return fetch_trash_count(conn)
 
 
-def get_review_queue_count(save_threshold: float) -> int:
+def get_review_queue_count(gallery_threshold: float) -> int:
     """
     Returns the number of items in the review queue.
 
     Args:
-        save_threshold: Minimum score threshold for review queue
+        gallery_threshold: Minimum score threshold used for gallery display.
+            The review queue includes images below this threshold (plus orphans).
 
     Returns:
         Count of items needing review
     """
-    with get_connection() as conn:
-        return fetch_review_queue_count(conn, save_threshold)
+    with closing_connection() as conn:
+        return fetch_review_queue_count(conn, gallery_threshold)
 
 
 # --- Hard Delete Operations (with connection) ---
@@ -174,7 +175,7 @@ def hard_delete_images(
     Returns:
         Dictionary with deletion results
     """
-    with get_connection() as conn:
+    with closing_connection() as conn:
         return gc_hard_delete_images(conn, filenames=filenames, delete_all=delete_all)
 
 
@@ -200,21 +201,22 @@ def hard_delete_images_with_conn(
 # --- Review Queue ---
 
 
-def get_review_queue_images(output_dir: str, save_threshold: float) -> list[dict]:
+def get_review_queue_images(output_dir: str, gallery_threshold: float) -> list[dict]:
     """
     Get images for the review queue with path resolution.
 
     Args:
         output_dir: Base output directory
-        save_threshold: Minimum confidence threshold
+        gallery_threshold: Minimum score threshold used for gallery display.
+            The review queue includes images below this threshold (plus orphans).
 
     Returns:
         List of image dictionaries with resolved paths
     """
     get_path_manager(output_dir)
 
-    with get_connection() as conn:
-        rows = db_fetch_review_queue_images(conn, save_threshold)
+    with closing_connection() as conn:
+        rows = db_fetch_review_queue_images(conn, gallery_threshold)
 
     images = []
     for row in rows:

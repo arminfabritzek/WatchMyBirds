@@ -15,10 +15,14 @@
 {% if days %}
 <div class="date-grid">
     {% for day in days %}
-    <a href="/gallery/{{ day.date }}" class="date-card">
+    <a href="/gallery/{{ day.date }}" class="date-card fade-in-item">
         <div class="date-card__image">
-            <img src="{{ day.cover_path }}" alt="{{ day.date }}">
+            <img loading="lazy" src="{{ day.cover_path }}" alt="{{ day.date }}">
             <span class="date-card__count">{{ day.count }}</span>
+            {% if day.cover_detection_id %}
+            <span class="cover-jump-badge" title="Zum Coverbild springen"
+                onclick="event.preventDefault(); event.stopPropagation(); window.location.href='/gallery/{{ day.date }}#detection-{{ day.cover_detection_id }}';">📌</span>
+            {% endif %}
         </div>
         <div class="date-card__label">{{ day.date }}</div>
     </a>

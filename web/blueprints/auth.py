@@ -9,17 +9,11 @@ from functools import wraps
 
 from flask import Blueprint, redirect, render_template, request, session, url_for
 
-from config import get_config
+from web.services import auth_service
 
 logger = logging.getLogger(__name__)
 
 auth_bp = Blueprint("auth", __name__)
-
-
-def get_edit_password():
-    """Gets the current EDIT_PASSWORD from config."""
-    cfg = get_config()
-    return cfg.get("EDIT_PASSWORD", "")
 
 
 def login_required(f):
@@ -38,14 +32,13 @@ def login_required(f):
 def login():
     """Login page and authentication handler."""
     error = None
-    next_url = request.args.get("next", "/gallery")
+    next_url = auth_service.get_redirect_target(request.args.get("next"))
 
     if request.method == "POST":
         password = request.form.get("password", "")
-        next_url = request.form.get("next", "/gallery")
-        edit_password = get_edit_password()
+        next_url = auth_service.get_redirect_target(request.form.get("next"))
 
-        if password == (edit_password or ""):
+        if auth_service.authenticate(password):
             session["authenticated"] = True
             logger.info("User authenticated successfully.")
             return redirect(next_url)

@@ -20,6 +20,7 @@ sibling_count (int): Total number of detections on this image
             data-bbox-x="{{ sib.bbox_x }}" data-bbox-y="{{ sib.bbox_y }}" data-bbox-w="{{ sib.bbox_w }}"
             data-bbox-h="{{ sib.bbox_h }}" data-bbox-name="{{ sib.common_name }}" onmouseenter="showHoverBbox(this)"
             onmouseleave="hideHoverBbox(this)" style="
+                position: relative;
                 min-width: 160px; 
                 max-width: 200px; 
                 padding: 0.5rem; 
@@ -38,6 +39,16 @@ sibling_count (int): Total number of detections on this image
                 {{ "%.0f"|format(sib.od_confidence * 100) }}%
                 {% if sib.cls_class_name %} / {{ "%.0f"|format(sib.cls_confidence * 100) }}%{% endif %}
             </div>
+            <button type="button"
+                onclick="relabelDetection(event, {{ sib.detection_id }}, '{{ sib.cls_class_name or sib.od_class_name }}')"
+                title="Relabel species"
+                style="position:absolute;top:4px;right:24px;background:none;border:none;cursor:pointer;font-size:0.7rem;opacity:0.4;padding:2px 4px;border-radius:3px;transition:opacity 0.15s;"
+                onmouseenter="this.style.opacity='1';this.style.background='rgba(167,139,250,0.15)'"
+                onmouseleave="this.style.opacity='0.4';this.style.background='none'">🏷️</button>
+            <button type="button" onclick="deleteDetection(event, {{ sib.detection_id }})" title="Delete this detection"
+                style="position:absolute;top:4px;right:4px;background:none;border:none;cursor:pointer;font-size:0.7rem;opacity:0.4;padding:2px 4px;border-radius:3px;transition:opacity 0.15s;"
+                onmouseenter="this.style.opacity='1';this.style.background='rgba(220,53,69,0.15)'"
+                onmouseleave="this.style.opacity='0.4';this.style.background='none'">🗑</button>
             <div style="clear: both;"></div>
         </div>
         {% endfor %}
@@ -50,6 +61,7 @@ sibling_count (int): Total number of detections on this image
             data-bbox-x="{{ det.bbox_x }}" data-bbox-y="{{ det.bbox_y }}" data-bbox-w="{{ det.bbox_w }}"
             data-bbox-h="{{ det.bbox_h }}" data-bbox-name="{{ det.common_name }}" onmouseenter="showHoverBbox(this)"
             onmouseleave="hideHoverBbox(this)" style="
+                position: relative;
                 min-width: 160px; 
                 max-width: 200px; 
                 padding: 0.5rem; 
@@ -68,9 +80,20 @@ sibling_count (int): Total number of detections on this image
                 {{ "%.0f"|format(det.od_confidence * 100) }}%
                 {% if det.cls_class_name %} / {{ "%.0f"|format(det.cls_confidence * 100) }}%{% endif %}
             </div>
+            <button type="button"
+                onclick="relabelDetection(event, {{ det.detection_id }}, '{{ det.cls_class_name or det.od_class_name }}')"
+                title="Relabel species"
+                style="position:absolute;top:4px;right:24px;background:none;border:none;cursor:pointer;font-size:0.7rem;opacity:0.4;padding:2px 4px;border-radius:3px;transition:opacity 0.15s;"
+                onmouseenter="this.style.opacity='1';this.style.background='rgba(167,139,250,0.15)'"
+                onmouseleave="this.style.opacity='0.4';this.style.background='none'">🏷️</button>
+            <button type="button" onclick="deleteDetection(event, {{ det.detection_id }})" title="Delete this detection"
+                style="position:absolute;top:4px;right:4px;background:none;border:none;cursor:pointer;font-size:0.7rem;opacity:0.4;padding:2px 4px;border-radius:3px;transition:opacity 0.15s;"
+                onmouseenter="this.style.opacity='1';this.style.background='rgba(220,53,69,0.15)'"
+                onmouseleave="this.style.opacity='0.4';this.style.background='none'">🗑</button>
             <div style="clear: both;"></div>
         </div>
     </div>
     {% endif %}
+
 </div>
 {% endmacro %}

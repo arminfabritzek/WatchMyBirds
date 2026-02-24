@@ -61,6 +61,18 @@ black .
 - Prefer clear, scoped commit messages (e.g., `fix: handle missing wlan0` or `docs: clarify first-boot AP flow`).
 - PRs should include a concise summary, affected areas (e.g., `rpi/`, `web/`, `detectors/`), and any operational impacts.
 
+## Cross-Impact Requirement (Mandatory)
+When a change affects cross-cutting behavior (ports, firewall, Docker networking, service names, env vars, API contracts, or paths), you must either:
+1. Apply all related updates in the same change.
+2. Or document delegated follow-up work in `docs/IMPACT_LEDGER.md` before closing the task.
+
+Minimum impact checklist for networking/streaming changes:
+- Runtime config (`go2rtc.yaml`, app config, env vars)
+- Container/runtime wiring (`docker-compose.yml`, `docker-compose.example.yml` if relevant)
+- Appliance security/provisioning (`rpi/first-boot/first-boot.sh`, hardening scripts)
+- Build/release automation (`.github/workflows/*` when behavior changes image/runtime assumptions)
+- User/developer docs (`docs/streaming.md`, `docs/CONFIGURATION.md`, `README.md` as needed)
+
 ## Security & Configuration Tips
 - Change the default UI password (`EDIT_PASSWORD`) after first login.
 - RPi first‑boot AP mode only runs once; ensure `rpi/first-boot/first-boot.sh` and `rpi/systemd/wmb-first-boot.service` are in the image.
@@ -70,3 +82,10 @@ black .
 - Invariants are documented in `ARCHITECTURE.md` and `INVARIANTS.md`.
 - Originals are immutable; derivatives are disposable; DB is the metadata authority.
 - Storage changes must update `utils/path_manager.PathManager` and review deletion logic (`utils/file_gc.py`).
+
+## Agent Workflow Layout
+- Root governance for AI agents is defined in `AGENTS.md`.
+- Always-on agent rules are in `.agent/rules/*.md`.
+- Executable local workflows are in `.agent/workflows/*.md` and should include frontmatter with `description`.
+- Nested `*/AGENTS.md` files should contain only folder-specific deltas and must not duplicate root-level global rules.
+- For faster context loading, prefer the `/repo_context_bootstrap` workflow at task start.

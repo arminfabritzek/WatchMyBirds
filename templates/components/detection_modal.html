@@ -22,10 +22,19 @@ group_id (str): Modal group for navigation isolation
 
             <div class="modal-header wm-modal__header">
                 <div class="wm-modal__title">
-                    <span class="wm-modal__title-text">{{ det.common_name }}</span>
+                    {% set wiki_url = wikipedia_species_url(det.common_name, det.cls_class_name or det.od_class_name) %}
+                    {% if wiki_url %}
+                    <a class="wm-modal__title-text" href="{{ wiki_url }}" target="_blank"
+                        rel="noopener noreferrer nofollow external"
+                        title="Open Wikipedia (new tab): {{ det.common_name }}"
+                        aria-label="Open Wikipedia (new tab): {{ det.common_name }}"><em>{{ det.common_name }}</em>
+                        <span aria-hidden="true">↗</span></a>
+                    {% else %}
+                    <span class="wm-modal__title-text"><em>{{ det.common_name }}</em></span>
+                    {% endif %}
                     <span class="wm-modal__title-sub">{{ det.formatted_date }} {{ det.formatted_time }}{% if
-                        det.cls_class_name or det.od_class_name %} · {{ (det.cls_class_name or det.od_class_name) |
-                        replace('_', ' ') }}{% endif %}</span>
+                        det.cls_class_name or det.od_class_name %} · <em>{{ (det.cls_class_name or det.od_class_name)
+                            | replace('_', ' ') }}</em>{% endif %}</span>
                 </div>
                 <button type="button" class="btn-close wm-modal__close" data-bs-dismiss="modal"></button>
             </div>
@@ -36,6 +45,7 @@ group_id (str): Modal group for navigation isolation
                     image_url=det.full_path,
                     image_alt=det.common_name,
                     detection_id=det.detection_id,
+                    bbox={'x': det.bbox_x, 'y': det.bbox_y, 'w': det.bbox_w, 'h': det.bbox_h},
                     dismissable=true
                     ) }}
                 </div>
@@ -65,7 +75,8 @@ group_id (str): Modal group for navigation isolation
                 show_bbox_toggle=true,
                 show_trash=true,
                 show_download=true,
-                gallery_date=det.gallery_date
+                gallery_date=det.gallery_date,
+                is_favorite=det.is_favorite
                 ) }}
             </div>
 

@@ -1,2 +1,41 @@
 WatchMyBirds
 Copyright 2026 Armin Fabritzek
+
+This product includes software and data developed by third parties.
+Their respective licenses and terms of use apply independently of the
+Apache-2.0 license that covers this project.
+
+
+Third-Party Components
+======================
+
+Detection & Classification Models
+----------------------------------
+WatchMyBirds downloads AI models at runtime for object detection and species
+classification. These models are NOT part of this project and are licensed
+separately by their respective authors. Refer to the upstream model
+repositories for applicable license terms before redistribution.
+
+
+Data Sources
+------------
+  - Wikipedia — Species descriptions and images are retrieved at runtime.
+    Text and media are available under the Creative Commons
+    Attribution-ShareAlike 4.0 International (CC BY-SA 4.0) license.
+    See: https://creativecommons.org/licenses/by-sa/4.0/
+
+  - Open-Meteo — Weather data is provided by the Open-Meteo API.
+    Data is available under the Creative Commons Attribution 4.0
+    International (CC BY 4.0) license.
+    See: https://creativecommons.org/licenses/by/4.0/
+
+
+Software & Tools
+----------------
+  - Label Studio — Annotation tool by HumanSignal, Inc., used under the
+    terms of the Label Studio Academic Program.
+    See: https://labelstud.io
+
+  - go2rtc — WebRTC/RTSP relay used for low-latency camera streaming.
+    Licensed under the MIT License.
+    See: https://github.com/AlexxIT/go2rtc

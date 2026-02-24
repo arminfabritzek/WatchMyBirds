@@ -140,7 +140,9 @@ def test_submit_analysis_job_skips_ineligible(monkeypatch):
     )
     calls = []
     monkeypatch.setattr(
-        analysis_service.analysis_queue, "enqueue", lambda item: calls.append(item) or True
+        analysis_service.analysis_queue,
+        "enqueue",
+        lambda item: calls.append(item) or True,
     )
 
     ok = analysis_service.submit_analysis_job("img_c.jpg")

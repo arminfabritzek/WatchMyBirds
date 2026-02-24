@@ -70,8 +70,8 @@ The WatchMyBirds Raspberry Pi image is designed as a secure-by-default appliance
 - **Systemd Sandboxing:** The main application service (`app.service`) runs with maximum security directives:
     ```ini
     ProtectSystem=strict          # Read-only filesystem view (CRITICAL)
-    ReadWritePaths=/var/lib/watchmybirds /var/log/app
-    WorkingDirectory=/var/lib/watchmybirds
+    ReadWritePaths=/opt/app/data /var/log/app
+    WorkingDirectory=/opt/app
     PrivateTmp=true               # Isolated /tmp
     NoNewPrivileges=true          # SUID binaries blocked (sudo cannot escalate)
     ProtectHome=yes               # No access to /home
@@ -96,7 +96,7 @@ The WatchMyBirds Raspberry Pi image is designed as a secure-by-default appliance
   - **Headless OpenCV:** Uses `opencv-python-headless` to eliminate dependencies on X11/GL libraries, significantly reducing the installed package footprint.
 - **Filesystem Layout:**
   - **Code (`/opt/app`)**: Read-only for the application.
-  - **Data (`/var/lib/watchmybirds`)**: Writable storage for database and images.
+  - **Data (`/opt/app/data`)**: Writable storage for database, images, and runtime artifacts.
   - **Logs (`/var/log/app`)**: Writable app log directory.
 
 ### 4. Updates & Hygiene

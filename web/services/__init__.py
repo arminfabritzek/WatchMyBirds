@@ -11,10 +11,11 @@ ARCHITECTURE RULE:
 
 from web.services import (
     analytics_service,
+    auth_service,
     backup_restore_service,
-    db_service,
     detections_service,
     gallery_service,
+    health_service,
     ingest_service,
     onvif_service,
     path_service,
@@ -23,10 +24,12 @@ from web.services import (
 
 __all__ = [
     "analytics_service",
+    "auth_service",
     "backup_restore_service",
     "db_service",
     "detections_service",
     "gallery_service",
+    "health_service",
     "ingest_service",
     "onvif_service",
     "path_service",

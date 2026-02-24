@@ -129,6 +129,23 @@ class PersistenceService(PersistenceInterface):
         self._db_conn = get_connection()
         self._crop_service = CropService()
 
+    def close(self) -> None:
+        """Close owned resources."""
+        try:
+            if self._db_conn:
+                self._db_conn.close()
+        except Exception as e:
+            logger.debug(f"Failed to close PersistenceService DB connection: {e}")
+        finally:
+            self._db_conn = None
+
+    def __del__(self):
+        """Best-effort cleanup for interpreter shutdown."""
+        try:
+            self.close()
+        except Exception:
+            pass
+
     def save_image(
         self,
         frame,  # np.ndarray
@@ -283,6 +300,8 @@ class PersistenceService(PersistenceInterface):
                     "classifier_model_name": "classifier",
                     "classifier_model_version": classifier_model_id,
                     "thumbnail_path": thumb_filename,
+                    "frame_width": img_w,
+                    "frame_height": img_h,
                 },
             )
 

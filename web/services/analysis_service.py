@@ -33,7 +33,10 @@ class _DeepReviewDetectionData:
 # Eligibility
 # ---------------------------------------------------------------------------
 
-def check_deep_analysis_eligibility(filename: str, force: bool = False) -> tuple[bool, str]:
+
+def check_deep_analysis_eligibility(
+    filename: str, force: bool = False
+) -> tuple[bool, str]:
     """
     Deep analysis is allowed only for unreviewed orphan review items.
     When force=True, the no-hit exclusion (deep_scan_last_result='none') is skipped
@@ -84,6 +87,7 @@ def check_deep_analysis_eligibility(filename: str, force: bool = False) -> tuple
 # Submit
 # ---------------------------------------------------------------------------
 
+
 def submit_analysis_job(filename: str, force: bool = False) -> bool:
     """
     Submits a file for deep analysis.
@@ -121,6 +125,7 @@ def submit_analysis_job(filename: str, force: bool = False) -> bool:
 # ---------------------------------------------------------------------------
 # Detection payload builder
 # ---------------------------------------------------------------------------
+
 
 def _build_detection_payload(
     detection_manager,
@@ -182,6 +187,7 @@ def _build_detection_payload(
 # Deep scan DB helpers
 # ---------------------------------------------------------------------------
 
+
 def _record_deep_scan_start(filename: str) -> None:
     """Increment attempt count and record timestamp at job start."""
     try:
@@ -214,6 +220,7 @@ def _record_deep_scan_result(filename: str, result: str) -> None:
 # ---------------------------------------------------------------------------
 # Worker function (called by AnalysisQueue._worker_loop)
 # ---------------------------------------------------------------------------
+
 
 def process_deep_analysis_job(detection_manager, job_data: dict):
     """
@@ -305,9 +312,7 @@ def process_deep_analysis_job(detection_manager, job_data: dict):
             if result.success:
                 saved_count += 1
 
-        logger.info(
-            f"Saved {saved_count} new detections from deep scan for {filename}"
-        )
+        logger.info(f"Saved {saved_count} new detections from deep scan for {filename}")
         _record_deep_scan_result(filename, "found")
     except Exception as e:
         logger.error(f"Error saving deep scan results: {e}", exc_info=True)
@@ -317,6 +322,7 @@ def process_deep_analysis_job(detection_manager, job_data: dict):
 # ---------------------------------------------------------------------------
 # Nightly candidate query (Primary DB filter — Constraint #5)
 # ---------------------------------------------------------------------------
+
 
 def _fetch_orphan_review_filenames() -> list[str]:
     """
@@ -366,6 +372,7 @@ def count_deep_scan_candidates() -> int:
 # ---------------------------------------------------------------------------
 # Nightly sweep
 # ---------------------------------------------------------------------------
+
 
 def start_nightly_analysis_sweep(interval=900):
     """

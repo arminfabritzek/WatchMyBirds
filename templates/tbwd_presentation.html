@@ -1,0 +1,307 @@
+{% extends "base.html" %}
+
+{% block title %}Native Hedgerows – The Backbone of European Wildlife - WatchMyBirds{% endblock %}
+
+{% block content %}
+<style>
+    .nature-wrap {
+        max-width: 900px;
+        margin: 0 auto;
+        padding: var(--space-lg) var(--space-md) var(--space-3xl);
+    }
+
+    .nature-hero-img {
+        width: 100%;
+        border-radius: var(--radius-lg);
+        margin-bottom: var(--space-md);
+        aspect-ratio: 16/9;
+        object-fit: cover;
+    }
+
+    .nature-hero {
+        padding: var(--space-xl) var(--space-lg);
+        margin-bottom: var(--space-lg);
+        background: var(--color-surface);
+        border: 1px solid var(--color-border);
+        border-radius: var(--radius-xl);
+        box-shadow: var(--shadow-sm);
+    }
+
+    .nature-tag {
+        display: inline-block;
+        background: rgba(255, 194, 51, 0.12);
+        color: #b8860b;
+        border: 1px solid rgba(255, 194, 51, 0.3);
+        border-radius: 999px;
+        padding: 0.25rem 0.75rem;
+        font-size: 0.72rem;
+        font-weight: 800;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+    }
+
+    .nature-title {
+        margin: 0.6rem 0 0.4rem;
+        font-size: clamp(1.6rem, 3.5vw, 2.4rem);
+        font-weight: 900;
+        line-height: 1.12;
+        background: linear-gradient(135deg, #ffc233, #4cda6a, #339af0);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+    }
+
+    .nature-sub {
+        margin: 0;
+        color: var(--color-text-muted);
+        max-width: 760px;
+        line-height: 1.65;
+        font-size: 1rem;
+    }
+
+    .nature-section {
+        background: var(--color-surface);
+        border: 1px solid var(--color-border);
+        border-radius: var(--radius-xl);
+        box-shadow: var(--shadow-sm);
+        padding: var(--space-lg);
+        margin-top: var(--space-md);
+    }
+
+    .nature-section h2 {
+        margin: 0 0 0.5rem;
+        font-size: 1.15rem;
+        color: #4cda6a;
+        font-weight: 800;
+    }
+
+    .nature-section p,
+    .nature-section li {
+        color: var(--color-text-muted);
+        font-size: 0.93rem;
+        line-height: 1.65;
+    }
+
+    .nature-section ul,
+    .nature-section ol {
+        margin: 0.5rem 0 0;
+        padding-left: 1.2rem;
+    }
+
+    .nature-section li {
+        margin-bottom: 0.25rem;
+    }
+
+    .nature-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+        gap: var(--space-md);
+        margin: var(--space-md) 0;
+    }
+
+    .nature-card {
+        background: var(--color-surface);
+        border: 1px solid var(--color-border);
+        border-radius: var(--radius-xl);
+        box-shadow: var(--shadow-sm);
+        padding: var(--space-lg);
+    }
+
+    .nature-card h3 {
+        margin: 0 0 0.4rem;
+        font-size: 1.02rem;
+        color: #ffc233;
+        font-weight: 700;
+    }
+
+    .nature-card p {
+        margin: 0;
+        color: var(--color-text-muted);
+        font-size: 0.93rem;
+        line-height: 1.6;
+    }
+
+    .nature-highlight {
+        border-left: 3px solid #ffc233;
+        padding-left: 1rem;
+        margin: 0.7rem 0;
+        color: var(--color-text);
+        font-style: italic;
+        font-size: 0.94rem;
+        line-height: 1.6;
+    }
+
+    .nature-table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 0.5rem;
+        font-size: 0.88rem;
+    }
+
+    .nature-table th {
+        text-align: left;
+        color: #ffc233;
+        padding: 0.4rem 0.6rem;
+        border-bottom: 2px solid var(--color-border);
+        font-weight: 700;
+    }
+
+    .nature-table td {
+        padding: 0.4rem 0.6rem;
+        color: var(--color-text-muted);
+        border-bottom: 1px solid var(--color-border-light);
+    }
+</style>
+
+<div class="nature-wrap">
+    <section class="nature-hero">
+        <img class="nature-hero-img" src="/assets/nature_hedgerow.png"
+            alt="A mature native hedgerow in bloom with a European Robin perched among hawthorn flowers">
+        <span class="nature-tag">Nature Explorer</span>
+        <h1 class="nature-title">Native Hedgerows: 600 Species in a Single Row of Shrubs</h1>
+        <p class="nature-sub">
+            A mature native hedgerow is not just a property boundary. It is a corridor, a larder, a nesting site,
+            and a highway for wildlife. A single 100-metre hawthorn hedge can support over 600 species of insects,
+            birds, mammals, and fungi — more than most manicured gardens will ever see.
+        </p>
+    </section>
+
+    <section class="nature-section">
+        <h2>What Makes a Hedgerow Alive</h2>
+        <p>
+            The key difference between a dead fence and a living hedge is structure. A wildlife hedgerow has
+            thorny species at the core — Hawthorn (<em>Crataegus monogyna</em>), Blackthorn (<em>Prunus spinosa</em>),
+            and Dog Rose (<em>Rosa canina</em>) — that create impenetrable nesting cover for birds like
+            Whitethroats, Dunnocks, and Yellowhammers. The thorns keep predators out while the dense interior
+            stays dry and sheltered.
+        </p>
+        <div class="nature-highlight">
+            A single old Hawthorn in flower produces enough nectar to support over 300 insect species.
+            Its autumn berries (haws) are a critical fuel stop for migrating Redwings and Fieldfares arriving from
+            Scandinavia in October.
+        </div>
+    </section>
+
+    <section class="nature-grid">
+        <article class="nature-card">
+            <h3>The Food Calendar</h3>
+            <p>
+                A well-mixed hedge provides food year-round. Blackthorn flowers first in March (before leaves appear),
+                feeding early bees. Hawthorn blooms in May. Elder flowers in June. Then come the fruits:
+                sloes in September, haws in October, rosehips and elderberries through November.
+                Each species fills a different window. Remove one, and a gap opens in the food chain.
+            </p>
+        </article>
+        <article class="nature-card">
+            <h3>The Nesting Calendar</h3>
+            <p>
+                Wrens build their dome nests deep inside hedges from late March. Blackbirds and Song Thrushes
+                prefer the fork of a mature hedge shrub. Long-tailed Tits weave their elastic, lichen-covered
+                nests in the upper canopy. Hedge Sparrows (Dunnocks) nest low, often just 30 cm above ground.
+                Each species uses a different height and density layer — which is why a thick, tall hedge
+                supports far more nesting pairs than a trimmed one.
+            </p>
+        </article>
+        <article class="nature-card">
+            <h3>The Insect Layer</h3>
+            <p>
+                Leaf litter at the hedge base is where moth caterpillars pupate, ground beetles hunt slugs,
+                and hedgehogs forage. The bark of older stems hosts lichen and moss — tiny ecosystems in themselves
+                that feed micro-moths and springtails. Hoverflies lay eggs on aphid-covered shoots.
+                Without this insect layer, there would be no food for nesting birds in spring.
+            </p>
+        </article>
+    </section>
+
+    <section class="nature-section">
+        <h2>Which Species to Plant</h2>
+        <p>A good native hedge in Central Europe uses 5–7 species. Here are the essential ones:</p>
+        <table class="nature-table">
+            <thead>
+                <tr>
+                    <th>Species</th>
+                    <th>Role</th>
+                    <th>Flowers</th>
+                    <th>Fruit</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td>Hawthorn (<em>Crataegus</em>)</td>
+                    <td>Core structure, nesting</td>
+                    <td>May</td>
+                    <td>Oct–Nov (haws)</td>
+                </tr>
+                <tr>
+                    <td>Blackthorn (<em>Prunus spinosa</em>)</td>
+                    <td>Early nectar, dense thorns</td>
+                    <td>March</td>
+                    <td>Sep–Oct (sloes)</td>
+                </tr>
+                <tr>
+                    <td>Dog Rose (<em>Rosa canina</em>)</td>
+                    <td>Climbing cover, hips for birds</td>
+                    <td>June</td>
+                    <td>Oct–Dec (rosehips)</td>
+                </tr>
+                <tr>
+                    <td>Elder (<em>Sambucus nigra</em>)</td>
+                    <td>Fast filler, summer nectar</td>
+                    <td>June</td>
+                    <td>Aug–Sep (elderberries)</td>
+                </tr>
+                <tr>
+                    <td>Field Maple (<em>Acer campestre</em>)</td>
+                    <td>Height, autumn colour, aphid host</td>
+                    <td>May</td>
+                    <td>Seeds (Oct)</td>
+                </tr>
+                <tr>
+                    <td>Hazel (<em>Corylus avellana</em>)</td>
+                    <td>Catkins for early bees, nuts for Dormice</td>
+                    <td>Feb</td>
+                    <td>Sep–Oct (hazelnuts)</td>
+                </tr>
+                <tr>
+                    <td>Spindle (<em>Euonymus europaeus</em>)</td>
+                    <td>Autumn fruit, caterpillar host</td>
+                    <td>May</td>
+                    <td>Oct (pink capsules)</td>
+                </tr>
+            </tbody>
+        </table>
+    </section>
+
+    <section class="nature-section">
+        <h2>How to Manage — Less is More</h2>
+        <ul>
+            <li><strong>Never cut all sides in one year.</strong> Trim one side this year, the other next year. This
+                always leaves fruit and nesting cover.</li>
+            <li><strong>Cut in late winter</strong> (January–February), after birds have eaten the berries and before
+                nesting begins in March.</li>
+            <li><strong>Use hand tools on small hedges.</strong> Flail mowers shatter stems and create entry points for
+                disease. Sécateurs leave clean cuts that heal faster.</li>
+            <li><strong>Let some sections grow tall.</strong> Standard trees (especially Oak or Ash) emerging above the
+                hedgeline are used by Kestrels as hunting perches and by Barn Owls as roost sites.</li>
+            <li><strong>Leave the base untidy.</strong> Dead wood, leaf litter, and tussocky grass at the hedge foot are
+                where most invertebrate life lives. Never "clean up" a hedge base.</li>
+        </ul>
+    </section>
+
+    <section class="nature-section">
+        <h2>The Network Effect</h2>
+        <p>
+            Hedgerows work best when they connect to other hedgerows, woodlands, or wild patches.
+            A continuous hedge network lets Dormice travel between feeding areas without crossing open ground.
+            It allows ground beetles to colonise new gardens. It gives bats — like the Common Pipistrelle —
+            a navigational corridor between roost and hunting ground. Isolated hedges still support life,
+            but connected hedges support ecosystems.
+        </p>
+        <div class="nature-highlight">
+            In England, the total length of hedgerows exceeds the total length of roads.
+            In Germany, hedge loss since 1950 is estimated at 50–80% in intensively farmed regions.
+            Every new metre of native hedge is a small act of restoration.
+        </div>
+    </section>
+</div>
+{% endblock %}

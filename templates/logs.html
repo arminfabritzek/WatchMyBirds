@@ -1,85 +1,286 @@
 {% extends "base.html" %}
 
-{% block title %}System Logs - WatchMyBirds{% endblock %}
+{% block title %}Diagnostics - WatchMyBirds{% endblock %}
 
 {% block head %}
 {# Styles migrated to design-system.css: LOGS PAGE section #}
 {% endblock %}
 
 {% block content %}
-{# Page Header #}
 <div class="page__header">
-    <h1 class="page__title">System Logs</h1>
-    <div class="page__actions">
-        <button onclick="window.location.reload()" class="btn btn--secondary">Refresh</button>
+    <h1 class="page__title">Diagnostics</h1>
+    <div class="page__actions logs-page-actions">
+        <label class="logs-auto-refresh">
+            <input id="diag-auto-refresh" type="checkbox" checked>
+            Auto-refresh (5s)
+        </label>
+        <button id="diag-refresh-btn" class="btn btn--secondary">Refresh</button>
     </div>
 </div>
 
-{# Log Card #}
+<div class="grid logs-summary-grid">
+    <div class="metric-card">
+        <div class="metric-label">Host</div>
+        <div id="diag-host" class="metric-value logs-metric-value">-</div>
+    </div>
+    <div class="metric-card">
+        <div class="metric-label">Runtime</div>
+        <div id="diag-runtime" class="metric-value logs-metric-value">-</div>
+    </div>
+    <div class="metric-card">
+        <div class="metric-label">FD Count</div>
+        <div id="diag-fd" class="metric-value logs-metric-value">-</div>
+    </div>
+    <div class="metric-card">
+        <div class="metric-label">RSS Sum (App + Children)</div>
+        <div id="diag-app-rss" class="metric-value logs-metric-value">-</div>
+    </div>
+    <div class="metric-card">
+        <div class="metric-label">FFmpeg RSS</div>
+        <div id="diag-ffmpeg-rss" class="metric-value logs-metric-value">-</div>
+    </div>
+    <div class="metric-card">
+        <div class="metric-label">Disk Used</div>
+        <div id="diag-disk" class="metric-value logs-metric-value">-</div>
+    </div>
+</div>
+<p class="text-sm text-muted logs-summary-note">
+    RSS Sum is process RSS + child-process RSS and can fluctuate due to worker/FFmpeg churn and shared memory.
+</p>
+
 <div class="card">
-    <div class="card__header" style="display: flex; justify-content: space-between; align-items: center;">
-        <span class="font-mono text-sm text-muted">/var/lib/watchmybirds/logs/app.log</span>
-        <div id="filter-controls" style="display: flex; gap: var(--space-xs);">
-            <button class="filter-btn active" data-level="INFO">INFO</button>
-            <button class="filter-btn active" data-level="WARNING">WARN</button>
-            <button class="filter-btn active" data-level="ERROR">ERROR</button>
-        </div>
+    <div class="card__header logs-tabbar">
+        <button class="filter-btn logs-tab active" data-tab="app">App Log</button>
+        <button class="filter-btn logs-tab" data-tab="vitals">Vitals CSV</button>
+        <button class="filter-btn logs-tab" data-tab="system">System Snapshot</button>
     </div>
-    <div class="card__body" style="padding: 0;">
-        <pre id="log-content" class="log-viewer">{{ logs }}</pre>
+
+    <div class="card__body logs-card-body">
+        <section id="logs-pane-app" class="logs-pane active">
+            <div class="logs-pane-header">
+                <span class="font-mono text-sm text-muted">{{ app_log_path }}</span>
+                <div class="logs-level-filters">
+                    <button class="filter-btn logs-level-btn active" data-level="INFO">INFO</button>
+                    <button class="filter-btn logs-level-btn active" data-level="WARNING">WARN</button>
+                    <button class="filter-btn logs-level-btn active" data-level="ERROR">ERROR</button>
+                </div>
+            </div>
+            <pre id="app-log-content" class="log-viewer">{{ app_logs }}</pre>
+        </section>
+
+        <section id="logs-pane-vitals" class="logs-pane">
+            <div class="logs-pane-header">
+                <span class="font-mono text-sm text-muted">{{ vitals_log_path }}</span>
+            </div>
+            <pre id="vitals-content" class="log-viewer">{{ vitals_logs }}</pre>
+        </section>
+
+        <section id="logs-pane-system" class="logs-pane">
+            <div class="logs-pane-header">
+                <span class="font-mono text-sm text-muted">Runtime command probes and service snapshot</span>
+            </div>
+            <pre id="system-content" class="log-viewer">Loading diagnostics...</pre>
+        </section>
     </div>
-    <div class="card__footer" style="display: flex; justify-content: space-between;">
-        <span class="text-sm text-muted">Showing last 200 lines</span>
-        <span id="line-count" class="text-sm text-muted"></span>
+
+    <div class="card__footer logs-footer">
+        <span id="line-count" class="text-sm text-muted">-</span>
+        <span id="diag-meta" class="text-sm text-muted">-</span>
     </div>
 </div>
 {% endblock %}
 
 {% block scripts %}
 <script>
-    document.addEventListener('DOMContentLoaded', function () {
-        const logContent = document.getElementById('log-content');
-        const originalLogs = logContent.textContent;
-        const lines = originalLogs.split('\n');
+    document.addEventListener('DOMContentLoaded', () => {
+        const appLogContent = document.getElementById('app-log-content');
+        const vitalsContent = document.getElementById('vitals-content');
+        const systemContent = document.getElementById('system-content');
+        const lineCount = document.getElementById('line-count');
+        const meta = document.getElementById('diag-meta');
+        const refreshBtn = document.getElementById('diag-refresh-btn');
+        const autoRefreshCheckbox = document.getElementById('diag-auto-refresh');
 
-        function processLogs() {
-            let html = '';
-            let count = 0;
+        let rawAppLogs = appLogContent.textContent || '';
+        let autoRefreshTimer = null;
 
-            const activeLevels = Array.from(document.querySelectorAll('.filter-btn.active'))
-                .map(btn => btn.getAttribute('data-level'));
-
-            lines.forEach(line => {
-                if (!line.trim()) return;
-
-                let level = 'INFO';
-                if (line.includes(' - WARNING - ')) level = 'WARNING';
-                else if (line.includes(' - ERROR - ')) level = 'ERROR';
-                else if (line.includes(' - DEBUG - ')) level = 'DEBUG';
-
-                if (activeLevels.includes(level) || (level === 'DEBUG' && activeLevels.includes('INFO'))) {
-                    let formatted = line
-                        .replace(/[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2},[0-9]{3}/, '<span class="log-timestamp">$&</span>')
-                        .replace(new RegExp(` - ${level} - `), ` - <span class="log-${level.toLowerCase()}">${level}</span> - `);
-
-                    html += `<div>${formatted}</div>`;
-                    count++;
-                }
-            });
-
-            logContent.innerHTML = html || '<div class="text-muted">No logs found matching filters.</div>';
-            document.getElementById('line-count').textContent = count + ' lines displayed';
-            logContent.scrollTop = logContent.scrollHeight;
+        function escapeHtml(value) {
+            return (value || '')
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
         }
 
-        document.querySelectorAll('.filter-btn').forEach(btn => {
+        function detectLogLevel(line) {
+            if (line.includes(' - CRITICAL - ') || line.includes(' - ERROR - ')) return 'ERROR';
+            if (line.includes(' - WARNING - ')) return 'WARNING';
+            if (line.includes(' - DEBUG - ')) return 'DEBUG';
+            return 'INFO';
+        }
+
+        function renderAppLogs() {
+            const activeLevels = Array.from(document.querySelectorAll('.logs-level-btn.active'))
+                .map(btn => btn.getAttribute('data-level'));
+            const lines = rawAppLogs.split('\n');
+            let rendered = '';
+            let visibleLines = 0;
+
+            for (const line of lines) {
+                if (!line.trim()) continue;
+                const level = detectLogLevel(line);
+                if (!activeLevels.includes(level) && !(level === 'DEBUG' && activeLevels.includes('INFO'))) {
+                    continue;
+                }
+
+                let formatted = escapeHtml(line);
+                formatted = formatted.replace(
+                    /(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3})/,
+                    '<span class="log-timestamp">$1</span>'
+                );
+                formatted = formatted
+                    .replace(' - INFO - ', ' - <span class="log-info">INFO</span> - ')
+                    .replace(' - WARNING - ', ' - <span class="log-warning">WARNING</span> - ')
+                    .replace(' - ERROR - ', ' - <span class="log-error">ERROR</span> - ')
+                    .replace(' - CRITICAL - ', ' - <span class="log-error">CRITICAL</span> - ')
+                    .replace(' - DEBUG - ', ' - <span class="log-info">DEBUG</span> - ');
+
+                rendered += `<div>${formatted}</div>`;
+                visibleLines += 1;
+            }
+
+            appLogContent.innerHTML = rendered || '<div class="text-muted">No log lines matching current filters.</div>';
+            appLogContent.scrollTop = appLogContent.scrollHeight;
+            lineCount.textContent = `${visibleLines} app log lines shown`;
+        }
+
+        function formatObjectBlock(title, obj) {
+            if (!obj || typeof obj !== 'object') return '';
+            const lines = Object.entries(obj).map(([k, v]) => `${k}: ${typeof v === 'object' ? JSON.stringify(v) : v}`);
+            return `=== ${title} ===\n${lines.join('\n')}`;
+        }
+
+        function formatCommandBlock(title, cmdResult) {
+            if (!cmdResult) return '';
+            const expectedPermission = !!cmdResult.expected_permission_error;
+            const header = `available=${cmdResult.available} ok=${cmdResult.ok} returncode=${cmdResult.returncode} timed_out=${cmdResult.timed_out}${expectedPermission ? ' expected_permission_error=true' : ''}`;
+            const output = cmdResult.output || cmdResult.error || '(no output)';
+            const note = expectedPermission
+                ? '\n\nNote: Journal access is limited for this app user. This is expected on hardened hosts.'
+                : '';
+            return `=== ${title} ===\n${header}\n\n${output}${note}`;
+        }
+
+        function renderSystemSnapshot(data) {
+            const blocks = [];
+            blocks.push(formatObjectBlock('Runtime', data.runtime));
+            blocks.push(formatObjectBlock('System', data.system));
+            blocks.push(formatObjectBlock('Process', data.process));
+
+            if (data.monitor_active) {
+                blocks.push(formatObjectBlock('Monitor Vitals', data.vitals));
+            } else {
+                blocks.push('=== Monitor Vitals ===\nSystemMonitor is not active.');
+            }
+
+            if (data.files && data.files.fd_leak_dump && data.files.fd_leak_dump.present) {
+                blocks.push(
+                    `=== FD Leak Dump ===\nDetected.\n\n${data.files.fd_leak_dump.tail_text || '(empty dump)'}`
+                );
+            }
+
+            if (data.commands) {
+                blocks.push(formatCommandBlock('systemctl show app', data.commands.systemctl_app));
+                blocks.push(formatCommandBlock('journalctl -u app -n 80', data.commands.journal_app_tail));
+                blocks.push(formatCommandBlock('docker ps', data.commands.docker_ps));
+                blocks.push(formatCommandBlock('docker stats --no-stream --all', data.commands.docker_stats));
+            }
+
+            systemContent.textContent = blocks.filter(Boolean).join('\n\n');
+        }
+
+        function updateSummary(data) {
+            const runtime = data.runtime || {};
+            const vitals = data.vitals || {};
+            const system = data.system || {};
+
+            document.getElementById('diag-host').textContent = runtime.hostname || 'n/a';
+            document.getElementById('diag-runtime').textContent = runtime.environment || 'n/a';
+            document.getElementById('diag-fd').textContent = (vitals.fd_count ?? data.process?.fds ?? 'n/a');
+            document.getElementById('diag-app-rss').textContent =
+                vitals.app_total_rss_mb != null ? `${vitals.app_total_rss_mb} MB` : `${data.process?.rss_mb ?? 'n/a'} MB`;
+            document.getElementById('diag-ffmpeg-rss').textContent =
+                vitals.ffmpeg_rss_mb != null ? `${vitals.ffmpeg_rss_mb} MB` : 'n/a';
+            document.getElementById('diag-disk').textContent =
+                system.disk_used_percent != null ? `${Number(system.disk_used_percent).toFixed(1)}%` : 'n/a';
+        }
+
+        async function refreshDiagnostics() {
+            refreshBtn.disabled = true;
+            try {
+                const response = await fetch('/api/v1/system/diagnostics');
+                const data = await response.json();
+                if (!response.ok || data.status !== 'success') {
+                    throw new Error(data.message || 'Diagnostics request failed');
+                }
+
+                updateSummary(data);
+                renderSystemSnapshot(data);
+
+                if (data.files?.app_log?.tail_text) {
+                    rawAppLogs = data.files.app_log.tail_text;
+                    renderAppLogs();
+                }
+                if (data.files?.vitals_csv?.tail_text) {
+                    vitalsContent.textContent = data.files.vitals_csv.tail_text;
+                }
+
+                const generatedAt = data.runtime?.generated_at || new Date().toISOString();
+                meta.textContent = `Last refresh: ${generatedAt}`;
+            } catch (error) {
+                meta.textContent = `Diagnostics error: ${error.message}`;
+            } finally {
+                refreshBtn.disabled = false;
+            }
+        }
+
+        function setActiveTab(tabKey) {
+            document.querySelectorAll('.logs-tab').forEach(btn => {
+                btn.classList.toggle('active', btn.dataset.tab === tabKey);
+            });
+            document.querySelectorAll('.logs-pane').forEach(pane => {
+                pane.classList.toggle('active', pane.id === `logs-pane-${tabKey}`);
+            });
+        }
+
+        function updateAutoRefresh() {
+            if (autoRefreshTimer) {
+                clearInterval(autoRefreshTimer);
+                autoRefreshTimer = null;
+            }
+            if (autoRefreshCheckbox.checked) {
+                autoRefreshTimer = setInterval(refreshDiagnostics, 5000);
+            }
+        }
+
+        document.querySelectorAll('.logs-tab').forEach(btn => {
+            btn.addEventListener('click', () => setActiveTab(btn.dataset.tab));
+        });
+
+        document.querySelectorAll('.logs-level-btn').forEach(btn => {
             btn.addEventListener('click', () => {
                 btn.classList.toggle('active');
-                processLogs();
+                renderAppLogs();
             });
         });
 
-        processLogs();
+        refreshBtn.addEventListener('click', refreshDiagnostics);
+        autoRefreshCheckbox.addEventListener('change', updateAutoRefresh);
+
+        renderAppLogs();
+        refreshDiagnostics();
+        updateAutoRefresh();
     });
 </script>
 {% endblock %}

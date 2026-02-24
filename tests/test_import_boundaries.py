@@ -1,18 +1,20 @@
 """
 Import Boundary Tests.
 
-Validates that architectural import rules are followed:
+Validates architecture boundaries with explicit enforcement levels:
 - web/* may NOT import directly from utils/, camera/, detectors/
 - web/services/* may ONLY import from core/*
 - core/* may NOT import from web/, flask, werkzeug
 
-NOTE: This test currently detects EXISTING violations in web_interface.py.
-      As routes are migrated to use services, violations should decrease.
-      The test tracks progress toward zero violations.
+Marker policy:
+- arch_hard: PR-blocking invariants
+- arch_soft: monitoring-only invariants
 """
 
 import ast
 from pathlib import Path
+
+import pytest
 
 
 def get_project_root() -> Path:
@@ -66,6 +68,7 @@ def check_forbidden_imports(
 class TestWebLayerBoundaries:
     """Tests for web layer import boundaries."""
 
+    @pytest.mark.arch_hard
     def test_services_only_import_from_core(self):
         """web/services/* should only import from core/*."""
         project_root = get_project_root()
@@ -75,6 +78,10 @@ class TestWebLayerBoundaries:
             return  # No services yet
 
         forbidden = ["utils.", "camera.", "detectors."]
+        # Pragmatic exceptions: lazy imports where no core wrapper exists
+        allowed_exceptions = {
+            ("report_scheduler.py", "utils.daily_report"),
+        }
         all_violations = []
 
         for py_file in services_dir.glob("*.py"):
@@ -83,13 +90,15 @@ class TestWebLayerBoundaries:
             imports = get_imports_from_file(py_file)
             violations = check_forbidden_imports(imports, forbidden)
             for module, line in violations:
-                all_violations.append(f"{py_file.name}:{line} imports {module}")
+                if (py_file.name, module) not in allowed_exceptions:
+                    all_violations.append(f"{py_file.name}:{line} imports {module}")
 
         assert len(all_violations) == 0, (
             "Services should only import from core/*. Violations:\n"
             + "\n".join(all_violations)
         )
 
+    @pytest.mark.arch_hard
     def test_core_does_not_import_web(self):
         """core/* should never import from web/, flask, werkzeug."""
         project_root = get_project_root()
@@ -114,12 +123,12 @@ class TestWebLayerBoundaries:
             + "\n".join(all_violations)
         )
 
+    @pytest.mark.arch_soft
     def test_count_web_interface_violations(self):
         """
         Counts violations in web_interface.py.
 
-        This test does NOT fail - it tracks migration progress.
-        As routes are migrated, the count should decrease to 0.
+        SOFT monitor only: does not fail CI.
         """
         project_root = get_project_root()
         web_interface = project_root / "web" / "web_interface.py"
@@ -141,6 +150,7 @@ class TestWebLayerBoundaries:
         # Uncomment below when migration is complete:
         # assert len(violations) == 0
 
+    @pytest.mark.arch_soft
     def test_detection_manager_only_uses_services(self):
         """
         detection_manager.py should only use Services for core operations.
@@ -184,6 +194,7 @@ class TestWebLayerBoundaries:
         )
 
 
+@pytest.mark.arch_hard
 class TestModuleStructure:
     """Tests for module structure integrity."""
 
@@ -228,6 +239,7 @@ class TestModuleStructure:
         assert len(missing) == 0, f"Missing service modules: {missing}"
 
 
+@pytest.mark.arch_hard
 class TestDetectorServicesArchitecture:
     """Tests for detectors/services/* architectural boundaries."""
 

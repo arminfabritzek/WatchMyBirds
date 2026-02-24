@@ -1,0 +1,35 @@
+{#
+Thumbnail View Toggle - switches between BBox crop thumbnails and full (optimized) images.
+Reads/writes preference to localStorage('wmb_thumb_view').
+Include this partial wherever a gallery grid appears.
+#}
+<button type="button" class="btn btn--secondary thumb-view-toggle" id="thumbViewToggle" onclick="toggleThumbView()"
+    title="Thumbnail-Ansicht umschalten">🔳 Crop</button>
+
+<script>
+    (function () {
+        const STORAGE_KEY = 'wmb_thumb_view';
+        const pref = localStorage.getItem(STORAGE_KEY) || 'crop';
+
+        function applyThumbView(mode) {
+            document.querySelectorAll('img[data-thumb-src][data-full-src]').forEach(img => {
+                img.src = mode === 'full' ? img.dataset.fullSrc : img.dataset.thumbSrc;
+            });
+            const btn = document.getElementById('thumbViewToggle');
+            if (btn) {
+                btn.textContent = mode === 'full' ? '🖼 Full' : '🔳 Crop';
+                btn.classList.toggle('active', mode === 'full');
+            }
+        }
+
+        window.toggleThumbView = function () {
+            const current = localStorage.getItem(STORAGE_KEY) || 'crop';
+            const next = current === 'crop' ? 'full' : 'crop';
+            localStorage.setItem(STORAGE_KEY, next);
+            applyThumbView(next);
+        };
+
+        // Apply on page load
+        document.addEventListener('DOMContentLoaded', () => applyThumbView(pref));
+    })();
+</script>

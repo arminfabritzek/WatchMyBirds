@@ -13,11 +13,14 @@ show_nav=true,
 show_bbox_toggle=true,
 show_trash=true,
 show_download=true,
-gallery_date=none
+gallery_date=none,
+is_favorite=false
 ) %}
 <div class="modal-action-bar">
     {# Left: Actions #}
     <div class="modal-action-bar__group">
+        <button type="button" class="btn btn--secondary btn--sm smart-zoom-toggle" onclick="toggleSmartZoom(this)"
+            title="Toggle between bird close-up and full image">🔍 Zoom</button>
         {% if show_bbox_toggle %}
         <button type="button" class="btn btn--secondary btn--sm bbox-toggle" onclick="toggleBboxOverlay(this)"
             data-detection-id="{{ detection_id }}" data-siblings='{{ (siblings | default([])) | tojson }}'
@@ -31,9 +34,18 @@ gallery_date=none
             onclick="deleteDetection(event, {{ detection_id }})">🗑</button>
         {% endif %}
         {% if gallery_date %}
-        <a href="/gallery/{{ gallery_date }}#detection-{{ detection_id }}" class="btn btn--secondary btn--sm"
-            title="Go to Day">📅</a>
+        <a href="/gallery/{{ gallery_date }}?focus={{ detection_id }}#detection-{{ detection_id }}"
+            class="btn btn--secondary btn--sm" title="Go to Day">📅</a>
         {% endif %}
+    </div>
+
+    {# Center: Favorite Toggle #}
+    <div class="modal-action-bar__group">
+        <button type="button" class="fav-btn{% if is_favorite %} fav-btn--active{% endif %}"
+            data-detection-id="{{ detection_id }}" onclick="toggleFavorite(event, {{ detection_id }}, this)"
+            title="Toggle favorite for cover images">
+            {% if is_favorite %}⭐{% else %}☆{% endif %}
+        </button>
     </div>
 
     {# Right: Navigation + Close #}

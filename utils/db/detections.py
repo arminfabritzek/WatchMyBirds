@@ -30,8 +30,10 @@ def insert_detection(conn: sqlite3.Connection, row: dict[str, Any]) -> int:
             detector_model_version,
             classifier_model_name,
             classifier_model_version,
-            thumbnail_path
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+            thumbnail_path,
+            frame_width,
+            frame_height
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
         """,
         (
             row.get("image_filename"),
@@ -50,6 +52,8 @@ def insert_detection(conn: sqlite3.Connection, row: dict[str, Any]) -> int:
             row.get("classifier_model_name"),
             row.get("classifier_model_version"),
             row.get("thumbnail_path"),
+            row.get("frame_width"),
+            row.get("frame_height"),
         ),
     )
     conn.commit()
@@ -131,6 +135,9 @@ def fetch_detections_for_gallery(
             i.downloaded_timestamp,
             (SELECT cls_class_name FROM classifications c WHERE c.detection_id = d.detection_id ORDER BY cls_confidence DESC LIMIT 1) as cls_class_name,
             (SELECT cls_confidence FROM classifications c WHERE c.detection_id = d.detection_id ORDER BY cls_confidence DESC LIMIT 1) as cls_confidence,
+            d.rating,
+            d.rating_source,
+            d.is_favorite,
             -- Count of sibling detections on the same image (for multi-bird display)
             (SELECT COUNT(*) FROM detections d2 WHERE d2.image_filename = d.image_filename AND d2.status = 'active') as sibling_count
         FROM detections d
@@ -144,6 +151,43 @@ def fetch_detections_for_gallery(
         params.append(limit)
 
     cur = conn.execute(query, params)
+    return cur.fetchall()
+
+
+def fetch_random_favorites(
+    conn: sqlite3.Connection,
+    limit: int = 6,
+) -> list[sqlite3.Row]:
+    """
+    Returns a random selection of favorite detections, diversified by species.
+    Used for a quick 'best of' preview gallery on the homepage.
+    """
+    query = """
+    WITH RankedFavorites AS (
+        SELECT
+            d.detection_id,
+            i.timestamp as image_timestamp,
+            d.bbox_x, d.bbox_y, d.bbox_w, d.bbox_h,
+            d.od_class_name, d.od_confidence, d.score, d.is_favorite,
+            (substr(i.timestamp, 1, 4) || '-' || substr(i.timestamp, 5, 2) || '-' || substr(i.timestamp, 7, 2) || '/' ||
+             COALESCE(d.thumbnail_path, REPLACE(i.filename, '.jpg', '_crop_1.webp'))) AS thumbnail_path_virtual,
+            (substr(i.timestamp, 1, 4) || '-' || substr(i.timestamp, 5, 2) || '-' || substr(i.timestamp, 7, 2) || '/' ||
+             REPLACE(i.filename, '.jpg', '.webp')) AS relative_path,
+            COALESCE((SELECT cls_class_name FROM classifications c WHERE c.detection_id = d.detection_id ORDER BY cls_confidence DESC LIMIT 1), d.od_class_name, 'Unknown') as species_key,
+            ROW_NUMBER() OVER(
+                PARTITION BY COALESCE((SELECT cls_class_name FROM classifications c WHERE c.detection_id = d.detection_id ORDER BY cls_confidence DESC LIMIT 1), d.od_class_name, 'Unknown')
+                ORDER BY RANDOM()
+            ) as rn
+        FROM detections d
+        JOIN images i ON d.image_filename = i.filename
+        WHERE d.status = 'active' AND d.is_favorite = 1
+    )
+    SELECT * FROM RankedFavorites
+    WHERE rn = 1
+    ORDER BY RANDOM()
+    LIMIT ?
+    """
+    cur = conn.execute(query, (limit,))
     return cur.fetchall()
 
 
@@ -219,7 +263,7 @@ def fetch_daily_covers(
     conn: sqlite3.Connection, min_score: float = 0.0
 ) -> list[sqlite3.Row]:
     """
-    Returns the best detection (highest score) for each day to use as a cover.
+    Returns the best detection (highest rating, then score) for each day to use as a cover.
     Includes bbox for dynamic cropping and image count per day.
 
     Args:
@@ -237,7 +281,7 @@ def fetch_daily_covers(
             d.thumbnail_path,
             ROW_NUMBER() OVER (
                 PARTITION BY (substr(d.image_filename, 1, 4) || '-' || substr(d.image_filename, 5, 2) || '-' || substr(d.image_filename, 7, 2))
-                ORDER BY d.score DESC
+                ORDER BY COALESCE(d.rating, 0) DESC, d.score DESC
             ) as rn
         FROM detections d
         JOIN images i ON d.image_filename = i.filename
@@ -246,7 +290,7 @@ def fetch_daily_covers(
     DayCounts AS (
         SELECT
             (substr(d.image_filename, 1, 4) || '-' || substr(d.image_filename, 5, 2) || '-' || substr(d.image_filename, 7, 2)) as date_iso,
-            COUNT(DISTINCT d.image_filename) as image_count
+            COUNT(*) as image_count
         FROM detections d
         WHERE d.status = 'active'
         AND (d.score IS NULL OR d.score >= ?)
@@ -401,3 +445,137 @@ def purge_detections(
     conn.commit()
 
     return {"purged": True, "count": count, "detection_ids": affected_ids}
+
+
+def fetch_count_last_24h(conn: sqlite3.Connection, threshold_timestamp: str) -> int:
+    """
+    Count active detections in the last 24 hours (rolling window).
+
+    Args:
+        conn: Database connection
+        threshold_timestamp: Timestamp string in formats:
+            - '%Y%m%d_%H%M%S' for direct comparison with image_filename
+            - Can be the result of threshold_datetime.strftime("%Y%m%d_%H%M%S")
+
+    Returns:
+        Total count of detections since threshold
+    """
+    cur = conn.execute(
+        """
+        SELECT COUNT(*) AS cnt
+        FROM detections d
+        JOIN images i ON d.image_filename = i.filename
+        WHERE d.status = 'active'
+        AND i.timestamp >= ?
+        """,
+        (threshold_timestamp,),
+    )
+    row = cur.fetchone()
+    return int(row["cnt"]) if row else 0
+
+
+def fetch_detections_last_24h(
+    conn: sqlite3.Connection,
+    threshold_timestamp: str,
+    limit: int | None = None,
+    order_by: str = "time",
+) -> list[sqlite3.Row]:
+    """
+    Fetch detections from the last 24 hours (rolling window).
+
+    Args:
+        conn: Database connection
+        threshold_timestamp: Timestamp string (YYYYMMDD_HHMMSS format)
+        limit: Optional limit
+        order_by: "time" (newest first) or "score" (highest first)
+
+    Returns:
+        List of detection rows (same format as fetch_detections_for_gallery)
+    """
+    # Sort order
+    if order_by == "time":
+        order_clause = "ORDER BY i.timestamp DESC, d.score DESC"
+    else:  # "score"
+        order_clause = "ORDER BY d.score DESC, i.timestamp DESC"
+
+    limit_clause = f"LIMIT {limit}" if limit else ""
+
+    query = f"""
+        SELECT
+            d.detection_id,
+            i.timestamp as image_timestamp,
+            d.bbox_x,
+            d.bbox_y,
+            d.bbox_w,
+            d.bbox_h,
+            d.od_class_name,
+            d.od_confidence,
+            d.score,
+            (substr(i.timestamp, 1, 4) || '-' || substr(i.timestamp, 5, 2) || '-' || substr(i.timestamp, 7, 2) || '/' ||
+             COALESCE(d.thumbnail_path, REPLACE(i.filename, '.jpg', '_crop_1.webp'))) AS thumbnail_path_virtual,
+            REPLACE(i.filename, '.jpg', '.webp') as optimized_name_virtual,
+            (substr(i.timestamp, 1, 4) || '-' || substr(i.timestamp, 5, 2) || '-' || substr(i.timestamp, 7, 2) || '/' ||
+             REPLACE(i.filename, '.jpg', '.webp')) AS relative_path,
+            i.filename as original_name,
+            i.downloaded_timestamp,
+            (SELECT cls_class_name FROM classifications c WHERE c.detection_id = d.detection_id ORDER BY cls_confidence DESC LIMIT 1) as cls_class_name,
+            (SELECT cls_confidence FROM classifications c WHERE c.detection_id = d.detection_id ORDER BY cls_confidence DESC LIMIT 1) as cls_confidence,
+            d.is_favorite,
+            (SELECT COUNT(*) FROM detections d2 WHERE d2.image_filename = d.image_filename AND d2.status = 'active') as sibling_count
+        FROM detections d
+        JOIN images i ON d.image_filename = i.filename
+        WHERE d.status = 'active'
+        AND i.timestamp >= ?
+        {order_clause}
+        {limit_clause}
+    """
+
+    cur = conn.execute(query, (threshold_timestamp,))
+    return cur.fetchall()
+
+
+def fetch_bbox_centers(
+    conn: sqlite3.Connection,
+    limit: int = 1000,
+) -> list[sqlite3.Row]:
+    """
+    Fetch bounding-box center coordinates for the heatmap strip chart.
+
+    Returns lightweight rows with only the center-x, center-y (normalized 0-1),
+    species classification, confidence score, and timestamp.
+    Ordered newest-first so the frontend can render a time-series strip.
+
+    Args:
+        conn: Database connection
+        limit: Maximum number of data points (default 1000, RPi-friendly)
+
+    Returns:
+        List of rows: (center_x, center_y, species, score, image_timestamp)
+    """
+    query = f"""
+        SELECT
+            (d.bbox_x + d.bbox_w / 2.0) AS center_x,
+            (d.bbox_y + d.bbox_h / 2.0) AS center_y,
+            d.bbox_w,
+            d.bbox_h,
+            COALESCE(
+                (SELECT c.cls_class_name
+                 FROM classifications c
+                 WHERE c.detection_id = d.detection_id
+                 ORDER BY c.cls_confidence DESC LIMIT 1),
+                d.od_class_name
+            ) AS species,
+            d.score,
+            i.timestamp AS image_timestamp
+        FROM detections d
+        JOIN images i ON d.image_filename = i.filename
+        WHERE d.status = 'active'
+          AND d.bbox_x IS NOT NULL
+          AND d.bbox_y IS NOT NULL
+          AND d.bbox_w > 0
+          AND d.bbox_h > 0
+        ORDER BY i.timestamp DESC
+        LIMIT {limit}
+    """
+    cur = conn.execute(query)
+    return cur.fetchall()

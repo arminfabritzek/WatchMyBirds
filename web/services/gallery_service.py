@@ -92,3 +92,22 @@ def get_image_paths(output_dir: str, filename: str) -> dict[str, Path]:
 def get_sibling_detections(original_name: str) -> list[dict]:
     """Get sibling detections for an image."""
     return gallery_core.get_sibling_detections(original_name)
+
+
+# --- External Links ---
+
+
+def get_species_wikipedia_url(
+    common_name: str | None,
+    scientific_name: str | None = None,
+    locale: str = "de",
+) -> str | None:
+    """Get Wikipedia URL for species."""
+    return gallery_core.get_species_wikipedia_url(common_name, scientific_name, locale)
+
+
+def regenerate_derivative(
+    output_dir: str, filename_rel: str, type: str = "thumb"
+) -> bool:
+    """Regenerate a missing derivative."""
+    return gallery_core.regenerate_derivative(output_dir, filename_rel, type)

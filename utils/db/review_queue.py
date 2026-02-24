@@ -62,41 +62,80 @@ def fetch_orphan_count(conn: sqlite3.Connection) -> int:
 
 
 def fetch_review_queue_images(
-    conn: sqlite3.Connection, save_threshold: float = 0.65
+    conn: sqlite3.Connection,
+    gallery_threshold: float = 0.7,
+    exclude_deep_scanned: bool = False,
 ) -> list[sqlite3.Row]:
     """
     Returns images that need review:
     - review_status = 'untagged' AND
-    - (no detections OR max(od_confidence) < save_threshold)
+    - (no detections OR max(score) < gallery_threshold)
 
     Sorted by timestamp ASC (oldest first).
     """
-    query = """
+    where_clauses = [
+        "(i.review_status IS NULL OR i.review_status = 'untagged')",
+        "(NOT EXISTS (SELECT 1 FROM detections d WHERE d.image_filename = i.filename) OR (SELECT MAX(COALESCE(d.score, 0.0)) FROM detections d WHERE d.image_filename = i.filename) < ?)",
+        "i.filename IS NOT NULL",
+    ]
+    params = [gallery_threshold]
+
+    if exclude_deep_scanned:
+        where_clauses.append(
+            "NOT EXISTS (SELECT 1 FROM detections d WHERE d.image_filename = i.filename AND d.od_model_id LIKE 'deep_scan_%')"
+        )
+
+    where_sql = " AND ".join(where_clauses)
+
+    query = f"""
     SELECT
         i.filename,
         i.timestamp,
         i.review_status,
-        (SELECT MAX(d.od_confidence) FROM detections d WHERE d.image_filename = i.filename) as max_od_conf,
+        (SELECT MAX(COALESCE(d.score, 0.0)) FROM detections d WHERE d.image_filename = i.filename) as max_score,
+        (
+            SELECT d.bbox_x
+            FROM detections d
+            WHERE d.image_filename = i.filename
+            ORDER BY COALESCE(d.score, 0.0) DESC, d.detection_id DESC
+            LIMIT 1
+        ) as bbox_x,
+        (
+            SELECT d.bbox_y
+            FROM detections d
+            WHERE d.image_filename = i.filename
+            ORDER BY COALESCE(d.score, 0.0) DESC, d.detection_id DESC
+            LIMIT 1
+        ) as bbox_y,
+        (
+            SELECT d.bbox_w
+            FROM detections d
+            WHERE d.image_filename = i.filename
+            ORDER BY COALESCE(d.score, 0.0) DESC, d.detection_id DESC
+            LIMIT 1
+        ) as bbox_w,
+        (
+            SELECT d.bbox_h
+            FROM detections d
+            WHERE d.image_filename = i.filename
+            ORDER BY COALESCE(d.score, 0.0) DESC, d.detection_id DESC
+            LIMIT 1
+        ) as bbox_h,
         CASE
             WHEN NOT EXISTS (SELECT 1 FROM detections d WHERE d.image_filename = i.filename)
             THEN 'orphan'
-            ELSE 'low_confidence'
+            ELSE 'low_score'
         END as review_reason
     FROM images i
-    WHERE (i.review_status IS NULL OR i.review_status = 'untagged')
-    AND (
-        NOT EXISTS (SELECT 1 FROM detections d WHERE d.image_filename = i.filename)
-        OR (SELECT MAX(d.od_confidence) FROM detections d WHERE d.image_filename = i.filename) < ?
-    )
-    AND i.filename IS NOT NULL
+    WHERE {where_sql}
     ORDER BY i.timestamp ASC;
     """
-    cur = conn.execute(query, (save_threshold,))
+    cur = conn.execute(query, params)
     return cur.fetchall()
 
 
 def fetch_review_queue_count(
-    conn: sqlite3.Connection, save_threshold: float = 0.65
+    conn: sqlite3.Connection, gallery_threshold: float = 0.7
 ) -> int:
     """
     Returns count of images needing review (for badge).
@@ -108,11 +147,11 @@ def fetch_review_queue_count(
     WHERE (i.review_status IS NULL OR i.review_status = 'untagged')
     AND (
         NOT EXISTS (SELECT 1 FROM detections d WHERE d.image_filename = i.filename)
-        OR (SELECT MAX(d.od_confidence) FROM detections d WHERE d.image_filename = i.filename) < ?
+        OR (SELECT MAX(COALESCE(d.score, 0.0)) FROM detections d WHERE d.image_filename = i.filename) < ?
     )
     AND i.filename IS NOT NULL;
     """
-    row = conn.execute(query, (save_threshold,)).fetchone()
+    row = conn.execute(query, (gallery_threshold,)).fetchone()
     return row[0] if row else 0
 
 

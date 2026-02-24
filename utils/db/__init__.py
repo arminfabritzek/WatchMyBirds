@@ -11,14 +11,16 @@ Usage:
     from utils.db.detections import insert_detection
 """
 
-# Connection and Schema
 # Analytics Operations
 from utils.db.analytics import (
     fetch_all_detection_times,
     fetch_all_time_daily_counts,
     fetch_analytics_summary,
+    fetch_simulation_data,
     fetch_species_timestamps,
 )
+
+# Connection and Schema
 from utils.db.connection import (
     DB_FILENAME,
     _ensure_column,
@@ -33,11 +35,15 @@ from utils.db.connection import (
 
 # Detection Operations
 from utils.db.detections import (
+    fetch_bbox_centers,
+    fetch_count_last_24h,
     fetch_daily_covers,
     fetch_day_count,
     fetch_detection_species_summary,
     fetch_detections_for_gallery,
+    fetch_detections_last_24h,
     fetch_hourly_counts,
+    fetch_random_favorites,
     fetch_sibling_detections,
     insert_classification,
     insert_detection,
@@ -52,6 +58,9 @@ from utils.db.images import (
     insert_image,
     update_downloaded_timestamp,
 )
+
+# Inbox ingest audit log
+from utils.db.inbox_ingest_events import insert_inbox_ingest_event
 
 # Review Queue Operations
 from utils.db.review_queue import (
@@ -89,10 +98,14 @@ __all__ = [
     # Detections
     "insert_detection",
     "insert_classification",
+    "fetch_bbox_centers",
     "fetch_detections_for_gallery",
     "fetch_sibling_detections",
     "fetch_day_count",
+    "fetch_count_last_24h",
+    "fetch_detections_last_24h",
     "fetch_hourly_counts",
+    "fetch_random_favorites",
     "fetch_daily_covers",
     "fetch_detection_species_summary",
     "reject_detections",
@@ -106,6 +119,7 @@ __all__ = [
     "fetch_all_detection_times",
     "fetch_species_timestamps",
     "fetch_analytics_summary",
+    "fetch_simulation_data",
     # Review Queue
     "fetch_orphan_images",
     "delete_orphan_images",
@@ -115,4 +129,6 @@ __all__ = [
     "restore_no_bird_images",
     "delete_no_bird_images",
     "update_review_status",
+    # Inbox ingest audit log
+    "insert_inbox_ingest_event",
 ]

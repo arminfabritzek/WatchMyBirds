@@ -1,8 +1,10 @@
 import ipaddress
 import logging
+import os
 import socket
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from pathlib import Path
 from urllib.parse import urlparse
 
 import ifaddr
@@ -25,6 +27,63 @@ class NetworkScanner:
     def __init__(self):
         self._found_devices: dict[str, dict] = {}  # Key: "ip:port"
         self._lock = threading.Lock()
+
+    def _candidate_onvif_ports(self, preferred_port: int | None) -> list[int]:
+        """
+        Returns ordered ONVIF ports to try.
+        Preferred port first, then known common ONVIF ports without duplicates.
+        """
+        ordered: list[int] = []
+        if isinstance(preferred_port, int) and preferred_port > 0:
+            ordered.append(preferred_port)
+
+        for port in self.COMMON_PORTS:
+            if port not in ordered:
+                ordered.append(port)
+
+        return ordered
+
+    def _resolve_onvif_wsdl_dir(self) -> str | None:
+        """
+        Resolve WSDL directory for onvif-zeep.
+        This keeps ONVIF working even if the package wheel misses bundled WSDL files.
+        """
+        candidates: list[Path] = []
+
+        env_wsdl = os.getenv("ONVIF_WSDL_DIR", "").strip()
+        if env_wsdl:
+            candidates.append(Path(env_wsdl))
+
+        # Default onvif-zeep layout: site-packages/wsdl
+        try:
+            import onvif as onvif_module
+
+            candidates.append(
+                Path(onvif_module.__file__).resolve().parent.parent / "wsdl"
+            )
+        except Exception:
+            pass
+
+        # Repository-bundled fallback for appliance/dev images.
+        project_root = Path(__file__).resolve().parents[1]
+        candidates.append(project_root / "assets" / "onvif_wsdl")
+
+        for candidate in candidates:
+            try:
+                if (candidate / "devicemgmt.wsdl").exists():
+                    return str(candidate)
+            except Exception:
+                continue
+        return None
+
+    def _create_onvif_camera(
+        self, ip: str, port: int, user: str, password: str
+    ) -> ONVIFCamera:
+        """Create ONVIF camera client with explicit WSDL path when available."""
+        wsdl_dir = self._resolve_onvif_wsdl_dir()
+        if wsdl_dir:
+            return ONVIFCamera(ip, port, user, password, wsdl_dir=wsdl_dir)
+        return ONVIFCamera(ip, port, user, password)
 
     def scan(self, fast: bool = False) -> list[dict]:
         """
@@ -249,7 +308,7 @@ class NetworkScanner:
     def get_device_info(self, ip, port, user, password):
         """Directly query a specific camera."""
         try:
-            cam = ONVIFCamera(ip, port, user, password)
+            cam = self._create_onvif_camera(ip, port, user, password)
             info = cam.devicemgmt.GetDeviceInformation()
             return {
                 "manufacturer": info.Manufacturer,
@@ -263,35 +322,54 @@ class NetworkScanner:
 
     def get_stream_uri(self, ip, port, user, password, profile_index=0):
         """Get RTSP URI."""
-        try:
-            c = ONVIFCamera(ip, port, user, password)
-            media = c.create_media_service()
-            profiles = media.GetProfiles()
-            if not profiles:
-                raise Exception("No profiles found")
-            token = profiles[profile_index].token
+        last_error = None
+        tried_ports = self._candidate_onvif_ports(port)
 
-            uri_resp = media.GetStreamUri(
-                {
-                    "StreamSetup": {
-                        "Stream": "RTP-Unicast",
-                        "Transport": {"Protocol": "RTSP"},
-                    },
-                    "ProfileToken": token,
-                }
-            )
-            uri = uri_resp.Uri
+        for try_port in tried_ports:
+            try:
+                c = self._create_onvif_camera(ip, try_port, user, password)
+                media = c.create_media_service()
+                profiles = media.GetProfiles()
+                if not profiles:
+                    raise RuntimeError("No profiles found")
+                token = profiles[profile_index].token
 
-            # Inject creds
-            if user and password:
-                p = urlparse(uri)
-                # Reconstruct with auth
-                netloc = f"{user}:{password}@{p.hostname}"
-                if p.port:
-                    netloc += f":{p.port}"
-                uri = p._replace(netloc=netloc).geturl()
-            return uri
+                uri_resp = media.GetStreamUri(
+                    {
+                        "StreamSetup": {
+                            "Stream": "RTP-Unicast",
+                            "Transport": {"Protocol": "RTSP"},
+                        },
+                        "ProfileToken": token,
+                    }
+                )
+                uri = uri_resp.Uri
 
-        except Exception as e:
-            logger.error(f"GetStream failed: {e}")
-            raise
+                # Inject creds
+                if user and password:
+                    p = urlparse(uri)
+                    # Reconstruct with auth
+                    netloc = f"{user}:{password}@{p.hostname}"
+                    if p.port:
+                        netloc += f":{p.port}"
+                    uri = p._replace(netloc=netloc).geturl()
+
+                if try_port != port:
+                    logger.info(
+                        "GetStream succeeded via ONVIF fallback port %s (requested %s)",
+                        try_port,
+                        port,
+                    )
+                return uri
+
+            except Exception as e:
+                last_error = e
+                logger.debug("GetStream failed for %s:%s: %s", ip, try_port, e)
+
+        logger.error(
+            "GetStream failed for %s on ONVIF ports %s: %s",
+            ip,
+            tried_ports,
+            last_error,
+        )
+        raise RuntimeError(f"GetStream failed after port fallback: {last_error}")

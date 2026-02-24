@@ -19,6 +19,10 @@
         <a class="app-bar__link app-bar__link--primary{% if current_path == '/' %} active{% endif %}" href="/">
             Live
         </a>
+        <a class="app-bar__link app-bar__link--primary{% if current_path == '/species' %} active{% endif %}"
+            href="/species">
+            Species
+        </a>
         <a class="app-bar__link app-bar__link--primary{% if current_path and current_path.startswith('/gallery') %} active{% endif %}"
             href="/gallery">
             Gallery
@@ -32,16 +36,9 @@
         <span class="app-bar__spacer"></span>
 
         {# SECONDARY: Admin/utility actions (muted) #}
-        <a class="app-bar__link app-bar__link--secondary{% if current_path == '/species' %} active{% endif %}"
-            href="/species">
-            Species
-        </a>
         <a class="app-bar__link app-bar__link--secondary{% if current_path == '/admin/review' %} active{% endif %}"
             href="/admin/review">
             Review
-            {% if untagged_count and untagged_count > 0 %}
-            <span class="app-bar__badge app-bar__badge--warning">{{ untagged_count }}</span>
-            {% endif %}
         </a>
         <a class="app-bar__link app-bar__link--secondary{% if current_path == '/inbox' %} active{% endif %}"
             href="/inbox">
@@ -51,9 +48,6 @@
         <a class="app-bar__link app-bar__link--secondary{% if current_path == '/trash' %} active{% endif %}"
             href="/trash">
             Trash
-            {% if trash_count and trash_count > 0 %}
-            <span class="app-bar__badge">{{ trash_count }}</span>
-            {% endif %}
         </a>
         <a class="app-bar__link app-bar__link--secondary{% if current_path == '/settings' %} active{% endif %}"
             href="/settings">
@@ -68,9 +62,28 @@
 
 {# Status Bar - Minimal, muted (NOT STICKY) #}
 <div class="status-bar" id="statusBar">
+
+    {# Weather Widget - compact live weather display #}
+    <div class="status-bar__item status-bar__item--weather" id="weatherWidget" style="display: none;" title="Weather">
+        <span class="status-bar__weather-emoji" id="weatherEmoji">--</span>
+        <span class="status-bar__value" id="weatherTemp">--°C</span>
+        <span class="status-bar__weather-wind" id="weatherWind">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                stroke-linecap="round" stroke-linejoin="round" style="vertical-align: -1px; opacity: 0.6;">
+                <path
+                    d="M9.59 4.59A2 2 0 1 1 11 8H2m10.59 11.41A2 2 0 1 0 14 16H2m15.73-8.27A2.5 2.5 0 1 1 19.5 12H2" />
+            </svg>
+            <span id="weatherWindVal">--</span>
+        </span>
+    </div>
+
     <div class="status-bar__item" title="CPU Usage">
         <span class="status-bar__label">CPU</span>
         <span class="status-bar__value" id="statusCpuVal">--%</span>
+    </div>
+    <div class="status-bar__item" title="RAM Usage">
+        <span class="status-bar__label">RAM</span>
+        <span class="status-bar__value" id="statusRamVal">--%</span>
     </div>
     <div class="status-bar__item" title="Temperature">
         <span class="status-bar__value" id="statusTempVal">--°C</span>
@@ -80,40 +93,68 @@
     </div>
 </div>
 
+<style>
+    /* Weather widget styles */
+    .status-bar__item--weather {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding-right: 12px;
+        border-right: 1px solid rgba(255, 255, 255, 0.1);
+        margin-right: 8px;
+    }
+
+    .status-bar__weather-emoji {
+        font-size: 1.25rem;
+        line-height: 1;
+    }
+
+    .status-bar__weather-wind {
+        display: flex;
+        align-items: center;
+        gap: 2px;
+        font-size: 0.875rem;
+        opacity: 0.7;
+    }
+</style>
+
 <script>
     (function () {
         function updateStatus() {
-            fetch('/api/v1/system/stats')
+            fetch('/api/v1/health')
                 .then(r => r.json())
                 .then(data => {
-                    if (data.status === 'success') {
-                        const cpu = Math.round(data.cpu);
+                    // Check top-level status or existence of 'system'
+                    if (data.system) {
+                        const cpu = Math.round(data.system.cpu_percent || 0);
                         const cpuEl = document.getElementById('statusCpuVal');
                         cpuEl.textContent = cpu + '%';
-                        // Only color when critical
                         cpuEl.className = 'status-bar__value' + (cpu >= 85 ? ' status-bar__value--danger' : cpu >= 70 ? ' status-bar__value--warning' : '');
 
-                        if (data.temp !== undefined) {
-                            const temp = Math.round(data.temp);
+                        const ram = Math.round(data.system.ram_percent || 0);
+                        const ramEl = document.getElementById('statusRamVal');
+                        ramEl.textContent = ram + '%';
+                        ramEl.className = 'status-bar__value' + (ram >= 90 ? ' status-bar__value--danger' : ram >= 75 ? ' status-bar__value--warning' : '');
+
+                        if (data.system.cpu_temp_c !== null) {
+                            const temp = Math.round(data.system.cpu_temp_c);
                             const tempEl = document.getElementById('statusTempVal');
                             tempEl.textContent = temp + '°C';
                             tempEl.className = 'status-bar__value' + (temp >= 70 ? ' status-bar__value--danger' : temp >= 60 ? ' status-bar__value--warning' : '');
                         }
 
-                        if (data.disk !== undefined) {
+                        if (data.disk) {
                             const diskEl = document.getElementById('statusDiskVal');
                             diskEl.textContent = data.disk.free_gb + ' GB';
-                            // Use absolute threshold: green if ≥100GB free, otherwise percent-based
+
                             let diskClass = 'status-bar__value';
                             if (data.disk.free_gb < 100) {
-                                // Low absolute space - use percent thresholds
                                 if (data.disk.percent >= 90) {
                                     diskClass += ' status-bar__value--danger';
                                 } else if (data.disk.percent >= 75) {
                                     diskClass += ' status-bar__value--warning';
                                 }
                             }
-                            // If ≥100GB free, stays default (green) regardless of percent
                             diskEl.className = diskClass;
                         }
                     }
@@ -121,8 +162,28 @@
                 .catch(() => { });
         }
 
+        function updateWeather() {
+            fetch('/api/v1/weather/now')
+                .then(r => r.json())
+                .then(data => {
+                    const widget = document.getElementById('weatherWidget');
+                    if (!widget) return;
+                    const w = data.weather;
+                    if (data.status === 'success' && w && w.temp_c !== null) {
+                        document.getElementById('weatherEmoji').textContent = w.condition_emoji || '🌡️';
+                        document.getElementById('weatherTemp').textContent = Math.round(w.temp_c) + '°C';
+                        document.getElementById('weatherWindVal').textContent = Math.round(w.wind_kph || 0) + ' km/h';
+                        widget.title = (w.condition_text || 'Weather') + ' · ' + Math.round(w.temp_c) + '°C';
+                        widget.style.display = 'flex';
+                    }
+                })
+                .catch(() => { });
+        }
+
         updateStatus();
+        updateWeather();
         setInterval(updateStatus, 3000);
+        setInterval(updateWeather, 300000); // 5 min
     })();
 
     function toggleNav() {
@@ -130,20 +191,48 @@
         if (nav) nav.classList.toggle('open');
     }
 
+    function toggleDropdown(e) {
+        e.stopPropagation();
+        const dropdown = e.currentTarget.closest('.app-bar__dropdown');
+        if (!dropdown) return;
+
+        // Close all other dropdowns first
+        document.querySelectorAll('.app-bar__dropdown.open').forEach(d => {
+            if (d !== dropdown) d.classList.remove('open');
+        });
+
+        dropdown.classList.toggle('open');
+    }
+
     document.addEventListener('DOMContentLoaded', function () {
-        document.querySelectorAll('.app-bar__nav .app-bar__link').forEach(link => {
+        // Close mobile nav on link click
+        document.querySelectorAll('.app-bar__nav .app-bar__link:not(.app-bar__dropdown-trigger)').forEach(link => {
             link.addEventListener('click', () => {
                 const nav = document.getElementById('appBarNav');
                 if (nav) nav.classList.remove('open');
             });
         });
 
+        // Close dropdown items → also close mobile nav
+        document.querySelectorAll('.app-bar__dropdown-item').forEach(link => {
+            link.addEventListener('click', () => {
+                const nav = document.getElementById('appBarNav');
+                if (nav) nav.classList.remove('open');
+            });
+        });
+
+        // Click outside → close nav + dropdowns
         document.addEventListener('click', function (e) {
             const nav = document.getElementById('appBarNav');
             const toggle = document.querySelector('.app-bar__toggle');
             if (nav && nav.classList.contains('open') && !nav.contains(e.target) && !toggle.contains(e.target)) {
                 nav.classList.remove('open');
             }
+
+            // Close all open dropdowns when clicking outside
+            document.querySelectorAll('.app-bar__dropdown.open').forEach(d => {
+                if (!d.contains(e.target)) d.classList.remove('open');
+            });
         });
     });
 </script>

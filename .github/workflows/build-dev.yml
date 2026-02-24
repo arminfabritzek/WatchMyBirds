@@ -1,6 +1,8 @@
 name: Build DEV Image
 
 on:
+  workflow_dispatch:
+
   workflow_run:
     workflows: ["Build Golden Image"]
     types:
@@ -9,7 +11,7 @@ on:
 jobs:
   build-dev:
     runs-on: ubuntu-latest
-    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     permissions:
       contents: write
 
@@ -179,23 +181,27 @@ jobs:
           sudo umount mount_point
           sudo losetup -d $LOOP_DEV
 
-      - name: Rename Image
+      - name: Set Build Date
+        id: builddate
         run: |
-          DATE=$(date +%Y-%m-%d)
-          mv golden.img watchmybirds-rpi-dev-${DATE}.img
+          echo "date=$(date +%Y-%m-%d-%H%M)" >> $GITHUB_OUTPUT
+          echo "date_short=$(date +%Y-%m-%d)" >> $GITHUB_OUTPUT
+
+      - name: Rename Image
+        run: mv golden.img watchmybirds-rpi-dev-${{ steps.builddate.outputs.date }}.img
 
       - name: Compress DEV Image
-        run: |
-          DATE=$(date +%Y-%m-%d)
-          xz -z -1 -T0 watchmybirds-rpi-dev-${DATE}.img
+        run: xz -z -1 -T0 watchmybirds-rpi-dev-${{ steps.builddate.outputs.date }}.img
 
       - name: Create DEV Release and Upload
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          DATE=$(date +%Y-%m-%d)
-          TAG="rpi-dev-${DATE}"
-          IMG_FILE="watchmybirds-rpi-dev-${DATE}.img.xz"
+          set -euo pipefail
+          
+          TAG="rpi-dev-${{ steps.builddate.outputs.date }}"
+          IMG_FILE="watchmybirds-rpi-dev-${{ steps.builddate.outputs.date }}.img.xz"
+          DATE_SHORT="${{ steps.builddate.outputs.date_short }}"
           
           # Create Release Notes File (content at column 0 to avoid Markdown indentation issues)
           cat > release_notes.md << 'RELEASE_EOF'
@@ -206,19 +212,18 @@ jobs:
           
           ⚠️ **Development build** – SSH enabled, relaxed security for testing.
           
-          Flash to SD card with [Raspberry Pi Imager](https://www.raspberrypi.com/software/) and boot on Raspberry Pi 5.
+          Flash to SD card with [Raspberry Pi Imager](https://www.raspberrypi.com/software/) and boot on Raspberry Pi 4 or 5.
           RELEASE_EOF
-          sed -i "s/PLACEHOLDER_DATE/${DATE}/g" release_notes.md
+          sed -i "s/PLACEHOLDER_DATE/${DATE_SHORT}/g" release_notes.md
           sed -i "s/PLACEHOLDER_COMMIT/${{ github.sha }}/g" release_notes.md
           
-          # Create Release if not exists
-          gh release view "$TAG" --repo "${{ github.repository }}" >/dev/null 2>&1 || \
-            gh release create "$TAG" \
-              --repo "${{ github.repository }}" \
-              --title "🍓 Raspberry Pi Dev Image – ${DATE}" \
-              --notes-file release_notes.md \
-              --generate-notes \
-              --prerelease
+          echo "Creating release $TAG..."
+          gh release create "$TAG" \
+            --repo "${{ github.repository }}" \
+            --title "🍓 Raspberry Pi Dev Image – ${DATE_SHORT}" \
+            --notes-file release_notes.md \
+            --generate-notes \
+            --prerelease
 
           # Upload Asset
           echo "Uploading $IMG_FILE to release $TAG..."

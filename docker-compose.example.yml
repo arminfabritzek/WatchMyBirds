@@ -1,20 +1,15 @@
 services:
   # One-stack default: start go2rtc + WatchMyBirds together.
+  # Uses host networking so WebRTC streaming works out of the box.
   go2rtc:
     image: alexxit/go2rtc:latest
     container_name: go2rtc
     restart: unless-stopped
-    networks:
-      - wmb_net
+    network_mode: host
     volumes:
       # Reuse the existing output folder.
       # go2rtc reads /config/go2rtc.yaml -> /your_path/output/go2rtc.yaml on host.
       - /your_path/output:/config
-    ports:
-      - "1984:1984" # go2rtc Web UI
-      - "8554:8554" # RTSP relay
-      - "8555:8555/tcp" # WebRTC (TCP)
-      - "8555:8555/udp" # WebRTC (UDP)
 
   watchmybirds:
     image: starminworks/watchmybirds:latest
@@ -22,15 +17,15 @@ services:
     depends_on:
       go2rtc:
         condition: service_started
-    networks:
-      - wmb_net
+    restart: unless-stopped
+    network_mode: host
     environment:
       # Camera source the user provides.
       - CAMERA_URL=rtsp://user:password@192.168.x.x:554/stream1
       # Recommended default: relay when available, direct fallback if not.
       - STREAM_SOURCE_MODE=auto # auto | relay | direct
-      # Service-DNS access to go2rtc in bridge network.
-      - GO2RTC_API_BASE=http://go2rtc:1984
+      # go2rtc runs on the same host network.
+      - GO2RTC_API_BASE=http://127.0.0.1:1984
       # Keep config in /output so no extra host mount is needed.
       - GO2RTC_CONFIG_PATH=/output/go2rtc.yaml
       # Paths
@@ -65,15 +60,32 @@ services:
       - /your_path/output:/output
       - /your_path/ingest:/ingest
       - /your_path/models:/models
-    ports:
-      - "8050:8050" # Web UI
-    restart: unless-stopped
-
-networks:
-  wmb_net:
-    driver: bridge
 
 # If you intentionally want to run without go2rtc:
 # - Remove go2rtc service.
 # - Remove GO2RTC_API_BASE and GO2RTC_CONFIG_PATH from watchmybirds.
 # - Set STREAM_SOURCE_MODE=direct.
+
+# ── Optional: Bridge Network ──────────────────────────────────
+# If you prefer Docker bridge networking (isolated ports),
+# replace `network_mode: host` with the config below.
+# Note: WebRTC may not work without extra STUN/TURN configuration.
+#
+#   1. Remove `network_mode: host` from both services
+#   2. Add to both services:
+#        networks:
+#          - wmb_net
+#   3. Add ports to go2rtc:
+#        ports:
+#          - "1984:1984"
+#          - "8554:8554"
+#          - "8555:8555/tcp"
+#          - "8555:8555/udp"
+#   4. Add ports to watchmybirds:
+#        ports:
+#          - "8050:8050"
+#   5. Change GO2RTC_API_BASE to http://go2rtc:1984
+#   6. Add at the bottom:
+#        networks:
+#          wmb_net:
+#            driver: bridge

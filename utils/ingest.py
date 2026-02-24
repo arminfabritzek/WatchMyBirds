@@ -15,6 +15,7 @@ from utils.db import (
     insert_classification,
     insert_detection,
     insert_image,
+    insert_inbox_ingest_event,
 )
 from utils.image_ops import create_square_crop
 from utils.path_manager import get_path_manager
@@ -59,15 +60,32 @@ def extract_original_exif(filepath: str) -> bytes | None:
 def get_image_creation_date(filepath: str) -> datetime:
     """
     Determines the creation timestamp of an image.
-    Priority: EXIF DateTimeOriginal > File Modification Time > Now
+    Priority: EXIF DateTimeOriginal > EXIF DateTimeDigitized > File Modification Time > Now
     """
     try:
         # 1. Try EXIF
         exif_dict = piexif.load(filepath)
         if piexif.ExifIFD.DateTimeOriginal in exif_dict["Exif"]:
-            dt_str = exif_dict["Exif"][piexif.ExifIFD.DateTimeOriginal].decode("utf-8")
-            # Format is typically "YYYY:MM:DD HH:MM:SS"
-            return datetime.strptime(dt_str, "%Y:%m:%d %H:%M:%S")
+            dt_raw = exif_dict["Exif"][piexif.ExifIFD.DateTimeOriginal]
+            dt_str = (
+                dt_raw.decode("utf-8", errors="ignore")
+                if isinstance(dt_raw, (bytes, bytearray))
+                else str(dt_raw)
+            )
+            dt_str = dt_str.strip("\x00").strip()
+            if dt_str:
+                # Format is typically "YYYY:MM:DD HH:MM:SS"
+                return datetime.strptime(dt_str, "%Y:%m:%d %H:%M:%S")
+        if piexif.ExifIFD.DateTimeDigitized in exif_dict["Exif"]:
+            dt_raw = exif_dict["Exif"][piexif.ExifIFD.DateTimeDigitized]
+            dt_str = (
+                dt_raw.decode("utf-8", errors="ignore")
+                if isinstance(dt_raw, (bytes, bytearray))
+                else str(dt_raw)
+            )
+            dt_str = dt_str.strip("\x00").strip()
+            if dt_str:
+                return datetime.strptime(dt_str, "%Y:%m:%d %H:%M:%S")
     except Exception:
         pass  # Fallback
 
@@ -80,6 +98,96 @@ def get_image_creation_date(filepath: str) -> datetime:
 
     # 3. Fallback to Now
     return datetime.now()
+
+
+def _check_inbox_exif_requirements(
+    filepath: str, *, require_datetime: bool, require_gps: bool
+) -> tuple[bool, str | None, dict]:
+    """
+    Validate that an inbox import file contains required EXIF fields.
+
+    Requirements (matching `detectors.services.persistence_service.add_exif_metadata`):
+    - Date/time: DateTimeOriginal (preferred) or DateTimeDigitized
+    - GPS: GPSLatitude + GPSLongitude
+    """
+    details: dict = {
+        "require_datetime": bool(require_datetime),
+        "require_gps": bool(require_gps),
+    }
+
+    try:
+        exif_dict = piexif.load(filepath)
+    except Exception as e:
+        details.update(
+            {
+                "exif_load_ok": False,
+                "exif_error": str(e),
+                "has_exif_datetime": False,
+                "has_exif_gps": False,
+            }
+        )
+        missing = []
+        if require_datetime:
+            missing.append("exif_datetime")
+        if require_gps:
+            missing.append("exif_gps")
+        reason = "missing_" + "_and_".join(missing) if missing else "missing_exif"
+        return False, reason, details
+
+    details["exif_load_ok"] = True
+
+    exif_ifd = exif_dict.get("Exif", {}) or {}
+    gps_ifd = exif_dict.get("GPS", {}) or {}
+
+    # Date/time (prefer DateTimeOriginal, else DateTimeDigitized)
+    dt_source = None
+    dt_value = None
+    for tag, src in (
+        (piexif.ExifIFD.DateTimeOriginal, "DateTimeOriginal"),
+        (piexif.ExifIFD.DateTimeDigitized, "DateTimeDigitized"),
+    ):
+        if tag in exif_ifd:
+            raw = exif_ifd.get(tag)
+            s = (
+                raw.decode("utf-8", errors="ignore")
+                if isinstance(raw, (bytes, bytearray))
+                else str(raw)
+            )
+            s = s.strip("\x00").strip()
+            if not s:
+                continue
+            # Validate format to avoid ingesting garbage values
+            try:
+                datetime.strptime(s, "%Y:%m:%d %H:%M:%S")
+            except Exception:
+                details[f"{src}_raw"] = s
+                continue
+            dt_source = src
+            dt_value = s
+            break
+
+    has_dt = bool(dt_source and dt_value)
+    details["has_exif_datetime"] = has_dt
+    if dt_source:
+        details["exif_datetime_source"] = dt_source
+    if dt_value:
+        details["exif_datetime_value"] = dt_value
+
+    # GPS (we only require coordinates, refs are optional for the check)
+    gps_lat = gps_ifd.get(piexif.GPSIFD.GPSLatitude)
+    gps_lon = gps_ifd.get(piexif.GPSIFD.GPSLongitude)
+    has_gps = bool(gps_lat and gps_lon)
+    details["has_exif_gps"] = has_gps
+
+    missing = []
+    if require_datetime and not has_dt:
+        missing.append("exif_datetime")
+    if require_gps and not has_gps:
+        missing.append("exif_gps")
+
+    if missing:
+        return False, "missing_" + "_and_".join(missing), details
+    return True, None, details
 
 
 def ingest_folder(folder_path: str, source_id: int, move_files: bool = False):
@@ -116,38 +224,41 @@ def ingest_folder(folder_path: str, source_id: int, move_files: bool = False):
     count_skipped = 0
     count_errors = 0
 
-    for root, dirnames, files in os.walk(folder_path):
-        # Exclude system folders from recursion
-        dirnames[:] = [
-            d for d in dirnames if d not in ("processed", "skipped", "error")
-        ]
+    try:
+        for root, dirnames, files in os.walk(folder_path):
+            # Exclude system folders from recursion
+            dirnames[:] = [
+                d for d in dirnames if d not in ("processed", "skipped", "error")
+            ]
 
-        for filename in files:
-            if filename.lower().endswith((".jpg", ".jpeg", ".png")):
-                filepath = os.path.join(root, filename)
-                try:
-                    status = ingest_file(
-                        conn,
-                        filepath,
-                        source_id,
-                        detector,
-                        classifier,
-                        det_meta=(det_model_name, det_model_version),
-                        cls_meta=(cls_model_name, cls_model_version),
-                    )
+            for filename in files:
+                if filename.lower().endswith((".jpg", ".jpeg", ".png")):
+                    filepath = os.path.join(root, filename)
+                    try:
+                        status = ingest_file(
+                            conn,
+                            filepath,
+                            source_id,
+                            detector,
+                            classifier,
+                            det_meta=(det_model_name, det_model_version),
+                            cls_meta=(cls_model_name, cls_model_version),
+                        )
 
-                    if move_files:
-                        _handle_file_move(root, filename, status)
+                        if move_files:
+                            _handle_file_move(root, filename, status)
 
-                    if status == "ingested":
-                        count_ingested += 1
-                    elif status == "skipped":
-                        count_skipped += 1
-                except Exception as e:
-                    logger.error(f"Error ingesting {filepath}: {e}", exc_info=True)
-                    if move_files:
-                        _handle_file_move(root, filename, "error")
-                    count_errors += 1
+                        if status == "ingested":
+                            count_ingested += 1
+                        elif status == "skipped":
+                            count_skipped += 1
+                    except Exception as e:
+                        logger.error(f"Error ingesting {filepath}: {e}", exc_info=True)
+                        if move_files:
+                            _handle_file_move(root, filename, "error")
+                        count_errors += 1
+    finally:
+        conn.close()
 
     logger.info(
         f"Ingest complete. Ingested: {count_ingested}, Skipped: {count_skipped}, Errors: {count_errors}"
@@ -276,8 +387,8 @@ def ingest_file(
         for i, det in enumerate(detection_info_list, start=1):
             x1, y1, x2, y2 = det["x1"], det["y1"], det["x2"], det["y2"]
             bbox_tuple = (x1, y1, x2, y2)
-            cls_name = None
-            cls_conf = 0.0
+            det_cls_name = None
+            det_cls_conf = 0.0
 
             # Crop & Classify
             crop = create_square_crop(image, bbox_tuple, margin_percent=0.1)
@@ -287,7 +398,9 @@ def ingest_file(
                 )
                 crop_rgb = cv2.cvtColor(crop_resized, cv2.COLOR_BGR2RGB)
                 # Classifier predict
-                _, _, cls_name, cls_conf = classifier.predict_from_image(crop_rgb)
+                _, _, det_cls_name, det_cls_conf = classifier.predict_from_image(
+                    crop_rgb
+                )
 
             # --- GENERATE SQUARE THUMBNAIL (Match Live Stream: _crop_{i}) ---
             thumb_filename = f"{timestamp_str}_crop_{i}.webp"
@@ -354,8 +467,8 @@ def ingest_file(
                     "bbox": (x1, y1, x2, y2),
                     "od_class_name": det["class_name"],
                     "od_confidence": det["confidence"],
-                    "cls_class_name": cls_name,
-                    "cls_confidence": cls_conf,
+                    "cls_class_name": det_cls_name,
+                    "cls_confidence": det_cls_conf,
                     "thumb_filename": thumb_filename,
                 }
             )
@@ -364,19 +477,14 @@ def ingest_file(
         best_score_val = 0.0
         for enriched_det in enriched_detections:
             od = enriched_det["od_confidence"]
-            cls = enriched_det["cls_confidence"]
+            det_cls = enriched_det["cls_confidence"]
             # Formula: 0.5 * od + 0.5 * cls
             # If cls is 0.0 (no class found/threshold), effectively it lowers the score, which is correct.
             # However, if cls is missing/None, we should treat it as od (fallback).
-            # Here cls_conf is 0.0 if not found, so let's check for that.
-            if cls > 0:
-                score = 0.5 * od + 0.5 * cls
-            else:
-                score = od
-
-            if cls > 0:
-                score = 0.5 * od + 0.5 * cls
-                agreement = min(od, cls)
+            # Here det_cls is 0.0 if not found, so let's check for that.
+            if det_cls > 0:
+                score = 0.5 * od + 0.5 * det_cls
+                agreement = min(od, det_cls)
             else:
                 score = od
                 agreement = od
@@ -389,7 +497,7 @@ def ingest_file(
 
             # Logging according to verification request (DEBUG only)
             logger.debug(
-                f"Ingest Logic: od={od:.3f}, cls={cls:.3f} -> score={score:.3f}, agreement={agreement:.3f} "
+                f"Ingest Logic: od={od:.3f}, cls={det_cls:.3f} -> score={score:.3f}, agreement={agreement:.3f} "
                 f"[Models: od={det_name}:{det_version}, cls={cls_name}:{cls_version}]"
             )
 
@@ -434,6 +542,8 @@ def ingest_file(
                     "classifier_model_name": cls_name,
                     "classifier_model_version": cls_version,
                     "thumbnail_path": enriched_det["thumb_filename"],
+                    "frame_width": image.shape[1],
+                    "frame_height": image.shape[0],
                 },
             )
 
@@ -524,74 +634,143 @@ def ingest_inbox_folder(pending_dir: str, file_snapshot: list[str]):
     cls_model_version = cls_model_id
 
     conn = get_connection()
-    source_id = get_or_create_user_import_source(conn)
-
     count_ingested = 0
     count_skipped = 0
     count_errors = 0
 
-    for filepath in file_snapshot:
-        if not os.path.exists(filepath):
-            logger.warning(
-                f"File no longer exists (removed during processing?): {filepath}"
-            )
-            continue
+    try:
+        source_id = get_or_create_user_import_source(conn)
+        cfg = get_config()
+        require_dt = bool(cfg.get("INBOX_REQUIRE_EXIF_DATETIME", True))
+        require_gps = bool(cfg.get("INBOX_REQUIRE_EXIF_GPS", True))
 
-        filename = os.path.basename(filepath)
+        for filepath in file_snapshot:
+            if not os.path.exists(filepath):
+                logger.warning(
+                    f"File no longer exists (removed during processing?): {filepath}"
+                )
+                continue
 
-        # Extension check
-        if not filename.lower().endswith((".jpg", ".jpeg", ".png")):
-            logger.debug(f"Skipping non-image file: {filename}")
-            continue
+            filename = os.path.basename(filepath)
 
-        try:
-            status = ingest_file(
-                conn,
-                filepath,
-                source_id,
-                detector,
-                classifier,
-                det_meta=(det_model_name, det_model_version),
-                cls_meta=(cls_model_name, cls_model_version),
-            )
+            # Extension check
+            if not filename.lower().endswith((".jpg", ".jpeg", ".png")):
+                logger.debug(f"Skipping non-image file: {filename}")
+                continue
 
-            # Move file based on status
-            if status == "ingested":
-                target_dir = path_mgr.get_inbox_processed_dir(today)
-                count_ingested += 1
-            else:  # skipped (duplicate)
-                target_dir = path_mgr.get_inbox_skipped_dir(today)
-                count_skipped += 1
+            try:
+                # Inbox EXIF gate: skip imports without required EXIF date/time + GPS
+                if require_dt or require_gps:
+                    ok, reason, details = _check_inbox_exif_requirements(
+                        filepath,
+                        require_datetime=require_dt,
+                        require_gps=require_gps,
+                    )
+                    if not ok:
+                        insert_inbox_ingest_event(
+                            conn,
+                            inbox_filename=filename,
+                            status="skipped",
+                            reason=reason,
+                            source_id=source_id,
+                            details=details,
+                        )
+                        logger.info(
+                            "Skipping inbox file due to missing EXIF metadata: %s (%s)",
+                            filename,
+                            reason,
+                        )
 
-            target_path = target_dir / filename
+                        # Move to skipped directory (same as duplicate handling)
+                        target_dir = path_mgr.get_inbox_skipped_dir(today)
+                        count_skipped += 1
+                        target_path = target_dir / filename
 
-            # Handle filename collision
-            if target_path.exists():
-                base, ext = os.path.splitext(filename)
-                filename = f"{base}_{int(datetime.now().timestamp() * 1000)}{ext}"
+                        if target_path.exists():
+                            base, ext = os.path.splitext(filename)
+                            moved_name = (
+                                f"{base}_{int(datetime.now().timestamp() * 1000)}{ext}"
+                            )
+                            target_path = target_dir / moved_name
+
+                        shutil.move(filepath, str(target_path))
+                        logger.debug(f"Moved {target_path.name} to {target_dir}")
+                        continue
+
+                status = ingest_file(
+                    conn,
+                    filepath,
+                    source_id,
+                    detector,
+                    classifier,
+                    det_meta=(det_model_name, det_model_version),
+                    cls_meta=(cls_model_name, cls_model_version),
+                )
+
+                if status == "skipped":
+                    # Currently only used for hash-duplicate idempotency.
+                    insert_inbox_ingest_event(
+                        conn,
+                        inbox_filename=filename,
+                        status="skipped",
+                        reason="duplicate_hash",
+                        source_id=source_id,
+                        details={"skip_reason": "duplicate_hash"},
+                    )
+
+                # Move file based on status
+                if status == "ingested":
+                    target_dir = path_mgr.get_inbox_processed_dir(today)
+                    count_ingested += 1
+                else:  # skipped (duplicate)
+                    target_dir = path_mgr.get_inbox_skipped_dir(today)
+                    count_skipped += 1
+
                 target_path = target_dir / filename
 
-            shutil.move(filepath, str(target_path))
-            logger.debug(f"Moved {filename} to {target_dir}")
-
-        except Exception as e:
-            logger.error(f"Error ingesting {filepath}: {e}", exc_info=True)
-            count_errors += 1
-
-            # Move to error directory
-            try:
-                error_dir = path_mgr.get_inbox_error_dir()
-                error_path = error_dir / filename
-
-                if error_path.exists():
+                # Handle filename collision
+                if target_path.exists():
                     base, ext = os.path.splitext(filename)
                     filename = f"{base}_{int(datetime.now().timestamp() * 1000)}{ext}"
+                    target_path = target_dir / filename
+
+                shutil.move(filepath, str(target_path))
+                logger.debug(f"Moved {filename} to {target_dir}")
+
+            except Exception as e:
+                logger.error(f"Error ingesting {filepath}: {e}", exc_info=True)
+                count_errors += 1
+                try:
+                    insert_inbox_ingest_event(
+                        conn,
+                        inbox_filename=filename,
+                        status="error",
+                        reason="exception",
+                        source_id=source_id,
+                        details={"error": str(e)},
+                    )
+                except Exception:
+                    # Never fail the ingest loop due to audit logging.
+                    pass
+
+                # Move to error directory
+                try:
+                    error_dir = path_mgr.get_inbox_error_dir()
                     error_path = error_dir / filename
 
-                shutil.move(filepath, str(error_path))
-                logger.debug(f"Moved {filename} to error directory")
-            except Exception as move_err:
-                logger.error(f"Failed to move {filename} to error: {move_err}")
+                    if error_path.exists():
+                        base, ext = os.path.splitext(filename)
+                        filename = (
+                            f"{base}_{int(datetime.now().timestamp() * 1000)}{ext}"
+                        )
+                        error_path = error_dir / filename
+
+                    shutil.move(filepath, str(error_path))
+                    logger.debug(f"Moved {filename} to error directory")
+                except Exception as move_err:
+                    logger.error(f"Failed to move {filename} to error: {move_err}")
+    finally:
+        conn.close()
 
     logger.info(
         f"Inbox ingest complete. "

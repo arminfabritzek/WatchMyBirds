@@ -45,6 +45,17 @@
 
 {# Process Button - only if there are pending files #}
 <div id="processSection" class="mt-lg hidden">
+    <div style="display: flex; gap: 12px; align-items: center; margin-bottom: 12px;">
+        <label for="batchSize" style="font-weight: 600; white-space: nowrap;">Batch size:</label>
+        <select id="batchSize" class="form-control"
+            style="flex: 1; padding: 8px 12px; border-radius: 8px; border: 1px solid var(--color-border); background: var(--color-surface-2); font-size: 15px;">
+            <option value="100">100</option>
+            <option value="250">250</option>
+            <option value="500">500</option>
+            <option value="1000">1000</option>
+            <option value="0" selected>All</option>
+        </select>
+    </div>
     <button id="processBtn" class="btn btn--accent btn--lg btn--block" onclick="startProcessing()">
         <span id="processBtnText">✨ Process Now</span>
     </button>
@@ -86,8 +97,29 @@
     }
 
     function handleFiles(fileList) {
-        // No limit - accept ALL files
-        selectedFiles = Array.from(fileList);
+        // Filter for images (jpg, png) and size limit (50MB)
+        const validExtensions = ['.jpg', '.jpeg', '.png'];
+        const currentFiles = Array.from(fileList);
+
+        let rejectedCount = 0;
+
+        currentFiles.forEach(file => {
+            const ext = file.name.substring(file.name.lastIndexOf('.')).toLowerCase();
+            if (!validExtensions.includes(ext)) {
+                rejectedCount++;
+                return;
+            }
+            if (file.size > 50 * 1024 * 1024) { // 50MB limit
+                rejectedCount++;
+                return;
+            }
+            selectedFiles.push(file);
+        });
+
+        if (rejectedCount > 0) {
+            alert(`Skipped ${rejectedCount} invalid file(s). Only JPG/PNG images under 50MB are allowed.`);
+        }
+
         renderFileList();
     }
 
@@ -240,9 +272,11 @@
         result.innerHTML = '';
 
         try {
+            const batchSize = parseInt(document.getElementById('batchSize').value) || 0;
             const response = await fetch('/api/inbox/process', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' }
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ batch_size: batchSize })
             });
             const data = await response.json();
 

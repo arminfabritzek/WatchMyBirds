@@ -5,22 +5,29 @@ Provides all gallery-related operations separated from the web layer.
 """
 
 import logging
+import os
+import re
 import time
 from pathlib import Path
 from typing import Any
 
+import cv2
+
 from config import get_config
 from utils.db import (
+    closing_connection,
     fetch_daily_covers,
     fetch_detection_species_summary,
     fetch_detections_for_gallery,
-    get_connection,
 )
 from utils.db import (
     fetch_sibling_detections as db_fetch_sibling_detections,
 )
 from utils.image_ops import generate_preview_thumbnail as _generate_preview_thumbnail
 from utils.path_manager import get_path_manager
+from utils.wikipedia import (
+    build_species_wikipedia_url as _build_species_wikipedia_url,
+)
 
 logger = logging.getLogger(__name__)
 config = get_config()
@@ -40,7 +47,7 @@ def get_detections_for_date(date_str_iso: str) -> list[dict]:
     Returns:
         List of detection dictionaries
     """
-    with get_connection() as conn:
+    with closing_connection() as conn:
         rows = fetch_detections_for_gallery(conn, date_str_iso, order_by="time")
         return [dict(row) for row in rows]
 
@@ -53,7 +60,7 @@ def get_all_detections() -> list[dict]:
         List of detection dictionaries
     """
     try:
-        with get_connection() as conn:
+        with closing_connection() as conn:
             rows = fetch_detections_for_gallery(conn, order_by="time")
             return [dict(row) for row in rows]
     except Exception as e:
@@ -79,7 +86,7 @@ def get_captured_detections() -> list[dict]:
 
     detections = []
     try:
-        with get_connection() as conn:
+        with closing_connection() as conn:
             rows = fetch_detections_for_gallery(conn, order_by="time")
             detections = [dict(row) for row in rows]
     except Exception as e:
@@ -125,10 +132,10 @@ def get_daily_covers(common_names: dict[str, str] | None = None) -> dict[str, di
         common_names = {}
 
     covers: dict[str, dict] = {}
-    gallery_threshold = config.get("GALLERY_DISPLAY_THRESHOLD", 0.7)
+    gallery_threshold = config["GALLERY_DISPLAY_THRESHOLD"]
 
     try:
-        with get_connection() as conn:
+        with closing_connection() as conn:
             rows = fetch_daily_covers(conn, min_score=gallery_threshold)
             for row in rows:
                 date_key = row["date_key"]
@@ -178,7 +185,7 @@ def get_daily_species_summary(
         common_names = {}
 
     try:
-        with get_connection() as conn:
+        with closing_connection() as conn:
             rows = fetch_detection_species_summary(conn, date_iso)
     except Exception as e:
         logger.error(f"Error fetching daily species summary for {date_iso}: {e}")
@@ -254,6 +261,165 @@ def get_sibling_detections(original_name: str) -> list[dict]:
     Returns:
         List of sibling detection dictionaries
     """
-    with get_connection() as conn:
+    with closing_connection() as conn:
         rows = db_fetch_sibling_detections(conn, original_name)
         return [dict(row) for row in rows]
+
+
+# --- External Links ---
+
+
+def get_species_wikipedia_url(
+    common_name: str | None,
+    scientific_name: str | None = None,
+    locale: str = "de",
+) -> str | None:
+    """
+    Build a robust Wikipedia species search URL.
+
+    Args:
+        common_name: Species common name
+        scientific_name: Species scientific name
+        locale: Wikipedia locale subdomain (default: "de")
+
+    Returns:
+        URL string or None
+    """
+    return _build_species_wikipedia_url(common_name, scientific_name, locale)
+
+
+# --- Derivative Regeneration ---
+
+
+def regenerate_derivative(
+    output_dir: str, filename_rel: str, type: str = "thumb"
+) -> bool:
+    """
+    Attempts to regenerate a missing derivative.
+
+    Args:
+        output_dir: Base output directory
+        filename_rel: YYYYMMDD/basename.webp (path from route)
+        type: 'thumb' | 'optimized'
+
+    Returns:
+        True if successful, False otherwise
+    """
+    try:
+        path_mgr = get_path_manager(output_dir)
+
+        # 1. Parse Path
+        filename = os.path.basename(filename_rel)
+
+        # 2. Check source (Original)
+        original_filename = None
+        crop_index = None
+
+        if type == "thumb":
+            match = re.match(r"(.*)_crop_(\d+)\.webp$", filename)
+            if match:
+                base_no_ext = match.group(1)
+                crop_index = int(match.group(2))
+                original_filename = f"{base_no_ext}.jpg"
+        elif type == "optimized":
+            base_no_ext = os.path.splitext(filename)[0]
+            original_filename = f"{base_no_ext}.jpg"
+
+        if not original_filename:
+            return False
+
+        original_path = path_mgr.get_original_path(original_filename)
+
+        if not original_path.exists():
+            logger.error(
+                f"Cannot regenerate {filename}: Original missing at {original_path}"
+            )
+            return False
+
+        # 3. Load Original
+        img = cv2.imread(str(original_path))
+        if img is None:
+            return False
+
+        # 4. Process
+        target_path = None
+        out_img = None
+
+        if type == "optimized":
+            # Resize logic
+            if img.shape[1] > 1920:
+                scale = 1920 / img.shape[1]
+                new_h = int(img.shape[0] * scale)
+                out_img = cv2.resize(img, (1920, new_h))
+            else:
+                out_img = img
+
+            target_path = path_mgr.get_derivative_path(filename, "optimized")
+
+        elif type == "thumb":
+            # BBox Lookup from DB
+            with closing_connection() as conn:
+                cursor = conn.execute(
+                    """
+                    SELECT bbox_x, bbox_y, bbox_w, bbox_h
+                    FROM detections
+                    WHERE image_filename = ?
+                    ORDER BY detection_id ASC
+                    LIMIT 1 OFFSET ?
+                """,
+                    (original_filename, crop_index - 1),
+                )
+
+                row = cursor.fetchone()
+                if not row:
+                    logger.error(
+                        f"Cannot regenerate thumb: No detection found for {original_filename} index {crop_index}"
+                    )
+                    return False
+
+                # Crop Logic
+                h, w = img.shape[:2]
+                x1 = int(row[0] * w)
+                y1 = int(row[1] * h)
+                bw = int(row[2] * w)
+                bh = int(row[3] * h)
+                x2 = x1 + bw
+                y2 = y1 + bh
+
+                # Expand & Square
+                TARGET_SIZE = 256
+                EXPANSION = 0.1
+                side = int(max(bw, bh) * (1 + EXPANSION))
+                cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
+                sq_x1, sq_y1 = cx - side // 2, cy - side // 2
+                sq_x2, sq_y2 = sq_x1 + side, sq_y1 + side
+
+                # Clamp
+                sq_x1, sq_y1 = max(0, sq_x1), max(0, sq_y1)
+                sq_x2, sq_y2 = min(w, sq_x2), min(h, sq_y2)
+
+                if sq_x2 > sq_x1 and sq_y2 > sq_y1:
+                    crop_img = img[sq_y1:sq_y2, sq_x1:sq_x2]
+                    out_img = cv2.resize(
+                        crop_img,
+                        (TARGET_SIZE, TARGET_SIZE),
+                        interpolation=cv2.INTER_AREA,
+                    )
+                    target_path = path_mgr.get_derivative_path(filename, "thumb")
+                else:
+                    return False
+
+        # 5. Save
+        if target_path and out_img is not None:
+            path_mgr.ensure_date_structure(
+                path_mgr.extract_date_from_filename(filename)
+            )
+            cv2.imwrite(str(target_path), out_img, [int(cv2.IMWRITE_WEBP_QUALITY), 80])
+            logger.info(f"Regenerated missing derivative: {target_path}")
+            return True
+
+    except Exception as e:
+        logger.error(f"Regeneration failed for {filename_rel}: {e}")
+        return False
+
+    return False

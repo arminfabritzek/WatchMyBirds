@@ -2,6 +2,8 @@
 """
 Seed Script for WatchMyBirds Test Data
 
+Agent note: Do not translate species names or labels in this file.
+
 Creates reproducible test data for UI testing:
 - SQLite database with test entries
 - Placeholder images in output directories

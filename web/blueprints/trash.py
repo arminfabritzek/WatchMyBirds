@@ -7,6 +7,9 @@ Handles all trash-related routes:
 - POST /api/trash/purge - Permanently delete specific items
 - POST /api/trash/empty - Empty entire trash
 - POST /api/detections/reject - Reject detections (move to trash)
+- POST /api/detections/relabel - Relabel a detection's species
+- POST /api/detections/rate - Set manual rating for a detection
+- GET /api/species-list - List known species
 """
 
 import math
@@ -34,8 +37,11 @@ def trash_page():
     page = request.args.get("page", 1, type=int)
     limit = 50
 
-    with db_service.get_connection() as conn:
+    conn = db_service.get_connection()
+    try:
         items, total_count = db_service.fetch_trash_items(conn, page=page, limit=limit)
+    finally:
+        conn.close()
 
     processed_items = []
     for item in items:
@@ -112,7 +118,8 @@ def trash_restore():
 
         restored_count = 0
 
-        with db_service.get_connection() as conn:
+        conn = db_service.get_connection()
+        try:
             # Restore detections
             if detection_ids:
                 db_service.restore_detections(conn, detection_ids)
@@ -123,6 +130,8 @@ def trash_restore():
                 restored_count += db_service.restore_no_bird_images(
                     conn, image_filenames
                 )
+        finally:
+            conn.close()
 
         return jsonify({"status": "success", "result": {"restored": restored_count}})
     except Exception as e:
@@ -149,7 +158,8 @@ def trash_purge():
         img_deleted = 0
         files_deleted = 0
 
-        with db_service.get_connection() as conn:
+        conn = db_service.get_connection()
+        try:
             # Purge detections
             if detection_ids:
                 result = detections_service.hard_delete_detections_with_conn(
@@ -165,6 +175,8 @@ def trash_purge():
                 )
                 img_deleted = img_result.get("rows_deleted", 0)
                 files_deleted += img_result.get("files_deleted", 0)
+        finally:
+            conn.close()
 
         logger.info(
             f"Trash purge: {det_deleted} detections, {img_deleted} images, {files_deleted} files deleted"
@@ -195,7 +207,8 @@ def trash_empty():
         img_deleted = 0
         files_deleted = 0
 
-        with db_service.get_connection() as conn:
+        conn = db_service.get_connection()
+        try:
             # Empty rejected detections
             result = detections_service.hard_delete_detections_with_conn(
                 conn, before_date="2099-12-31"
@@ -209,6 +222,8 @@ def trash_empty():
             )
             img_deleted = img_result.get("rows_deleted", 0)
             files_deleted += img_result.get("files_deleted", 0)
+        finally:
+            conn.close()
 
         logger.info(
             f"Trash emptied: {det_deleted} detections, {img_deleted} images, {files_deleted} files deleted"
@@ -238,6 +253,204 @@ def reject_detection():
     ids = data.get("ids", [])
     if not ids:
         return jsonify({"error": "No IDs provided"}), 400
-    with db_service.get_connection() as conn:
+    conn = db_service.get_connection()
+    try:
         db_service.reject_detections(conn, ids)
+    finally:
+        conn.close()
     return jsonify({"status": "success"})
+
+
+@trash_bp.route("/api/species-list", methods=["GET"])
+def species_list():
+    """Returns the list of known species for relabeling."""
+    import json
+    import os
+
+    project_root = os.path.dirname(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    )
+    names_file = os.path.join(project_root, "assets", "common_names_DE.json")
+    try:
+        with open(names_file, encoding="utf-8") as f:
+            names = json.load(f)
+        # Return sorted by scientific name for dropdown
+        species = [
+            {"scientific": k, "common": v}
+            for k, v in sorted(names.items(), key=lambda x: x[0])
+        ]
+        return jsonify({"status": "success", "species": species})
+    except Exception as e:
+        logger.error(f"Failed to load species list: {e}")
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@trash_bp.route("/api/detections/relabel", methods=["POST"])
+@login_required
+def relabel_detection():
+    """
+    Relabels a detection to a different species.
+    Accepts: { detection_id: int, species: "Scientific_name" }
+    Updates both od_class_name in detections and cls_class_name in classifications.
+    """
+    data = request.get_json() or {}
+    detection_id = data.get("detection_id")
+    new_species = data.get("species")
+
+    if not detection_id or not new_species:
+        return jsonify({"error": "detection_id and species required"}), 400
+
+    conn = db_service.get_connection()
+    try:
+        # Update detection record
+        conn.execute(
+            "UPDATE detections SET od_class_name = ? WHERE detection_id = ?",
+            (new_species, detection_id),
+        )
+
+        # Update classification records (all for this detection)
+        conn.execute(
+            "UPDATE classifications SET cls_class_name = ? WHERE detection_id = ?",
+            (new_species, detection_id),
+        )
+
+        conn.commit()
+        # Invalidate gallery cache so the change shows immediately
+        try:
+            from web.web_interface import _cached_images
+
+            _cached_images["images"] = None
+        except Exception:
+            pass
+        logger.info(f"Detection {detection_id} relabeled to {new_species}")
+        return jsonify({"status": "success", "new_species": new_species})
+    except Exception as e:
+        logger.error(f"Error relabeling detection {detection_id}: {e}")
+        return jsonify({"status": "error", "message": str(e)}), 500
+    finally:
+        conn.close()
+
+
+def compute_auto_rating(od_confidence, cls_confidence, bbox_w, bbox_h):
+    """
+    Compute automatic detection quality rating (1-5).
+    5 = Audio+Visual match (gold), 4 = excellent, 3 = good, 2 = uncertain, 1 = poor.
+
+    NOTE: Legacy function kept for backward compatibility. The UI now uses
+    the simpler is_favorite toggle for cover image selection.
+    """
+    od_conf = od_confidence or 0
+    cls_conf = cls_confidence or 0
+    bbox_area = (bbox_w or 0) * (bbox_h or 0)
+
+    # Visual quality score
+    visual_score = od_conf * 0.4 + cls_conf * 0.6
+
+    # BBox size bonus/penalty
+    if bbox_area > 0.05:
+        visual_score += 0.1
+    elif bbox_area < 0.005:
+        visual_score -= 0.15
+
+    # Map to 1-4
+    if visual_score >= 0.65:
+        return 4
+    elif visual_score >= 0.45:
+        return 3
+    elif visual_score >= 0.25:
+        return 2
+    else:
+        return 1
+
+
+@trash_bp.route("/api/detections/rate", methods=["POST"])
+@login_required
+def rate_detection():
+    """
+    Set a manual rating for a detection.
+    Accepts: { detection_id: int, rating: int (1-5) }
+
+    NOTE: Legacy endpoint kept for backward compatibility.
+    The UI now uses /api/detections/favorite instead.
+    """
+    data = request.get_json() or {}
+    detection_id = data.get("detection_id")
+    rating = data.get("rating")
+
+    if not detection_id or rating is None:
+        return jsonify({"error": "detection_id and rating required"}), 400
+
+    rating = int(rating)
+    if rating < 1 or rating > 5:
+        return jsonify({"error": "Rating must be 1-5"}), 400
+
+    conn = db_service.get_connection()
+    try:
+        conn.execute(
+            "UPDATE detections SET rating = ?, rating_source = 'manual' WHERE detection_id = ?",
+            (rating, detection_id),
+        )
+        conn.commit()
+        # Invalidate gallery cache so rating-based sorting updates immediately
+        try:
+            from web.web_interface import _cached_images
+
+            _cached_images["images"] = None
+        except Exception:
+            pass
+        logger.info(f"Detection {detection_id} rated {rating}/5 (manual)")
+        return jsonify({"status": "success", "rating": rating})
+    except Exception as e:
+        logger.error(f"Error rating detection {detection_id}: {e}")
+        return jsonify({"status": "error", "message": str(e)}), 500
+    finally:
+        conn.close()
+
+
+@trash_bp.route("/api/detections/favorite", methods=["POST"])
+@login_required
+def toggle_favorite():
+    """
+    Toggle favorite status for a detection (❤️ on/off).
+    Accepts: { detection_id: int }
+    Returns the new is_favorite state.
+    """
+    data = request.get_json() or {}
+    detection_id = data.get("detection_id")
+
+    if not detection_id:
+        return jsonify({"error": "detection_id required"}), 400
+
+    conn = db_service.get_connection()
+    try:
+        # Read current state
+        row = conn.execute(
+            "SELECT COALESCE(is_favorite, 0) as is_favorite FROM detections WHERE detection_id = ?",
+            (detection_id,),
+        ).fetchone()
+
+        if not row:
+            return jsonify({"error": "Detection not found"}), 404
+
+        new_state = 0 if row["is_favorite"] else 1
+        conn.execute(
+            "UPDATE detections SET is_favorite = ? WHERE detection_id = ?",
+            (new_state, detection_id),
+        )
+        conn.commit()
+
+        # Invalidate gallery cache
+        try:
+            from web.web_interface import _cached_images
+
+            _cached_images["images"] = None
+        except Exception:
+            pass
+
+        logger.info(f"Detection {detection_id} favorite={'on' if new_state else 'off'}")
+        return jsonify({"status": "success", "is_favorite": bool(new_state)})
+    except Exception as e:
+        logger.error(f"Error toggling favorite for detection {detection_id}: {e}")
+        return jsonify({"status": "error", "message": str(e)}), 500
+    finally:
+        conn.close()

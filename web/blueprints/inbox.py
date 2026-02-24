@@ -50,7 +50,7 @@ def inbox_page():
 def inbox_upload():
     """
     Handle file uploads to inbox/pending.
-    Max 20 files, max 50MB each.
+    Max 100 files per request, max 50MB each.
     """
     try:
         # Block during restore
@@ -189,8 +189,8 @@ def inbox_status():
 def inbox_process():
     """
     Start processing of inbox/pending files.
-    Policy: Detection MUST be stopped (paused) before processing.
-    Returns 409 if detection running or processing already active.
+    Policy: Detection is auto-paused during processing (like backup/restore).
+    Returns 409 if processing already active.
     """
     try:
         # Block during restore
@@ -211,8 +211,18 @@ def inbox_process():
 
         # Take snapshot of pending files
         pending_dir = path_mgr.get_inbox_pending_dir()
-        snapshot = list(pending_dir.iterdir())
-        file_count = len([f for f in snapshot if f.is_file()])
+        snapshot = sorted(
+            [f for f in pending_dir.iterdir() if f.is_file()],
+            key=lambda f: f.name,
+        )
+
+        # Apply batch_size limit (0 = all)
+        body = request.get_json(silent=True) or {}
+        batch_size = int(body.get("batch_size", 0))
+        if batch_size > 0:
+            snapshot = snapshot[:batch_size]
+
+        file_count = len(snapshot)
 
         if file_count == 0:
             return (
@@ -222,9 +232,17 @@ def inbox_process():
 
         # Start background processing
         def run_inbox_ingest():
+            was_paused = None
             try:
                 with _inbox_processing["lock"]:
                     _inbox_processing["active"] = True
+
+                # Auto-pause detection during ingest to avoid resource contention.
+                if _detection_manager is not None:
+                    was_paused = bool(_detection_manager.paused)
+                    if not was_paused:
+                        logger.info("Inbox: Auto-pausing detection during processing.")
+                        _detection_manager.paused = True
 
                 ingest_service.process_inbox(
                     str(pending_dir), [str(f) for f in snapshot if f.is_file()]
@@ -233,6 +251,14 @@ def inbox_process():
             except Exception as e:
                 logger.error(f"Inbox ingest error: {e}", exc_info=True)
             finally:
+                if (
+                    _detection_manager is not None
+                    and was_paused is not None
+                    and not was_paused
+                ):
+                    logger.info("Inbox: Restoring detection state (resume).")
+                    _detection_manager.paused = False
+
                 with _inbox_processing["lock"]:
                     _inbox_processing["active"] = False
 

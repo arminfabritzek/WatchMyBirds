@@ -1,0 +1,235 @@
+{#
+Inline Edit Mode - adds select/delete functionality to any gallery grid.
+Include this partial at the bottom of pages that have .wm-tile elements.
+Requires gallery_utils.js to be loaded (for deleteDetection API).
+
+Usage: {% include 'partials/inline_edit.html' %}
+#}
+
+<style>
+    /* Inline edit mode styles */
+    .inline-edit-active .wm-tile {
+        position: relative;
+    }
+
+    .wm-tile .inline-edit-checkbox {
+        display: none;
+        position: absolute;
+        top: 6px;
+        left: 6px;
+        z-index: 10;
+        width: 18px;
+        height: 18px;
+        accent-color: var(--color-primary, #a78bfa);
+        cursor: pointer;
+    }
+
+    .inline-edit-active .wm-tile .inline-edit-checkbox {
+        display: block;
+    }
+
+    .inline-edit-active .wm-tile {
+        cursor: pointer;
+    }
+
+    .inline-edit-active .wm-tile.selected {
+        outline: 3px solid var(--color-primary, #a78bfa);
+        outline-offset: -3px;
+        opacity: 0.85;
+    }
+
+    .inline-edit-footer {
+        display: none;
+        position: fixed;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        z-index: 1000;
+        padding: 10px 20px;
+        background: rgba(26, 29, 35, 0.95);
+        border-top: 1px solid rgba(167, 139, 250, 0.3);
+        backdrop-filter: blur(8px);
+        justify-content: center;
+        align-items: center;
+        gap: 12px;
+    }
+
+    .inline-edit-footer.visible {
+        display: flex;
+    }
+
+    .inline-edit-footer .counter {
+        color: rgba(255, 255, 255, 0.7);
+        font-size: var(--font-size-sm);
+    }
+
+    .inline-edit-footer .btn {
+        font-size: var(--font-size-sm);
+        padding: 6px 16px;
+    }
+</style>
+
+<div class="inline-edit-footer" id="inlineEditFooter">
+    <span class="counter" id="inlineEditCounter">0 selected</span>
+    <button type="button" class="btn btn--danger" onclick="inlineEditTrash()">🗑 Move to Trash</button>
+    <button type="button" class="btn btn--secondary" onclick="inlineEditCancel()">Cancel</button>
+</div>
+
+<script>
+    (function () {
+        let editMode = false;
+        let lastClickedIndex = null;
+
+        // Toggle edit mode
+        window.toggleInlineEdit = function (btn) {
+            editMode = !editMode;
+            const container = document.querySelector('.species-grid, .gallery-grid, #subgallery-grid');
+            if (!container) return;
+
+            if (editMode) {
+                container.classList.add('inline-edit-active');
+                btn.classList.add('active');
+                btn.textContent = '✏️ Done';
+                lastClickedIndex = null;
+
+                // Add checkboxes to all tiles that don't have one yet
+                const tiles = container.querySelectorAll('.wm-tile');
+                tiles.forEach((tile, idx) => {
+                    tile.dataset.editIndex = idx;
+                    if (!tile.querySelector('.inline-edit-checkbox')) {
+                        const cb = document.createElement('input');
+                        cb.type = 'checkbox';
+                        cb.className = 'inline-edit-checkbox';
+                        cb.dataset.detectionId = tile.dataset.detectionId;
+                        cb.addEventListener('click', e => e.stopPropagation());
+                        cb.addEventListener('change', updateInlineCounter);
+                        tile.prepend(cb);
+                    }
+                });
+
+                // Make tiles clickable to toggle selection (with Shift+Click range)
+                tiles.forEach(tile => {
+                    tile._inlineEditClick = function (e) {
+                        if (e.target.closest('.wm-tile__button')) {
+                            e.preventDefault();
+                            e.stopPropagation();
+                        }
+                        const cb = tile.querySelector('.inline-edit-checkbox');
+                        if (!cb) return;
+
+                        const currentIdx = parseInt(tile.dataset.editIndex);
+
+                        if (e.target !== cb) {
+                            cb.checked = !cb.checked;
+                        }
+
+                        // Shift+Click range selection
+                        if (e.shiftKey && lastClickedIndex !== null) {
+                            const allTiles = Array.from(container.querySelectorAll('.wm-tile'));
+                            const minIdx = Math.min(lastClickedIndex, currentIdx);
+                            const maxIdx = Math.max(lastClickedIndex, currentIdx);
+                            for (let i = minIdx; i <= maxIdx; i++) {
+                                const t = allTiles[i];
+                                if (t) {
+                                    const tcb = t.querySelector('.inline-edit-checkbox');
+                                    if (tcb) {
+                                        tcb.checked = cb.checked;
+                                        t.classList.toggle('selected', cb.checked);
+                                    }
+                                }
+                            }
+                        }
+
+                        lastClickedIndex = currentIdx;
+                        tile.classList.toggle('selected', cb.checked);
+                        updateInlineCounter();
+                    };
+                    tile.addEventListener('click', tile._inlineEditClick, true);
+                });
+
+                document.getElementById('inlineEditFooter').classList.add('visible');
+            } else {
+                exitEditMode(container, btn);
+            }
+        };
+
+        function exitEditMode(container, btn) {
+            editMode = false;
+            if (!container) container = document.querySelector('.species-grid, .gallery-grid, #subgallery-grid');
+            if (!container) return;
+
+            container.classList.remove('inline-edit-active');
+
+            // Remove click handlers and deselect
+            container.querySelectorAll('.wm-tile').forEach(tile => {
+                if (tile._inlineEditClick) {
+                    tile.removeEventListener('click', tile._inlineEditClick, true);
+                    delete tile._inlineEditClick;
+                }
+                tile.classList.remove('selected');
+                const cb = tile.querySelector('.inline-edit-checkbox');
+                if (cb) cb.checked = false;
+            });
+
+            document.getElementById('inlineEditFooter').classList.remove('visible');
+
+            // Reset button
+            if (!btn) btn = document.querySelector('.inline-edit-toggle');
+            if (btn) {
+                btn.classList.remove('active');
+                btn.textContent = '✏️ Edit';
+            }
+        }
+
+        function updateInlineCounter() {
+            const checked = document.querySelectorAll('.inline-edit-checkbox:checked');
+            document.getElementById('inlineEditCounter').textContent = checked.length + ' selected';
+        }
+
+        window.inlineEditTrash = async function () {
+            const checked = document.querySelectorAll('.inline-edit-checkbox:checked');
+            if (checked.length === 0) {
+                alert('No items selected.');
+                return;
+            }
+
+            if (!confirm(`Move ${checked.length} detection(s) to trash?`)) return;
+
+            const ids = Array.from(checked).map(cb => parseInt(cb.dataset.detectionId));
+
+            try {
+                const resp = await fetch('/api/detections/reject', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ ids: ids })
+                });
+
+                if (resp.ok) {
+                    // Remove tiles with animation
+                    checked.forEach(cb => {
+                        const tile = cb.closest('.wm-tile');
+                        if (tile) {
+                            tile.style.transition = 'opacity 0.3s, transform 0.3s';
+                            tile.style.opacity = '0';
+                            tile.style.transform = 'scale(0.8)';
+                            setTimeout(() => tile.remove(), 320);
+                        }
+                    });
+
+                    // Update counter
+                    setTimeout(updateInlineCounter, 350);
+                } else {
+                    const data = await resp.json();
+                    alert('Error: ' + (data.error || 'Unknown'));
+                }
+            } catch (err) {
+                console.error('Inline edit trash error:', err);
+                alert('Error deleting detections.');
+            }
+        };
+
+        window.inlineEditCancel = function () {
+            exitEditMode();
+        };
+    })();
+</script>

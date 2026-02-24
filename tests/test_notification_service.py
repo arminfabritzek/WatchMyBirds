@@ -210,7 +210,7 @@ class TestSendSummary:
         call_args = mock_send.call_args
         message = call_args.kwargs["text"]
 
-        assert "2 Arten erkannt" in message
+        assert "2 Species detected" in message
         assert "Kohlmeise" in message
         assert "Blaumeise" in message
         assert "Parus major" in message  # Underscore replaced with space

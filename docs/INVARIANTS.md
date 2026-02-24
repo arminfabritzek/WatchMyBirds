@@ -1,37 +1,88 @@
-# System Invariants
+# INVARIANTS.md v2
 
-## 1. Storage & Filesystem
-*   Original images (`originals/`) MUST BE immutable; they MUST NOT be modified in place after initial write.
-*   Derivative images (`derivatives/`) MUST BE treated as disposable caches; they MUST be reproducible from originals at any time.
-*   Originals and derivatives MUST share the same base filename structure.
-*   All image storage MUST follow the `YYYY-MM-DD` directory structure based on the image capture date.
+## HARD
 
-## 2. Path Resolution
-*   `utils.path_manager.PathManager` MUST BE the distinct and exclusive authority for resolving all filesystem paths.
-*   Application code MUST NOT manually construct filesystem paths using string concatenation or `os.path.join` for storage locations.
-*   All filesystem operations MUST use paths resolved by `PathManager`.
+### H-01 Web Service Import Boundary
+DO:
+- Keep imports in `web/services/*.py` limited to:
+  - `core/*` (business logic layer)
+  - Python stdlib / `typing` modules
+  - `config`, `logging_config` (project infrastructure)
+  - `utils.*` (shared utilities)
+  - `web.services.*` (intra-package imports, e.g. `db_service`)
+DO NOT:
+- Import `camera/*` or `detectors/*` from `web/services/*.py`.
 
-## 3. Database
-*   The database tables MUST NOT store absolute or relative filesystem paths.
-*   The `filename` column in the `images` table MUST BE the unique identifier for linking database records to files.
-*   Database records MUST refer to files strictly by their filename.
+### H-02 Core Isolation From Web Framework
+DO:
+- Keep `core/*.py` independent from Flask and web modules.
+DO NOT:
+- Import `web/*`, `flask`, or `werkzeug` from `core/*.py`.
 
-## 4. Image Processing
-*   `utils.image_ops` MUST BE the single canonical source for all shared image manipulation logic.
-*   Detectors, Ingest, and Web modules MUST NOT implement their own image manipulation logic; they MUST import from `utils.image_ops`.
+### H-03 Detector Service Isolation
+DO:
+- Keep `detectors/services/*.py` independent from web modules.
+DO NOT:
+- Import `web/*`, `flask`, or `werkzeug` from `detectors/services/*.py`.
 
-## 5. Deletion & Cleanup
-*   Hard deletion operations MUST attempt to remove files from the filesystem *before* removing corresponding database records.
-*   Deletion logic MUST operate exclusively on **Absolute Paths** resolved via `PathManager`.
-*   Deletion operations MUST BE idempotent; a missing file MUST NOT cause the database deletion to fail.
-*   Files MUST NOT be deleted unless they are verified to be within the configured `OUTPUT_DIR`.
+### H-04 Detector Service Internal Dependency Rule
+DO:
+- Allow only `detectors/services/persistence_service.py` to import `detectors/services/crop_service.py`.
+DO NOT:
+- Add any other direct import between files in `detectors/services/*.py`.
 
-## 6. UI Architecture
-*   Flask with Jinja2 MUST BE the only supported UI rendering technology for core features.
-*   Legacy Dash components and routes MUST remain deprecated and non-functional.
-*   New UI features MUST BE implemented using Flask routes and templates.
+### H-05 Required Module Set
+DO:
+- Keep these files present in `core/`: `gallery_core.py`, `settings_core.py`, `onvif_core.py`, `analytics_core.py`, `detections_core.py`.
+- Keep these files present in `web/services/`: `gallery_service.py`, `settings_service.py`, `onvif_service.py`, `analytics_service.py`, `detections_service.py`.
+- Keep these files present in `detectors/services/`: `persistence_service.py`, `crop_service.py`, `classification_service.py`, `detection_service.py`, `notification_service.py`.
 
-## 7. Cross-Impact Governance (HARD)
-*   If a change affects cross-cutting contracts or operations (for example ports, firewall, service names, env vars, API shape, storage paths, or build/deploy behavior), all required linked updates MUST BE completed in the same task.
-*   If immediate completion is not possible, an explicit delegation entry MUST BE added to `docs/IMPACT_LEDGER.md` before merge.
-*   A task with unresolved cross-impact follow-ups MUST NOT be marked complete without either complete linked updates or a ledger delegation entry.
+## SOFT
+
+### S-01 Route Thinness
+DO:
+- Keep blueprint handlers and `web/web_interface.py` routes focused on request parsing, service calls, and HTTP response mapping.
+DO NOT:
+- Add new business rules, SQL statements, or file-processing pipelines directly in route handlers.
+
+### S-02 Service Responsibility
+DO:
+- Put use-case logic in dedicated service modules.
+DO NOT:
+- Use `web/services/db_service.py` as a pass-through for route-level SQL orchestration in new code.
+
+### S-03 Runtime State Ownership
+DO:
+- Prefer explicit, injectable stateful services for background work and progress tracking.
+DO NOT:
+- Introduce additional module-level mutable globals in web blueprints.
+
+### S-04 IO Placement
+DO:
+- Route OS commands, filesystem workflows, and system metrics collection through dedicated service modules.
+DO NOT:
+- Add new direct `subprocess`, large file IO workflows, or hardware metric collection in route handlers.
+
+### S-05 Path and Image Operation Centralization
+DO:
+- Use `PathManager` and shared image utility modules for new storage/image operations.
+DO NOT:
+- Add new manual storage path construction or duplicate image transformation logic in web handlers.
+
+## OBSOLETE
+
+### O-01 Pure Domain Core
+DO NOT:
+- Treat `core/*` as a pure domain/model layer with zero IO.
+
+### O-02 Strict UI Orchestration-Only Rule
+DO NOT:
+- Use "UI/API layer contains no logic at all" as an acceptance criterion for the current repository state.
+
+### O-03 Exclusive PathManager Authority
+DO NOT:
+- Use "all storage paths are already exclusively resolved via PathManager" as a factual invariant.
+
+### O-04 Single Image-Ops Authority Already Enforced
+DO NOT:
+- Use "all image manipulation already flows through `utils.image_ops`" as a factual invariant.

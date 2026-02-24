@@ -147,15 +147,15 @@ class NotificationService(NotificationInterface):
                     reverse=True,
                 )
 
-                # Format message: "🐦 X Art(en) erkannt:" + list
-                art_text = "Art" if species_count == 1 else "Arten"
+                # Format message: "🐦 X Species detected:" + list
+                art_text = "Species"
                 species_lines = []
 
                 for latin_name, info in sorted_species:
                     latin_formatted = latin_name.replace("_", " ")
                     species_lines.append(f"• {info['common']} ({latin_formatted})")
 
-                message = f"🐦 {species_count} {art_text} erkannt:\n" + "\n".join(
+                message = f"🐦 {species_count} {art_text} detected:\n" + "\n".join(
                     species_lines
                 )
 

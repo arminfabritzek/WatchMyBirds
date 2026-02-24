@@ -5,14 +5,23 @@ Handles analytics routes:
 - GET /api/analytics/summary - Summary statistics
 - GET /api/analytics/time-of-day - Time distribution KDE
 - GET /api/analytics/species-activity - Per-species activity
-- GET /analytics - Svelte-rendered dashboard
-- GET /analytics-pure - Pure Jinja2/CSS dashboard
+- GET /analytics - Server-rendered analytics dashboard
 """
 
+from calendar import month_abbr, monthrange
+from datetime import date, datetime, timedelta
+
 import numpy as np
-from flask import Blueprint, jsonify, render_template
+from flask import Blueprint, jsonify, render_template, request
 
 from logging_config import get_logger
+from utils.db.analytics import (
+    fetch_all_time_daily_counts,
+    fetch_bird_visits,
+    fetch_simulation_data,
+    fetch_weather_analytics,
+    fetch_weather_detection_correlation,
+)
 from web.services import db_service
 
 logger = get_logger(__name__)
@@ -22,15 +31,21 @@ analytics_bp = Blueprint("analytics", __name__)
 
 @analytics_bp.route("/api/analytics/summary", methods=["GET"])
 def analytics_summary():
-    with db_service.get_connection() as conn:
+    conn = db_service.get_connection()
+    try:
         summary = db_service.fetch_analytics_summary(conn)
+    finally:
+        conn.close()
     return jsonify(summary)
 
 
 @analytics_bp.route("/api/analytics/time-of-day", methods=["GET"])
 def analytics_time_of_day():
-    with db_service.get_connection() as conn:
+    conn = db_service.get_connection()
+    try:
         rows = db_service.fetch_all_detection_times(conn)
+    finally:
+        conn.close()
 
     if not rows:
         return jsonify({"points": [], "peak_hour": None, "histogram": []})
@@ -107,8 +122,11 @@ def analytics_time_of_day():
 
 @analytics_bp.route("/api/analytics/species-activity", methods=["GET"])
 def analytics_species_activity():
-    with db_service.get_connection() as conn:
+    conn = db_service.get_connection()
+    try:
         rows = db_service.fetch_species_timestamps(conn)
+    finally:
+        conn.close()
 
     # Group by species
     species_times = {}
@@ -186,14 +204,47 @@ def analytics_species_activity():
     return jsonify(series)
 
 
+@analytics_bp.route("/api/analytics/visits", methods=["GET"])
+def analytics_visits_api():
+    """Return bird visit clustering (read-only, no DB writes)."""
+    try:
+        conn = db_service.get_connection()
+        try:
+            data = fetch_bird_visits(conn)
+        finally:
+            conn.close()
+        # Strip per-visit detection_ids for the summary response (keep it lean)
+        summary = data["summary"]
+        # Return top-10 longest visits for quick inspection
+        top_visits = sorted(
+            data["visits"], key=lambda v: v["duration_sec"], reverse=True
+        )[:10]
+        for v in top_visits:
+            v.pop("detection_ids", None)
+        return jsonify({"summary": summary, "top_visits": top_visits})
+    except Exception as e:
+        logger.error(f"Visits API error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@analytics_bp.route("/api/analytics/simulation", methods=["GET"])
+def analytics_simulation_api():
+    """Return simulation data for species removal what-if analysis."""
+    exclude = request.args.get("exclude", "")
+    try:
+        conn = db_service.get_connection()
+        try:
+            data = fetch_simulation_data(conn, exclude if exclude else None)
+        finally:
+            conn.close()
+        return jsonify(data)
+    except Exception as e:
+        logger.error(f"Simulation API error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
 @analytics_bp.route("/analytics", methods=["GET"])
 def analytics_page():
-    """Serves the analytics dashboard page with minimal HTML for Svelte mount."""
-    return render_template("analytics.html")
-
-
-@analytics_bp.route("/analytics-pure", methods=["GET"])
-def analytics_pure():
     """Server-rendered analytics dashboard without Svelte - pure Jinja2/CSS."""
     # 1. Summary Stats
     summary = {
@@ -202,8 +253,11 @@ def analytics_pure():
         "date_range": {"first": None, "last": None},
     }
     try:
-        with db_service.get_connection() as conn:
+        conn = db_service.get_connection()
+        try:
             summary = db_service.fetch_analytics_summary(conn)
+        finally:
+            conn.close()
     except Exception as e:
         logger.error(f"Error fetching analytics summary: {e}")
 
@@ -214,8 +268,11 @@ def analytics_pure():
         "peak_hour_formatted": "—",
     }
     try:
-        with db_service.get_connection() as conn:
+        conn = db_service.get_connection()
+        try:
             rows = db_service.fetch_all_detection_times(conn)
+        finally:
+            conn.close()
 
         hours_float = []
         for row in rows:
@@ -250,11 +307,222 @@ def analytics_pure():
     except Exception as e:
         logger.error(f"Error fetching time of day data: {e}")
 
+    # 2b. Activity by Date (toggle: daily/weekly/monthly)
+    activity_granularity = (
+        request.args.get("activity_granularity", "daily") or ""
+    ).lower()
+    if activity_granularity not in {"daily", "weekly", "monthly"}:
+        activity_granularity = "daily"
+
+    daily_options = [30, 90, 180]
+    weekly_options = [12, 26, 52]
+    activity_days = request.args.get("activity_days", type=int) or 90
+    activity_weeks = request.args.get("activity_weeks", type=int) or 52
+    if activity_days not in daily_options:
+        activity_days = 90
+    if activity_weeks not in weekly_options:
+        activity_weeks = 52
+
+    activity_controls = {
+        "daily_options": daily_options,
+        "daily_days": activity_days,
+        "weekly_options": weekly_options,
+        "weekly_weeks": activity_weeks,
+        "monthly_year": None,
+        "monthly_year_options": [],
+    }
+
+    daily_activity = {
+        "bars": [],
+        "dates": [],
+        "max_count": 0,
+        "total_days": 0,
+        "bar_count": 0,
+        "bucket_span": 1,
+        "granularity": activity_granularity,
+        "window_label": "",
+        "window_start": None,
+        "window_end": None,
+    }
+    try:
+        conn = db_service.get_connection()
+        try:
+            daily_rows = fetch_all_time_daily_counts(conn)
+        finally:
+            conn.close()
+
+        if daily_rows:
+            total_days = len(daily_rows)
+            counts_by_date: dict[str, int] = {}
+            all_dates: list[date] = []
+            for row in daily_rows:
+                date_iso = row["date_iso"]
+                count = int(row["count"] or 0)
+                counts_by_date[date_iso] = count
+                all_dates.append(datetime.strptime(date_iso, "%Y-%m-%d").date())
+
+            all_dates.sort()
+            last_detection_date = all_dates[-1]
+            years_with_data = sorted({d.year for d in all_dates})
+
+            selected_year = years_with_data[-1]
+            requested_year = request.args.get("activity_year", type=int)
+            if requested_year in years_with_data:
+                selected_year = requested_year
+
+            activity_controls["monthly_year"] = selected_year
+            activity_controls["monthly_year_options"] = years_with_data
+
+            grouped_rows = []
+            window_label = ""
+
+            if activity_granularity == "daily":
+                window_label = f"Last {activity_days} days"
+                start_day = last_detection_date - timedelta(days=activity_days - 1)
+                day_ptr = start_day
+                while day_ptr <= last_detection_date:
+                    day_iso = day_ptr.isoformat()
+                    grouped_rows.append(
+                        {
+                            "start": day_iso,
+                            "end": day_iso,
+                            "count": int(counts_by_date.get(day_iso, 0)),
+                        }
+                    )
+                    day_ptr += timedelta(days=1)
+            elif activity_granularity == "weekly":
+                window_label = f"Last {activity_weeks} weeks"
+                end_week_start = last_detection_date - timedelta(
+                    days=last_detection_date.weekday()
+                )
+                start_week_start = end_week_start - timedelta(weeks=activity_weeks - 1)
+                week_ptr = start_week_start
+                while week_ptr <= end_week_start:
+                    week_end = week_ptr + timedelta(days=6)
+                    week_count = 0
+                    for offset in range(7):
+                        day_iso = (week_ptr + timedelta(days=offset)).isoformat()
+                        week_count += int(counts_by_date.get(day_iso, 0))
+
+                    iso_year, iso_week, _ = week_ptr.isocalendar()
+                    grouped_rows.append(
+                        {
+                            "start": week_ptr.isoformat(),
+                            "end": week_end.isoformat(),
+                            "count": week_count,
+                            "week_label": f"{iso_year}-W{iso_week:02d}",
+                        }
+                    )
+                    week_ptr += timedelta(weeks=1)
+            else:
+                window_label = f"{selected_year} by month"
+                for month in range(1, 13):
+                    month_start = date(selected_year, month, 1)
+                    month_end = date(
+                        selected_year, month, monthrange(selected_year, month)[1]
+                    )
+                    month_count = 0
+                    day_ptr = month_start
+                    while day_ptr <= month_end:
+                        month_count += int(counts_by_date.get(day_ptr.isoformat(), 0))
+                        day_ptr += timedelta(days=1)
+
+                    grouped_rows.append(
+                        {
+                            "start": month_start.isoformat(),
+                            "end": month_end.isoformat(),
+                            "count": month_count,
+                            "month_label": month_abbr[month],
+                        }
+                    )
+
+            bucket_starts = [r["start"] for r in grouped_rows]
+            bucket_ends = [r["end"] for r in grouped_rows]
+            bucket_counts = [int(r["count"]) for r in grouped_rows]
+            n = len(bucket_counts)
+            max_count = max(bucket_counts) if bucket_counts else 1
+            W, H = 800, 120
+            PAD_T, PAD_B = 10, 5
+            usable_h = H - PAD_T - PAD_B
+
+            bars = []
+            if n > 0:
+                slot_w = W / n
+                bar_w = max(1.0, slot_w * 0.8)
+                for i, c in enumerate(bucket_counts):
+                    h = (usable_h * (c / max_count)) if max_count > 0 else 0
+                    x = i * slot_w + (slot_w - bar_w) / 2
+                    y = PAD_T + usable_h - h
+                    date_start = bucket_starts[i]
+                    date_end = bucket_ends[i]
+                    if activity_granularity == "monthly":
+                        month_label = grouped_rows[i].get("month_label", date_start[:7])
+                        date_label = f"{month_label} {selected_year}"
+                    elif activity_granularity == "weekly":
+                        week_label = grouped_rows[i].get("week_label", "")
+                        date_label = f"{week_label} ({date_start} to {date_end})"
+                    elif date_start == date_end:
+                        date_label = date_start
+                    else:
+                        date_label = f"{date_start} to {date_end}"
+
+                    bars.append(
+                        {
+                            "x": round(x, 2),
+                            "y": round(y, 2),
+                            "w": round(bar_w, 2),
+                            "h": round(h, 2),
+                            "count": int(c),
+                            "date_label": date_label,
+                        }
+                    )
+
+            date_labels = []
+            if activity_granularity == "monthly":
+                date_labels = [month_abbr[m] for m in range(1, 13)]
+            elif n > 0:
+                label_indices = [0]
+                target_label_count = 6
+                if n > target_label_count:
+                    step = (n - 1) / (target_label_count - 1)
+                    for k in range(1, target_label_count - 1):
+                        label_indices.append(int(round(step * k)))
+                label_indices.append(n - 1)
+                label_indices = sorted(set(label_indices))
+
+                for i in label_indices:
+                    start_iso = bucket_starts[i]
+                    end_iso = bucket_ends[i]
+                    if activity_granularity == "weekly":
+                        date_labels.append(start_iso[5:])
+                    elif start_iso == end_iso:
+                        date_labels.append(start_iso[5:])
+                    else:
+                        date_labels.append(f"{start_iso[5:]}–{end_iso[5:]}")
+
+            daily_activity = {
+                "bars": bars,
+                "dates": date_labels,
+                "max_count": max_count,
+                "total_days": total_days,
+                "bar_count": len(bars),
+                "bucket_span": 1,
+                "granularity": activity_granularity,
+                "window_label": window_label,
+                "window_start": bucket_starts[0] if bucket_starts else None,
+                "window_end": bucket_ends[-1] if bucket_ends else None,
+            }
+    except Exception as e:
+        logger.error(f"Error fetching daily activity: {e}")
+
     # 3. Species Activity with Sparklines
     species_activity = []
     try:
-        with db_service.get_connection() as conn:
+        conn = db_service.get_connection()
+        try:
             rows = db_service.fetch_species_timestamps(conn)
+        finally:
+            conn.close()
 
         # Group by species
         species_times = {}
@@ -309,10 +577,47 @@ def analytics_pure():
     except Exception as e:
         logger.error(f"Error fetching species activity: {e}")
 
+    # 4. Weather Analytics
+    weather = {"has_data": False}
+    weather_correlation = []
+    try:
+        conn = db_service.get_connection()
+        try:
+            weather = fetch_weather_analytics(conn)
+            weather_correlation = fetch_weather_detection_correlation(conn)
+        finally:
+            conn.close()
+    except Exception as e:
+        logger.error(f"Error fetching weather analytics: {e}")
+
+    # 6. Species Removal Simulation (initial load, no species excluded)
+    simulation = {
+        "species_list": [],
+        "daily_series": [],
+        "biodiversity_real": {},
+        "biodiversity_sim": {},
+        "delta": {},
+        "excluded_species": None,
+    }
+    try:
+        conn = db_service.get_connection()
+        try:
+            simulation = fetch_simulation_data(conn)
+        finally:
+            conn.close()
+    except Exception as e:
+        logger.error(f"Error fetching simulation data: {e}")
+
     return render_template(
-        "analytics_pure.html",
+        "analytics.html",
         summary=summary,
         time_of_day=time_of_day,
+        daily_activity=daily_activity,
+        activity_granularity=activity_granularity,
+        activity_controls=activity_controls,
         species_activity=species_activity,
-        current_path="/analytics-pure",
+        weather=weather,
+        weather_correlation=weather_correlation,
+        simulation=simulation,
+        current_path="/analytics",
     )

@@ -46,11 +46,21 @@
         if (!slider) return;
 
         // On page load: if no min_score in URL, use localStorage default (or 0)
-        const url = new URL(window.location);
-        if (!url.searchParams.has('min_score')) {
+        // Check if we need to apply a saved default
+        const urlParams = new URLSearchParams(window.location.search);
+        const serverValue = parseFloat(slider.getAttribute('value'));
+
+        if (!urlParams.has('min_score')) {
             const savedDefault = localStorage.getItem(STORAGE_KEY);
             if (savedDefault !== null) {
-                slider.value = parseFloat(savedDefault);
+                const savedVal = parseFloat(savedDefault);
+                // Only reload if saved value differs significantly from what server rendered
+                if (Math.abs(savedVal - serverValue) > 0.01) {
+                    const reloadUrl = new URL(window.location);
+                    reloadUrl.searchParams.set('min_score', savedVal.toFixed(2));
+                    window.location.replace(reloadUrl.toString());
+                    return; // Stop further execution
+                }
             }
         }
 

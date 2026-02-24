@@ -40,6 +40,9 @@ raw_input_index.csv
 *.swp
 *.swo
 
+# Agent governance (internal)
+AGENTS.md
+
 # Docker files (not needed inside image)
 docker-compose*.yml
 

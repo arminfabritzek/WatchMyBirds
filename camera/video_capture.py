@@ -86,21 +86,21 @@ class VideoCapture:
         self._recovery_initial_frame_wait_sec = 12.0
 
         # -- Recovery Dispatcher Infrastructure (Steps 0-6) --
-        self._recovery_gate = threading.Lock()          # single-flight gate
-        self._recovery_gen = itertools.count(1)         # attempt id generator
-        self._recovery_cooldown_until = 0.0             # earliest next recovery ts
-        self._recovery_cooldown_sec = 5.0               # min gap between recoveries
+        self._recovery_gate = threading.Lock()  # single-flight gate
+        self._recovery_gen = itertools.count(1)  # attempt id generator
+        self._recovery_cooldown_until = 0.0  # earliest next recovery ts
+        self._recovery_cooldown_sec = 5.0  # min gap between recoveries
         # Circuit breaker (Step 6)
-        self._breaker_timestamps = []                   # recent recovery attempt times
-        self._breaker_threshold = 5                     # max attempts in window
-        self._breaker_window_sec = 60.0                 # window size
-        self._breaker_offline_until = 0.0               # OFFLINE cooldown end
-        self._breaker_offline_sec = 60.0                # OFFLINE duration
+        self._breaker_timestamps = []  # recent recovery attempt times
+        self._breaker_threshold = 5  # max attempts in window
+        self._breaker_window_sec = 60.0  # window size
+        self._breaker_offline_until = 0.0  # OFFLINE cooldown end
+        self._breaker_offline_sec = 60.0  # OFFLINE duration
         # Process registry (Step 4)
-        self._child_registry = {}                       # pid -> {handle, start_ts, kind, gen}
-        self._child_hard_cap = 4                        # max concurrent children
+        self._child_registry = {}  # pid -> {handle, start_ts, kind, gen}
+        self._child_hard_cap = 4  # max concurrent children
         # Timer coalescing (Step 5)
-        self._pending_reinit_timer = None               # at most one pending timer
+        self._pending_reinit_timer = None  # at most one pending timer
         self._pending_reinit_lock = threading.Lock()
 
         logger.debug(
@@ -170,9 +170,7 @@ class VideoCapture:
         logger.error(error_msg)
         raise ValueError(f"Unable to determine stream type for source: {self.source}")
 
-    def _setup_capture(
-        self, require_initial_frame=False, initial_frame_wait_sec=None
-    ):
+    def _setup_capture(self, require_initial_frame=False, initial_frame_wait_sec=None):
         logger.debug("Setting up video capture...")
         if self.stream_type == self.RTSP:
             try:
@@ -815,7 +813,7 @@ class VideoCapture:
                                 self._health_check_error_state = True
                             self.request_recovery(
                                 trigger="health_check",
-                                reason="RTSP FFmpeg subprocess terminated unexpectedly."
+                                reason="RTSP FFmpeg subprocess terminated unexpectedly.",
                             )
                         else:
                             if time.time() - self.last_frame_time > 10:
@@ -824,7 +822,9 @@ class VideoCapture:
                                         "No frame received for over 10 seconds; triggering reinitialization."
                                     )
                                     self._health_check_error_state = True
-                                self.request_recovery(trigger="health_check", reason="RTSP stream stale.")
+                                self.request_recovery(
+                                    trigger="health_check", reason="RTSP stream stale."
+                                )
                             else:
                                 if self._health_check_error_state:
                                     logger.debug(
@@ -838,7 +838,9 @@ class VideoCapture:
                                 "HTTP stream is not opened. Triggering reinitialization."
                             )
                             self._health_check_error_state = True
-                        self.request_recovery(trigger="health_check", reason="HTTP stream not opened.")
+                        self.request_recovery(
+                            trigger="health_check", reason="HTTP stream not opened."
+                        )
                     else:
                         if self._health_check_error_state:
                             logger.debug("HTTP stream recovered.")
@@ -990,7 +992,10 @@ class VideoCapture:
                                 logger.debug(
                                     "Exceeded max consecutive None frames. Attempting codec switch recovery."
                                 )
-                                self.request_recovery(trigger="reader_codec_switch", reason="Exceeded max consecutive None frames")
+                                self.request_recovery(
+                                    trigger="reader_codec_switch",
+                                    reason="Exceeded max consecutive None frames",
+                                )
                                 self.last_codec_switch_time = now
                                 self._last_codec_switch_skip_logged = False
                             else:
@@ -1007,7 +1012,7 @@ class VideoCapture:
                         ):
                             self.request_recovery(
                                 trigger="reader_none_frames",
-                                reason="Multiple None frames received."
+                                reason="Multiple None frames received.",
                             )
                             self.consecutive_none_frames = 0
 
@@ -1060,9 +1065,13 @@ class VideoCapture:
             logger.error("HTTP/RTSP capture not opened.")
             if self.stream_type == self.RTSP:
                 logger.debug("Requesting recovery from _read_frame.")
-                self.request_recovery(trigger="read_frame_codec", reason="Capture not opened (RTSP)")
+                self.request_recovery(
+                    trigger="read_frame_codec", reason="Capture not opened (RTSP)"
+                )
             else:
-                self.request_recovery(trigger="read_frame", reason="Capture not opened.")
+                self.request_recovery(
+                    trigger="read_frame", reason="Capture not opened."
+                )
             return None
 
     def _switch_to_ffmpeg(self):
@@ -1144,7 +1153,7 @@ class VideoCapture:
                 )
                 self.request_recovery(
                     trigger="resolution_change_no_dims",
-                    reason="Resolution changed but no cached dimensions available"
+                    reason="Resolution changed but no cached dimensions available",
                 )
                 return
 
@@ -1167,8 +1176,7 @@ class VideoCapture:
                         f"Failed to restart FFmpeg after runtime resolution change: {restart_error}"
                     )
                     self.request_recovery(
-                        trigger="resolution_restart_failed",
-                        reason=str(restart_error)
+                        trigger="resolution_restart_failed", reason=str(restart_error)
                     )
         finally:
             self.runtime_resolution_lock.release()
@@ -1214,7 +1222,10 @@ class VideoCapture:
                     now = time.time()
                     if now - self.last_codec_switch_time > self.codec_switch_cooldown:
                         logger.warning("Empty frame detected - possible codec switch.")
-                        self.request_recovery(trigger="ffmpeg_empty_frame", reason="Empty frame - possible codec switch")
+                        self.request_recovery(
+                            trigger="ffmpeg_empty_frame",
+                            reason="Empty frame - possible codec switch",
+                        )
                         self.last_codec_switch_time = now
                         self._last_codec_switch_skip_logged = False
                     else:
@@ -1253,7 +1264,9 @@ class VideoCapture:
                 f"cap={self._child_hard_cap} kind={kind}"
             )
             # Kill oldest child to make room
-            oldest_pid = min(self._child_registry, key=lambda p: self._child_registry[p]["start_ts"])
+            oldest_pid = min(
+                self._child_registry, key=lambda p: self._child_registry[p]["start_ts"]
+            )
             self._force_kill_child(oldest_pid, reason="hard cap exceeded")
         pid = handle.pid
         self._child_registry[pid] = {
@@ -1261,11 +1274,17 @@ class VideoCapture:
             "start_ts": time.time(),
             "kind": kind,
         }
-        logger.debug(f"event=child_registered pid={pid} kind={kind} total={len(self._child_registry)}")
+        logger.debug(
+            f"event=child_registered pid={pid} kind={kind} total={len(self._child_registry)}"
+        )
 
     def _cleanup_stale_children(self):
         """Remove finished processes from registry."""
-        stale = [pid for pid, info in self._child_registry.items() if info["handle"].poll() is not None]
+        stale = [
+            pid
+            for pid, info in self._child_registry.items()
+            if info["handle"].poll() is not None
+        ]
         for pid in stale:
             del self._child_registry[pid]
 
@@ -1309,7 +1328,9 @@ class VideoCapture:
             )
             return
         # Prune old timestamps and check threshold
-        self._breaker_timestamps = [t for t in self._breaker_timestamps if now - t < self._breaker_window_sec]
+        self._breaker_timestamps = [
+            t for t in self._breaker_timestamps if now - t < self._breaker_window_sec
+        ]
         if len(self._breaker_timestamps) >= self._breaker_threshold:
             self._breaker_offline_until = now + self._breaker_offline_sec
             logger.warning(
@@ -1366,13 +1387,15 @@ class VideoCapture:
     # ------------------------------------------------------------------
     def _schedule_reinit(self, reason):
         """Schedule ONE pending reinit timer (coalesced)."""
-        delay = min(2 ** self.retry_count, 60)
+        delay = min(2**self.retry_count, 60)
         with self._pending_reinit_lock:
             if self._pending_reinit_timer is not None:
                 self._pending_reinit_timer.cancel()
                 logger.debug("event=reinit_timer_replaced old_timer_cancelled=true")
             timer = threading.Timer(
-                delay, self.request_recovery, kwargs={"trigger": "scheduled_reinit", "reason": reason}
+                delay,
+                self.request_recovery,
+                kwargs={"trigger": "scheduled_reinit", "reason": reason},
             )
             timer.daemon = True
             timer.name = "ReinitTimer"
@@ -1395,9 +1418,7 @@ class VideoCapture:
         try:
             logger.debug(f"Reinitializing camera due to: {reason}")
             if self.retry_count >= 5:
-                logger.debug(
-                    "Maximum retry attempts reached. Scheduling longer delay."
-                )
+                logger.debug("Maximum retry attempts reached. Scheduling longer delay.")
                 self.retry_count = 0
                 self._schedule_reinit(reason="Retry after max attempts")
                 return

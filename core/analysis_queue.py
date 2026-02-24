@@ -41,12 +41,14 @@ class AnalysisQueue:
         processor_func: Function to call for each item. Must accept (item) as argument.
         """
         if self._worker_thread and self._worker_thread.is_alive():
-             logger.warning("AnalysisQueue worker already running")
-             return
+            logger.warning("AnalysisQueue worker already running")
+            return
 
         self._processor_func = processor_func
         self._stop_event.clear()
-        self._worker_thread = threading.Thread(target=self._worker_loop, name="DeepAnalysisWorker", daemon=True)
+        self._worker_thread = threading.Thread(
+            target=self._worker_loop, name="DeepAnalysisWorker", daemon=True
+        )
         self._worker_thread.start()
         logger.info("DeepAnalysisQueue worker started")
 

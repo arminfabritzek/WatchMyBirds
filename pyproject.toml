@@ -119,6 +119,10 @@ testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_functions = ["test_*"]
 addopts = "-v --tb=short"
+markers = [
+    "arch_hard: blocking architecture invariants",
+    "arch_soft: non-blocking architecture monitoring",
+]
 filterwarnings = [
     "ignore::DeprecationWarning",
 ]

@@ -79,8 +79,9 @@
                             <input type="text" class="form-control" id="addCamIp" placeholder="192.168.1.100" required>
                         </div>
                         <div class="col-4">
-                            <label for="addCamPort" class="form-label">Port</label>
+                            <label for="addCamPort" class="form-label">ONVIF Port</label>
                             <input type="number" class="form-control" id="addCamPort" value="80">
+                            <small class="text-muted">ONVIF control port (often 80/8080), not RTSP stream port.</small>
                         </div>
                     </div>
                     <div class="mb-3">
@@ -137,8 +138,9 @@
                             <input type="text" class="form-control" id="editCamIp">
                         </div>
                         <div class="col-4">
-                            <label for="editCamPort" class="form-label">Port</label>
+                            <label for="editCamPort" class="form-label">ONVIF Port</label>
                             <input type="number" class="form-control" id="editCamPort">
+                            <small class="text-muted">ONVIF control port (often 80/8080), not RTSP stream port.</small>
                         </div>
                     </div>
                     <div class="mb-3">
@@ -250,8 +252,8 @@
                 spinner.classList.add('d-none');
                 if (data.status === 'success') {
                     // Success! Fill the RTSP URL
-                    document.getElementById('streamUrlInput').value = data.uri;
-                    updateRealSource(data.uri);
+                    document.getElementById('cameraUrlInput').value = data.uri;
+                    updateCameraUrl(data.uri);
 
                     // Close modal
                     const modalEl = document.getElementById('onvifModal');
@@ -274,7 +276,7 @@
     }
 
     function toggleUrlVisibility() {
-        const input = document.getElementById('streamUrlInput');
+        const input = document.getElementById('cameraUrlInput');
         const btn = document.getElementById('btnToggleUrl');
         if (input.type === 'password') {
             input.type = 'text';
@@ -610,15 +612,14 @@
         loadSavedCameras();
     });
 
-    // Set video source directly via API
-    function setVideoSource(value) {
+    // Set camera URL via API
+    function setCameraUrl(value) {
         if (!value || value.trim() === '') {
-            alert('Please enter a valid video source');
+            alert('Please enter a valid camera URL');
             return;
         }
 
         const trimmed = value.trim();
-        updateRealSource(trimmed);
 
         // Show loading feedback
         const btn = (typeof event !== 'undefined' && event && event.target)
@@ -631,10 +632,13 @@
         }
 
         // Update via settings API
+        const modeSelect = document.getElementById('STREAM_SOURCE_MODE');
+        const payload = { CAMERA_URL: trimmed };
+        if (modeSelect) payload.STREAM_SOURCE_MODE = modeSelect.value;
         fetch('/api/v1/settings', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ VIDEO_SOURCE: trimmed })
+            body: JSON.stringify(payload)
         })
             .then(res => {
                 if (!res.ok) {
@@ -643,9 +647,8 @@
                 return res.json();
             })
             .then(data => {
-                // Success! API returns {"status": "success"} on success
                 if (data.status === 'success') {
-                    alert(`✅ Video source updated!\n\nNew source: ${value.trim()}\n\nPage will reload.`);
+                    alert(`✅ Camera URL updated!\n\nNew source: ${trimmed}\n\nPage will reload.`);
                     window.location.reload();
                 } else {
                     alert(`❌ Failed: ${data.message || 'Unexpected response'}`);
@@ -757,26 +760,45 @@
     {% endwith %}
 
     <!-- Main Settings Form -->
-    <form method="POST" action="{{ url_for('update_settings_route') }}" onsubmit="prepareFormSubmission()">
+    <form id="settingsForm" onsubmit="return submitSettingsForm(event)">
 
         <!-- 1. Stream & Performance -->
         <div class="card mb-4">
             <div class="card-header bg-primary text-white fw-bold">1. Stream & Performance</div>
             <div class="card-body">
 
-                <!-- Video Source - SIMPLIFIED -->
+                <!-- Camera source -->
                 <div class="mb-4">
-                    <label class="form-label fw-bold">Video Source</label>
+                    <label class="form-label fw-bold">Camera Source</label>
 
-                    <!-- Current Active Source Display -->
-                    <div class="alert alert-info py-2 mb-3">
-                        <strong>🎥 Active:</strong>
-                        <code id="currentSourceDisplay">{{ payload['VIDEO_SOURCE'].value }}</code>
+                    <!-- Runtime source (live) -->
+                    <div class="alert alert-info py-2 mb-2">
+                        <strong>Runtime Source (live):</strong>
+                        <code id="runtimeSourceDisplay">{{ payload.get('STREAM_SOURCE_RUNTIME_VIDEO', {}).get('value', payload['VIDEO_SOURCE'].value) }}</code>
+                        <span
+                            class="badge ms-2 {{ 'text-bg-success' if payload.get('STREAM_SOURCE_RUNTIME_MODE', {}).get('value', 'direct') == 'relay' else 'text-bg-primary' }}"
+                            id="runtimeModeBadge">
+                            runtime: {{ payload.get('STREAM_SOURCE_RUNTIME_MODE', {}).get('value', 'direct') | default('direct') }}
+                        </span>
                     </div>
 
-                    <!-- Hidden Real Field -->
-                    <input type="hidden" name="VIDEO_SOURCE" id="VIDEO_SOURCE"
-                        value="{{ payload['VIDEO_SOURCE'].value }}">
+                    <!-- Resolver decision -->
+                    <div class="alert alert-light border py-2 mb-3">
+                        <strong>Resolver Decision:</strong>
+                        <span class="badge text-bg-secondary ms-2" id="resolverModeBadge">
+                            resolver: {{ payload.get('STREAM_SOURCE_EFFECTIVE_MODE', {}).get('value', 'direct') | default('direct') }}
+                        </span>
+                        <span class="badge text-bg-light border text-dark ms-1" id="streamModeSettingBadge">
+                            setting: {{ payload.get('STREAM_SOURCE_MODE', {}).get('value', 'auto') | default('auto') }}
+                        </span>
+                        <div class="form-text text-muted small mt-1" id="streamModeReason">
+                            {{ payload.get('STREAM_SOURCE_REASON', {}).get('value', '') }}
+                        </div>
+                    </div>
+
+                    <!-- User-facing source field -->
+                    <input type="hidden" name="CAMERA_URL" id="CAMERA_URL"
+                        value="{{ payload.get('CAMERA_URL', {}).get('value', '') }}">
 
                     <!-- Simple Input Options -->
                     <div class="row g-2">
@@ -790,24 +812,47 @@
                                     <option value="2">Camera 2</option>
                                 </select>
                                 <button type="button" class="btn btn-primary btn-sm"
-                                    onclick="setVideoSource(document.getElementById('usbIndexSelect').value)">Set</button>
+                                    onclick="setCameraUrl(document.getElementById('usbIndexSelect').value)">Set</button>
                             </div>
                         </div>
 
-                        <!-- Manual Stream URL -->
+                        <!-- Camera URL -->
                         <div class="col-md-9">
-                            <label class="small text-muted">Stream URL (rtsp:// or http://)</label>
+                            <label class="small text-muted">Camera URL (rtsp:// or http://)</label>
                             <div class="input-group input-group-sm">
-                                <input type="text" id="streamUrlInput" class="form-control form-control-sm"
+                                <input type="text" id="cameraUrlInput" class="form-control form-control-sm"
+                                    value="{{ payload.get('CAMERA_URL', {}).get('value', '') }}"
                                     placeholder="rtsp://user:pass@192.168.1.100:554/stream">
                                 <button type="button" class="btn btn-primary btn-sm"
-                                    onclick="setVideoSource(document.getElementById('streamUrlInput').value)">Apply</button>
+                                    onclick="setCameraUrl(document.getElementById('cameraUrlInput').value)">Apply</button>
+                            </div>
+                            <div class="form-text text-muted small mt-1">
+                                Passwords stay masked as <code>*****</code>. Replace stars only if you want to change credentials.
                             </div>
                         </div>
                     </div>
 
+                    <div class="row g-2 mt-2">
+                        <div class="col-md-6">
+                            <label for="STREAM_SOURCE_MODE" class="small text-muted">Stream Routing Mode</label>
+                            <select name="STREAM_SOURCE_MODE" id="STREAM_SOURCE_MODE" class="form-select form-select-sm text-dark">
+                                <option value="auto" {{ 'selected' if payload.get('STREAM_SOURCE_MODE', {}).get('value', 'auto') == 'auto' }}>auto (use go2rtc if available)</option>
+                                <option value="relay" {{ 'selected' if payload.get('STREAM_SOURCE_MODE', {}).get('value', 'auto') == 'relay' }}>relay (always go2rtc)</option>
+                                <option value="direct" {{ 'selected' if payload.get('STREAM_SOURCE_MODE', {}).get('value', 'auto') == 'direct' }}>direct (camera -> app)</option>
+                            </select>
+                            <div class="form-text text-muted small">
+                                <strong>auto:</strong> prefer go2rtc and fallback to direct. <strong>relay:</strong> force go2rtc. <strong>direct:</strong> app connects directly.
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="small text-muted">Effective Video Source (read-only)</label>
+                            <input type="text" class="form-control form-control-sm" readonly disabled
+                                value="{{ payload['VIDEO_SOURCE'].value }}">
+                        </div>
+                    </div>
+
                     <div class="form-text text-muted mt-2">
-                        💡 Use "📹 Use" button on saved cameras below to activate them directly.
+                        Use the "Use" button on saved cameras below to activate them directly.
                     </div>
                 </div>
 
@@ -1000,14 +1045,14 @@
             </div>
         </div>
 
-        <button type="submit" class="btn btn-primary btn-lg w-100 mb-5">Apply & Restart Services</button>
+        <button type="submit" class="btn btn-primary btn-lg w-100 mb-5" id="settingsSubmitBtn">Apply & Restart Services</button>
     </form>
 
     <!-- JS Logic for Source and Location -->
     <script>
         // Init logic on load
         document.addEventListener('DOMContentLoaded', function () {
-            initVideoSource();
+            initCameraUrl();
             initLocation();
             loadSystemVersions();
         });
@@ -1026,12 +1071,12 @@
                 });
         }
 
-        // --- Video Source Logic ---
-        function updateRealSource(forceValue) {
-            const hidden = document.getElementById('VIDEO_SOURCE');
+        // --- Camera URL Logic ---
+        function updateCameraUrl(forceValue) {
+            const hidden = document.getElementById('CAMERA_URL');
             if (!hidden) return;
 
-            const streamInput = document.getElementById('streamUrlInput');
+            const streamInput = document.getElementById('cameraUrlInput');
             const usbSelect = document.getElementById('usbIndexSelect');
 
             const streamVal = streamInput ? streamInput.value.trim() : '';
@@ -1047,30 +1092,20 @@
             if (!nextVal) return;
 
             hidden.value = nextVal;
-            const display = document.getElementById('currentSourceDisplay');
+            const display = document.getElementById('runtimeSourceDisplay');
             if (display) display.textContent = nextVal;
         }
 
-        function initVideoSource() {
-            const currentVal = document.getElementById('VIDEO_SOURCE').value;
+        function initCameraUrl() {
+            const currentVal = document.getElementById('CAMERA_URL').value;
             // Prefill stream URL input if current source is a URL
             if (currentVal && !(/^\d+$/.test(currentVal))) {
-                document.getElementById('streamUrlInput').value = currentVal;
+                document.getElementById('cameraUrlInput').value = currentVal;
             }
         }
 
         // --- Location Logic ---
         function initLocation() {
-            // Backend renders dictionary usually, but templates typically stringify it.
-            // Check how payload['LOCATION_DATA'].value is passed.
-            // It's likely a python dict or a string representation of it.
-            // In the previous code there was a raw input.
-            // We'll read the macro logic: it accessed meta.value directly.
-
-            // We need to parse the initial value from server rendered JS variable if possible, 
-            // or parse the value attribute of the hidden field.
-
-            // Let's pass the raw values safely via data-attributes or JS
             const rawLat = "{{ payload['LOCATION_DATA'].value.get('latitude', '') if payload['LOCATION_DATA'].value is mapping else '' }}";
             const rawLon = "{{ payload['LOCATION_DATA'].value.get('longitude', '') if payload['LOCATION_DATA'].value is mapping else '' }}";
 
@@ -1082,33 +1117,67 @@
             const lat = document.getElementById('locLat').value.trim();
             const lon = document.getElementById('locLon').value.trim();
 
-            // Simple validation helper
-            if (!lat || !lon) {
-                // If empty, maybe send empty? Or keep previous? 
-                // Let's assume user wants to clear if both empty.
-                if (!lat && !lon) {
-                    document.getElementById('LOCATION_DATA').value = "";
-                    return;
-                }
+            if (!lat && !lon) {
+                document.getElementById('LOCATION_DATA').value = "";
+                return;
             }
-
-            // Construct JSON-like object but unfortunately the backend expects... what?
-            // The backend likely expects a JSON string OR handles a dict form object?
-            // Existing backend `update_settings_route` usually gets raw form values. 
-            // If we send a string "{'latitude': ...}", the backend config loader (dynaconf/dotenv) needs to handle it.
-            // Wait, standard .env is string. Complex types in .env are tricky.
-            // Let's look at how it was displayed previously:
-            // "loc_val.latitude ~ ', ' ~ loc_val.longitude" was displayed.
 
             // Format as "lat, lon" expected by backend config.py
             document.getElementById('LOCATION_DATA').value = `${lat}, ${lon}`;
         }
 
-        function prepareFormSubmission() {
-            // Ensure final sync
-            updateRealSource();
+        function submitSettingsForm(event) {
+            event.preventDefault();
+
+            // Ensure final sync of derived fields
+            updateCameraUrl();
             updateLocationJson();
-            return true;
+
+            const form = document.getElementById('settingsForm');
+            const btn = document.getElementById('settingsSubmitBtn');
+            const originalText = btn.textContent;
+            btn.textContent = 'Saving...';
+            btn.disabled = true;
+
+            // Collect all named form fields into a JSON payload
+            const formData = new FormData(form);
+            const payload = {};
+            for (const [key, value] of formData.entries()) {
+                payload[key] = value;
+            }
+
+            fetch('/api/v1/settings', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'same-origin',
+                body: JSON.stringify(payload)
+            })
+            .then(res => {
+                if (!res.ok) {
+                    return res.json().then(err => {
+                        throw new Error(err.message || JSON.stringify(err.errors) || 'API Error');
+                    });
+                }
+                return res.json();
+            })
+            .then(data => {
+                if (data.status === 'success') {
+                    alert('✅ Settings saved successfully! Page will reload.');
+                    window.location.reload();
+                } else {
+                    alert('❌ Failed: ' + (data.message || 'Unexpected response'));
+                    btn.textContent = originalText;
+                    btn.disabled = false;
+                }
+            })
+            .catch(err => {
+                alert('❌ Error: ' + (err.message || 'Connection failed'));
+                console.error(err);
+                btn.textContent = originalText;
+                btn.disabled = false;
+            });
+
+            return false;
         }
     </script>
 

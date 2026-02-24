@@ -2,22 +2,27 @@
 Modal Image Viewer Component (UI_STANDARD.md compliant)
 
 Renders an image with optional bounding box overlay canvas.
-Used in detection_modal, orphan_modal, etc.
+Supports smart-zoom: if bbox data is provided, the image auto-zooms
+to the bird region on load. Click "🖼 Full" in the action bar to toggle.
 
 Args:
 image_url (str): URL to the optimized/full image
 image_alt (str): Alt text for accessibility
 detection_id (int): Current detection ID
+bbox (dict): Optional bounding box {x, y, w, h} as fractions 0-1
 dismissable (bool): If true, clicking image closes modal
 #}
 {% macro render_image_viewer(image_url, image_alt, detection_id, bbox=none, siblings=none, dismissable=true) %}
-<div class="modal-image-viewer wm-image-viewer">
-    <img class="wm-image-viewer__img bbox-base-image"
-         src="{{ image_url }}"
-         alt="{{ image_alt }}"
-         data-detection-id="{{ detection_id }}"
-         {% if dismissable %}role="button" data-bs-dismiss="modal" aria-label="Close" title="Click to close"{% endif %}
-         onload="if(typeof initBboxOverlay==='function')initBboxOverlay(this)">
+<div class="modal-image-viewer wm-image-viewer" {% if bbox and bbox.x is not none and bbox.w and bbox.w> 0 %}
+    data-bbox-x="{{ bbox.x }}"
+    data-bbox-y="{{ bbox.y }}"
+    data-bbox-w="{{ bbox.w }}"
+    data-bbox-h="{{ bbox.h }}"
+    {% endif %}>
+    <img class="wm-image-viewer__img bbox-base-image" src="{{ image_url }}" alt="{{ image_alt }}"
+        data-detection-id="{{ detection_id }}" {% if dismissable %}role="button" data-bs-dismiss="modal"
+        aria-label="Close" title="Click to close" {% endif %}
+        onload="if(typeof initBboxOverlay==='function')initBboxOverlay(this);if(typeof initSmartZoom==='function')initSmartZoom(this)">
 
     <canvas class="wm-image-viewer__overlay bbox-overlay"></canvas>
 </div>

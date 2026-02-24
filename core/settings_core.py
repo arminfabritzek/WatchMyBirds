@@ -83,7 +83,7 @@ def get_gallery_display_threshold() -> float:
         Gallery display threshold value
     """
     config = get_config()
-    return config.get("GALLERY_DISPLAY_THRESHOLD", 0.7)
+    return config["GALLERY_DISPLAY_THRESHOLD"]
 
 
 def get_edit_password() -> str | None:

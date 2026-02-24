@@ -15,6 +15,9 @@ from utils.db import (
     fetch_analytics_summary as _fetch_analytics_summary,
 )
 from utils.db import (
+    fetch_count_last_24h as _fetch_count_last_24h,
+)
+from utils.db import (
     fetch_daily_covers as _fetch_daily_covers,
 )
 from utils.db import (
@@ -27,7 +30,16 @@ from utils.db import (
     fetch_detections_for_gallery as _fetch_detections_for_gallery,
 )
 from utils.db import (
+    fetch_detections_last_24h as _fetch_detections_last_24h,
+)
+from utils.db import (
+    fetch_random_favorites as _fetch_random_favorites,
+)
+from utils.db import (
     fetch_review_queue_count as _fetch_review_queue_count,
+)
+from utils.db import (
+    fetch_review_queue_images as _fetch_review_queue_images,
 )
 from utils.db import (
     fetch_species_timestamps as _fetch_species_timestamps,
@@ -108,6 +120,11 @@ def fetch_daily_covers(conn, min_score: float = 0.0) -> list:
     return _fetch_daily_covers(conn, min_score)
 
 
+def fetch_random_favorites(conn, limit: int = 6) -> list:
+    """Fetch random favorite covers."""
+    return _fetch_random_favorites(conn, limit=limit)
+
+
 def fetch_detection_species_summary(conn, date_iso: str) -> list:
     """Fetch species summary for a date."""
     return _fetch_detection_species_summary(conn, date_iso)
@@ -154,6 +171,32 @@ def fetch_day_count(conn, date_str_iso: str) -> int:
     return _fetch_day_count(conn, date_str_iso)
 
 
-def fetch_review_queue_count(conn, save_threshold: float) -> int:
+def fetch_review_queue_count(conn, gallery_threshold: float) -> int:
     """Fetch count of items in review queue."""
-    return _fetch_review_queue_count(conn, save_threshold)
+    return _fetch_review_queue_count(conn, gallery_threshold)
+
+
+def fetch_review_queue_images(
+    conn, gallery_threshold: float, exclude_deep_scanned: bool = False
+) -> list:
+    """Fetch images needing review."""
+    return _fetch_review_queue_images(
+        conn, gallery_threshold, exclude_deep_scanned=exclude_deep_scanned
+    )
+
+
+# --- 24h Rolling Window Operations ---
+
+
+def fetch_count_last_24h(conn, threshold_timestamp: str) -> int:
+    """Fetch count of detections in last 24h (rolling window)."""
+    return _fetch_count_last_24h(conn, threshold_timestamp)
+
+
+def fetch_detections_last_24h(
+    conn, threshold_timestamp: str, limit: int | None = None, order_by: str = "time"
+) -> list:
+    """Fetch detections from last 24h (rolling window)."""
+    return _fetch_detections_last_24h(
+        conn, threshold_timestamp, limit=limit, order_by=order_by
+    )

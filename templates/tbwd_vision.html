@@ -1,0 +1,322 @@
+{% extends "base.html" %}
+
+{% block title %}Winter Bird Feeding – What Actually Works - WatchMyBirds{% endblock %}
+
+{% block content %}
+<style>
+    .nature-wrap {
+        max-width: 900px;
+        margin: 0 auto;
+        padding: var(--space-lg) var(--space-md) var(--space-3xl);
+    }
+
+    .nature-hero-img {
+        width: 100%;
+        border-radius: var(--radius-lg);
+        margin-bottom: var(--space-md);
+        aspect-ratio: 16/9;
+        object-fit: cover;
+    }
+
+    .nature-hero {
+        padding: var(--space-xl) var(--space-lg);
+        margin-bottom: var(--space-lg);
+        background: var(--color-surface);
+        border: 1px solid var(--color-border);
+        border-radius: var(--radius-xl);
+        box-shadow: var(--shadow-sm);
+    }
+
+    .nature-tag {
+        display: inline-block;
+        background: rgba(168, 85, 247, 0.1);
+        color: #7c3aed;
+        border: 1px solid rgba(168, 85, 247, 0.25);
+        border-radius: 999px;
+        padding: 0.25rem 0.75rem;
+        font-size: 0.72rem;
+        font-weight: 800;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+    }
+
+    .nature-title {
+        margin: 0.6rem 0 0.4rem;
+        font-size: clamp(1.6rem, 3.5vw, 2.4rem);
+        font-weight: 900;
+        line-height: 1.12;
+        background: linear-gradient(135deg, #4cda6a, #339af0, #a855f7);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+    }
+
+    .nature-sub {
+        margin: 0;
+        color: var(--color-text-muted);
+        max-width: 760px;
+        line-height: 1.65;
+        font-size: 1rem;
+    }
+
+    .nature-section {
+        background: var(--color-surface);
+        border: 1px solid var(--color-border);
+        border-radius: var(--radius-xl);
+        box-shadow: var(--shadow-sm);
+        padding: var(--space-lg);
+        margin-top: var(--space-md);
+    }
+
+    .nature-section h2 {
+        margin: 0 0 0.5rem;
+        font-size: 1.15rem;
+        color: #339af0;
+        font-weight: 800;
+    }
+
+    .nature-section p,
+    .nature-section li {
+        color: var(--color-text-muted);
+        font-size: 0.93rem;
+        line-height: 1.65;
+    }
+
+    .nature-section ul,
+    .nature-section ol {
+        margin: 0.5rem 0 0;
+        padding-left: 1.2rem;
+    }
+
+    .nature-section li {
+        margin-bottom: 0.25rem;
+    }
+
+    .nature-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+        gap: var(--space-md);
+        margin: var(--space-md) 0;
+    }
+
+    .nature-card {
+        background: var(--color-surface);
+        border: 1px solid var(--color-border);
+        border-radius: var(--radius-xl);
+        box-shadow: var(--shadow-sm);
+        padding: var(--space-lg);
+    }
+
+    .nature-card h3 {
+        margin: 0 0 0.4rem;
+        font-size: 1.02rem;
+        color: #a855f7;
+        font-weight: 700;
+    }
+
+    .nature-card p {
+        margin: 0;
+        color: var(--color-text-muted);
+        font-size: 0.93rem;
+        line-height: 1.6;
+    }
+
+    .nature-highlight {
+        border-left: 3px solid #a855f7;
+        padding-left: 1rem;
+        margin: 0.7rem 0;
+        color: var(--color-text);
+        font-style: italic;
+        font-size: 0.94rem;
+        line-height: 1.6;
+    }
+
+    .nature-table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 0.5rem;
+        font-size: 0.88rem;
+    }
+
+    .nature-table th {
+        text-align: left;
+        color: #339af0;
+        padding: 0.4rem 0.6rem;
+        border-bottom: 2px solid var(--color-border);
+        font-weight: 700;
+    }
+
+    .nature-table td {
+        padding: 0.4rem 0.6rem;
+        color: var(--color-text-muted);
+        border-bottom: 1px solid var(--color-border-light);
+    }
+
+    .nature-warning {
+        background: rgba(255, 107, 107, 0.06);
+        border: 1px solid rgba(255, 107, 107, 0.2);
+        border-radius: var(--radius-lg);
+        padding: 0.8rem 1rem;
+        margin-top: 0.7rem;
+    }
+
+    .nature-warning strong {
+        color: #ff6b6b;
+    }
+
+    .nature-warning p {
+        margin: 0.3rem 0 0;
+    }
+</style>
+
+<div class="nature-wrap">
+    <section class="nature-hero">
+        <img class="nature-hero-img" src="/assets/nature_feeding.png"
+            alt="A Blue Tit and Robin at a wooden bird feeder in a snowy winter garden">
+        <span class="nature-tag">Nature Knowledge</span>
+        <h1 class="nature-title">Winter Bird Feeding: What Actually Works</h1>
+        <p class="nature-sub">
+            Feeding garden birds in winter is one of the most popular forms of nature interaction in Europe.
+            Over 15 million households in Germany alone put out food between November and March.
+            But most feeding stations are set up wrong. The type of food, placement, and hygiene
+            determine whether your feeder helps birds survive — or spreads disease.
+        </p>
+    </section>
+
+    <section class="nature-section">
+        <h2>Why Feeding Matters in Modern Landscapes</h2>
+        <p>
+            Wild bird populations in Europe have declined by over 420 million individuals since 1980.
+            Farmland birds like Linnets and Corn Buntings have lost 60% of their populations.
+            The main cause is not cold winters — it's year-round habitat loss. Weed seeds, stubble fields,
+            and wild flower margins have been replaced by clean-harvested cropland.
+            In this depleted landscape, garden feeders become an important supplementary food source,
+            especially during prolonged frost or snow cover when natural food is sealed away.
+        </p>
+        <div class="nature-highlight">
+            Research from the British Trust for Ornithology shows that garden feeding has measurably improved
+            winter survival rates for species like Blue Tit, Great Tit, and Robin. These species now have
+            larger breeding populations in areas with high feeder density.
+        </div>
+    </section>
+
+    <section class="nature-section">
+        <h2>Which Food for Which Bird</h2>
+        <p>Not all birds eat the same things. Using the wrong food means you only attract a few generalist species.</p>
+        <table class="nature-table">
+            <thead>
+                <tr>
+                    <th>Food Type</th>
+                    <th>Species Attracted</th>
+                    <th>Notes</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td>Sunflower seeds (black)</td>
+                    <td>Great Tit, Blue Tit, Nuthatch, Greenfinch</td>
+                    <td>Best all-round food. High fat content.</td>
+                </tr>
+                <tr>
+                    <td>Peanuts (unsalted, whole)</td>
+                    <td>Great Spotted Woodpecker, Nuthatch, Coal Tit</td>
+                    <td>Must be in a mesh feeder — whole peanuts can choke young birds.</td>
+                </tr>
+                <tr>
+                    <td>Fat balls / suet</td>
+                    <td>Long-tailed Tit, Wren, Treecreeper</td>
+                    <td>Remove plastic nets — birds get entangled. Use open feeders.</td>
+                </tr>
+                <tr>
+                    <td>Nyjer seed (thistle)</td>
+                    <td>Goldfinch, Siskin, Redpoll</td>
+                    <td>Requires special feeder with tiny ports.</td>
+                </tr>
+                <tr>
+                    <td>Mealworms (dried)</td>
+                    <td>Robin, Blackbird, Dunnock</td>
+                    <td>Best scattered on ground. Robins won't use hanging feeders.</td>
+                </tr>
+                <tr>
+                    <td>Fruit (apples, raisins)</td>
+                    <td>Blackbird, Fieldfare, Redwing, Blackcap</td>
+                    <td>Cut apples in half, place on ground. Critical for winter migrants.</td>
+                </tr>
+                <tr>
+                    <td>Mixed seed (cheap)</td>
+                    <td>House Sparrow, Chaffinch</td>
+                    <td>Avoid mixes with wheat or dog biscuit — these are filler most birds reject.</td>
+                </tr>
+            </tbody>
+        </table>
+    </section>
+
+    <section class="nature-grid">
+        <article class="nature-card">
+            <h3>Feeder Placement</h3>
+            <p>
+                Place feeders at least 2 metres from dense cover (where cats could hide),
+                but within 4 metres of a tree or shrub (so birds can flee from Sparrowhawks).
+                The ideal position is over a hard surface or gravel — not over grass,
+                where spilled seed rots and breeds Salmonella. Height: 1.5–2m for hanging feeders,
+                ground level for ground-feeding species like Robins and Blackbirds.
+            </p>
+        </article>
+        <article class="nature-card">
+            <h3>The Water Problem</h3>
+            <p>
+                Fresh water is more important than food. Birds need to drink and bathe daily,
+                even in freezing conditions. A shallow dish (max 5 cm deep) with a stone for grip
+                is sufficient. In frost, pour warm (never boiling) water to melt ice each morning.
+                Never add salt, glycerine, or antifreeze — all are toxic to birds.
+                Change water daily to prevent disease transmission.
+            </p>
+        </article>
+        <article class="nature-card">
+            <h3>Hygiene — The Silent Killer</h3>
+            <p>
+                Dirty feeders kill more birds than cats. Trichomonosis (caused by <em>Trichomonas gallinae</em>)
+                has decimated Greenfinch populations across Europe since 2005 — spread almost entirely through
+                contaminated feeders and bird baths. Clean all feeders weekly with hot water and a mild disinfectant.
+                Rotate feeder positions monthly. If you see a lethargic bird with fluffed feathers near your feeder,
+                remove all food for 2 weeks to break the infection cycle.
+            </p>
+        </article>
+    </section>
+
+    <section class="nature-section">
+        <h2>When to Feed — and When to Stop</h2>
+        <p>
+            The traditional advice was "feed from November to March". Modern ornithologists now recommend
+            year-round feeding, but with different foods. Winter feeding focuses on high-fat seeds and suet.
+            Summer feeding should offer protein-rich foods (mealworms, sunflower hearts) that help parents
+            provision chicks. The one rule: <strong>never feed bread</strong>. It fills birds' stomachs
+            with no nutritional value and causes angel wing deformity in waterfowl.
+        </p>
+        <div class="nature-warning">
+            <strong>⚠ Important</strong>
+            <p>
+                If you start feeding in winter, do not suddenly stop. Birds that have learned to rely on your feeder
+                may have abandoned other foraging routes. If you go on holiday, ask a neighbour to refill the feeder.
+                A reliable food source that suddenly disappears during a cold snap can cause genuine harm.
+            </p>
+        </div>
+    </section>
+
+    <section class="nature-section">
+        <h2>What You'll See at Your Feeder</h2>
+        <p>
+            A well-stocked, well-placed feeding station in Central Europe typically attracts 12–18 species
+            over a winter season. The first arrivals (within hours) are usually Great Tits and Blue Tits.
+            Robins follow within days. After 1–2 weeks, shyer species like Nuthatches and Treecreepers
+            investigate. Woodpeckers may take a month. If you add ground food, Dunnocks and Wrens appear —
+            species most people never knew were in their garden.
+        </p>
+        <p>
+            In cold winters, rare visitors like Bramblings, Waxwings, or Hawfinches may turn up.
+            These irruptive species are pushed south by food shortages in Scandinavia and Russia,
+            and gardens become crucial survival stations. Keep your camera and your WatchMyBirds system ready.
+        </p>
+    </section>
+</div>
+{% endblock %}

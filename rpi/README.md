@@ -66,6 +66,16 @@ The system logs to `systemd-journald`.
 # View app logs
 sudo journalctl -u app -f
 
+# View go2rtc logs
+sudo journalctl -u go2rtc -f
+
 # View boot initialization logs
 cat /boot/firmware/first-boot.log
 ```
+
+### Streaming Runtime
+- The appliance image installs and enables `go2rtc.service` by default.
+- On first boot (client mode), `go2rtc` is started before `app.service`.
+- The app uses `STREAM_SOURCE_MODE=auto` behavior:
+  - go2rtc healthy -> relay mode
+  - go2rtc unavailable -> direct fallback

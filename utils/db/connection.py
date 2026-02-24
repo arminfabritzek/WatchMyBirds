@@ -143,12 +143,12 @@ def _init_schema(conn: sqlite3.Connection) -> None:
     _ensure_column_on_table(conn, "detections", "frame_width", "INTEGER")
     _ensure_column_on_table(conn, "detections", "frame_height", "INTEGER")
 
-
-
     # Detection Quality Rating (1-5 stars, computed or manual)
     _ensure_column_on_table(conn, "detections", "rating", "INTEGER")
     _ensure_column_on_table(conn, "detections", "rating_source", "TEXT DEFAULT 'auto'")
 
+    # Favorite flag (simple ❤️ toggle for cover image selection)
+    _ensure_column_on_table(conn, "detections", "is_favorite", "INTEGER DEFAULT 0")
 
     conn.execute("""
         CREATE TABLE IF NOT EXISTS sources (
@@ -176,7 +176,9 @@ def _init_schema(conn: sqlite3.Connection) -> None:
     # Deep Scan tracking (additive, no destructive migration)
     _ensure_column_on_table(conn, "images", "deep_scan_last_attempt_at", "TEXT")
     _ensure_column_on_table(conn, "images", "deep_scan_last_result", "TEXT")
-    _ensure_column_on_table(conn, "images", "deep_scan_attempt_count", "INTEGER DEFAULT 0")
+    _ensure_column_on_table(
+        conn, "images", "deep_scan_attempt_count", "INTEGER DEFAULT 0"
+    )
 
     # 1. Ensure Default Source Exists
     default_source_id = get_or_create_default_source(conn)
@@ -184,7 +186,6 @@ def _init_schema(conn: sqlite3.Connection) -> None:
     conn.execute(
         "UPDATE images SET source_id = ? WHERE source_id IS NULL", (default_source_id,)
     )
-
 
     conn.execute("""
         CREATE TABLE IF NOT EXISTS species_meta (

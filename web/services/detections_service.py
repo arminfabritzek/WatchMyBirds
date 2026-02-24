@@ -65,13 +65,13 @@ def get_trash_count() -> int:
     return detections_core.get_trash_count()
 
 
-def get_review_queue_count(save_threshold: float) -> int:
+def get_review_queue_count(gallery_threshold: float) -> int:
     """
     Get count of items needing review.
 
     Delegates to core.detections_core.
     """
-    return detections_core.get_review_queue_count(save_threshold)
+    return detections_core.get_review_queue_count(gallery_threshold)
 
 
 # --- Hard Delete Operations ---
@@ -112,9 +112,9 @@ def hard_delete_images_with_conn(
 # --- Review Queue ---
 
 
-def get_review_queue_images(output_dir: str, save_threshold: float) -> list[dict]:
+def get_review_queue_images(output_dir: str, gallery_threshold: float) -> list[dict]:
     """Get images for the review queue."""
-    return detections_core.get_review_queue_images(output_dir, save_threshold)
+    return detections_core.get_review_queue_images(output_dir, gallery_threshold)
 
 
 def get_preview_path(output_dir: str, filename: str):

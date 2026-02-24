@@ -7,6 +7,7 @@ import logging
 import math
 import os
 import platform
+import random
 import re
 import subprocess
 import time
@@ -14,7 +15,6 @@ from datetime import datetime
 from pathlib import Path
 
 import cv2
-import numpy as np
 from flask import (
     Flask,
     Response,
@@ -26,7 +26,6 @@ from flask import (
     send_from_directory,
     url_for,
 )
-from PIL import Image, ImageDraw, ImageFont
 
 from config import (
     get_config,
@@ -34,7 +33,14 @@ from config import (
     update_runtime_settings,
     validate_runtime_updates,
 )
+from utils.settings import mask_rtsp_url
 from web.blueprints.auth import auth_bp, login_required
+from web.power_actions import (
+    POWER_MANAGEMENT_UNAVAILABLE_MESSAGE,
+    get_power_action_success_message,
+    is_power_management_available,
+    schedule_power_action,
+)
 from web.services import (
     db_service,
     gallery_service,
@@ -42,11 +48,6 @@ from web.services import (
     path_service,
 )
 
-config = get_config()
-db_conn = db_service.get_connection()
-
-_CACHE_TIMEOUT = 60  # Set cache timeout in seconds
-_cached_images = {"images": None, "timestamp": 0}
 # In-Memory Caches
 _species_summary_cache = {"timestamp": 0, "payload": None}
 
@@ -62,6 +63,9 @@ def create_web_interface(detection_manager, system_monitor=None):
     Configuration is loaded from the global config module.
     """
     logger = logging.getLogger(__name__)
+
+    # V-03: Local scope access instead of module-level globals
+    config = get_config()
 
     output_dir = config["OUTPUT_DIR"]
     output_resize_width = config["STREAM_WIDTH_OUTPUT_RESIZE"]
@@ -97,19 +101,69 @@ def create_web_interface(detection_manager, system_monitor=None):
         logger.error(f"Failed to load common names from {common_names_file}: {e}")
         COMMON_NAMES = {"Cyanistes_caeruleus": "Eurasian blue tit"}
 
-    def get_detections_for_date(date_str_iso):
-        rows = db_service.fetch_detections_for_gallery(
-            db_conn, date_str_iso, order_by="time"
+    def _compute_auto_rating_local(od_confidence, cls_confidence, bbox_w, bbox_h):
+        """
+        Local auto-rating fallback.
+        Kept in web_interface to avoid hard runtime coupling to trash blueprint helpers.
+        """
+        od_conf = od_confidence or 0
+        cls_conf = cls_confidence or 0
+        bbox_area = (bbox_w or 0) * (bbox_h or 0)
+
+        visual_score = od_conf * 0.4 + cls_conf * 0.6
+        if bbox_area > 0.05:
+            visual_score += 0.1
+        elif bbox_area < 0.005:
+            visual_score -= 0.15
+
+        if visual_score >= 0.65:
+            return 4
+        if visual_score >= 0.45:
+            return 3
+        if visual_score >= 0.25:
+            return 2
+        return 1
+
+    def _compute_rating_lazy(det):
+        """Compute auto-rating for a detection that has no rating yet. Write back to DB."""
+        rating = _compute_auto_rating_local(
+            det.get("od_confidence", 0),
+            det.get("cls_confidence", 0),
+            det.get("bbox_w", 0),
+            det.get("bbox_h", 0),
         )
-        # Convert to list of dicts immediately for easier handling
-        return [dict(row) for row in rows]
+        # Lazy write-back (best-effort, non-blocking)
+        try:
+            det_id = det.get("detection_id")
+            if det_id:
+                conn = db_service.get_connection()
+                try:
+                    conn.execute(
+                        "UPDATE detections SET rating = ?, rating_source = 'auto' WHERE detection_id = ? AND rating IS NULL",
+                        (rating, det_id),
+                    )
+                    conn.commit()
+                finally:
+                    conn.close()
+        except Exception:
+            pass  # Non-critical
+        return rating
+
+    def get_detections_for_date(date_str_iso):
+        with db_service.closing_connection() as conn:
+            rows = db_service.fetch_detections_for_gallery(
+                conn, date_str_iso, order_by="time"
+            )
+            # Convert to list of dicts immediately for easier handling
+            return [dict(row) for row in rows]
 
     def delete_detections(detection_ids):
         """
         [SEMANTIC DELETE]
         Rejects specific detections.
         """
-        db_service.reject_detections(db_conn, detection_ids)
+        with db_service.closing_connection() as conn:
+            db_service.reject_detections(conn, detection_ids)
         return True
 
     def get_all_detections():
@@ -118,8 +172,9 @@ def create_web_interface(detection_manager, system_monitor=None):
         Returns list of dicts.
         """
         try:
-            rows = db_service.fetch_detections_for_gallery(db_conn, order_by="time")
-            return [dict(row) for row in rows]
+            with db_service.closing_connection() as conn:
+                rows = db_service.fetch_detections_for_gallery(conn, order_by="time")
+                return [dict(row) for row in rows]
         except Exception as e:
             logger.error(f"Error reading detections from SQLite: {e}")
             return []
@@ -127,64 +182,139 @@ def create_web_interface(detection_manager, system_monitor=None):
     def get_daily_covers():
         """Returns a dict of {YYYY-MM-DD: {path, bbox}} for gallery overview."""
         covers = {}
-        gallery_threshold = config.get("GALLERY_DISPLAY_THRESHOLD", 0.7)
+        gallery_threshold = config["GALLERY_DISPLAY_THRESHOLD"]
         try:
-            rows = db_service.fetch_daily_covers(db_conn, min_score=gallery_threshold)
-            for row in rows:
-                date_key = row["date_key"]  # Already YYYY-MM-DD
-                optimized_name = row["optimized_name_virtual"]
-                if not date_key or not optimized_name:
+            detections = get_captured_detections()
+            by_date = {}
+            for det in detections:
+                date_key = _date_iso_from_timestamp(det.get("image_timestamp", ""))
+                if not date_key:
+                    continue
+                by_date.setdefault(date_key, []).append(det)
+
+            for date_key, day_detections in by_date.items():
+                chosen = _pick_cover_for_group(
+                    day_detections, seed_key=f"day:{date_key}", date_iso=date_key
+                )
+                if not chosen:
                     continue
 
-                # Use virtual thumbnail path corresponding to new route structure
-                thumb_path_virtual = row[
-                    "thumbnail_path_virtual"
-                ]  # YYYYMMDD/filename.webp
+                full_path = chosen.get("relative_path") or chosen.get(
+                    "optimized_name_virtual", ""
+                )
+                thumb_path_virtual = chosen.get("thumbnail_path_virtual")
+                if not full_path and not thumb_path_virtual:
+                    continue
 
-                # Construct display path pointing to new routes
                 if thumb_path_virtual:
                     display_path = f"/uploads/derivatives/thumbs/{thumb_path_virtual}"
                     is_thumb = True
                 else:
-                    display_path = f"/uploads/derivatives/optimized/{optimized_name}"
+                    display_path = f"/uploads/derivatives/optimized/{full_path}"
                     is_thumb = False
 
-                bbox = (row["bbox_x"], row["bbox_y"], row["bbox_w"], row["bbox_h"])
+                count = sum(
+                    1
+                    for d in day_detections
+                    if (d.get("score") is None)
+                    or ((d.get("score") or 0.0) >= gallery_threshold)
+                )
+
+                bbox = (
+                    chosen.get("bbox_x", 0.0),
+                    chosen.get("bbox_y", 0.0),
+                    chosen.get("bbox_w", 0.0),
+                    chosen.get("bbox_h", 0.0),
+                )
 
                 covers[date_key] = {
                     "path": display_path,
                     "bbox": bbox,
                     "is_thumb": is_thumb,
-                    "count": row["image_count"],
+                    "count": count,
+                    "detection_id": chosen.get("detection_id"),
                 }
         except Exception as e:
             logger.error(f"Error reading daily covers from SQLite: {e}")
         return covers
 
+    def _bbox_touches_edge(det: dict, margin: float = 0.01) -> bool:
+        """Return True if the detection's bounding box touches or exceeds the image edge.
+
+        Normalized bbox coords are in 0..1 range.
+        A bbox is considered edge-touching if any side is within *margin* of
+        the image boundary (default 1%).
+        """
+        bx = det.get("bbox_x") or 0.0
+        by = det.get("bbox_y") or 0.0
+        bw = det.get("bbox_w") or 0.0
+        bh = det.get("bbox_h") or 0.0
+        if bw <= 0 or bh <= 0:
+            return True  # no valid bbox → treat as edge-touching
+        return (
+            bx <= margin
+            or by <= margin
+            or (bx + bw) >= (1.0 - margin)
+            or (by + bh) >= (1.0 - margin)
+        )
+
+    def _cover_quality_tuple(det: dict) -> tuple[int, float]:
+        """
+        Quality key for species cover and summary selection.
+        Priority: favorite first, then score.
+        """
+        is_fav = 1 if int(det.get("is_favorite") or 0) else 0
+        score = float(det.get("score") or 0.0)
+        return (is_fav, score)
+
+    def _is_favorite(det: dict) -> bool:
+        """True when a detection is marked as ❤️ favorite."""
+        return bool(int(det.get("is_favorite") or 0))
+
+    def _date_iso_from_timestamp(ts: str) -> str:
+        """Convert YYYYMMDD_HHMMSS -> YYYY-MM-DD."""
+        if not ts or len(ts) < 8:
+            return ""
+        return f"{ts[:4]}-{ts[4:6]}-{ts[6:8]}"
+
+    def _pick_cover_for_group(candidates: list[dict], **_kwargs) -> dict | None:
+        """
+        Pick one cover candidate.
+        Priority:
+        1) If ❤️ favorites exist → random.choice() among them
+        2) Prefer non-edge images
+        3) Otherwise pick single best by score
+        """
+        if not candidates:
+            return None
+
+        # 1. Favorites win over everything else
+        fav_pool = [d for d in candidates if _is_favorite(d)]
+        if fav_pool:
+            return random.choice(fav_pool)
+
+        # 2. Prefer non-edge images for the fallback
+        interior = [d for d in candidates if not _bbox_touches_edge(d)]
+        pool = interior if interior else candidates
+
+        # 3. Fallback: best by score
+        ranked = sorted(
+            pool,
+            key=lambda d: float(d.get("score") or 0.0),
+            reverse=True,
+        )
+        return ranked[0] if ranked else None
+
     def get_captured_detections():
         """
         Returns a list of captured detections (dicts).
-        Uses caching to avoid repeated DB hits if frequent.
+        Uses fresh DB reads for UI correctness after manual relabel/rating updates.
         """
-        now = time.time()
-        if (
-            _cached_images["images"] is not None
-            and (now - _cached_images["timestamp"]) < _CACHE_TIMEOUT
-        ):
-            return _cached_images["images"]
-
-        detections = []
         try:
-            rows = db_service.fetch_detections_for_gallery(
-                db_conn, order_by="time"
-            )  # Most recent first
-            detections = [dict(row) for row in rows]
+            return gallery_service.get_all_detections()
         except Exception as e:
             logger.error(f"Error reading detections from SQLite: {e}")
-
-        _cached_images["images"] = detections
-        _cached_images["timestamp"] = now
-        return detections
+            return []
 
     def get_captured_detections_by_date():
         """
@@ -206,7 +336,8 @@ def create_web_interface(detection_manager, system_monitor=None):
     def get_daily_species_summary(date_iso: str):
         """Returns per-species counts for a given date (YYYY-MM-DD) - always fresh from DB."""
         try:
-            rows = db_service.fetch_detection_species_summary(db_conn, date_iso)
+            with db_service.closing_connection() as conn:
+                rows = db_service.fetch_detection_species_summary(conn, date_iso)
         except Exception as e:
             logger.error(f"Error fetching daily species summary for {date_iso}: {e}")
             rows = []
@@ -223,180 +354,6 @@ def create_web_interface(detection_manager, system_monitor=None):
             )
         return summary
 
-    def generate_video_feed():
-        # Load placeholder once
-        static_placeholder_path = "assets/static_placeholder.jpg"
-        if os.path.exists(static_placeholder_path):
-            static_placeholder = cv2.imread(static_placeholder_path)
-            if static_placeholder is not None:
-                original_h, original_w = static_placeholder.shape[:2]
-                ratio = original_h / float(original_w)
-                placeholder_w = output_resize_width
-                placeholder_h = int(placeholder_w * ratio)
-                static_placeholder = cv2.resize(
-                    static_placeholder, (placeholder_w, placeholder_h)
-                )
-            else:
-                placeholder_w = output_resize_width
-                placeholder_h = int(placeholder_w * 9 / 16)
-                static_placeholder = np.zeros(
-                    (placeholder_h, placeholder_w, 3), dtype=np.uint8
-                )
-        else:
-            placeholder_w = output_resize_width
-            placeholder_h = int(placeholder_w * 9 / 16)
-            static_placeholder = np.zeros(
-                (placeholder_h, placeholder_w, 3), dtype=np.uint8
-            )
-
-        # Parameters for text overlay
-        padding_x_percent = 0.005
-        padding_y_percent = 0.04
-
-        while True:
-            start_time = time.time()
-            # Retrieve the most recent display frame (raw or optimized)
-            frame = detection_manager.get_display_frame()
-            if frame is not None:
-                # Derive size from the current frame to avoid blocking on VideoCapture availability.
-                h, w = frame.shape[:2]
-                output_resize_height = int(h * output_resize_width / w) if w else h
-                resized_frame = cv2.resize(
-                    frame, (output_resize_width, output_resize_height)
-                )
-                # Overlay current timestamp
-                pil_image = Image.fromarray(
-                    cv2.cvtColor(resized_frame, cv2.COLOR_BGR2RGB)
-                )
-            else:
-                # If no frame, use the placeholder.
-                pil_image = Image.fromarray(
-                    cv2.cvtColor(static_placeholder, cv2.COLOR_BGR2RGB)
-                )
-
-            draw = ImageDraw.Draw(pil_image)
-            img_width, img_height = pil_image.size
-            padding_x = int(img_width * padding_x_percent)
-            padding_y = int(img_height * padding_y_percent)
-
-            # Dynamic font size: ~2.5% of image width, clamped 12-24px
-            target_font_size = max(12, min(24, int(img_width * 0.025)))
-            try:
-                custom_font = ImageFont.truetype(
-                    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-                    target_font_size,
-                )
-            except OSError:
-                try:
-                    custom_font = ImageFont.truetype(
-                        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-                        target_font_size,
-                    )
-                except OSError:
-                    try:
-                        # macOS fallback
-                        custom_font = ImageFont.truetype(
-                            "/System/Library/Fonts/Helvetica.ttc", target_font_size
-                        )
-                    except OSError:
-                        custom_font = ImageFont.load_default()
-
-            # Classic top-right timestamp (Mac style)
-            # English weekday/month names
-            weekdays_en = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
-            months_en = [
-                "",
-                "Jan",
-                "Feb",
-                "Mar",
-                "Apr",
-                "May",
-                "Jun",
-                "Jul",
-                "Aug",
-                "Sep",
-                "Oct",
-                "Nov",
-                "Dec",
-            ]
-
-            now = datetime.now()
-            weekday = weekdays_en[now.weekday()]
-            month = months_en[now.month]
-
-            # Single line: "Fri Jan 30 22:25:45"
-            timestamp_text = f"{weekday} {month} {now.day} {now.strftime('%H:%M:%S')}"
-
-            # Position: top-right
-            bbox = draw.textbbox((0, 0), timestamp_text, font=custom_font)
-            text_width = bbox[2] - bbox[0]
-            text_height = bbox[3] - bbox[1]
-            text_x = img_width - text_width - padding_x - 5
-            text_y = padding_y
-
-            # Auto-contrast: sample background luminance
-            # Get the region where text will be drawn
-            region_x1 = max(0, text_x - 2)
-            region_y1 = max(0, text_y - 2)
-            region_x2 = min(img_width, text_x + text_width + 2)
-            region_y2 = min(img_height, text_y + text_height + 2)
-
-            # Crop region and calculate average brightness
-            region = pil_image.crop((region_x1, region_y1, region_x2, region_y2))
-            pixels = list(region.getdata())
-            if pixels:
-                # Calculate luminance (perceived brightness)
-                avg_lum = sum(
-                    0.299 * p[0] + 0.587 * p[1] + 0.114 * p[2] for p in pixels
-                ) / len(pixels)
-            else:
-                avg_lum = 128  # Default to mid-gray
-
-            # Choose text color based on background
-            if avg_lum > 128:
-                # Light background → dark text
-                text_color = (0, 0, 0)
-                shadow_color = (255, 255, 255)
-            else:
-                # Dark background → light text
-                text_color = (255, 255, 255)
-                shadow_color = (0, 0, 0)
-
-            # Draw shadow + text
-            draw.text(
-                (text_x + 1, text_y + 1),
-                timestamp_text,
-                font=custom_font,
-                fill=shadow_color,
-            )
-            draw.text(
-                (text_x, text_y), timestamp_text, font=custom_font, fill=text_color
-            )
-            # Convert back to OpenCV BGR format
-            frame_with_timestamp = cv2.cvtColor(np.array(pil_image), cv2.COLOR_RGB2BGR)
-
-            ret, buffer = cv2.imencode(
-                ".jpg", frame_with_timestamp, [int(cv2.IMWRITE_JPEG_QUALITY), 70]
-            )
-            if ret:
-                frame_data = buffer.tobytes()
-                # Include Content-Length for Safari compatibility
-                yield (
-                    b"--frame\r\n"
-                    b"Content-Type: image/jpeg\r\n"
-                    b"Content-Length: "
-                    + str(len(frame_data)).encode()
-                    + b"\r\n\r\n"
-                    + frame_data
-                    + b"\r\n"
-                )
-            elapsed = time.time() - start_time
-            stream_fps = config.get("STREAM_FPS", 0)
-            if stream_fps and stream_fps > 0:
-                desired_frame_time = 1.0 / stream_fps
-                if elapsed < desired_frame_time:
-                    time.sleep(desired_frame_time - elapsed)
-
     # -----------------------------
     # Flask Server and Routes
     # -----------------------------
@@ -406,6 +363,10 @@ def create_web_interface(detection_manager, system_monitor=None):
     template_folder = os.path.join(project_root, "templates")
     assets_folder = os.path.join(project_root, "assets")
     server = Flask(__name__, template_folder=template_folder)
+    # Expose helper globally for imported Jinja macros (works without "with context").
+    server.jinja_env.globals["wikipedia_species_url"] = (
+        gallery_service.get_species_wikipedia_url
+    )
 
     # Configure Flask for large file uploads (backups can be several GB)
     server.config["MAX_CONTENT_LENGTH"] = 10 * 1024 * 1024 * 1024  # 10 GB
@@ -450,216 +411,16 @@ def create_web_interface(detection_manager, system_monitor=None):
     init_backup_bp(detection_manager)
     server.register_blueprint(backup_bp)
 
-    # Load version info if available (Only for Dev Sync)
-    version_info = ""
-    try:
-        version_file = os.path.join(
-            output_dir, "..", "version.txt"
-        )  # Look in /opt/app/version.txt
-        if os.path.exists("version.txt"):
-            with open("version.txt") as f:
-                version_info = f"Synced: {f.read().strip()}"
-        elif os.path.exists(version_file):
-            with open(version_file) as f:
-                version_info = f"Synced: {f.read().strip()}"
-    except Exception:
-        pass
-
-    @server.context_processor
-    def inject_version():
-        return dict(version_info=version_info)
-
-    @server.context_processor
-    def inject_counts():
-        """Injects global counts for Navbar badges (Trash, Untagged)."""
-        counts = {"trash_count": 0, "untagged_count": 0}
-        try:
-            # Use a fresh connection or the shared one?
-            # Shared db_conn is created at module level. SQLite allows sharing read-only if thread safe.
-            # But let's use a fresh connection pattern or the helper if it's quick.
-            # fetch_trash_count uses 'conn'.
-            # Since this runs on EVERY request, we must be careful.
-            # For now, let's just query. Optimisation: Cache this for 60s?
-
-            # Simple caching mechanism for counts
-            now = time.time()
-            # Use a global cache dict attached to the function or module
-            if not hasattr(inject_counts, "cache"):
-                inject_counts.cache = {"time": 0, "data": counts}
-
-            if now - inject_counts.cache["time"] < 30:  # 30s cache
-                return inject_counts.cache["data"]
-
-            with db_service.get_connection() as conn:
-                counts["trash_count"] = db_service.fetch_trash_count(conn)
-                # Use SAVE_THRESHOLD for Review Queue count
-                save_threshold = config.get("SAVE_THRESHOLD", 0.65)
-                counts["untagged_count"] = db_service.fetch_review_queue_count(
-                    conn, save_threshold
-                )
-
-            inject_counts.cache = {"time": now, "data": counts}
-        except Exception as e:
-            logger.error(f"Error fetching global counts: {e}")
-
-        return counts
-
     # Auth helper is now imported from web.blueprints.auth
 
     def setup_web_routes(server):
         path_mgr = path_service.get_path_manager(output_dir)
-
-        # --- Helper for Regeneration ---
-        def regenerate_derivative(filename_rel, type="thumb"):
-            """
-            Attempts to regenerate a missing derivative.
-            filename_rel: YYYYMMDD/basename.webp (path from route)
-            type: 'thumb' | 'optimized'
-            """
-            try:
-                # 1. Parse Path
-                # filename_rel is like "20240120/20240120_120000_123456_crop_1.webp" or "20240120/timestamp.webp"
-                # PathManager expects just the filename, it resolves date from correct format.
-                # Route passes <path:filename>, which might include slashes if user requests "20240120/file.webp"
-                # But path_manager.get_derivative_path expects filename only if it contains date.
-
-                # Let's extract just the filename
-                filename = os.path.basename(filename_rel)
-
-                # 2. Check source (Original)
-                # Recover original filename logic.
-                # Optimized: original name is same usually (just .jpg)
-                # Thumb: {basename}_crop_{i}.webp -> need to find original {basename}.jpg
-
-                # Regex for Thumb: (.*)_crop_(\d+)\.webp
-                # Regex for Optimized: (.*)\.webp -> (.*).jpg
-
-                original_filename = None
-                crop_index = None
-
-                if type == "thumb":
-                    match = re.match(r"(.*)_crop_(\d+)\.webp$", filename)
-                    if match:
-                        base_no_ext = match.group(1)
-                        crop_index = int(match.group(2))
-                        original_filename = f"{base_no_ext}.jpg"
-                elif type == "optimized":
-                    base_no_ext = os.path.splitext(filename)[0]
-                    original_filename = f"{base_no_ext}.jpg"
-
-                if not original_filename:
-                    return False
-
-                original_path = path_mgr.get_original_path(original_filename)
-
-                if not original_path.exists():
-                    logger.error(
-                        f"Cannot regenerate {filename}: Original missing at {original_path}"
-                    )
-                    return False
-
-                # 3. Load Original
-                img = cv2.imread(str(original_path))
-                if img is None:
-                    return False
-
-                # 4. Process
-                if type == "optimized":
-                    # Resize logic
-                    if img.shape[1] > 1920:
-                        scale = 1920 / img.shape[1]
-                        new_h = int(img.shape[0] * scale)
-                        out_img = cv2.resize(img, (1920, new_h))
-                    else:
-                        out_img = img
-
-                    target_path = path_mgr.get_derivative_path(filename, "optimized")
-
-                elif type == "thumb":
-                    # BBox Lookup from DB
-                    # We need the detection corresponding to index
-                    # Note: crop_index is 1-based index from detection list
-                    # Order by detection_id ASC for that image
-
-                    # Need clean filename for query? "base_no_ext.jpg"
-                    # image_filename is original_filename
-
-                    cursor = db_conn.execute(
-                        """
-                        SELECT bbox_x, bbox_y, bbox_w, bbox_h
-                        FROM detections
-                        WHERE image_filename = ?
-                        ORDER BY detection_id ASC
-                        LIMIT 1 OFFSET ?
-                    """,
-                        (original_filename, crop_index - 1),
-                    )
-
-                    row = cursor.fetchone()
-                    if not row:
-                        logger.error(
-                            f"Cannot regenerate thumb: No detection found for {original_filename} index {crop_index}"
-                        )
-                        return False
-
-                    # Crop Logic
-                    h, w = img.shape[:2]
-                    x1 = int(row[0] * w)
-                    y1 = int(row[1] * h)
-                    bw = int(row[2] * w)
-                    bh = int(row[3] * h)
-                    x2 = x1 + bw
-                    y2 = y1 + bh
-
-                    # Expand & Square (Copy logic from DetectionManager or simplify)
-                    # Simplified slightly for robustness
-                    TARGET_SIZE = 256
-                    EXPANSION = 0.1
-                    side = int(max(bw, bh) * (1 + EXPANSION))
-                    cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
-                    sq_x1, sq_y1 = cx - side // 2, cy - side // 2
-                    sq_x2, sq_y2 = sq_x1 + side, sq_y1 + side
-
-                    # Clamp
-                    sq_x1, sq_y1 = max(0, sq_x1), max(0, sq_y1)
-                    sq_x2, sq_y2 = min(w, sq_x2), min(h, sq_y2)
-
-                    if sq_x2 > sq_x1 and sq_y2 > sq_y1:
-                        crop_img = img[sq_y1:sq_y2, sq_x1:sq_x2]
-                        out_img = cv2.resize(
-                            crop_img,
-                            (TARGET_SIZE, TARGET_SIZE),
-                            interpolation=cv2.INTER_AREA,
-                        )
-                        target_path = path_mgr.get_derivative_path(filename, "thumb")
-                    else:
-                        return False
-
-                # 5. Save
-                path_mgr.ensure_date_structure(
-                    path_mgr.extract_date_from_filename(filename)
-                )
-                cv2.imwrite(
-                    str(target_path), out_img, [int(cv2.IMWRITE_WEBP_QUALITY), 80]
-                )
-                logger.info(f"Regenerated missing derivative: {target_path}")
-                return True
-
-            except Exception as e:
-                logger.error(f"Regeneration failed for {filename}: {e}")
-                return False
 
         # --- Routes ---
 
         @server.route("/uploads/originals/<path:filename>")
         def serve_original(filename):
             # filename typically includes date folder e.g. "20240120/file.jpg"
-            # path_manager logic: get_original_path expects JUST filename generally,
-            # OR we construct path manually relative to originals dir.
-            # Let's trust flask's safe_join usually but we have structure.
-            # Best: use path_mgr.resolve? No, path_mgr constructs absolute paths.
-
-            # If request is "20240120/file.jpg", we can map it.
             full_path = path_mgr.originals_dir / filename
             if not full_path.exists():
                 return "Not found", 404
@@ -671,12 +432,23 @@ def create_web_interface(detection_manager, system_monitor=None):
         def serve_thumb(filename):
             full_path = path_mgr.thumbs_dir / filename
             if not full_path.exists():
-                # Trigger Regeneration
-                # filename is e.g. "20240120/foo.webp"
-                if regenerate_derivative(filename, "thumb"):
+                # Trigger Regeneration via Service
+                if gallery_service.regenerate_derivative(output_dir, filename, "thumb"):
                     if not full_path.exists():  # Double check
                         return "Regeneration failed", 500
                 else:
+                    # Fallback: try _preview.webp if _crop_N.webp missing
+                    import re
+
+                    preview_name = re.sub(
+                        r"_crop_\d+\.webp$", "_preview.webp", filename
+                    )
+                    preview_path = path_mgr.thumbs_dir / preview_name
+                    if preview_name != filename and preview_path.exists():
+                        return send_from_directory(
+                            os.path.dirname(preview_path),
+                            os.path.basename(preview_path),
+                        )
                     return "Not found and could not regenerate", 404
             return send_from_directory(
                 os.path.dirname(full_path), os.path.basename(full_path)
@@ -686,7 +458,10 @@ def create_web_interface(detection_manager, system_monitor=None):
         def serve_optimized(filename):
             full_path = path_mgr.optimized_dir / filename
             if not full_path.exists():
-                if regenerate_derivative(filename, "optimized"):
+                # Trigger Regeneration via Service
+                if gallery_service.regenerate_derivative(
+                    output_dir, filename, "optimized"
+                ):
                     if not full_path.exists():
                         return "Regeneration failed", 500
                 else:
@@ -713,10 +488,52 @@ def create_web_interface(detection_manager, system_monitor=None):
             lambda filename: send_from_directory(assets_folder, filename)
         )
 
-        def video_feed_route():
+        @server.route("/video_feed")
+        def video_feed():
+            """Compatibility MJPEG stream for browsers that cannot reach Go2RTC."""
+
+            stream_fps = float(config.get("STREAM_FPS", 5.0) or 5.0)
+            stream_fps = max(1.0, stream_fps)
+            frame_interval = 1.0 / stream_fps
+
+            def generate():
+                while True:
+                    loop_start = time.time()
+                    frame = detection_manager.get_display_frame()
+                    if frame is None:
+                        time.sleep(0.1)
+                        continue
+
+                    try:
+                        h, w = frame.shape[:2]
+                        output_h = int(h * output_resize_width / w) if w else h
+                        resized = cv2.resize(frame, (output_resize_width, output_h))
+                        ok, buffer = cv2.imencode(
+                            ".jpg", resized, [cv2.IMWRITE_JPEG_QUALITY, 80]
+                        )
+                        if not ok:
+                            continue
+                    except Exception as e:
+                        logger.debug(f"Failed to encode MJPEG frame: {e}")
+                        time.sleep(0.05)
+                        continue
+
+                    yield (
+                        b"--frame\r\n"
+                        b"Content-Type: image/jpeg\r\n\r\n" + buffer.tobytes() + b"\r\n"
+                    )
+
+                    elapsed = time.time() - loop_start
+                    sleep_for = frame_interval - elapsed
+                    if sleep_for > 0:
+                        time.sleep(sleep_for)
+
             return Response(
-                generate_video_feed(),
+                generate(),
                 mimetype="multipart/x-mixed-replace; boundary=frame",
+                headers={
+                    "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"
+                },
             )
 
         # Snapshot API - returns current frame as downloadable JPEG
@@ -811,8 +628,44 @@ def create_web_interface(detection_manager, system_monitor=None):
                 return jsonify({"errors": errors}), 400
             update_runtime_settings(valid)
 
-            # Delegate component updates to DetectionManager (Video Source, Debug Mode, Models, etc.)
-            detection_manager.update_configuration(valid)
+            # --- Resolve effective sources after settings change ---
+            from config import resolve_effective_sources
+
+            cfg = get_config()
+            resolved = resolve_effective_sources(cfg)
+            cfg["VIDEO_SOURCE"] = resolved["video_source"]
+
+            # Delegate component updates to DetectionManager
+            detection_manager.update_configuration(
+                {"VIDEO_SOURCE": resolved["video_source"]}
+            )
+
+            # Sync go2rtc config if relay mode (was MISSING – parity with api_v1)
+            if resolved["effective_mode"] == "relay" and cfg.get("CAMERA_URL"):
+                try:
+                    from utils.go2rtc_config import (
+                        reload_go2rtc_stream,
+                        sync_camera_stream_source,
+                    )
+
+                    sync_ok = sync_camera_stream_source(
+                        cfg["GO2RTC_CONFIG_PATH"],
+                        cfg["CAMERA_URL"],
+                        cfg["GO2RTC_STREAM_NAME"],
+                    )
+                    if not sync_ok:
+                        logger.warning(
+                            "go2rtc config sync returned false (path=%s)",
+                            cfg.get("GO2RTC_CONFIG_PATH", ""),
+                        )
+                    # Runtime reload: push source into running go2rtc
+                    reload_go2rtc_stream(
+                        api_base=cfg.get("GO2RTC_API_BASE", "http://127.0.0.1:1984"),
+                        stream_name=cfg["GO2RTC_STREAM_NAME"],
+                        camera_url=cfg["CAMERA_URL"],
+                    )
+                except Exception as exc:
+                    logger.warning("go2rtc config sync failed: %s", exc)
 
             return jsonify(get_settings_payload())
 
@@ -994,9 +847,11 @@ def create_web_interface(detection_manager, system_monitor=None):
         def cameras_use_route(camera_id: int):
             """
             Use a saved camera: Fetches RTSP URI using stored credentials
-            and sets it as the active VIDEO_SOURCE.
+            and sets it as CAMERA_URL. The resolver derives effective VIDEO_SOURCE.
             """
             try:
+                from config import resolve_effective_sources
+
                 cam = onvif_service.get_camera(camera_id, include_password=True)
 
                 if not cam:
@@ -1043,13 +898,50 @@ def create_web_interface(detection_manager, system_monitor=None):
                         }
                     ), 400
 
-                # Set as VIDEO_SOURCE and persist
-                logger.info(f"Setting VIDEO_SOURCE to: {uri[:50]}...")
-                update_runtime_settings({"VIDEO_SOURCE": uri})
-                detection_manager.update_configuration({"VIDEO_SOURCE": uri})
+                # Set CAMERA_URL (not VIDEO_SOURCE directly) and resolve
+                logger.info(f"Setting CAMERA_URL to: {uri[:50]}...")
+                update_runtime_settings({"CAMERA_URL": uri})
+
+                cfg = get_config()
+                resolved = resolve_effective_sources(cfg)
+                cfg["VIDEO_SOURCE"] = resolved["video_source"]
+
+                detection_manager.update_configuration(
+                    {"VIDEO_SOURCE": resolved["video_source"]}
+                )
+
+                # Sync go2rtc config if relay mode
+                if resolved["effective_mode"] == "relay" and cfg.get("CAMERA_URL"):
+                    try:
+                        from utils.go2rtc_config import (
+                            reload_go2rtc_stream,
+                            sync_camera_stream_source,
+                        )
+
+                        sync_ok = sync_camera_stream_source(
+                            cfg["GO2RTC_CONFIG_PATH"],
+                            cfg["CAMERA_URL"],
+                            cfg["GO2RTC_STREAM_NAME"],
+                        )
+                        if not sync_ok:
+                            logger.warning(
+                                "go2rtc config sync returned false (path=%s)",
+                                cfg.get("GO2RTC_CONFIG_PATH", ""),
+                            )
+                        # Runtime reload: push source into running go2rtc
+                        reload_go2rtc_stream(
+                            api_base=cfg.get(
+                                "GO2RTC_API_BASE", "http://127.0.0.1:1984"
+                            ),
+                            stream_name=cfg["GO2RTC_STREAM_NAME"],
+                            camera_url=cfg["CAMERA_URL"],
+                        )
+                    except Exception as exc:
+                        logger.warning("go2rtc config sync failed: %s", exc)
 
                 logger.info(
-                    f"Camera {camera_id} activated as VIDEO_SOURCE - saved to settings.yaml"
+                    f"Camera {camera_id} activated: mode={resolved['effective_mode']} "
+                    f"video_source={resolved['video_source'][:40]}"
                 )
 
                 return jsonify(
@@ -1064,9 +956,6 @@ def create_web_interface(detection_manager, system_monitor=None):
                 logger.error(f"Camera use failed: {e}", exc_info=True)
                 return jsonify({"status": "error", "message": str(e)}), 500
 
-        server.add_url_rule(
-            "/video_feed", endpoint="video_feed", view_func=video_feed_route
-        )
         server.add_url_rule(
             "/api/daily_species_summary",
             endpoint="daily_species_summary",
@@ -1248,16 +1137,44 @@ def create_web_interface(detection_manager, system_monitor=None):
             date_iso = request.form.get("date_iso")
             det_ids = request.form.getlist("ids")
 
+            # Handle reject_all BEFORE checking det_ids (it doesn't need selections)
+            if action == "reject_all":
+                if not date_iso:
+                    return redirect("/gallery")
+
+                with db_service.closing_connection() as conn:
+                    # Get all detection IDs for this date
+                    date_prefix = date_iso.replace("-", "")  # 2026-02-06 -> 20260206
+                    query = """
+                        SELECT d.detection_id
+                        FROM detections d
+                        JOIN images i ON d.image_filename = i.filename
+                        WHERE i.timestamp LIKE ?
+                        AND (d.status IS NULL OR d.status != 'rejected')
+                    """
+                    rows = conn.execute(query, (f"{date_prefix}%",)).fetchall()
+                    all_ids = [r["detection_id"] for r in rows]
+
+                    if all_ids:
+                        db_service.reject_detections(conn, all_ids)
+                        logger.info(
+                            f"Rejected ALL {len(all_ids)} detections for {date_iso}"
+                        )
+
+                # Reset caches
+                gallery_service.invalidate_cache()
+                return redirect(f"/gallery/{date_iso}")
+
             if not det_ids:
                 return redirect(f"/edit/{date_iso}")
 
             ids_int = [int(i) for i in det_ids]
 
             if action == "reject":
-                with db_service.get_connection() as conn:
+                with db_service.closing_connection() as conn:
                     db_service.reject_detections(conn, ids_int)
                 # Reset caches
-                _cached_images["images"] = None
+                gallery_service.invalidate_cache()
                 # _daily_gallery_summary_cache was removed
                 return redirect(f"/edit/{date_iso}")
 
@@ -1267,7 +1184,7 @@ def create_web_interface(detection_manager, system_monitor=None):
 
                 from flask import send_file
 
-                with db_service.get_connection() as conn:
+                with db_service.closing_connection() as conn:
                     # Resolve IDs to paths
                     placeholders = ",".join("?" for _ in ids_int)
                     query = f"""
@@ -1356,7 +1273,7 @@ def create_web_interface(detection_manager, system_monitor=None):
             if min_score_param is not None:
                 current_threshold = min_score_param
             else:
-                current_threshold = config.get("GALLERY_DISPLAY_THRESHOLD", 0.7)
+                current_threshold = config["GALLERY_DISPLAY_THRESHOLD"]
 
             # Apply display threshold
             if current_threshold > 0:
@@ -1366,22 +1283,27 @@ def create_web_interface(detection_manager, system_monitor=None):
                     if (d.get("score") or 0.0) >= current_threshold
                 ]
 
-            # Aggregate: best per species
-            species_groups = {}
+            # Group detections per species and pick one curated cover per species.
+            species_candidates = {}
             for det in all_detections:
                 cls_class = det.get("cls_class_name")
                 od_class = det.get("od_class_name")
                 species_key = (
                     cls_class
                     if cls_class
-                    else (od_class if od_class else "Unclassified")
+                    else (od_class if od_class else "Unknown_species")
                 )
+                species_candidates.setdefault(species_key, []).append(det)
 
-                score = det.get("score") or 0.0
-                if species_key not in species_groups or score > (
-                    species_groups[species_key].get("score") or 0.0
-                ):
-                    species_groups[species_key] = det
+            # One cover per species (favorites preferred, random rotation).
+            today_iso = datetime.now().strftime("%Y-%m-%d")
+            species_groups = {}
+            for s_key, candidates in species_candidates.items():
+                chosen = _pick_cover_for_group(
+                    candidates, seed_key=f"species:{s_key}", date_iso=today_iso
+                )
+                if chosen:
+                    species_groups[s_key] = chosen
 
             # Convert to list and enrich for template
             detections = []
@@ -1442,6 +1364,11 @@ def create_web_interface(detection_manager, system_monitor=None):
                         "bbox_y": det.get("bbox_y", 0.0) or 0.0,
                         "bbox_w": det.get("bbox_w", 0.0) or 0.0,
                         "bbox_h": det.get("bbox_h", 0.0) or 0.0,
+                        # Rating (legacy)
+                        "rating": det.get("rating"),
+                        "rating_source": det.get("rating_source", "auto"),
+                        # Favorite
+                        "is_favorite": bool(int(det.get("is_favorite") or 0)),
                     }
                 )
 
@@ -1476,7 +1403,7 @@ def create_web_interface(detection_manager, system_monitor=None):
             if min_score_param is not None:
                 current_threshold = min_score_param
             else:
-                current_threshold = config.get("GALLERY_DISPLAY_THRESHOLD", 0.7)
+                current_threshold = config["GALLERY_DISPLAY_THRESHOLD"]
 
             all_detections = get_captured_detections()
 
@@ -1485,7 +1412,7 @@ def create_web_interface(detection_manager, system_monitor=None):
                 det_species_key = (
                     det.get("cls_class_name")
                     or det.get("od_class_name")
-                    or "Unclassified"
+                    or "Unknown_species"
                 )
                 if det_species_key != species_key:
                     continue
@@ -1556,6 +1483,11 @@ def create_web_interface(detection_manager, system_monitor=None):
                         "bbox_y": det.get("bbox_y", 0.0) or 0.0,
                         "bbox_w": det.get("bbox_w", 0.0) or 0.0,
                         "bbox_h": det.get("bbox_h", 0.0) or 0.0,
+                        # Rating (legacy)
+                        "rating": det.get("rating"),
+                        "rating_source": det.get("rating_source", "auto"),
+                        # Favorite
+                        "is_favorite": bool(int(det.get("is_favorite") or 0)),
                     }
                 )
 
@@ -1625,6 +1557,7 @@ def create_web_interface(detection_manager, system_monitor=None):
                         "display_date": display_date,
                         "cover_path": data.get("path", ""),
                         "count": data.get("count", 0),
+                        "cover_detection_id": data.get("detection_id"),
                     }
                 )
 
@@ -1658,21 +1591,25 @@ def create_web_interface(detection_manager, system_monitor=None):
             if min_score_param is not None:
                 current_threshold = min_score_param
             else:
-                current_threshold = config.get("GALLERY_DISPLAY_THRESHOLD", 0.7)
+                current_threshold = config["GALLERY_DISPLAY_THRESHOLD"]
 
             # Fetch detections
             sql_order = "time" if sort_by in ("time_asc", "time_desc") else "score"
-            rows = db_service.fetch_detections_for_gallery(
-                db_conn, date, order_by=sql_order
-            )
+            with db_service.closing_connection() as conn:
+                rows = db_service.fetch_detections_for_gallery(
+                    conn, date, order_by=sql_order
+                )
             detections_raw = [dict(row) for row in rows]
+            total_items_unfiltered = len(detections_raw)
 
-            # Apply score filter
+            # Apply score filter (but always include the focused detection if present)
+            focus_id_param = request.args.get("focus", type=int)
             if current_threshold > 0:
                 detections_raw = [
                     d
                     for d in detections_raw
                     if (d.get("score") or 0.0) >= current_threshold
+                    or (focus_id_param and d.get("detection_id") == focus_id_param)
                 ]
 
             # Python-side sorting adjustments
@@ -1692,6 +1629,14 @@ def create_web_interface(detection_manager, system_monitor=None):
 
             total_items = len(detections_raw)
             total_pages = math.ceil(total_items / PAGE_SIZE) or 1
+
+            # Auto-focus: if ?focus=DETECTION_ID is present, calculate the correct page
+            if focus_id_param and page == 1:
+                for idx, d in enumerate(detections_raw):
+                    if d.get("detection_id") == focus_id_param:
+                        page = (idx // PAGE_SIZE) + 1
+                        break
+
             page = max(1, min(page, total_pages))
             start_index = (page - 1) * PAGE_SIZE
             end_index = page * PAGE_SIZE
@@ -1792,6 +1737,11 @@ def create_web_interface(detection_manager, system_monitor=None):
                     "bbox_y": det.get("bbox_y", 0.0) or 0.0,
                     "bbox_w": det.get("bbox_w", 0.0) or 0.0,
                     "bbox_h": det.get("bbox_h", 0.0) or 0.0,
+                    # Rating (legacy)
+                    "rating": det.get("rating"),
+                    "rating_source": det.get("rating_source", "auto"),
+                    # Favorite
+                    "is_favorite": bool(int(det.get("is_favorite") or 0)),
                 }
 
             detections = [enrich_detection(d) for d in page_detections_raw]
@@ -1799,20 +1749,25 @@ def create_web_interface(detection_manager, system_monitor=None):
             # Species of the Day (page 1 only)
             species_of_day = []
             if page == 1:
-                species_groups = {}
+                species_candidates = {}
                 for det in detections_raw:
                     cls_class = det.get("cls_class_name")
                     od_class = det.get("od_class_name")
                     species_key = (
                         cls_class
                         if cls_class
-                        else (od_class if od_class else "Unclassified")
+                        else (od_class if od_class else "Unknown_species")
                     )
-                    score = det.get("score") or 0.0
-                    if species_key not in species_groups or score > (
-                        species_groups[species_key].get("score") or 0.0
-                    ):
-                        species_groups[species_key] = det
+                    species_candidates.setdefault(species_key, []).append(det)
+
+                species_groups = {}
+                for s_key, candidates in species_candidates.items():
+                    chosen = _pick_cover_for_group(
+                        candidates, seed_key=f"daydetail:{s_key}", date_iso=date
+                    )
+                    if chosen:
+                        species_groups[s_key] = chosen
+
                 species_of_day = [
                     enrich_detection(d)
                     for d in sorted(
@@ -1848,6 +1803,7 @@ def create_web_interface(detection_manager, system_monitor=None):
                 page=page,
                 total_pages=total_pages,
                 total_items=total_items,
+                total_items_unfiltered=total_items_unfiltered,
                 sort_by=sort_by,
                 current_threshold=current_threshold,
                 detections=detections,
@@ -1866,65 +1822,146 @@ def create_web_interface(detection_manager, system_monitor=None):
         @server.route("/logs")
         @login_required
         def logs_route():
-            """Displays the last 200 lines of the app log."""
-            log_file = Path(config["OUTPUT_DIR"]) / "logs" / "app.log"
-            logs = ""
-            if log_file.exists():
-                try:
-                    with open(log_file, encoding="utf-8") as f:
-                        # Use a more efficient way to get last N lines if file is huge,
-                        # but for now, reading all and slicing is simple for app logs.
-                        lines = f.readlines()
-                        logs = "".join(lines[-200:])
-                except Exception as e:
-                    logs = f"Error reading log file: {e}"
-            else:
-                logs = f"Log file not found at {log_file}"
+            """Admin diagnostics view with app log and runtime snapshots."""
 
-            return render_template("logs.html", logs=logs)
+            from collections import deque
+
+            def _tail_text(path: Path, max_lines: int) -> str:
+                if not path.exists():
+                    return f"File not found: {path}"
+                try:
+                    with open(path, encoding="utf-8", errors="ignore") as f:
+                        return "".join(deque(f, maxlen=max_lines))
+                except Exception as e:
+                    return f"Error reading {path.name}: {e}"
+
+            logs_dir = Path(config["OUTPUT_DIR"]) / "logs"
+            app_log_path = logs_dir / "app.log"
+            vitals_path = logs_dir / "vital_signs.csv"
+
+            return render_template(
+                "logs.html",
+                current_path="/logs",
+                app_logs=_tail_text(app_log_path, 300),
+                vitals_logs=_tail_text(vitals_path, 240),
+                app_log_path=str(app_log_path),
+                vitals_log_path=str(vitals_path),
+            )
 
     setup_web_routes(server)
 
     # --- Phase 4: Homepage (Live Stream) Migrated to Flask (Final Phase) ---
     def index_route():
         """Server-rendered Homepage / Live Stream."""
-        today_iso = datetime.now().strftime("%Y-%m-%d")
+        # Calculate 24h rolling window threshold
+        from datetime import timedelta
 
-        # 1. Day Count & Title
-        today_count = 0
+        now = datetime.now()
+        threshold_24h = now - timedelta(hours=24)
+        threshold_str = threshold_24h.strftime("%Y%m%d_%H%M%S")
+        today_iso = now.strftime("%Y-%m-%d")
+        today_midnight_str = now.strftime("%Y%m%d") + "_000000"  # Since midnight
+
+        def _format_ts_parts(ts: str) -> tuple[str, str, str]:
+            if not ts or len(ts) < 15:
+                return "", "", ""
+            date_str = ts[:8]
+            time_str = ts[9:15]
+            formatted_time = f"{time_str[0:2]}:{time_str[2:4]}:{time_str[4:6]}"
+            formatted_date = f"{date_str[6:8]}.{date_str[4:6]}.{date_str[0:4]}"
+            gallery_date_iso = f"{date_str[0:4]}-{date_str[4:6]}-{date_str[6:8]}"
+            return formatted_time, formatted_date, gallery_date_iso
+
+        def _format_ts_human(ts: str) -> str:
+            if not ts:
+                return "Unknown"
+            try:
+                dt = datetime.strptime(ts, "%Y%m%d_%H%M%S")
+                return dt.strftime("%d.%m.%Y %H:%M")
+            except ValueError:
+                return "Unknown"
+
+        def _format_epoch_human(ts: float) -> str:
+            if ts <= 0:
+                return "Never"
+            try:
+                return datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S")
+            except (TypeError, ValueError, OSError):
+                return "Unknown"
+
+        def _format_age_short(seconds: float) -> str:
+            if seconds < 0:
+                return "0s ago"
+            if seconds < 60:
+                return f"{int(seconds)}s ago"
+            if seconds < 3600:
+                return f"{int(seconds // 60)}m ago"
+            if seconds < 86400:
+                return f"{int(seconds // 3600)}h ago"
+            return f"{int(seconds // 86400)}d ago"
+
+        def _format_iso_human(ts: str | None) -> str:
+            if not ts:
+                return "n/a"
+            try:
+                dt = datetime.fromisoformat(ts)
+                return dt.strftime("%Y-%m-%d %H:%M:%S")
+            except ValueError:
+                return "n/a"
+
+        # 1. 24h Count & Title
+        last_24h_count = 0
         try:
-            with db_service.get_connection() as conn:
-                today_count = db_service.fetch_day_count(conn, today_iso)
-            title = f"Live Stream (Today's Detections: {today_count})"
+            with db_service.closing_connection() as conn:
+                last_24h_count = db_service.fetch_count_last_24h(conn, threshold_str)
+            title = f"🎥 Live • {last_24h_count} Detections (24h)"
         except Exception as e:
-            logger.error(f"Error fetching day count: {e}")
-            title = "Live Stream"
+            logger.error(f"Error fetching 24h count: {e}")
+            title = "🎥 Live Stream"
 
         # 1b. Dashboard Stats (All-time stats for engagement)
         dashboard_stats = {
             "total_detections": 0,
             "total_species": 0,
-            "today_count": today_count,
+            "last_24h_count": last_24h_count,  # Renamed from today_count
+            "today_count": 0,
             "first_date": None,
             "last_date": None,
         }
         try:
-            with db_service.get_connection() as conn:
+            with db_service.closing_connection() as conn:
                 summary = db_service.fetch_analytics_summary(conn)
                 dashboard_stats["total_detections"] = summary.get("total_detections", 0)
                 dashboard_stats["total_species"] = summary.get("total_species", 0)
                 date_range = summary.get("date_range", {})
                 dashboard_stats["first_date"] = date_range.get("first")
                 dashboard_stats["last_date"] = date_range.get("last")
+                dashboard_stats["today_count"] = db_service.fetch_day_count(
+                    conn, today_iso
+                )
         except Exception as e:
             logger.error(f"Error fetching dashboard stats: {e}")
 
-        # 2. Latest Detections (Top 5)
+        # 1c. Bird Visit Stats (spatio-temporal clustering, read-only)
+        try:
+            from utils.db.analytics import fetch_bird_visits
+
+            with db_service.closing_connection() as conn:
+                visit_data = fetch_bird_visits(conn, since_timestamp=today_midnight_str)
+            visit_summary = visit_data.get("summary", {})
+            dashboard_stats["today_visits"] = visit_summary.get("total_visits", 0)
+            dashboard_stats["avg_visit_duration_sec"] = visit_summary.get(
+                "avg_visit_duration_sec", 0
+            )
+        except Exception as e:
+            logger.error(f"Error fetching visit stats: {e}")
+
+        # 2. Latest Detections (Top 5 from last 24h)
         latest_detections = []
         try:
-            with db_service.get_connection() as conn:
-                rows = db_service.fetch_detections_for_gallery(
-                    conn, today_iso, limit=5, order_by="time"
+            with db_service.closing_connection() as conn:
+                rows = db_service.fetch_detections_last_24h(
+                    conn, threshold_str, limit=5, order_by="time"
                 )
                 # Enrich for template
                 for row in rows:
@@ -1948,18 +1985,7 @@ def create_web_interface(detection_manager, system_monitor=None):
                     display_path = display_url
                     original_path = original_url
                     ts = det.get("image_timestamp", "")
-
-                    formatted_time = ""
-                    formatted_date = ""
-                    if len(ts) >= 15:
-                        date_str = ts[:8]
-                        time_str = ts[9:15]  # HHMMSS
-                        formatted_time = (
-                            f"{time_str[0:2]}:{time_str[2:4]}:{time_str[4:6]}"
-                        )
-                        formatted_date = (
-                            f"{date_str[6:8]}.{date_str[4:6]}.{date_str[0:4]}"
-                        )
+                    formatted_time, formatted_date, _ = _format_ts_parts(ts)
 
                     latest_detections.append(
                         {
@@ -1993,32 +2019,38 @@ def create_web_interface(detection_manager, system_monitor=None):
         except Exception as e:
             logger.error(f"Error fetching latest detections: {e}")
 
-        # 3. Daily Summary (Gallery Style - Best per species)
-        # Used for "Today's Summary" section - visual grid
+        # 3. 24h Summary (Gallery Style - Best per species)
+        # Used for "Last 24h Summary" section - visual grid
         visual_summary = []
         try:
-            with db_service.get_connection() as conn:
-                # fetch all for today to group by species
-                rows = db_service.fetch_detections_for_gallery(
-                    conn, today_iso, order_by="score"
+            with db_service.closing_connection() as conn:
+                # fetch all since midnight (not rolling 24h) for "Today's Visitors"
+                rows = db_service.fetch_detections_last_24h(
+                    conn, today_midnight_str, order_by="score"
                 )
-                all_today = [dict(r) for r in rows]
+                all_24h = [dict(r) for r in rows]
 
-                species_groups = {}
-                for det in all_today:
+                # Group by species and pick one curated cover per species
+                species_candidates = {}
+                for det in all_24h:
                     cls = det.get("cls_class_name")
                     od = det.get("od_class_name")
-                    s_key = cls if cls else (od if od else "Unclassified")
-                    score = det.get("score", 0.0) or 0.0
-                    if s_key not in species_groups or score > species_groups[s_key].get(
-                        "score", 0.0
-                    ):
-                        species_groups[s_key] = det
+                    s_key = cls if cls else (od if od else "Unknown_species")
+                    species_candidates.setdefault(s_key, []).append(det)
 
-                # Sort by score desc for display
+                species_groups = {}
+                today_iso = datetime.now().strftime("%Y-%m-%d")
+                for s_key, candidates in species_candidates.items():
+                    chosen = _pick_cover_for_group(
+                        candidates, seed_key=f"24h:{s_key}", date_iso=today_iso
+                    )
+                    if chosen:
+                        species_groups[s_key] = chosen
+
+                # Sort by quality (favorite first, then score)
                 sorted_summary = sorted(
                     species_groups.values(),
-                    key=lambda x: x.get("score", 0.0),
+                    key=_cover_quality_tuple,
                     reverse=True,
                 )
 
@@ -2040,24 +2072,14 @@ def create_web_interface(detection_manager, system_monitor=None):
                     )
 
                     ts = det.get("image_timestamp", "")
-                    formatted_time = ""
-                    formatted_date = ""
-                    if len(ts) >= 15:
-                        date_str = ts[:8]
-                        time_str = ts[9:15]
-                        formatted_time = (
-                            f"{time_str[0:2]}:{time_str[2:4]}:{time_str[4:6]}"
-                        )
-                        formatted_date = (
-                            f"{date_str[6:8]}.{date_str[4:6]}.{date_str[0:4]}"
-                        )
+                    formatted_time, formatted_date, _ = _format_ts_parts(ts)
 
                     visual_summary.append(
                         {
                             "detection_id": det.get("detection_id"),
                             "species_key": det.get("cls_class_name")
                             or det.get("od_class_name")
-                            or "Unclassified",
+                            or "Unknown_species",
                             "common_name": COMMON_NAMES.get(
                                 det.get("cls_class_name") or det.get("od_class_name"),
                                 "Unknown",
@@ -2108,19 +2130,219 @@ def create_web_interface(detection_manager, system_monitor=None):
         except Exception as e:
             logger.error(f"Error fetching species summary table: {e}")
 
+        # 5. Archive Preview – latest 5 UNIQUE species (deduplicated)
+        recent_archive_preview = []
+        try:
+            with db_service.closing_connection() as conn:
+                # Fetch more rows so we can deduplicate by species
+                rows = db_service.fetch_detections_for_gallery(
+                    conn, limit=30, order_by="time"
+                )
+                seen_species = set()
+                for row in rows:
+                    det = dict(row)
+                    species_key = (
+                        det.get("cls_class_name")
+                        or det.get("od_class_name")
+                        or "Unknown"
+                    )
+
+                    # Skip if we already have this species
+                    if species_key in seen_species:
+                        continue
+                    seen_species.add(species_key)
+
+                    full_path = det.get("relative_path") or det.get(
+                        "optimized_name_virtual", ""
+                    )
+                    thumb_virtual = det.get("thumbnail_path_virtual")
+                    if thumb_virtual:
+                        display_url = f"/uploads/derivatives/thumbs/{thumb_virtual}"
+                    else:
+                        display_url = f"/uploads/derivatives/optimized/{full_path}"
+
+                    ts = det.get("image_timestamp", "")
+                    formatted_time, formatted_date, gallery_date_iso = _format_ts_parts(
+                        ts
+                    )
+                    recent_archive_preview.append(
+                        {
+                            "detection_id": det.get("detection_id"),
+                            "common_name": COMMON_NAMES.get(species_key, "Unknown"),
+                            "display_path": display_url,
+                            "formatted_time": formatted_time,
+                            "formatted_date": formatted_date,
+                            "gallery_date_iso": gallery_date_iso,
+                            "image_timestamp": ts,
+                        }
+                    )
+
+                    if len(recent_archive_preview) >= 5:
+                        break
+        except Exception as e:
+            logger.error(f"Error fetching archive preview: {e}")
+
+        # 5b. Best Species Favorites Preview
+        best_species_preview = []
+        try:
+            with db_service.closing_connection() as conn:
+                rows = db_service.fetch_random_favorites(conn, limit=12)
+                for row in rows:
+                    det = dict(row)
+                    species_key = det.get("species_key") or "Unknown"
+
+                    full_path = det.get("relative_path") or ""
+                    thumb_virtual = det.get("thumbnail_path_virtual")
+                    if thumb_virtual:
+                        display_url = f"/uploads/derivatives/thumbs/{thumb_virtual}"
+                    else:
+                        display_url = f"/uploads/derivatives/optimized/{full_path}"
+
+                    best_species_preview.append(
+                        {
+                            "detection_id": det.get("detection_id"),
+                            "species_key": species_key,
+                            "common_name": COMMON_NAMES.get(species_key, "Unknown"),
+                            "display_path": display_url,
+                        }
+                    )
+        except Exception as e:
+            logger.error(f"Error fetching best species preview: {e}")
+
+        # 6. Landing Status Row
+        landing_status = {
+            "last_detection": "No detections yet",
+            "stream_state": "Unknown",
+            "stream_tone": "neutral",
+            "stream_detail": "No successful frame yet",
+        }
+
+        if recent_archive_preview:
+            latest = recent_archive_preview[0]
+            landing_status["last_detection"] = (
+                f"{latest.get('common_name', 'Unknown')} · "
+                f"{_format_ts_human(latest.get('image_timestamp', ''))}"
+            )
+
+        try:
+            frame_ts = 0.0
+            last_good_frame_ts = 0.0
+            first_frame_received = False
+            frame_lock = getattr(detection_manager, "frame_lock", None)
+            if frame_lock is not None:
+                with frame_lock:
+                    frame_ts = float(
+                        getattr(detection_manager, "latest_raw_timestamp", 0.0) or 0.0
+                    )
+                    last_good_frame_ts = float(
+                        getattr(detection_manager, "last_good_frame_timestamp", 0.0)
+                        or 0.0
+                    )
+                    first_frame_received = bool(
+                        getattr(detection_manager, "_first_frame_received", False)
+                    )
+            else:
+                frame_ts = float(
+                    getattr(detection_manager, "latest_raw_timestamp", 0.0) or 0.0
+                )
+                last_good_frame_ts = float(
+                    getattr(detection_manager, "last_good_frame_timestamp", 0.0) or 0.0
+                )
+                first_frame_received = bool(
+                    getattr(detection_manager, "_first_frame_received", False)
+                )
+
+            if first_frame_received and last_good_frame_ts <= 0 and frame_ts > 0:
+                last_good_frame_ts = frame_ts
+
+            now_ts = time.time()
+            if frame_ts <= 0:
+                landing_status["stream_state"] = "Offline"
+                landing_status["stream_tone"] = "bad"
+            else:
+                frame_age = now_ts - frame_ts
+                if first_frame_received and frame_age <= 5:
+                    landing_status["stream_state"] = "Online"
+                    landing_status["stream_tone"] = "ok"
+                elif frame_age <= 20:
+                    landing_status["stream_state"] = "Starting"
+                    landing_status["stream_tone"] = "warn"
+                else:
+                    landing_status["stream_state"] = "Offline"
+                    landing_status["stream_tone"] = "bad"
+
+            if last_good_frame_ts > 0:
+                last_good_age = max(0.0, now_ts - last_good_frame_ts)
+                landing_status["stream_detail"] = (
+                    f"Last good frame: {_format_age_short(last_good_age)}"
+                )
+            elif landing_status["stream_state"] == "Starting":
+                landing_status["stream_detail"] = "Waiting for first frame..."
+        except Exception as e:
+            logger.debug(f"Could not compute stream status for landing: {e}")
+
+        today_detection_count = dashboard_stats.get("today_count", 0)
+        is_quiet_today = today_detection_count == 0
+
+        noise_hourly = {"noise": [], "total_noise": 0, "total_birds": 0}
+
         return render_template(
             "stream.html",
-            current_path="/",  # Active nav state
             title=title,
+            current_path="/",  # Active nav state
             latest_detections=latest_detections,
             visual_summary=visual_summary,
             species_summary=species_summary_table,
             dashboard_stats=dashboard_stats,
-            empty_latest_message="No detections yet today.",
+            empty_latest_message="No detections in the last 24 hours.",
             image_width=IMAGE_WIDTH,
             today_iso=today_iso,
+            today_detection_count=today_detection_count,
+            is_quiet_today=is_quiet_today,
+            recent_archive_preview=recent_archive_preview,
+            best_species_preview=best_species_preview,
+            landing_status=landing_status,
+            noise_hourly=noise_hourly,
         )
 
+    def tbwd_presentation_route():
+        return render_template(
+            "tbwd_presentation.html",
+            current_path="/tbwd",
+        )
+
+    server.add_url_rule(
+        "/tbwd",
+        endpoint="tbwd_presentation",
+        view_func=tbwd_presentation_route,
+        methods=["GET"],
+    )
+
+    def tbwd_vision_route():
+        return render_template(
+            "tbwd_vision.html",
+            current_path="/tbwd-vision",
+        )
+
+    server.add_url_rule(
+        "/tbwd-vision",
+        endpoint="tbwd_vision",
+        view_func=tbwd_vision_route,
+        methods=["GET"],
+    )
+
+    def tbwd_habitat_route():
+        return render_template(
+            "tbwd_habitat.html",
+            current_path="/tbwd-habitat",
+        )
+
+    server.add_url_rule(
+        "/tbwd-habitat",
+        endpoint="tbwd_habitat",
+        view_func=tbwd_habitat_route,
+        methods=["GET"],
+    )
     server.add_url_rule("/", endpoint="index", view_func=index_route, methods=["GET"])
 
     RUNTIME_BOOL_KEYS = {
@@ -2128,6 +2350,9 @@ def create_web_interface(detection_manager, system_monitor=None):
         "TELEGRAM_ENABLED",
         "DEBUG_MODE",
         "EXIF_GPS_ENABLED",
+        "INBOX_REQUIRE_EXIF_DATETIME",
+        "INBOX_REQUIRE_EXIF_GPS",
+        "MOTION_DETECTION_ENABLED",
     }
     RUNTIME_NUMBER_KEYS = {
         "CONFIDENCE_THRESHOLD_DETECTION",
@@ -2156,7 +2381,7 @@ def create_web_interface(detection_manager, system_monitor=None):
         "OUTPUT_DIR": "Output Directory (Main storage for images and database)",
         "MODEL_BASE_PATH": "Model Base Path (Storage directory for AI model weights)",
         "DEBUG_MODE": "Debug Mode (Enables verbose logging and developer features)",
-        "CPU_LIMIT": "CPU Core Limit (Maximum number of cores allowed for processing)",
+        "CPU_LIMIT": "CPU Core Limit (0 disables affinity, >0 pins to first N available cores)",
         "VIDEO_SOURCE": "Video Source (Input RTSP URL or secondary camera ID)",
         "DETECTOR_MODEL_CHOICE": "Primary Detector Model (The AI engine selected at boot)",
         "STREAM_WIDTH_OUTPUT_RESIZE": "Stream Output Width (Visual resolution for the live feed)",
@@ -2165,8 +2390,11 @@ def create_web_interface(detection_manager, system_monitor=None):
         "TELEGRAM_BOT_TOKEN": "Telegram Bot Token (From BotFather)",
         "TELEGRAM_CHAT_ID": "Telegram Chat ID (Numeric ID or JSON list of IDs)",
         "EXIF_GPS_ENABLED": "Write GPS to Exif (Safe to disable for privacy)",
+        "INBOX_REQUIRE_EXIF_DATETIME": "Inbox Require EXIF Date/Time (Skip imports without DateTimeOriginal/DateTimeDigitized)",
+        "INBOX_REQUIRE_EXIF_GPS": "Inbox Require EXIF GPS (Skip imports without GPSLatitude/GPSLongitude)",
     }
 
+    # Keys ordered for UI display purposes
     RUNTIME_KEYS_ORDER = [
         "VIDEO_SOURCE",
         "CONFIDENCE_THRESHOLD_DETECTION",
@@ -2177,6 +2405,8 @@ def create_web_interface(detection_manager, system_monitor=None):
         "DAY_AND_NIGHT_CAPTURE_LOCATION",
         "LOCATION_DATA",
         "EXIF_GPS_ENABLED",
+        "INBOX_REQUIRE_EXIF_DATETIME",
+        "INBOX_REQUIRE_EXIF_GPS",
         "TELEGRAM_COOLDOWN",
         "TELEGRAM_ENABLED",
         "GALLERY_DISPLAY_THRESHOLD",
@@ -2186,6 +2416,8 @@ def create_web_interface(detection_manager, system_monitor=None):
         "DEBUG_MODE",
         "TELEGRAM_BOT_TOKEN",
         "TELEGRAM_CHAT_ID",
+        "MOTION_DETECTION_ENABLED",
+        "MOTION_SENSITIVITY",
     ]
 
     ADVANCED_KEYS = {
@@ -2219,12 +2451,23 @@ def create_web_interface(detection_manager, system_monitor=None):
     def settings_route():
         trash_count = 0
         try:
-            with db_service.get_connection() as conn:
+            with db_service.closing_connection() as conn:
                 trash_count = db_service.fetch_trash_count(conn)
         except Exception as e:
             logger.error(f"Failed to fetch trash count: {e}")
 
         payload = get_settings_payload()
+
+        # Security: Mask RTSP password in UI
+        if "VIDEO_SOURCE" in payload:
+            payload["VIDEO_SOURCE"]["value"] = mask_rtsp_url(
+                payload["VIDEO_SOURCE"]["value"]
+            )
+        if "CAMERA_URL" in payload:
+            payload["CAMERA_URL"]["value"] = mask_rtsp_url(
+                payload["CAMERA_URL"]["value"]
+            )
+
         return render_template(
             "settings.html",
             payload=payload,
@@ -2240,37 +2483,20 @@ def create_web_interface(detection_manager, system_monitor=None):
     @server.route("/api/settings/update", methods=["POST"])
     @login_required
     def update_settings_route():
-        updates = {}
-        for key in RUNTIME_KEYS_ORDER:
-            val = request.form.get(key)
-            if val is not None:
-                # Type Conversion based on Keys
-                if key in RUNTIME_BOOL_KEYS:
-                    updates[key] = val.lower() == "true"
-                elif key in RUNTIME_NUMBER_KEYS:
-                    try:
-                        val_clean = val.replace(",", ".")
-                        if "." in val_clean:
-                            updates[key] = float(val_clean)
-                        else:
-                            updates[key] = int(val_clean)
-                    except ValueError:
-                        pass  # Ignore execution
-                else:
-                    updates[key] = val
-
-        logger.info(f"Received settings update request: {updates}")
-
-        valid, errors = validate_runtime_updates(updates)
-        if errors:
-            flash(f"Errors: {errors}", "error")
-        else:
-            update_runtime_settings(valid)
-            # Trigger component updates (Debug Mode, Video Source, etc.)
-            detection_manager.update_configuration(valid)
-            flash("Settings updated successfully.", "success")
-
-        return redirect(url_for("settings_route"))
+        """
+        DEPRECATED: Legacy form POST endpoint.
+        The UI now uses POST /api/v1/settings via AJAX.
+        This route is kept briefly as a fallback/marker but returns an error to enforce migration.
+        """
+        logger.warning(
+            "Deprecated /api/settings/update called. Client should use /api/v1/settings."
+        )
+        return jsonify(
+            {
+                "status": "error",
+                "message": "Endpoint deprecated. Use POST /api/v1/settings",
+            }
+        ), 410
 
     @server.route("/api/settings/ingest", methods=["POST"])
     @login_required
@@ -2363,9 +2589,7 @@ def create_web_interface(detection_manager, system_monitor=None):
         try:
             logger.warning("System shutdown initiated via Web UI.")
 
-            import shutil
-
-            if not (os.path.isdir("/run/systemd/system") and shutil.which("systemctl")):
+            if not is_power_management_available():
                 logger.warning(
                     "Shutdown ignored: systemd not available (likely container)."
                 )
@@ -2373,39 +2597,20 @@ def create_web_interface(detection_manager, system_monitor=None):
                     jsonify(
                         {
                             "status": "error",
-                            "message": "Power management is intentionally disabled in non-systemd environments.",
+                            "message": POWER_MANAGEMENT_UNAVAILABLE_MESSAGE,
                         }
                     ),
                     400,
                 )
-
-            def delayed_shutdown():
-                time.sleep(2)
-                try:
-                    import subprocess
-
-                    subprocess.run(
-                        ["systemctl", "--no-ask-password", "--no-wall", "poweroff"],
-                        check=True,
-                        capture_output=True,
-                        text=True,
-                        timeout=10,
-                    )
-                except subprocess.CalledProcessError as e:
-                    details = (e.stderr or e.stdout or "").strip()
-                    logger.error(
-                        f"Shutdown command failed (Exit {e.returncode}): {details}"
-                    )
-                except Exception as e:
-                    logger.error(f"Shutdown command failed: {e}")
-
-            import threading
-
-            t = threading.Thread(target=delayed_shutdown)
-            t.start()
+            schedule_power_action("shutdown", logger)
 
             return (
-                jsonify({"status": "success", "message": "System is shutting down..."}),
+                jsonify(
+                    {
+                        "status": "success",
+                        "message": get_power_action_success_message("shutdown"),
+                    }
+                ),
                 200,
             )
         except Exception as e:
@@ -2419,9 +2624,7 @@ def create_web_interface(detection_manager, system_monitor=None):
         try:
             logger.warning("System restart initiated via Web UI.")
 
-            import shutil
-
-            if not (os.path.isdir("/run/systemd/system") and shutil.which("systemctl")):
+            if not is_power_management_available():
                 logger.warning(
                     "Restart ignored: systemd not available (likely container)."
                 )
@@ -2429,39 +2632,20 @@ def create_web_interface(detection_manager, system_monitor=None):
                     jsonify(
                         {
                             "status": "error",
-                            "message": "Power management is intentionally disabled in non-systemd environments.",
+                            "message": POWER_MANAGEMENT_UNAVAILABLE_MESSAGE,
                         }
                     ),
                     400,
                 )
-
-            def delayed_restart():
-                time.sleep(2)
-                try:
-                    import subprocess
-
-                    subprocess.run(
-                        ["systemctl", "--no-ask-password", "--no-wall", "reboot"],
-                        check=True,
-                        capture_output=True,
-                        text=True,
-                        timeout=10,
-                    )
-                except subprocess.CalledProcessError as e:
-                    details = (e.stderr or e.stdout or "").strip()
-                    logger.error(
-                        f"Restart command failed (Exit {e.returncode}): {details}"
-                    )
-                except Exception as e:
-                    logger.error(f"Restart command failed: {e}")
-
-            import threading
-
-            t = threading.Thread(target=delayed_restart)
-            t.start()
+            schedule_power_action("restart", logger)
 
             return (
-                jsonify({"status": "success", "message": "System is restarting..."}),
+                jsonify(
+                    {
+                        "status": "success",
+                        "message": get_power_action_success_message("restart"),
+                    }
+                ),
                 200,
             )
         except Exception as e:
@@ -2540,21 +2724,34 @@ def create_web_interface(detection_manager, system_monitor=None):
     @login_required
     def api_status():
         """
-        Returns general system status including detection state.
+        Returns general system status including detection and deep scan state.
         Used by various pages to check detection status.
         """
         try:
             output_dir = config.get("OUTPUT_DIR", "./data/output")
 
-            return jsonify(
-                {
-                    "detection_paused": detection_manager.paused,
-                    "detection_running": not detection_manager.paused,
-                    "restart_required": backup_restore_service.is_restart_required(
-                        output_dir
-                    ),
-                }
-            )
+            response = {
+                "detection_paused": detection_manager.paused,
+                "detection_running": not detection_manager.paused,
+                "restart_required": backup_restore_service.is_restart_required(
+                    output_dir
+                ),
+            }
+
+            # Scope 3: Deep Scan visibility
+            try:
+                from core.analysis_queue import analysis_queue
+                from web.services.analysis_service import count_deep_scan_candidates
+
+                response["deep_scan_active"] = detection_manager.is_deep_scan_active()
+                response["deep_scan_queue_pending"] = analysis_queue.pending_count()
+                response["deep_scan_candidates_remaining"] = (
+                    count_deep_scan_candidates()
+                )
+            except Exception as ds_err:
+                logger.debug(f"Could not compute deep scan status: {ds_err}")
+
+            return jsonify(response)
         except Exception as e:
             logger.error(f"Status API error: {e}")
             return jsonify({"error": str(e)}), 500

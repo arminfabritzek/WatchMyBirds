@@ -31,16 +31,16 @@ def review_page():
     Sorted oldest first.
     """
     output_dir = config.get("OUTPUT_DIR", "output")
-    save_threshold = config.get("SAVE_THRESHOLD", 0.65)
+    gallery_threshold = config["GALLERY_DISPLAY_THRESHOLD"]
 
-    rows = detections_service.get_review_queue_images(output_dir, save_threshold)
+    rows = detections_service.get_review_queue_images(output_dir, gallery_threshold)
 
     orphans = []
     for row in rows:
         filename = row["filename"]
         timestamp = row["timestamp"] or ""
-        review_reason = row["review_reason"]  # 'orphan' or 'low_confidence'
-        max_od_conf = row["max_od_conf"]
+        review_reason = row["review_reason"]  # 'orphan' or 'low_score'
+        max_score = row["max_score"]
 
         # Format date/time from timestamp (YYYYMMDD_HHMMSS)
         formatted_date = ""
@@ -82,8 +82,8 @@ def review_page():
         if review_reason == "orphan":
             reason_label = "No Detection"
         else:
-            conf_pct = round((max_od_conf or 0) * 100)
-            reason_label = f"Low Conf ({conf_pct}%)"
+            score_pct = round((max_score or 0) * 100)
+            reason_label = f"Low Score ({score_pct}%)"
 
         orphans.append(
             {
@@ -96,7 +96,11 @@ def review_page():
                 "full_url": full_url,
                 "review_reason": review_reason,
                 "reason_label": reason_label,
-                "max_od_conf": max_od_conf,
+                "max_score": max_score,
+                "bbox_x": row["bbox_x"],
+                "bbox_y": row["bbox_y"],
+                "bbox_w": row["bbox_w"],
+                "bbox_h": row["bbox_h"],
             }
         )
 
@@ -173,12 +177,85 @@ def review_decision():
         status_map = {"confirm": "confirmed_bird", "no_bird": "no_bird"}
         new_status = status_map[action]
 
-        with db_service.get_connection() as conn:
+        conn = db_service.get_connection()
+        try:
+            if action == "confirm":
+                # Confirming "Bird Present" requires an existing detection.
+                # Otherwise the image becomes non-eligible for Deep Scan and can get stuck.
+                placeholders = ",".join("?" for _ in filenames)
+                rows = conn.execute(
+                    f"""
+                    SELECT
+                        i.filename,
+                        EXISTS(
+                            SELECT 1
+                            FROM detections d
+                            WHERE d.image_filename = i.filename
+                        ) AS has_detections
+                    FROM images i
+                    WHERE i.filename IN ({placeholders})
+                    """,
+                    filenames,
+                ).fetchall()
+
+                missing = [row["filename"] for row in rows if not row["has_detections"]]
+                if missing:
+                    return (
+                        jsonify(
+                            {
+                                "status": "error",
+                                "message": "Cannot confirm Bird Present for items without detections. Use Deep Scan first.",
+                                "filenames": missing,
+                            }
+                        ),
+                        409,
+                    )
+
             updated = db_service.update_review_status(conn, filenames, new_status)
+        finally:
+            conn.close()
 
         logger.info(f"Review decision: {action} -> {updated} images updated")
         return jsonify({"status": "success", "updated": updated, "action": action})
 
     except Exception as e:
         logger.error(f"Error in review decision: {e}")
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@review_bp.route("/api/review/analyze/<filename>", methods=["POST"])
+@login_required
+def analyze_review_item(filename):
+    """
+    Triggers a deep analysis for the given file.
+    Query params:
+      force=1  — bypass no-hit DB exclusion (re-scan already-scanned images)
+    """
+    try:
+        from web.services.analysis_service import (
+            check_deep_analysis_eligibility,
+            submit_analysis_job,
+        )
+
+        force = request.args.get("force", "0") in ("1", "true", "yes")
+
+        is_eligible, reason = check_deep_analysis_eligibility(filename, force=force)
+        if not is_eligible:
+            return (
+                jsonify(
+                    {
+                        "status": "error",
+                        "message": reason or "Image is not eligible for deep analysis.",
+                    }
+                ),
+                409,
+            )
+
+        if submit_analysis_job(filename, force=force):
+            return jsonify({"status": "success", "message": "Deep analysis queued"})
+
+        return jsonify({"status": "error", "message": "Failed to queue analysis"}), 500
+
+    except Exception as e:
+        logger.error(f"Error triggering analysis: {e}")
         return jsonify({"status": "error", "message": str(e)}), 500

@@ -42,16 +42,28 @@ All API endpoints follow this response pattern:
 ### 1. Status & Control
 
 #### GET `/api/status`
-Returns system status including detection state.
+Returns system status including detection state and deep scan progress.
 
 **Response:**
 ```json
 {
   "detection_paused": false,
   "detection_running": true,
-  "restart_required": false
+  "restart_required": false,
+  "deep_scan_active": false,
+  "deep_scan_queue_pending": 0,
+  "deep_scan_candidates_remaining": 42
 }
 ```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `detection_paused` | bool | Whether the detection loop is paused |
+| `detection_running` | bool | Inverse of `detection_paused` |
+| `restart_required` | bool | Whether a service restart is pending |
+| `deep_scan_active` | bool | `true` while a Deep Scan job is executing (live DET+CLS loops are gated) |
+| `deep_scan_queue_pending` | int | Number of Deep Scan jobs waiting in the worker queue |
+| `deep_scan_candidates_remaining` | int | DB count of nightly-eligible orphan images (never-scanned + error retries) |
 
 ---
 
@@ -634,6 +646,15 @@ Cleans up temporary restore files.
 ---
 
 ## Changelog
+
+### 2026-02-13
+- **Deep Scan Stability Hardening:**
+  - `GET /api/status` now includes `deep_scan_active`, `deep_scan_queue_pending`, `deep_scan_candidates_remaining`.
+  - `POST /api/review/analyze/<filename>` accepts `?force=1` to bypass no-hit DB exclusion.
+- **UI: Review Modal "Preview only" Fallback** (no API change):
+  - Review modal (`orphan_modal.html`) now shows a visible amber "Preview only" badge when the full-size image fails to load and falls back to thumbnail. Previously the fallback was silent.
+- **UI: Global Zoom Preference Persistence** (no API change):
+  - Smart Zoom toggle state (`Full` / `Zoom`) is now persisted globally via `localStorage` key `wmb_modal_zoom_pref`. Preference survives page reloads and modal navigation. Applies wherever bbox-based zoom is available (Gallery modals).
 
 ### 2026-02-04
 - Initial documentation created from code inventory

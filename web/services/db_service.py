@@ -59,6 +59,11 @@ def fetch_daily_covers(conn, min_score: float = 0.0) -> list:
     return db_core.fetch_daily_covers(conn, min_score)
 
 
+def fetch_random_favorites(conn, limit: int = 6) -> list:
+    """Fetch random favorite covers."""
+    return db_core.fetch_random_favorites(conn, limit=limit)
+
+
 def fetch_detection_species_summary(conn, date_iso: str) -> list:
     """Fetch species summary for a date."""
     return db_core.fetch_detection_species_summary(conn, date_iso)
@@ -105,6 +110,34 @@ def fetch_day_count(conn, date_str_iso: str) -> int:
     return db_core.fetch_day_count(conn, date_str_iso)
 
 
-def fetch_review_queue_count(conn, save_threshold: float) -> int:
+def fetch_review_queue_count(conn, gallery_threshold: float) -> int:
     """Fetch count of items in review queue."""
-    return db_core.fetch_review_queue_count(conn, save_threshold)
+    return db_core.fetch_review_queue_count(conn, gallery_threshold)
+
+
+def fetch_review_queue_images(
+    conn,
+    gallery_threshold: float,
+    exclude_deep_scanned: bool = False,
+) -> list:
+    """Fetch images needing review."""
+    return db_core.fetch_review_queue_images(
+        conn, gallery_threshold, exclude_deep_scanned=exclude_deep_scanned
+    )
+
+
+# --- 24h Rolling Window Operations ---
+
+
+def fetch_count_last_24h(conn, threshold_timestamp: str) -> int:
+    """Fetch count of detections in last 24h (rolling window)."""
+    return db_core.fetch_count_last_24h(conn, threshold_timestamp)
+
+
+def fetch_detections_last_24h(
+    conn, threshold_timestamp: str, limit: int | None = None, order_by: str = "time"
+) -> list:
+    """Fetch detections from last 24h (rolling window)."""
+    return db_core.fetch_detections_last_24h(
+        conn, threshold_timestamp, limit=limit, order_by=order_by
+    )

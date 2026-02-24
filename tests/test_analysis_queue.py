@@ -1,6 +1,7 @@
 """
 Tests for AnalysisQueue gate lifecycle and dedup.
 """
+
 import time
 
 from core.analysis_queue import AnalysisQueue
@@ -41,7 +42,9 @@ def test_gate_enters_and_exits_around_job(monkeypatch):
     q = AnalysisQueue()
     q.set_detection_manager(dm)
     # Force gate enabled
-    monkeypatch.setattr("core.analysis_queue.get_config", lambda: {"DEEP_SCAN_GATE_ENABLED": True})
+    monkeypatch.setattr(
+        "core.analysis_queue.get_config", lambda: {"DEEP_SCAN_GATE_ENABLED": True}
+    )
 
     q.start(_processor)
     q.enqueue({"filename": "gate_test.jpg"})
@@ -64,7 +67,9 @@ def test_gate_exits_on_processor_exception(monkeypatch):
 
     q = AnalysisQueue()
     q.set_detection_manager(dm)
-    monkeypatch.setattr("core.analysis_queue.get_config", lambda: {"DEEP_SCAN_GATE_ENABLED": True})
+    monkeypatch.setattr(
+        "core.analysis_queue.get_config", lambda: {"DEEP_SCAN_GATE_ENABLED": True}
+    )
 
     q.start(_failing_processor)
     q.enqueue({"filename": "crash.jpg"})
@@ -85,7 +90,9 @@ def test_gate_skipped_when_disabled(monkeypatch):
 
     q = AnalysisQueue()
     q.set_detection_manager(dm)
-    monkeypatch.setattr("core.analysis_queue.get_config", lambda: {"DEEP_SCAN_GATE_ENABLED": False})
+    monkeypatch.setattr(
+        "core.analysis_queue.get_config", lambda: {"DEEP_SCAN_GATE_ENABLED": False}
+    )
 
     q.start(_processor)
     q.enqueue({"filename": "no_gate.jpg"})
@@ -108,7 +115,9 @@ def test_gate_skipped_when_no_detection_manager(monkeypatch):
 
     q = AnalysisQueue()
     # No set_detection_manager() call
-    monkeypatch.setattr("core.analysis_queue.get_config", lambda: {"DEEP_SCAN_GATE_ENABLED": True})
+    monkeypatch.setattr(
+        "core.analysis_queue.get_config", lambda: {"DEEP_SCAN_GATE_ENABLED": True}
+    )
 
     q.start(_processor)
     q.enqueue({"filename": "solo.jpg"})
@@ -144,7 +153,9 @@ def test_dedup_set_cleared_after_processing(monkeypatch):
         processed.append(job["filename"])
 
     q = AnalysisQueue()
-    monkeypatch.setattr("core.analysis_queue.get_config", lambda: {"DEEP_SCAN_GATE_ENABLED": False})
+    monkeypatch.setattr(
+        "core.analysis_queue.get_config", lambda: {"DEEP_SCAN_GATE_ENABLED": False}
+    )
     q.start(_processor)
     q.enqueue({"filename": "once.jpg"})
     time.sleep(1.5)

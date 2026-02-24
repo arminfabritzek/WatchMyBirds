@@ -8,7 +8,7 @@ Tests verify:
 - DB records are created correctly
 - Services interact correctly
 - Pipeline starts and stops cleanly
-- Runs in <10s without camera, BirdNET, or real models
+- Runs in <10s without camera or real models
 
 Strategy:
 - Mock VideoCapture to return synthetic frames
@@ -48,7 +48,7 @@ class MockClassificationResult:
     species: str
     common_name: str
     confidence: float
-    model_id: str = "mock-birdnet"
+    model_id: str = "mock-classifier"
 
 
 class MockVideoCapture:
@@ -128,11 +128,11 @@ def create_mock_classification_service():
             species="Parus major",
             common_name="Kohlmeise",
             confidence=0.92,
-            model_id="mock-birdnet",
+            model_id="mock-classifier",
         )
 
     mock_service.classify = mock_classify
-    mock_service.get_model_id.return_value = "mock-birdnet"
+    mock_service.get_model_id.return_value = "mock-classifier"
 
     return mock_service
 
@@ -400,7 +400,7 @@ class TestE2EPipeline:
         # Insert classification record
         cursor.execute(
             "INSERT INTO classifications (detection_id, species, common_name, confidence, model_id) VALUES (?, ?, ?, ?, ?)",
-            (detection_db_id, "Parus major", "Kohlmeise", 0.92, "mock-birdnet"),
+            (detection_db_id, "Parus major", "Kohlmeise", 0.92, "mock-classifier"),
         )
 
         conn.commit()

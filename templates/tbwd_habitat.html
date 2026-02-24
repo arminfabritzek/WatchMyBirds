@@ -1,0 +1,1324 @@
+{% extends "base.html" %}
+
+{% block title %}🔬 TBWD Habitat – Modulare Habitat-Kits · Eco-Abo{% endblock %}
+
+{% block content %}
+<style>
+    /* ═══════════════════════════════════════════════════════════════
+       TBWD HABITAT – CINEMATIC DARK THEME
+       Habitat Kits · Actionable Biodiversity · Eco-Subscription
+       ═══════════════════════════════════════════════════════════════ */
+
+    :root {
+        --hab-bg-deep: #050b12;
+        --hab-bg-card: rgba(10, 20, 34, 0.85);
+        --hab-ink: #e4edf8;
+        --hab-ink-muted: #7a90a8;
+        --hab-ink-dim: #4e6580;
+        --hab-accent-amber: #f59e0b;
+        --hab-accent-leaf: #4cda6a;
+        --hab-accent-sky: #339af0;
+        --hab-accent-coral: #ff6b6b;
+        --hab-accent-violet: #a855f7;
+        --hab-accent-teal: #2dd4bf;
+        --hab-accent-rose: #f472b6;
+        --hab-accent-brown: #d4915c;
+        --hab-glass: blur(18px);
+        --hab-shadow-hero: 0 32px 80px rgba(0, 0, 0, 0.6);
+        --hab-radius: 24px;
+        --hab-radius-sm: 14px;
+    }
+
+    body {
+        background:
+            radial-gradient(ellipse at 20% 12%, rgba(245, 158, 11, 0.07), transparent 45%),
+            radial-gradient(ellipse at 75% 18%, rgba(76, 218, 106, 0.06), transparent 40%),
+            radial-gradient(ellipse at 45% 80%, rgba(45, 212, 191, 0.05), transparent 38%),
+            radial-gradient(ellipse at 85% 75%, rgba(168, 85, 247, 0.04), transparent 35%),
+            linear-gradient(165deg, var(--hab-bg-deep) 0%, #0c1824 100%);
+        font-family: "Avenir Next", "Inter", "Segoe UI", sans-serif;
+        color: var(--hab-ink);
+        min-height: 100vh;
+        overflow-x: hidden;
+    }
+
+    /* ── Wrapper ── */
+    .hab-wrap {
+        max-width: 1100px;
+        margin: 0 auto;
+        padding: 1.2rem 1rem 5rem;
+    }
+
+    /* ── Back Links ── */
+    .hab-nav {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+        margin-bottom: 1.2rem;
+    }
+
+    .hab-back {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.4rem;
+        color: var(--hab-ink-muted);
+        text-decoration: none;
+        font-weight: 700;
+        font-size: 0.85rem;
+        padding: 0.35rem 0.7rem;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.04);
+        border: 1px solid rgba(255, 255, 255, 0.06);
+        transition: all 0.3s ease;
+    }
+
+    .hab-back:hover {
+        color: var(--hab-accent-leaf);
+        background: rgba(76, 218, 106, 0.08);
+        border-color: rgba(76, 218, 106, 0.2);
+    }
+
+    /* ═══ HERO ═══ */
+    .hab-hero {
+        position: relative;
+        border-radius: var(--hab-radius);
+        overflow: hidden;
+        margin-bottom: 3rem;
+        background: var(--hab-bg-card);
+        border: 1px solid rgba(255, 255, 255, 0.06);
+        box-shadow: var(--hab-shadow-hero);
+    }
+
+    .hab-hero__glow {
+        position: absolute;
+        inset: 0;
+        background:
+            radial-gradient(circle at 30% 40%, rgba(245, 158, 11, 0.12), transparent 50%),
+            radial-gradient(circle at 70% 55%, rgba(76, 218, 106, 0.1), transparent 50%),
+            radial-gradient(circle at 50% 85%, rgba(45, 212, 191, 0.07), transparent 45%);
+        z-index: 1;
+        pointer-events: none;
+    }
+
+    .hab-hero__inner {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 1.5rem;
+        padding: 2.5rem 1.5rem;
+        position: relative;
+        z-index: 2;
+    }
+
+    .hab-hero__badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.4rem;
+        background: rgba(245, 158, 11, 0.12);
+        color: var(--hab-accent-amber);
+        border-radius: 999px;
+        padding: 0.3rem 0.85rem;
+        font-size: 0.78rem;
+        font-weight: 800;
+        letter-spacing: 0.03em;
+        text-transform: uppercase;
+        border: 1px solid rgba(245, 158, 11, 0.18);
+        width: fit-content;
+    }
+
+    .hab-hero__title {
+        margin: 0.6rem 0 0.4rem;
+        font-size: clamp(1.7rem, 4.5vw, 2.9rem);
+        font-weight: 900;
+        line-height: 1.1;
+        letter-spacing: -0.02em;
+        background: linear-gradient(135deg, var(--hab-accent-amber), var(--hab-accent-leaf), var(--hab-accent-teal));
+        background-size: 300% auto;
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+        animation: habGradientShift 7s ease infinite;
+    }
+
+    .hab-hero__sub {
+        margin: 0;
+        font-size: clamp(1rem, 2vw, 1.2rem);
+        font-weight: 600;
+        color: var(--hab-ink-muted);
+        line-height: 1.5;
+        max-width: 600px;
+    }
+
+    .hab-hero__img {
+        width: 100%;
+        max-width: 480px;
+        border-radius: 18px;
+        box-shadow: 0 16px 48px rgba(0, 0, 0, 0.55);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        justify-self: center;
+    }
+
+    /* ═══ SECTION ═══ */
+    .hab-section {
+        margin-bottom: 3rem;
+    }
+
+    .hab-section__header {
+        display: flex;
+        align-items: center;
+        margin-bottom: 0.4rem;
+    }
+
+    .hab-section__number {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 40px;
+        height: 40px;
+        border-radius: 12px;
+        font-size: 1rem;
+        font-weight: 900;
+        margin-right: 0.65rem;
+        flex-shrink: 0;
+    }
+
+    .hab-section__number--amber {
+        background: rgba(245, 158, 11, 0.15);
+        color: var(--hab-accent-amber);
+    }
+
+    .hab-section__number--leaf {
+        background: rgba(76, 218, 106, 0.15);
+        color: var(--hab-accent-leaf);
+    }
+
+    .hab-section__number--sky {
+        background: rgba(51, 154, 240, 0.15);
+        color: var(--hab-accent-sky);
+    }
+
+    .hab-section__number--coral {
+        background: rgba(255, 107, 107, 0.15);
+        color: var(--hab-accent-coral);
+    }
+
+    .hab-section__number--violet {
+        background: rgba(168, 85, 247, 0.15);
+        color: var(--hab-accent-violet);
+    }
+
+    .hab-section__number--teal {
+        background: rgba(45, 212, 191, 0.15);
+        color: var(--hab-accent-teal);
+    }
+
+    .hab-section__number--rose {
+        background: rgba(244, 114, 182, 0.15);
+        color: var(--hab-accent-rose);
+    }
+
+    .hab-section__number--brown {
+        background: rgba(212, 145, 92, 0.15);
+        color: var(--hab-accent-brown);
+    }
+
+    .hab-section__title {
+        font-size: clamp(1.2rem, 2.8vw, 1.75rem);
+        font-weight: 900;
+        margin: 0;
+        color: var(--hab-ink);
+    }
+
+    .hab-section__sub {
+        margin: 0.3rem 0 1.3rem;
+        font-size: 0.95rem;
+        font-weight: 600;
+        color: var(--hab-ink-muted);
+        max-width: 720px;
+        line-height: 1.55;
+    }
+
+    /* ═══ GLASS CARD ═══ */
+    .hab-card {
+        background: var(--hab-bg-card);
+        backdrop-filter: var(--hab-glass);
+        border: 1px solid rgba(255, 255, 255, 0.06);
+        border-radius: var(--hab-radius);
+        box-shadow: 0 12px 40px rgba(0, 0, 0, 0.3);
+        overflow: hidden;
+        transition: transform 0.35s ease, box-shadow 0.35s ease;
+    }
+
+    .hab-card:hover {
+        transform: translateY(-4px);
+        box-shadow: 0 18px 52px rgba(0, 0, 0, 0.4);
+    }
+
+    .hab-card__body {
+        padding: 1.3rem 1.4rem 1.5rem;
+    }
+
+    .hab-card__title {
+        font-size: 1.12rem;
+        font-weight: 800;
+        margin: 0 0 0.5rem;
+    }
+
+    .hab-card__text {
+        font-size: 0.91rem;
+        color: var(--hab-ink-muted);
+        line-height: 1.6;
+        margin: 0;
+    }
+
+    /* ═══ FEATURE GRID ═══ */
+    .hab-features {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 1.2rem;
+    }
+
+    /* ═══ HABITAT MODULE CARD (large) ═══ */
+    .hab-module {
+        background: var(--hab-bg-card);
+        backdrop-filter: var(--hab-glass);
+        border-radius: var(--hab-radius);
+        border: 1px solid rgba(255, 255, 255, 0.06);
+        box-shadow: 0 12px 40px rgba(0, 0, 0, 0.3);
+        overflow: hidden;
+        transition: transform 0.35s ease, box-shadow 0.35s ease;
+    }
+
+    .hab-module:hover {
+        transform: translateY(-3px);
+        box-shadow: 0 18px 50px rgba(0, 0, 0, 0.4);
+    }
+
+    .hab-module__header {
+        padding: 1.3rem 1.4rem 0;
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+    }
+
+    .hab-module__icon {
+        font-size: 2.2rem;
+        width: 56px;
+        height: 56px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: 16px;
+        flex-shrink: 0;
+    }
+
+    .hab-module__title-wrap {
+        min-width: 0;
+    }
+
+    .hab-module__title {
+        font-size: 1.2rem;
+        font-weight: 900;
+        margin: 0 0 0.15rem;
+    }
+
+    .hab-module__subtitle {
+        font-size: 0.82rem;
+        color: var(--hab-ink-muted);
+        font-weight: 600;
+        margin: 0;
+    }
+
+    .hab-module__body {
+        padding: 1rem 1.4rem 1.4rem;
+    }
+
+    .hab-module__features {
+        display: grid;
+        gap: 0.6rem;
+    }
+
+    .hab-module__feat {
+        display: flex;
+        align-items: center;
+        gap: 0.7rem;
+        padding: 0.65rem 0.85rem;
+        border-radius: var(--hab-radius-sm);
+        background: rgba(255, 255, 255, 0.025);
+        border: 1px solid rgba(255, 255, 255, 0.04);
+        transition: all 0.25s ease;
+    }
+
+    .hab-module__feat:hover {
+        background: rgba(255, 255, 255, 0.04);
+        border-color: rgba(255, 255, 255, 0.08);
+    }
+
+    .hab-module__feat-icon {
+        font-size: 1.3rem;
+        flex-shrink: 0;
+    }
+
+    .hab-module__feat-title {
+        font-weight: 700;
+        font-size: 0.9rem;
+        margin: 0;
+    }
+
+    .hab-module__feat-desc {
+        font-size: 0.8rem;
+        color: var(--hab-ink-muted);
+        margin: 0.1rem 0 0;
+    }
+
+    /* ═══ ACTION CARDS ═══ */
+    .hab-actions {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 0.85rem;
+    }
+
+    .hab-action {
+        display: flex;
+        align-items: center;
+        gap: 1rem;
+        padding: 1.1rem 1.3rem;
+        border-radius: var(--hab-radius-sm);
+        border: 1px solid rgba(255, 255, 255, 0.04);
+        background: rgba(255, 255, 255, 0.02);
+        transition: all 0.3s ease;
+        position: relative;
+        overflow: hidden;
+    }
+
+    .hab-action::before {
+        content: '';
+        position: absolute;
+        left: 0;
+        top: 0;
+        bottom: 0;
+        width: 3px;
+        border-radius: 3px;
+        transition: opacity 0.3s ease;
+    }
+
+    .hab-action:hover {
+        background: rgba(255, 255, 255, 0.04);
+        border-color: rgba(255, 255, 255, 0.1);
+        transform: translateX(4px);
+    }
+
+    .hab-action--feed::before {
+        background: var(--hab-accent-amber);
+    }
+
+    .hab-action--water::before {
+        background: var(--hab-accent-sky);
+    }
+
+    .hab-action--plant::before {
+        background: var(--hab-accent-leaf);
+    }
+
+    .hab-action--clean::before {
+        background: var(--hab-accent-teal);
+    }
+
+    .hab-action__icon {
+        font-size: 1.8rem;
+        flex-shrink: 0;
+        width: 48px;
+        text-align: center;
+    }
+
+    .hab-action__what {
+        font-weight: 800;
+        font-size: 0.95rem;
+        margin: 0 0 0.15rem;
+    }
+
+    .hab-action__why {
+        font-size: 0.82rem;
+        color: var(--hab-ink-muted);
+        margin: 0;
+        line-height: 1.45;
+    }
+
+    /* ═══ VERSUS BLOCK ═══ */
+    .hab-versus {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 1.2rem;
+        margin: 1.3rem 0;
+    }
+
+    .hab-versus__side {
+        padding: 1.4rem;
+        border-radius: var(--hab-radius);
+        border: 1px solid rgba(255, 255, 255, 0.06);
+    }
+
+    .hab-versus__side--before {
+        background: rgba(255, 107, 107, 0.04);
+        border-color: rgba(255, 107, 107, 0.1);
+    }
+
+    .hab-versus__side--after {
+        background: rgba(76, 218, 106, 0.04);
+        border-color: rgba(76, 218, 106, 0.1);
+    }
+
+    .hab-versus__label {
+        font-size: 0.72rem;
+        font-weight: 800;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        margin: 0 0 0.6rem;
+    }
+
+    .hab-versus__text {
+        font-size: 1.15rem;
+        font-weight: 900;
+        margin: 0 0 0.3rem;
+    }
+
+    .hab-versus__sub {
+        font-size: 0.88rem;
+        color: var(--hab-ink-muted);
+        margin: 0;
+        line-height: 1.5;
+    }
+
+    /* ═══ BUSINESS MODEL TIER ═══ */
+    .hab-tiers {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 1.2rem;
+    }
+
+    .hab-tier {
+        background: var(--hab-bg-card);
+        backdrop-filter: var(--hab-glass);
+        border: 1px solid rgba(255, 255, 255, 0.06);
+        border-radius: var(--hab-radius);
+        padding: 1.5rem;
+        position: relative;
+        overflow: hidden;
+        transition: transform 0.35s ease, box-shadow 0.35s ease;
+    }
+
+    .hab-tier:hover {
+        transform: translateY(-4px);
+        box-shadow: 0 16px 48px rgba(0, 0, 0, 0.4);
+    }
+
+    .hab-tier--highlight {
+        border-color: rgba(76, 218, 106, 0.2);
+    }
+
+    .hab-tier--highlight::before {
+        content: '';
+        position: absolute;
+        inset: 0;
+        background: linear-gradient(135deg, rgba(76, 218, 106, 0.05), rgba(45, 212, 191, 0.03));
+        pointer-events: none;
+    }
+
+    .hab-tier__badge {
+        display: inline-flex;
+        padding: 0.2rem 0.6rem;
+        border-radius: 999px;
+        font-size: 0.7rem;
+        font-weight: 800;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        margin-bottom: 0.6rem;
+    }
+
+    .hab-tier__title {
+        font-size: 1.2rem;
+        font-weight: 900;
+        margin: 0 0 0.3rem;
+        position: relative;
+    }
+
+    .hab-tier__price {
+        font-size: 0.88rem;
+        color: var(--hab-ink-muted);
+        font-weight: 700;
+        margin: 0 0 0.8rem;
+        position: relative;
+    }
+
+    .hab-tier__list {
+        list-style: none;
+        padding: 0;
+        margin: 0;
+        position: relative;
+    }
+
+    .hab-tier__list li {
+        padding: 0.3rem 0;
+        font-size: 0.88rem;
+        font-weight: 600;
+        color: var(--hab-ink);
+    }
+
+    .hab-tier__list li::before {
+        content: '✓';
+        margin-right: 0.5rem;
+        font-weight: 800;
+    }
+
+    /* ═══ PSYCHOLOGY GRID ═══ */
+    .hab-psych {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 0.85rem;
+    }
+
+    .hab-psych__item {
+        display: flex;
+        align-items: center;
+        gap: 0.85rem;
+        padding: 1rem 1.1rem;
+        border-radius: var(--hab-radius-sm);
+        background: rgba(255, 255, 255, 0.02);
+        border: 1px solid rgba(255, 255, 255, 0.04);
+        transition: all 0.3s ease;
+    }
+
+    .hab-psych__item:hover {
+        background: rgba(255, 255, 255, 0.04);
+        border-color: rgba(255, 255, 255, 0.1);
+        transform: translateY(-2px);
+    }
+
+    .hab-psych__icon {
+        font-size: 2rem;
+        flex-shrink: 0;
+        width: 52px;
+        height: 52px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: 14px;
+        background: rgba(255, 255, 255, 0.03);
+    }
+
+    .hab-psych__title {
+        font-weight: 800;
+        font-size: 0.98rem;
+        margin: 0 0 0.15rem;
+    }
+
+    .hab-psych__desc {
+        font-size: 0.84rem;
+        color: var(--hab-ink-muted);
+        margin: 0;
+        line-height: 1.45;
+    }
+
+    /* ═══ CALLOUT ═══ */
+    .hab-callout {
+        position: relative;
+        padding: 1.5rem 1.6rem;
+        border-radius: var(--hab-radius);
+        border: 1px solid rgba(76, 218, 106, 0.15);
+        overflow: hidden;
+    }
+
+    .hab-callout::before {
+        content: '';
+        position: absolute;
+        inset: 0;
+        background: linear-gradient(135deg, rgba(76, 218, 106, 0.06), rgba(51, 154, 240, 0.04));
+        z-index: 0;
+    }
+
+    .hab-callout__content {
+        position: relative;
+        z-index: 1;
+    }
+
+    .hab-callout__title {
+        font-size: 1.1rem;
+        font-weight: 800;
+        margin: 0 0 0.5rem;
+        color: var(--hab-accent-leaf);
+    }
+
+    .hab-callout__text {
+        font-size: 0.9rem;
+        line-height: 1.6;
+        color: var(--hab-ink-muted);
+        margin: 0;
+    }
+
+    .hab-callout__list {
+        list-style: none;
+        padding: 0;
+        margin: 0.6rem 0 0;
+    }
+
+    .hab-callout__list li {
+        padding: 0.35rem 0;
+        font-size: 0.88rem;
+        color: var(--hab-ink);
+        font-weight: 600;
+    }
+
+    .hab-callout__list li::before {
+        content: '→';
+        color: var(--hab-accent-leaf);
+        margin-right: 0.5rem;
+        font-weight: 800;
+    }
+
+    /* ═══ QUOTE ═══ */
+    .hab-quote {
+        position: relative;
+        padding: 2rem 1.8rem;
+        border-radius: var(--hab-radius);
+        border: 1px solid rgba(245, 158, 11, 0.12);
+        overflow: hidden;
+        text-align: center;
+    }
+
+    .hab-quote::before {
+        content: '';
+        position: absolute;
+        inset: 0;
+        background: linear-gradient(135deg, rgba(245, 158, 11, 0.06), rgba(76, 218, 106, 0.04), rgba(45, 212, 191, 0.03));
+        z-index: 0;
+    }
+
+    .hab-quote__content {
+        position: relative;
+        z-index: 1;
+    }
+
+    .hab-quote__text {
+        font-size: clamp(1.15rem, 2.5vw, 1.55rem);
+        font-weight: 900;
+        line-height: 1.3;
+        margin: 0 0 0.5rem;
+        background: linear-gradient(135deg, var(--hab-accent-amber), var(--hab-accent-leaf));
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+    }
+
+    .hab-quote__author {
+        font-size: 0.88rem;
+        color: var(--hab-ink-dim);
+        font-weight: 600;
+    }
+
+    /* ═══ REALITY CHECK ═══ */
+    .hab-reality {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 0.75rem;
+    }
+
+    .hab-reality__item {
+        display: flex;
+        align-items: center;
+        gap: 0.85rem;
+        padding: 0.85rem 1rem;
+        border-radius: var(--hab-radius-sm);
+        background: rgba(255, 107, 107, 0.03);
+        border: 1px solid rgba(255, 107, 107, 0.08);
+        transition: all 0.3s ease;
+    }
+
+    .hab-reality__item:hover {
+        background: rgba(255, 107, 107, 0.06);
+        border-color: rgba(255, 107, 107, 0.15);
+    }
+
+    .hab-reality__icon {
+        font-size: 1.3rem;
+        flex-shrink: 0;
+    }
+
+    .hab-reality__text {
+        font-size: 0.9rem;
+        font-weight: 700;
+        margin: 0;
+    }
+
+    /* ═══ DIVIDER ═══ */
+    .hab-divider {
+        height: 1px;
+        background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.08), transparent);
+        margin: 3rem 0;
+        border: none;
+    }
+
+    /* ═══ CTA BOTTOM ═══ */
+    .hab-cta {
+        text-align: center;
+        padding: 2.5rem 1.5rem;
+        border-radius: var(--hab-radius);
+        background: var(--hab-bg-card);
+        border: 1px solid rgba(245, 158, 11, 0.1);
+        position: relative;
+        overflow: hidden;
+    }
+
+    .hab-cta::before {
+        content: '';
+        position: absolute;
+        inset: 0;
+        background:
+            radial-gradient(circle at 30% 50%, rgba(245, 158, 11, 0.07), transparent 60%),
+            radial-gradient(circle at 70% 50%, rgba(76, 218, 106, 0.05), transparent 55%);
+        pointer-events: none;
+    }
+
+    .hab-cta__title {
+        font-size: clamp(1.3rem, 3vw, 2rem);
+        font-weight: 900;
+        margin: 0 0 0.5rem;
+        position: relative;
+        background: linear-gradient(135deg, var(--hab-accent-amber), var(--hab-accent-leaf));
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+    }
+
+    .hab-cta__sub {
+        font-size: 1rem;
+        color: var(--hab-ink-muted);
+        font-weight: 600;
+        margin: 0;
+        position: relative;
+    }
+
+    .hab-cta__arrow {
+        display: block;
+        margin-top: 1rem;
+        font-size: 0.92rem;
+        font-weight: 800;
+        color: var(--hab-accent-leaf);
+        position: relative;
+    }
+
+    /* ═══ ANIMATIONS ═══ */
+    @keyframes habGradientShift {
+
+        0%,
+        100% {
+            background-position: 0% center;
+        }
+
+        50% {
+            background-position: 100% center;
+        }
+    }
+
+    @keyframes habFadeUp {
+        from {
+            opacity: 0;
+            transform: translateY(24px);
+        }
+
+        to {
+            opacity: 1;
+            transform: translateY(0);
+        }
+    }
+
+    @keyframes habPulse {
+
+        0%,
+        100% {
+            opacity: 1;
+        }
+
+        50% {
+            opacity: 0.6;
+        }
+    }
+
+    .hab-animate {
+        animation: habFadeUp 0.7s ease forwards;
+        opacity: 0;
+    }
+
+    .hab-animate--d1 {
+        animation-delay: 0.1s;
+    }
+
+    .hab-animate--d2 {
+        animation-delay: 0.2s;
+    }
+
+    .hab-animate--d3 {
+        animation-delay: 0.35s;
+    }
+
+    .hab-animate--d4 {
+        animation-delay: 0.5s;
+    }
+
+    .hab-animate--d5 {
+        animation-delay: 0.65s;
+    }
+
+    .hab-animate--d6 {
+        animation-delay: 0.8s;
+    }
+
+    .hab-animate--d7 {
+        animation-delay: 0.95s;
+    }
+
+    /* ═══ RESPONSIVE ═══ */
+    @media (min-width: 720px) {
+        .hab-hero__inner {
+            grid-template-columns: 1.2fr 1fr;
+            padding: 3rem 2.5rem;
+        }
+
+        .hab-features {
+            grid-template-columns: repeat(2, 1fr);
+        }
+
+        .hab-actions {
+            grid-template-columns: repeat(2, 1fr);
+        }
+
+        .hab-tiers {
+            grid-template-columns: repeat(3, 1fr);
+        }
+
+        .hab-psych {
+            grid-template-columns: repeat(2, 1fr);
+        }
+
+        .hab-reality {
+            grid-template-columns: repeat(2, 1fr);
+        }
+
+        .hab-versus {
+            grid-template-columns: 1fr 1fr;
+        }
+    }
+
+    @media (min-width: 960px) {
+        .hab-features {
+            grid-template-columns: repeat(3, 1fr);
+        }
+    }
+</style>
+
+<div class="hab-wrap">
+
+    <!-- Navigation -->
+    <div class="hab-nav">
+        <a href="/dashboard" class="hab-back">← Dashboard</a>
+        <a href="/tbwd" class="hab-back">🔬 TBWD Device</a>
+        <a href="/tbwd-vision" class="hab-back">🌍 Vision</a>
+    </div>
+
+    <!-- ═══════════════════════════════════ HERO ═══════════════════════════════════ -->
+    <section class="hab-hero hab-animate">
+        <div class="hab-hero__glow"></div>
+        <div class="hab-hero__inner">
+            <div>
+                <span class="hab-hero__badge">🔬 Habitat Kits 2026</span>
+                <h1 class="hab-hero__title">Modulare<br>Habitat-Stationen</h1>
+                <p class="hab-hero__sub">
+                    Nicht nur beobachten – aktiv handeln. Smarte Habitat-Kits für Vögel,
+                    Eichhörnchen, Insekten und Amphibien. Mit Sensor-Monitoring,
+                    KI-Erkennung und konkreten Handlungsempfehlungen.
+                </p>
+            </div>
+            <img class="hab-hero__img" src="/assets/img/presentation/habitat_kit_hero.png"
+                alt="Modulare Habitat-Kit Produktvisualisierung – Futterstation, Insektenhotel, Mini-Teich">
+        </div>
+    </section>
+
+    <!-- ═══════════════════════ 01 · Habitat Module ═══════════════════════ -->
+    <section class="hab-section hab-animate hab-animate--d1">
+        <div class="hab-section__header">
+            <span class="hab-section__number hab-section__number--amber">01</span>
+            <h2 class="hab-section__title">Die Habitat-Module</h2>
+        </div>
+        <p class="hab-section__sub">
+            Jedes Modul ist ein eigenständiges Mini-Ökosystem mit smarten Sensoren.
+            Plug & Play – an jede bestehende WatchMyBirds-Station anschließbar.
+        </p>
+
+        <div class="hab-features">
+            <!-- Eichhörnchen -->
+            <div class="hab-module">
+                <div class="hab-module__header">
+                    <div class="hab-module__icon" style="background: rgba(212, 145, 92, 0.12);">🐿️</div>
+                    <div class="hab-module__title-wrap">
+                        <h3 class="hab-module__title" style="color: var(--hab-accent-brown);">Eichhörnchen-Kit</h3>
+                        <p class="hab-module__subtitle">Futterkammer · Kamera · Population</p>
+                    </div>
+                </div>
+                <div class="hab-module__body">
+                    <div class="hab-module__features">
+                        <div class="hab-module__feat">
+                            <span class="hab-module__feat-icon">⚙️</span>
+                            <div>
+                                <p class="hab-module__feat-title">Drehmechanismus-Futterstation</p>
+                                <p class="hab-module__feat-desc">Portioniert automatisch, verhindert Überfütterung und
+                                    Raub durch andere Tiere.</p>
+                            </div>
+                        </div>
+                        <div class="hab-module__feat">
+                            <span class="hab-module__feat-icon">📷</span>
+                            <div>
+                                <p class="hab-module__feat-title">Identifikations-Kamera</p>
+                                <p class="hab-module__feat-desc">KI erkennt individuelle Eichhörnchen anhand von
+                                    Fellmuster und Größe.</p>
+                            </div>
+                        </div>
+                        <div class="hab-module__feat">
+                            <span class="hab-module__feat-icon">📊</span>
+                            <div>
+                                <p class="hab-module__feat-title">Populationsstatistik</p>
+                                <p class="hab-module__feat-desc">Wie viele verschiedene Individuen? Zu welchen Zeiten?
+                                    Trends über Wochen.</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Insekten -->
+            <div class="hab-module">
+                <div class="hab-module__header">
+                    <div class="hab-module__icon" style="background: rgba(76, 218, 106, 0.12);">🐝</div>
+                    <div class="hab-module__title-wrap">
+                        <h3 class="hab-module__title" style="color: var(--hab-accent-leaf);">Insekten-Kit</h3>
+                        <p class="hab-module__subtitle">Feuchtigkeit · Temperatur · Blühkalender</p>
+                    </div>
+                </div>
+                <div class="hab-module__body">
+                    <div class="hab-module__features">
+                        <div class="hab-module__feat">
+                            <span class="hab-module__feat-icon">💧</span>
+                            <div>
+                                <p class="hab-module__feat-title">Feuchtigkeitssensor</p>
+                                <p class="hab-module__feat-desc">Optimale Bedingungen im Insektenhotel. Alert bei zu
+                                    trocken oder zu feucht.</p>
+                            </div>
+                        </div>
+                        <div class="hab-module__feat">
+                            <span class="hab-module__feat-icon">🌡️</span>
+                            <div>
+                                <p class="hab-module__feat-title">Temperaturüberwachung</p>
+                                <p class="hab-module__feat-desc">Warnung bei Frost oder Überhitzung. Historische
+                                    Vergleiche pro Saison.</p>
+                            </div>
+                        </div>
+                        <div class="hab-module__feat">
+                            <span class="hab-module__feat-icon">🌸</span>
+                            <div>
+                                <p class="hab-module__feat-title">Blühkalender + Reminder</p>
+                                <p class="hab-module__feat-desc">Wann blüht was? Automatische Push-Erinnerung zum
+                                    Nachsäen und Pflegen.</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Amphibien -->
+            <div class="hab-module">
+                <div class="hab-module__header">
+                    <div class="hab-module__icon" style="background: rgba(45, 212, 191, 0.12);">🦎</div>
+                    <div class="hab-module__title-wrap">
+                        <h3 class="hab-module__title" style="color: var(--hab-accent-teal);">Amphibien-Kit</h3>
+                        <p class="hab-module__subtitle">Mini-Teich · Wasserstand · Regenwasser</p>
+                    </div>
+                </div>
+                <div class="hab-module__body">
+                    <div class="hab-module__features">
+                        <div class="hab-module__feat">
+                            <span class="hab-module__feat-icon">🌊</span>
+                            <div>
+                                <p class="hab-module__feat-title">Mini-Teich mit Wasserstandssensor</p>
+                                <p class="hab-module__feat-desc">Automatische Pegelüberwachung. Alert vor kritischer
+                                    Austrocknung.</p>
+                            </div>
+                        </div>
+                        <div class="hab-module__feat">
+                            <span class="hab-module__feat-icon">🌡️</span>
+                            <div>
+                                <p class="hab-module__feat-title">Temperatur-Alert</p>
+                                <p class="hab-module__feat-desc">Warnung bei gefährlichen Wassertemperaturen.
+                                    Frost-Schutz-Hinweise.</p>
+                            </div>
+                        </div>
+                        <div class="hab-module__feat">
+                            <span class="hab-module__feat-icon">🌧️</span>
+                            <div>
+                                <p class="hab-module__feat-title">Regenwasser-Nachführung</p>
+                                <p class="hab-module__feat-desc">Optional: Automatische Zuleitung aus Regensammler. Kein
+                                    Leitungswasser nötig.</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <hr class="hab-divider">
+
+    <!-- ═══════════════════════ 02 · Der Clou: Handlungsorientiert ═══════════════════════ -->
+    <section class="hab-section hab-animate hab-animate--d2">
+        <div class="hab-section__header">
+            <span class="hab-section__number hab-section__number--leaf">02</span>
+            <h2 class="hab-section__title">Der eigentliche Clou</h2>
+        </div>
+
+        <div class="hab-versus">
+            <div class="hab-versus__side hab-versus__side--before">
+                <p class="hab-versus__label" style="color: var(--hab-accent-coral);">Vorher</p>
+                <p class="hab-versus__text" style="color: var(--hab-accent-coral);">„Du hast 12 Kohlmeisen."</p>
+                <p class="hab-versus__sub">
+                    Nett zu wissen. Aber dann? Nichts passiert.
+                    Reine Beobachtung ohne Konsequenz.
+                </p>
+            </div>
+            <div class="hab-versus__side hab-versus__side--after">
+                <p class="hab-versus__label" style="color: var(--hab-accent-leaf);">Nachher</p>
+                <p class="hab-versus__text" style="color: var(--hab-accent-leaf);">„Heute kannst du konkret etwas tun."
+                </p>
+                <p class="hab-versus__sub">
+                    Handlungsorientiert. Persönlich. Zeitbezogen.
+                    Die App sagt dir, was jetzt zählt.
+                </p>
+            </div>
+        </div>
+
+        <p class="hab-section__sub" style="margin-top: 1.2rem;">
+            Die App zeigt nicht nur Daten – sie empfiehlt konkrete Handlungen, die heute einen Unterschied machen.
+        </p>
+
+        <div class="hab-actions">
+            <div class="hab-action hab-action--feed">
+                <div class="hab-action__icon">🌻</div>
+                <div>
+                    <p class="hab-action__what">Futter auffüllen</p>
+                    <p class="hab-action__why">Vorrat unter 30%. Hohe Aktivität erwartet: Kälteeinbruch morgen.</p>
+                </div>
+            </div>
+            <div class="hab-action hab-action--water">
+                <div class="hab-action__icon">💧</div>
+                <div>
+                    <p class="hab-action__what">Wasser erneuern</p>
+                    <p class="hab-action__why">Wasserstand niedrig. Letzte Erneuerung: vor 4 Tagen. Temperatur steigt.
+                    </p>
+                </div>
+            </div>
+            <div class="hab-action hab-action--plant">
+                <div class="hab-action__icon">🌱</div>
+                <div>
+                    <p class="hab-action__what">Wildblumen nachsäen</p>
+                    <p class="hab-action__why">Blühkalender: Jetzt ist der perfekte Zeitpunkt für Kornblumen und
+                        Ringelblumen.</p>
+                </div>
+            </div>
+            <div class="hab-action hab-action--clean">
+                <div class="hab-action__icon">🧹</div>
+                <div>
+                    <p class="hab-action__what">Insektenhotel reinigen</p>
+                    <p class="hab-action__why">Letzte Reinigung: 45 Tage. Feuchtigkeitssensor zeigt erhöhte Werte.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <hr class="hab-divider">
+
+    <!-- ═══════════════════════ QUOTE ═══════════════════════ -->
+    <div class="hab-quote hab-animate hab-animate--d3">
+        <div class="hab-quote__content">
+            <p class="hab-quote__text">Wenn Biodiversität so bequem wird wie Prime –<br>dann skaliert sie.</p>
+            <p class="hab-quote__author">– Eco-Abo statt Amazon 2.0 –</p>
+        </div>
+    </div>
+
+    <hr class="hab-divider">
+
+    <!-- ═══════════════════════ 03 · Geschäftsmodell ═══════════════════════ -->
+    <section class="hab-section hab-animate hab-animate--d3">
+        <div class="hab-section__header">
+            <span class="hab-section__number hab-section__number--sky">03</span>
+            <h2 class="hab-section__title">Geschäftsmodell: Eco-Abo</h2>
+        </div>
+        <p class="hab-section__sub">
+            Nicht Amazon 2.0. Sondern ein nachhaltiges Abo-Modell, das Biodiversität fördert
+            und gleichzeitig den Betrieb der Plattform finanziert.
+        </p>
+
+        <div class="hab-tiers">
+            <!-- Free Tier -->
+            <div class="hab-tier">
+                <span class="hab-tier__badge"
+                    style="background: rgba(255, 255, 255, 0.06); color: var(--hab-ink-muted);">Gratis</span>
+                <h3 class="hab-tier__title">Basis-Software</h3>
+                <p class="hab-tier__price">Kostenlos · Forever</p>
+                <ul class="hab-tier__list">
+                    <li style="color: var(--hab-ink-muted);">Volle App-Funktionalität</li>
+                    <li style="color: var(--hab-ink-muted);">KI-Erkennung lokal</li>
+                    <li style="color: var(--hab-ink-muted);">Dashboard & Statistiken</li>
+                    <li style="color: var(--hab-ink-muted);">Community-Zugang</li>
+                    <li style="color: var(--hab-ink-muted);">Open Source</li>
+                </ul>
+            </div>
+
+            <!-- Hardware Kits -->
+            <div class="hab-tier">
+                <span class="hab-tier__badge"
+                    style="background: rgba(51, 154, 240, 0.12); color: var(--hab-accent-sky);">Einmalig</span>
+                <h3 class="hab-tier__title" style="color: var(--hab-accent-sky);">Sensor-Kits</h3>
+                <p class="hab-tier__price">Modulpakete · ab 29 €</p>
+                <ul class="hab-tier__list">
+                    <li>Vogel-Starter-Kit</li>
+                    <li>Eichhörnchen-Modul</li>
+                    <li>Insekten-Sensor-Pack</li>
+                    <li>Amphibien-Teich-Kit</li>
+                    <li>Erweiterungssensoren</li>
+                </ul>
+            </div>
+
+            <!-- Eco Abo -->
+            <div class="hab-tier hab-tier--highlight">
+                <span class="hab-tier__badge"
+                    style="background: rgba(76, 218, 106, 0.12); color: var(--hab-accent-leaf);">Eco-Abo</span>
+                <h3 class="hab-tier__title" style="color: var(--hab-accent-leaf);">Biodiversitäts-Box</h3>
+                <p class="hab-tier__price">Monatlich · ab 14,90 €</p>
+                <ul class="hab-tier__list">
+                    <li style="color: var(--hab-accent-leaf);">Automatische Futterlieferung</li>
+                    <li style="color: var(--hab-accent-leaf);">Saisonale Saatgut-Pakete</li>
+                    <li style="color: var(--hab-accent-leaf);">Ersatzteile & Verschleiß</li>
+                    <li style="color: var(--hab-accent-leaf);">Biodiversitäts-Box (4× jährlich)</li>
+                    <li style="color: var(--hab-accent-leaf);">Premium-Analytics</li>
+                </ul>
+            </div>
+        </div>
+    </section>
+
+    <hr class="hab-divider">
+
+    <!-- ═══════════════════════ 04 · Psychologie ═══════════════════════ -->
+    <section class="hab-section hab-animate hab-animate--d4">
+        <div class="hab-section__header">
+            <span class="hab-section__number hab-section__number--rose">04</span>
+            <h2 class="hab-section__title">Warum das psychologisch funktioniert</h2>
+        </div>
+        <p class="hab-section__sub">
+            Menschen brauchen keine komplizierten Gründe. Sie brauchen ein System,
+            das ihre natürlichen Motivationen anspricht.
+        </p>
+
+        <div class="hab-psych">
+            <div class="hab-psych__item">
+                <div class="hab-psych__icon">❤️</div>
+                <div>
+                    <p class="hab-psych__title">Helfen wollen</p>
+                    <p class="hab-psych__desc">Der grundlegende menschliche Impuls. Wir machen es greifbar: „Dein Garten
+                        hat heute 3 Arten mehr als vor einem Monat."</p>
+                </div>
+            </div>
+            <div class="hab-psych__item">
+                <div class="hab-psych__icon">👀</div>
+                <div>
+                    <p class="hab-psych__title">Tiere sehen</p>
+                    <p class="hab-psych__desc">Die Kamera-Feeds, die Nahaufnahmen, die Push-Benachrichtigung „Eisvogel
+                        gesichtet!" – der Wow-Effekt treibt Engagement.</p>
+                </div>
+            </div>
+            <div class="hab-psych__item">
+                <div class="hab-psych__icon">📈</div>
+                <div>
+                    <p class="hab-psych__title">Fortschritt messen</p>
+                    <p class="hab-psych__desc">Dashboards, Trends, Raritäten-Score. Gamification ist kein Gimmick – es
+                        ist der Motor für Langzeit-Engagement.</p>
+                </div>
+            </div>
+            <div class="hab-psych__item">
+                <div class="hab-psych__icon">✨</div>
+                <div>
+                    <p class="hab-psych__title">Einfache Systeme</p>
+                    <p class="hab-psych__desc">Flash → Boot → Fertig. Futter wird geliefert. Die App sagt, was zu tun
+                        ist. Kein Nachdenken nötig.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <hr class="hab-divider">
+
+    <!-- ═══════════════════════ 05 · Reality Check ═══════════════════════ -->
+    <section class="hab-section hab-animate hab-animate--d5">
+        <div class="hab-section__header">
+            <span class="hab-section__number hab-section__number--coral">05</span>
+            <h2 class="hab-section__title">Ehrlicher Reality-Check</h2>
+        </div>
+        <p class="hab-section__sub">
+            Das wird nur funktionieren, wenn die Grundlagen stimmen.
+            Kein Wunschdenken – sondern klare Voraussetzungen.
+        </p>
+
+        <div class="hab-reality">
+            <div class="hab-reality__item">
+                <span class="hab-reality__icon">🔧</span>
+                <p class="hab-reality__text">Hardware muss robust & billig sein – kein Bastel-Alptraum</p>
+            </div>
+            <div class="hab-reality__item">
+                <span class="hab-reality__icon">🛠️</span>
+                <p class="hab-reality__text">Kein Wartungs-Albtraum – Plug & Forget statt ständig reparieren</p>
+            </div>
+            <div class="hab-reality__item">
+                <span class="hab-reality__icon">🔒</span>
+                <p class="hab-reality__text">Datenschutz sauber bleiben – keine Kamera-Feeds in der Cloud</p>
+            </div>
+            <div class="hab-reality__item">
+                <span class="hab-reality__icon">🎯</span>
+                <p class="hab-reality__text">Nicht zu viele Arten gleichzeitig – Fokus schlägt Feature-Creep</p>
+            </div>
+        </div>
+
+        <div class="hab-callout" style="margin-top: 1.5rem;">
+            <div class="hab-callout__content">
+                <h4 class="hab-callout__title">🚀 Start-Strategie</h4>
+                <p class="hab-callout__text">
+                    Start klein. Maximaler Fokus. Beweis, dass das Konzept funktioniert, bevor du erweiterst.
+                </p>
+                <ul class="hab-callout__list">
+                    <li><strong>Phase 1:</strong> Vögel + Wasserstation → Proof of Concept</li>
+                    <li><strong>Phase 2:</strong> Eichhörnchen-Modul → Populationsmonitoring</li>
+                    <li><strong>Phase 3:</strong> Insekten-Kit → Blühkalender + Sensoren</li>
+                    <li><strong>Phase 4:</strong> Amphibien-Kit → Teich-Management</li>
+                    <li>Funktioniert Phase 1? → Erweitern. Sonst → Iterieren.</li>
+                </ul>
+            </div>
+        </div>
+    </section>
+
+    <hr class="hab-divider">
+
+    <!-- ═══════════════════════ CTA BOTTOM ═══════════════════════ -->
+    <div class="hab-cta hab-animate hab-animate--d6">
+        <h2 class="hab-cta__title">Beobachten. Handeln. Liefern lassen.</h2>
+        <p class="hab-cta__sub">
+            Biodiversität wird so bequem wie ein Abo.<br>
+            Und jeder Garten wird zur aktiven Umweltstation.
+        </p>
+        <span class="hab-cta__arrow">🐿️ 🐝 🦎 🐦 – Jedes Modul zählt.</span>
+    </div>
+
+</div>
+{% endblock %}

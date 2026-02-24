@@ -40,14 +40,27 @@ Set these in your `.env` file, `docker-compose.yml`, or system environment.
 | `INGEST_DIR` | `/ingest` | Directory for bulk image ingestion |
 | `MODEL_BASE_PATH` | `/models` | Base directory for AI model files |
 
-### Video Source
+### Camera Source Resolution
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `VIDEO_SOURCE` | `0` | Camera source: integer for USB webcam, string for RTSP/HTTP URL |
+| `CAMERA_URL` | `""` | User-facing camera source URL (usually RTSP) |
+| `STREAM_SOURCE_MODE` | `auto` | Source policy: `auto`, `relay`, or `direct` |
+| `GO2RTC_STREAM_NAME` | `camera` | Relay stream name used for `rtsp://<host>:8554/<name>` |
+| `GO2RTC_API_BASE` | `http://127.0.0.1:1984` | Go2RTC health probe endpoint |
+| `GO2RTC_CONFIG_PATH` | `./go2rtc.yaml` | Writable go2rtc config file path synchronized by the app |
 | `STREAM_FPS_CAPTURE` | `5.0` | Capture FPS throttle (reduces CPU load) |
 | `STREAM_FPS` | `0` | UI MJPEG feed throttle (0 = unlimited) |
 | `STREAM_WIDTH_OUTPUT_RESIZE` | `640` | Width for live stream preview in the UI |
+
+Resolver behavior:
+- `auto`: use relay when go2rtc probe succeeds; otherwise use `CAMERA_URL` directly
+- `relay`: always use go2rtc relay URL
+- `direct`: always use `CAMERA_URL`
+
+Deployment-specific `GO2RTC_CONFIG_PATH` values:
+- Docker Compose: `/output/go2rtc.yaml`
+- RPi appliance (`app.service`): `/opt/app/data/output/go2rtc.yaml`
 
 ### Detection & Classification
 
@@ -91,11 +104,32 @@ Set these in your `.env` file, `docker-compose.yml`, or system environment.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `CPU_LIMIT` | `1` | CPU affinity cap (≤0 disables affinity) |
+| `CPU_LIMIT` | `0` | CPU affinity cap (`0` disables affinity; `1+` pins to first N available CPUs) |
+
+### Deep Scan Stability
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `DEEP_SCAN_GATE_ENABLED` | `True` | When `True`, live detection and classification loops pause while a Deep Scan job runs (prevents resource contention on RPi). Set `False` to allow concurrent Deep Scan + live detection. Runtime-changeable via Settings UI. |
 
 ---
 
 ## Important Notes
+
+### Inbox Import Requirements (EXIF Date/Time + GPS)
+
+Inbox imports (files uploaded/copied into the Inbox) can be configured to require
+EXIF metadata before a file is ingested into the main database.
+
+If enabled, the app will **skip** inbox files unless they contain:
+- EXIF capture timestamp: `DateTimeOriginal` (preferred) or `DateTimeDigitized`
+- EXIF GPS coordinates: `GPSLatitude` and `GPSLongitude`
+
+Runtime settings:
+- `INBOX_REQUIRE_EXIF_DATETIME` (default: `True`)
+- `INBOX_REQUIRE_EXIF_GPS` (default: `True`)
+
+Skipped files are moved to `inbox/skipped/YYYYMMDD/`.
 
 ### Ingest vs. Live Operation
 
@@ -147,7 +181,10 @@ INGEST_DIR=/data/watchmybirds/ingest
 MODEL_BASE_PATH=/data/watchmybirds/models
 
 # Camera
-VIDEO_SOURCE=rtsp://admin:password@192.168.1.100:554/stream1
+CAMERA_URL=rtsp://admin:password@192.168.1.100:554/stream1
+STREAM_SOURCE_MODE=auto
+GO2RTC_API_BASE=http://go2rtc:1984
+GO2RTC_CONFIG_PATH=/output/go2rtc.yaml
 STREAM_FPS_CAPTURE=5.0
 
 # Detection

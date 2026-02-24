@@ -245,8 +245,8 @@ fabric.properties
 .idea/caches/build_file_checksums.ser
 
 # Runtime data (ignore contents)
-ignore/
 output/**
+data/**
 models/**
 ingest/**
 
@@ -264,9 +264,12 @@ ingest/**
 config/cameras.yaml
 # Local Go2RTC runtime config (may contain credentials)
 go2rtc.yaml
+# Local docker-compose (user creates from docker-compose.example.yml)
+docker-compose.yml
 
 # Codex agent metadata
 .agent/
+AGENTS.md
 private_docs/
 /_debug_logs
-/data/output
+tools/onvif_ptz_tester/.onvif_tester_settings.json

@@ -17,7 +17,7 @@
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
 
     <!-- Design System (Source of Truth for all styling) -->
-    <link rel="stylesheet" href="/assets/design-system.css">
+    <link rel="stylesheet" href="/assets/design-system.css?v=20260222">
 
     {% block head %}{% endblock %}
 </head>
@@ -32,12 +32,92 @@
         </div>
     </main>
 
+    <footer class="app-footer py-2 text-center text-muted">
+        <small>WatchMyBirds</small>
+    </footer>
+
     {% block modals %}{% endblock %}
 
     <!-- Bootstrap JS Bundle -->
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
 
     {% block scripts %}{% endblock %}
+
+    {# ── Toast Container ──────────────────────────────── #}
+    <div class="wm-toast-container" id="wmToastContainer"></div>
+
+    {# ── Global UX: Fade-In Observer + Toast API ──── #}
+    <script>
+        (function () {
+            'use strict';
+
+            /* ── Fade-In Observer ─────────────────────────── */
+            if ('IntersectionObserver' in window) {
+                const obs = new IntersectionObserver(function (entries) {
+                    entries.forEach(function (entry) {
+                        if (entry.isIntersecting) {
+                            entry.target.classList.add('is-visible');
+                            obs.unobserve(entry.target);
+                        }
+                    });
+                }, { threshold: 0.08 });
+
+                document.querySelectorAll('.fade-in-item').forEach(function (el) {
+                    obs.observe(el);
+                });
+
+                /* Re-observe after dynamic content updates (auto-refresh) */
+                const mo = new MutationObserver(function (mutations) {
+                    mutations.forEach(function (m) {
+                        m.addedNodes.forEach(function (node) {
+                            if (node.nodeType !== 1) return;
+                            if (node.classList && node.classList.contains('fade-in-item')) obs.observe(node);
+                            node.querySelectorAll && node.querySelectorAll('.fade-in-item').forEach(function (el) {
+                                obs.observe(el);
+                            });
+                        });
+                    });
+                });
+                mo.observe(document.body, { childList: true, subtree: true });
+            } else {
+                /* Fallback: show everything immediately */
+                document.querySelectorAll('.fade-in-item').forEach(function (el) {
+                    el.classList.add('is-visible');
+                });
+            }
+
+            /* ── Toast Notification API ───────────────────── */
+            var container = document.getElementById('wmToastContainer');
+            var ICONS = { success: '✓', error: '✕', info: 'ℹ' };
+
+            window.wmToast = function (message, type, durationMs) {
+                type = type || 'info';
+                durationMs = durationMs || 3500;
+
+                var toast = document.createElement('div');
+                toast.className = 'wm-toast wm-toast--' + type;
+                toast.innerHTML =
+                    '<span class="wm-toast__icon">' + (ICONS[type] || 'ℹ') + '</span>' +
+                    '<span class="wm-toast__text">' + message + '</span>' +
+                    '<button class="wm-toast__close" aria-label="Close">✕</button>' +
+                    '<div class="wm-toast__progress" style="animation-duration:' + durationMs + 'ms;"></div>';
+
+                var closeBtn = toast.querySelector('.wm-toast__close');
+                var timer;
+
+                function dismiss() {
+                    clearTimeout(timer);
+                    toast.classList.add('wm-toast--dismiss');
+                    setTimeout(function () { toast.remove(); }, 300);
+                }
+
+                closeBtn.addEventListener('click', dismiss);
+                timer = setTimeout(dismiss, durationMs);
+
+                container.appendChild(toast);
+            };
+        })();
+    </script>
 </body>
 
 </html>

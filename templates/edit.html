@@ -90,7 +90,8 @@
 
                 <div class="wm-tile__media wm-tile__media--bbox">
                     <img class="wm-tile__image wm-tile__image--bbox" src="{{ det.display_path }}"
-                        alt="{{ det.cls_class_name or det.od_class_name }}">
+                        alt="{{ det.cls_class_name or det.od_class_name }}" data-thumb-src="{{ det.display_path }}"
+                        data-full-src="{{ det.full_path }}">
                 </div>
 
                 <div class="wm-tile__body">
@@ -145,6 +146,10 @@
                     onclick="return confirmReject()">
                     <i class="bi bi-trash"></i> Move to Trash
                 </button>
+                <button type="submit" name="action" value="reject_all" class="btn btn-outline-danger px-4"
+                    onclick="return confirmDeleteAll()">
+                    <i class="bi bi-trash"></i> ⚠️ Delete ALL Day
+                </button>
                 <button type="submit" name="action" value="download" class="btn btn-success px-4">
                     <i class="bi bi-download"></i> Download Selected (ZIP)
                 </button>
@@ -168,6 +173,27 @@
         }
     }
 
+    function handleCheckboxSelection(checkbox, shiftKey) {
+        if (!checkbox) return;
+
+        const checkboxes = Array.from(document.querySelectorAll('.wm-tile__checkbox'));
+        const currentIndex = Number(checkbox.dataset.index);
+
+        if (shiftKey && lastClickedIndex !== null) {
+            toggleRange(checkboxes, lastClickedIndex, currentIndex, checkbox.checked);
+        }
+
+        lastClickedIndex = currentIndex;
+        updateCounter();
+    }
+
+    // Support Shift+Click directly on checkboxes (primary user interaction path).
+    document.querySelectorAll('.wm-tile__checkbox').forEach((checkbox) => {
+        checkbox.addEventListener('click', (event) => {
+            handleCheckboxSelection(checkbox, event.shiftKey);
+        });
+    });
+
     document.querySelectorAll('.wm-tile--bbox').forEach((tile) => {
         tile.addEventListener('click', (event) => {
             if (event.target.closest('.wm-tile__select')) return;
@@ -176,16 +202,7 @@
             if (!checkbox) return;
 
             checkbox.checked = !checkbox.checked;
-
-            const checkboxes = Array.from(document.querySelectorAll('.wm-tile__checkbox'));
-            const currentIndex = Number(checkbox.dataset.index);
-
-            if (event.shiftKey && lastClickedIndex !== null) {
-                toggleRange(checkboxes, lastClickedIndex, currentIndex, checkbox.checked);
-            }
-
-            lastClickedIndex = currentIndex;
-            updateCounter();
+            handleCheckboxSelection(checkbox, event.shiftKey);
         });
     });
 
@@ -209,6 +226,19 @@
             return false;
         }
         return confirm('Are you sure you want to move ' + count + ' items to the trash?');
+    }
+
+    function confirmDeleteAll() {
+        if (!confirm('⚠️ WARNING!\n\nThis will delete ALL images of this ENTIRE DAY!\n\n(Including images on other pages)\n\nAre you sure?')) {
+            return false;
+        }
+
+        // Double confirmation for destructive action
+        if (!confirm('Really move ALL images of this day to trash?')) {
+            return false;
+        }
+
+        return true;  // Let the form submit with action=reject_all
     }
 </script>
 {% endblock %}

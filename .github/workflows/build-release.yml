@@ -144,6 +144,22 @@ jobs:
           "
           
           # ---------------------------------------------------------
+          # VERIFY INJECTED CODE (Debug: remove once confirmed)
+          # ---------------------------------------------------------
+          echo "=== VERIFY: Checking injected app code ==="
+          echo "--- stream.html: Best of Species ---"
+          sudo grep "Best of Species" mount_point/opt/app/templates/stream.html || echo "❌ MISSING: Best of Species"
+          echo "--- appbar.html: weather count ---"
+          sudo grep -c "weather" mount_point/opt/app/templates/partials/appbar.html || echo "❌ MISSING: weather in appbar"
+          echo "--- web_interface.py: best_species_preview count ---"
+          sudo grep -c "best_species_preview" mount_point/opt/app/web/web_interface.py || echo "❌ MISSING: best_species_preview"
+          echo "--- weather_service.py exists? ---"
+          ls -la mount_point/opt/app/web/services/weather_service.py || echo "❌ MISSING: weather_service.py"
+          echo "--- commit.txt content ---"
+          cat mount_point/opt/app/commit.txt
+          echo "=== VERIFY COMPLETE ==="
+
+          # ---------------------------------------------------------
           # CLEANUP
           # ---------------------------------------------------------
           sudo umount mount_point/sys
@@ -156,23 +172,27 @@ jobs:
           sudo umount mount_point
           sudo losetup -d $LOOP_DEV
 
-      - name: Rename Image
+      - name: Set Build Date
+        id: builddate
         run: |
-          DATE=$(date +%Y-%m-%d)
-          mv golden.img watchmybirds-rpi-${DATE}.img
+          echo "date=$(date +%Y-%m-%d-%H%M)" >> $GITHUB_OUTPUT
+          echo "date_short=$(date +%Y-%m-%d)" >> $GITHUB_OUTPUT
+
+      - name: Rename Image
+        run: mv golden.img watchmybirds-rpi-${{ steps.builddate.outputs.date }}.img
 
       - name: Compress Release Image
-        run: |
-          DATE=$(date +%Y-%m-%d)
-          xz -z -1 -T0 watchmybirds-rpi-${DATE}.img
+        run: xz -z -1 -T0 watchmybirds-rpi-${{ steps.builddate.outputs.date }}.img
 
       - name: Create Release and Upload
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          DATE=$(date +%Y-%m-%d)
-          TAG="rpi-${DATE}"
-          IMG_FILE="watchmybirds-rpi-${DATE}.img.xz"
+          set -euo pipefail
+          
+          TAG="rpi-${{ steps.builddate.outputs.date }}"
+          IMG_FILE="watchmybirds-rpi-${{ steps.builddate.outputs.date }}.img.xz"
+          DATE_SHORT="${{ steps.builddate.outputs.date_short }}"
           
           # Create Release Notes File (content at column 0 to avoid Markdown indentation issues)
           cat > release_notes.md << 'RELEASE_EOF'
@@ -181,22 +201,21 @@ jobs:
           **Build Date:** PLACEHOLDER_DATE
           **Commit:** PLACEHOLDER_COMMIT
           
-          Flash to SD card with [Raspberry Pi Imager](https://www.raspberrypi.com/software/) and boot on Raspberry Pi 5.
+          Flash to SD card with [Raspberry Pi Imager](https://www.raspberrypi.com/software/) and boot on Raspberry Pi 4 or 5.
           
           See [Installation Guide](https://github.com/PLACEHOLDER_REPO#raspberry-pi-appliance) for setup instructions.
           RELEASE_EOF
-          sed -i "s/PLACEHOLDER_DATE/${DATE}/g" release_notes.md
+          sed -i "s/PLACEHOLDER_DATE/${DATE_SHORT}/g" release_notes.md
           sed -i "s/PLACEHOLDER_COMMIT/${{ github.sha }}/g" release_notes.md
           sed -i "s|PLACEHOLDER_REPO|${{ github.repository }}|g" release_notes.md
           
-          # Create Release if not exists
-          gh release view "$TAG" --repo "${{ github.repository }}" >/dev/null 2>&1 || \
-            gh release create "$TAG" \
-              --repo "${{ github.repository }}" \
-              --title "🍓 Raspberry Pi Image – ${DATE}" \
-              --notes-file release_notes.md \
-              --generate-notes \
-              --latest
+          echo "Creating release $TAG..."
+          gh release create "$TAG" \
+            --repo "${{ github.repository }}" \
+            --title "🍓 Raspberry Pi Image – ${DATE_SHORT}" \
+            --notes-file release_notes.md \
+            --generate-notes \
+            --latest
 
           # Upload Asset
           echo "Uploading $IMG_FILE to release $TAG..."

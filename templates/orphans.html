@@ -9,28 +9,38 @@
         <span class="page-control-bar__title">Review Queue</span>
         <span class="page-control-bar__badge">{{ orphans|length }}</span>
         {% if orphans %}
+        {% set confirmable_items = orphans | selectattr('review_reason', 'ne', 'orphan') | list %}
         <label class="page-control-bar__select-all">
             <input type="checkbox" id="select-all" class="page-control-bar__checkbox" onclick="toggleSelectAll(this)" {%
                 if orphans|length==0 %}disabled{% endif %} aria-label="Select all items">
             <span class="page-control-bar__select-label">Select All</span>
         </label>
+        <label class="page-control-bar__select-all" style="margin-left: 12px;"
+            title="Focus on low-confidence detections">
+            <input type="checkbox" id="hide-orphans" class="page-control-bar__checkbox"
+                onchange="toggleOrphanFilter(this)" aria-label="Hide No Detection items">
+            <span class="page-control-bar__select-label">Hide No Detection</span>
+        </label>
         {% endif %}
     </div>
     <div class="page-control-bar__meta">
         <span id="selected-counter">0 items selected</span>
+        <span id="deep-scan-status" style="margin-left: 12px;">Deep Scan: Loading...</span>
     </div>
     <div class="page-control-bar__right">
         {% if orphans %}
+        {% if confirmable_items %}
         <button type="button" class="btn btn--primary" onclick="bulkAction('confirm')" id="btn-bird-present"
             aria-label="Bird Present">
             <span aria-hidden="true">✓</span> <span class="btn__label">Bird Present</span>
         </button>
+        {% endif %}
         <button type="button" class="btn btn--secondary" onclick="bulkAction('skip')" id="btn-skip" aria-label="Skip">
             <span aria-hidden="true">→</span> <span class="btn__label">Skip</span>
         </button>
         <button type="button" class="btn btn--danger" onclick="bulkAction('no_bird')" id="btn-no-bird"
-            aria-label="No Bird">
-            <span aria-hidden="true">✗</span> <span class="btn__label">No Bird</span>
+            aria-label="Move to Trash">
+            <span aria-hidden="true">✗</span> <span class="btn__label">Move to Trash</span>
         </button>
         {% endif %}
         <a href="/" class="btn btn--secondary">← Stream</a>
@@ -52,7 +62,7 @@
 {% if orphans %}
 <div class="orphan-grid">
     {% for img in orphans %}
-    <div class="wm-tile wm-tile--review" data-filename="{{ img.filename }}">
+    <div class="wm-tile wm-tile--review" data-filename="{{ img.filename }}" data-reason="{{ img.review_reason }}">
         <div class="wm-tile__select">
             <input class="form-check-input wm-tile__checkbox" type="checkbox" value="{{ img.filename }}"
                 onchange="updateCounter()">
@@ -78,16 +88,24 @@
         </div>
 
         <div class="wm-tile__actions">
+            {% if img.review_reason == 'orphan' %}
+            <button type="button" class="btn btn-sm btn-info" onclick="analyzeAction(event, '{{ img.filename }}')"
+                title="Deep Scan">
+                <i class="bi bi-search"></i>
+            </button>
+            {% endif %}
+            {% if img.review_reason != 'orphan' %}
             <button type="button" class="btn btn-sm btn-success" onclick="singleAction('{{ img.filename }}', 'confirm')"
                 title="Bird Present">
                 <i class="bi bi-check"></i>
             </button>
+            {% endif %}
             <button type="button" class="btn btn-sm btn-outline-secondary"
                 onclick="singleAction('{{ img.filename }}', 'skip')" title="Skip">
                 <i class="bi bi-arrow-right"></i>
             </button>
             <button type="button" class="btn btn-sm btn-danger" onclick="singleAction('{{ img.filename }}', 'no_bird')"
-                title="No Bird">
+                title="Move to Trash">
                 <i class="bi bi-x"></i>
             </button>
         </div>
@@ -113,12 +131,108 @@
 {% endblock %}
 
 {% block scripts %}
-<script src="/assets/js/gallery_utils.js"></script>
+<script src="/assets/js/gallery_utils.js?v=test_v3"></script>
 <script>
-    // Track if user has confirmed "No Bird" action once this session
+    // Track if user has confirmed "Move to Trash" action once this session
     let noBirdConfirmed = localStorage.getItem('noBirdConfirmed') === 'true';
 
+    function initReviewDefaultBboxes(img) {
+        const viewer = img.closest('.wm-image-viewer');
+        if (!viewer) return;
+
+        // Fallback preview is generated independently, bbox coordinates no longer match.
+        if (viewer.classList.contains('wm-image-viewer--fallback')) return;
+
+        const bx = parseFloat(viewer.dataset.bboxX);
+        const by = parseFloat(viewer.dataset.bboxY);
+        const bw = parseFloat(viewer.dataset.bboxW);
+        const bh = parseFloat(viewer.dataset.bboxH);
+        if (isNaN(bx) || isNaN(by) || isNaN(bw) || isNaN(bh) || bw <= 0 || bh <= 0) return;
+
+        const canvas = viewer.querySelector('.bbox-overlay');
+        if (!canvas || typeof drawBoundingBoxes !== 'function') return;
+
+        canvas.style.display = 'block';
+        drawBoundingBoxes(canvas, img, [{
+            x: bx,
+            y: by,
+            w: bw,
+            h: bh,
+            name: viewer.dataset.bboxName || 'Detection',
+            isCurrent: true
+        }], null);
+    }
+
+    async function refreshDeepScanStatus() {
+        const statusEl = document.getElementById('deep-scan-status');
+        if (!statusEl) return;
+
+        try {
+            const response = await fetch('/api/status', { cache: 'no-store' });
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}`);
+            }
+
+            const data = await response.json();
+            const active = data.deep_scan_active === true;
+            const pending = Number.isFinite(data.deep_scan_queue_pending) ? data.deep_scan_queue_pending : 0;
+            const remaining = Number.isFinite(data.deep_scan_candidates_remaining) ? data.deep_scan_candidates_remaining : 0;
+
+            statusEl.textContent = `Deep Scan: ${active ? 'Running' : 'Idle'} | Queue: ${pending} | Remaining: ${remaining}`;
+        } catch (error) {
+            statusEl.textContent = 'Deep Scan: Status unavailable';
+        }
+    }
+
+    async function analyzeAction(event, filename) {
+        if (event) event.stopPropagation();
+
+        const btn = event ? event.currentTarget : null;
+        const originalHtml = btn ? btn.innerHTML : '';
+
+        if (btn) {
+            btn.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>';
+            btn.disabled = true;
+        }
+
+        try {
+            const response = await fetch(`/api/review/analyze/${filename}`, {
+                method: 'POST'
+            });
+            const data = await response.json();
+
+            if (data.status === 'success') {
+                if (btn) {
+                    btn.classList.remove('btn-info');
+                    btn.classList.add('btn-secondary');
+                    btn.title = "Analysis Queued";
+                    btn.innerHTML = '<i class="bi bi-hourglass-split"></i>';
+                }
+                // Also update modal button if exists
+                const modalBtn = document.getElementById(`btn-analyze-modal-${filename.replace(/\./g, '_')}`);
+                if (modalBtn) {
+                    modalBtn.disabled = true;
+                    modalBtn.innerHTML = '<i class="bi bi-hourglass-split"></i> Queued';
+                }
+            } else {
+                alert('Error: ' + data.message);
+                if (btn) {
+                    btn.innerHTML = originalHtml;
+                    btn.disabled = false;
+                }
+            }
+        } catch (error) {
+            console.error('Analysis error:', error);
+            alert('Network error.');
+            if (btn) {
+                btn.innerHTML = originalHtml;
+                btn.disabled = false;
+            }
+        }
+    }
+
     function toggleSelectAll(source) {
+
         const checkboxes = document.querySelectorAll('.wm-tile__checkbox');
         checkboxes.forEach(cb => cb.checked = source.checked);
         updateCounter();
@@ -196,9 +310,9 @@
             return;
         }
 
-        // One-time confirmation for "No Bird"
+        // One-time confirmation for "Move to Trash"
         if (action === 'no_bird' && !noBirdConfirmed) {
-            if (!confirm('Mark ' + filenames.length + ' image(s) as "No Bird"?\n\nThese will be moved to Trash (recoverable). Files are NOT deleted.\n\n(This confirmation won\'t show again this session)')) {
+            if (!confirm('Move ' + filenames.length + ' image(s) to Trash?\n\nThese will be moved to Trash (recoverable). Files are NOT deleted.\n\n(This confirmation won\'t show again this session)')) {
                 return;
             }
             noBirdConfirmed = true;
@@ -209,9 +323,9 @@
     }
 
     function singleAction(filename, action) {
-        // One-time confirmation for "No Bird"
+        // One-time confirmation for "Move to Trash"
         if (action === 'no_bird' && !noBirdConfirmed) {
-            if (!confirm('Mark this image as "No Bird"?\n\nIt will be moved to Trash (recoverable). File is NOT deleted.\n\n(This confirmation won\'t show again this session)')) {
+            if (!confirm('Move this image to Trash?\n\nIt will be moved to Trash (recoverable). File is NOT deleted.\n\n(This confirmation won\'t show again this session)')) {
                 return;
             }
             noBirdConfirmed = true;
@@ -296,5 +410,53 @@
             handleCheckboxClick(checkbox, e.shiftKey);
         });
     });
+
+    // --- Hide No Detection filter ---
+    function toggleOrphanFilter(checkbox) {
+        const hide = checkbox.checked;
+        localStorage.setItem('reviewHideOrphans', hide ? 'true' : 'false');
+        applyOrphanFilter(hide);
+    }
+
+    function applyOrphanFilter(hide) {
+        document.querySelectorAll('.wm-tile--review[data-reason="orphan"]').forEach(tile => {
+            tile.style.display = hide ? 'none' : '';
+            // Uncheck hidden tiles
+            if (hide) {
+                const cb = tile.querySelector('.wm-tile__checkbox');
+                if (cb) cb.checked = false;
+            }
+        });
+        updateCounter();
+        // Update badge count
+        const visible = document.querySelectorAll('.wm-tile--review').length
+            - (hide ? document.querySelectorAll('.wm-tile--review[data-reason="orphan"]').length : 0);
+        const badge = document.querySelector('.page-control-bar__badge');
+        if (badge) badge.textContent = visible;
+    }
+
+    // Restore filter state from localStorage
+    (function () {
+        const saved = localStorage.getItem('reviewHideOrphans') === 'true';
+        const cb = document.getElementById('hide-orphans');
+        if (cb && saved) {
+            cb.checked = true;
+            applyOrphanFilter(true);
+        }
+    })();
+
+    document.addEventListener('shown.bs.modal', function (event) {
+        const modal = event.target;
+        if (!modal.classList.contains('gallery-modal')) return;
+        if (modal.getAttribute('data-modal-group') !== 'review') return;
+
+        const img = modal.querySelector('.wm-image-viewer__img');
+        if (img && img.complete && img.naturalWidth > 0) {
+            initReviewDefaultBboxes(img);
+        }
+    });
+
+    refreshDeepScanStatus();
+    setInterval(refreshDeepScanStatus, 15000);
 </script>
 {% endblock %}
