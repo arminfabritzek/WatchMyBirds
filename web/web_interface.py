@@ -1943,6 +1943,7 @@ def create_web_interface(detection_manager, system_monitor=None):
             logger.error(f"Error fetching dashboard stats: {e}")
 
         # 1c. Bird Visit Stats (spatio-temporal clustering, read-only)
+        species_visit_counts: dict[str, int] = {}
         try:
             from utils.db.analytics import fetch_bird_visits
 
@@ -1953,6 +1954,7 @@ def create_web_interface(detection_manager, system_monitor=None):
             dashboard_stats["avg_visit_duration_sec"] = visit_summary.get(
                 "avg_visit_duration_sec", 0
             )
+            species_visit_counts = visit_summary.get("species_visit_counts", {})
         except Exception as e:
             logger.error(f"Error fetching visit stats: {e}")
 
@@ -2115,17 +2117,10 @@ def create_web_interface(detection_manager, system_monitor=None):
         try:
             species_summary_table = get_daily_species_summary(today_iso)
 
-            # Create lookup for count per species
-            species_count_map = {}
-            for item in species_summary_table:
-                species_key = item.get("species", "")
-                if species_key:
-                    species_count_map[species_key] = item.get("count", 0)
-
-            # Enrich visual_summary with count
+            # Enrich visual_summary with visit count (not detection count)
             for det in visual_summary:
                 species_key = det.get("species") or det.get("latin_name", "")
-                det["count"] = species_count_map.get(species_key, 0)
+                det["count"] = species_visit_counts.get(species_key, 0)
 
         except Exception as e:
             logger.error(f"Error fetching species summary table: {e}")
