@@ -671,6 +671,8 @@ def fetch_simulation_data(
 # Tuning constants – safe to adjust without touching the DB
 _VISIT_MAX_GAP_SEC = 60  # Max seconds between photos in the same visit
 _VISIT_MAX_BBOX_DIST = 0.25  # Max bbox center shift (fraction of image width)
+_VISIT_MIN_BBOX_IOU = 0.02  # Allow slight overlap to keep one moving bird together
+_VISIT_MIN_AREA_SIMILARITY = 0.2  # Guard against merging birds at very different scale
 
 
 def _parse_timestamp(ts: str) -> float:
@@ -707,10 +709,49 @@ def _bbox_center_distance(
     return math.sqrt((cx_a - cx_b) ** 2 + (cy_a - cy_b) ** 2)
 
 
+def _bbox_iou(
+    ax: float,
+    ay: float,
+    aw: float,
+    ah: float,
+    bx: float,
+    by: float,
+    bw: float,
+    bh: float,
+) -> float:
+    """Intersection-over-union for normalised xywh boxes."""
+    ax1, ay1 = (ax or 0), (ay or 0)
+    ax2, ay2 = ax1 + (aw or 0), ay1 + (ah or 0)
+    bx1, by1 = (bx or 0), (by or 0)
+    bx2, by2 = bx1 + (bw or 0), by1 + (bh or 0)
+
+    inter_w = max(0.0, min(ax2, bx2) - max(ax1, bx1))
+    inter_h = max(0.0, min(ay2, by2) - max(ay1, by1))
+    inter_area = inter_w * inter_h
+    area_a = max(0.0, (aw or 0) * (ah or 0))
+    area_b = max(0.0, (bw or 0) * (bh or 0))
+    union = area_a + area_b - inter_area
+    if union <= 0:
+        return 0.0
+    return inter_area / union
+
+
+def _bbox_area_similarity(aw: float, ah: float, bw: float, bh: float) -> float:
+    """Size similarity ratio in [0..1], where 1 means equal bbox area."""
+    area_a = max(0.0, (aw or 0) * (ah or 0))
+    area_b = max(0.0, (bw or 0) * (bh or 0))
+    if area_a <= 0 or area_b <= 0:
+        # Missing/invalid box sizes should not break grouping entirely.
+        return 1.0
+    return min(area_a, area_b) / max(area_a, area_b)
+
+
 def fetch_bird_visits(
     conn: sqlite3.Connection,
     max_gap_sec: float = _VISIT_MAX_GAP_SEC,
     max_bbox_dist: float = _VISIT_MAX_BBOX_DIST,
+    min_bbox_iou: float = _VISIT_MIN_BBOX_IOU,
+    min_area_similarity: float = _VISIT_MIN_AREA_SIMILARITY,
     since_timestamp: str | None = None,
 ) -> dict[str, Any]:
     """
@@ -718,10 +759,11 @@ def fetch_bird_visits(
 
     Algorithm (read-only, no DB writes):
       1. Query all active detections with timestamp + bbox + species.
-      2. Sort by species, then timestamp.
-      3. Walk through the sorted list: consecutive detections of the same
-         species within `max_gap_sec` and `max_bbox_dist` belong to the
-         same visit.
+      2. Sort globally by timestamp.
+      3. Associate each detection to the best matching *open* visit of the
+         same species using gated nearest-neighbour matching (time + bbox).
+         This is a lightweight MOT-style heuristic (SORT-like association,
+         but no Kalman filter) and keeps risk low while handling overlaps.
 
     Args:
         since_timestamp: Optional YYYYMMDD_HHMMSS filter. If provided, only
@@ -769,7 +811,7 @@ def fetch_bird_visits(
         WHERE d.status = 'active'
           AND COALESCE(c.cls_class_name, d.od_class_name) IS NOT NULL
           {time_filter}
-        ORDER BY species ASC, i.timestamp ASC
+        ORDER BY i.timestamp ASC, species ASC
     """,
         params,
     )
@@ -788,7 +830,7 @@ def fetch_bird_visits(
 
     # ── Clustering pass ──────────────────────────────────────────────
     visits: list[dict[str, Any]] = []
-    current_visit: dict[str, Any] | None = None
+    open_visits: list[dict[str, Any]] = []
 
     for row in rows:
         det_id = row["detection_id"]
@@ -800,53 +842,94 @@ def fetch_bird_visits(
         bw = row["bbox_w"] or 0
         bh = row["bbox_h"] or 0
 
-        extend = False
-        if current_visit and current_visit["species"] == species:
-            time_diff = epoch - current_visit["_last_epoch"]
+        # Auto-close stale visits first (no future detection can match anymore).
+        still_open: list[dict[str, Any]] = []
+        for visit in open_visits:
+            if epoch - visit["_last_epoch"] > max_gap_sec:
+                visits.append(visit)
+            else:
+                still_open.append(visit)
+        open_visits = still_open
+
+        # Find best same-species candidate with gating (nearest neighbour MOT style).
+        best_visit: dict[str, Any] | None = None
+        best_cost: float | None = None
+        for visit in open_visits:
+            if visit["species"] != species:
+                continue
+
+            time_diff = epoch - visit["_last_epoch"]
+            if time_diff < 0 or time_diff > max_gap_sec:
+                continue
+
             spatial_diff = _bbox_center_distance(
-                current_visit["_last_bx"],
-                current_visit["_last_by"],
-                current_visit["_last_bw"],
-                current_visit["_last_bh"],
+                visit["_last_bx"],
+                visit["_last_by"],
+                visit["_last_bw"],
+                visit["_last_bh"],
                 bx,
                 by,
                 bw,
                 bh,
             )
-            if 0 <= time_diff <= max_gap_sec and spatial_diff <= max_bbox_dist:
-                extend = True
+            overlap = _bbox_iou(
+                visit["_last_bx"],
+                visit["_last_by"],
+                visit["_last_bw"],
+                visit["_last_bh"],
+                bx,
+                by,
+                bw,
+                bh,
+            )
+            area_similarity = _bbox_area_similarity(
+                visit["_last_bw"],
+                visit["_last_bh"],
+                bw,
+                bh,
+            )
 
-        if extend:
-            current_visit["end_time"] = ts_str
-            current_visit["_last_epoch"] = epoch
-            current_visit["_last_bx"] = bx
-            current_visit["_last_by"] = by
-            current_visit["_last_bw"] = bw
-            current_visit["_last_bh"] = bh
-            current_visit["photo_count"] += 1
-            current_visit["detection_ids"].append(det_id)
-        else:
-            # Finalise previous visit
-            if current_visit:
-                visits.append(current_visit)
-            current_visit = {
-                "species": species,
-                "start_time": ts_str,
-                "end_time": ts_str,
-                "_last_epoch": epoch,
-                "_start_epoch": epoch,
-                "_last_bx": bx,
-                "_last_by": by,
-                "_last_bw": bw,
-                "_last_bh": bh,
-                "photo_count": 1,
-                "detection_ids": [det_id],
-            }
+            if area_similarity < min_area_similarity:
+                continue
+            if spatial_diff > max_bbox_dist and overlap < min_bbox_iou:
+                continue
 
-    # Don't forget the last visit
-    if current_visit:
-        visits.append(current_visit)
+            # Lower cost is better: normalised time + distance, rewarded by overlap.
+            cost = (time_diff / max(max_gap_sec, 1e-6)) + (
+                spatial_diff / max(max_bbox_dist, 1e-6)
+            ) - 0.5 * overlap
+            if best_cost is None or cost < best_cost:
+                best_cost = cost
+                best_visit = visit
 
+        if best_visit is None:
+            open_visits.append(
+                {
+                    "species": species,
+                    "start_time": ts_str,
+                    "end_time": ts_str,
+                    "_last_epoch": epoch,
+                    "_start_epoch": epoch,
+                    "_last_bx": bx,
+                    "_last_by": by,
+                    "_last_bw": bw,
+                    "_last_bh": bh,
+                    "photo_count": 1,
+                    "detection_ids": [det_id],
+                }
+            )
+            continue
+
+        best_visit["end_time"] = ts_str
+        best_visit["_last_epoch"] = epoch
+        best_visit["_last_bx"] = bx
+        best_visit["_last_by"] = by
+        best_visit["_last_bw"] = bw
+        best_visit["_last_bh"] = bh
+        best_visit["photo_count"] += 1
+        best_visit["detection_ids"].append(det_id)
+
+    visits.extend(open_visits)
     # ── Clean up internal keys & compute duration ────────────────────
     for v in visits:
         v["duration_sec"] = round(v["_last_epoch"] - v["_start_epoch"], 1)
