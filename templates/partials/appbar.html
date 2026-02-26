@@ -32,10 +32,10 @@
             Analytics
         </a>
 
-        {# Spacer for visual separation #}
+        {# Auth: Login / Admin links + Logout #}
         <span class="app-bar__spacer"></span>
-
-        {# SECONDARY: Admin/utility actions (muted) #}
+        {% if session.get('authenticated') %}
+        {# SECONDARY: Admin/utility actions (only when logged in) #}
         <a class="app-bar__link app-bar__link--secondary{% if current_path == '/admin/review' %} active{% endif %}"
             href="/admin/review">
             Review
@@ -44,7 +44,6 @@
             href="/inbox">
             Inbox
         </a>
-
         <a class="app-bar__link app-bar__link--secondary{% if current_path == '/trash' %} active{% endif %}"
             href="/trash">
             Trash
@@ -57,6 +56,14 @@
             href="/logs">
             Logs
         </a>
+        <a class="app-bar__link app-bar__link--secondary" href="/logout" title="Logout">
+            🔓
+        </a>
+        {% else %}
+        <a class="app-bar__link app-bar__link--secondary" href="/login" title="Login">
+            🔒
+        </a>
+        {% endif %}
     </nav>
 </header>
 
