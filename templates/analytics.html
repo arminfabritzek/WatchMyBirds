@@ -11,26 +11,26 @@
     {# Dashboard Header #}
     <header class="dashboard-header">
         <h1 class="dashboard-header__title">Analytics</h1>
-        <p class="dashboard-header__subtitle">All-Time Detection Statistics</p>
+        <p class="dashboard-header__subtitle">All-Time Observation Statistics</p>
     </header>
 
     {# Summary Cards #}
     <div class="summary-grid">
         <div class="summary-card">
             <div class="summary-card__value">{{ summary.total_detections | default(0) }}</div>
-            <div class="summary-card__label">Total Detections</div>
+            <div class="summary-card__label">Total Observations</div>
         </div>
         <div class="summary-card summary-card--accent">
             <div class="summary-card__value">{{ summary.total_species | default(0) }}</div>
-            <div class="summary-card__label">Species Detected</div>
+            <div class="summary-card__label">Species Observed</div>
         </div>
         <div class="summary-card summary-card--secondary">
             <div class="summary-card__value">{{ summary.date_range.first | default('—') }}</div>
-            <div class="summary-card__label">First Detection</div>
+            <div class="summary-card__label">First Observation</div>
         </div>
         <div class="summary-card summary-card--warning">
             <div class="summary-card__value">{{ summary.date_range.last | default('—') }}</div>
-            <div class="summary-card__label">Last Detection</div>
+            <div class="summary-card__label">Last Observation</div>
         </div>
     </div>
 
@@ -47,7 +47,7 @@
         <div class="histogram">
             {% for bar in time_of_day.histogram %}
             <div class="histogram__bar" style="height: {{ bar.height_pct }}%;"
-                data-count="{{ bar.count }} ({{ bar.hour }}:00)" title="{{ bar.hour }}:00 - {{ bar.count }} detections">
+                data-count="{{ bar.count }} ({{ bar.hour }}:00)" title="{{ bar.hour }}:00 - {{ bar.count }} observations">
             </div>
             {% endfor %}
         </div>
@@ -112,7 +112,7 @@
             </div>
         </div>
         <p class="chart-card__meta">
-            Active detection days in dataset: {{ daily_activity.total_days }}
+            Active observation days in dataset: {{ daily_activity.total_days }}
             {% if daily_activity.window_start and daily_activity.window_end %}
             · Window: {{ daily_activity.window_start }} to {{ daily_activity.window_end }}
             {% endif %}
@@ -123,7 +123,7 @@
                 {% for bar in daily_activity.bars %}
                 <rect class="daily-activity__bar" x="{{ bar.x }}" y="{{ bar.y }}" width="{{ bar.w }}"
                     height="{{ bar.h }}" rx="1" ry="1">
-                    <title>{{ bar.date_label }}: {{ bar.count }} detections</title>
+                    <title>{{ bar.date_label }}: {{ bar.count }} observations</title>
                 </rect>
                 {% endfor %}
             </svg>
@@ -336,14 +336,15 @@
                     <span class="weekly-weather__date">{{ day.day_short }}</span>
                 </div>
                 <div class="weekly-weather__col-temp">
-                    <span class="weekly-weather__temp-lo">{{ day.min_temp }}°</span>
+                    <span class="weekly-weather__temp-lo" style="color: hsl({{ day.hue_lo }}, 55%, 45%);">{{ day.min_temp }}°</span>
                     <div class="weekly-weather__temp-range">
                         <div class="weekly-weather__temp-bar"
                             style="left: {{ ((day.min_temp - weather.temp_min) / (weather.temp_max - weather.temp_min + 0.1)) * 100 }}%;
-                                   width: {{ ((day.max_temp - day.min_temp) / (weather.temp_max - weather.temp_min + 0.1)) * 100 }}%;">
+                                   width: {{ ((day.max_temp - day.min_temp) / (weather.temp_max - weather.temp_min + 0.1)) * 100 }}%;
+                                   background: linear-gradient(90deg, hsl({{ day.hue_lo }}, 70%, 55%), hsl({{ day.hue_hi }}, 70%, 50%));">
                         </div>
                     </div>
-                    <span class="weekly-weather__temp-hi">{{ day.max_temp }}°</span>
+                    <span class="weekly-weather__temp-hi" style="color: hsl({{ day.hue_hi }}, 65%, 45%);">{{ day.max_temp }}°</span>
                 </div>
                 <div class="weekly-weather__col-bar">
                     {% if day.total_precip > 0 %}
@@ -362,14 +363,14 @@
     </div>
     {% endif %}
 
-    {# Detection vs. Weather Correlation #}
+    {# Observation vs. Weather Correlation #}
     {% if weather_correlation %}
     <div class="chart-card chart-card--weather">
         <h3 class="chart-card__title">
             🐦 Bird Activity by Weather Condition
         </h3>
         <p class="metric-card__desc" style="margin-bottom: var(--space-md);">
-            How many birds were detected under which weather conditions.
+            How many birds were observed under which weather conditions.
             Wider bars indicate higher activity during that condition.
         </p>
 
@@ -413,7 +414,7 @@
         </h3>
         <p class="sim-description">
             Select a species to remove from the dataset and observe how biodiversity metrics
-            and daily detection patterns change. This helps assess each species' contribution to
+            and daily observation patterns change. This helps assess each species' contribution to
             local ecosystem health.
         </p>
 
@@ -479,7 +480,7 @@
 
         {# Time Series Chart #}
         <div class="sim-chart-container">
-            <h4 class="sim-chart__subtitle">Daily Detection Count — Real vs. Simulated</h4>
+            <h4 class="sim-chart__subtitle">Daily Observation Count — Real vs. Simulated</h4>
             <div class="sim-chart-legend">
                 <span class="sim-chart-legend__item">
                     <span class="sim-chart-legend__swatch sim-chart-legend__swatch--real"></span>

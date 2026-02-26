@@ -3425,6 +3425,10 @@ code {
 }
 
 /* Weekly Weather Summary */
+.weekly-weather {
+    overflow: hidden;
+}
+
 .weekly-weather__header {
     display: flex;
     padding: var(--space-xs) var(--space-sm);
@@ -3450,7 +3454,7 @@ code {
 }
 
 .weekly-weather__col-day {
-    width: 60px;
+    width: 64px;
     flex-shrink: 0;
 }
 
@@ -3461,10 +3465,11 @@ code {
 }
 
 .weekly-weather__col-temp {
-    flex: 1;
+    flex: 1 1 0;
+    min-width: 0;
     display: flex;
     align-items: center;
-    gap: var(--space-xs);
+    gap: 6px;
 }
 
 .weekly-weather__temp-lo,
@@ -3472,8 +3477,10 @@ code {
     font-family: 'SF Mono', 'Fira Code', monospace;
     font-size: var(--font-size-xs);
     color: var(--color-text-muted);
-    width: 30px;
+    width: 38px;
+    flex-shrink: 0;
     text-align: right;
+    white-space: nowrap;
 }
 
 .weekly-weather__temp-hi {
@@ -3484,19 +3491,22 @@ code {
 
 .weekly-weather__temp-range {
     flex: 1;
+    min-width: 60px;
     height: 6px;
     background: var(--color-surface-2);
     border-radius: 3px;
     position: relative;
+    overflow: hidden;
 }
 
 .weekly-weather__temp-bar {
     position: absolute;
     top: 0;
     height: 100%;
-    background: linear-gradient(90deg, var(--color-weather-temp-light), var(--color-weather-temp));
+    /* gradient set inline via hue_lo/hue_hi for cold→warm coloring */
     border-radius: 3px;
     min-width: 8px;
+    transition: background 0.3s ease;
 }
 
 .weekly-weather__col-bar {
@@ -3536,12 +3546,13 @@ code {
 }
 
 .weekly-weather__col-wind {
-    width: 80px;
+    width: 90px;
     flex-shrink: 0;
     text-align: right;
     font-family: 'SF Mono', 'Fira Code', monospace;
     font-size: var(--font-size-sm);
     color: var(--color-text-muted);
+    white-space: nowrap;
 }
 
 @media (max-width: 768px) {

@@ -193,7 +193,7 @@ Usage: {% include 'partials/inline_edit.html' %}
                 return;
             }
 
-            if (!confirm(`Move ${checked.length} detection(s) to trash?`)) return;
+            if (!confirm(`Move ${checked.length} observation(s) to trash?`)) return;
 
             const ids = Array.from(checked).map(cb => parseInt(cb.dataset.detectionId));
 

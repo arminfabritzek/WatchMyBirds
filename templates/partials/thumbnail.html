@@ -16,8 +16,8 @@ Parameters:
 {% macro thumbnail(image_path, bbox=None, index=0, od_class='', od_conf=0, cls_class='', cls_conf=0, score=0,
 common_name='', image_width=150, is_thumb=False, show_checkbox=False, detection_id='') %}
 <div class="wm-tile wm-tile--bbox{% if show_checkbox %} wm-tile--selectable{% endif %}"
-     data-detection-id="{{ detection_id }}"
-     {% if bbox %}data-bbox-x="{{ bbox[0] }}" data-bbox-y="{{ bbox[1] }}" data-bbox-w="{{ bbox[2] }}" data-bbox-h="{{ bbox[3] }}"{% endif %}>
+    data-detection-id="{{ detection_id }}" {% if bbox %}data-bbox-x="{{ bbox[0] }}" data-bbox-y="{{ bbox[1] }}"
+    data-bbox-w="{{ bbox[2] }}" data-bbox-h="{{ bbox[3] }}" {% endif %}>
 
     {% if show_checkbox %}
     <div class="wm-tile__select">
@@ -26,16 +26,12 @@ common_name='', image_width=150, is_thumb=False, show_checkbox=False, detection_
     </div>
     {% endif %}
 
-    <button type="button"
-            class="wm-tile__button"
-            data-bs-toggle="modal"
-            data-bs-target="#modal-{{ index }}"
-            data-image-path="{{ image_path }}">
+    <button type="button" class="wm-tile__button" data-bs-toggle="modal" data-bs-target="#modal-{{ index }}"
+        data-image-path="{{ image_path }}">
 
         <div class="wm-tile__media wm-tile__media--bbox">
-            <img class="wm-tile__image wm-tile__image--bbox"
-                 src="{{ image_path }}"
-                 alt="{{ common_name or cls_class or 'Detection' }}">
+            <img class="wm-tile__image wm-tile__image--bbox" src="{{ image_path }}"
+                alt="{{ common_name or cls_class or 'Observation' }}">
         </div>
     </button>
 

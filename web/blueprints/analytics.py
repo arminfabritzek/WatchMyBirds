@@ -261,6 +261,18 @@ def analytics_page():
     except Exception as e:
         logger.error(f"Error fetching analytics summary: {e}")
 
+    # 1b. Override total_detections with visit-grouped total_visits
+    try:
+        conn = db_service.get_connection()
+        try:
+            visit_data = fetch_bird_visits(conn)
+            visit_summary = visit_data.get("summary", {})
+            summary["total_detections"] = visit_summary.get("total_visits", 0)
+        finally:
+            conn.close()
+    except Exception as e:
+        logger.error(f"Error fetching all-time visits for analytics: {e}")
+
     # 2. Time of Day Histogram (24 hourly bins)
     time_of_day = {
         "histogram": [],

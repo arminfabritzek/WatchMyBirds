@@ -1914,7 +1914,7 @@ def create_web_interface(detection_manager, system_monitor=None):
         try:
             with db_service.closing_connection() as conn:
                 last_24h_count = db_service.fetch_count_last_24h(conn, threshold_str)
-            title = f"🎥 Live • {last_24h_count} Detections (24h)"
+            title = f"🎥 Live • {last_24h_count} Observations (24h)"
         except Exception as e:
             logger.error(f"Error fetching 24h count: {e}")
             title = "🎥 Live Stream"
@@ -1955,8 +1955,36 @@ def create_web_interface(detection_manager, system_monitor=None):
                 "avg_visit_duration_sec", 0
             )
             species_visit_counts = visit_summary.get("species_visit_counts", {})
+
+            # Compute today's average confidence from visit detections
+            visits_list = visit_data.get("visits", [])
+            all_det_ids: list[int] = []
+            for v in visits_list:
+                all_det_ids.extend(v.get("detection_ids", []))
+            if all_det_ids:
+                try:
+                    with db_service.closing_connection() as conn2:
+                        placeholders = ",".join("?" for _ in all_det_ids)
+                        row = conn2.execute(
+                            f"SELECT ROUND(AVG(score), 2) AS avg_score "
+                            f"FROM detections WHERE detection_id IN ({placeholders}) "
+                            f"AND status = 'active'",
+                            all_det_ids,
+                        ).fetchone()
+                        dashboard_stats["today_avg_confidence"] = (
+                            row["avg_score"] if row and row["avg_score"] else 0.0
+                        )
+                except Exception:
+                    dashboard_stats["today_avg_confidence"] = 0.0
+            else:
+                dashboard_stats["today_avg_confidence"] = 0.0
         except Exception as e:
             logger.error(f"Error fetching visit stats: {e}")
+
+        # Override title with visit-grouped count (observations, not raw detections)
+        today_visits = dashboard_stats.get("today_visits", 0)
+        if today_visits > 0:
+            title = f"🎥 Live • {today_visits} Observations (24h)"
 
         # 2. Latest Detections (Top 5 from last 24h)
         latest_detections = []

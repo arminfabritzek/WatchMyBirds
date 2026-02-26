@@ -307,18 +307,34 @@ def fetch_weather_analytics(conn: sqlite3.Connection) -> dict:
             # Find max values for bar scaling
             max_precip_day = max(r["total_precip"] or 0 for r in weekly_rows) or 1
 
-            # If there was no 24h timeline (or too few readings), fall back to weekly
-            # temperature bounds for chart scaling in templates.
-            if "temp_min" not in result or "temp_max" not in result:
-                mins = [r["min_temp"] for r in weekly_rows if r["min_temp"] is not None]
-                maxs = [r["max_temp"] for r in weekly_rows if r["max_temp"] is not None]
-                if mins:
-                    result["temp_min"] = round(min(mins), 1)
-                if maxs:
-                    result["temp_max"] = round(max(maxs), 1)
+            # Ensure temp_min/temp_max encompass the full weekly range.
+            # The 24h timeline may set narrower bounds, but the weekly summary
+            # bars need the global min/max across all 7 days.
+            weekly_mins = [r["min_temp"] for r in weekly_rows if r["min_temp"] is not None]
+            weekly_maxs = [r["max_temp"] for r in weekly_rows if r["max_temp"] is not None]
+            if weekly_mins:
+                wk_min = round(min(weekly_mins), 1)
+                result["temp_min"] = (
+                    min(result["temp_min"], wk_min)
+                    if "temp_min" in result
+                    else wk_min
+                )
+            if weekly_maxs:
+                wk_max = round(max(weekly_maxs), 1)
+                result["temp_max"] = (
+                    max(result["temp_max"], wk_max)
+                    if "temp_max" in result
+                    else wk_max
+                )
 
             for r in weekly_rows:
                 precip = r["total_precip"] or 0
+                # Compute HSL hue for cold→warm gradient:
+                # -10°C → 240 (deep blue), 25°C → 0 (red)
+                min_t = r["min_temp"] if r["min_temp"] is not None else 0
+                max_t = r["max_temp"] if r["max_temp"] is not None else 0
+                hue_lo = round(240 * (1 - (max(-10.0, min(25.0, min_t)) + 10) / 35))
+                hue_hi = round(240 * (1 - (max(-10.0, min(25.0, max_t)) + 10) / 35))
                 result["weekly_summary"].append(
                     {
                         "day": r["day"],
@@ -330,6 +346,8 @@ def fetch_weather_analytics(conn: sqlite3.Connection) -> dict:
                         "avg_wind": r["avg_wind"],
                         "precip_pct": round((precip / max_precip_day) * 100, 1),
                         "readings": r["readings"],
+                        "hue_lo": hue_lo,
+                        "hue_hi": hue_hi,
                     }
                 )
 

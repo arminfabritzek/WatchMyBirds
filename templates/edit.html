@@ -1,11 +1,11 @@
 {% extends 'base.html' %}
 
-{% block title %}Edit Detections - {{ date_iso }} - WatchMyBirds{% endblock %}
+{% block title %}Edit Observations - {{ date_iso }} - WatchMyBirds{% endblock %}
 
 {% block content %}
 <div class="container-fluid mt-4">
     <div class="d-flex justify-content-between align-items-center mb-4">
-        <h2>Edit Detections for {{ date_iso }}</h2>
+        <h2>Edit Observations for {{ date_iso }}</h2>
         <div class="btn-group">
             <a href="/gallery/{{ date_iso }}" class="btn btn-outline-secondary">Back to Subgallery</a>
             <a href="/gallery" class="btn btn-outline-secondary">Back to Gallery</a>
@@ -134,7 +134,7 @@
 
         {% else %}
         <div class="alert alert-info py-5 text-center">
-            <h4>No detections match your filters.</h4>
+            <h4>No observations match your filters.</h4>
             <p>Try broadening your search or resetting filters.</p>
         </div>
         {% endif %}
