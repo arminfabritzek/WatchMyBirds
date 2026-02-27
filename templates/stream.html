@@ -79,35 +79,51 @@
         color: var(--color-text-muted);
     }
 
-    /* Live Clock Overlay */
-    .stream-clock {
+    /* Stream Info Overlay (Clock + Weather combined) */
+    .stream-info {
         position: absolute;
         top: 50px;
         left: 15px;
         background: rgba(0, 0, 0, 0.6);
         backdrop-filter: blur(5px);
         color: white;
-        padding: 5px 12px;
+        padding: 6px 12px;
         border-radius: 6px;
         font-family: 'JetBrains Mono', monospace;
-        font-size: 0.9rem;
-        font-weight: 600;
+        font-size: 0.82rem;
+        font-weight: 500;
         z-index: 10;
         pointer-events: none;
         border: 1px solid rgba(255, 255, 255, 0.2);
         display: flex;
+        flex-direction: column;
         align-items: center;
-        gap: 8px;
+        gap: 2px;
+        line-height: 1.4;
     }
 
-    .stream-clock::before {
-        content: "";
-        display: block;
-        width: 8px;
-        height: 8px;
+    .stream-info__row {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        white-space: nowrap;
+    }
+
+    .stream-info__dot {
+        width: 7px;
+        height: 7px;
         background: #ff4d4d;
         border-radius: 50%;
+        flex-shrink: 0;
         animation: pulse 1s infinite;
+    }
+
+    .stream-info__weather {
+        opacity: 0.85;
+        font-size: 0.78rem;
+        padding-left: 13px;
+        white-space: nowrap;
+        /* align with clock text (dot width + gap) */
     }
 
     @keyframes pulse {
@@ -242,10 +258,18 @@
             })();
         </script>
 
-        {# Redundant timestamp removed to prevent overlap with camera overlay #}
-
-        <div class="stream-clock" id="streamClock">
-            <span id="clockDisplay">--:--:--</span>
+        {# Combined overlay: clock + weather (bottom-left, avoids camera RTC top-right) #}
+        <div class="stream-info" id="streamInfo">
+            <div class="stream-info__row">
+                <span class="stream-info__dot"></span>
+                <span id="clockDisplay">--:--:--</span>
+            </div>
+            <div class="stream-info__weather" id="streamWeatherTemp" style="display: none;">
+                <span id="streamWeatherTempContent"></span>
+            </div>
+            <div class="stream-info__weather" id="streamWeatherPrecip" style="display: none;">
+                <span id="streamWeatherPrecipContent"></span>
+            </div>
         </div>
 
         <script>
@@ -261,6 +285,30 @@
             }
             setInterval(updateClock, 1000);
             updateClock();
+
+            // Weather line – polls /api/v1/weather/now every 5 min
+            (function () {
+                const WEATHER_POLL_MS = 5 * 60 * 1000;
+
+                function updateStreamWeather() {
+                    fetch('/api/v1/weather/now')
+                        .then(function (r) { return r.json(); })
+                        .then(function (data) {
+                            if (data.status !== 'success' || !data.weather || data.weather.temp_c === null) return;
+                            var w = data.weather;
+                            var temp = Math.round(w.temp_c) + '°C';
+                            var precip = (w.precip_mm != null ? w.precip_mm : 0).toFixed(1) + ' mm';
+                            document.getElementById('streamWeatherTempContent').textContent = temp;
+                            document.getElementById('streamWeatherTemp').style.display = 'block';
+                            document.getElementById('streamWeatherPrecipContent').textContent = precip;
+                            document.getElementById('streamWeatherPrecip').style.display = 'block';
+                        })
+                        .catch(function () { /* silent */ });
+                }
+
+                updateStreamWeather();
+                setInterval(updateStreamWeather, WEATHER_POLL_MS);
+            })();
         </script>
 
         {# PTZ Controls (on hover) #}
