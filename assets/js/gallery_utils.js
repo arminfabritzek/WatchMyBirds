@@ -115,7 +115,9 @@ function navigateModal(btn, direction) {
     if (!group) return;
 
     // Get current image path to skip siblings (multiple detections on same image)
-    const currentImagePath = currentModalEl.getAttribute('data-image-path');
+    // For observation groups (obs*), do NOT skip — all detections must be reachable
+    const isObservationGroup = group.startsWith('obs');
+    const currentImagePath = isObservationGroup ? null : currentModalEl.getAttribute('data-image-path');
 
     // Find all modals in this group
     const allModals = Array.from(document.querySelectorAll(`.gallery-modal[data-modal-group="${group}"]`));

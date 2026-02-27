@@ -4444,6 +4444,225 @@ body {
     color: var(--color-text-muted);
 }
 
+.wm-tile__meta-row {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: var(--space-sm);
+    font-size: var(--font-size-xs);
+}
+
+.wm-tile__duration {
+    color: var(--color-text-muted);
+    font-weight: 500;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   OBSERVATION CARD — Horizontal cover + info, expands to filmstrip
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Filmstrip must span all grid columns */
+#subgallery-grid>.obs-filmstrip {
+    grid-column: 1 / -1;
+}
+
+.obs-card {
+    display: flex;
+    align-items: center;
+    gap: var(--space-md);
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-lg);
+    padding: var(--space-md);
+    cursor: pointer;
+    transition: all var(--transition-fast);
+    margin-bottom: 0;
+}
+
+.obs-card:hover {
+    border-color: var(--color-primary);
+    box-shadow: var(--shadow-md);
+    transform: translateY(-1px);
+}
+
+.obs-card--expanded {
+    border-color: var(--color-primary);
+    background: var(--color-surface-2);
+    border-bottom-left-radius: 0;
+    border-bottom-right-radius: 0;
+    margin-bottom: 0;
+}
+
+.obs-card__cover {
+    position: relative;
+    flex-shrink: 0;
+    width: 120px;
+    height: 120px;
+    border-radius: var(--radius-md);
+    overflow: hidden;
+}
+
+.obs-card__image {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+}
+
+.obs-card__cover .wm-tile__badge {
+    top: 6px;
+    right: 6px;
+    font-size: var(--font-size-xs);
+    padding: 3px 7px;
+}
+
+.obs-card__info {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+    flex: 1;
+}
+
+.obs-card__name {
+    font-size: var(--font-size-md);
+    font-weight: 600;
+    color: var(--color-text);
+}
+
+.obs-card__latin {
+    font-size: var(--font-size-sm);
+    color: var(--color-text-muted);
+    font-style: italic;
+}
+
+.obs-card__time-line {
+    font-size: var(--font-size-sm);
+    color: var(--color-text-muted);
+    font-family: 'SF Mono', 'Fira Code', monospace;
+}
+
+.obs-card__meta {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    font-size: var(--font-size-sm);
+}
+
+.obs-card__expand-hint {
+    color: var(--color-text-subtle);
+    font-size: var(--font-size-xs);
+    transition: transform 0.2s;
+}
+
+.obs-card--expanded .obs-card__expand-hint {
+    transform: rotate(180deg);
+}
+
+/* ── Filmstrip (expanded grid of all photos) ───────────────────────── */
+
+.obs-filmstrip {
+    background: var(--color-surface-2);
+    border: 1px solid var(--color-primary);
+    border-top: none;
+    border-radius: 0 0 var(--radius-lg) var(--radius-lg);
+    padding: var(--space-md);
+    margin-bottom: var(--space-md);
+    animation: filmstrip-open 0.2s ease-out;
+}
+
+@keyframes filmstrip-open {
+    from {
+        opacity: 0;
+        max-height: 0;
+    }
+
+    to {
+        opacity: 1;
+        max-height: 2000px;
+    }
+}
+
+.obs-filmstrip__header {
+    display: flex;
+    align-items: center;
+    gap: var(--space-md);
+    margin-bottom: var(--space-sm);
+    flex-wrap: wrap;
+}
+
+.obs-filmstrip__title {
+    font-weight: 600;
+    font-size: var(--font-size-md);
+    color: var(--color-text);
+}
+
+.obs-filmstrip__time {
+    font-size: var(--font-size-sm);
+    color: var(--color-text-muted);
+}
+
+.obs-filmstrip__close {
+    margin-left: auto;
+    font-size: var(--font-size-sm);
+    padding: 4px 12px;
+}
+
+.obs-filmstrip__grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+    gap: var(--space-sm);
+}
+
+.obs-filmstrip__item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+}
+
+.obs-filmstrip__button {
+    display: block;
+    width: 100%;
+    padding: 0;
+    border: 2px solid transparent;
+    background: none;
+    cursor: pointer;
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+    transition: border-color 0.15s, transform 0.15s;
+}
+
+.obs-filmstrip__button:hover {
+    border-color: var(--color-primary);
+    transform: scale(1.03);
+}
+
+.obs-filmstrip__thumb {
+    width: 100%;
+    aspect-ratio: 1;
+    object-fit: cover;
+    display: block;
+}
+
+.obs-filmstrip__label {
+    font-size: var(--font-size-xs);
+    color: var(--color-text-muted);
+    font-family: 'SF Mono', 'Fira Code', monospace;
+}
+
+/* ── Responsive: stack vertically on small screens ─────────────────── */
+@media (max-width: 480px) {
+    .obs-card__cover {
+        width: 80px;
+        height: 80px;
+    }
+
+    .obs-filmstrip__grid {
+        grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+    }
+}
+
 .wm-tile__size {
     font-size: var(--font-size-xs);
     color: var(--color-text-subtle);

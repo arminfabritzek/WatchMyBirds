@@ -66,6 +66,11 @@ def get_daily_species_summary(
     return gallery_core.get_daily_species_summary(date_iso, common_names)
 
 
+def group_detections_into_observations(detections: list[dict]) -> list[dict]:
+    """Group detections into observations (visit clusters)."""
+    return gallery_core.group_detections_into_observations(detections)
+
+
 def invalidate_cache() -> None:
     """Invalidate gallery cache."""
     gallery_core.invalidate_cache()

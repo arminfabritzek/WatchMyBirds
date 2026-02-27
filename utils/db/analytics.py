@@ -310,21 +310,21 @@ def fetch_weather_analytics(conn: sqlite3.Connection) -> dict:
             # Ensure temp_min/temp_max encompass the full weekly range.
             # The 24h timeline may set narrower bounds, but the weekly summary
             # bars need the global min/max across all 7 days.
-            weekly_mins = [r["min_temp"] for r in weekly_rows if r["min_temp"] is not None]
-            weekly_maxs = [r["max_temp"] for r in weekly_rows if r["max_temp"] is not None]
+            weekly_mins = [
+                r["min_temp"] for r in weekly_rows if r["min_temp"] is not None
+            ]
+            weekly_maxs = [
+                r["max_temp"] for r in weekly_rows if r["max_temp"] is not None
+            ]
             if weekly_mins:
                 wk_min = round(min(weekly_mins), 1)
                 result["temp_min"] = (
-                    min(result["temp_min"], wk_min)
-                    if "temp_min" in result
-                    else wk_min
+                    min(result["temp_min"], wk_min) if "temp_min" in result else wk_min
                 )
             if weekly_maxs:
                 wk_max = round(max(weekly_maxs), 1)
                 result["temp_max"] = (
-                    max(result["temp_max"], wk_max)
-                    if "temp_max" in result
-                    else wk_max
+                    max(result["temp_max"], wk_max) if "temp_max" in result else wk_max
                 )
 
             for r in weekly_rows:
@@ -913,9 +913,11 @@ def fetch_bird_visits(
                 continue
 
             # Lower cost is better: normalised time + distance, rewarded by overlap.
-            cost = (time_diff / max(max_gap_sec, 1e-6)) + (
-                spatial_diff / max(max_bbox_dist, 1e-6)
-            ) - 0.5 * overlap
+            cost = (
+                (time_diff / max(max_gap_sec, 1e-6))
+                + (spatial_diff / max(max_bbox_dist, 1e-6))
+                - 0.5 * overlap
+            )
             if best_cost is None or cost < best_cost:
                 best_cost = cost
                 best_visit = visit

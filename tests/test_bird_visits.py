@@ -43,7 +43,9 @@ def _insert_det(
     species: str,
     bbox: tuple[float, float, float, float],
 ) -> None:
-    conn.execute("INSERT INTO images(filename, timestamp) VALUES (?, ?)", (filename, ts))
+    conn.execute(
+        "INSERT INTO images(filename, timestamp) VALUES (?, ?)", (filename, ts)
+    )
     conn.execute(
         """
         INSERT INTO detections(
@@ -115,10 +117,38 @@ def test_fetch_bird_visits_keeps_two_parallel_same_species_visits_separate():
     conn = _make_conn()
     try:
         # Bird A (left/top), Bird B (right/bottom), interleaved in time.
-        _insert_det(conn, 1, "a1.webp", "20260101_120000", "parus_major", (0.10, 0.10, 0.16, 0.16))
-        _insert_det(conn, 2, "b1.webp", "20260101_120005", "parus_major", (0.70, 0.70, 0.16, 0.16))
-        _insert_det(conn, 3, "a2.webp", "20260101_120010", "parus_major", (0.11, 0.11, 0.16, 0.16))
-        _insert_det(conn, 4, "b2.webp", "20260101_120015", "parus_major", (0.69, 0.69, 0.16, 0.16))
+        _insert_det(
+            conn,
+            1,
+            "a1.webp",
+            "20260101_120000",
+            "parus_major",
+            (0.10, 0.10, 0.16, 0.16),
+        )
+        _insert_det(
+            conn,
+            2,
+            "b1.webp",
+            "20260101_120005",
+            "parus_major",
+            (0.70, 0.70, 0.16, 0.16),
+        )
+        _insert_det(
+            conn,
+            3,
+            "a2.webp",
+            "20260101_120010",
+            "parus_major",
+            (0.11, 0.11, 0.16, 0.16),
+        )
+        _insert_det(
+            conn,
+            4,
+            "b2.webp",
+            "20260101_120015",
+            "parus_major",
+            (0.69, 0.69, 0.16, 0.16),
+        )
         conn.commit()
 
         data = fetch_bird_visits(conn)

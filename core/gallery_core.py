@@ -204,6 +204,256 @@ def get_daily_species_summary(
     return summary
 
 
+# ── Observation Grouping (Issue #12) ────────────────────────────────
+
+# Clustering constants – must match utils/db/analytics.py
+_OBS_MAX_GAP_SEC = 60
+_OBS_MAX_BBOX_DIST = 0.25
+_OBS_MIN_BBOX_IOU = 0.02
+_OBS_MIN_AREA_SIMILARITY = 0.2
+
+
+def _ts_to_epoch(ts: str) -> float:
+    """Convert YYYYMMDD_HHMMSS (or YYYYMMDD_HHMMSS_ffffff) to epoch seconds.
+
+    The images table stores timestamps with optional microsecond suffixes
+    (e.g. ``20260225_084116_427121``).  We only need second-level precision,
+    so we truncate to the first 15 characters before parsing.
+
+    Returns 0.0 on failure.
+    """
+    from datetime import datetime as _dt
+
+    try:
+        # Truncate to YYYYMMDD_HHMMSS (15 chars), discarding _ffffff
+        return _dt.strptime(ts[:15], "%Y%m%d_%H%M%S").timestamp()
+    except (ValueError, TypeError):
+        return 0.0
+
+
+def _bbox_dist(
+    ax: float,
+    ay: float,
+    aw: float,
+    ah: float,
+    bx: float,
+    by: float,
+    bw: float,
+    bh: float,
+) -> float:
+    """Euclidean distance between bbox centres (normalised coords)."""
+    import math
+
+    cx_a = (ax or 0) + (aw or 0) / 2.0
+    cy_a = (ay or 0) + (ah or 0) / 2.0
+    cx_b = (bx or 0) + (bw or 0) / 2.0
+    cy_b = (by or 0) + (bh or 0) / 2.0
+    return math.sqrt((cx_a - cx_b) ** 2 + (cy_a - cy_b) ** 2)
+
+
+def _bbox_iou_local(
+    ax: float,
+    ay: float,
+    aw: float,
+    ah: float,
+    bx: float,
+    by: float,
+    bw: float,
+    bh: float,
+) -> float:
+    """IoU for normalised xywh boxes."""
+    ax1, ay1 = (ax or 0), (ay or 0)
+    ax2, ay2 = ax1 + (aw or 0), ay1 + (ah or 0)
+    bx1, by1 = (bx or 0), (by or 0)
+    bx2, by2 = bx1 + (bw or 0), by1 + (bh or 0)
+    inter_w = max(0.0, min(ax2, bx2) - max(ax1, bx1))
+    inter_h = max(0.0, min(ay2, by2) - max(ay1, by1))
+    inter = inter_w * inter_h
+    union = max(0.0, (aw or 0) * (ah or 0)) + max(0.0, (bw or 0) * (bh or 0)) - inter
+    return inter / union if union > 0 else 0.0
+
+
+def _bbox_area_sim(aw: float, ah: float, bw: float, bh: float) -> float:
+    """Area similarity ratio [0..1]."""
+    a = max(0.0, (aw or 0) * (ah or 0))
+    b = max(0.0, (bw or 0) * (bh or 0))
+    if a <= 0 or b <= 0:
+        return 1.0
+    return min(a, b) / max(a, b)
+
+
+def group_detections_into_observations(
+    detections: list[dict],
+    max_gap_sec: float = _OBS_MAX_GAP_SEC,
+    max_bbox_dist: float = _OBS_MAX_BBOX_DIST,
+) -> list[dict]:
+    """Group already-fetched detection dicts into observations (visits).
+
+    Pure in-memory clustering — no DB calls.  Mirrors the algorithm in
+    ``utils.db.analytics.fetch_bird_visits`` but operates on detection
+    dicts that already carry ``image_timestamp``, ``bbox_*``, ``score``,
+    ``cls_class_name`` / ``od_class_name``, and ``detection_id``.
+
+    Returns a list of observation dicts sorted by ``start_time`` desc:
+
+    .. code-block:: python
+
+        {
+            "observation_id": int,       # 1-based index
+            "species": str,
+            "detection_ids": list[int],
+            "photo_count": int,
+            "duration_sec": float,
+            "best_score": float,
+            "cover_detection_id": int,   # detection_id of best photo
+            "start_time": str,           # YYYYMMDD_HHMMSS
+            "end_time": str,
+        }
+    """
+    if not detections:
+        return []
+
+    # ── Extract fields & sort by timestamp ──────────────────────────
+    items: list[dict] = []
+    for det in detections:
+        species = det.get("cls_class_name") or det.get("od_class_name") or "unknown"
+        ts = det.get("image_timestamp", "") or ""
+        items.append(
+            {
+                "det_id": det.get("detection_id"),
+                "species": species,
+                "ts": ts,
+                "epoch": _ts_to_epoch(ts),
+                "bx": det.get("bbox_x") or 0,
+                "by": det.get("bbox_y") or 0,
+                "bw": det.get("bbox_w") or 0,
+                "bh": det.get("bbox_h") or 0,
+                "score": det.get("score") or 0.0,
+            }
+        )
+    items.sort(key=lambda x: x["epoch"])
+
+    # ── Clustering pass (nearest-neighbour, gated) ──────────────────
+    closed: list[dict] = []
+    open_visits: list[dict] = []
+
+    for item in items:
+        epoch = item["epoch"]
+        species = item["species"]
+        bx, by, bw, bh = item["bx"], item["by"], item["bw"], item["bh"]
+
+        # Auto-close stale visits
+        still_open: list[dict] = []
+        for v in open_visits:
+            if epoch - v["_last_epoch"] > max_gap_sec:
+                closed.append(v)
+            else:
+                still_open.append(v)
+        open_visits = still_open
+
+        # Find best matching open visit
+        best: dict | None = None
+        best_cost: float | None = None
+        for v in open_visits:
+            if v["species"] != species:
+                continue
+            td = epoch - v["_last_epoch"]
+            if td < 0 or td > max_gap_sec:
+                continue
+            sd = _bbox_dist(
+                v["_last_bx"],
+                v["_last_by"],
+                v["_last_bw"],
+                v["_last_bh"],
+                bx,
+                by,
+                bw,
+                bh,
+            )
+            iou = _bbox_iou_local(
+                v["_last_bx"],
+                v["_last_by"],
+                v["_last_bw"],
+                v["_last_bh"],
+                bx,
+                by,
+                bw,
+                bh,
+            )
+            area_sim = _bbox_area_sim(v["_last_bw"], v["_last_bh"], bw, bh)
+            if area_sim < _OBS_MIN_AREA_SIMILARITY:
+                continue
+            if sd > max_bbox_dist and iou < _OBS_MIN_BBOX_IOU:
+                continue
+            cost = (
+                (td / max(max_gap_sec, 1e-6))
+                + (sd / max(max_bbox_dist, 1e-6))
+                - 0.5 * iou
+            )
+            if best_cost is None or cost < best_cost:
+                best_cost = cost
+                best = v
+
+        if best is None:
+            open_visits.append(
+                {
+                    "species": species,
+                    "start_time": item["ts"],
+                    "end_time": item["ts"],
+                    "_start_epoch": epoch,
+                    "_last_epoch": epoch,
+                    "_last_bx": bx,
+                    "_last_by": by,
+                    "_last_bw": bw,
+                    "_last_bh": bh,
+                    "detection_ids": [item["det_id"]],
+                    "_best_score": item["score"],
+                    "_best_det_id": item["det_id"],
+                    "_best_ts": item["ts"],
+                }
+            )
+        else:
+            best["end_time"] = item["ts"]
+            best["_last_epoch"] = epoch
+            best["_last_bx"] = bx
+            best["_last_by"] = by
+            best["_last_bw"] = bw
+            best["_last_bh"] = bh
+            best["detection_ids"].append(item["det_id"])
+            # Update cover: higher score wins, tiebreak by recency
+            if item["score"] > best["_best_score"] or (
+                item["score"] == best["_best_score"] and item["ts"] > best["_best_ts"]
+            ):
+                best["_best_score"] = item["score"]
+                best["_best_det_id"] = item["det_id"]
+                best["_best_ts"] = item["ts"]
+
+    closed.extend(open_visits)
+
+    # ── Format output ───────────────────────────────────────────────
+    # Sort by start_time descending (most recent first)
+    closed.sort(key=lambda v: v.get("_start_epoch", 0), reverse=True)
+
+    observations: list[dict] = []
+    for idx, v in enumerate(closed, start=1):
+        dur = round(v.get("_last_epoch", 0) - v.get("_start_epoch", 0), 1)
+        observations.append(
+            {
+                "observation_id": idx,
+                "species": v["species"],
+                "detection_ids": v["detection_ids"],
+                "photo_count": len(v["detection_ids"]),
+                "duration_sec": max(dur, 0.0),
+                "best_score": v["_best_score"],
+                "cover_detection_id": v["_best_det_id"],
+                "start_time": v["start_time"],
+                "end_time": v["end_time"],
+            }
+        )
+
+    return observations
+
+
 def invalidate_cache() -> None:
     """Invalidates the detection cache, forcing a refresh on next access."""
     global _cached_images

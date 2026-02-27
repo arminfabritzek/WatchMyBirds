@@ -15,8 +15,9 @@
         {% include 'partials/filter_bar.html' %}
     </div>
     <div class="page-control-bar__meta">
-        Page {{ page }} of {{ total_pages }} ({{ total_items }} visible{% if total_items_unfiltered > total_items %} /
-        {{ total_items_unfiltered }} total{% else %} items{% endif %})
+        Page {{ page }} of {{ total_pages }} ({{ total_items }} observation{{ 's' if total_items != 1 }}{% if
+        total_items_unfiltered > total_items %} /
+        {{ total_items_unfiltered }} total{% endif %})
     </div>
     <div class="page-control-bar__right">
         {% include 'partials/thumb_view_toggle.html' %}
@@ -56,27 +57,55 @@
 </section>
 {% endif %}
 
-{# Main Gallery Grid #}
+{# Main Gallery Grid — Observation Tiles #}
 <section class="section">
     <h2 class="section__title">All Observations</h2>
     <div class="gallery-grid" id="subgallery-grid">
-        {% for det in detections %}
-        <div class="wm-tile fade-in-item" id="detection-{{ det.detection_id }}" data-detection-id="{{ det.detection_id }}">
+        {% for obs in observations %}
+        {# ── Observation tile (standard wm-tile, clickable → expands filmstrip) ── #}
+        <div class="wm-tile fade-in-item" id="observation-{{ obs.observation_id }}"
+            data-obs-id="{{ obs.observation_id }}" onclick="toggleObsFilmstrip(this)" style="cursor:pointer;">
             <div class="wm-tile__media">
-                <button type="button" class="wm-tile__button" data-bs-toggle="modal"
-                    data-bs-target="#modal-main-{{ det.detection_id }}" style="height:100%; display:block;">
-                    <img class="wm-tile__image" loading="lazy" src="{{ det.display_url }}" alt="{{ det.common_name }}"
-                        data-thumb-src="{{ det.display_url }}" data-full-src="{{ det.full_url }}">
-                </button>
-                {% include 'partials/rating_badge.html' %}
-            </div>
-
-            <div class="wm-tile__body">
-                <span class="wm-tile__name">{{ det.common_name }}</span>
-                {% if det.cls_class_name or det.od_class_name %}
-                <span class="wm-tile__latin">{{ (det.cls_class_name or det.od_class_name) | replace('_', ' ') }}</span>
+                <img class="wm-tile__image" loading="lazy" src="{{ obs.cover_detection.display_url }}"
+                    alt="{{ obs.common_name }}">
+                {% if obs.photo_count > 1 %}
+                <span class="wm-tile__badge" title="{{ obs.photo_count }} photos in this observation">📸 {{
+                    obs.photo_count }}</span>
                 {% endif %}
-                <span class="wm-tile__score">{{ "%.2f"|format(det.score) }}</span>
+            </div>
+            <div class="wm-tile__body">
+                <span class="wm-tile__name">{{ obs.common_name }}</span>
+                <span class="wm-tile__meta">{{ obs.cover_detection.formatted_time }}{% if obs.duration_sec > 0 %} · {{
+                    obs.duration_display }}{% endif %}</span>
+                <span class="wm-tile__score">{{ "%.2f"|format(obs.best_score) }}{% if obs.photo_count > 1 %} <span
+                        class="obs-card__expand-hint">▼</span>{% endif %}</span>
+            </div>
+        </div>
+
+        {# ── Hidden filmstrip (all photos in this observation) ── #}
+        <div class="obs-filmstrip" id="filmstrip-{{ obs.observation_id }}" style="display:none;">
+            <div class="obs-filmstrip__header">
+                <span class="obs-filmstrip__title">{{ obs.common_name }} — {{ obs.photo_count }} photo{{ 's' if
+                    obs.photo_count != 1 }}</span>
+                {% if obs.cover_detection.formatted_time %}
+                <span class="obs-filmstrip__time">{{ obs.cover_detection.formatted_time }}{% if obs.duration_sec > 0 %}
+                    · {{ obs.duration_display }}{% endif %}</span>
+                {% endif %}
+                <button type="button" class="btn btn--sm btn--secondary obs-filmstrip__close"
+                    onclick="event.stopPropagation(); closeFilmstrip('{{ obs.observation_id }}')">✕ Close</button>
+            </div>
+            <div class="obs-filmstrip__grid">
+                {% for det in obs.all_detections %}
+                <div class="obs-filmstrip__item" data-detection-id="{{ det.detection_id }}">
+                    <button type="button" class="obs-filmstrip__button" data-bs-toggle="modal"
+                        data-bs-target="#modal-obs{{ obs.observation_id }}-{{ det.detection_id }}">
+                        <img class="obs-filmstrip__thumb" loading="lazy" src="{{ det.display_url }}"
+                            alt="{{ det.common_name }}">
+                    </button>
+                    <span class="obs-filmstrip__label">{{ det.formatted_time }} · {{ "%.0f"|format(det.score * 100)
+                        }}%</span>
+                </div>
+                {% endfor %}
             </div>
         </div>
         {% endfor %}
@@ -122,16 +151,54 @@
 {{ render_modal(det, 'species') }}
 {% endfor %}
 
-{# Main Modals #}
-{% for det in detections %}
-{{ render_modal(det, 'main') }}
+{# Observation Modals — each observation renders modals for all its detections #}
+{% for obs in observations %}
+{% for det in obs.all_detections %}
+{{ render_modal(det, 'obs' ~ obs.observation_id) }}
+{% endfor %}
 {% endfor %}
 {% endblock %}
 
 {% block scripts %}
 <script src="/assets/js/gallery_utils.js?v=test_v3"></script>
 <script>
-    // Scroll to detection if navigated via anchor hash
+    /** Toggle the filmstrip for an observation card. */
+    function toggleObsFilmstrip(card) {
+        const obsId = card.getAttribute('data-obs-id');
+        if (!obsId) return;
+
+        const filmstrip = document.getElementById('filmstrip-' + obsId);
+        if (!filmstrip) return;
+
+        const isOpen = filmstrip.style.display !== 'none';
+
+        // Close all other filmstrips first
+        document.querySelectorAll('.obs-filmstrip').forEach(fs => {
+            fs.style.display = 'none';
+        });
+        document.querySelectorAll('.obs-card').forEach(c => {
+            c.classList.remove('obs-card--expanded');
+        });
+
+        if (!isOpen) {
+            filmstrip.style.display = 'block';
+            card.classList.add('obs-card--expanded');
+            // Smooth scroll to the filmstrip
+            setTimeout(() => {
+                filmstrip.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+            }, 50);
+        }
+    }
+
+    /** Close a specific filmstrip. */
+    function closeFilmstrip(obsId) {
+        const filmstrip = document.getElementById('filmstrip-' + obsId);
+        const card = document.getElementById('observation-' + obsId);
+        if (filmstrip) filmstrip.style.display = 'none';
+        if (card) card.classList.remove('obs-card--expanded');
+    }
+
+    // Scroll to observation if navigated via anchor hash
     document.addEventListener('DOMContentLoaded', function () {
         if (window.location.hash) {
             const targetId = window.location.hash.substring(1);
@@ -139,7 +206,6 @@
             if (targetEl) {
                 setTimeout(() => {
                     targetEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                    // Highlight effect
                     targetEl.style.outline = '3px solid var(--color-primary)';
                     targetEl.style.outlineOffset = '2px';
                     setTimeout(() => {

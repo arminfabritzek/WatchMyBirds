@@ -182,7 +182,6 @@ def create_web_interface(detection_manager, system_monitor=None):
     def get_daily_covers():
         """Returns a dict of {YYYY-MM-DD: {path, bbox}} for gallery overview."""
         covers = {}
-        gallery_threshold = config["GALLERY_DISPLAY_THRESHOLD"]
         try:
             detections = get_captured_detections()
             by_date = {}
@@ -213,12 +212,9 @@ def create_web_interface(detection_manager, system_monitor=None):
                     display_path = f"/uploads/derivatives/optimized/{full_path}"
                     is_thumb = False
 
-                count = sum(
-                    1
-                    for d in day_detections
-                    if (d.get("score") is None)
-                    or ((d.get("score") or 0.0) >= gallery_threshold)
-                )
+                # Count = number of observations (grouped visits)
+                obs = gallery_service.group_detections_into_observations(day_detections)
+                count = len(obs)
 
                 bbox = (
                     chosen.get("bbox_x", 0.0),
@@ -1573,7 +1569,7 @@ def create_web_interface(detection_manager, system_monitor=None):
         )
 
         def subgallery_route(date):
-            """Server-rendered subgallery page for a specific date."""
+            """Server-rendered subgallery page for a specific date (observation-based)."""
             # Validate date format
             if not re.match(r"^\d{4}-\d{2}-\d{2}$", date):
                 return "Invalid date format.", 400
@@ -1593,55 +1589,62 @@ def create_web_interface(detection_manager, system_monitor=None):
             else:
                 current_threshold = config["GALLERY_DISPLAY_THRESHOLD"]
 
-            # Fetch detections
-            sql_order = "time" if sort_by in ("time_asc", "time_desc") else "score"
+            # Fetch all detections for this date
             with db_service.closing_connection() as conn:
                 rows = db_service.fetch_detections_for_gallery(
-                    conn, date, order_by=sql_order
+                    conn, date, order_by="time"
                 )
             detections_raw = [dict(row) for row in rows]
-            total_items_unfiltered = len(detections_raw)
 
-            # Apply score filter (but always include the focused detection if present)
+            # ── Group into observations ────────────────────────────────
+            observations_all = gallery_service.group_detections_into_observations(
+                detections_raw
+            )
+            total_obs_unfiltered = len(observations_all)
+
+            # Apply min_score filter on observation.best_score
             focus_id_param = request.args.get("focus", type=int)
             if current_threshold > 0:
-                detections_raw = [
-                    d
-                    for d in detections_raw
-                    if (d.get("score") or 0.0) >= current_threshold
-                    or (focus_id_param and d.get("detection_id") == focus_id_param)
-                ]
+                observations_filtered = []
+                for obs in observations_all:
+                    if obs["best_score"] >= current_threshold:
+                        observations_filtered.append(obs)
+                    elif focus_id_param and focus_id_param in obs["detection_ids"]:
+                        # Always include the observation containing the focused detection
+                        observations_filtered.append(obs)
+                observations_all = observations_filtered
 
-            # Python-side sorting adjustments
-            if sort_by == "species":
-                detections_raw.sort(
-                    key=lambda x: (
-                        x.get("cls_class_name") or x.get("od_class_name") or ""
-                    ).lower()
+            # ── Sort observations ──────────────────────────────────────
+            if sort_by == "time_asc":
+                observations_all.sort(key=lambda o: o["start_time"])
+            elif sort_by == "score":
+                observations_all.sort(key=lambda o: o["best_score"], reverse=True)
+            elif sort_by == "species":
+                observations_all.sort(
+                    key=lambda o: COMMON_NAMES.get(o["species"], o["species"]).lower()
                 )
-            elif sort_by == "time_asc":
-                detections_raw.sort(key=lambda x: x.get("image_timestamp", ""))
-            elif sort_by == "time_desc":
-                detections_raw.sort(
-                    key=lambda x: x.get("image_timestamp", ""), reverse=True
-                )
-            # score comes sorted from DB
+            else:
+                # Default: time_desc — already sorted by start_time desc
+                # from group_detections_into_observations
+                pass
 
-            total_items = len(detections_raw)
+            total_items = len(observations_all)
             total_pages = math.ceil(total_items / PAGE_SIZE) or 1
 
-            # Auto-focus: if ?focus=DETECTION_ID is present, calculate the correct page
+            # Auto-focus: if ?focus=DETECTION_ID, find the observation & page
             if focus_id_param and page == 1:
-                for idx, d in enumerate(detections_raw):
-                    if d.get("detection_id") == focus_id_param:
+                for idx, obs in enumerate(observations_all):
+                    if focus_id_param in obs["detection_ids"]:
                         page = (idx // PAGE_SIZE) + 1
                         break
 
             page = max(1, min(page, total_pages))
             start_index = (page - 1) * PAGE_SIZE
             end_index = page * PAGE_SIZE
+            page_observations = observations_all[start_index:end_index]
 
-            page_detections_raw = detections_raw[start_index:end_index]
+            # ── Build detection lookup for enrichment ──────────────────
+            det_by_id = {d.get("detection_id"): d for d in detections_raw}
 
             # Enrich detections for template
             def enrich_detection(det):
@@ -1744,9 +1747,50 @@ def create_web_interface(detection_manager, system_monitor=None):
                     "is_favorite": bool(int(det.get("is_favorite") or 0)),
                 }
 
-            detections = [enrich_detection(d) for d in page_detections_raw]
+            # ── Enrich observations for template ───────────────────────
+            def _format_duration(sec: float) -> str:
+                """Format seconds to human-readable duration."""
+                sec = max(0, int(sec))
+                if sec < 60:
+                    return f"{sec}s"
+                minutes = sec // 60
+                remaining = sec % 60
+                return f"{minutes}m {remaining:02d}s"
 
-            # Species of the Day (page 1 only)
+            enriched_observations = []
+            for obs in page_observations:
+                cover_det = det_by_id.get(obs["cover_detection_id"])
+                if not cover_det:
+                    continue
+                enriched_cover = enrich_detection(cover_det)
+
+                # Enrich all detections in this observation for modals
+                all_dets_enriched = []
+                for did in obs["detection_ids"]:
+                    raw = det_by_id.get(did)
+                    if raw:
+                        all_dets_enriched.append(enrich_detection(raw))
+
+                enriched_observations.append(
+                    {
+                        "observation_id": obs["observation_id"],
+                        "species": obs["species"],
+                        "common_name": COMMON_NAMES.get(
+                            obs["species"], obs["species"].replace("_", " ")
+                        ),
+                        "photo_count": obs["photo_count"],
+                        "duration_sec": obs["duration_sec"],
+                        "duration_display": _format_duration(obs["duration_sec"]),
+                        "best_score": obs["best_score"],
+                        "cover_detection": enriched_cover,
+                        "all_detections": all_dets_enriched,
+                        "detection_ids": obs["detection_ids"],
+                        "start_time": obs["start_time"],
+                        "end_time": obs["end_time"],
+                    }
+                )
+
+            # Species of the Day (page 1 only) — unchanged logic
             species_of_day = []
             if page == 1:
                 species_candidates = {}
@@ -1803,10 +1847,10 @@ def create_web_interface(detection_manager, system_monitor=None):
                 page=page,
                 total_pages=total_pages,
                 total_items=total_items,
-                total_items_unfiltered=total_items_unfiltered,
+                total_items_unfiltered=total_obs_unfiltered,
                 sort_by=sort_by,
                 current_threshold=current_threshold,
-                detections=detections,
+                observations=enriched_observations,
                 species_of_day=species_of_day,
                 pagination_range=pagination_range,
                 image_width=IMAGE_WIDTH,
