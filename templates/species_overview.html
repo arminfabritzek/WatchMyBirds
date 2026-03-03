@@ -20,8 +20,10 @@
     </div>
     <div class="page-control-bar__right">
         {% include 'partials/thumb_view_toggle.html' %}
+        {% if session.get('authenticated') %}
         <button type="button" class="btn btn--secondary inline-edit-toggle" onclick="toggleInlineEdit(this)">✏️
             Edit</button>
+        {% endif %}
         <a href="/species" class="btn btn--secondary">← Species</a>
         <a href="/" class="btn btn--secondary">Live</a>
     </div>
@@ -87,7 +89,9 @@
 </nav>
 {% endif %}
 
+{% if session.get('authenticated') %}
 {% include 'partials/inline_edit.html' %}
+{% endif %}
 {% endblock %}
 
 {% block modals %}

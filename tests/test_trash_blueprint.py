@@ -88,3 +88,43 @@ def test_rate_rejects_zero_rating(client):
     data = response.get_json()
     assert "1-5" in data["error"]
     mock_conn.commit.assert_not_called()
+
+
+# ── Unauthenticated access tests ──
+
+
+@pytest.fixture
+def unauth_client(app):
+    """Client without session authentication."""
+    with app.test_client() as client:
+        yield client
+
+
+def test_unauth_reject_redirects_to_login(unauth_client):
+    response = unauth_client.post(
+        "/api/detections/reject",
+        json={"ids": [1]},
+        follow_redirects=False,
+    )
+    assert response.status_code == 302
+    assert "/login" in response.headers["Location"]
+
+
+def test_unauth_relabel_redirects_to_login(unauth_client):
+    response = unauth_client.post(
+        "/api/detections/relabel",
+        json={"detection_id": 1, "species": "Parus_major"},
+        follow_redirects=False,
+    )
+    assert response.status_code == 302
+    assert "/login" in response.headers["Location"]
+
+
+def test_unauth_favorite_redirects_to_login(unauth_client):
+    response = unauth_client.post(
+        "/api/detections/favorite",
+        json={"detection_id": 1},
+        follow_redirects=False,
+    )
+    assert response.status_code == 302
+    assert "/login" in response.headers["Location"]

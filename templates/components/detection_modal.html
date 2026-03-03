@@ -13,6 +13,7 @@ group_id (str): Modal group for navigation isolation
 {% from "components/modal_detection_info.html" import render_detection_info %}
 
 {% macro render_modal(det, group_id) %}
+{% set can_moderate = session.get('authenticated') %}
 <div class="modal fade gallery-modal wm-modal" id="modal-{{ group_id }}-{{ det.detection_id }}" tabindex="-1"
     aria-hidden="true" data-modal-group="{{ group_id }}" data-image-path="{{ det.full_path }}">
 
@@ -53,7 +54,8 @@ group_id (str): Modal group for navigation isolation
                     {{ render_detection_info(
                     det=det,
                     siblings=det.siblings,
-                    sibling_count=det.sibling_count
+                    sibling_count=det.sibling_count,
+                    can_moderate=can_moderate
                     ) }}
                 </div>
             </div>
@@ -76,7 +78,8 @@ group_id (str): Modal group for navigation isolation
                 show_trash=true,
                 show_download=true,
                 gallery_date=det.gallery_date,
-                is_favorite=det.is_favorite
+                is_favorite=det.is_favorite,
+                can_moderate=can_moderate
                 ) }}
             </div>
 

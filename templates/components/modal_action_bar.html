@@ -14,7 +14,8 @@ show_bbox_toggle=true,
 show_trash=true,
 show_download=true,
 gallery_date=none,
-is_favorite=false
+is_favorite=false,
+can_moderate=false
 ) %}
 <div class="modal-action-bar">
     {# Left: Actions #}
@@ -29,7 +30,7 @@ is_favorite=false
         {% if show_download and original_url %}
         <a href="{{ original_url }}" download class="btn btn--secondary btn--sm">DL</a>
         {% endif %}
-        {% if show_trash %}
+        {% if show_trash and can_moderate %}
         <button type="button" class="btn btn--danger btn--sm"
             onclick="deleteDetection(event, {{ detection_id }})">🗑</button>
         {% endif %}

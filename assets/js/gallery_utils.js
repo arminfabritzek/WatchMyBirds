@@ -4,6 +4,27 @@
  */
 
 /* =========================================
+   Auth Redirect Detection (Session Expiry)
+   =========================================
+   When a session expires, fetch() follows the 302 to /login transparently
+   and returns the login HTML with status 200. We detect this by checking
+   resp.redirected + URL containing '/login', or content-type is text/html.
+*/
+function isAuthRedirect(resp) {
+    if (resp.redirected && resp.url && resp.url.includes('/login')) return true;
+    const ct = resp.headers.get('content-type');
+    if (resp.ok && ct && ct.includes('text/html')) return true;
+    return false;
+}
+
+function redirectToLogin() {
+    if (window.wmToast) window.wmToast('Session expired. Please log in.', 'error');
+    window.location.href = '/login?next=' + encodeURIComponent(
+        window.location.pathname + window.location.search + window.location.hash
+    );
+}
+
+/* =========================================
    Favorite Toggle (Modal Action Bar & Badges)
    ========================================= */
 
@@ -44,14 +65,11 @@ async function toggleFavorite(event, detectionId, btn) {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ detection_id: Number(detectionId) })
         });
+        if (isAuthRedirect(resp)) {
+            redirectToLogin();
+            return;
+        }
         if (resp.ok) {
-            // Check if we hit an auth redirect (fetch follows 302s to /login transparently, returning HTML with 200 OK)
-            const contentType = resp.headers.get("content-type");
-            if (contentType && contentType.includes("text/html")) {
-                if (window.wmToast) window.wmToast('Session expired. Please log in.', 'error');
-                window.location.href = '/login?next=' + encodeURIComponent(window.location.pathname);
-                return;
-            }
 
             step = "json";
             const data = await resp.json();
@@ -182,6 +200,10 @@ async function deleteDetection(event, id) {
             body: JSON.stringify({ ids: [id] })
         });
 
+        if (isAuthRedirect(response)) {
+            redirectToLogin();
+            return;
+        }
         if (response.ok) {
             // Check if this is a sibling card delete (inside an open modal)
             const openModal = document.querySelector('.gallery-modal.show');
@@ -351,6 +373,11 @@ async function relabelDetection(event, detectionId, currentSpecies) {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ detection_id: detectionId, species: scientific })
             });
+            if (isAuthRedirect(resp)) {
+                overlay.remove();
+                redirectToLogin();
+                return;
+            }
             if (resp.ok) {
                 overlay.remove();
                 // Update the sibling card text in-place

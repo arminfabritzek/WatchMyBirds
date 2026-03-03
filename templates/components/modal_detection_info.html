@@ -8,8 +8,9 @@ Args:
 det (dict): Current detection with od_class_name, cls_class_name, confidences
 siblings (list): List of sibling detections (if multi-detection image)
 sibling_count (int): Total number of detections on this image
+can_moderate (bool): Whether to show moderation controls (relabel/delete)
 #}
-{% macro render_detection_info(det, siblings=none, sibling_count=1) %}
+{% macro render_detection_info(det, siblings=none, sibling_count=1, can_moderate=false) %}
 <div class="detection-info small text-muted mt-2 text-center">
     {% if sibling_count and sibling_count > 1 and siblings %}
     {# Multiple detections on same image #}
@@ -39,6 +40,7 @@ sibling_count (int): Total number of detections on this image
                 {{ "%.0f"|format(sib.od_confidence * 100) }}%
                 {% if sib.cls_class_name %} / {{ "%.0f"|format(sib.cls_confidence * 100) }}%{% endif %}
             </div>
+            {% if can_moderate %}
             <button type="button"
                 onclick="relabelDetection(event, {{ sib.detection_id }}, '{{ sib.cls_class_name or sib.od_class_name }}')"
                 title="Relabel species"
@@ -49,6 +51,7 @@ sibling_count (int): Total number of detections on this image
                 style="position:absolute;top:4px;right:4px;background:none;border:none;cursor:pointer;font-size:0.7rem;opacity:0.4;padding:2px 4px;border-radius:3px;transition:opacity 0.15s;"
                 onmouseenter="this.style.opacity='1';this.style.background='rgba(220,53,69,0.15)'"
                 onmouseleave="this.style.opacity='0.4';this.style.background='none'">🗑</button>
+            {% endif %}
             <div style="clear: both;"></div>
         </div>
         {% endfor %}
@@ -80,6 +83,7 @@ sibling_count (int): Total number of detections on this image
                 {{ "%.0f"|format(det.od_confidence * 100) }}%
                 {% if det.cls_class_name %} / {{ "%.0f"|format(det.cls_confidence * 100) }}%{% endif %}
             </div>
+            {% if can_moderate %}
             <button type="button"
                 onclick="relabelDetection(event, {{ det.detection_id }}, '{{ det.cls_class_name or det.od_class_name }}')"
                 title="Relabel species"
@@ -90,6 +94,7 @@ sibling_count (int): Total number of detections on this image
                 style="position:absolute;top:4px;right:4px;background:none;border:none;cursor:pointer;font-size:0.7rem;opacity:0.4;padding:2px 4px;border-radius:3px;transition:opacity 0.15s;"
                 onmouseenter="this.style.opacity='1';this.style.background='rgba(220,53,69,0.15)'"
                 onmouseleave="this.style.opacity='0.4';this.style.background='none'">🗑</button>
+            {% endif %}
             <div style="clear: both;"></div>
         </div>
     </div>

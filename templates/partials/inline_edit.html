@@ -204,6 +204,10 @@ Usage: {% include 'partials/inline_edit.html' %}
                     body: JSON.stringify({ ids: ids })
                 });
 
+                if (isAuthRedirect(resp)) {
+                    redirectToLogin();
+                    return;
+                }
                 if (resp.ok) {
                     // Remove tiles with animation
                     checked.forEach(cb => {
