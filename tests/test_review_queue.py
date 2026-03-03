@@ -23,7 +23,13 @@ def _make_conn() -> sqlite3.Connection:
             bbox_h REAL,
             od_confidence REAL,
             score REAL,
-            od_model_id TEXT
+            od_model_id TEXT,
+            status TEXT DEFAULT 'active',
+            thumbnail_path TEXT,
+            decision_state TEXT,
+            bbox_quality REAL,
+            unknown_score REAL,
+            decision_reasons TEXT
         );
         """
     )

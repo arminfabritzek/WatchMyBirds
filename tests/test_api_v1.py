@@ -168,6 +168,62 @@ class TestApiV1Analytics:
             assert "total_species" in data
             assert "total_days" in data
 
+    def _mock_decisions_db(self):
+        """Create a mock connection that returns decision state rows."""
+        mock_conn = MagicMock()
+        # Simulate rows returned by COALESCE(decision_state, 'null')
+        mock_row_confirmed = {"state": "confirmed", "cnt": 90}
+        mock_row_uncertain = {"state": "uncertain", "cnt": 15}
+        mock_row_unknown = {"state": "unknown", "cnt": 8}
+        mock_row_null = {"state": "null", "cnt": 5}
+        mock_conn.execute.return_value.fetchall.return_value = [
+            mock_row_confirmed,
+            mock_row_uncertain,
+            mock_row_unknown,
+            mock_row_null,
+        ]
+        return mock_conn
+
+    def test_analytics_decisions_returns_structure(self, client):
+        """GET /api/v1/analytics/decisions returns decision state distribution."""
+        mock_conn = self._mock_decisions_db()
+
+        with patch("web.blueprints.api_v1.db_service") as mock_db:
+            mock_db.get_connection.return_value = mock_conn
+            mock_db.fetch_review_queue_count.return_value = 23
+
+            response = client.get("/api/v1/analytics/decisions")
+
+            assert response.status_code == 200
+            data = response.get_json()
+
+            assert data["status"] == "success"
+            assert data["total"] == 118  # 90+15+8+5
+            assert "states" in data
+            assert data["states"]["confirmed"] == 90
+            assert data["states"]["uncertain"] == 15
+            assert data["states"]["unknown"] == 8
+            assert data["review_queue_count"] == 23
+
+    def test_decision_metrics_alias_returns_same_structure(self, client):
+        """GET /api/v1/decision-metrics is an alias for analytics/decisions."""
+        mock_conn = self._mock_decisions_db()
+
+        with patch("web.blueprints.api_v1.db_service") as mock_db:
+            mock_db.get_connection.return_value = mock_conn
+            mock_db.fetch_review_queue_count.return_value = 23
+
+            response = client.get("/api/v1/decision-metrics")
+
+            assert response.status_code == 200
+            data = response.get_json()
+
+            # Must return the exact same shape as /analytics/decisions
+            assert data["status"] == "success"
+            assert data["total"] == 118
+            assert "states" in data
+            assert data["review_queue_count"] == 23
+
 
 class TestApiV1DetectionControl:
     """Test detection pause/resume endpoints."""

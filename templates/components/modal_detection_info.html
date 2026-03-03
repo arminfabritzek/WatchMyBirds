@@ -40,6 +40,20 @@ can_moderate (bool): Whether to show moderation controls (relabel/delete)
                 {{ "%.0f"|format(sib.od_confidence * 100) }}%
                 {% if sib.cls_class_name %} / {{ "%.0f"|format(sib.cls_confidence * 100) }}%{% endif %}
             </div>
+            {# Decision state badge (P1-04) #}
+            {% if sib.decision_state %}
+            <div style="font-size: 0.6rem; margin-top: 2px;">
+                {% if sib.decision_state == 'confirmed' %}
+                <span style="color: var(--color-success, #22c55e);" title="Decision: Confirmed">✅</span>
+                {% elif sib.decision_state == 'uncertain' %}
+                <span style="color: var(--color-warning, #eab308);" title="Decision: Uncertain">⚠️ uncertain</span>
+                {% elif sib.decision_state == 'unknown' %}
+                <span style="color: var(--color-info, #3b82f6);" title="Decision: Unknown">❓ unknown</span>
+                {% elif sib.decision_state == 'rejected' %}
+                <span style="color: var(--color-danger, #ef4444);" title="Decision: Rejected">🚫 rejected</span>
+                {% endif %}
+            </div>
+            {% endif %}
             {% if can_moderate %}
             <button type="button"
                 onclick="relabelDetection(event, {{ sib.detection_id }}, '{{ sib.cls_class_name or sib.od_class_name }}')"
@@ -83,6 +97,20 @@ can_moderate (bool): Whether to show moderation controls (relabel/delete)
                 {{ "%.0f"|format(det.od_confidence * 100) }}%
                 {% if det.cls_class_name %} / {{ "%.0f"|format(det.cls_confidence * 100) }}%{% endif %}
             </div>
+            {# Decision state badge (P1-04) #}
+            {% if det.decision_state %}
+            <div style="font-size: 0.6rem; margin-top: 2px;">
+                {% if det.decision_state == 'confirmed' %}
+                <span style="color: var(--color-success, #22c55e);" title="Decision: Confirmed">✅</span>
+                {% elif det.decision_state == 'uncertain' %}
+                <span style="color: var(--color-warning, #eab308);" title="Decision: Uncertain">⚠️ uncertain</span>
+                {% elif det.decision_state == 'unknown' %}
+                <span style="color: var(--color-info, #3b82f6);" title="Decision: Unknown">❓ unknown</span>
+                {% elif det.decision_state == 'rejected' %}
+                <span style="color: var(--color-danger, #ef4444);" title="Decision: Rejected">🚫 rejected</span>
+                {% endif %}
+            </div>
+            {% endif %}
             {% if can_moderate %}
             <button type="button"
                 onclick="relabelDetection(event, {{ det.detection_id }}, '{{ det.cls_class_name or det.od_class_name }}')"

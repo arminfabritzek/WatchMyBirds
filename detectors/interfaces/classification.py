@@ -5,9 +5,27 @@ Defines the contract for classifying bird species from image crops.
 """
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from enum import StrEnum
 
 import numpy as np
+
+
+class DecisionState(StrEnum):
+    CONFIRMED = "confirmed"
+    UNCERTAIN = "uncertain"
+    UNKNOWN = "unknown"
+    REJECTED = "rejected"
+
+
+@dataclass
+class DecisionResult:
+    decision_state: DecisionState
+    bbox_quality: float | None = None
+    species_conf: float | None = None
+    unknown_score: float | None = None
+    reasons_json: str = "[]"
+    policy_version: str = "1.0"
 
 
 @dataclass
@@ -24,6 +42,48 @@ class ClassificationResult:
     class_name: str
     confidence: float
     model_id: str = ""
+    top_k_confidences: list[float] = field(default_factory=list)
+
+
+def compute_unknown_score(top_k_confidences: list[float]) -> float:
+    """
+    Computes an unknown/out-of-distribution score from top-k class probabilities.
+
+    Uses two complementary signals:
+    - **Margin**: Difference between top-1 and top-2 confidence.
+      A small margin means the model is unsure which class it is.
+    - **Entropy**: Shannon entropy of the top-k distribution (normalized).
+      High entropy means the probability mass is spread across many classes.
+
+    Returns:
+        Score in [0.0, 1.0]. Higher means more likely unknown/OOD.
+    """
+    if not top_k_confidences or len(top_k_confidences) < 1:
+        # No data at all → unknown by definition
+        return 1.0
+
+    top1 = top_k_confidences[0]
+
+    # Single class or no second class → use inverse of top-1 confidence
+    if len(top_k_confidences) < 2:
+        return float(np.clip(1.0 - top1, 0.0, 1.0))
+
+    # Margin: small margin → high unknown score
+    top2 = top_k_confidences[1]
+    margin = top1 - top2
+    # Normalize margin to [0, 1]: margin of 0 → unknown_score=1, margin >=0.5 → 0
+    margin_score = float(np.clip(1.0 - margin / 0.5, 0.0, 1.0))
+
+    # Entropy (normalized Shannon entropy over top-k)
+    probs = np.array(top_k_confidences, dtype=np.float64)
+    probs = probs / (probs.sum() + 1e-12)  # re-normalize top-k to sum=1
+    entropy = -np.sum(probs * np.log(probs + 1e-12))
+    max_entropy = np.log(len(probs) + 1e-12)
+    norm_entropy = float(entropy / max_entropy) if max_entropy > 0 else 0.0
+
+    # Blend: 60% margin, 40% entropy
+    unknown = 0.6 * margin_score + 0.4 * norm_entropy
+    return float(np.clip(unknown, 0.0, 1.0))
 
 
 class ClassificationInterface(ABC):

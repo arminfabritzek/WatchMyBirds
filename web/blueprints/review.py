@@ -81,6 +81,10 @@ def review_page():
         # Badge label for review reason
         if review_reason == "orphan":
             reason_label = "No Detection"
+        elif review_reason == "unknown_species":
+            reason_label = "Unknown Species"
+        elif review_reason == "uncertain":
+            reason_label = "Uncertain"
         else:
             score_pct = round((max_score or 0) * 100)
             reason_label = f"Low Score ({score_pct}%)"
@@ -101,6 +105,11 @@ def review_page():
                 "bbox_y": row["bbox_y"],
                 "bbox_w": row["bbox_w"],
                 "bbox_h": row["bbox_h"],
+                # Decision fields (P1-04)
+                "decision_state": row.get("decision_state"),
+                "bbox_quality": row.get("bbox_quality"),
+                "unknown_score": row.get("unknown_score"),
+                "decision_reasons": row.get("decision_reasons"),
             }
         )
 

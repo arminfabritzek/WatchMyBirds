@@ -213,6 +213,7 @@ def test_process_deep_analysis_job_uses_standard_persistence_path(monkeypatch):
                 class_name="Parus_major",
                 confidence=0.8,
                 model_id="cls_model_v1",
+                top_k_confidences=[0.8, 0.05, 0.03, 0.02, 0.01],
             )
 
     class _FakePersistenceService:
@@ -244,6 +245,28 @@ def test_process_deep_analysis_job_uses_standard_persistence_path(monkeypatch):
             self.classification_service = _FakeClassificationService()
             self.persistence_service = _FakePersistenceService()
             self.classifier_model_id = ""
+
+            from detectors.services.capability_registry import build_default_registry
+            from detectors.services.decision_policy_service import DecisionPolicyService
+            from detectors.services.temporal_decision_service import (
+                TemporalDecisionService,
+            )
+
+            self.decision_policy_service = DecisionPolicyService()
+            self.temporal_decision_service = TemporalDecisionService()
+            self.capability_registry = build_default_registry()
+
+        def compute_detection_signals(self, **kwargs):
+            from detectors.services.scoring_pipeline import (
+                compute_detection_signals as _compute,
+            )
+
+            return _compute(
+                **kwargs,
+                decision_policy=self.decision_policy_service,
+                temporal_service=self.temporal_decision_service,
+                capability_registry=self.capability_registry,
+            )
 
         def run_exhaustive_scan(self, frame):
             return [

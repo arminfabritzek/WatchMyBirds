@@ -32,8 +32,13 @@ def insert_detection(conn: sqlite3.Connection, row: dict[str, Any]) -> int:
             classifier_model_version,
             thumbnail_path,
             frame_width,
-            frame_height
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+            frame_height,
+            decision_state,
+            bbox_quality,
+            unknown_score,
+            decision_reasons,
+            policy_version
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
         """,
         (
             row.get("image_filename"),
@@ -54,6 +59,11 @@ def insert_detection(conn: sqlite3.Connection, row: dict[str, Any]) -> int:
             row.get("thumbnail_path"),
             row.get("frame_width"),
             row.get("frame_height"),
+            row.get("decision_state"),
+            row.get("bbox_quality"),
+            row.get("unknown_score"),
+            row.get("decision_reasons"),
+            row.get("policy_version"),
         ),
     )
     conn.commit()
@@ -139,7 +149,12 @@ def fetch_detections_for_gallery(
             d.rating_source,
             d.is_favorite,
             -- Count of sibling detections on the same image (for multi-bird display)
-            (SELECT COUNT(*) FROM detections d2 WHERE d2.image_filename = d.image_filename AND d2.status = 'active') as sibling_count
+            (SELECT COUNT(*) FROM detections d2 WHERE d2.image_filename = d.image_filename AND d2.status = 'active') as sibling_count,
+            -- Decision policy fields (P1-04)
+            d.decision_state,
+            d.bbox_quality,
+            d.unknown_score,
+            d.decision_reasons
         FROM detections d
         JOIN images i ON d.image_filename = i.filename
         WHERE {where_sql}
@@ -209,6 +224,7 @@ def fetch_sibling_detections(
             d.bbox_y,
             d.bbox_w,
             d.bbox_h,
+            d.decision_state,
             (SELECT cls_class_name FROM classifications c WHERE c.detection_id = d.detection_id ORDER BY cls_confidence DESC LIMIT 1) as cls_class_name,
             (SELECT cls_confidence FROM classifications c WHERE c.detection_id = d.detection_id ORDER BY cls_confidence DESC LIMIT 1) as cls_confidence,
             (substr(i.timestamp, 1, 4) || '-' || substr(i.timestamp, 5, 2) || '-' || substr(i.timestamp, 7, 2) || '/' ||

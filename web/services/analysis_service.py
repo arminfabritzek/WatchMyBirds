@@ -27,6 +27,11 @@ class _DeepReviewDetectionData:
     cls_confidence: float = 0.0
     score: float = 0.0
     agreement_score: float = 0.0
+    decision_state: str | None = None
+    bbox_quality: float | None = None
+    unknown_score: float | None = None
+    decision_reasons: str | None = None
+    policy_version: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -154,6 +159,7 @@ def _build_detection_payload(
         margin_percent=0.1,
         to_rgb=True,
     )
+    cls_result = None
     if crop_rgb is not None:
         cls_result = detection_manager.classification_service.classify(crop_rgb)
         cls_name = cls_result.class_name
@@ -164,12 +170,19 @@ def _build_detection_payload(
             detection_manager.classifier_model_id or cls_result.model_id or ""
         )
 
-    if cls_conf > 0:
-        score = 0.5 * od_conf + 0.5 * cls_conf
-        agreement_score = min(od_conf, cls_conf)
-    else:
-        score = od_conf
-        agreement_score = od_conf
+    # Centralised scoring pipeline (single source of truth)
+    signals = detection_manager.compute_detection_signals(
+        bbox=bbox,
+        frame_shape=frame.shape,
+        od_conf=od_conf,
+        cls_conf=cls_conf,
+        top_k_confidences=(
+            cls_result.top_k_confidences
+            if cls_result is not None and cls_conf > 0
+            else None
+        ),
+        species_key=cls_name or "unknown",
+    )
 
     payload = _DeepReviewDetectionData(
         bbox=bbox,
@@ -177,8 +190,13 @@ def _build_detection_payload(
         class_name=raw_detection.get("class_name", "bird"),
         cls_class_name=cls_name,
         cls_confidence=cls_conf,
-        score=score,
-        agreement_score=agreement_score,
+        score=signals.score,
+        agreement_score=signals.agreement_score,
+        decision_state=signals.decision_state,
+        bbox_quality=signals.bbox_quality,
+        unknown_score=signals.unknown_score,
+        decision_reasons=signals.decision_reasons_json,
+        policy_version=signals.policy_version,
     )
     return payload, classifier_model_id
 

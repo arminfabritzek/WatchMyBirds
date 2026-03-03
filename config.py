@@ -70,6 +70,9 @@ DEFAULTS = {
     "DETECTION_INTERVAL_SECONDS": 2.0,
     "MODEL_BASE_PATH": "./data/models",
     "CLASSIFIER_CONFIDENCE_THRESHOLD": 0.55,
+    "BBOX_QUALITY_THRESHOLD": 0.40,
+    "SPECIES_CONF_THRESHOLD": 0.70,
+    "UNKNOWN_SCORE_THRESHOLD": 0.60,
     "STREAM_FPS": 5.0,
     "STREAM_FPS_CAPTURE": 5.0,
     "STREAM_WIDTH_OUTPUT_RESIZE": 640,
@@ -104,6 +107,9 @@ RUNTIME_KEYS = {
     "STREAM_FPS",
     "STREAM_FPS_CAPTURE",
     "CLASSIFIER_CONFIDENCE_THRESHOLD",
+    "BBOX_QUALITY_THRESHOLD",
+    "SPECIES_CONF_THRESHOLD",
+    "UNKNOWN_SCORE_THRESHOLD",
     "TELEGRAM_COOLDOWN",
     "EDIT_PASSWORD",
     "TELEGRAM_ENABLED",
@@ -169,6 +175,9 @@ def _load_config():
         "SAVE_THRESHOLD",
         "DETECTION_INTERVAL_SECONDS",
         "CLASSIFIER_CONFIDENCE_THRESHOLD",
+        "BBOX_QUALITY_THRESHOLD",
+        "SPECIES_CONF_THRESHOLD",
+        "UNKNOWN_SCORE_THRESHOLD",
         "STREAM_FPS",
         "STREAM_FPS_CAPTURE",
         "TELEGRAM_COOLDOWN",
@@ -389,7 +398,11 @@ def ensure_go2rtc_stream_synced(config: dict, *, with_retry: bool = False) -> No
     never did on a fresh image because go2rtc had an empty source list.
 
     Safe to call at any point; silently returns when preconditions are not met
-    (no camera URL, mode forced to direct, go2rtc unreachable).
+    (no camera URL, go2rtc unreachable).
+
+    Drift-protection: this sync also runs when ``STREAM_SOURCE_MODE=direct``.
+    Even in direct mode, the browser stream page may still rely on go2rtc, so
+    keeping go2rtc's upstream aligned with CAMERA_URL prevents stale sources.
 
     Args:
         config: The application config dict (must already be loaded/coerced).
@@ -400,10 +413,9 @@ def ensure_go2rtc_stream_synced(config: dict, *, with_retry: bool = False) -> No
     log = logging.getLogger(__name__)
 
     camera_url = config.get("CAMERA_URL", "")
-    mode = config.get("STREAM_SOURCE_MODE", "auto")
 
-    # Nothing to sync if there is no camera or the user explicitly wants direct.
-    if not camera_url or mode == "direct":
+    # Nothing to sync if there is no camera URL.
+    if not camera_url:
         return
 
     api_base = config.get("GO2RTC_API_BASE", "http://127.0.0.1:1984")
@@ -538,6 +550,9 @@ def _coerce_config_types(config):
         "CONFIDENCE_THRESHOLD_DETECTION",
         "SAVE_THRESHOLD",
         "CLASSIFIER_CONFIDENCE_THRESHOLD",
+        "BBOX_QUALITY_THRESHOLD",
+        "SPECIES_CONF_THRESHOLD",
+        "UNKNOWN_SCORE_THRESHOLD",
         "GALLERY_DISPLAY_THRESHOLD",
     ):
         try:
@@ -752,6 +767,9 @@ def _validate_value(key, value):
         "CONFIDENCE_THRESHOLD_DETECTION",
         "SAVE_THRESHOLD",
         "CLASSIFIER_CONFIDENCE_THRESHOLD",
+        "BBOX_QUALITY_THRESHOLD",
+        "SPECIES_CONF_THRESHOLD",
+        "UNKNOWN_SCORE_THRESHOLD",
         "GALLERY_DISPLAY_THRESHOLD",
     ):
         try:

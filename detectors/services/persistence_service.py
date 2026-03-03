@@ -269,12 +269,13 @@ class PersistenceService(PersistenceInterface):
         x1, y1, x2, y2 = detection.bbox
         self.generate_thumbnail(frame, detection.bbox, thumb_path)
 
-        # Normalize bbox to 0-1 range
+        # Normalize bbox to 0-1 range and clamp (YOLO may return
+        # slightly negative coords for detections at frame edges)
         img_h, img_w = frame.shape[:2]
-        bbox_x = x1 / img_w
-        bbox_y = y1 / img_h
-        bbox_w = (x2 - x1) / img_w
-        bbox_h = (y2 - y1) / img_h
+        bbox_x = max(0.0, min(1.0, x1 / img_w))
+        bbox_y = max(0.0, min(1.0, y1 / img_h))
+        bbox_w = max(0.0, min(1.0, (x2 - x1) / img_w))
+        bbox_h = max(0.0, min(1.0, (y2 - y1) / img_h))
 
         created_at_iso = datetime.now(UTC).isoformat()
 
@@ -302,6 +303,11 @@ class PersistenceService(PersistenceInterface):
                     "thumbnail_path": thumb_filename,
                     "frame_width": img_w,
                     "frame_height": img_h,
+                    "decision_state": detection.decision_state,
+                    "bbox_quality": detection.bbox_quality,
+                    "unknown_score": detection.unknown_score,
+                    "decision_reasons": detection.decision_reasons,
+                    "policy_version": detection.policy_version,
                 },
             )
 

@@ -139,6 +139,13 @@ def _init_schema(conn: sqlite3.Connection) -> None:
     _ensure_column_on_table(conn, "detections", "classifier_model_version", "TEXT")
     _ensure_column_on_table(conn, "detections", "thumbnail_path", "TEXT")
 
+    # Decision system fields (Plan v1)
+    _ensure_column_on_table(conn, "detections", "decision_state", "TEXT")
+    _ensure_column_on_table(conn, "detections", "bbox_quality", "REAL")
+    _ensure_column_on_table(conn, "detections", "unknown_score", "REAL")
+    _ensure_column_on_table(conn, "detections", "decision_reasons", "TEXT")
+    _ensure_column_on_table(conn, "detections", "policy_version", "TEXT")
+
     # Frame resolution at capture time (tracks camera/resolution changes)
     _ensure_column_on_table(conn, "detections", "frame_width", "INTEGER")
     _ensure_column_on_table(conn, "detections", "frame_height", "INTEGER")

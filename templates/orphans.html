@@ -47,6 +47,38 @@
     </div>
 </nav>
 
+{# Decision State Summary Strip (P1-05) — answers "how many uncertain/unknown?" #}
+<div class="decision-stats-strip" id="decisionStatsStrip" style="display: none;
+    max-width: 1280px; margin: 0 auto; padding: 6px 16px;
+    font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 0.72rem;
+    color: var(--color-text-muted); opacity: 0.7; transition: opacity 0.2s ease;
+    display: none;">
+    <span id="dsConfirmed" style="margin-right: 12px;">✅ Confirmed: –</span>
+    <span id="dsUncertain" style="margin-right: 12px; color: var(--color-warning, #eab308);">⚠️ Uncertain: –</span>
+    <span id="dsUnknown" style="margin-right: 12px; color: var(--color-info, #3b82f6);">❓ Unknown: –</span>
+    <span id="dsRejected" style="margin-right: 12px; color: var(--color-danger, #ef4444);">🚫 Rejected: –</span>
+    <span id="dsReview" style="color: var(--color-text-muted);">📋 Review Queue: –</span>
+</div>
+<script>
+(function() {
+    fetch('/api/v1/analytics/decisions', { credentials: 'same-origin', cache: 'no-store' })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (data.status !== 'success') return;
+            var s = data.states || {};
+            document.getElementById('dsConfirmed').textContent = '✅ Confirmed: ' + (s.confirmed || 0);
+            document.getElementById('dsUncertain').textContent = '⚠️ Uncertain: ' + (s.uncertain || 0);
+            document.getElementById('dsUnknown').textContent = '❓ Unknown: ' + (s.unknown || 0);
+            document.getElementById('dsRejected').textContent = '🚫 Rejected: ' + (s.rejected || 0);
+            document.getElementById('dsReview').textContent = '📋 Review Queue: ' + (data.review_queue_count || 0);
+            document.getElementById('decisionStatsStrip').style.display = 'flex';
+            document.getElementById('decisionStatsStrip').style.flexWrap = 'wrap';
+            document.getElementById('decisionStatsStrip').style.gap = '4px 0';
+        })
+        .catch(function() { /* silent - strip stays hidden */ });
+})();
+</script>
+
 <!-- Flash Messages -->
 {% with messages = get_flashed_messages(with_categories=true) %}
 {% if messages %}

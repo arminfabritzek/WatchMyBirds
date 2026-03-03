@@ -153,6 +153,58 @@ class TestResolveEffectiveSources:
 
 
 # ---------------------------------------------------------------------------
+# ensure_go2rtc_stream_synced
+# ---------------------------------------------------------------------------
+
+
+class TestEnsureGo2rtcStreamSynced:
+    """Tests for pre-sync drift protection behavior."""
+
+    def test_skips_when_camera_url_empty(self):
+        from config import ensure_go2rtc_stream_synced
+
+        cfg = _base_config(CAMERA_URL="")
+        with patch("config.probe_go2rtc") as probe_mock:
+            ensure_go2rtc_stream_synced(cfg)
+
+        probe_mock.assert_not_called()
+
+    def test_direct_mode_still_syncs(self):
+        """Direct mode should still keep go2rtc source aligned."""
+        from config import ensure_go2rtc_stream_synced
+
+        cfg = _base_config(STREAM_SOURCE_MODE="direct")
+        with (
+            patch("config.probe_go2rtc", return_value=True),
+            patch("utils.go2rtc_config.sync_camera_stream_source", return_value=True) as sync_mock,
+            patch("utils.go2rtc_config.reload_go2rtc_stream", return_value=True) as reload_mock,
+        ):
+            ensure_go2rtc_stream_synced(cfg)
+
+        sync_mock.assert_called_once_with(
+            cfg["GO2RTC_CONFIG_PATH"],
+            cfg["CAMERA_URL"],
+            cfg["GO2RTC_STREAM_NAME"],
+        )
+        reload_mock.assert_called_once()
+
+    def test_with_retry_uses_retry_reload(self):
+        from config import ensure_go2rtc_stream_synced
+
+        cfg = _base_config()
+        with (
+            patch("config.probe_go2rtc", return_value=True),
+            patch("utils.go2rtc_config.sync_camera_stream_source", return_value=True),
+            patch("utils.go2rtc_config.reload_go2rtc_stream_with_retry", return_value=True) as retry_mock,
+            patch("utils.go2rtc_config.reload_go2rtc_stream", return_value=True) as direct_mock,
+        ):
+            ensure_go2rtc_stream_synced(cfg, with_retry=True)
+
+        retry_mock.assert_called_once()
+        direct_mock.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
 # probe_go2rtc
 # ---------------------------------------------------------------------------
 

@@ -69,13 +69,23 @@ def fetch_review_queue_images(
     """
     Returns images that need review:
     - review_status = 'untagged' AND
-    - (no detections OR max(score) < gallery_threshold)
+    - (no detections OR max(score) < gallery_threshold
+       OR best detection has decision_state IN ('uncertain', 'unknown'))
 
     Sorted by timestamp ASC (oldest first).
     """
     where_clauses = [
         "(i.review_status IS NULL OR i.review_status = 'untagged')",
-        "(NOT EXISTS (SELECT 1 FROM detections d WHERE d.image_filename = i.filename) OR (SELECT MAX(COALESCE(d.score, 0.0)) FROM detections d WHERE d.image_filename = i.filename) < ?)",
+        """(
+            NOT EXISTS (SELECT 1 FROM detections d WHERE d.image_filename = i.filename)
+            OR (SELECT MAX(COALESCE(d.score, 0.0)) FROM detections d WHERE d.image_filename = i.filename) < ?
+            OR EXISTS (
+                SELECT 1 FROM detections d
+                WHERE d.image_filename = i.filename
+                AND d.status = 'active'
+                AND d.decision_state IN ('uncertain', 'unknown')
+            )
+        )""",
         "i.filename IS NOT NULL",
     ]
     params = [gallery_threshold]
@@ -124,8 +134,47 @@ def fetch_review_queue_images(
         CASE
             WHEN NOT EXISTS (SELECT 1 FROM detections d WHERE d.image_filename = i.filename)
             THEN 'orphan'
+            WHEN EXISTS (
+                SELECT 1 FROM detections d
+                WHERE d.image_filename = i.filename
+                AND d.status = 'active'
+                AND d.decision_state = 'unknown'
+            )
+            THEN 'unknown_species'
+            WHEN EXISTS (
+                SELECT 1 FROM detections d
+                WHERE d.image_filename = i.filename
+                AND d.status = 'active'
+                AND d.decision_state = 'uncertain'
+            )
+            THEN 'uncertain'
             ELSE 'low_score'
-        END as review_reason
+        END as review_reason,
+        -- Best detection's decision fields
+        (
+            SELECT d.decision_state
+            FROM detections d
+            WHERE d.image_filename = i.filename AND d.status = 'active'
+            ORDER BY COALESCE(d.score, 0.0) DESC LIMIT 1
+        ) as decision_state,
+        (
+            SELECT d.bbox_quality
+            FROM detections d
+            WHERE d.image_filename = i.filename AND d.status = 'active'
+            ORDER BY COALESCE(d.score, 0.0) DESC LIMIT 1
+        ) as bbox_quality,
+        (
+            SELECT d.unknown_score
+            FROM detections d
+            WHERE d.image_filename = i.filename AND d.status = 'active'
+            ORDER BY COALESCE(d.score, 0.0) DESC LIMIT 1
+        ) as unknown_score,
+        (
+            SELECT d.decision_reasons
+            FROM detections d
+            WHERE d.image_filename = i.filename AND d.status = 'active'
+            ORDER BY COALESCE(d.score, 0.0) DESC LIMIT 1
+        ) as decision_reasons
     FROM images i
     WHERE {where_sql}
     ORDER BY i.timestamp ASC;
@@ -148,6 +197,12 @@ def fetch_review_queue_count(
     AND (
         NOT EXISTS (SELECT 1 FROM detections d WHERE d.image_filename = i.filename)
         OR (SELECT MAX(COALESCE(d.score, 0.0)) FROM detections d WHERE d.image_filename = i.filename) < ?
+        OR EXISTS (
+            SELECT 1 FROM detections d
+            WHERE d.image_filename = i.filename
+            AND d.status = 'active'
+            AND d.decision_state IN ('uncertain', 'unknown')
+        )
     )
     AND i.filename IS NOT NULL;
     """

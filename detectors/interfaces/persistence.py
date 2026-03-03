@@ -63,6 +63,11 @@ class DetectionData:
         cls_confidence: Classification confidence.
         score: Combined detection+classification score.
         agreement_score: Agreement between detection and classification.
+        decision_state: Status string for decision enum.
+        bbox_quality: Computed quality heuristic of bounding box.
+        unknown_score: OOD explicit score.
+        decision_reasons: JSON list or serializable string of reason codes.
+        policy_version: Version identifier string of the policy engine.
     """
 
     bbox: tuple[int, int, int, int]  # x1, y1, x2, y2
@@ -72,6 +77,11 @@ class DetectionData:
     cls_confidence: float = 0.0
     score: float = 0.0
     agreement_score: float = 0.0
+    decision_state: str | None = None
+    bbox_quality: float | None = None
+    unknown_score: float | None = None
+    decision_reasons: str | None = None
+    policy_version: str | None = None
 
 
 class PersistenceInterface(ABC):

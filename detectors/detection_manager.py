@@ -19,11 +19,16 @@ from datetime import datetime
 from camera.video_capture import VideoCapture
 from config import get_config
 from detectors.classifier import ImageClassifier
+from detectors.interfaces.classification import DecisionState
 from detectors.motion_detector import MotionDetector
 from detectors.services import NotificationService, PersistenceService
+from detectors.services.capability_registry import build_default_registry
 from detectors.services.classification_service import ClassificationService
 from detectors.services.crop_service import CropService
+from detectors.services.decision_policy_service import DecisionPolicyService
 from detectors.services.detection_service import DetectionService
+from detectors.services.scoring_pipeline import ScoringResult, compute_detection_signals
+from detectors.services.temporal_decision_service import TemporalDecisionService
 from logging_config import get_logger
 from utils.db import get_connection, get_or_create_default_source
 from utils.path_manager import get_path_manager
@@ -89,6 +94,14 @@ class DetectionManager:
         self.detection_counter = 0
         self.detection_classes_agg = set()
 
+        # Decision state session counters (P1-03 observability)
+        self.decision_state_counts: dict[str, int] = {
+            "confirmed": 0,
+            "uncertain": 0,
+            "unknown": 0,
+            "rejected": 0,
+        }
+
         # Pending species buffer (for notifications)
         self.pending_species = {}
         self.pending_species_lock = threading.Lock()
@@ -144,8 +157,39 @@ class DetectionManager:
         self.notification_service = NotificationService(common_names=self.common_names)
         self.persistence_service = PersistenceService()
         self.crop_service = CropService()
+        self.decision_policy_service = DecisionPolicyService()
+        self.temporal_decision_service = TemporalDecisionService()
+        self.capability_registry = build_default_registry()
 
         logger.info("DetectionManager V2 initialized (with Services)")
+
+    # =========================================================================
+    # SIGNAL DELEGATE — single-entry scoring pipeline for external callers
+    # (e.g. analysis_service) without requiring cross-layer imports.
+    # =========================================================================
+
+    def compute_detection_signals(
+        self,
+        *,
+        bbox: tuple[int, int, int, int],
+        frame_shape: tuple[int, ...],
+        od_conf: float,
+        cls_conf: float,
+        top_k_confidences: list[float] | None,
+        species_key: str,
+    ) -> "ScoringResult":
+        """Delegate to :func:`scoring_pipeline.compute_detection_signals`."""
+        return compute_detection_signals(
+            bbox=bbox,
+            frame_shape=frame_shape,
+            od_conf=od_conf,
+            cls_conf=cls_conf,
+            top_k_confidences=top_k_confidences,
+            decision_policy=self.decision_policy_service,
+            temporal_service=self.temporal_decision_service,
+            capability_registry=self.capability_registry,
+            species_key=species_key,
+        )
 
     # =========================================================================
     # LIFECYCLE - Exact copy from original
@@ -455,13 +499,23 @@ class DetectionManager:
                 except Exception as e:
                     logger.error(f"Classification error: {e}")
 
-                # Calculate score
-                if cls_conf > 0:
-                    score = 0.5 * od_conf + 0.5 * cls_conf
-                    agreement = min(od_conf, cls_conf)
-                else:
-                    score = od_conf
-                    agreement = od_conf
+                # Centralised scoring pipeline (single source of truth)
+                signals = compute_detection_signals(
+                    bbox=bbox_tuple,
+                    frame_shape=original_frame.shape,
+                    od_conf=od_conf,
+                    cls_conf=cls_conf,
+                    top_k_confidences=(
+                        cls_result.top_k_confidences if cls_conf > 0 else None
+                    ),
+                    decision_policy=self.decision_policy_service,
+                    temporal_service=self.temporal_decision_service,
+                    capability_registry=self.capability_registry,
+                    species_key=cls_name or "unknown",
+                )
+                score = signals.score
+                agreement = signals.agreement_score
+                smoothed_state = signals.decision_state
 
                 # Save detection via PersistenceService
                 det_data = DetectionData(
@@ -472,6 +526,11 @@ class DetectionManager:
                     cls_confidence=cls_conf,
                     score=score,
                     agreement_score=agreement,
+                    decision_state=smoothed_state,
+                    bbox_quality=signals.bbox_quality,
+                    unknown_score=signals.unknown_score,
+                    decision_reasons=signals.decision_reasons_json,
+                    policy_version=signals.policy_version,
                 )
 
                 try:
@@ -484,8 +543,13 @@ class DetectionManager:
                         crop_index=idx,
                     )
 
-                    # Track best for notification
-                    if score > best_score:
+                    # P1-03: session counter for operational monitoring
+                    if smoothed_state in self.decision_state_counts:
+                        self.decision_state_counts[smoothed_state] += 1
+                    # Track best confirmed for notification
+                    # Gate on smoothed state — matches persisted decision_state.
+                    # When smoothing is OFF, smoothed_state == raw state.
+                    if score > best_score and smoothed_state == DecisionState.CONFIRMED:
                         best_score = score
                         best_species = cls_name or "Unknown"
                         best_thumb_path = (

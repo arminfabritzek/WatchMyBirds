@@ -23,19 +23,25 @@ group_id (str): Modal group for navigation isolation
 
             <div class="modal-header wm-modal__header">
                 <div class="wm-modal__title">
+                    {# P1-06: Trusted-species rendering — non-confirmed show tentative label #}
+                    {% set is_trusted = (det.decision_state == 'confirmed') or (det.decision_state is none) %}
                     {% set wiki_url = wikipedia_species_url(det.common_name, det.cls_class_name or det.od_class_name) %}
                     {% if wiki_url %}
                     <a class="wm-modal__title-text" href="{{ wiki_url }}" target="_blank"
                         rel="noopener noreferrer nofollow external"
                         title="Open Wikipedia (new tab): {{ det.common_name }}"
-                        aria-label="Open Wikipedia (new tab): {{ det.common_name }}"><em>{{ det.common_name }}</em>
+                        aria-label="Open Wikipedia (new tab): {{ det.common_name }}" {% if not is_trusted
+                        %}style="opacity: 0.65;" {% endif %}><em>{% if not is_trusted %}~ {% endif %}{{ det.common_name
+                            }}</em>
                         <span aria-hidden="true">↗</span></a>
                     {% else %}
-                    <span class="wm-modal__title-text"><em>{{ det.common_name }}</em></span>
+                    <span class="wm-modal__title-text" {% if not is_trusted %}style="opacity: 0.65;" {% endif %}><em>{%
+                            if not is_trusted %}~ {% endif %}{{ det.common_name }}</em></span>
                     {% endif %}
                     <span class="wm-modal__title-sub">{{ det.formatted_date }} {{ det.formatted_time }}{% if
                         det.cls_class_name or det.od_class_name %} · <em>{{ (det.cls_class_name or det.od_class_name)
-                            | replace('_', ' ') }}</em>{% endif %}</span>
+                            | replace('_', ' ') }}</em>{% endif %}{% if not is_trusted and det.decision_state %} · <span
+                            style="font-size: 0.7rem; opacity: 0.7;">{{ det.decision_state }}</span>{% endif %}</span>
                 </div>
                 <button type="button" class="btn-close wm-modal__close" data-bs-dismiss="modal"></button>
             </div>

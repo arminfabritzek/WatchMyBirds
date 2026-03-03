@@ -28,6 +28,7 @@ from flask import (
 )
 
 from config import (
+    ensure_go2rtc_stream_synced,
     get_config,
     get_settings_payload,
     update_runtime_settings,
@@ -624,10 +625,13 @@ def create_web_interface(detection_manager, system_monitor=None):
                 return jsonify({"errors": errors}), 400
             update_runtime_settings(valid)
 
+            # Keep go2rtc stream mapping aligned with CAMERA_URL in all modes.
+            cfg = get_config()
+            ensure_go2rtc_stream_synced(cfg)
+
             # --- Resolve effective sources after settings change ---
             from config import resolve_effective_sources
 
-            cfg = get_config()
             resolved = resolve_effective_sources(cfg)
             cfg["VIDEO_SOURCE"] = resolved["video_source"]
 
@@ -635,33 +639,6 @@ def create_web_interface(detection_manager, system_monitor=None):
             detection_manager.update_configuration(
                 {"VIDEO_SOURCE": resolved["video_source"]}
             )
-
-            # Sync go2rtc config if relay mode (was MISSING – parity with api_v1)
-            if resolved["effective_mode"] == "relay" and cfg.get("CAMERA_URL"):
-                try:
-                    from utils.go2rtc_config import (
-                        reload_go2rtc_stream,
-                        sync_camera_stream_source,
-                    )
-
-                    sync_ok = sync_camera_stream_source(
-                        cfg["GO2RTC_CONFIG_PATH"],
-                        cfg["CAMERA_URL"],
-                        cfg["GO2RTC_STREAM_NAME"],
-                    )
-                    if not sync_ok:
-                        logger.warning(
-                            "go2rtc config sync returned false (path=%s)",
-                            cfg.get("GO2RTC_CONFIG_PATH", ""),
-                        )
-                    # Runtime reload: push source into running go2rtc
-                    reload_go2rtc_stream(
-                        api_base=cfg.get("GO2RTC_API_BASE", "http://127.0.0.1:1984"),
-                        stream_name=cfg["GO2RTC_STREAM_NAME"],
-                        camera_url=cfg["CAMERA_URL"],
-                    )
-                except Exception as exc:
-                    logger.warning("go2rtc config sync failed: %s", exc)
 
             return jsonify(get_settings_payload())
 
@@ -899,41 +876,13 @@ def create_web_interface(detection_manager, system_monitor=None):
                 update_runtime_settings({"CAMERA_URL": uri})
 
                 cfg = get_config()
+                ensure_go2rtc_stream_synced(cfg)
                 resolved = resolve_effective_sources(cfg)
                 cfg["VIDEO_SOURCE"] = resolved["video_source"]
 
                 detection_manager.update_configuration(
                     {"VIDEO_SOURCE": resolved["video_source"]}
                 )
-
-                # Sync go2rtc config if relay mode
-                if resolved["effective_mode"] == "relay" and cfg.get("CAMERA_URL"):
-                    try:
-                        from utils.go2rtc_config import (
-                            reload_go2rtc_stream,
-                            sync_camera_stream_source,
-                        )
-
-                        sync_ok = sync_camera_stream_source(
-                            cfg["GO2RTC_CONFIG_PATH"],
-                            cfg["CAMERA_URL"],
-                            cfg["GO2RTC_STREAM_NAME"],
-                        )
-                        if not sync_ok:
-                            logger.warning(
-                                "go2rtc config sync returned false (path=%s)",
-                                cfg.get("GO2RTC_CONFIG_PATH", ""),
-                            )
-                        # Runtime reload: push source into running go2rtc
-                        reload_go2rtc_stream(
-                            api_base=cfg.get(
-                                "GO2RTC_API_BASE", "http://127.0.0.1:1984"
-                            ),
-                            stream_name=cfg["GO2RTC_STREAM_NAME"],
-                            camera_url=cfg["CAMERA_URL"],
-                        )
-                    except Exception as exc:
-                        logger.warning("go2rtc config sync failed: %s", exc)
 
                 logger.info(
                     f"Camera {camera_id} activated: mode={resolved['effective_mode']} "
@@ -1484,6 +1433,8 @@ def create_web_interface(detection_manager, system_monitor=None):
                         "rating_source": det.get("rating_source", "auto"),
                         # Favorite
                         "is_favorite": bool(int(det.get("is_favorite") or 0)),
+                        # Decision policy (P1-04)
+                        "decision_state": det.get("decision_state"),
                     }
                 )
 
@@ -1712,6 +1663,8 @@ def create_web_interface(detection_manager, system_monitor=None):
                                     "bbox_y": sib["bbox_y"] or 0.0,
                                     "bbox_w": sib["bbox_w"] or 0.0,
                                     "bbox_h": sib["bbox_h"] or 0.0,
+                                    # Decision policy (P1-04)
+                                    "decision_state": sib.get("decision_state"),
                                 }
                             )
 
@@ -1745,6 +1698,8 @@ def create_web_interface(detection_manager, system_monitor=None):
                     "rating_source": det.get("rating_source", "auto"),
                     # Favorite
                     "is_favorite": bool(int(det.get("is_favorite") or 0)),
+                    # Decision policy (P1-04)
+                    "decision_state": det.get("decision_state"),
                 }
 
             # ── Enrich observations for template ───────────────────────
@@ -2817,6 +2772,14 @@ def create_web_interface(detection_manager, system_monitor=None):
                 )
             except Exception as ds_err:
                 logger.debug(f"Could not compute deep scan status: {ds_err}")
+
+            # P1-03: Session-level decision state counters (zero DB cost)
+            try:
+                response["decision_state_counts"] = dict(
+                    detection_manager.decision_state_counts
+                )
+            except Exception:
+                pass
 
             return jsonify(response)
         except Exception as e:

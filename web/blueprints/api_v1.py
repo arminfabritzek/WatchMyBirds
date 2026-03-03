@@ -842,6 +842,134 @@ def analytics_summary():
     return jsonify(summary)
 
 
+@api_v1.route("/analytics/decisions", methods=["GET"])
+@api_v1.route("/decision-metrics", methods=["GET"])
+@login_required
+def analytics_decisions():
+    """
+    Returns decision state distribution for active detections.
+
+    Response::
+
+        {
+            "status": "success",
+            "total": 1234,
+            "states": {
+                "confirmed": 900,
+                "uncertain": 150,
+                "unknown": 80,
+                "rejected": 54,
+                "null": 50
+            },
+            "review_queue_count": 230
+        }
+    """
+    conn = db_service.get_connection()
+    try:
+        rows = conn.execute(
+            """
+            SELECT
+                COALESCE(d.decision_state, 'null') as state,
+                COUNT(*) as cnt
+            FROM detections d
+            WHERE d.status = 'active'
+            GROUP BY COALESCE(d.decision_state, 'null')
+            """
+        ).fetchall()
+
+        states = {row["state"]: row["cnt"] for row in rows}
+        total = sum(states.values())
+
+        review_count = db_service.fetch_review_queue_count(
+            conn, config["GALLERY_DISPLAY_THRESHOLD"]
+        )
+    finally:
+        conn.close()
+
+    return jsonify(
+        {
+            "status": "success",
+            "total": total,
+            "states": states,
+            "review_queue_count": review_count,
+        }
+    )
+
+
+@api_v1.route("/analytics/decisions/daily", methods=["GET"])
+@login_required
+def analytics_decisions_daily():
+    """
+    Returns per-day decision state distribution for the last N days.
+
+    Query params:
+        days (int): Number of days to look back (default: 14, max: 90)
+
+    Response::
+
+        {
+            "status": "success",
+            "days": [
+                {
+                    "date": "2026-03-04",
+                    "confirmed": 45,
+                    "uncertain": 5,
+                    "unknown": 3,
+                    "rejected": 1,
+                    "total": 54
+                },
+                ...
+            ]
+        }
+    """
+    days_back = min(request.args.get("days", 14, type=int), 90)
+
+    conn = db_service.get_connection()
+    try:
+        rows = conn.execute(
+            """
+            SELECT
+                substr(i.timestamp, 1, 4) || '-' || substr(i.timestamp, 5, 2) || '-' || substr(i.timestamp, 7, 2) AS day,
+                COALESCE(d.decision_state, 'null') AS state,
+                COUNT(*) AS cnt
+            FROM detections d
+            JOIN images i ON d.image_filename = i.filename
+            WHERE d.status = 'active'
+              AND i.timestamp >= strftime('%Y%m%d', 'now', ? || ' days') || '_000000'
+            GROUP BY day, state
+            ORDER BY day DESC, state
+            """,
+            (f"-{days_back}",),
+        ).fetchall()
+    finally:
+        conn.close()
+
+    # Pivot into per-day dicts
+    day_map: dict[str, dict[str, int]] = {}
+    for row in rows:
+        day = row["day"]
+        state = row["state"]
+        cnt = row["cnt"]
+        if day not in day_map:
+            day_map[day] = {
+                "date": day,
+                "confirmed": 0,
+                "uncertain": 0,
+                "unknown": 0,
+                "rejected": 0,
+                "null": 0,
+                "total": 0,
+            }
+        if state in day_map[day]:
+            day_map[day][state] = cnt
+        day_map[day]["total"] += cnt
+
+    # Sort by date descending
+    days_list = sorted(day_map.values(), key=lambda d: d["date"], reverse=True)
+
+    return jsonify({"status": "success", "days": days_list})
+
+
 # =============================================================================
 # Weather
 # =============================================================================

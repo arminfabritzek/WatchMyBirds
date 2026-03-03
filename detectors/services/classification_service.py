@@ -50,12 +50,15 @@ class ClassificationService(ClassificationInterface):
             ClassificationResult with species name and confidence.
         """
         try:
-            _, _, class_name, confidence = self._classifier.predict_from_image(crop)
+            top_k_indices, top_k_confs, class_name, confidence = (
+                self._classifier.predict_from_image(crop)
+            )
 
             return ClassificationResult(
                 class_name=class_name,
                 confidence=confidence,
                 model_id=self.get_model_id(),
+                top_k_confidences=[float(c) for c in top_k_confs],
             )
         except Exception as e:
             logger.error(f"Classification error: {e}")
