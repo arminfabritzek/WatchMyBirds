@@ -368,3 +368,49 @@ def test_count_deep_scan_candidates(monkeypatch):
 
     count = analysis_service.count_deep_scan_candidates()
     assert count == 2
+
+
+# ---------------------------------------------------------------------------
+# T3: ENABLE_NIGHTLY_DEEP_SCAN feature flag
+# ---------------------------------------------------------------------------
+
+
+def test_nightly_sweep_respects_feature_flag(monkeypatch):
+    """When ENABLE_NIGHTLY_DEEP_SCAN=false, start_nightly_analysis_sweep()
+    must return immediately without spawning a background thread."""
+    import threading
+
+    # Disable the flag via monkeypatch on the config dict
+    monkeypatch.setitem(analysis_service.config, "ENABLE_NIGHTLY_DEEP_SCAN", False)
+
+    threads_before = threading.enumerate()
+    sweep_names_before = {t.name for t in threads_before if "Nightly" in t.name}
+
+    analysis_service.start_nightly_analysis_sweep()
+
+    threads_after = threading.enumerate()
+    sweep_names_after = {t.name for t in threads_after if "Nightly" in t.name}
+
+    # No new nightly thread should have been spawned
+    assert sweep_names_after == sweep_names_before
+
+
+def test_nightly_sweep_starts_when_enabled(monkeypatch):
+    """When ENABLE_NIGHTLY_DEEP_SCAN=true, the sweep thread is spawned."""
+    import threading
+
+    # Ensure the flag is enabled
+    monkeypatch.setitem(analysis_service.config, "ENABLE_NIGHTLY_DEEP_SCAN", True)
+
+    threads_before = threading.enumerate()
+    sweep_names_before = {t.name for t in threads_before if "Nightly" in t.name}
+
+    # Use a very long interval so the thread doesn't actually do anything
+    analysis_service.start_nightly_analysis_sweep(interval=999999)
+
+    threads_after = threading.enumerate()
+    sweep_names_after = {t.name for t in threads_after if "Nightly" in t.name}
+
+    # A new NightlyAnalysisSweeper thread should appear
+    new_threads = sweep_names_after - sweep_names_before
+    assert "NightlyAnalysisSweeper" in new_threads

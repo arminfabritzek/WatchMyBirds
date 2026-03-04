@@ -396,7 +396,14 @@ def start_nightly_analysis_sweep(interval=900):
     """
     Background thread that checks if it's night and enqueues review items.
     interval: check interval in seconds (default 15 minutes).
+
+    Gated by ``ENABLE_NIGHTLY_DEEP_SCAN`` config flag.
     """
+    config = get_config()
+    if not config.get("ENABLE_NIGHTLY_DEEP_SCAN", True):
+        logger.info("Nightly deep scan disabled by feature flag (inner guard)")
+        return
+
     from web.services.weather_service import get_current_weather
 
     def sweep_loop():

@@ -167,8 +167,11 @@ def _create_runtime():
             lambda job: process_deep_analysis_job(detection_manager, job)
         )
 
-        # Start nightly sweep
-        start_nightly_analysis_sweep()
+        # Start nightly sweep (feature-flag gated)
+        if config.get("ENABLE_NIGHTLY_DEEP_SCAN", True):
+            start_nightly_analysis_sweep()
+        else:
+            logger.info("Nightly deep scan disabled by feature flag")
 
         atexit.register(analysis_queue.stop)
     except Exception as e:

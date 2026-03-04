@@ -143,4 +143,9 @@ def build_default_registry(config: dict | None = None) -> CapabilityRegistry:
         POLICY_VERSION,
         flag_key="ENABLE_DECISION_POLICY",
     )
+    reg.register(
+        "nightly_deep_scan",
+        "v1",
+        flag_key="ENABLE_NIGHTLY_DEEP_SCAN",
+    )
     return reg

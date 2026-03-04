@@ -544,12 +544,23 @@ class DetectionManager:
                     )
 
                     # P1-03: session counter for operational monitoring
-                    if smoothed_state in self.decision_state_counts:
+                    if smoothed_state and smoothed_state in self.decision_state_counts:
                         self.decision_state_counts[smoothed_state] += 1
-                    # Track best confirmed for notification
-                    # Gate on smoothed state — matches persisted decision_state.
-                    # When smoothing is OFF, smoothed_state == raw state.
-                    if score > best_score and smoothed_state == DecisionState.CONFIRMED:
+
+                    # Track best detection for notification.
+                    # Policy ON:  gate on smoothed decision state == CONFIRMED.
+                    # Policy OFF: conservative legacy gate — cls_conf > 0
+                    #             AND score >= SAVE_THRESHOLD.
+                    notify_eligible = False
+                    if smoothed_state is not None:
+                        # Decision policy active → require CONFIRMED
+                        notify_eligible = smoothed_state == DecisionState.CONFIRMED
+                    else:
+                        # Legacy-conservative fallback (no decision policy)
+                        save_thr = self.config.get("SAVE_THRESHOLD", 0.65)
+                        notify_eligible = cls_conf > 0 and score >= save_thr
+
+                    if score > best_score and notify_eligible:
                         best_score = score
                         best_species = cls_name or "Unknown"
                         best_thumb_path = (

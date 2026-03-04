@@ -26,7 +26,7 @@ class ScoringResult:
     agreement_score: float
     bbox_quality: float
     unknown_score: float
-    decision_state: DecisionState
+    decision_state: DecisionState | None
     decision_reasons_json: str
     policy_version: str
 
@@ -49,6 +49,12 @@ def compute_detection_signals(
     This is the **single source of truth** for the composite score formula,
     agreement score, bbox quality, unknown score, decision evaluation,
     temporal smoothing, and capability version tag.
+
+    When ``ENABLE_DECISION_POLICY`` is disabled in the capability registry,
+    the decision evaluation and temporal smoothing steps are skipped.
+    ``decision_state`` is set to ``None`` (legacy-compatible) and
+    ``decision_reasons_json`` is ``"[]"``.  Signal computation (score,
+    agreement, bbox_quality, unknown_score) remains active for diagnostics.
 
     Args:
         bbox:                Pixel coordinates ``(x1, y1, x2, y2)``.
@@ -86,28 +92,38 @@ def compute_detection_signals(
     else:
         unknown_s = compute_unknown_score([])
 
-    # --- Decision policy evaluation ---
-    decision_res = decision_policy.evaluate(
-        bbox_quality=bbox_q,
-        species_conf=cls_conf if cls_conf > 0 else None,
-        unknown_score=unknown_s,
-    )
-
-    # --- Temporal smoothing (feature-flag gated) ---
-    smoothed_state = temporal_service.smooth(
-        species_key=species_key,
-        raw_state=decision_res.decision_state,
-    )
-
     # --- Capability version tag for persistence ---
     cap_tag = capability_registry.snapshot().version_tag()
+
+    # --- Decision policy gate (T2: ENABLE_DECISION_POLICY) ---
+    policy_enabled = capability_registry.is_enabled("decision_policy")
+
+    if policy_enabled:
+        # --- Decision policy evaluation ---
+        decision_res = decision_policy.evaluate(
+            bbox_quality=bbox_q,
+            species_conf=cls_conf if cls_conf > 0 else None,
+            unknown_score=unknown_s,
+        )
+
+        # --- Temporal smoothing (feature-flag gated) ---
+        smoothed_state: DecisionState | None = temporal_service.smooth(
+            species_key=species_key,
+            raw_state=decision_res.decision_state,
+        )
+
+        reasons_json = decision_res.reasons_json
+    else:
+        # Legacy-conservative mode: no synthetic decision labels.
+        smoothed_state = None
+        reasons_json = "[]"
 
     return ScoringResult(
         score=score,
         agreement_score=agreement,
-        bbox_quality=decision_res.bbox_quality,
-        unknown_score=decision_res.unknown_score,
+        bbox_quality=bbox_q,
+        unknown_score=unknown_s,
         decision_state=smoothed_state,
-        decision_reasons_json=decision_res.reasons_json,
+        decision_reasons_json=reasons_json,
         policy_version=cap_tag,
     )

@@ -243,3 +243,74 @@ def test_version_tag_non_empty(
 
     assert result.policy_version
     assert "+" in result.policy_version or result.policy_version != "none"
+
+
+# ---------------------------------------------------------------------------
+# T2: ENABLE_DECISION_POLICY=false → no decision state
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture()
+def policy_disabled_registry():
+    """Registry with ENABLE_DECISION_POLICY explicitly disabled."""
+    from detectors.services.capability_registry import build_default_registry
+
+    return build_default_registry(
+        config={"ENABLE_DECISION_POLICY": "false", "ENABLE_TEMPORAL_SMOOTHING": "false"}
+    )
+
+
+def test_policy_disabled_returns_no_decision_state(
+    good_bbox,
+    hd_frame_shape,
+    decision_policy,
+    temporal_service,
+    policy_disabled_registry,
+):
+    """When ENABLE_DECISION_POLICY=false, decision_state must be None
+    and decision_reasons_json must be empty '[]'."""
+    result = compute_detection_signals(
+        bbox=good_bbox,
+        frame_shape=hd_frame_shape,
+        od_conf=0.9,
+        cls_conf=0.8,
+        top_k_confidences=[0.8, 0.05, 0.03, 0.02, 0.01],
+        decision_policy=decision_policy,
+        temporal_service=temporal_service,
+        capability_registry=policy_disabled_registry,
+        species_key="Parus_major",
+    )
+
+    assert result.decision_state is None
+    assert result.decision_reasons_json == "[]"
+    # Signals must still be computed for diagnostics
+    assert result.score == pytest.approx(0.85)
+    assert result.agreement_score == pytest.approx(0.8)
+    assert result.bbox_quality is not None
+    assert result.unknown_score is not None
+    assert result.policy_version  # version tag still present
+
+
+def test_policy_enabled_returns_confirmed(
+    good_bbox,
+    hd_frame_shape,
+    decision_policy,
+    temporal_service,
+    capability_registry,
+):
+    """Default (policy enabled) produces CONFIRMED for good signals — byte-for-byte
+    equivalent to pre-T2 behavior."""
+    result = compute_detection_signals(
+        bbox=good_bbox,
+        frame_shape=hd_frame_shape,
+        od_conf=0.9,
+        cls_conf=0.8,
+        top_k_confidences=[0.8, 0.05, 0.03, 0.02, 0.01],
+        decision_policy=decision_policy,
+        temporal_service=temporal_service,
+        capability_registry=capability_registry,
+        species_key="Parus_major",
+    )
+
+    assert result.decision_state == DecisionState.CONFIRMED
+    assert result.decision_reasons_json == "[]"

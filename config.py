@@ -92,6 +92,7 @@ DEFAULTS = {
     "MOTION_DETECTION_ENABLED": False,
     "MOTION_SENSITIVITY": 500,
     "CAMERA_URL": "",
+    "ENABLE_NIGHTLY_DEEP_SCAN": True,
     "STREAM_SOURCE_MODE": "auto",  # "auto", "relay", "direct"
     "GO2RTC_STREAM_NAME": "camera",
     "GO2RTC_API_BASE": "http://127.0.0.1:1984",
@@ -197,6 +198,8 @@ def _load_config():
         config["EXIF_GPS_ENABLED"] = os.getenv("EXIF_GPS_ENABLED")
     if os.getenv("TELEGRAM_ENABLED") is not None:
         config["TELEGRAM_ENABLED"] = os.getenv("TELEGRAM_ENABLED")
+    if os.getenv("ENABLE_NIGHTLY_DEEP_SCAN") is not None:
+        config["ENABLE_NIGHTLY_DEEP_SCAN"] = os.getenv("ENABLE_NIGHTLY_DEEP_SCAN")
     if os.getenv("CPU_LIMIT") is not None:
         config["CPU_LIMIT"] = os.getenv("CPU_LIMIT")
 
@@ -497,6 +500,7 @@ def _coerce_config_types(config):
         "INBOX_REQUIRE_EXIF_DATETIME",
         "INBOX_REQUIRE_EXIF_GPS",
         "MOTION_DETECTION_ENABLED",
+        "ENABLE_NIGHTLY_DEEP_SCAN",
     ):
         if key in config:
             config[key] = _coerce_bool(config.get(key))
