@@ -408,6 +408,11 @@ def create_web_interface(detection_manager, system_monitor=None):
     init_backup_bp(detection_manager)
     server.register_blueprint(backup_bp)
 
+    # Register Moderation Blueprint
+    from web.blueprints.moderation import moderation_bp
+
+    server.register_blueprint(moderation_bp)
+
     # Auth helper is now imported from web.blueprints.auth
 
     def setup_web_routes(server):

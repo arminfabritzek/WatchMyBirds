@@ -243,6 +243,36 @@ def _init_schema(conn: sqlite3.Connection) -> None:
         "CREATE INDEX IF NOT EXISTS idx_inbox_ingest_events_hash ON inbox_ingest_events(content_hash);"
     )
 
+    # Rescan Proposals — safe proposal persistence (never auto-overwrite)
+    # Status flow: queued → ready → applied | discarded | failed
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS rescan_proposals (
+            proposal_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            job_id TEXT NOT NULL,
+            target_detection_id INTEGER,
+            image_filename TEXT NOT NULL,
+            suggested_species TEXT,
+            suggested_confidence REAL,
+            suggested_score REAL,
+            bbox_x REAL,
+            bbox_y REAL,
+            bbox_w REAL,
+            bbox_h REAL,
+            topk_json TEXT,
+            source_model TEXT,
+            status TEXT DEFAULT 'queued',
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            applied_at TEXT,
+            FOREIGN KEY(image_filename) REFERENCES images(filename) ON DELETE CASCADE
+        );
+    """)
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_rescan_proposals_job_id ON rescan_proposals(job_id);"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_rescan_proposals_status ON rescan_proposals(status);"
+    )
+
     conn.commit()
 
 
