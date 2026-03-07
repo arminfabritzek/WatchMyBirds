@@ -176,8 +176,12 @@ class TestEnsureGo2rtcStreamSynced:
         cfg = _base_config(STREAM_SOURCE_MODE="direct")
         with (
             patch("config.probe_go2rtc", return_value=True),
-            patch("utils.go2rtc_config.sync_camera_stream_source", return_value=True) as sync_mock,
-            patch("utils.go2rtc_config.reload_go2rtc_stream", return_value=True) as reload_mock,
+            patch(
+                "utils.go2rtc_config.sync_camera_stream_source", return_value=True
+            ) as sync_mock,
+            patch(
+                "utils.go2rtc_config.reload_go2rtc_stream", return_value=True
+            ) as reload_mock,
         ):
             ensure_go2rtc_stream_synced(cfg)
 
@@ -195,8 +199,12 @@ class TestEnsureGo2rtcStreamSynced:
         with (
             patch("config.probe_go2rtc", return_value=True),
             patch("utils.go2rtc_config.sync_camera_stream_source", return_value=True),
-            patch("utils.go2rtc_config.reload_go2rtc_stream_with_retry", return_value=True) as retry_mock,
-            patch("utils.go2rtc_config.reload_go2rtc_stream", return_value=True) as direct_mock,
+            patch(
+                "utils.go2rtc_config.reload_go2rtc_stream_with_retry", return_value=True
+            ) as retry_mock,
+            patch(
+                "utils.go2rtc_config.reload_go2rtc_stream", return_value=True
+            ) as direct_mock,
         ):
             ensure_go2rtc_stream_synced(cfg, with_retry=True)
 
@@ -500,6 +508,26 @@ class TestValidateNewKeys:
         ok, _val = _validate_value("TELEGRAM_REPORT_TIME", "25:99")
         assert ok is False
 
+    def test_species_locale_de_valid(self):
+        from config import _validate_value
+
+        ok, val = _validate_value("SPECIES_COMMON_NAME_LOCALE", "de")
+        assert ok is True
+        assert val == "DE"
+
+    def test_species_locale_no_valid(self):
+        from config import _validate_value
+
+        ok, val = _validate_value("SPECIES_COMMON_NAME_LOCALE", "NO")
+        assert ok is True
+        assert val == "NO"
+
+    def test_species_locale_invalid_rejected(self):
+        from config import _validate_value
+
+        ok, _val = _validate_value("SPECIES_COMMON_NAME_LOCALE", "FR")
+        assert ok is False
+
 
 # ---------------------------------------------------------------------------
 # Coercion (_coerce_config_types)
@@ -543,6 +571,13 @@ class TestCoercionNewKeys:
         cfg = dict(DEFAULTS, TELEGRAM_REPORT_TIME="invalid")
         _coerce_config_types(cfg)
         assert cfg["TELEGRAM_REPORT_TIME"] == DEFAULTS["TELEGRAM_REPORT_TIME"]
+
+    def test_species_locale_invalid_fallback(self):
+        from config import DEFAULTS, _coerce_config_types
+
+        cfg = dict(DEFAULTS, SPECIES_COMMON_NAME_LOCALE="FR")
+        _coerce_config_types(cfg)
+        assert cfg["SPECIES_COMMON_NAME_LOCALE"] == "DE"
 
 
 # ---------------------------------------------------------------------------
@@ -608,3 +643,11 @@ class TestSettingsPayload:
         assert rt_mode.get("internal") is True
         assert rt_mode.get("source") == "runtime"
         assert rt_mode.get("value") in ("direct", "relay")
+
+    def test_species_locale_is_editable(self):
+        from config import get_settings_payload
+
+        payload = get_settings_payload()
+        lc = payload.get("SPECIES_COMMON_NAME_LOCALE", {})
+        assert lc.get("editable") is True
+        assert lc.get("value") in ("DE", "NO")

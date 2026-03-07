@@ -774,11 +774,13 @@
                     <!-- Runtime source (live) -->
                     <div class="alert alert-info py-2 mb-2">
                         <strong>Runtime Source (live):</strong>
-                        <code id="runtimeSourceDisplay">{{ payload.get('STREAM_SOURCE_RUNTIME_VIDEO', {}).get('value', payload['VIDEO_SOURCE'].value) }}</code>
+                        <code
+                            id="runtimeSourceDisplay">{{ payload.get('STREAM_SOURCE_RUNTIME_VIDEO', {}).get('value', payload['VIDEO_SOURCE'].value) }}</code>
                         <span
                             class="badge ms-2 {{ 'text-bg-success' if payload.get('STREAM_SOURCE_RUNTIME_MODE', {}).get('value', 'direct') == 'relay' else 'text-bg-primary' }}"
                             id="runtimeModeBadge">
-                            runtime: {{ payload.get('STREAM_SOURCE_RUNTIME_MODE', {}).get('value', 'direct') | default('direct') }}
+                            runtime: {{ payload.get('STREAM_SOURCE_RUNTIME_MODE', {}).get('value', 'direct') |
+                            default('direct') }}
                         </span>
                     </div>
 
@@ -786,7 +788,8 @@
                     <div class="alert alert-light border py-2 mb-3">
                         <strong>Resolver Decision:</strong>
                         <span class="badge text-bg-secondary ms-2" id="resolverModeBadge">
-                            resolver: {{ payload.get('STREAM_SOURCE_EFFECTIVE_MODE', {}).get('value', 'direct') | default('direct') }}
+                            resolver: {{ payload.get('STREAM_SOURCE_EFFECTIVE_MODE', {}).get('value', 'direct') |
+                            default('direct') }}
                         </span>
                         <span class="badge text-bg-light border text-dark ms-1" id="streamModeSettingBadge">
                             setting: {{ payload.get('STREAM_SOURCE_MODE', {}).get('value', 'auto') | default('auto') }}
@@ -827,7 +830,8 @@
                                     onclick="setCameraUrl(document.getElementById('cameraUrlInput').value)">Apply</button>
                             </div>
                             <div class="form-text text-muted small mt-1">
-                                Passwords stay masked as <code>*****</code>. Replace stars only if you want to change credentials.
+                                Passwords stay masked as <code>*****</code>. Replace stars only if you want to change
+                                credentials.
                             </div>
                         </div>
                     </div>
@@ -835,13 +839,18 @@
                     <div class="row g-2 mt-2">
                         <div class="col-md-6">
                             <label for="STREAM_SOURCE_MODE" class="small text-muted">Stream Routing Mode</label>
-                            <select name="STREAM_SOURCE_MODE" id="STREAM_SOURCE_MODE" class="form-select form-select-sm text-dark">
-                                <option value="auto" {{ 'selected' if payload.get('STREAM_SOURCE_MODE', {}).get('value', 'auto') == 'auto' }}>auto (use go2rtc if available)</option>
-                                <option value="relay" {{ 'selected' if payload.get('STREAM_SOURCE_MODE', {}).get('value', 'auto') == 'relay' }}>relay (always go2rtc)</option>
-                                <option value="direct" {{ 'selected' if payload.get('STREAM_SOURCE_MODE', {}).get('value', 'auto') == 'direct' }}>direct (camera -> app)</option>
+                            <select name="STREAM_SOURCE_MODE" id="STREAM_SOURCE_MODE"
+                                class="form-select form-select-sm text-dark">
+                                <option value="auto" {{ 'selected' if payload.get('STREAM_SOURCE_MODE',
+                                    {}).get('value', 'auto' )=='auto' }}>auto (use go2rtc if available)</option>
+                                <option value="relay" {{ 'selected' if payload.get('STREAM_SOURCE_MODE',
+                                    {}).get('value', 'auto' )=='relay' }}>relay (always go2rtc)</option>
+                                <option value="direct" {{ 'selected' if payload.get('STREAM_SOURCE_MODE',
+                                    {}).get('value', 'auto' )=='direct' }}>direct (camera -> app)</option>
                             </select>
                             <div class="form-text text-muted small">
-                                <strong>auto:</strong> prefer go2rtc and fallback to direct. <strong>relay:</strong> force go2rtc. <strong>direct:</strong> app connects directly.
+                                <strong>auto:</strong> prefer go2rtc and fallback to direct. <strong>relay:</strong>
+                                force go2rtc. <strong>direct:</strong> app connects directly.
                             </div>
                         </div>
                         <div class="col-md-6">
@@ -1028,6 +1037,17 @@
                         </select>
                     </div>
                     <div class="col-md-6">
+                        <label for="SPECIES_COMMON_NAME_LOCALE" class="form-label">Species Common Names</label>
+                        <select name="SPECIES_COMMON_NAME_LOCALE" id="SPECIES_COMMON_NAME_LOCALE" class="form-select">
+                            <option value="DE" {% if payload.get('SPECIES_COMMON_NAME_LOCALE', {}).get('value', 'DE'
+                                )=='DE' %}selected{% endif %}>Deutsch (DE)</option>
+                            <option value="NO" {% if payload.get('SPECIES_COMMON_NAME_LOCALE', {}).get('value', 'DE'
+                                )=='NO' %}selected{% endif %}>Norsk (NO)</option>
+                        </select>
+                        <div class="form-text text-muted"><small>Language for species display names in gallery and
+                                picker.</small></div>
+                    </div>
+                    <div class="col-md-6">
                         <label for="DEBUG_MODE" class="form-label">Debug Mode</label>
                         <select name="DEBUG_MODE" id="DEBUG_MODE" class="form-select">
                             <option value="true" {% if payload['DEBUG_MODE'].value %}selected{% endif %}>Enabled
@@ -1045,7 +1065,8 @@
             </div>
         </div>
 
-        <button type="submit" class="btn btn-primary btn-lg w-100 mb-5" id="settingsSubmitBtn">Apply & Restart Services</button>
+        <button type="submit" class="btn btn-primary btn-lg w-100 mb-5" id="settingsSubmitBtn">Apply & Restart
+            Services</button>
     </form>
 
     <!-- JS Logic for Source and Location -->
@@ -1152,30 +1173,30 @@
                 credentials: 'same-origin',
                 body: JSON.stringify(payload)
             })
-            .then(res => {
-                if (!res.ok) {
-                    return res.json().then(err => {
-                        throw new Error(err.message || JSON.stringify(err.errors) || 'API Error');
-                    });
-                }
-                return res.json();
-            })
-            .then(data => {
-                if (data.status === 'success') {
-                    alert('✅ Settings saved successfully! Page will reload.');
-                    window.location.reload();
-                } else {
-                    alert('❌ Failed: ' + (data.message || 'Unexpected response'));
+                .then(res => {
+                    if (!res.ok) {
+                        return res.json().then(err => {
+                            throw new Error(err.message || JSON.stringify(err.errors) || 'API Error');
+                        });
+                    }
+                    return res.json();
+                })
+                .then(data => {
+                    if (data.status === 'success') {
+                        alert('✅ Settings saved successfully! Page will reload.');
+                        window.location.reload();
+                    } else {
+                        alert('❌ Failed: ' + (data.message || 'Unexpected response'));
+                        btn.textContent = originalText;
+                        btn.disabled = false;
+                    }
+                })
+                .catch(err => {
+                    alert('❌ Error: ' + (err.message || 'Connection failed'));
+                    console.error(err);
                     btn.textContent = originalText;
                     btn.disabled = false;
-                }
-            })
-            .catch(err => {
-                alert('❌ Error: ' + (err.message || 'Connection failed'));
-                console.error(err);
-                btn.textContent = originalText;
-                btn.disabled = false;
-            });
+                });
 
             return false;
         }

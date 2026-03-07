@@ -232,22 +232,14 @@ def get_species_thumbnails():
     Uses gallery_service.get_captured_detections() following established patterns.
     Returns thumbnails keyed by: scientific name (both formats) and German name.
     """
-    # Load common names for German mapping
-    import json
-    import os
+    # Load common names for localized mapping
+    from utils.species_names import load_common_names
+
+    cfg = get_config()
+    locale = cfg.get("SPECIES_COMMON_NAME_LOCALE", "DE")
+    common_names = load_common_names(locale)
 
     from web.services import gallery_service
-
-    project_root = os.path.dirname(
-        os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    )
-    common_names_file = os.path.join(project_root, "assets", "common_names_DE.json")
-    common_names = {}
-    try:
-        with open(common_names_file, encoding="utf-8") as f:
-            common_names = json.load(f)
-    except Exception:
-        pass
 
     mapping = {}
     try:
@@ -448,6 +440,11 @@ def settings_post():
 
         if valid:
             update_runtime_settings(valid)
+
+            # Notify host (web_interface) about runtime setting changes
+            _cb = getattr(api_v1, "on_runtime_settings_applied", None)
+            if callable(_cb):
+                _cb(valid)
 
             # --- Pre-sync go2rtc before resolving stream sources ---
             cfg = get_config()
@@ -1482,7 +1479,12 @@ def bbox_heatmap_public():
 # =============================================================================
 
 
-def init_api_v1(app, detection_manager, system_monitor=None):
+def init_api_v1(
+    app,
+    detection_manager,
+    system_monitor=None,
+    on_runtime_settings_applied=None,
+):
     """
     Initialize the API v1 blueprint and register it with the app.
 
@@ -1490,12 +1492,18 @@ def init_api_v1(app, detection_manager, system_monitor=None):
         app: Flask application instance
         detection_manager: DetectionManager instance for detection control
         system_monitor: Optional SystemMonitor instance for vitals API
+        on_runtime_settings_applied: Optional callback(valid_updates: dict)
+            invoked after runtime settings have been persisted.  Lets the
+            host (web_interface) react to config changes (e.g. locale reload).
     """
     # Store detection_manager reference on blueprint for route access
     api_v1.detection_manager = detection_manager
 
     # Store system_monitor reference for vitals API (optional)
     api_v1.system_monitor = system_monitor
+
+    # Store runtime-settings callback
+    api_v1.on_runtime_settings_applied = on_runtime_settings_applied
 
     # Register blueprint
     app.register_blueprint(api_v1)

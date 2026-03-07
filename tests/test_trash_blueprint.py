@@ -1,6 +1,6 @@
 """Tests for trash blueprint relabel/rate/species-list APIs."""
 
-from unittest.mock import MagicMock, mock_open, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from flask import Flask
@@ -29,15 +29,56 @@ def client(app):
 
 
 def test_species_list_returns_sorted_species(client):
-    payload = {"Parus_major": "Great Tit"}
-    with patch("builtins.open", mock_open(read_data="{}")):
-        with patch("json.load", return_value=payload):
+    names = {"Parus_major": "Great Tit"}
+    with patch("utils.species_names.load_common_names", return_value=names):
+        with patch(
+            "config.get_config",
+            return_value={"SPECIES_COMMON_NAME_LOCALE": "DE"},
+        ):
             response = client.get("/api/species-list")
 
     assert response.status_code == 200
     data = response.get_json()
     assert data["status"] == "success"
-    assert data["species"] == [{"scientific": "Parus_major", "common": "Great Tit"}]
+    # Unknown_species is always pinned at position 0
+    assert data["species"][0] == {
+        "scientific": "Unknown_species",
+        "common": "Unknown species",
+    }
+    assert {"scientific": "Parus_major", "common": "Great Tit"} in data["species"]
+
+
+def test_species_list_deduplicates_unknown_species(client):
+    """If common_names already contains Unknown_species, it must appear exactly once."""
+    names = {"Unknown_species": "Unknown species", "Parus_major": "Great Tit"}
+    with patch("utils.species_names.load_common_names", return_value=names):
+        with patch(
+            "config.get_config",
+            return_value={"SPECIES_COMMON_NAME_LOCALE": "DE"},
+        ):
+            response = client.get("/api/species-list")
+
+    data = response.get_json()
+    unknown_entries = [
+        s for s in data["species"] if s["scientific"] == "Unknown_species"
+    ]
+    assert len(unknown_entries) == 1
+    assert data["species"][0]["scientific"] == "Unknown_species"
+
+
+def test_species_list_uses_locale_no(client):
+    """species-list with NO locale uses Norwegian common names."""
+    names = {"Parus_major": "Kjøttmeis", "Unknown_species": "Unknown species"}
+    with patch("utils.species_names.load_common_names", return_value=names):
+        with patch(
+            "config.get_config",
+            return_value={"SPECIES_COMMON_NAME_LOCALE": "NO"},
+        ):
+            response = client.get("/api/species-list")
+
+    data = response.get_json()
+    assert data["species"][0]["scientific"] == "Unknown_species"
+    assert {"scientific": "Parus_major", "common": "Kjøttmeis"} in data["species"]
 
 
 def test_relabel_requires_detection_and_species(client):

@@ -263,22 +263,24 @@ def reject_detection():
 
 @trash_bp.route("/api/species-list", methods=["GET"])
 def species_list():
-    """Returns the list of known species for relabeling."""
-    import json
-    import os
+    """Returns the list of known species for relabeling (locale-aware)."""
+    from config import get_config
+    from utils.species_names import load_common_names
 
-    project_root = os.path.dirname(
-        os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    )
-    names_file = os.path.join(project_root, "assets", "common_names_DE.json")
     try:
-        with open(names_file, encoding="utf-8") as f:
-            names = json.load(f)
+        cfg = get_config()
+        locale = cfg.get("SPECIES_COMMON_NAME_LOCALE", "DE")
+        names = load_common_names(locale)
+
         # Return sorted by scientific name for dropdown
         species = [
             {"scientific": k, "common": v}
             for k, v in sorted(names.items(), key=lambda x: x[0])
         ]
+        # Pin Unknown_species as system fallback at position 0
+        species = [s for s in species if s["scientific"] != "Unknown_species"]
+        unknown_label = names.get("Unknown_species", "Unknown species")
+        species.insert(0, {"scientific": "Unknown_species", "common": unknown_label})
         return jsonify({"status": "success", "species": species})
     except Exception as e:
         logger.error(f"Failed to load species list: {e}")

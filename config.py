@@ -97,6 +97,7 @@ DEFAULTS = {
     "GO2RTC_STREAM_NAME": "camera",
     "GO2RTC_API_BASE": "http://127.0.0.1:1984",
     "GO2RTC_CONFIG_PATH": "./go2rtc.yaml",
+    "SPECIES_COMMON_NAME_LOCALE": "DE",
 }
 
 RUNTIME_KEYS = {
@@ -129,6 +130,7 @@ RUNTIME_KEYS = {
     "INBOX_REQUIRE_EXIF_GPS",
     "MOTION_DETECTION_ENABLED",
     "MOTION_SENSITIVITY",
+    "SPECIES_COMMON_NAME_LOCALE",
 }
 
 BOOT_KEYS = set(DEFAULTS.keys()) - RUNTIME_KEYS
@@ -170,6 +172,9 @@ def _load_config():
     ):
         if os.getenv(key) is not None:
             config[key] = os.getenv(key)
+
+    if os.getenv("SPECIES_COMMON_NAME_LOCALE") is not None:
+        config["SPECIES_COMMON_NAME_LOCALE"] = os.getenv("SPECIES_COMMON_NAME_LOCALE")
 
     for key in (
         "CONFIDENCE_THRESHOLD_DETECTION",
@@ -645,6 +650,12 @@ def _coerce_config_types(config):
     else:
         config["GO2RTC_CONFIG_PATH"] = "./go2rtc.yaml"
 
+    # SPECIES_COMMON_NAME_LOCALE: uppercase, only DE or NO
+    locale_val = str(config.get("SPECIES_COMMON_NAME_LOCALE", "DE")).strip().upper()
+    if locale_val not in ("DE", "NO"):
+        locale_val = "DE"
+    config["SPECIES_COMMON_NAME_LOCALE"] = locale_val
+
 
 def _coerce_bool(value):
     if isinstance(value, bool):
@@ -884,6 +895,13 @@ def _validate_value(key, value):
             "direct",
         ):
             return True, value.strip().lower()
+        return False, None
+
+    if key == "SPECIES_COMMON_NAME_LOCALE":
+        if isinstance(value, str):
+            normalized = value.strip().upper()
+            if normalized in ("DE", "NO"):
+                return True, normalized
         return False, None
 
     return False, None

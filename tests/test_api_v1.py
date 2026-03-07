@@ -103,6 +103,31 @@ class TestApiV1Settings:
                 # Per docs/API.md:
                 assert data["status"] == "success"
 
+    def test_settings_post_invokes_runtime_callback_for_locale(self, client):
+        """POST /api/v1/settings triggers on_runtime_settings_applied callback."""
+        from web.blueprints.api_v1 import api_v1
+
+        callback = MagicMock()
+        api_v1.on_runtime_settings_applied = callback
+
+        with patch("config.validate_runtime_updates") as mock_validate:
+            with patch("config.update_runtime_settings"):
+                mock_validate.return_value = (
+                    {"SPECIES_COMMON_NAME_LOCALE": "NO"},
+                    {},
+                )
+
+                response = client.post(
+                    "/api/v1/settings",
+                    json={"SPECIES_COMMON_NAME_LOCALE": "NO"},
+                )
+
+        assert response.status_code == 200
+        callback.assert_called_once_with({"SPECIES_COMMON_NAME_LOCALE": "NO"})
+
+        # Cleanup
+        api_v1.on_runtime_settings_applied = None
+
 
 class TestApiV1Onvif:
     """Test /api/v1/onvif endpoints."""

@@ -2,7 +2,6 @@
 # web_interface.py
 # ------------------------------------------------------------------------------
 
-import json
 import logging
 import math
 import os
@@ -93,14 +92,10 @@ def create_web_interface(detection_manager, system_monitor=None):
     IMAGE_WIDTH = 150
     PAGE_SIZE = 50
 
-    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    common_names_file = os.path.join(project_root, "assets", "common_names_DE.json")
-    try:
-        with open(common_names_file, encoding="utf-8") as f:
-            COMMON_NAMES = json.load(f)
-    except Exception as e:
-        logger.error(f"Failed to load common names from {common_names_file}: {e}")
-        COMMON_NAMES = {"Cyanistes_caeruleus": "Eurasian blue tit"}
+    from utils.species_names import load_common_names
+
+    _species_locale = config.get("SPECIES_COMMON_NAME_LOCALE", "DE")
+    COMMON_NAMES = load_common_names(_species_locale)
 
     def _compute_auto_rating_local(od_confidence, cls_confidence, bbox_w, bbox_h):
         """
@@ -379,7 +374,20 @@ def create_web_interface(detection_manager, system_monitor=None):
     # Register API v1 Blueprint
     from web.blueprints.api_v1 import init_api_v1
 
-    init_api_v1(server, detection_manager, system_monitor=system_monitor)
+    def _on_runtime_settings_applied(valid_updates: dict) -> None:
+        """React to runtime setting changes dispatched from API v1."""
+        nonlocal COMMON_NAMES
+        if "SPECIES_COMMON_NAME_LOCALE" in valid_updates:
+            new_names = load_common_names(valid_updates["SPECIES_COMMON_NAME_LOCALE"])
+            COMMON_NAMES.clear()
+            COMMON_NAMES.update(new_names)
+
+    init_api_v1(
+        server,
+        detection_manager,
+        system_monitor=system_monitor,
+        on_runtime_settings_applied=_on_runtime_settings_applied,
+    )
 
     # Register Trash Blueprint
     from web.blueprints.trash import trash_bp
@@ -629,6 +637,13 @@ def create_web_interface(detection_manager, system_monitor=None):
             if errors:
                 return jsonify({"errors": errors}), 400
             update_runtime_settings(valid)
+
+            # Hot-reload common names if locale changed
+            if "SPECIES_COMMON_NAME_LOCALE" in valid:
+                nonlocal COMMON_NAMES
+                new_names = load_common_names(valid["SPECIES_COMMON_NAME_LOCALE"])
+                COMMON_NAMES.clear()
+                COMMON_NAMES.update(new_names)
 
             # Keep go2rtc stream mapping aligned with CAMERA_URL in all modes.
             cfg = get_config()
@@ -2419,6 +2434,7 @@ def create_web_interface(detection_manager, system_monitor=None):
         "EXIF_GPS_ENABLED": "Write GPS to Exif (Safe to disable for privacy)",
         "INBOX_REQUIRE_EXIF_DATETIME": "Inbox Require EXIF Date/Time (Skip imports without DateTimeOriginal/DateTimeDigitized)",
         "INBOX_REQUIRE_EXIF_GPS": "Inbox Require EXIF GPS (Skip imports without GPSLatitude/GPSLongitude)",
+        "SPECIES_COMMON_NAME_LOCALE": "Species Common Names (Language for display names: DE=Deutsch, NO=Norsk)",
     }
 
     # Keys ordered for UI display purposes
@@ -2434,6 +2450,7 @@ def create_web_interface(detection_manager, system_monitor=None):
         "EXIF_GPS_ENABLED",
         "INBOX_REQUIRE_EXIF_DATETIME",
         "INBOX_REQUIRE_EXIF_GPS",
+        "SPECIES_COMMON_NAME_LOCALE",
         "TELEGRAM_COOLDOWN",
         "TELEGRAM_ENABLED",
         "GALLERY_DISPLAY_THRESHOLD",
