@@ -1214,9 +1214,9 @@
             ⚙️ Advanced
         </summary>
 
-        <!-- Ingest UI (legacy - for Docker mounts) -->
+        <!-- Ingest UI (for Docker mounts) -->
         <div class="card mt-2">
-            <div class="card-header bg-light fw-bold">Image Ingest (Legacy)</div>
+            <div class="card-header bg-light fw-bold">Image Ingest</div>
             <div class="card-body">
                 <p class="card-text text-muted">
                     <small>For Docker deployments: Import images from the mounted <code>/ingest</code>
@@ -1225,7 +1225,7 @@
                 <p class="card-text text-muted">
                     <small>💡 For normal uploads, use the <a href="/inbox">Inbox</a>.</small>
                 </p>
-                <form method="POST" action="{{ url_for('ingest_route') }}">
+                <form method="POST" action="{{ url_for('start_ingest_endpoint') }}">
                     <button type="submit" class="btn btn-secondary btn-sm">Start Ingest from /ingest</button>
                 </form>
             </div>

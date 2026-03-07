@@ -17,7 +17,6 @@ import cv2
 from flask import (
     Flask,
     Response,
-    flash,
     jsonify,
     redirect,
     render_template,
@@ -31,7 +30,6 @@ from config import (
     get_config,
     get_settings_payload,
     update_runtime_settings,
-    validate_runtime_updates,
 )
 from utils.settings import mask_rtsp_url
 from web.blueprints.auth import auth_bp, login_required
@@ -625,43 +623,6 @@ def create_web_interface(detection_manager, system_monitor=None):
                 logger.error(f"Error starting ingest: {e}")
                 return jsonify({"status": "error", "message": str(e)}), 500
 
-        def settings_get_route():
-            return jsonify(get_settings_payload())
-
-        @login_required
-        def settings_post_route():
-            payload = request.get_json(silent=True) or {}
-            if not isinstance(payload, dict):
-                return jsonify({"error": "Invalid payload"}), 400
-            valid, errors = validate_runtime_updates(payload)
-            if errors:
-                return jsonify({"errors": errors}), 400
-            update_runtime_settings(valid)
-
-            # Hot-reload common names if locale changed
-            if "SPECIES_COMMON_NAME_LOCALE" in valid:
-                nonlocal COMMON_NAMES
-                new_names = load_common_names(valid["SPECIES_COMMON_NAME_LOCALE"])
-                COMMON_NAMES.clear()
-                COMMON_NAMES.update(new_names)
-
-            # Keep go2rtc stream mapping aligned with CAMERA_URL in all modes.
-            cfg = get_config()
-            ensure_go2rtc_stream_synced(cfg)
-
-            # --- Resolve effective sources after settings change ---
-            from config import resolve_effective_sources
-
-            resolved = resolve_effective_sources(cfg)
-            cfg["VIDEO_SOURCE"] = resolved["video_source"]
-
-            # Delegate component updates to DetectionManager
-            detection_manager.update_configuration(
-                {"VIDEO_SOURCE": resolved["video_source"]}
-            )
-
-            return jsonify(get_settings_payload())
-
         # --- ONVIF Discovery API ---
         @server.route("/api/onvif/discover", methods=["GET"])
         @login_required
@@ -926,18 +887,6 @@ def create_web_interface(detection_manager, system_monitor=None):
             endpoint="daily_species_summary",
             view_func=daily_species_summary_route,
             methods=["GET"],
-        )
-        server.add_url_rule(
-            "/api/settings",
-            endpoint="settings_get",
-            view_func=settings_get_route,
-            methods=["GET"],
-        )
-        server.add_url_rule(
-            "/api/settings",
-            endpoint="settings_post",
-            view_func=settings_post_route,
-            methods=["POST"],
         )
 
         # --- Analytics API Routes --- MOVED TO web/blueprints/analytics.py ---
@@ -2523,48 +2472,6 @@ def create_web_interface(detection_manager, system_monitor=None):
             labels=SETTING_LABELS,
             trash_count=trash_count,
         )
-
-    @server.route("/api/settings/update", methods=["POST"])
-    @login_required
-    def update_settings_route():
-        """
-        DEPRECATED: Legacy form POST endpoint.
-        The UI now uses POST /api/v1/settings via AJAX.
-        This route is kept briefly as a fallback/marker but returns an error to enforce migration.
-        """
-        logger.warning(
-            "Deprecated /api/settings/update called. Client should use /api/v1/settings."
-        )
-        return jsonify(
-            {
-                "status": "error",
-                "message": "Endpoint deprecated. Use POST /api/v1/settings",
-            }
-        ), 410
-
-    @server.route("/api/settings/ingest", methods=["POST"])
-    @login_required
-    def ingest_route():
-        import threading
-
-        # Determine Path (Logic copied from trigger_ingest)
-        env_path = config.get("INGEST_DIR")
-        cwd_path = os.path.abspath(os.path.join(os.getcwd(), "ingest"))
-        if os.path.exists(env_path):
-            ingest_path = env_path
-        elif os.path.exists(cwd_path):
-            ingest_path = cwd_path
-        else:
-            ingest_path = env_path
-
-        def run_ingest():
-            detection_manager.start_user_ingest(ingest_path)
-
-        t = threading.Thread(target=run_ingest)
-        t.start()
-
-        flash("Ingest process started in background.", "info")
-        return redirect(url_for("settings_route"))
 
     @server.route("/api/system/versions", methods=["GET"])
     @login_required

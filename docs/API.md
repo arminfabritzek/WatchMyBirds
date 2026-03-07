@@ -95,7 +95,7 @@ Resumes the detection loop.
 
 ### 2. Settings
 
-#### GET `/api/settings`
+#### GET `/api/v1/settings`
 Returns current application settings.
 
 **Response:**
@@ -115,6 +115,7 @@ Returns current application settings.
     "city": "Munich"
   },
   "EXIF_GPS_ENABLED": true,
+  "SPECIES_COMMON_NAME_LOCALE": "DE",
   "MOTION_DETECTION_ENABLED": true,
   "MOTION_SENSITIVITY": 500
 }
@@ -122,14 +123,14 @@ Returns current application settings.
 
 ---
 
-#### POST `/api/settings`
-Updates application settings.
+#### POST `/api/v1/settings`
+Updates application settings. Only runtime-modifiable keys are accepted.
 
 **Request Body:**
 ```json
 {
-  "VIDEO_SOURCE": "rtsp://192.168.1.100:554/stream",
-  "CONFIDENCE_THRESHOLD": 0.7
+  "CONFIDENCE_THRESHOLD_DETECTION": 0.7,
+  "SPECIES_COMMON_NAME_LOCALE": "NO"
 }
 ```
 
@@ -140,23 +141,9 @@ Updates application settings.
 }
 ```
 
----
-
-#### POST `/api/settings/update`
-Alternative endpoint for settings update (same as POST `/api/settings`).
-
----
-
-#### POST `/api/settings/ingest`
-Triggers manual ingest from configured ingest directory.
-
-**Response:**
-```json
-{
-  "status": "success",
-  "message": "Ingest completed"
-}
-```
+> **Note:** Legacy endpoints `GET/POST /api/settings`, `POST /api/settings/update`,
+> and `POST /api/settings/ingest` have been removed.
+> Use `POST /api/v1/settings` for settings and `POST /api/ingest/start` for ingest.
 
 ---
 
