@@ -37,7 +37,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           # Get latest Golden Release tag
-          LATEST_TAG=$(gh release list --repo ${{ github.repository }} --limit 10 --json tagName,isPrerelease,createdAt --jq 'sort_by(.createdAt) | reverse | .[] | select(.tagName | startswith("golden-bookworm")) | .tagName' | head -n 1)
+          LATEST_TAG=$(gh release list --repo ${{ github.repository }} --limit 50 --json tagName,isPrerelease,createdAt --jq 'sort_by(.createdAt) | reverse | .[] | select(.tagName | startswith("golden-bookworm")) | .tagName' | head -n 1)
           
           if [ -z "$LATEST_TAG" ]; then
             echo "::error::No Golden Image Release found!"
