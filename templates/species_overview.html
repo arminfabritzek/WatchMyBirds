@@ -24,7 +24,7 @@
         {% include 'partials/thumb_view_toggle.html' %}
         {% if session.get('authenticated') %}
         <button type="button" class="btn btn--secondary inline-edit-toggle" onclick="toggleInlineEdit(this)">✏️
-            Edit</button>
+            Batch Edit</button>
         {% endif %}
         <a href="/species" class="btn btn--secondary">← Species</a>
         <a href="/" class="btn btn--secondary">Live</a>
@@ -34,7 +34,8 @@
 {% if detections %}
 <div class="species-grid" id="species-overview-grid">
     {% for det in detections %}
-    <div class="wm-tile fade-in-item" id="detection-{{ det.detection_id }}" data-detection-id="{{ det.detection_id }}">
+    <div class="wm-tile fade-in-item" id="detection-{{ det.detection_id }}" data-detection-id="{{ det.detection_id }}"
+        data-batch-target="detection">
         <div class="wm-tile__media">
             <button type="button" class="wm-tile__button" data-bs-toggle="modal"
                 data-bs-target="#modal-species_overview-{{ det.detection_id }}" style="height:100%; display:block;">
@@ -118,6 +119,7 @@
 {% endblock %}
 
 {% block scripts %}
+<script src="/assets/js/species_picker.js?v=1"></script>
 <script src="/assets/js/gallery_utils.js?v=test_v3"></script>
 <script src="/assets/js/tile_actions.js?v=1"></script>
 <script src="/assets/js/batch_actions.js?v=1"></script>

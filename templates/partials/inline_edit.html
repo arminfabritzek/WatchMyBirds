@@ -8,11 +8,13 @@ Usage: {% include 'partials/inline_edit.html' %}
 
 <style>
     /* Inline edit mode styles */
-    .inline-edit-active .wm-tile {
+    .inline-edit-active .wm-tile,
+    .inline-edit-active [data-batch-target] {
         position: relative;
     }
 
-    .wm-tile .inline-edit-checkbox {
+    .wm-tile .inline-edit-checkbox,
+    [data-batch-target] .inline-edit-checkbox {
         display: none;
         position: absolute;
         top: 6px;
@@ -24,15 +26,18 @@ Usage: {% include 'partials/inline_edit.html' %}
         cursor: pointer;
     }
 
-    .inline-edit-active .wm-tile .inline-edit-checkbox {
+    .inline-edit-active .wm-tile .inline-edit-checkbox,
+    .inline-edit-active [data-batch-target] .inline-edit-checkbox {
         display: block;
     }
 
-    .inline-edit-active .wm-tile {
+    .inline-edit-active .wm-tile[data-batch-target],
+    .inline-edit-active [data-batch-target] {
         cursor: pointer;
     }
 
-    .inline-edit-active .wm-tile.selected {
+    .inline-edit-active .wm-tile[data-batch-target].selected,
+    .inline-edit-active [data-batch-target].selected {
         outline: 3px solid var(--color-primary, #a78bfa);
         outline-offset: -3px;
         opacity: 0.85;
@@ -74,6 +79,9 @@ Usage: {% include 'partials/inline_edit.html' %}
     <button type="button" class="btn btn--danger" onclick="inlineEditTrash()">🗑 Move to Trash</button>
     <button type="button" class="btn btn--outline-danger" id="inlineRejectAllBtn" onclick="inlineEditTrashAllFiltered()"
         style="display:none;">⚠️ Reject All Filtered</button>
+    <button type="button" class="btn btn--primary" onclick="inlineEditRelabel()">🏷️ Relabel Selected</button>
+    <button type="button" class="btn btn--outline-primary" id="inlineRelabelAllBtn"
+        onclick="inlineEditRelabelAllFiltered()" style="display:none;">🏷️ Relabel All Filtered</button>
     <button type="button" class="btn btn--secondary" onclick="inlineEditCancel()">Cancel</button>
 </div>
 
@@ -82,32 +90,35 @@ Usage: {% include 'partials/inline_edit.html' %}
         let editMode = false;
         let lastClickedIndex = null;
 
-        // Show 'Reject All Filtered' button if filter context is available
+        // Show filter-dependent buttons if filter context is available
         if (window.INLINE_EDIT_FILTER_CONTEXT) {
-            const allBtn = document.getElementById('inlineRejectAllBtn');
+            var allBtn = document.getElementById('inlineRejectAllBtn');
             if (allBtn) allBtn.style.display = '';
+            var relabelAllBtn = document.getElementById('inlineRelabelAllBtn');
+            if (relabelAllBtn) relabelAllBtn.style.display = '';
         }
 
         // Toggle edit mode
         window.toggleInlineEdit = function (btn) {
             editMode = !editMode;
-            const container = document.querySelector('.species-grid, .gallery-grid, #subgallery-grid');
-            if (!container) return;
+            var pageRoot = document.querySelector('.species-grid, .gallery-grid, #subgallery-grid');
+            if (!pageRoot) pageRoot = document.body;
 
             if (editMode) {
-                container.classList.add('inline-edit-active');
+                pageRoot.classList.add('inline-edit-active');
                 btn.classList.add('active');
                 btn.textContent = '✏️ Done';
                 lastClickedIndex = null;
 
-                // Add checkboxes to all tiles that don't have one yet
-                const tiles = container.querySelectorAll('.wm-tile');
-                tiles.forEach((tile, idx) => {
+                // Add checkboxes to all batch-target elements
+                var targets = document.querySelectorAll('[data-batch-target="detection"][data-detection-id]');
+                targets.forEach(function (tile, idx) {
                     tile.dataset.editIndex = idx;
                     if (!tile.querySelector('.inline-edit-checkbox')) {
                         const cb = document.createElement('input');
                         cb.type = 'checkbox';
                         cb.className = 'inline-edit-checkbox';
+                        cb.value = tile.dataset.detectionId;
                         cb.dataset.detectionId = tile.dataset.detectionId;
                         cb.addEventListener('click', e => e.stopPropagation());
                         cb.addEventListener('change', updateInlineCounter);
@@ -115,10 +126,10 @@ Usage: {% include 'partials/inline_edit.html' %}
                     }
                 });
 
-                // Make tiles clickable to toggle selection (with Shift+Click range)
-                tiles.forEach(tile => {
+                // Make targets clickable to toggle selection (with Shift+Click range)
+                targets.forEach(function (tile) {
                     tile._inlineEditClick = function (e) {
-                        if (e.target.closest('.wm-tile__button')) {
+                        if (e.target.closest('.wm-tile__button, .obs-filmstrip__button')) {
                             e.preventDefault();
                             e.stopPropagation();
                         }
@@ -133,13 +144,13 @@ Usage: {% include 'partials/inline_edit.html' %}
 
                         // Shift+Click range selection
                         if (e.shiftKey && lastClickedIndex !== null) {
-                            const allTiles = Array.from(container.querySelectorAll('.wm-tile'));
+                            var allTargets = Array.from(document.querySelectorAll('[data-batch-target="detection"]'));
                             const minIdx = Math.min(lastClickedIndex, currentIdx);
                             const maxIdx = Math.max(lastClickedIndex, currentIdx);
-                            for (let i = minIdx; i <= maxIdx; i++) {
-                                const t = allTiles[i];
+                            for (var i = minIdx; i <= maxIdx; i++) {
+                                var t = allTargets[i];
                                 if (t) {
-                                    const tcb = t.querySelector('.inline-edit-checkbox');
+                                    var tcb = t.querySelector('.inline-edit-checkbox');
                                     if (tcb) {
                                         tcb.checked = cb.checked;
                                         t.classList.toggle('selected', cb.checked);
@@ -157,25 +168,23 @@ Usage: {% include 'partials/inline_edit.html' %}
 
                 document.getElementById('inlineEditFooter').classList.add('visible');
             } else {
-                exitEditMode(container, btn);
+                exitEditMode(pageRoot, btn);
             }
         };
 
         function exitEditMode(container, btn) {
             editMode = false;
-            if (!container) container = document.querySelector('.species-grid, .gallery-grid, #subgallery-grid');
-            if (!container) return;
 
-            container.classList.remove('inline-edit-active');
+            if (container) container.classList.remove('inline-edit-active');
 
-            // Remove click handlers and deselect
-            container.querySelectorAll('.wm-tile').forEach(tile => {
+            // Remove click handlers and deselect on all batch targets
+            document.querySelectorAll('[data-batch-target="detection"]').forEach(function (tile) {
                 if (tile._inlineEditClick) {
                     tile.removeEventListener('click', tile._inlineEditClick, true);
                     delete tile._inlineEditClick;
                 }
                 tile.classList.remove('selected');
-                const cb = tile.querySelector('.inline-edit-checkbox');
+                var cb = tile.querySelector('.inline-edit-checkbox');
                 if (cb) cb.checked = false;
             });
 
@@ -252,6 +261,26 @@ Usage: {% include 'partials/inline_edit.html' %}
                 }
                 setTimeout(function () { location.reload(); }, 1500);
             }
+        };
+
+        // --- Batch Relabel Selected via Moderation API ---
+        window.inlineEditRelabel = async function () {
+            var selection = WmBatchActions.getExplicitSelection('.inline-edit-checkbox');
+            await WmBatchActions.runBatchRelabel(selection);
+        };
+
+        // --- Batch Relabel All Filtered via Moderation API ---
+        window.inlineEditRelabelAllFiltered = async function () {
+            if (!window.INLINE_EDIT_FILTER_CONTEXT || typeof WmBatchActions === 'undefined') {
+                alert('Filter context not available.');
+                return;
+            }
+
+            var selection = WmBatchActions.buildFilterContext(
+                window.INLINE_EDIT_FILTER_CONTEXT.surface,
+                window.INLINE_EDIT_FILTER_CONTEXT
+            );
+            await WmBatchActions.runBatchRelabel(selection);
         };
 
         window.inlineEditCancel = function () {

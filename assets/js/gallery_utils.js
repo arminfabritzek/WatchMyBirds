@@ -240,24 +240,8 @@ async function deleteDetection(event, id) {
 }
 
 /* =========================================
-   Relabel Logic
+   Relabel Logic — uses WmSpeciesPicker for UI
    ========================================= */
-let _speciesCache = null;
-
-async function loadSpeciesList() {
-    if (_speciesCache) return _speciesCache;
-    try {
-        const resp = await fetch('/api/species-list');
-        const data = await resp.json();
-        if (data.status === 'success') {
-            _speciesCache = data.species; // [{scientific, common}, ...]
-            return _speciesCache;
-        }
-    } catch (e) {
-        console.error('Failed to load species list:', e);
-    }
-    return [];
-}
 
 async function relabelDetection(event, detectionId, currentSpecies) {
     if (event) {
@@ -265,145 +249,60 @@ async function relabelDetection(event, detectionId, currentSpecies) {
         event.stopPropagation();
     }
 
-    const species = await loadSpeciesList();
-    if (!species.length) {
-        alert('Artenliste konnte nicht geladen werden.');
+    if (typeof WmSpeciesPicker === 'undefined') {
+        alert('Species picker not available.');
         return;
     }
 
-    // Create overlay dropdown
+    // Determine mount element (inside open modal or body)
     const openModal = document.querySelector('.gallery-modal.show');
-    const container = openModal || document.body;
+    const mountEl = openModal || document.body;
 
-    // Remove any existing relabel overlay
-    const existing = container.querySelector('.relabel-overlay');
-    if (existing) existing.remove();
+    // Open the shared species picker
+    const choice = await WmSpeciesPicker.pickSpecies({
+        currentSpecies: currentSpecies,
+        mountEl: mountEl,
+        title: '🏷️ Relabel Species'
+    });
 
-    const overlay = document.createElement('div');
-    overlay.className = 'relabel-overlay';
-    overlay.style.cssText = `
-        position: absolute; top: 0; left: 0; right: 0; bottom: 0;
-        background: rgba(0,0,0,0.7); z-index: 9999;
-        display: flex; align-items: center; justify-content: center;
-    `;
+    // User cancelled
+    if (!choice) return;
 
-    const panel = document.createElement('div');
-    panel.style.cssText = `
-        background: #1a1d23; border: 1px solid rgba(167,139,250,0.3);
-        border-radius: 12px; padding: 16px; width: 320px; max-height: 70vh;
-        display: flex; flex-direction: column; gap: 10px;
-        font-family: system-ui, -apple-system, sans-serif;
-        box-shadow: 0 8px 32px rgba(0,0,0,0.5);
-    `;
-
-    // Header
-    const header = document.createElement('div');
-    header.style.cssText = 'color:#a78bfa;font-weight:600;font-size:0.9rem;';
-    header.textContent = '🏷️ Art korrigieren';
-    panel.appendChild(header);
-
-    // Search input
-    const searchInput = document.createElement('input');
-    searchInput.type = 'text';
-    searchInput.placeholder = 'Art suchen...';
-    searchInput.style.cssText = `
-        width: 100%; padding: 8px 12px; border-radius: 6px;
-        border: 1px solid rgba(255,255,255,0.15); background: rgba(255,255,255,0.08);
-        color: #fff; font-size: 0.85rem; outline: none; box-sizing: border-box;
-    `;
-    panel.appendChild(searchInput);
-
-    // Species list
-    const listEl = document.createElement('div');
-    listEl.style.cssText = 'overflow-y: auto; max-height: 45vh; display: flex; flex-direction: column; gap: 2px;';
-
-    function renderList(filter) {
-        listEl.innerHTML = '';
-        const filtered = filter
-            ? species.filter(s => s.common.toLowerCase().includes(filter) || s.scientific.toLowerCase().includes(filter))
-            : species;
-        for (const sp of filtered) {
-            const item = document.createElement('button');
-            item.type = 'button';
-            const isCurrent = sp.scientific === currentSpecies;
-            item.style.cssText = `
-                display: flex; justify-content: space-between; align-items: center;
-                width: 100%; padding: 8px 10px; border: none; border-radius: 6px;
-                cursor: pointer; text-align: left; font-size: 0.8rem;
-                background: ${isCurrent ? 'rgba(167,139,250,0.15)' : 'transparent'};
-                color: ${isCurrent ? '#a78bfa' : 'rgba(255,255,255,0.85)'};
-                transition: background 0.1s;
-            `;
-            item.onmouseenter = () => { if (!isCurrent) item.style.background = 'rgba(255,255,255,0.08)'; };
-            item.onmouseleave = () => { if (!isCurrent) item.style.background = 'transparent'; };
-            item.innerHTML = `<span><strong style="font-style:italic;">${sp.scientific.replace(/_/g, ' ')}</strong></span><span style="font-size:0.7rem;color:rgba(255,255,255,0.4);">${sp.common}</span>`;
-            item.onclick = () => doRelabel(sp.scientific, sp.common);
-            listEl.appendChild(item);
+    // Perform the single-item relabel POST
+    try {
+        const resp = await fetch('/api/detections/relabel', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ detection_id: detectionId, species: choice.scientific })
+        });
+        if (isAuthRedirect(resp)) {
+            redirectToLogin();
+            return;
         }
-    }
-
-    renderList('');
-    panel.appendChild(listEl);
-
-    // Cancel button
-    const cancelBtn = document.createElement('button');
-    cancelBtn.type = 'button';
-    cancelBtn.textContent = 'Abbrechen';
-    cancelBtn.style.cssText = `
-        padding: 6px 16px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.15);
-        background: transparent; color: rgba(255,255,255,0.6); cursor: pointer;
-        font-size: 0.8rem; align-self: flex-end;
-    `;
-    cancelBtn.onclick = () => overlay.remove();
-    panel.appendChild(cancelBtn);
-
-    overlay.appendChild(panel);
-    overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
-    container.appendChild(overlay);
-
-    // Focus search
-    setTimeout(() => searchInput.focus(), 50);
-    searchInput.oninput = () => renderList(searchInput.value.toLowerCase());
-
-    // Perform relabel
-    async function doRelabel(scientific, common) {
-        try {
-            const resp = await fetch('/api/detections/relabel', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ detection_id: detectionId, species: scientific })
-            });
-            if (isAuthRedirect(resp)) {
-                overlay.remove();
-                redirectToLogin();
-                return;
+        if (resp.ok) {
+            // Update the sibling card text in-place
+            const card = openModal?.querySelector(`.sibling-card[data-detection-id="${detectionId}"]`);
+            if (card) {
+                const nameEl = card.querySelector('div[style*="font-weight: 600"]');
+                if (nameEl) nameEl.textContent = choice.common;
+                card.dataset.bboxName = choice.common;
+                // Flash green briefly
+                card.style.transition = 'background 0.3s';
+                card.style.background = 'rgba(52,211,153,0.2)';
+                setTimeout(() => { card.style.background = ''; }, 1200);
             }
-            if (resp.ok) {
-                overlay.remove();
-                // Update the sibling card text in-place
-                const card = openModal?.querySelector(`.sibling-card[data-detection-id="${detectionId}"]`);
-                if (card) {
-                    const nameEl = card.querySelector('div[style*="font-weight: 600"]');
-                    if (nameEl) nameEl.textContent = common;
-                    card.dataset.bboxName = common;
-                    // Flash green briefly
-                    card.style.transition = 'background 0.3s';
-                    card.style.background = 'rgba(52,211,153,0.2)';
-                    setTimeout(() => { card.style.background = ''; }, 1200);
-                }
-                // Also update modal title if this is the main detection
-                const titleEl = openModal?.querySelector('.wm-modal__title-text');
-                if (titleEl && titleEl.textContent.trim().includes(currentSpecies?.replace(/_/g, ' '))) {
-                    titleEl.innerHTML = `<em>${common}</em>`;
-                }
-            } else {
-                const data = await resp.json();
-                alert('Relabel fehlgeschlagen: ' + (data.error || data.message || 'Unbekannter Fehler'));
+            // Also update modal title if this is the main detection
+            const titleEl = openModal?.querySelector('.wm-modal__title-text');
+            if (titleEl && titleEl.textContent.trim().includes(currentSpecies?.replace(/_/g, ' '))) {
+                titleEl.innerHTML = `<em>${choice.common}</em>`;
             }
-        } catch (err) {
-            console.error('Relabel error:', err);
-            alert('Fehler beim Umbenennen.');
+        } else {
+            const data = await resp.json();
+            alert('Relabel failed: ' + (data.error || data.message || 'Unknown error'));
         }
+    } catch (err) {
+        console.error('Relabel error:', err);
+        alert('Error relabeling detection.');
     }
 }
 

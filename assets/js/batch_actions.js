@@ -9,8 +9,9 @@
  * - buildFilterContext(surface, params): returns { mode, filter_context }
  * - previewAndConfirm(actionLabel, selectionPayload): resolves selection, shows confirm
  * - executeBatchAction(endpoint, payload): executes the batch action via moderation API
+ * - runBatchRelabel(selectionPayload, options): species picker → preview → relabel → reload
  *
- * Dependencies: None (standalone module, no framework)
+ * Dependencies: WmSpeciesPicker (for runBatchRelabel only)
  */
 
 window.WmBatchActions = (function () {
@@ -24,7 +25,9 @@ window.WmBatchActions = (function () {
     function getExplicitSelection(checkboxSelector) {
         var checked = document.querySelectorAll(checkboxSelector + ':checked');
         var ids = Array.from(checked).map(function (cb) {
-            return parseInt(cb.value || cb.dataset.detectionId, 10);
+            // Prefer data-detection-id; fall back to value only if numeric
+            var raw = cb.dataset.detectionId || cb.value;
+            return parseInt(raw, 10);
         }).filter(function (id) { return !isNaN(id); });
 
         return { mode: 'explicit', ids: ids };
@@ -134,7 +137,7 @@ window.WmBatchActions = (function () {
     /**
      * Execute a batch action against the moderation API.
      * @param {string} endpoint - e.g. '/api/moderation/bulk/reject'
-     * @param {Object} payload - { detection_ids, new_species?, ... }
+     * @param {Object} payload - { detection_ids, species?, ... }
      * @returns {Promise<Object>} - API response data
      */
     async function executeBatchAction(endpoint, payload) {
@@ -186,6 +189,69 @@ window.WmBatchActions = (function () {
         }
     }
 
+    /**
+     * Batch relabel flow: species picker → preview/confirm → execute → toast + reload.
+     *
+     * @param {Object} selectionPayload - from getExplicitSelection or buildFilterContext
+     * @param {Object} [options]
+     * @param {string} [options.pickerTitle] - Title for the species picker
+     * @param {Element} [options.mountEl] - Mount element for the picker overlay
+     * @returns {Promise<{ success: boolean, cancelled?: boolean, data?: Object }>}
+     */
+    async function runBatchRelabel(selectionPayload, options) {
+        options = options || {};
+
+        // Guard: need WmSpeciesPicker
+        if (typeof WmSpeciesPicker === 'undefined') {
+            alert('Species picker not available.');
+            return { success: false, cancelled: true };
+        }
+
+        // Step 1: Open species picker
+        var choice = await WmSpeciesPicker.pickSpecies({
+            title: options.pickerTitle || '🏷️ Batch Relabel',
+            mountEl: options.mountEl || document.body
+        });
+
+        if (!choice) {
+            return { success: false, cancelled: true };
+        }
+
+        var speciesDisplay = choice.scientific.replace(/_/g, ' ');
+
+        // Step 2: Preview/confirm with species name in the label
+        var actionLabel = 'Relabel to ' + speciesDisplay;
+        var preview = await previewAndConfirm(actionLabel, selectionPayload);
+        if (!preview.confirmed) {
+            return { success: false, cancelled: true };
+        }
+
+        // Step 3: Execute via moderation API
+        var payload = {
+            detection_ids: preview.resolved.detection_ids,
+            species: choice.scientific
+        };
+
+        try {
+            var data = await executeBatchAction('/api/moderation/bulk/relabel', payload);
+
+            // Step 4: Toast + Reload
+            if (typeof wmToast === 'function') {
+                wmToast(
+                    (data.relabeled || 0) + ' items relabeled to ' + speciesDisplay,
+                    'success', 3000
+                );
+            }
+            setTimeout(function () { location.reload(); }, 1500);
+
+            return { success: true, data: data };
+        } catch (err) {
+            console.error('[batch-actions] Relabel error:', err);
+            alert('Relabel failed: ' + err.message);
+            return { success: false, cancelled: false };
+        }
+    }
+
     // Public API
     return {
         getExplicitSelection: getExplicitSelection,
@@ -193,6 +259,7 @@ window.WmBatchActions = (function () {
         resolveSelection: resolveSelection,
         previewAndConfirm: previewAndConfirm,
         executeBatchAction: executeBatchAction,
-        runBatchAction: runBatchAction
+        runBatchAction: runBatchAction,
+        runBatchRelabel: runBatchRelabel
     };
 })();

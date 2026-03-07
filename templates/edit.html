@@ -137,12 +137,18 @@
 
     <!-- Sticky Footer for Actions -->
     <div class="sticky-action-footer py-3 bg-light border-top shadow-lg">
-        <div class="container-fluid d-flex justify-content-center gap-3">
+        <div class="container-fluid d-flex justify-content-center gap-3 flex-wrap">
             <button type="button" class="btn btn-danger px-4" onclick="batchRejectSelected()">
                 <i class="bi bi-trash"></i> Move to Trash
             </button>
             <button type="button" class="btn btn-outline-danger px-4" onclick="batchRejectAllFiltered()">
                 <i class="bi bi-trash"></i> ⚠️ Reject All Filtered
+            </button>
+            <button type="button" class="btn btn-primary px-4" onclick="batchRelabelSelected()">
+                <i class="bi bi-tag"></i> 🏷️ Relabel Selected
+            </button>
+            <button type="button" class="btn btn-outline-primary px-4" onclick="batchRelabelAllFiltered()">
+                <i class="bi bi-tag"></i> 🏷️ Relabel All Filtered
             </button>
             <button type="button" class="btn btn-success px-4" onclick="downloadSelected()">
                 <i class="bi bi-download"></i> Download Selected (ZIP)
@@ -155,6 +161,7 @@
 {% endblock %}
 
 {% block scripts %}
+<script src="/assets/js/species_picker.js?v=1"></script>
 <script src="/assets/js/gallery_utils.js?v=test_v3"></script>
 <script src="/assets/js/batch_actions.js?v=1"></script>
 <script>
@@ -285,6 +292,18 @@
             container.appendChild(input);
         });
         document.getElementById('download-form').submit();
+    }
+
+    // --- Batch Relabel via Moderation API ---
+
+    async function batchRelabelSelected() {
+        const selection = WmBatchActions.getExplicitSelection('.wm-tile__checkbox');
+        await WmBatchActions.runBatchRelabel(selection);
+    }
+
+    async function batchRelabelAllFiltered() {
+        const selection = WmBatchActions.buildFilterContext('edit', EDIT_FILTER_CONTEXT);
+        await WmBatchActions.runBatchRelabel(selection);
     }
 </script>
 {% endblock %}
