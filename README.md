@@ -62,6 +62,12 @@
 
 ---
 
+<p align="center">
+  <img src="assets/images/watchmybirds_best_of.gif" alt="Best of Species" width="80%">
+</p>
+
+---
+
 ## Requirements
 
 - Python 3.11+ or Docker 20.10+
