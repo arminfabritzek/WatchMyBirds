@@ -1,0 +1,103 @@
+{#
+Tile Toolbox — Unified hover action dock for wm-tile cards.
+
+Renders a compact toolbar overlay at the bottom of any wm-tile.
+Appears on hover (desktop) or tap (mobile).
+
+Parameters:
+detection_id (int|None): If set, enables detection-level actions (relabel, reject).
+filename (str|None): Image filename, for review-queue actions.
+surface (str): One of 'gallery', 'species', 'review', 'trash'.
+is_favorite (bool): Current favorite state.
+can_moderate (bool): Whether destructive actions are available.
+review_reason (str|None): 'orphan' | 'low_confidence' | None — gates Deep Scan.
+modal_target (str|None): CSS selector for the detail modal (e.g. '#modal-species-42').
+#}
+{% macro tile_toolbox(
+detection_id=none,
+filename=none,
+surface='gallery',
+is_favorite=false,
+can_moderate=false,
+review_reason=none,
+modal_target=none
+) %}
+<div class="wm-toolbox" role="toolbar" aria-label="Tile actions">
+    {# ── Favorite toggle (only for detection tiles) ── #}
+    {% if detection_id %}
+    <button type="button" class="wm-toolbox__btn wm-toolbox__fav{% if is_favorite %} wm-toolbox__fav--active{% endif %}"
+        data-action="favorite" data-detection-id="{{ detection_id }}"
+        aria-label="{{ 'Remove from favorites' if is_favorite else 'Add to favorites' }}"
+        aria-pressed="{{ 'true' if is_favorite else 'false' }}"
+        title="{{ 'Unfavorite' if is_favorite else 'Favorite' }}">
+        {{ '⭐' if is_favorite else '☆' }}
+    </button>
+    {% endif %}
+
+    {# ── Tools menu trigger ── #}
+    {% if can_moderate or modal_target %}
+    <div class="wm-toolbox__menu" role="group" aria-label="More actions">
+        <button type="button" class="wm-toolbox__btn wm-toolbox__more" data-action="toggle-menu" aria-haspopup="true"
+            aria-expanded="false" aria-label="More actions" title="More actions">⋮</button>
+
+        <div class="wm-toolbox__dropdown" role="menu" aria-label="Actions">
+            {# Details — opens the detection modal (Top-K, Confidences, Wiki) #}
+            {% if modal_target %}
+            <button type="button" class="wm-toolbox__item" role="menuitem" data-action="details"
+                data-modal-target="{{ modal_target }}" aria-label="Show details">
+                ℹ️ <span>Details</span>
+            </button>
+            {% endif %}
+
+            {# Relabel — only if we have a detection_id #}
+            {% if detection_id and can_moderate %}
+            <button type="button" class="wm-toolbox__item" role="menuitem" data-action="relabel"
+                data-detection-id="{{ detection_id }}" aria-label="Relabel species">
+                🏷️ <span>Relabel</span>
+            </button>
+            {% endif %}
+
+            {# Delete / Reject #}
+            {% if detection_id and can_moderate %}
+            <button type="button" class="wm-toolbox__item wm-toolbox__item--danger" role="menuitem" data-action="delete"
+                data-detection-id="{{ detection_id }}" aria-label="Move to trash">
+                🗑️ <span>Delete</span>
+            </button>
+            {% endif %}
+
+            {# Review-specific: Deep Scan (orphan only) #}
+            {% if surface == 'review' and review_reason == 'orphan' and filename %}
+            <button type="button" class="wm-toolbox__item" role="menuitem" data-action="deep-scan"
+                data-filename="{{ filename }}" aria-label="Deep Scan this image">
+                🔍 <span>Deep Scan</span>
+            </button>
+            {% endif %}
+
+            {# Review-specific: Bird Present (non-orphan) #}
+            {% if surface == 'review' and review_reason != 'orphan' and filename %}
+            <button type="button" class="wm-toolbox__item" role="menuitem" data-action="review-confirm"
+                data-filename="{{ filename }}" aria-label="Mark as Bird Present">
+                ✓ <span>Bird Present</span>
+            </button>
+            {% endif %}
+
+            {# Review-specific: No Bird / Trash #}
+            {% if surface == 'review' and filename %}
+            <button type="button" class="wm-toolbox__item wm-toolbox__item--danger" role="menuitem"
+                data-action="review-no-bird" data-filename="{{ filename }}" aria-label="Mark as No Bird">
+                ✗ <span>No Bird</span>
+            </button>
+            {% endif %}
+
+            {# Trash-specific: Restore #}
+            {% if surface == 'trash' %}
+            <button type="button" class="wm-toolbox__item" role="menuitem" data-action="restore"
+                data-detection-id="{{ detection_id }}" data-filename="{{ filename }}" aria-label="Restore from trash">
+                ↩ <span>Restore</span>
+            </button>
+            {% endif %}
+        </div>
+    </div>
+    {% endif %}
+</div>
+{% endmacro %}

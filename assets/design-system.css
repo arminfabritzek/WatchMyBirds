@@ -4701,6 +4701,147 @@ body {
     object-fit: cover;
 }
 
+/* ═══════════════════════════════════════════════════════════════════════════
+   WM-TOOLBOX — Shared tile hover action dock (Phase C)
+   Hover-reveal toolbar at bottom-right of any wm-tile.
+   Desktop: shows on hover. Mobile: shows on tap via :focus-within.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.wm-toolbox {
+    position: absolute;
+    bottom: 6px;
+    right: 6px;
+    z-index: 15;
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    opacity: 0;
+    transform: translateY(4px);
+    transition: opacity 0.15s ease, transform 0.15s ease;
+    pointer-events: none;
+}
+
+/* Show on tile hover or when any button inside is focused (mobile tap) */
+.wm-tile:hover .wm-toolbox,
+.wm-tile:focus-within .wm-toolbox,
+.trash-item:hover .wm-toolbox,
+.trash-item:focus-within .wm-toolbox,
+.wm-toolbox:focus-within {
+    opacity: 1;
+    transform: translateY(0);
+    pointer-events: auto;
+}
+
+/* Always show if a dropdown is open */
+.wm-toolbox:has(.wm-toolbox__dropdown--open) {
+    opacity: 1;
+    transform: translateY(0);
+    pointer-events: auto;
+}
+
+.wm-toolbox__btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    border: none;
+    border-radius: var(--radius-sm);
+    background: rgba(0, 0, 0, 0.55);
+    color: rgba(255, 255, 255, 0.85);
+    font-size: 0.85rem;
+    cursor: pointer;
+    transition: background 0.12s, transform 0.12s;
+    backdrop-filter: blur(6px);
+    line-height: 1;
+}
+
+.wm-toolbox__btn:hover {
+    background: rgba(0, 0, 0, 0.75);
+    transform: scale(1.1);
+}
+
+.wm-toolbox__btn:focus-visible {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 2px;
+}
+
+/* Favorite active state */
+.wm-toolbox__fav--active {
+    background: rgba(220, 38, 38, 0.25);
+}
+
+/* Menu wrapper */
+.wm-toolbox__menu {
+    position: relative;
+}
+
+/* Dropdown */
+.wm-toolbox__dropdown {
+    display: none;
+    position: absolute;
+    bottom: 100%;
+    right: 0;
+    margin-bottom: 4px;
+    min-width: 140px;
+    background: var(--color-surface, #1a1d23);
+    border: 1px solid var(--color-border, rgba(255, 255, 255, 0.12));
+    border-radius: var(--radius-md);
+    padding: 4px 0;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+    z-index: 20;
+}
+
+.wm-toolbox__dropdown--open {
+    display: flex;
+    flex-direction: column;
+}
+
+.wm-toolbox__item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    width: 100%;
+    padding: 6px 12px;
+    border: none;
+    background: transparent;
+    color: var(--color-text, rgba(255, 255, 255, 0.85));
+    font-size: 0.78rem;
+    cursor: pointer;
+    transition: background 0.1s;
+    text-align: left;
+    white-space: nowrap;
+}
+
+.wm-toolbox__item:hover {
+    background: rgba(255, 255, 255, 0.08);
+}
+
+.wm-toolbox__item:focus-visible {
+    outline: 2px solid var(--color-primary);
+    outline-offset: -2px;
+}
+
+.wm-toolbox__item--danger {
+    color: var(--color-danger, #ef4444);
+}
+
+.wm-toolbox__item--danger:hover {
+    background: rgba(239, 68, 68, 0.12);
+}
+
+/* Reduced motion preference */
+@media (prefers-reduced-motion: reduce) {
+    .wm-toolbox {
+        transition: none;
+    }
+
+    .wm-toolbox__btn {
+        transition: none;
+    }
+}
+
 /* ── Scientific / Ecological Metrics ─────────────────────────────────── */
 
 .scientific-grid {

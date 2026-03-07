@@ -7,6 +7,7 @@
 {% endblock %}
 
 {% block content %}
+{% from 'partials/tile_toolbox.html' import tile_toolbox %}
 {# Page Control Bar - Unified Design #}
 <nav class="page-control-bar" role="navigation" aria-label="Trash controls">
     <div class="page-control-bar__left">
@@ -64,6 +65,12 @@
                 {% endif %}
             </div>
         </div>
+        {{ tile_toolbox(
+        detection_id=item.detection_id if item.trash_type == 'detection' else none,
+        filename=item.filename if item.trash_type == 'image' else none,
+        surface='trash',
+        can_moderate=true
+        ) }}
     </div>
     {% endfor %}
 </div>
@@ -102,6 +109,8 @@
 {% endblock %}
 
 {% block scripts %}
+<script src="/assets/js/gallery_utils.js?v=test_v3"></script>
+<script src="/assets/js/tile_actions.js?v=1"></script>
 <script>
     document.addEventListener('DOMContentLoaded', function () {
         const checkboxes = document.querySelectorAll('.trash-checkbox');

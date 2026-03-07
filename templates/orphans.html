@@ -3,6 +3,8 @@
 {% block title %}Review Queue - WatchMyBirds{% endblock %}
 
 {% block content %}
+{% from 'partials/tile_toolbox.html' import tile_toolbox %}
+{% set can_moderate = true %}
 {# Page Control Bar - Unified Design #}
 <nav class="page-control-bar" role="navigation" aria-label="Review Queue controls">
     <div class="page-control-bar__left">
@@ -60,23 +62,23 @@
     <span id="dsReview" style="color: var(--color-text-muted);">📋 Review Queue: –</span>
 </div>
 <script>
-(function() {
-    fetch('/api/v1/analytics/decisions', { credentials: 'same-origin', cache: 'no-store' })
-        .then(function(r) { return r.json(); })
-        .then(function(data) {
-            if (data.status !== 'success') return;
-            var s = data.states || {};
-            document.getElementById('dsConfirmed').textContent = '✅ Confirmed: ' + (s.confirmed || 0);
-            document.getElementById('dsUncertain').textContent = '⚠️ Uncertain: ' + (s.uncertain || 0);
-            document.getElementById('dsUnknown').textContent = '❓ Unknown: ' + (s.unknown || 0);
-            document.getElementById('dsRejected').textContent = '🚫 Rejected: ' + (s.rejected || 0);
-            document.getElementById('dsReview').textContent = '📋 Review Queue: ' + (data.review_queue_count || 0);
-            document.getElementById('decisionStatsStrip').style.display = 'flex';
-            document.getElementById('decisionStatsStrip').style.flexWrap = 'wrap';
-            document.getElementById('decisionStatsStrip').style.gap = '4px 0';
-        })
-        .catch(function() { /* silent - strip stays hidden */ });
-})();
+    (function () {
+        fetch('/api/v1/analytics/decisions', { credentials: 'same-origin', cache: 'no-store' })
+            .then(function (r) { return r.json(); })
+            .then(function (data) {
+                if (data.status !== 'success') return;
+                var s = data.states || {};
+                document.getElementById('dsConfirmed').textContent = '✅ Confirmed: ' + (s.confirmed || 0);
+                document.getElementById('dsUncertain').textContent = '⚠️ Uncertain: ' + (s.uncertain || 0);
+                document.getElementById('dsUnknown').textContent = '❓ Unknown: ' + (s.unknown || 0);
+                document.getElementById('dsRejected').textContent = '🚫 Rejected: ' + (s.rejected || 0);
+                document.getElementById('dsReview').textContent = '📋 Review Queue: ' + (data.review_queue_count || 0);
+                document.getElementById('decisionStatsStrip').style.display = 'flex';
+                document.getElementById('decisionStatsStrip').style.flexWrap = 'wrap';
+                document.getElementById('decisionStatsStrip').style.gap = '4px 0';
+            })
+            .catch(function () { /* silent - strip stays hidden */ });
+    })();
 </script>
 
 <!-- Flash Messages -->
@@ -141,6 +143,13 @@
                 <i class="bi bi-x"></i>
             </button>
         </div>
+
+        {{ tile_toolbox(
+        filename=img.filename,
+        surface='review',
+        can_moderate=true,
+        review_reason=img.review_reason
+        ) }}
     </div>
     {% endfor %}
 </div>
@@ -164,6 +173,7 @@
 
 {% block scripts %}
 <script src="/assets/js/gallery_utils.js?v=test_v3"></script>
+<script src="/assets/js/tile_actions.js?v=1"></script>
 <script>
     // Track if user has confirmed "Move to Trash" action once this session
     let noBirdConfirmed = localStorage.getItem('noBirdConfirmed') === 'true';

@@ -7,6 +7,8 @@
 {% endblock %}
 
 {% block content %}
+{% from 'partials/tile_toolbox.html' import tile_toolbox %}
+{% set can_moderate = session.get('authenticated') %}
 <nav class="page-control-bar" role="navigation" aria-label="Gallery controls">
     <div class="page-control-bar__left">
         <span class="page-control-bar__title">{{ date }}</span>
@@ -45,6 +47,13 @@
                 </button>
                 {% include 'partials/rating_badge.html' %}
             </div>
+            {{ tile_toolbox(
+            detection_id=det.detection_id,
+            surface='gallery',
+            is_favorite=det.is_favorite|default(false),
+            can_moderate=can_moderate,
+            modal_target='#modal-species-' ~ det.detection_id
+            ) }}
 
             <div class="wm-tile__body">
                 <span class="wm-tile__name">{{ det.common_name }}</span>
@@ -165,6 +174,7 @@
 
 {% block scripts %}
 <script src="/assets/js/gallery_utils.js?v=test_v3"></script>
+<script src="/assets/js/tile_actions.js?v=1"></script>
 <script>
     /** Toggle the filmstrip for an observation card. */
     function toggleObsFilmstrip(card) {
