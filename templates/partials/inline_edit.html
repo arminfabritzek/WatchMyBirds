@@ -1,7 +1,7 @@
 {#
 Inline Edit Mode - adds select/delete functionality to any gallery grid.
 Include this partial at the bottom of pages that have .wm-tile elements.
-Requires gallery_utils.js to be loaded (for deleteDetection API).
+Requires gallery_utils.js and batch_actions.js to be loaded.
 
 Usage: {% include 'partials/inline_edit.html' %}
 #}
@@ -72,6 +72,8 @@ Usage: {% include 'partials/inline_edit.html' %}
 <div class="inline-edit-footer" id="inlineEditFooter">
     <span class="counter" id="inlineEditCounter">0 selected</span>
     <button type="button" class="btn btn--danger" onclick="inlineEditTrash()">🗑 Move to Trash</button>
+    <button type="button" class="btn btn--outline-danger" id="inlineRejectAllBtn" onclick="inlineEditTrashAllFiltered()"
+        style="display:none;">⚠️ Reject All Filtered</button>
     <button type="button" class="btn btn--secondary" onclick="inlineEditCancel()">Cancel</button>
 </div>
 
@@ -79,6 +81,12 @@ Usage: {% include 'partials/inline_edit.html' %}
     (function () {
         let editMode = false;
         let lastClickedIndex = null;
+
+        // Show 'Reject All Filtered' button if filter context is available
+        if (window.INLINE_EDIT_FILTER_CONTEXT) {
+            const allBtn = document.getElementById('inlineRejectAllBtn');
+            if (allBtn) allBtn.style.display = '';
+        }
 
         // Toggle edit mode
         window.toggleInlineEdit = function (btn) {
@@ -186,49 +194,63 @@ Usage: {% include 'partials/inline_edit.html' %}
             document.getElementById('inlineEditCounter').textContent = checked.length + ' selected';
         }
 
+        // --- Batch Reject via Moderation API ---
         window.inlineEditTrash = async function () {
-            const checked = document.querySelectorAll('.inline-edit-checkbox:checked');
-            if (checked.length === 0) {
-                alert('No items selected.');
+            const selection = WmBatchActions.getExplicitSelection('.inline-edit-checkbox');
+            const result = await WmBatchActions.runBatchAction(
+                'Move to Trash',
+                selection,
+                '/api/moderation/bulk/reject'
+            );
+
+            if (result.success) {
+                // Remove tiles with animation
+                const checked = document.querySelectorAll('.inline-edit-checkbox:checked');
+                checked.forEach(cb => {
+                    const tile = cb.closest('.wm-tile');
+                    if (tile) {
+                        tile.style.transition = 'opacity 0.3s, transform 0.3s';
+                        tile.style.opacity = '0';
+                        tile.style.transform = 'scale(0.8)';
+                        setTimeout(() => tile.remove(), 320);
+                    }
+                });
+
+                setTimeout(updateInlineCounter, 350);
+                if (window.wmToast) {
+                    window.wmToast(
+                        (result.data.rejected_count || selection.ids.length) + ' items moved to trash',
+                        'success', 3000
+                    );
+                }
+            }
+        };
+
+        // --- Reject All Filtered via Moderation API ---
+        window.inlineEditTrashAllFiltered = async function () {
+            if (!window.INLINE_EDIT_FILTER_CONTEXT || typeof WmBatchActions === 'undefined') {
+                alert('Filter context not available.');
                 return;
             }
 
-            if (!confirm(`Move ${checked.length} observation(s) to trash?`)) return;
+            const selection = WmBatchActions.buildFilterContext(
+                window.INLINE_EDIT_FILTER_CONTEXT.surface,
+                window.INLINE_EDIT_FILTER_CONTEXT
+            );
+            const result = await WmBatchActions.runBatchAction(
+                '⚠️ Reject All Filtered',
+                selection,
+                '/api/moderation/bulk/reject'
+            );
 
-            const ids = Array.from(checked).map(cb => parseInt(cb.dataset.detectionId));
-
-            try {
-                const resp = await fetch('/api/detections/reject', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ ids: ids })
-                });
-
-                if (isAuthRedirect(resp)) {
-                    redirectToLogin();
-                    return;
+            if (result.success) {
+                if (window.wmToast) {
+                    window.wmToast(
+                        (result.data.rejected_detections || 0) + ' items moved to trash',
+                        'success', 3000
+                    );
                 }
-                if (resp.ok) {
-                    // Remove tiles with animation
-                    checked.forEach(cb => {
-                        const tile = cb.closest('.wm-tile');
-                        if (tile) {
-                            tile.style.transition = 'opacity 0.3s, transform 0.3s';
-                            tile.style.opacity = '0';
-                            tile.style.transform = 'scale(0.8)';
-                            setTimeout(() => tile.remove(), 320);
-                        }
-                    });
-
-                    // Update counter
-                    setTimeout(updateInlineCounter, 350);
-                } else {
-                    const data = await resp.json();
-                    alert('Error: ' + (data.error || 'Unknown'));
-                }
-            } catch (err) {
-                console.error('Inline edit trash error:', err);
-                alert('Error deleting detections.');
+                setTimeout(function () { location.reload(); }, 1500);
             }
         };
 

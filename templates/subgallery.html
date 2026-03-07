@@ -152,6 +152,14 @@
 {% endif %}
 
 {% if session.get('authenticated') %}
+<script>
+    window.INLINE_EDIT_FILTER_CONTEXT = {
+        surface: 'gallery',
+        date: '{{ date }}',
+        min_score: '{{ current_threshold }}',
+        sort: '{{ sort_by }}'
+    };
+</script>
 {% include 'partials/inline_edit.html' %}
 {% endif %}
 {% endblock %}
@@ -175,6 +183,7 @@
 {% block scripts %}
 <script src="/assets/js/gallery_utils.js?v=test_v3"></script>
 <script src="/assets/js/tile_actions.js?v=1"></script>
+<script src="/assets/js/batch_actions.js?v=1"></script>
 <script>
     /** Toggle the filmstrip for an observation card. */
     function toggleObsFilmstrip(card) {
