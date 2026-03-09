@@ -179,7 +179,23 @@ Contributions are welcome! Please:
 2. Keep pull requests focused and well-scoped
 3. Follow existing code style
 
+See [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) for setup instructions, coding standards, and commit conventions.
+
 ---
+
+## Community & Research Use
+
+WatchMyBirds aims to support citizen science and ecological monitoring.
+
+Possible use cases include:
+- 🏡 Backyard bird monitoring
+- 🌿 Biodiversity observation
+- 🎓 Educational projects
+- 🔬 Ecological research setups
+- 📈 Long-term wildlife monitoring
+
+The system is designed to run locally on affordable hardware to make wildlife observation accessible to a wide community.
+
 
 ## Acknowledgements
 

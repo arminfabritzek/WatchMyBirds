@@ -52,7 +52,7 @@ The WatchMyBirds Raspberry Pi image is designed as a secure-by-default appliance
 > [!WARNING]
 > **Dev Image Risk:** The development image is significantly less secure than the production image. It is designed for rapid iteration and debugging, not for exposure to untrusted networks. Never deploy a Dev image in a production environment.
 
-### 2. Network Security
+### 3. Network Security
 - **SSH Disabled by Default:** SSH is disabled on the image. It must be explicitly enabled by the user.
 - **SSH Hardening (When Enabled):**
   - `PermitRootLogin no`
@@ -66,7 +66,7 @@ The WatchMyBirds Raspberry Pi image is designed as a secure-by-default appliance
   - **Enforcement:** UFW is configured and enabled by the first-boot script.
 - **Fail2Ban:** Not installed by default in the appliance image.
 
-### 3. System Isolation & Hardening
+### 4. System Isolation & Hardening
 - **Systemd Sandboxing:** The main application service (`app.service`) runs with maximum security directives:
     ```ini
     ProtectSystem=strict          # Read-only filesystem view (CRITICAL)
@@ -99,7 +99,7 @@ The WatchMyBirds Raspberry Pi image is designed as a secure-by-default appliance
   - **Data (`/opt/app/data`)**: Writable storage for database, images, and runtime artifacts.
   - **Logs (`/var/log/app`)**: Writable app log directory.
 
-### 4. Updates & Hygiene
+### 5. Updates & Hygiene
 - **Unattended Upgrades:** Package is installed; activation relies on OS defaults or user configuration.
 - **Dependency Audit:** `pip-audit` is not executed in the current CI workflows.
 - **Config Permissions:** If `/etc/app/app.env` is used, it should be `chmod 600` (not enforced by hardening scripts).
@@ -111,7 +111,7 @@ The WatchMyBirds Raspberry Pi image is designed as a secure-by-default appliance
   - Bash history is wiped for all users.
   - Secrets and credentials are never baked into the image.
 
-### 5. Wireless Security
+### 6. Wireless Security
 - **WiFi Country (Regulatory):** WiFi country defaults to `DE` for regulatory compliance. Operators are responsible for adjusting the regulatory domain when deploying the device outside Germany.
 - **AP Mode:** 
   - WPA2-protected Access Point for initial setup (SSID `WatchMyBirds-XXXX`).
