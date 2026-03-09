@@ -51,4 +51,4 @@ black .
 
 ## Questions?
 
-Open an issue or start a [discussion](https://github.com/arminfabritzek/WatchMyBirds/discussions) — we're happy to help!
+Open an [issue](https://github.com/arminfabritzek/WatchMyBirds/issues) — we're happy to help!
