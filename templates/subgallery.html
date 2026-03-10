@@ -76,7 +76,8 @@
             data-obs-id="{{ obs.observation_id }}" onclick="toggleObsFilmstrip(this)" style="cursor:pointer;">
             <div class="wm-tile__media">
                 <img class="wm-tile__image" loading="lazy" src="{{ obs.cover_detection.display_url }}"
-                    alt="{{ obs.common_name }}">
+                    alt="{{ obs.common_name }}" data-thumb-src="{{ obs.cover_detection.display_url }}"
+                    data-full-src="{{ obs.cover_detection.full_url }}">
                 {% if obs.photo_count > 1 %}
                 <span class="wm-tile__badge" title="{{ obs.photo_count }} photos in this observation">📸 {{
                     obs.photo_count }}</span>
@@ -110,7 +111,8 @@
                     <button type="button" class="obs-filmstrip__button" data-bs-toggle="modal"
                         data-bs-target="#modal-obs{{ obs.observation_id }}-{{ det.detection_id }}">
                         <img class="obs-filmstrip__thumb" loading="lazy" src="{{ det.display_url }}"
-                            alt="{{ det.common_name }}">
+                            alt="{{ det.common_name }}" data-thumb-src="{{ det.display_url }}"
+                            data-full-src="{{ det.full_url }}">
                     </button>
                     <span class="obs-filmstrip__label">{{ det.formatted_time }} · {{ "%.0f"|format(det.score * 100)
                         }}%</span>
