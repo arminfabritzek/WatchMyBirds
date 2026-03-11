@@ -69,12 +69,17 @@
 
             case 'details':
                 var modalTarget = actionEl.getAttribute('data-modal-target');
+                var detailsHref = actionEl.getAttribute('data-details-href');
                 if (modalTarget && typeof bootstrap !== 'undefined') {
                     var modalEl = document.querySelector(modalTarget);
                     if (modalEl) {
                         var bsModal = new bootstrap.Modal(modalEl);
                         bsModal.show();
+                        return;
                     }
+                }
+                if (detailsHref) {
+                    window.location.href = detailsHref;
                 }
                 break;
 

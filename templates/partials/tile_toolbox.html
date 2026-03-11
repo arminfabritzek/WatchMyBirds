@@ -12,6 +12,7 @@ is_favorite (bool): Current favorite state.
 can_moderate (bool): Whether destructive actions are available.
 review_reason (str|None): 'orphan' | 'low_confidence' | None — gates Deep Scan.
 modal_target (str|None): CSS selector for the detail modal (e.g. '#modal-species-42').
+details_href (str|None): Fallback navigation target for details when no modal exists.
 #}
 {% macro tile_toolbox(
 detection_id=none,
@@ -20,7 +21,8 @@ surface='gallery',
 is_favorite=false,
 can_moderate=false,
 review_reason=none,
-modal_target=none
+modal_target=none,
+details_href=none
 ) %}
 <div class="wm-toolbox" role="toolbar" aria-label="Tile actions">
     {# ── Favorite toggle (only for detection tiles) ── #}
@@ -35,16 +37,17 @@ modal_target=none
     {% endif %}
 
     {# ── Tools menu trigger ── #}
-    {% if can_moderate or modal_target %}
+    {% if can_moderate or modal_target or details_href %}
     <div class="wm-toolbox__menu" role="group" aria-label="More actions">
         <button type="button" class="wm-toolbox__btn wm-toolbox__more" data-action="toggle-menu" aria-haspopup="true"
             aria-expanded="false" aria-label="More actions" title="More actions">⋮</button>
 
         <div class="wm-toolbox__dropdown" role="menu" aria-label="Actions">
             {# Details — opens the detection modal (Top-K, Confidences, Wiki) #}
-            {% if modal_target %}
+            {% if modal_target or details_href %}
             <button type="button" class="wm-toolbox__item" role="menuitem" data-action="details"
-                data-modal-target="{{ modal_target }}" aria-label="Show details">
+                {% if modal_target %}data-modal-target="{{ modal_target }}" {% endif %}
+                {% if details_href %}data-details-href="{{ details_href }}" {% endif %}aria-label="Show details">
                 ℹ️ <span>Details</span>
             </button>
             {% endif %}

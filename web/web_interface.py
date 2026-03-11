@@ -2102,6 +2102,7 @@ def create_web_interface(detection_manager, system_monitor=None):
                             "bbox_y": det.get("bbox_y", 0.0) or 0.0,
                             "bbox_w": det.get("bbox_w", 0.0) or 0.0,
                             "bbox_h": det.get("bbox_h", 0.0) or 0.0,
+                            "is_favorite": bool(int(det.get("is_favorite") or 0)),
                         }
                     )
 
@@ -2189,12 +2190,18 @@ def create_web_interface(detection_manager, system_monitor=None):
                     else:
                         display_url = f"/uploads/derivatives/optimized/{full_path}"
 
+                    gallery_date = _date_iso_from_timestamp(
+                        det.get("image_timestamp", "")
+                    )
+
                     best_species_preview.append(
                         {
                             "detection_id": det.get("detection_id"),
                             "species_key": species_key,
                             "common_name": COMMON_NAMES.get(species_key, "Unknown"),
                             "display_path": display_url,
+                            "gallery_date": gallery_date,
+                            "is_favorite": bool(int(det.get("is_favorite") or 0)),
                         }
                     )
         except Exception as e:

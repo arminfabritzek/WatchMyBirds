@@ -51,6 +51,27 @@ function redirectToLogin() {
     }, true); // `true` ensures it runs in the capture phase, before any targets
 });
 
+function setToolboxFavoriteState(btn, isFav) {
+    if (!btn || !btn.classList) return;
+    btn.classList.toggle('wm-toolbox__fav--active', isFav);
+    btn.textContent = isFav ? '⭐' : '☆';
+    btn.setAttribute('aria-pressed', isFav ? 'true' : 'false');
+    btn.setAttribute('aria-label', isFav ? 'Remove from favorites' : 'Add to favorites');
+    btn.setAttribute('title', isFav ? 'Unfavorite' : 'Favorite');
+}
+
+function setLegacyTileBadgeState(btn, isFav) {
+    if (!btn || !btn.classList) return;
+    btn.classList.toggle('wm-tile__fav-badge--active', isFav);
+    btn.textContent = isFav ? '⭐' : '☆';
+}
+
+function setModalFavoriteState(btn, isFav) {
+    if (!btn || !btn.classList) return;
+    btn.classList.toggle('fav-btn--active', isFav);
+    btn.textContent = isFav ? '⭐' : '☆';
+}
+
 async function toggleFavorite(event, detectionId, btn) {
     if (event) {
         event.preventDefault();
@@ -78,25 +99,25 @@ async function toggleFavorite(event, detectionId, btn) {
             step = "btn-toggle";
             // Update the button in the modal or the hovered badge
             if (btn && btn.classList) {
-                btn.classList.toggle('fav-btn--active', isFav);
-                btn.classList.toggle('wm-tile__fav-badge--active', isFav);
-                btn.textContent = isFav ? '⭐' : '☆';
+                setToolboxFavoriteState(btn, isFav);
+                setLegacyTileBadgeState(btn, isFav);
+                setModalFavoriteState(btn, isFav);
             }
 
             step = "dom-queries";
             try {
-                // Also update the counterpart (if clicking on tile, update modal; if modal, update tile)
-                const tileBadge = document.querySelector(`.wm-tile[data-detection-id="${detectionId}"] .wm-tile__fav-badge`);
-                if (tileBadge && tileBadge !== btn) {
-                    tileBadge.classList.toggle('wm-tile__fav-badge--active', isFav);
-                    tileBadge.textContent = isFav ? '⭐' : '☆';
-                }
+                // Keep every rendered instance of the same detection in sync.
+                document.querySelectorAll(`.wm-toolbox__fav[data-detection-id="${detectionId}"]`).forEach(function (toolboxBtn) {
+                    if (toolboxBtn !== btn) setToolboxFavoriteState(toolboxBtn, isFav);
+                });
 
-                const modalBtn = document.querySelector(`.gallery-modal[data-detection-id="${detectionId}"] .fav-btn`);
-                if (modalBtn && modalBtn !== btn) {
-                    modalBtn.classList.toggle('fav-btn--active', isFav);
-                    modalBtn.textContent = isFav ? '⭐' : '☆';
-                }
+                document.querySelectorAll(`.wm-tile[data-detection-id="${detectionId}"] .wm-tile__fav-badge`).forEach(function (tileBadge) {
+                    if (tileBadge !== btn) setLegacyTileBadgeState(tileBadge, isFav);
+                });
+
+                document.querySelectorAll(`.gallery-modal[data-detection-id="${detectionId}"] .fav-btn`).forEach(function (modalBtn) {
+                    if (modalBtn !== btn) setModalFavoriteState(modalBtn, isFav);
+                });
             } catch (domErr) {
                 console.warn('DOM update error ignored:', domErr);
             }

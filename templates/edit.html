@@ -3,10 +3,13 @@
 {% block title %}Edit Observations - {{ date_iso }} - WatchMyBirds{% endblock %}
 
 {% block content %}
+{% from 'partials/tile_toolbox.html' import tile_toolbox %}
+{% set can_moderate = session.get('authenticated') %}
 <div class="container-fluid mt-4">
     <div class="d-flex justify-content-between align-items-center mb-4">
         <h2>Edit Observations for {{ date_iso }}</h2>
         <div class="btn-group">
+            {% include 'partials/thumb_view_toggle.html' %}
             <a href="/gallery/{{ date_iso }}" class="btn btn-outline-secondary">Back to Subgallery</a>
             <a href="/gallery" class="btn btn-outline-secondary">Back to Gallery</a>
         </div>
@@ -96,6 +99,13 @@
                     alt="{{ det.cls_class_name or det.od_class_name }}" data-thumb-src="{{ det.display_path }}"
                     data-full-src="{{ det.full_path }}">
             </div>
+            {{ tile_toolbox(
+            detection_id=det.detection_id,
+            surface='gallery',
+            is_favorite=det.is_favorite|default(false),
+            can_moderate=can_moderate,
+            details_href='/gallery/' ~ date_iso ~ '?focus=' ~ det.detection_id ~ '#detection-' ~ det.detection_id
+            ) }}
 
             <div class="wm-tile__body">
                 <span class="wm-tile__name">{{ det.common_name }}</span>
@@ -163,6 +173,7 @@
 {% block scripts %}
 <script src="/assets/js/species_picker.js?v=1"></script>
 <script src="/assets/js/gallery_utils.js?v=test_v3"></script>
+<script src="/assets/js/tile_actions.js?v=1"></script>
 <script src="/assets/js/batch_actions.js?v=1"></script>
 <script>
     let lastClickedIndex = null;
@@ -209,7 +220,7 @@
 
     document.querySelectorAll('.wm-tile--bbox').forEach((tile) => {
         tile.addEventListener('click', (event) => {
-            if (event.target.closest('.wm-tile__select')) return;
+            if (event.target.closest('.wm-tile__select, .wm-toolbox')) return;
 
             const checkbox = tile.querySelector('.wm-tile__checkbox');
             if (!checkbox) return;

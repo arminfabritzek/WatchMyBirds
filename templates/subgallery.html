@@ -43,7 +43,6 @@
                     <img class="wm-tile__image" loading="lazy" src="{{ det.display_url }}" alt="{{ det.common_name }}"
                         data-thumb-src="{{ det.display_url }}" data-full-src="{{ det.full_url }}">
                 </button>
-                {% include 'partials/rating_badge.html' %}
             </div>
             {{ tile_toolbox(
             detection_id=det.detection_id,
@@ -73,7 +72,8 @@
         {% for obs in observations %}
         {# ── Observation tile (standard wm-tile, clickable → expands filmstrip) ── #}
         <div class="wm-tile fade-in-item" id="observation-{{ obs.observation_id }}"
-            data-obs-id="{{ obs.observation_id }}" onclick="toggleObsFilmstrip(this)" style="cursor:pointer;">
+            data-detection-id="{{ obs.cover_detection.detection_id }}" data-obs-id="{{ obs.observation_id }}"
+            onclick="toggleObsFilmstrip(this)" style="cursor:pointer;">
             <div class="wm-tile__media">
                 <img class="wm-tile__image" loading="lazy" src="{{ obs.cover_detection.display_url }}"
                     alt="{{ obs.common_name }}" data-thumb-src="{{ obs.cover_detection.display_url }}"
@@ -83,6 +83,13 @@
                     obs.photo_count }}</span>
                 {% endif %}
             </div>
+            {{ tile_toolbox(
+            detection_id=obs.cover_detection.detection_id,
+            surface='gallery',
+            is_favorite=obs.cover_detection.is_favorite|default(false),
+            can_moderate=can_moderate,
+            modal_target='#modal-obs' ~ obs.observation_id ~ '-' ~ obs.cover_detection.detection_id
+            ) }}
             <div class="wm-tile__body">
                 <span class="wm-tile__name">{{ obs.common_name }}</span>
                 <span class="wm-tile__meta">{{ obs.cover_detection.formatted_time }}{% if obs.duration_sec > 0 %} · {{
@@ -108,12 +115,21 @@
                 {% for det in obs.all_detections %}
                 <div class="obs-filmstrip__item" data-detection-id="{{ det.detection_id }}"
                     data-batch-target="detection">
-                    <button type="button" class="obs-filmstrip__button" data-bs-toggle="modal"
-                        data-bs-target="#modal-obs{{ obs.observation_id }}-{{ det.detection_id }}">
-                        <img class="obs-filmstrip__thumb" loading="lazy" src="{{ det.display_url }}"
-                            alt="{{ det.common_name }}" data-thumb-src="{{ det.display_url }}"
-                            data-full-src="{{ det.full_url }}">
-                    </button>
+                    <div class="obs-filmstrip__media wm-toolbox-host">
+                        <button type="button" class="obs-filmstrip__button" data-bs-toggle="modal"
+                            data-bs-target="#modal-obs{{ obs.observation_id }}-{{ det.detection_id }}">
+                            <img class="obs-filmstrip__thumb" loading="lazy" src="{{ det.display_url }}"
+                                alt="{{ det.common_name }}" data-thumb-src="{{ det.display_url }}"
+                                data-full-src="{{ det.full_url }}">
+                        </button>
+                        {{ tile_toolbox(
+                        detection_id=det.detection_id,
+                        surface='gallery',
+                        is_favorite=det.is_favorite|default(false),
+                        can_moderate=can_moderate,
+                        modal_target='#modal-obs' ~ obs.observation_id ~ '-' ~ det.detection_id
+                        ) }}
+                    </div>
                     <span class="obs-filmstrip__label">{{ det.formatted_time }} · {{ "%.0f"|format(det.score * 100)
                         }}%</span>
                 </div>
@@ -190,17 +206,13 @@
         document.querySelectorAll('.obs-filmstrip').forEach(fs => {
             fs.style.display = 'none';
         });
-        document.querySelectorAll('.obs-card').forEach(c => {
+        document.querySelectorAll('#subgallery-grid > .wm-tile[data-obs-id]').forEach(c => {
             c.classList.remove('obs-card--expanded');
         });
 
         if (!isOpen) {
             filmstrip.style.display = 'block';
             card.classList.add('obs-card--expanded');
-            // Smooth scroll to the filmstrip
-            setTimeout(() => {
-                filmstrip.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-            }, 50);
         }
     }
 

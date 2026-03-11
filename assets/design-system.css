@@ -2157,6 +2157,12 @@ code {
     box-shadow: var(--shadow-sm);
 }
 
+.quiet-preview__link {
+    display: block;
+    color: inherit;
+    text-decoration: none;
+}
+
 .quiet-preview__thumb {
     width: 100%;
     aspect-ratio: 1;
@@ -4143,6 +4149,7 @@ body {
    ═══════════════════════════════════════════════════════════════════════════ */
 
 .wm-tile {
+    position: relative;
     background: var(--color-surface);
     border: 1px solid var(--color-border);
     border-radius: var(--radius-lg);
@@ -4636,8 +4643,14 @@ body {
 
 .obs-filmstrip__grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+    grid-auto-flow: column;
+    grid-auto-columns: minmax(180px, 220px);
     gap: var(--space-sm);
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    scroll-snap-type: x proximity;
+    scrollbar-width: thin;
+    padding-bottom: var(--space-xs);
 }
 
 .obs-filmstrip__item {
@@ -4645,6 +4658,13 @@ body {
     flex-direction: column;
     align-items: center;
     gap: 4px;
+    min-width: 0;
+    scroll-snap-align: start;
+}
+
+.obs-filmstrip__media {
+    position: relative;
+    width: 100%;
 }
 
 .obs-filmstrip__button {
@@ -4661,7 +4681,7 @@ body {
 
 .obs-filmstrip__button:hover {
     border-color: var(--color-primary);
-    transform: scale(1.03);
+    transform: translateY(-1px);
 }
 
 .obs-filmstrip__thumb {
@@ -4677,6 +4697,15 @@ body {
     font-family: 'SF Mono', 'Fira Code', monospace;
 }
 
+.obs-filmstrip__grid::-webkit-scrollbar {
+    height: 10px;
+}
+
+.obs-filmstrip__grid::-webkit-scrollbar-thumb {
+    background: color-mix(in srgb, var(--color-primary) 40%, transparent);
+    border-radius: var(--radius-full);
+}
+
 /* ── Responsive: stack vertically on small screens ─────────────────── */
 @media (max-width: 480px) {
     .obs-card__cover {
@@ -4685,7 +4714,7 @@ body {
     }
 
     .obs-filmstrip__grid {
-        grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+        grid-auto-columns: minmax(150px, 180px);
     }
 }
 
@@ -4747,9 +4776,15 @@ body {
     pointer-events: none;
 }
 
+.wm-toolbox-host {
+    position: relative;
+}
+
 /* Show on tile hover or when any button inside is focused (mobile tap) */
 .wm-tile:hover .wm-toolbox,
 .wm-tile:focus-within .wm-toolbox,
+.wm-toolbox-host:hover .wm-toolbox,
+.wm-toolbox-host:focus-within .wm-toolbox,
 .trash-item:hover .wm-toolbox,
 .trash-item:focus-within .wm-toolbox,
 .wm-toolbox:focus-within {
