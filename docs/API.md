@@ -404,17 +404,55 @@ Returns system resource statistics.
 ---
 
 #### GET `/api/system/versions`
-Returns software version information.
+Returns system and build metadata (legacy route).
+
+**Response:**
+```json
+{
+  "app_version": "0.1.0",
+  "git_commit": "abc1234",
+  "build_date": "2026-03-11T10:00:00Z",
+  "deploy_type": "rpi",
+  "kernel": "6.6.51+rpt-rpi-v8",
+  "os": "Debian GNU/Linux 12 (bookworm)",
+  "bootloader": "2024-09-23"
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `app_version` | string | Semantic version from `APP_VERSION` file |
+| `git_commit` | string | Short (7-char) commit hash |
+| `build_date` | string | ISO build timestamp |
+| `deploy_type` | string | `docker`, `rpi`, or `dev` |
+| `kernel` | string | OS kernel version |
+| `os` | string | Pretty OS name |
+| `bootloader` | string | RPi bootloader version (or `Unknown`) |
+
+---
+
+#### GET `/api/v1/system/versions`
+Returns system and build metadata plus V1-only extras.
 
 **Response:**
 ```json
 {
   "status": "success",
-  "app_version": "2026.02.04",
+  "app_version": "0.1.0",
+  "git_commit": "abc1234",
+  "build_date": "2026-03-11T10:00:00Z",
+  "deploy_type": "rpi",
+  "kernel": "6.6.51+rpt-rpi-v8",
+  "os": "Debian GNU/Linux 12 (bookworm)",
+  "bootloader": "2024-09-23",
   "python_version": "3.11.6",
   "opencv_version": "4.8.1"
 }
 ```
+
+The shared metadata subset (`app_version`, `git_commit`, `build_date`,
+`deploy_type`, `kernel`, `os`, `bootloader`) is identical across both routes.
+V1 additionally returns `status`, `python_version`, and `opencv_version`.
 
 ---
 

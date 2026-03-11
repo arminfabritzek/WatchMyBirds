@@ -94,6 +94,7 @@ jobs:
           # Write Version Metadata
           echo "dev-${{ github.sha }}" | sudo tee mount_point/opt/app/version.txt
           echo "${{ github.sha }}" | sudo tee mount_point/opt/app/commit.txt
+          date -u +%Y-%m-%dT%H:%M:%SZ | sudo tee mount_point/opt/app/build_date.txt
 
           # Copy DEV hardening resources
           sudo mkdir -p mount_point/tmp/systemd

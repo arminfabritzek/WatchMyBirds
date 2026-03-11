@@ -1083,6 +1083,13 @@
                 .then(res => res.json())
                 .then(data => {
                     document.getElementById('si-app').innerText = data.app_version || 'N/A';
+                    document.getElementById('si-commit').innerText = data.git_commit || 'N/A';
+                    document.getElementById('si-build-date').innerText = data.build_date || 'N/A';
+                    const deployEl = document.getElementById('si-deploy');
+                    const deployType = data.deploy_type || 'N/A';
+                    deployEl.innerText = deployType;
+                    const badgeColors = { docker: 'bg-info text-dark', rpi: 'bg-success', dev: 'bg-warning text-dark' };
+                    deployEl.className = 'badge ' + (badgeColors[deployType] || 'bg-secondary');
                     document.getElementById('si-kernel').innerText = data.kernel || 'N/A';
                     document.getElementById('si-os').innerText = data.os || 'N/A';
                     document.getElementById('si-boot').innerText = data.bootloader || 'N/A';
@@ -1354,6 +1361,18 @@
                 <div class="col-6 col-md-3">
                     <small class="text-muted d-block">WatchMyBirds</small>
                     <span class="fw-bold" id="si-app">Loading...</span>
+                </div>
+                <div class="col-6 col-md-3">
+                    <small class="text-muted d-block">Git Commit</small>
+                    <span class="font-monospace" id="si-commit">Loading...</span>
+                </div>
+                <div class="col-6 col-md-3">
+                    <small class="text-muted d-block">Build Date</small>
+                    <span class="font-monospace" id="si-build-date">Loading...</span>
+                </div>
+                <div class="col-6 col-md-3">
+                    <small class="text-muted d-block">Deployment</small>
+                    <span class="badge bg-secondary" id="si-deploy">Loading...</span>
                 </div>
                 <div class="col-6 col-md-3">
                     <small class="text-muted d-block">Kernel</small>

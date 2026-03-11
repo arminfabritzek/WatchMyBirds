@@ -34,6 +34,7 @@
 
     <footer class="app-footer py-2 text-center text-muted">
         <small>WatchMyBirds</small>
+        <small class="ms-1 font-monospace" id="footer-version" style="opacity:.55"></small>
         <a href="https://github.com/arminfabritzek/WatchMyBirds" target="_blank" rel="noopener noreferrer"
            class="ms-2 text-muted" title="View on GitHub" style="opacity:.55;transition:opacity .2s;"
            onmouseover="this.style.opacity='1'" onmouseout="this.style.opacity='.55'">
@@ -49,6 +50,21 @@
             </svg>
         </a>
     </footer>
+    <script>
+        (function(){
+            fetch('/api/v1/system/versions')
+                .then(function(r){return r.json()})
+                .then(function(d){
+                    var el=document.getElementById('footer-version');
+                    if(el && d.app_version && d.app_version!=='Unknown'){
+                        var label='v'+d.app_version;
+                        if(d.git_commit && d.git_commit!=='Unknown') label+='-'+d.git_commit;
+                        el.textContent=label;
+                    }
+                })
+                .catch(function(){});
+        })();
+    </script>
 
     {% block modals %}{% endblock %}
 

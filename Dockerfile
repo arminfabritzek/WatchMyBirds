@@ -61,6 +61,11 @@ COPY go2rtc.yaml.example ./
 # Create runtime directories (no model/output copy at build time)
 RUN mkdir -p /models /output /ingest
 
+# Persist build metadata as runtime-readable files
+RUN echo "${VERSION}" > /app/APP_VERSION && \
+    echo "${GIT_COMMIT}" > /app/BUILD_COMMIT && \
+    echo "${BUILD_DATE}" > /app/BUILD_DATE
+
 # Add the entrypoint script
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh

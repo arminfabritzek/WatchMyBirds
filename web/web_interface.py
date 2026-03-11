@@ -2483,30 +2483,28 @@ def create_web_interface(detection_manager, system_monitor=None):
     @server.route("/api/system/versions", methods=["GET"])
     @login_required
     def system_versions_route():
+        from utils.deploy_info import read_build_metadata
+
+        # Build metadata from shared helper
+        meta = read_build_metadata()
+
         data = {
-            "app_version": "Unknown",
+            "app_version": meta["app_version"],
+            "git_commit": meta["git_commit"],
+            "build_date": meta["build_date"],
+            "deploy_type": meta["deploy_type"],
             "kernel": "Unknown",
             "os": "Unknown",
             "bootloader": "Unknown",
         }
 
-        # 1. App Version (from APP_VERSION file in app directory)
-        try:
-            app_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-            version_file = os.path.join(app_dir, "APP_VERSION")
-            if os.path.exists(version_file):
-                with open(version_file) as f:
-                    data["app_version"] = f.read().strip()
-        except Exception:
-            pass
-
-        # 2. Kernel
+        # Kernel
         try:
             data["kernel"] = platform.release()
         except Exception:
             pass
 
-        # 3. OS
+        # OS
         try:
             if os.path.exists("/etc/os-release"):
                 with open("/etc/os-release") as f:
@@ -2517,7 +2515,7 @@ def create_web_interface(detection_manager, system_monitor=None):
         except Exception:
             pass
 
-        # 4. Bootloader
+        # Bootloader
         # Note: rpi-eeprom-update may require elevated privileges. With NNP=true,
         # sudo is blocked. If unprivileged access fails, bootloader info stays "Unknown".
         try:

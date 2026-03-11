@@ -1323,17 +1323,82 @@ def system_diagnostics():
 @login_required
 def system_versions():
     """
-    Returns software version information.
-    Mirror of: GET /api/system/versions
+    Returns software version and build metadata.
+
+    Shared metadata subset (same as legacy ``/api/system/versions``):
+      ``app_version``, ``git_commit``, ``build_date``, ``deploy_type``,
+      ``kernel``, ``os``, ``bootloader``.
+
+    V1-only extras:
+      ``status``, ``python_version``, ``opencv_version``.
     """
     try:
+        import platform as _platform
         import sys
 
         import cv2
 
+        from utils.deploy_info import read_build_metadata
+
+        meta = read_build_metadata()
+
+        # System info (kernel, os, bootloader) — same logic as legacy route
+        kernel = "Unknown"
+        os_name = "Unknown"
+        bootloader = "Unknown"
+
+        try:
+            kernel = _platform.release()
+        except Exception:
+            pass
+
+        try:
+            os_release = Path("/etc/os-release")
+            if os_release.is_file():
+                for line in os_release.read_text(
+                    encoding="utf-8", errors="ignore"
+                ).splitlines():
+                    if line.startswith("PRETTY_NAME="):
+                        os_name = line.split("=", 1)[1].strip().strip('"')
+                        break
+        except Exception:
+            pass
+
+        try:
+            import shutil
+
+            if shutil.which("rpi-eeprom-update"):
+                import subprocess
+
+                res = subprocess.run(
+                    ["rpi-eeprom-update"],
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                    check=False,
+                )
+                if res.returncode == 0:
+                    for line in res.stdout.splitlines():
+                        if "CURRENT:" in line:
+                            parts = line.split("CURRENT:", 1)
+                            if len(parts) > 1:
+                                bootloader = parts[1].strip()
+                                break
+        except Exception:
+            pass
+
         return jsonify(
             {
                 "status": "success",
+                # Shared metadata subset
+                "app_version": meta["app_version"],
+                "git_commit": meta["git_commit"],
+                "build_date": meta["build_date"],
+                "deploy_type": meta["deploy_type"],
+                "kernel": kernel,
+                "os": os_name,
+                "bootloader": bootloader,
+                # V1-only extras
                 "python_version": f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}",
                 "opencv_version": cv2.__version__,
             }

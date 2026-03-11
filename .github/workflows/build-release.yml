@@ -87,6 +87,7 @@ jobs:
           # Write Version Metadata
           echo "main-${{ github.sha }}" | sudo tee mount_point/opt/app/version.txt
           echo "${{ github.sha }}" | sudo tee mount_point/opt/app/commit.txt
+          date -u +%Y-%m-%dT%H:%M:%SZ | sudo tee mount_point/opt/app/build_date.txt
           
           # Fix Permissions (Resolve user inside chroot)
           sudo chroot mount_point chown -R watchmybirds:watchmybirds /opt/app
