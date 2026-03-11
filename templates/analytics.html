@@ -151,6 +151,20 @@
             <div class="species-table__col-peak">Peak</div>
             <div class="species-table__col-count">Count</div>
         </div>
+        <div class="species-table__axis-row" aria-hidden="true">
+            <div class="species-table__col-name"></div>
+            <div class="species-table__col-graph">
+                <div class="species-table__axis-labels">
+                    {% for hour in range(24) %}
+                    <span class="species-table__axis-label{% if hour in [0, 6, 12, 18, 23] %} species-table__axis-label--major{% endif %}">
+                        {{ "%02d"|format(hour) }}
+                    </span>
+                    {% endfor %}
+                </div>
+            </div>
+            <div class="species-table__col-peak"></div>
+            <div class="species-table__col-count"></div>
+        </div>
 
         {% for species in species_activity %}
         <div class="species-table__row">
@@ -159,6 +173,10 @@
             </div>
             <div class="species-table__col-graph">
                 <svg class="sparkline" viewBox="0 0 200 30" preserveAspectRatio="none">
+                    {% for hour in range(24) %}
+                    <line x1="{{ (hour / 23 * 200) | round(1) }}" y1="0" x2="{{ (hour / 23 * 200) | round(1) }}" y2="30"
+                        class="sparkline__guide{% if hour in [0, 6, 12, 18, 23] %} sparkline__guide--major{% endif %}" />
+                    {% endfor %}
                     <path d="{{ species.sparkline_path }}" fill="none" stroke="var(--color-primary)" stroke-width="1.5"
                         vector-effect="non-scaling-stroke" />
                     <path d="{{ species.sparkline_path }} L 200 30 L 0 30 Z" fill="var(--color-primary)"

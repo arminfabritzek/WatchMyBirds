@@ -29,6 +29,29 @@ logger = get_logger(__name__)
 analytics_bp = Blueprint("analytics", __name__)
 
 
+def _get_species_peak_hour(item: dict) -> float:
+    """Return a numeric peak-hour value for deterministic sorting."""
+    peak_hour = item.get("peak_hour")
+    if peak_hour is not None:
+        return float(peak_hour)
+
+    peak_hour_formatted = item.get("peak_hour_formatted", "")
+    if isinstance(peak_hour_formatted, str):
+        parts = peak_hour_formatted.split(":", 1)
+        if parts and parts[0].isdigit():
+            return float(parts[0])
+
+    return float("inf")
+
+
+def _sort_species_activity_by_peak_hour(items: list[dict]) -> list[dict]:
+    """Sort species activity by peak hour and break ties by species name."""
+    return sorted(
+        items,
+        key=lambda item: (_get_species_peak_hour(item), item.get("species", "")),
+    )
+
+
 @analytics_bp.route("/api/analytics/summary", methods=["GET"])
 def analytics_summary():
     conn = db_service.get_connection()
@@ -193,13 +216,7 @@ def analytics_species_activity():
             }
         )
 
-    # Sort by median activity time
-    for s in series:
-        sp = s["species"]
-        times = species_times[sp]
-        s["median_hour"] = float(np.median(times))
-
-    series.sort(key=lambda x: x["median_hour"])
+    series = _sort_species_activity_by_peak_hour(series)
 
     return jsonify(series)
 
@@ -580,12 +597,10 @@ def analytics_page():
                     "count": len(times),
                     "peak_hour_formatted": peak_formatted,
                     "sparkline_path": sparkline_path,
-                    "median_hour": float(np.median(times)),
                 }
             )
 
-        # Sort by median activity time
-        species_activity.sort(key=lambda x: x["median_hour"])
+        species_activity = _sort_species_activity_by_peak_hour(species_activity)
     except Exception as e:
         logger.error(f"Error fetching species activity: {e}")
 
