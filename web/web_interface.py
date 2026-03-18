@@ -1562,6 +1562,12 @@ def create_web_interface(detection_manager, system_monitor=None):
             start_index = (page - 1) * PAGE_SIZE
             end_index = page * PAGE_SIZE
             page_observations = observations_all[start_index:end_index]
+            focus_observation_id = None
+            if focus_id_param:
+                for obs in page_observations:
+                    if focus_id_param in obs["detection_ids"]:
+                        focus_observation_id = obs["observation_id"]
+                        break
 
             # ── Build detection lookup for enrichment ──────────────────
             det_by_id = {d.get("detection_id"): d for d in detections_raw}
@@ -1778,6 +1784,7 @@ def create_web_interface(detection_manager, system_monitor=None):
                 species_of_day=species_of_day,
                 pagination_range=pagination_range,
                 image_width=IMAGE_WIDTH,
+                focus_observation_id=focus_observation_id,
             )
 
         server.add_url_rule(

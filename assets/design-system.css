@@ -2129,6 +2129,16 @@ code {
     font-size: var(--font-size-lg);
 }
 
+.quiet-preview__title-link {
+    color: inherit;
+    text-decoration: none;
+}
+
+.quiet-preview__title-link:hover,
+.quiet-preview__title-link:focus-visible {
+    color: var(--color-primary-dark);
+}
+
 .quiet-preview__all {
     font-size: var(--font-size-sm);
     font-weight: 600;

@@ -179,9 +179,16 @@
 {% endfor %}
 
 {# Observation Modals — each observation renders modals for all its detections #}
+{% set nav = namespace(index=0) %}
 {% for obs in observations %}
 {% for det in obs.all_detections %}
-{{ render_modal(det, 'obs' ~ obs.observation_id) }}
+{{ render_modal(
+det,
+'obs' ~ obs.observation_id,
+nav_scope='subgallery-all-observations',
+nav_index=nav.index
+) }}
+{% set nav.index = nav.index + 1 %}
 {% endfor %}
 {% endfor %}
 {% endblock %}
@@ -192,6 +199,22 @@
 <script src="/assets/js/tile_actions.js?v=1"></script>
 <script src="/assets/js/batch_actions.js?v=1"></script>
 <script>
+    const focusObservationId = {{ focus_observation_id | tojson }};
+
+    function highlightObservationTarget(targetEl) {
+        if (!targetEl) return;
+
+        setTimeout(() => {
+            targetEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            targetEl.style.outline = '3px solid var(--color-primary)';
+            targetEl.style.outlineOffset = '2px';
+            setTimeout(() => {
+                targetEl.style.outline = '';
+                targetEl.style.outlineOffset = '';
+            }, 2000);
+        }, 100);
+    }
+
     /** Toggle the filmstrip for an observation card. */
     function toggleObsFilmstrip(card) {
         const obsId = card.getAttribute('data-obs-id');
@@ -224,21 +247,21 @@
         if (card) card.classList.remove('obs-card--expanded');
     }
 
-    // Scroll to observation if navigated via anchor hash
+    // Scroll to focused observation or anchor target after navigation.
     document.addEventListener('DOMContentLoaded', function () {
+        if (focusObservationId) {
+            const targetEl = document.getElementById('observation-' + focusObservationId);
+            if (targetEl) {
+                highlightObservationTarget(targetEl);
+                return;
+            }
+        }
+
         if (window.location.hash) {
             const targetId = window.location.hash.substring(1);
             const targetEl = document.getElementById(targetId);
             if (targetEl) {
-                setTimeout(() => {
-                    targetEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                    targetEl.style.outline = '3px solid var(--color-primary)';
-                    targetEl.style.outlineOffset = '2px';
-                    setTimeout(() => {
-                        targetEl.style.outline = '';
-                        targetEl.style.outlineOffset = '';
-                    }, 2000);
-                }, 100);
+                highlightObservationTarget(targetEl);
             }
         }
     });

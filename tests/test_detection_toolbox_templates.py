@@ -35,6 +35,23 @@ def test_subgallery_cover_and_filmstrip_use_toolbox():
     assert "partials/rating_badge.html" not in content
 
 
+def test_subgallery_observation_modals_define_global_nav_scope():
+    content = _read("templates/subgallery.html")
+
+    assert "{% set nav = namespace(index=0) %}" in content
+    assert "nav_scope='subgallery-all-observations'" in content
+    assert "nav_index=nav.index" in content
+    assert "{% set nav.index = nav.index + 1 %}" in content
+
+
+def test_detection_modal_supports_optional_nav_scope_and_index():
+    content = _read("templates/components/detection_modal.html")
+
+    assert "{% macro render_modal(det, group_id, nav_scope=none, nav_index=none) %}" in content
+    assert 'data-nav-scope="{{ nav_scope }}"' in content
+    assert 'data-nav-index="{{ nav_index }}"' in content
+
+
 def test_species_templates_use_toolbox_without_legacy_badge():
     species_content = _read("templates/species.html")
     overview_content = _read("templates/species_overview.html")
@@ -74,3 +91,9 @@ def test_detection_toolbox_css_and_js_support_scroll_strip_and_sync():
     assert "overflow-x: auto;" in css
     assert ".obs-filmstrip__media" in css
     assert '.wm-toolbox__fav[data-detection-id="${detectionId}"]' in js
+    assert "const navScope = currentModalEl.getAttribute('data-nav-scope');" in js
+    assert '.gallery-modal[data-nav-scope="${navScope}"]' in js
+    assert "data-nav-index" in js
+    assert "let modalNavigationInFlight = false;" in js
+    assert "hidden.bs.modal" in js
+    assert "shown.bs.modal" in js

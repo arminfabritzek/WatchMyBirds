@@ -7,15 +7,19 @@ Used in gallery views to show detection details.
 Args:
 det (dict): Detection object with all data
 group_id (str): Modal group for navigation isolation
+nav_scope (str|None): Optional explicit navigation scope across multiple groups
+nav_index (int|None): Optional index within nav_scope
 #}
 {% from "components/modal_image_viewer.html" import render_image_viewer %}
 {% from "components/modal_action_bar.html" import render_action_bar %}
 {% from "components/modal_detection_info.html" import render_detection_info %}
 
-{% macro render_modal(det, group_id) %}
+{% macro render_modal(det, group_id, nav_scope=none, nav_index=none) %}
 {% set can_moderate = session.get('authenticated') %}
 <div class="modal fade gallery-modal wm-modal" id="modal-{{ group_id }}-{{ det.detection_id }}" tabindex="-1"
-    aria-hidden="true" data-modal-group="{{ group_id }}" data-image-path="{{ det.full_path }}">
+    aria-hidden="true" data-modal-group="{{ group_id }}" data-image-path="{{ det.full_path }}"
+    {% if nav_scope %}data-nav-scope="{{ nav_scope }}"{% endif %}
+    {% if nav_index is not none %}data-nav-index="{{ nav_index }}"{% endif %}>
 
     <div
         class="modal-dialog modal-xl modal-dialog-centered modal-dialog-scrollable modal-fullscreen-md-down wm-modal__dialog">

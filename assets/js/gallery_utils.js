@@ -146,9 +146,60 @@ async function toggleFavorite(event, detectionId, btn) {
 /* =========================================
    Modal Navigation (Simple, Fast)
    ========================================= */
+let modalNavigationInFlight = false;
+
+function showModalTransition(currentModalEl, nextModalEl) {
+    if (!currentModalEl || !nextModalEl || currentModalEl === nextModalEl || modalNavigationInFlight) return;
+
+    modalNavigationInFlight = true;
+
+    const unlockNavigation = function () {
+        modalNavigationInFlight = false;
+    };
+
+    const showNextModal = function () {
+        const nextInstance = bootstrap.Modal.getOrCreateInstance
+            ? bootstrap.Modal.getOrCreateInstance(nextModalEl)
+            : new bootstrap.Modal(nextModalEl);
+
+        nextModalEl.addEventListener('shown.bs.modal', unlockNavigation, { once: true });
+        nextInstance.show();
+    };
+
+    const currentInstance = bootstrap.Modal.getInstance(currentModalEl);
+    if (currentInstance && currentModalEl.classList.contains('show')) {
+        currentModalEl.addEventListener('hidden.bs.modal', showNextModal, { once: true });
+        currentInstance.hide();
+        return;
+    }
+
+    showNextModal();
+}
+
 function navigateModal(btn, direction) {
     const currentModalEl = btn.closest('.modal');
     if (!currentModalEl) return;
+
+    const navScope = currentModalEl.getAttribute('data-nav-scope');
+    if (navScope) {
+        const scopedModals = Array.from(
+            document.querySelectorAll(`.gallery-modal[data-nav-scope="${navScope}"]`)
+        ).sort(function (a, b) {
+            return Number(a.getAttribute('data-nav-index')) - Number(b.getAttribute('data-nav-index'));
+        });
+
+        const currentIndex = scopedModals.indexOf(currentModalEl);
+        if (currentIndex === -1 || scopedModals.length <= 1) return;
+
+        const step = direction === 'next' ? 1 : -1;
+        let nextIndex = currentIndex + step;
+
+        if (nextIndex >= scopedModals.length) nextIndex = 0;
+        if (nextIndex < 0) nextIndex = scopedModals.length - 1;
+
+        showModalTransition(currentModalEl, scopedModals[nextIndex]);
+        return;
+    }
 
     const group = currentModalEl.getAttribute('data-modal-group');
     if (!group) return;
@@ -189,16 +240,7 @@ function navigateModal(btn, direction) {
     }
 
     const nextModalEl = allModals[nextIndex];
-
-    // Hide current modal
-    const currentInstance = bootstrap.Modal.getInstance(currentModalEl);
-    if (currentInstance) {
-        currentInstance.hide();
-    }
-
-    // Show next modal
-    const nextInstance = new bootstrap.Modal(nextModalEl);
-    nextInstance.show();
+    showModalTransition(currentModalEl, nextModalEl);
 }
 
 

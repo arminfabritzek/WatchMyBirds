@@ -16,6 +16,22 @@ def test_stream_tiles_link_to_species_overview():
     assert 'data-bs-target="#modal-summary-' not in content
 
 
+def test_stream_today_visitors_title_links_to_today_subgallery():
+    content = _read_text("templates/stream.html")
+
+    assert 'href="{{ url_for(\'subgallery\', date=today_iso) }}"' in content
+    assert '<a class="quiet-preview__all" href="/gallery">Gallery</a>' in content
+
+
+def test_stream_today_visitors_tiles_focus_matching_detection_on_subgallery():
+    content = _read_text("templates/stream.html")
+
+    assert (
+        'href="{{ url_for(\'subgallery\', date=today_iso, focus=det.detection_id) }}"'
+        in content
+    )
+
+
 def test_species_tiles_link_to_species_overview():
     content = _read_text("templates/species.html")
 
