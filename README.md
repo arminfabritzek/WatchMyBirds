@@ -43,9 +43,9 @@
 
 ## Highlights
 
-- 🎯 **Real-time detection** — Two-stage AI pipeline (detection + classification)
+- 🎯 **Real-time detection** — Multi-stage AI pipeline (detection + classification)
 - 📊 **Analytics dashboard** — Activity patterns, species statistics, temporal insights
-- 🍓 **Raspberry Pi ready** — Pre-built appliance images with WiFi setup
+- 🍓 **Raspberry Pi ready** — Pre-built images with WiFi setup
 - 🐳 **Docker support** — One-command deployment on any server
 - 🔒 **Hardened by default** — Systemd sandboxing, session auth, no root required
 
@@ -55,7 +55,7 @@
 
 - ⭐ **Favorites & cover images** — Mark your best shots as favorites; they become species cover images
 - 📹 **Live stream** — Low-latency WebRTC live view via go2rtc relay with multi-viewer support
-- 📖 **Species encyclopedia** — Auto-fetched Wikipedia descriptions for every detected species
+- 📖 **Species encyclopedia** — Wikipedia descriptions for every detected species
 - ✅ **Review queue** — Triage new detections — keep, reclassify, or trash in one swipe
 - 🗑️ **Trash & restore** — Soft-delete with easy restore — nothing lost by accident
 - 🎥 **ONVIF & PTZ** — Auto-discover IP cameras with pan-tilt-zoom control from the UI
@@ -144,7 +144,7 @@ See [rpi/README.md](rpi/README.md) for detailed setup instructions.
 
 ### Performance
 
-Measured with a 1080p RTSP stream. Times vary with resolution, scene complexity, and number of detected birds.
+Measured with a 2560 x 1920 RTSP stream. Times vary with resolution, scene complexity, and number of detected birds.
 
 | | Detection | Classification (per bird) | Full cycle (1 bird) |
 |---|---|---|---|
@@ -236,6 +236,13 @@ Weather data is provided by the Open-Meteo API.
 Data is available under the <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank">Creative Commons Attribution 4.0 International (CC BY 4.0)</a> license.
 
 ---
+
+## Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=arminfabritzek/WatchMyBirds&type=Date)](https://star-history.com/#arminfabritzek/WatchMyBirds&Date)
+
+---
+
 
 ## License
 
