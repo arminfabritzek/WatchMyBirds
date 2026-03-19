@@ -18,7 +18,7 @@
         {% include 'partials/filter_bar.html' %}
     </div>
     <div class="page-control-bar__meta">
-        Page {{ page }} of {{ total_pages }} ({{ total_items }} observations)
+        Page {{ page }} of {{ total_pages }} ({{ total_items }} detections)
     </div>
     <div class="page-control-bar__right">
         {% include 'partials/thumb_view_toggle.html' %}
@@ -64,7 +64,7 @@
 {% else %}
 <div class="empty-state">
     <div class="empty-state__icon">🐦</div>
-    <p>No observations found for this species with the current filter.</p>
+    <p>No detections found for this species with the current filter.</p>
 </div>
 {% endif %}
 

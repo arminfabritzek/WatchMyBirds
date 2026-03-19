@@ -1,0 +1,70 @@
+{#
+Shared batch action footer for moderation surfaces.
+
+Provides a consistent button row while leaving selection/query logic
+to the calling template.
+#}
+{% macro render_batch_action_footer(
+footer_id='batchActionFooter',
+footer_class='',
+always_visible=false,
+counter_id='batchActionCounter',
+counter_text='0 selected',
+trash_selected_onclick=none,
+trash_selected_label='Move Selected to Trash',
+trash_selected_class='btn btn--danger',
+trash_filtered_onclick=none,
+trash_filtered_label='Move All Filtered to Trash',
+trash_filtered_class='btn btn--outline-danger',
+trash_filtered_id=none,
+trash_filtered_hidden=false,
+relabel_selected_onclick=none,
+relabel_selected_label='Relabel Selected',
+relabel_selected_class='btn btn--primary',
+relabel_filtered_onclick=none,
+relabel_filtered_label='Relabel All Filtered',
+relabel_filtered_class='btn btn--outline-primary',
+relabel_filtered_id=none,
+relabel_filtered_hidden=false,
+download_onclick=none,
+download_label=none,
+download_class='btn btn--success',
+cancel_onclick=none,
+cancel_label=none,
+cancel_class='btn btn--secondary'
+) %}
+<div class="wm-batch-footer{% if always_visible %} wm-batch-footer--static{% endif %}{% if footer_class %} {{ footer_class }}{% endif %}"
+    id="{{ footer_id }}">
+    <span class="wm-batch-footer__counter" id="{{ counter_id }}">{{ counter_text }}</span>
+
+    {% if trash_selected_onclick %}
+    <button type="button" class="{{ trash_selected_class }}" onclick="{{ trash_selected_onclick }}">🗑 {{
+        trash_selected_label }}</button>
+    {% endif %}
+
+    {% if trash_filtered_onclick %}
+    <button type="button" class="{{ trash_filtered_class }}"{% if trash_filtered_id %} id="{{ trash_filtered_id }}"{% endif %}
+        onclick="{{ trash_filtered_onclick }}"{% if trash_filtered_hidden %} style="display:none;"{% endif %}>⚠️ {{
+        trash_filtered_label }}</button>
+    {% endif %}
+
+    {% if relabel_selected_onclick %}
+    <button type="button" class="{{ relabel_selected_class }}" onclick="{{ relabel_selected_onclick }}">🏷️ {{
+        relabel_selected_label }}</button>
+    {% endif %}
+
+    {% if relabel_filtered_onclick %}
+    <button type="button" class="{{ relabel_filtered_class }}"{% if relabel_filtered_id %} id="{{ relabel_filtered_id }}"{% endif %}
+        onclick="{{ relabel_filtered_onclick }}"{% if relabel_filtered_hidden %} style="display:none;"{% endif %}>🏷️
+        {{ relabel_filtered_label }}</button>
+    {% endif %}
+
+    {% if download_onclick and download_label %}
+    <button type="button" class="{{ download_class }}" onclick="{{ download_onclick }}">⬇️ {{ download_label }}</button>
+    {% endif %}
+
+    {% if cancel_onclick and cancel_label %}
+    <button type="button" class="{{ cancel_class }}" onclick="{{ cancel_onclick }}">{{ cancel_label }}</button>
+    {% endif %}
+</div>
+{% endmacro %}

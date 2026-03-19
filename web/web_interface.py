@@ -94,6 +94,7 @@ def create_web_interface(detection_manager, system_monitor=None):
 
     _species_locale = config.get("SPECIES_COMMON_NAME_LOCALE", "DE")
     COMMON_NAMES = load_common_names(_species_locale)
+    UNKNOWN_SPECIES_KEY = "Unknown_species"
 
     def _compute_auto_rating_local(od_confidence, cls_confidence, bbox_w, bbox_h):
         """
@@ -912,6 +913,8 @@ def create_web_interface(detection_manager, system_monitor=None):
                 "sort": request.args.get("sort", "time_desc"),
                 "min_conf": request.args.get("min_conf", "0.0"),
             }
+            if filters["species"] in {"Unknown", "Unclassified"}:
+                filters["species"] = UNKNOWN_SPECIES_KEY
 
             detections = get_detections_for_date(date_iso)
             if not detections:
@@ -928,7 +931,9 @@ def create_web_interface(detection_manager, system_monitor=None):
             species_list = sorted(
                 list(
                     set(
-                        det["cls_class_name"] or det["od_class_name"] or "Unknown"
+                        det["cls_class_name"]
+                        or det["od_class_name"]
+                        or UNKNOWN_SPECIES_KEY
                         for det in detections
                     )
                 )
@@ -950,7 +955,11 @@ def create_web_interface(detection_manager, system_monitor=None):
                     continue
 
                 # Species filter
-                sp = det["cls_class_name"] or det["od_class_name"] or "Unknown"
+                sp = (
+                    det["cls_class_name"]
+                    or det["od_class_name"]
+                    or UNKNOWN_SPECIES_KEY
+                )
                 if filters["species"] != "all" and sp != filters["species"]:
                     continue
 
@@ -982,8 +991,13 @@ def create_web_interface(detection_manager, system_monitor=None):
                 det["original_path"] = (
                     f"/uploads/originals/{date_folder}/{original_name}"
                 )
+                species_key = (
+                    det.get("cls_class_name")
+                    or det.get("od_class_name")
+                    or UNKNOWN_SPECIES_KEY
+                )
                 det["common_name"] = COMMON_NAMES.get(
-                    det.get("cls_class_name") or det.get("od_class_name"), "Unknown"
+                    species_key, species_key.replace("_", " ")
                 )
                 det["latin_name"] = (
                     det.get("cls_class_name") or det.get("od_class_name") or ""
@@ -1303,6 +1317,8 @@ def create_web_interface(detection_manager, system_monitor=None):
             """Species-specific overview page with all detections for one species."""
             raw_species_key = request.args.get("species_key", type=str) or ""
             species_key = raw_species_key.strip().replace(" ", "_")
+            if species_key in {"Unknown", "Unclassified"}:
+                species_key = UNKNOWN_SPECIES_KEY
             if not species_key:
                 return redirect(url_for("species"))
 
@@ -1326,7 +1342,7 @@ def create_web_interface(detection_manager, system_monitor=None):
                 det_species_key = (
                     det.get("cls_class_name")
                     or det.get("od_class_name")
-                    or "Unknown_species"
+                    or UNKNOWN_SPECIES_KEY
                 )
                 if det_species_key != species_key:
                     continue
@@ -1730,7 +1746,7 @@ def create_web_interface(detection_manager, system_monitor=None):
                     species_key = (
                         cls_class
                         if cls_class
-                        else (od_class if od_class else "Unknown_species")
+                        else (od_class if od_class else UNKNOWN_SPECIES_KEY)
                     )
                     species_candidates.setdefault(species_key, []).append(det)
 

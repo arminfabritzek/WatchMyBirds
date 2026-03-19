@@ -24,7 +24,9 @@
     <div class="page-control-bar__right">
         {% include 'partials/thumb_view_toggle.html' %}
         {% if session.get('authenticated') %}
-        <a href="/edit/{{ date }}" class="btn btn--secondary">Batch Edit</a>
+        <button type="button" class="btn btn--secondary inline-edit-toggle" onclick="toggleInlineEdit(this)">✏️
+            Batch Edit</button>
+        <a href="/edit/{{ date }}" class="btn btn--secondary">Edit Page</a>
         {% endif %}
         <a href="/gallery" class="btn btn--secondary">← Gallery</a>
     </div>
@@ -36,7 +38,7 @@
     <h2 class="section__title">Species of the Day</h2>
     <div class="gallery-grid">
         {% for det in species_of_day %}
-        <div class="wm-tile fade-in-item" data-detection-id="{{ det.detection_id }}" data-batch-target="detection">
+        <div class="wm-tile fade-in-item" data-detection-id="{{ det.detection_id }}">
             <div class="wm-tile__media">
                 <button type="button" class="wm-tile__button" data-bs-toggle="modal"
                     data-bs-target="#modal-species-{{ det.detection_id }}" style="height:100%; display:block;">
@@ -72,7 +74,9 @@
         {% for obs in observations %}
         {# ── Observation tile (standard wm-tile, clickable → expands filmstrip) ── #}
         <div class="wm-tile fade-in-item" id="observation-{{ obs.observation_id }}"
-            data-detection-id="{{ obs.cover_detection.detection_id }}" data-obs-id="{{ obs.observation_id }}"
+            data-detection-id="{{ obs.cover_detection.detection_id }}" data-batch-target="detection"
+            data-batch-ids="{{ obs.detection_ids | join(',') }}"
+            data-obs-id="{{ obs.observation_id }}"
             onclick="toggleObsFilmstrip(this)" style="cursor:pointer;">
             <div class="wm-tile__media">
                 <img class="wm-tile__image" loading="lazy" src="{{ obs.cover_detection.display_url }}"
@@ -113,8 +117,7 @@
             </div>
             <div class="obs-filmstrip__grid">
                 {% for det in obs.all_detections %}
-                <div class="obs-filmstrip__item" data-detection-id="{{ det.detection_id }}"
-                    data-batch-target="detection">
+                <div class="obs-filmstrip__item" data-detection-id="{{ det.detection_id }}">
                     <div class="obs-filmstrip__media wm-toolbox-host">
                         <button type="button" class="obs-filmstrip__button" data-bs-toggle="modal"
                             data-bs-target="#modal-obs{{ obs.observation_id }}-{{ det.detection_id }}">
@@ -168,6 +171,18 @@
 </nav>
 {% endif %}
 
+{% if session.get('authenticated') %}
+<script>
+    window.INLINE_EDIT_FILTER_CONTEXT = {
+        surface: 'gallery',
+        date: '{{ date }}',
+        sort: '{{ sort_by }}',
+        min_score: '{{ current_threshold }}'
+    };
+</script>
+{% include 'partials/inline_edit.html' %}
+{% endif %}
+
 {% endblock %}
 
 {% block modals %}
@@ -217,6 +232,8 @@ nav_index=nav.index
 
     /** Toggle the filmstrip for an observation card. */
     function toggleObsFilmstrip(card) {
+        if (document.body.classList.contains('inline-edit-active')) return;
+
         const obsId = card.getAttribute('data-obs-id');
         if (!obsId) return;
 

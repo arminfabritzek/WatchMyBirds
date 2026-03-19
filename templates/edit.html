@@ -4,6 +4,7 @@
 
 {% block content %}
 {% from 'partials/tile_toolbox.html' import tile_toolbox %}
+{% from 'partials/batch_action_footer.html' import render_batch_action_footer %}
 {% set can_moderate = session.get('authenticated') %}
 <div class="container-fluid mt-4">
     <div class="d-flex justify-content-between align-items-center mb-4">
@@ -34,7 +35,7 @@
                     <select name="species" id="species" class="form-select" onchange="this.form.submit()">
                         <option value="all" {% if filters.species=='all' %}selected{% endif %}>All Species</option>
                         {% for sp in species_list %}
-                        <option value="{{ sp }}" {% if filters.species==sp %}selected{% endif %}>{{ sp }}</option>
+                        <option value="{{ sp }}" {% if filters.species==sp %}selected{% endif %}>{{ 'Unknown species' if sp == 'Unknown_species' else sp }}</option>
                         {% endfor %}
                     </select>
                 </div>
@@ -76,7 +77,6 @@
                 <input class="form-check-input" type="checkbox" id="select-all" onclick="toggleSelectAll(this)">
                 <label class="form-check-label fw-bold" for="select-all">Select All</label>
             </div>
-            <span class="text-muted" id="selected-counter">0 items selected</span>
         </div>
     </div>
 
@@ -145,26 +145,18 @@
     </div>
     {% endif %}
 
-    <!-- Sticky Footer for Actions -->
-    <div class="sticky-action-footer py-3 bg-light border-top shadow-lg">
-        <div class="container-fluid d-flex justify-content-center gap-3 flex-wrap">
-            <button type="button" class="btn btn-danger px-4" onclick="batchRejectSelected()">
-                <i class="bi bi-trash"></i> Move to Trash
-            </button>
-            <button type="button" class="btn btn-outline-danger px-4" onclick="batchRejectAllFiltered()">
-                <i class="bi bi-trash"></i> ⚠️ Reject All Filtered
-            </button>
-            <button type="button" class="btn btn-primary px-4" onclick="batchRelabelSelected()">
-                <i class="bi bi-tag"></i> 🏷️ Relabel Selected
-            </button>
-            <button type="button" class="btn btn-outline-primary px-4" onclick="batchRelabelAllFiltered()">
-                <i class="bi bi-tag"></i> 🏷️ Relabel All Filtered
-            </button>
-            <button type="button" class="btn btn-success px-4" onclick="downloadSelected()">
-                <i class="bi bi-download"></i> Download Selected (ZIP)
-            </button>
-        </div>
-    </div>
+    {{ render_batch_action_footer(
+    footer_id='editBatchFooter',
+    always_visible=true,
+    counter_id='selected-counter',
+    counter_text='0 items selected',
+    trash_selected_onclick='batchRejectSelected()',
+    trash_filtered_onclick='batchRejectAllFiltered()',
+    relabel_selected_onclick='batchRelabelSelected()',
+    relabel_filtered_onclick='batchRelabelAllFiltered()',
+    download_onclick='downloadSelected()',
+    download_label='Download Selected (ZIP)'
+    ) }}
 </div>
 
 {# Styles migrated to design-system.css: EDIT PAGE section #}
@@ -248,7 +240,7 @@
     async function batchRejectSelected() {
         const selection = WmBatchActions.getExplicitSelection('.wm-tile__checkbox');
         const result = await WmBatchActions.runBatchAction(
-            'Move to Trash',
+            'Move Selected to Trash',
             selection,
             '/api/moderation/bulk/reject'
         );
@@ -272,7 +264,7 @@
     async function batchRejectAllFiltered() {
         const selection = WmBatchActions.buildFilterContext('edit', EDIT_FILTER_CONTEXT);
         const result = await WmBatchActions.runBatchAction(
-            '⚠️ Reject ALL Filtered',
+            '⚠️ Move All Filtered to Trash',
             selection,
             '/api/moderation/bulk/reject'
         );

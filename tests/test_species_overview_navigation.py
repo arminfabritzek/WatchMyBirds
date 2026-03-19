@@ -36,6 +36,8 @@ def test_species_tiles_link_to_species_overview():
     content = _read_text("templates/species.html")
 
     assert "/species/overview?species_key=" in content
+    assert "Unknown_species" in content
+    assert "Unclassified" not in content
     assert 'data-bs-target="#modal-species_summary-' not in content
 
 
@@ -54,3 +56,5 @@ def test_species_overview_template_structure():
     )
     assert "render_modal(det, 'species_overview')" in content
     assert "species-overview-grid" in content
+    assert "detections" in content
+    assert "observations" not in content

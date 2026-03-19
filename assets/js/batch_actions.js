@@ -24,11 +24,25 @@ window.WmBatchActions = (function () {
      */
     function getExplicitSelection(checkboxSelector) {
         var checked = document.querySelectorAll(checkboxSelector + ':checked');
-        var ids = Array.from(checked).map(function (cb) {
+        var ids = [];
+
+        Array.from(checked).forEach(function (cb) {
+            var rawBatchIds = cb.dataset.batchIds;
+            if (rawBatchIds) {
+                rawBatchIds.split(',').forEach(function (raw) {
+                    var id = parseInt(raw, 10);
+                    if (!isNaN(id)) ids.push(id);
+                });
+                return;
+            }
+
             // Prefer data-detection-id; fall back to value only if numeric
             var raw = cb.dataset.detectionId || cb.value;
-            return parseInt(raw, 10);
-        }).filter(function (id) { return !isNaN(id); });
+            var id = parseInt(raw, 10);
+            if (!isNaN(id)) ids.push(id);
+        });
+
+        ids = Array.from(new Set(ids));
 
         return { mode: 'explicit', ids: ids };
     }
@@ -83,7 +97,7 @@ window.WmBatchActions = (function () {
 
     /**
      * Preview the selection and ask for confirmation.
-     * @param {string} actionLabel - e.g. 'Move to Trash', 'Relabel to Blaumeise'
+     * @param {string} actionLabel - e.g. 'Move Selected to Trash', 'Relabel to Blaumeise'
      * @param {Object} selectionPayload - from getExplicitSelection or buildFilterContext
      * @returns {Promise<{ confirmed: boolean, resolved: Object }>}
      */

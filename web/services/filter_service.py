@@ -14,9 +14,10 @@ from typing import Literal
 
 from config import get_config
 from logging_config import get_logger
-from web.services import db_service
+from web.services import db_service, gallery_service
 
 logger = get_logger(__name__)
+UNKNOWN_SPECIES_KEY = "Unknown_species"
 
 
 # ---------------------------------------------------------------------------
@@ -43,6 +44,7 @@ class FilterContext:
     # Score / confidence thresholds
     min_score: float = 0.0
     min_conf: float = 0.0
+    min_score_explicit: bool = False
 
     # Edit-page status filter
     status_filter: str = "all"  # "all" | "downloaded" | "not_downloaded"
@@ -53,12 +55,18 @@ class FilterContext:
     @classmethod
     def from_dict(cls, data: dict) -> FilterContext:
         """Build from a request payload dict, with safe defaults."""
+        raw_min_score = data.get("min_score") if "min_score" in data else None
+        min_score_explicit = raw_min_score not in (None, "")
+        species_key = data.get("species_key")
+        if species_key in {"Unknown", "Unclassified"}:
+            species_key = UNKNOWN_SPECIES_KEY
         return cls(
             surface=data.get("surface", "gallery"),
             date=data.get("date"),
-            species_key=data.get("species_key"),
-            min_score=float(data.get("min_score", 0.0)),
+            species_key=species_key,
+            min_score=float(raw_min_score) if min_score_explicit else 0.0,
             min_conf=float(data.get("min_conf", 0.0)),
+            min_score_explicit=min_score_explicit,
             status_filter=data.get("status_filter", "all"),
             sort=data.get("sort", "time_desc"),
         )
@@ -110,27 +118,34 @@ def resolve_filtered_ids(ctx: FilterContext) -> ResolvedSelection:
 
 
 def _resolve_gallery(ctx: FilterContext) -> ResolvedSelection:
-    """Gallery (daily subgallery) — observation-based, filtered by min_score."""
+    """Gallery (daily subgallery) — all detections of visible observations."""
     if not ctx.date:
         return ResolvedSelection()
 
     config = get_config()
     threshold = (
-        ctx.min_score if ctx.min_score > 0 else config["GALLERY_DISPLAY_THRESHOLD"]
+        ctx.min_score
+        if ctx.min_score_explicit
+        else config["GALLERY_DISPLAY_THRESHOLD"]
     )
 
     with db_service.closing_connection() as conn:
         rows = db_service.fetch_detections_for_gallery(conn, ctx.date, order_by="time")
 
-    ids = []
-    for row in rows:
-        row_dict = dict(row)
-        score = row_dict.get("score") or 0.0
-        if threshold > 0 and score < threshold:
-            continue
-        ids.append(row_dict["detection_id"])
+    detections = [dict(row) for row in rows]
+    observations = gallery_service.group_detections_into_observations(detections)
 
-    return ResolvedSelection(detection_ids=ids, total_count=len(ids))
+    detection_ids = []
+    for obs in observations:
+        if threshold > 0 and (obs.get("best_score") or 0.0) < threshold:
+            continue
+        detection_ids.extend(obs.get("detection_ids") or [])
+
+    detection_ids = list(dict.fromkeys(detection_ids))
+    return ResolvedSelection(
+        detection_ids=detection_ids,
+        total_count=len(detection_ids),
+    )
 
 
 def _resolve_species_overview(ctx: FilterContext) -> ResolvedSelection:
@@ -140,7 +155,9 @@ def _resolve_species_overview(ctx: FilterContext) -> ResolvedSelection:
 
     config = get_config()
     threshold = (
-        ctx.min_score if ctx.min_score > 0 else config["GALLERY_DISPLAY_THRESHOLD"]
+        ctx.min_score
+        if ctx.min_score_explicit
+        else config["GALLERY_DISPLAY_THRESHOLD"]
     )
 
     with db_service.closing_connection() as conn:
@@ -152,7 +169,7 @@ def _resolve_species_overview(ctx: FilterContext) -> ResolvedSelection:
         det_species = (
             row_dict.get("cls_class_name")
             or row_dict.get("od_class_name")
-            or "Unknown_species"
+            or UNKNOWN_SPECIES_KEY
         )
         if det_species != ctx.species_key:
             continue
@@ -188,7 +205,7 @@ def _resolve_edit(ctx: FilterContext) -> ResolvedSelection:
             sp = (
                 row_dict.get("cls_class_name")
                 or row_dict.get("od_class_name")
-                or "Unknown"
+                or UNKNOWN_SPECIES_KEY
             )
             if sp != ctx.species_key:
                 continue

@@ -555,6 +555,20 @@ code {
     color: white;
 }
 
+.btn--success {
+    background-color: #2e7d32;
+    border-color: #2e7d32;
+    color: white;
+}
+
+.btn--success:hover:not(:disabled) {
+    background-color: #1b5e20;
+    border-color: #1b5e20;
+    color: white;
+    transform: translateY(-1px);
+    box-shadow: var(--shadow-md);
+}
+
 .btn--outline-primary {
     background-color: transparent;
     border-color: var(--color-primary);
@@ -2556,6 +2570,39 @@ code {
     left: 0;
     right: 0;
     z-index: 1000;
+}
+
+.wm-batch-footer {
+    display: none;
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    z-index: 1000;
+    padding: 10px 20px;
+    background: rgba(26, 29, 35, 0.95);
+    border-top: 1px solid rgba(167, 139, 250, 0.3);
+    backdrop-filter: blur(8px);
+    justify-content: center;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+
+.wm-batch-footer.visible,
+.wm-batch-footer--static {
+    display: flex;
+}
+
+.wm-batch-footer__counter {
+    color: rgba(255, 255, 255, 0.7);
+    font-size: var(--font-size-sm);
+}
+
+.wm-batch-footer .btn {
+    font-size: var(--font-size-sm);
+    padding: 6px 16px;
+    white-space: nowrap;
 }
 
 .thumbnail-wrapper img {

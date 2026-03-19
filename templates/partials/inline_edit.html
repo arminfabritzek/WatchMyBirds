@@ -5,6 +5,7 @@ Requires gallery_utils.js and batch_actions.js to be loaded.
 
 Usage: {% include 'partials/inline_edit.html' %}
 #}
+{% from 'partials/batch_action_footer.html' import render_batch_action_footer %}
 
 <style>
     /* Inline edit mode styles */
@@ -43,47 +44,22 @@ Usage: {% include 'partials/inline_edit.html' %}
         opacity: 0.85;
     }
 
-    .inline-edit-footer {
-        display: none;
-        position: fixed;
-        bottom: 0;
-        left: 0;
-        right: 0;
-        z-index: 1000;
-        padding: 10px 20px;
-        background: rgba(26, 29, 35, 0.95);
-        border-top: 1px solid rgba(167, 139, 250, 0.3);
-        backdrop-filter: blur(8px);
-        justify-content: center;
-        align-items: center;
-        gap: 12px;
-    }
-
-    .inline-edit-footer.visible {
-        display: flex;
-    }
-
-    .inline-edit-footer .counter {
-        color: rgba(255, 255, 255, 0.7);
-        font-size: var(--font-size-sm);
-    }
-
-    .inline-edit-footer .btn {
-        font-size: var(--font-size-sm);
-        padding: 6px 16px;
-    }
 </style>
-
-<div class="inline-edit-footer" id="inlineEditFooter">
-    <span class="counter" id="inlineEditCounter">0 selected</span>
-    <button type="button" class="btn btn--danger" onclick="inlineEditTrash()">🗑 Move to Trash</button>
-    <button type="button" class="btn btn--outline-danger" id="inlineRejectAllBtn" onclick="inlineEditTrashAllFiltered()"
-        style="display:none;">⚠️ Reject All Filtered</button>
-    <button type="button" class="btn btn--primary" onclick="inlineEditRelabel()">🏷️ Relabel Selected</button>
-    <button type="button" class="btn btn--outline-primary" id="inlineRelabelAllBtn"
-        onclick="inlineEditRelabelAllFiltered()" style="display:none;">🏷️ Relabel All Filtered</button>
-    <button type="button" class="btn btn--secondary" onclick="inlineEditCancel()">Cancel</button>
-</div>
+{{ render_batch_action_footer(
+footer_id='inlineEditFooter',
+counter_id='inlineEditCounter',
+counter_text='0 selected',
+trash_selected_onclick='inlineEditTrash()',
+trash_filtered_onclick='inlineEditTrashAllFiltered()',
+trash_filtered_id='inlineRejectAllBtn',
+trash_filtered_hidden=true,
+relabel_selected_onclick='inlineEditRelabel()',
+relabel_filtered_onclick='inlineEditRelabelAllFiltered()',
+relabel_filtered_id='inlineRelabelAllBtn',
+relabel_filtered_hidden=true,
+cancel_onclick='inlineEditCancel()',
+cancel_label='Cancel'
+) }}
 
 <script>
     (function () {
@@ -101,14 +77,22 @@ Usage: {% include 'partials/inline_edit.html' %}
         // Toggle edit mode
         window.toggleInlineEdit = function (btn) {
             editMode = !editMode;
-            var pageRoot = document.querySelector('.species-grid, .gallery-grid, #subgallery-grid');
-            if (!pageRoot) pageRoot = document.body;
+            var pageRoot = document.body;
 
             if (editMode) {
                 pageRoot.classList.add('inline-edit-active');
                 btn.classList.add('active');
                 btn.textContent = '✏️ Done';
                 lastClickedIndex = null;
+
+                // Observation pages can have expanded detail rows that should not
+                // remain interactive while batch selection is active.
+                document.querySelectorAll('.obs-filmstrip').forEach(function (filmstrip) {
+                    filmstrip.style.display = 'none';
+                });
+                document.querySelectorAll('[data-obs-id]').forEach(function (card) {
+                    card.classList.remove('obs-card--expanded');
+                });
 
                 // Add checkboxes to all batch-target elements
                 var targets = document.querySelectorAll('[data-batch-target="detection"][data-detection-id]');
@@ -120,6 +104,9 @@ Usage: {% include 'partials/inline_edit.html' %}
                         cb.className = 'inline-edit-checkbox';
                         cb.value = tile.dataset.detectionId;
                         cb.dataset.detectionId = tile.dataset.detectionId;
+                        if (tile.dataset.batchIds) {
+                            cb.dataset.batchIds = tile.dataset.batchIds;
+                        }
                         cb.addEventListener('click', e => e.stopPropagation());
                         cb.addEventListener('change', updateInlineCounter);
                         tile.prepend(cb);
@@ -129,16 +116,23 @@ Usage: {% include 'partials/inline_edit.html' %}
                 // Make targets clickable to toggle selection (with Shift+Click range)
                 targets.forEach(function (tile) {
                     tile._inlineEditClick = function (e) {
-                        if (e.target.closest('.wm-tile__button, .obs-filmstrip__button')) {
-                            e.preventDefault();
-                            e.stopPropagation();
-                        }
+                        if (!editMode || e.target.closest('.wm-toolbox')) return;
+
                         const cb = tile.querySelector('.inline-edit-checkbox');
                         if (!cb) return;
 
+                        const clickedCheckbox = e.target === cb;
                         const currentIdx = parseInt(tile.dataset.editIndex);
 
-                        if (e.target !== cb) {
+                        if (!clickedCheckbox) {
+                            e.preventDefault();
+                        }
+                        e.stopPropagation();
+                        if (typeof e.stopImmediatePropagation === 'function') {
+                            e.stopImmediatePropagation();
+                        }
+
+                        if (!clickedCheckbox) {
                             cb.checked = !cb.checked;
                         }
 
@@ -194,7 +188,7 @@ Usage: {% include 'partials/inline_edit.html' %}
             if (!btn) btn = document.querySelector('.inline-edit-toggle');
             if (btn) {
                 btn.classList.remove('active');
-                btn.textContent = '✏️ Edit';
+                btn.textContent = '✏️ Batch Edit';
             }
         }
 
@@ -207,7 +201,7 @@ Usage: {% include 'partials/inline_edit.html' %}
         window.inlineEditTrash = async function () {
             const selection = WmBatchActions.getExplicitSelection('.inline-edit-checkbox');
             const result = await WmBatchActions.runBatchAction(
-                'Move to Trash',
+                'Move Selected to Trash',
                 selection,
                 '/api/moderation/bulk/reject'
             );
@@ -216,12 +210,20 @@ Usage: {% include 'partials/inline_edit.html' %}
                 // Remove tiles with animation
                 const checked = document.querySelectorAll('.inline-edit-checkbox:checked');
                 checked.forEach(cb => {
-                    const tile = cb.closest('.wm-tile');
+                    const tile = cb.closest('.wm-tile, [data-batch-target]');
                     if (tile) {
                         tile.style.transition = 'opacity 0.3s, transform 0.3s';
                         tile.style.opacity = '0';
                         tile.style.transform = 'scale(0.8)';
                         setTimeout(() => tile.remove(), 320);
+
+                        const obsId = tile.dataset.obsId;
+                        if (obsId) {
+                            const filmstrip = document.getElementById('filmstrip-' + obsId);
+                            if (filmstrip) {
+                                setTimeout(() => filmstrip.remove(), 320);
+                            }
+                        }
                     }
                 });
 
@@ -247,7 +249,7 @@ Usage: {% include 'partials/inline_edit.html' %}
                 window.INLINE_EDIT_FILTER_CONTEXT
             );
             const result = await WmBatchActions.runBatchAction(
-                '⚠️ Reject All Filtered',
+                '⚠️ Move All Filtered to Trash',
                 selection,
                 '/api/moderation/bulk/reject'
             );

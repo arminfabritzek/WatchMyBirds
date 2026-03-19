@@ -241,6 +241,7 @@ class TestFilterContext:
         ctx = FilterContext.from_dict({"surface": "gallery"})
         assert ctx.surface == "gallery"
         assert ctx.min_score == 0.0
+        assert ctx.min_score_explicit is False
         assert ctx.date is None
 
     def test_from_dict_full(self):
@@ -256,6 +257,18 @@ class TestFilterContext:
         assert ctx.surface == "species_overview"
         assert ctx.species_key == "Parus_major"
         assert ctx.min_score == 0.5
+        assert ctx.min_score_explicit is True
+
+    def test_from_dict_normalizes_legacy_unknown_aliases(self):
+        from web.services.filter_service import FilterContext
+
+        ctx = FilterContext.from_dict(
+            {
+                "surface": "edit",
+                "species_key": "Unknown",
+            }
+        )
+        assert ctx.species_key == "Unknown_species"
 
     def test_frozen_immutable(self):
         from web.services.filter_service import FilterContext
@@ -263,3 +276,181 @@ class TestFilterContext:
         ctx = FilterContext(surface="gallery")
         with pytest.raises((AttributeError, TypeError)):
             ctx.surface = "edit"
+
+
+class TestFilterResolverThresholds:
+    @patch("web.services.filter_service.db_service")
+    @patch("web.services.filter_service.get_config")
+    def test_species_overview_explicit_zero_keeps_zero_threshold(
+        self, mock_get_config, mock_db
+    ):
+        from web.services.filter_service import FilterContext, resolve_filtered_ids
+
+        mock_get_config.return_value = {"GALLERY_DISPLAY_THRESHOLD": 0.5}
+        mock_conn = MagicMock()
+        mock_db.closing_connection.return_value.__enter__ = MagicMock(
+            return_value=mock_conn
+        )
+        mock_db.closing_connection.return_value.__exit__ = MagicMock(return_value=False)
+        mock_db.fetch_detections_for_gallery.return_value = [
+            {
+                "detection_id": 11,
+                "cls_class_name": "Parus_major",
+                "od_class_name": "Parus_major",
+                "score": 0.2,
+            }
+        ]
+
+        ctx = FilterContext.from_dict(
+            {
+                "surface": "species_overview",
+                "species_key": "Parus_major",
+                "min_score": 0.0,
+            }
+        )
+
+        result = resolve_filtered_ids(ctx)
+
+        assert result.detection_ids == [11]
+        assert result.total_count == 1
+
+    @patch("web.services.filter_service.db_service")
+    @patch("web.services.filter_service.get_config")
+    def test_gallery_missing_min_score_falls_back_to_config_threshold(
+        self, mock_get_config, mock_db
+    ):
+        from web.services.filter_service import FilterContext, resolve_filtered_ids
+
+        mock_get_config.return_value = {"GALLERY_DISPLAY_THRESHOLD": 0.5}
+        mock_conn = MagicMock()
+        mock_db.closing_connection.return_value.__enter__ = MagicMock(
+            return_value=mock_conn
+        )
+        mock_db.closing_connection.return_value.__exit__ = MagicMock(return_value=False)
+        mock_db.fetch_detections_for_gallery.return_value = [
+            {
+                "detection_id": 21,
+                "score": 0.2,
+                "image_timestamp": "20260306_120000",
+                "bbox_x": 0.10,
+                "bbox_y": 0.10,
+                "bbox_w": 0.20,
+                "bbox_h": 0.20,
+            },
+            {
+                "detection_id": 22,
+                "score": 0.8,
+                "image_timestamp": "20260306_130000",
+                "bbox_x": 0.70,
+                "bbox_y": 0.70,
+                "bbox_w": 0.20,
+                "bbox_h": 0.20,
+            },
+        ]
+
+        ctx = FilterContext.from_dict(
+            {
+                "surface": "gallery",
+                "date": "2026-03-06",
+            }
+        )
+
+        result = resolve_filtered_ids(ctx)
+
+        assert result.detection_ids == [22]
+        assert result.total_count == 1
+
+    @patch("web.services.filter_service.db_service")
+    @patch("web.services.filter_service.get_config")
+    def test_gallery_returns_all_detection_ids_for_visible_observations(
+        self, mock_get_config, mock_db
+    ):
+        from web.services.filter_service import FilterContext, resolve_filtered_ids
+
+        mock_get_config.return_value = {"GALLERY_DISPLAY_THRESHOLD": 0.5}
+        mock_conn = MagicMock()
+        mock_db.closing_connection.return_value.__enter__ = MagicMock(
+            return_value=mock_conn
+        )
+        mock_db.closing_connection.return_value.__exit__ = MagicMock(return_value=False)
+        mock_db.fetch_detections_for_gallery.return_value = [
+            {
+                "detection_id": 41,
+                "cls_class_name": "Parus_major",
+                "od_class_name": "Parus_major",
+                "score": 0.9,
+                "image_timestamp": "20260306_120000",
+                "bbox_x": 0.10,
+                "bbox_y": 0.10,
+                "bbox_w": 0.20,
+                "bbox_h": 0.20,
+            },
+            {
+                "detection_id": 42,
+                "cls_class_name": "Parus_major",
+                "od_class_name": "Parus_major",
+                "score": 0.1,
+                "image_timestamp": "20260306_120005",
+                "bbox_x": 0.11,
+                "bbox_y": 0.11,
+                "bbox_w": 0.20,
+                "bbox_h": 0.20,
+            },
+            {
+                "detection_id": 43,
+                "cls_class_name": "Parus_major",
+                "od_class_name": "Parus_major",
+                "score": 0.4,
+                "image_timestamp": "20260306_130000",
+                "bbox_x": 0.60,
+                "bbox_y": 0.60,
+                "bbox_w": 0.20,
+                "bbox_h": 0.20,
+            },
+        ]
+
+        ctx = FilterContext.from_dict(
+            {
+                "surface": "gallery",
+                "date": "2026-03-06",
+            }
+        )
+
+        result = resolve_filtered_ids(ctx)
+
+        assert result.detection_ids == [41, 42]
+        assert result.total_count == 2
+
+    @patch("web.services.filter_service.db_service")
+    def test_edit_unknown_species_filter_matches_unknown_species_key(self, mock_db):
+        from web.services.filter_service import FilterContext, resolve_filtered_ids
+
+        mock_conn = MagicMock()
+        mock_db.closing_connection.return_value.__enter__ = MagicMock(
+            return_value=mock_conn
+        )
+        mock_db.closing_connection.return_value.__exit__ = MagicMock(return_value=False)
+        mock_db.fetch_detections_for_gallery.return_value = [
+            {
+                "detection_id": 31,
+                "cls_class_name": None,
+                "od_class_name": None,
+                "downloaded_timestamp": None,
+                "od_confidence": 0.0,
+                "cls_confidence": 0.0,
+                "score": 0.0,
+            }
+        ]
+
+        ctx = FilterContext.from_dict(
+            {
+                "surface": "edit",
+                "date": "2026-03-06",
+                "species_key": "Unknown_species",
+            }
+        )
+
+        result = resolve_filtered_ids(ctx)
+
+        assert result.detection_ids == [31]
+        assert result.total_count == 1

@@ -32,13 +32,13 @@
     <div class="wm-tile fade-in-item" data-detection-id="{{ det.detection_id }}">
         <div class="wm-tile__media">
             <a class="wm-tile__button" style="height:100%; display:block;"
-                href="/species/overview?species_key={{ (det.species_key or 'Unclassified') | urlencode }}&min_score={{ current_threshold }}"
-                aria-label="Show all observations: {{ det.common_name }}">
+                href="/species/overview?species_key={{ (det.species_key or 'Unknown_species') | urlencode }}&min_score={{ current_threshold }}"
+                aria-label="Show all detections: {{ det.common_name }}">
                 <img class="wm-tile__image" loading="lazy" src="{{ det.display_path }}" alt="{{ det.common_name }}"
                     data-thumb-src="{{ det.display_path }}" data-full-src="{{ det.full_path }}">
             </a>
             <a class="cover-jump-badge" title="Zum Coverbild springen"
-                href="/species/overview?species_key={{ (det.species_key or 'Unclassified') | urlencode }}&min_score={{ current_threshold }}#detection-{{ det.detection_id }}">📌</a>
+                href="/species/overview?species_key={{ (det.species_key or 'Unknown_species') | urlencode }}&min_score={{ current_threshold }}#detection-{{ det.detection_id }}">📌</a>
         </div>
         {{ tile_toolbox(
         detection_id=det.detection_id,
@@ -49,7 +49,7 @@
         ) }}
 
         <a class="wm-tile__body"
-            href="/species/overview?species_key={{ (det.species_key or 'Unclassified') | urlencode }}&min_score={{ current_threshold }}"
+            href="/species/overview?species_key={{ (det.species_key or 'Unknown_species') | urlencode }}&min_score={{ current_threshold }}"
             style="text-decoration:none;color:inherit;display:flex;">
             <span class="wm-tile__name">{{ det.common_name }}</span>
             {% if det.cls_class_name or det.od_class_name %}
