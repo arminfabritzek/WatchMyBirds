@@ -13,6 +13,7 @@ Handles all bulk moderation routes:
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 
 from flask import Blueprint, jsonify, request
 
@@ -26,6 +27,19 @@ logger = get_logger(__name__)
 moderation_bp = Blueprint("moderation", __name__)
 
 
+def _parse_iso_date(raw_value: str, field_name: str) -> str:
+    """Validate a YYYY-MM-DD date string and return it unchanged."""
+    if not raw_value:
+        raise ValueError(f"{field_name} required")
+
+    try:
+        datetime.strptime(raw_value, "%Y-%m-%d")
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"Invalid {field_name}: {raw_value}") from exc
+
+    return raw_value
+
+
 # ---------------------------------------------------------------------------
 # POST /api/moderation/resolve-selection
 # ---------------------------------------------------------------------------
@@ -37,9 +51,11 @@ def resolve_selection() -> tuple:
     """Resolve a selection to concrete detection IDs / filenames.
 
     Accepts:
-        { mode: "explicit" | "all_filtered",
+        { mode: "explicit" | "all_filtered" | "date_range",
           ids: [int, ...],              // only for mode=explicit
-          filter_context: { ... }       // only for mode=all_filtered
+          filter_context: { ... },      // only for mode=all_filtered
+          from_date: "YYYY-MM-DD",      // only for mode=date_range
+          to_date: "YYYY-MM-DD"         // only for mode=date_range
         }
 
     Returns:
@@ -81,6 +97,35 @@ def resolve_selection() -> tuple:
                 "detection_ids": result.detection_ids,
                 "image_filenames": result.image_filenames,
                 "total_count": result.total_count,
+            }
+        )
+
+    if mode == "date_range":
+        try:
+            from_date = _parse_iso_date(data.get("from_date"), "from_date")
+            to_date = _parse_iso_date(data.get("to_date"), "to_date")
+        except ValueError as exc:
+            return jsonify({"status": "error", "message": str(exc)}), 400
+
+        if from_date > to_date:
+            return jsonify(
+                {
+                    "status": "error",
+                    "message": "from_date must be on or before to_date",
+                }
+            ), 400
+
+        with db_service.closing_connection() as conn:
+            detection_ids = db_service.fetch_active_detection_ids_in_date_range(
+                conn, from_date, to_date
+            )
+
+        return jsonify(
+            {
+                "status": "success",
+                "detection_ids": detection_ids,
+                "image_filenames": [],
+                "total_count": len(detection_ids),
             }
         )
 

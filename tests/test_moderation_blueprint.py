@@ -101,6 +101,79 @@ class TestResolveSelection:
         assert data["total_count"] == 3
         mock_resolve.assert_called_once()
 
+    @patch("web.blueprints.moderation.db_service")
+    def test_date_range_resolves_active_detection_ids(self, mock_db, client):
+        mock_conn = MagicMock()
+        mock_db.closing_connection.return_value.__enter__ = MagicMock(
+            return_value=mock_conn
+        )
+        mock_db.closing_connection.return_value.__exit__ = MagicMock(return_value=False)
+        mock_db.fetch_active_detection_ids_in_date_range.return_value = [4, 5, 6]
+
+        resp = client.post(
+            "/api/moderation/resolve-selection",
+            json={
+                "mode": "date_range",
+                "from_date": "2026-03-01",
+                "to_date": "2026-03-03",
+            },
+        )
+
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert data["status"] == "success"
+        assert data["detection_ids"] == [4, 5, 6]
+        assert data["image_filenames"] == []
+        assert data["total_count"] == 3
+        mock_db.fetch_active_detection_ids_in_date_range.assert_called_once_with(
+            mock_conn, "2026-03-01", "2026-03-03"
+        )
+
+    @patch("web.blueprints.moderation.db_service")
+    def test_date_range_returns_zero_matches(self, mock_db, client):
+        mock_conn = MagicMock()
+        mock_db.closing_connection.return_value.__enter__ = MagicMock(
+            return_value=mock_conn
+        )
+        mock_db.closing_connection.return_value.__exit__ = MagicMock(return_value=False)
+        mock_db.fetch_active_detection_ids_in_date_range.return_value = []
+
+        resp = client.post(
+            "/api/moderation/resolve-selection",
+            json={
+                "mode": "date_range",
+                "from_date": "2026-03-01",
+                "to_date": "2026-03-01",
+            },
+        )
+
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert data["detection_ids"] == []
+        assert data["total_count"] == 0
+
+    def test_date_range_requires_both_dates(self, client):
+        resp = client.post(
+            "/api/moderation/resolve-selection",
+            json={"mode": "date_range", "from_date": "2026-03-01"},
+        )
+
+        assert resp.status_code == 400
+        assert "to_date required" in resp.get_json()["message"]
+
+    def test_date_range_rejects_invalid_ordering(self, client):
+        resp = client.post(
+            "/api/moderation/resolve-selection",
+            json={
+                "mode": "date_range",
+                "from_date": "2026-03-05",
+                "to_date": "2026-03-01",
+            },
+        )
+
+        assert resp.status_code == 400
+        assert "from_date must be on or before to_date" in resp.get_json()["message"]
+
     def test_unknown_mode_returns_400(self, client):
         resp = client.post(
             "/api/moderation/resolve-selection",

@@ -31,6 +31,13 @@ def fetch_detections_for_gallery(
     )
 
 
+def fetch_active_detection_ids_in_date_range(
+    conn, from_date: str, to_date: str
+) -> list[int]:
+    """Fetch active detection IDs in the inclusive capture-date range."""
+    return db_core.fetch_active_detection_ids_in_date_range(conn, from_date, to_date)
+
+
 def reject_detections(conn, detection_ids: list[int]) -> None:
     """Reject detections (move to trash)."""
     db_core.reject_detections(conn, detection_ids)

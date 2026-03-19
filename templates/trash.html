@@ -4,6 +4,11 @@
 
 {% block head %}
 {# Styles migrated to design-system.css: TRASH GRID and PAGINATION sections #}
+<style>
+    .trash-range-input {
+        width: 11rem;
+    }
+</style>
 {% endblock %}
 
 {% block content %}
@@ -37,6 +42,31 @@
         <a href="/gallery" class="btn btn--secondary">← Gallery</a>
     </div>
 </nav>
+
+<section class="page-control-bar" aria-label="Date range trash controls">
+    <div class="page-control-bar__left">
+        <span class="page-control-bar__title">Date Range Trash</span>
+        <label class="page-control-bar__select-all" for="trash-range-from">
+            <span class="page-control-bar__select-label">From</span>
+            <input type="date" id="trash-range-from" class="form-control trash-range-input" aria-label="From date">
+        </label>
+        <label class="page-control-bar__select-all" for="trash-range-to">
+            <span class="page-control-bar__select-label">To</span>
+            <input type="date" id="trash-range-to" class="form-control trash-range-input" aria-label="To date">
+        </label>
+    </div>
+    <div class="page-control-bar__meta">
+        <span id="trash-range-preview-status">Choose an inclusive date range to preview detections.</span>
+    </div>
+    <div class="page-control-bar__right">
+        <button id="trash-range-preview-btn" type="button" class="btn btn--secondary">
+            Preview
+        </button>
+        <button id="trash-range-confirm-btn" type="button" class="btn btn--danger" disabled>
+            Move to Trash
+        </button>
+    </div>
+</section>
 
 {% if items %}
 <div class="trash-grid">
@@ -109,6 +139,7 @@
 {% endblock %}
 
 {% block scripts %}
+<script src="/assets/js/batch_actions.js?v=1"></script>
 <script src="/assets/js/species_picker.js?v=1"></script>
 <script src="/assets/js/gallery_utils.js?v=test_v3"></script>
 <script src="/assets/js/tile_actions.js?v=1"></script>
@@ -119,7 +150,13 @@
         const purgeBtn = document.getElementById('purge-selected-btn');
         const emptyBtn = document.getElementById('empty-trash-btn');
         const selectAllCheckbox = document.getElementById('select-all-checkbox');
+        const rangeFromInput = document.getElementById('trash-range-from');
+        const rangeToInput = document.getElementById('trash-range-to');
+        const rangePreviewBtn = document.getElementById('trash-range-preview-btn');
+        const rangeConfirmBtn = document.getElementById('trash-range-confirm-btn');
+        const rangeStatus = document.getElementById('trash-range-preview-status');
         let lastClickedIndex = null;
+        let previewedDateRangeSelection = null;
 
         function updateButtons() {
             const checked = document.querySelectorAll('.trash-checkbox:checked').length;
@@ -257,6 +294,102 @@
                 performAction('restore', [fakeCheckbox]);
             });
         });
+
+        function resetDateRangePreview(message) {
+            previewedDateRangeSelection = null;
+            rangeConfirmBtn.disabled = true;
+            rangeStatus.textContent = message;
+        }
+
+        async function previewDateRangeTrash() {
+            const fromDate = rangeFromInput.value;
+            const toDate = rangeToInput.value;
+
+            if (!fromDate || !toDate) {
+                resetDateRangePreview('Choose both From and To dates first.');
+                return;
+            }
+
+            if (fromDate > toDate) {
+                resetDateRangePreview('From date must be on or before To date.');
+                return;
+            }
+
+            rangePreviewBtn.disabled = true;
+            rangeConfirmBtn.disabled = true;
+            rangeStatus.textContent = 'Resolving detections in the selected date range...';
+
+            try {
+                const resolved = await WmBatchActions.resolveSelection({
+                    mode: 'date_range',
+                    from_date: fromDate,
+                    to_date: toDate
+                });
+
+                previewedDateRangeSelection = resolved;
+
+                if (resolved.total_count > 0) {
+                    rangeConfirmBtn.disabled = false;
+                    rangeStatus.textContent = resolved.total_count + ' active detection(s) will be moved to trash.';
+                } else {
+                    rangeStatus.textContent = 'No active detections found in that date range.';
+                }
+            } catch (err) {
+                console.error('[trash-date-range] Preview failed:', err);
+                resetDateRangePreview('Preview failed: ' + err.message);
+            } finally {
+                rangePreviewBtn.disabled = false;
+            }
+        }
+
+        async function executeDateRangeTrash() {
+            if (!previewedDateRangeSelection || !previewedDateRangeSelection.total_count) {
+                resetDateRangePreview('Preview detections before moving them to trash.');
+                return;
+            }
+
+            const count = previewedDateRangeSelection.total_count;
+            const confirmed = confirm(
+                'Move ' + count + ' detection(s) to Trash?\n\n' +
+                'This is reversible and will not delete files.'
+            );
+            if (!confirmed) return;
+
+            rangePreviewBtn.disabled = true;
+            rangeConfirmBtn.disabled = true;
+
+            try {
+                const result = await WmBatchActions.executeBatchAction('/api/moderation/bulk/reject', {
+                    detection_ids: previewedDateRangeSelection.detection_ids
+                });
+
+                if (window.wmToast) {
+                    window.wmToast(
+                        (result.rejected_detections || count) + ' items moved to trash',
+                        'success',
+                        3000
+                    );
+                }
+                setTimeout(function () { location.reload(); }, 800);
+            } catch (err) {
+                console.error('[trash-date-range] Execute failed:', err);
+                resetDateRangePreview('Move to Trash failed: ' + err.message);
+            } finally {
+                rangePreviewBtn.disabled = false;
+            }
+        }
+
+        [rangeFromInput, rangeToInput].forEach(function (input) {
+            function handleDateInputChange() {
+                resetDateRangePreview('Date range changed. Preview again to confirm the new selection.');
+            }
+
+            input.addEventListener('change', handleDateInputChange);
+            input.addEventListener('input', handleDateInputChange);
+        });
+
+        rangePreviewBtn.addEventListener('click', previewDateRangeTrash);
+        rangeConfirmBtn.addEventListener('click', executeDateRangeTrash);
     });
 </script>
 {% endblock %}

@@ -359,6 +359,31 @@ def fetch_detection_species_summary(
     return cur.fetchall()
 
 
+def fetch_active_detection_ids_in_date_range(
+    conn: sqlite3.Connection, from_date: str, to_date: str
+) -> list[int]:
+    """
+    Return active detection IDs whose capture day falls within the inclusive
+    ISO date range [from_date, to_date], ordered deterministically.
+    """
+    from_prefix = from_date.replace("-", "")
+    to_prefix = to_date.replace("-", "")
+
+    cur = conn.execute(
+        """
+        SELECT d.detection_id
+        FROM detections d
+        JOIN images i ON i.filename = d.image_filename
+        WHERE d.status = 'active'
+          AND substr(i.timestamp, 1, 8) >= ?
+          AND substr(i.timestamp, 1, 8) <= ?
+        ORDER BY i.timestamp ASC, d.detection_id ASC
+        """,
+        (from_prefix, to_prefix),
+    )
+    return [int(row["detection_id"]) for row in cur.fetchall()]
+
+
 def reject_detections(conn: sqlite3.Connection, detection_ids: Iterable[int]) -> None:
     """
     Semantic Reject: Sets status of specific detections to 'rejected'.
