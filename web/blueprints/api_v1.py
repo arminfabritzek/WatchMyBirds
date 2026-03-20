@@ -248,7 +248,7 @@ def get_species_thumbnails():
 
         # Build mapping: best thumbnail per species (later entries overwrite)
         for det in all_detections:
-            species_lat = det.get("cls_class_name")
+            species_lat = det.get("species_key")
             thumb_virt = det.get("thumbnail_path_virtual")
 
             if not species_lat or not thumb_virt:
@@ -1537,6 +1537,127 @@ def bbox_heatmap_public():
         ),
         404,
     )
+
+
+# =============================================================================
+# OTA Update Endpoints (RPi only)
+# =============================================================================
+
+
+@api_v1.route("/system/updates/check", methods=["GET"])
+@login_required
+def system_updates_check():
+    """
+    Check for available updates.
+
+    Returns current version, latest release, and whether an update is available.
+    Only queries GitHub — does not modify anything.
+    """
+    try:
+        from utils.deploy_info import read_build_metadata
+        from web.services.update_service import get_latest_release, is_update_supported
+
+        meta = read_build_metadata()
+        current = meta.get("app_version", "Unknown")
+        latest = get_latest_release()
+
+        update_available = False
+        if latest and current not in ("Unknown", "") and latest["tag_name"]:
+            tag = latest["tag_name"].lstrip("v")
+            cur = current.lstrip("v")
+            update_available = tag != cur
+
+        return jsonify(
+            {
+                "status": "success",
+                "current_version": current,
+                "latest_release": latest,
+                "update_available": update_available,
+                "update_supported": is_update_supported(),
+            }
+        )
+    except Exception as e:
+        logger.error("Error checking for updates: %s", e)
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@api_v1.route("/system/updates/releases", methods=["GET"])
+@login_required
+def system_updates_releases():
+    """
+    List available GitHub releases.
+
+    Query params:
+      limit (int, default 10): how many releases to return.
+    """
+    try:
+        from web.services.update_service import list_releases
+
+        limit = min(int(request.args.get("limit", 10)), 50)
+        releases = list_releases(limit=limit)
+        return jsonify({"status": "success", "releases": releases})
+    except Exception as e:
+        logger.error("Error fetching releases: %s", e)
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@api_v1.route("/system/updates/status", methods=["GET"])
+@login_required
+def system_updates_status():
+    """
+    Return the current update status (idle / downloading / installing / …).
+
+    The wmb-update.service writes progress to a JSON file; this endpoint reads it.
+    """
+    try:
+        from web.services.update_service import get_update_status
+
+        return jsonify({"status": "success", **get_update_status()})
+    except Exception as e:
+        logger.error("Error reading update status: %s", e)
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@api_v1.route("/system/updates/install", methods=["POST"])
+@login_required
+def system_updates_install():
+    """
+    Trigger installation of a specific version.
+
+    JSON body:
+      target (str): release tag (e.g. "v0.2.0") or "main" for latest main branch.
+
+    Only works on RPi deployments with systemd.
+    """
+    try:
+        from web.services.update_service import is_update_supported, request_update
+
+        if not is_update_supported():
+            return (
+                jsonify(
+                    {
+                        "status": "error",
+                        "message": "OTA updates are only available on RPi deployments.",
+                    }
+                ),
+                400,
+            )
+
+        data = request.get_json(silent=True) or {}
+        target = (data.get("target") or "").strip()
+        if not target:
+            return (
+                jsonify({"status": "error", "message": "Missing 'target' field."}),
+                400,
+            )
+
+        success, message = request_update(target)
+        if success:
+            return jsonify({"status": "success", "message": message})
+        return jsonify({"status": "error", "message": message}), 500
+    except Exception as e:
+        logger.error("Error installing update: %s", e)
+        return jsonify({"status": "error", "message": str(e)}), 500
 
 
 # =============================================================================

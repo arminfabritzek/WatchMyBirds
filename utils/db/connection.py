@@ -115,6 +115,19 @@ def _init_schema(conn: sqlite3.Connection) -> None:
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_classifications_detection_id ON classifications(detection_id);"
     )
+    conn.execute(
+        """
+        DELETE FROM classifications
+        WHERE classification_id NOT IN (
+            SELECT MAX(classification_id)
+            FROM classifications
+            GROUP BY detection_id, rank
+        );
+        """
+    )
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_classifications_detection_rank ON classifications(detection_id, rank);"
+    )
 
     _ensure_column_on_table(conn, "detections", "status", "TEXT DEFAULT 'active'")
     _ensure_column_on_table(conn, "detections", "bbox_x", "REAL")
@@ -145,6 +158,9 @@ def _init_schema(conn: sqlite3.Connection) -> None:
     _ensure_column_on_table(conn, "detections", "unknown_score", "REAL")
     _ensure_column_on_table(conn, "detections", "decision_reasons", "TEXT")
     _ensure_column_on_table(conn, "detections", "policy_version", "TEXT")
+    _ensure_column_on_table(conn, "detections", "manual_species_override", "TEXT")
+    _ensure_column_on_table(conn, "detections", "species_source", "TEXT")
+    _ensure_column_on_table(conn, "detections", "species_updated_at", "TEXT")
 
     # Frame resolution at capture time (tracks camera/resolution changes)
     _ensure_column_on_table(conn, "detections", "frame_width", "INTEGER")

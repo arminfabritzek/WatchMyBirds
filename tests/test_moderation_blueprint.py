@@ -266,7 +266,21 @@ class TestBulkRelabel:
 
     @patch("web.blueprints.moderation.gallery_service")
     @patch("web.blueprints.moderation.db_service")
-    def test_relabel_succeeds(self, mock_db, mock_gallery, client):
+    @patch(
+        "web.blueprints.moderation.build_species_picker_entries",
+        return_value=[
+            {
+                "scientific": "Parus_major",
+                "common": "Great Tit",
+                "source": "model",
+                "score": None,
+                "rank": None,
+            }
+        ],
+    )
+    def test_relabel_succeeds(
+        self, _mock_species_entries, mock_db, mock_gallery, client
+    ):
         mock_conn = MagicMock()
         mock_db.closing_connection.return_value.__enter__ = MagicMock(
             return_value=mock_conn
@@ -282,8 +296,9 @@ class TestBulkRelabel:
         assert data["status"] == "success"
         assert data["relabeled"] == 3
         assert data["new_species"] == "Parus_major"
-        # 2 SQL calls per detection (detections + classifications)
-        assert mock_conn.execute.call_count == 6
+        mock_db.apply_species_override_many.assert_called_once_with(
+            mock_conn, [1, 2, 3], "Parus_major", "manual"
+        )
         mock_gallery.invalidate_cache.assert_called_once()
 
 

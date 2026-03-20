@@ -292,7 +292,8 @@ def group_detections_into_observations(
     Pure in-memory clustering — no DB calls.  Mirrors the algorithm in
     ``utils.db.analytics.fetch_bird_visits`` but operates on detection
     dicts that already carry ``image_timestamp``, ``bbox_*``, ``score``,
-    ``cls_class_name`` / ``od_class_name``, and ``detection_id``.
+    ``species_key`` / ``cls_class_name`` / ``od_class_name``, and
+    ``detection_id``.
 
     Returns a list of observation dicts sorted by ``start_time`` desc:
 
@@ -316,7 +317,12 @@ def group_detections_into_observations(
     # ── Extract fields & sort by timestamp ──────────────────────────
     items: list[dict] = []
     for det in detections:
-        species = det.get("cls_class_name") or det.get("od_class_name") or "unknown"
+        species = (
+            det.get("species_key")
+            or det.get("cls_class_name")
+            or det.get("od_class_name")
+            or "unknown"
+        )
         ts = det.get("image_timestamp", "") or ""
         items.append(
             {

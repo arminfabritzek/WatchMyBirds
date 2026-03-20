@@ -179,7 +179,7 @@ Contributions are welcome! Please:
 2. Keep pull requests focused and well-scoped
 3. Follow existing code style
 
-See [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) for setup instructions, coding standards, and commit conventions.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidance and [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) for the detailed setup and workflow notes.
 
 ---
 
@@ -197,43 +197,55 @@ Possible use cases include:
 The system is designed to run locally on affordable hardware to make wildlife observation accessible to a wide community.
 
 
-## Acknowledgements
-
-
+## Third-Party Tools & Data Sources
 
 <div align="center">
   <table>
     <tr>
-      <td align="center" width="33%">
-        <a href="https://labelstud.io">
-          <img src="https://raw.githubusercontent.com/HumanSignal/label-studio/refs/heads/develop/images/opossum_looking.svg" width="100" alt="Label Studio">
-        </a>
-      </td>
-      <td align="center" width="33%">
+      <td align="center" width="25%">
         <a href="https://www.wikipedia.org/">
-          <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/8/80/Wikipedia-logo-v2.svg/200px-Wikipedia-logo-v2.svg.png" width="60" alt="Wikipedia">
+          <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/8/80/Wikipedia-logo-v2.svg/200px-Wikipedia-logo-v2.svg.png" width="60" alt="Wikipedia" style="border-radius: 16px;">
         </a>
       </td>
-      <td align="center" width="33%">
+      <td align="center" width="25%">
         <a href="https://open-meteo.com/">
-          <img src="https://avatars.githubusercontent.com/u/86407831?s=200&v=4" width="80" alt="Open-Meteo">
+          <img src="https://avatars.githubusercontent.com/u/86407831?s=200&v=4" width="80" alt="Open-Meteo" style="border-radius: 16px;">
+        </a>
+      </td>
+      <td align="center" width="25%">
+        <a href="https://www.inaturalist.org/">
+          <img src="https://static.inaturalist.org/wiki_page_attachments/3154-original.png" width="96" alt="iNaturalist" style="border-radius: 16px;">
+        </a>
+      </td>
+      <td align="center" width="25%">
+        <a href="https://labelstud.io/">
+          <img src="https://user-images.githubusercontent.com/12534576/192582529-cf628f58-abc5-479b-a0d4-8a3542a4b35e.png" width="120" alt="Label Studio" style="border-radius: 16px;">
         </a>
       </td>
     </tr>
   </table>
 </div>
 
-### <a href="https://labelstud.io" target="_blank">Label Studio</a>
-Label Studio — Annotation tool by HumanSignal, Inc., used under the terms of the Label Studio Academic Program.
+### Data Sources
 
-
-### <a href="https://www.wikipedia.org/" target="_blank">Wikipedia</a>
+#### <a href="https://www.wikipedia.org/" target="_blank">Wikipedia</a>
 Wikipedia — Species descriptions and images are retrieved from Wikipedia.
 Text and media are available under the <a href="https://creativecommons.org/licenses/by-sa/4.0/" target="_blank">Creative Commons Attribution-ShareAlike 4.0 International (CC BY-SA 4.0)</a> license.
 
-### <a href="https://open-meteo.com/" target="_blank">Open-Meteo</a>
+#### <a href="https://open-meteo.com/" target="_blank">Open-Meteo</a>
 Weather data is provided by the Open-Meteo API.
 Data is available under the <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank">Creative Commons Attribution 4.0 International (CC BY 4.0)</a> license.
+
+#### <a href="https://www.inaturalist.org/" target="_blank">iNaturalist</a>
+The extended bird species list is generated from iNaturalist taxa data.
+
+### Software & Tools
+
+#### <a href="https://labelstud.io" target="_blank">Label Studio</a>
+Label Studio — Annotation tool by HumanSignal, Inc. This project uses Label Studio through the Label Studio Academic Program, which provides eligible academic users with free access to Label Studio Enterprise Cloud for non-commercial teaching and research.
+
+#### <a href="https://github.com/AlexxIT/go2rtc" target="_blank">go2rtc</a>
+go2rtc — WebRTC/RTSP relay used for low-latency camera streaming. Licensed under the MIT License.
 
 ---
 
@@ -250,4 +262,4 @@ This project is licensed under the **Apache-2.0 License**. See [LICENSE](LICENSE
 
 > **Third-party components** — This application integrates third-party services, models, and data sources
 > that are governed by their own licenses and terms of use.
-> See [NOTICE](NOTICE) and the [Acknowledgements](#acknowledgements) section for details.
+> See [NOTICE](NOTICE) and the [Third-Party Tools & Data Sources](#third-party-tools--data-sources) section for details.

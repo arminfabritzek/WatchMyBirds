@@ -7,7 +7,58 @@ insert, fetch, reject, restore, and purge functionality.
 
 import sqlite3
 from collections.abc import Iterable
+from datetime import UTC, datetime
 from typing import Any
+
+UNKNOWN_SPECIES_KEY = "Unknown_species"
+
+
+def _normalized_detector_species_sql(det_alias: str = "d") -> str:
+    return f"""
+        CASE
+            WHEN {det_alias}.od_class_name IS NULL OR TRIM({det_alias}.od_class_name) = ''
+                THEN '{UNKNOWN_SPECIES_KEY}'
+            WHEN lower({det_alias}.od_class_name) IN ('bird', 'unknown', 'unclassified')
+                THEN '{UNKNOWN_SPECIES_KEY}'
+            ELSE {det_alias}.od_class_name
+        END
+    """
+
+
+def _top1_species_sql(det_alias: str = "d") -> str:
+    return f"""
+        (
+            SELECT c.cls_class_name
+            FROM classifications c
+            WHERE c.detection_id = {det_alias}.detection_id
+              AND c.rank = 1
+              AND COALESCE(c.status, 'active') = 'active'
+            LIMIT 1
+        )
+    """
+
+
+def _top1_confidence_sql(det_alias: str = "d") -> str:
+    return f"""
+        (
+            SELECT c.cls_confidence
+            FROM classifications c
+            WHERE c.detection_id = {det_alias}.detection_id
+              AND c.rank = 1
+              AND COALESCE(c.status, 'active') = 'active'
+            LIMIT 1
+        )
+    """
+
+
+def _effective_species_sql(det_alias: str = "d") -> str:
+    return f"""
+        COALESCE(
+            NULLIF({det_alias}.manual_species_override, ''),
+            {_top1_species_sql(det_alias)},
+            {_normalized_detector_species_sql(det_alias)}
+        )
+    """
 
 
 def insert_detection(conn: sqlite3.Connection, row: dict[str, Any]) -> int:
@@ -37,8 +88,11 @@ def insert_detection(conn: sqlite3.Connection, row: dict[str, Any]) -> int:
             bbox_quality,
             unknown_score,
             decision_reasons,
-            policy_version
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+            policy_version,
+            manual_species_override,
+            species_source,
+            species_updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
         """,
         (
             row.get("image_filename"),
@@ -64,6 +118,9 @@ def insert_detection(conn: sqlite3.Connection, row: dict[str, Any]) -> int:
             row.get("unknown_score"),
             row.get("decision_reasons"),
             row.get("policy_version"),
+            row.get("manual_species_override"),
+            row.get("species_source"),
+            row.get("species_updated_at", row.get("created_at")),
         ),
     )
     conn.commit()
@@ -143,8 +200,11 @@ def fetch_detections_for_gallery(
              REPLACE(i.filename, '.jpg', '.webp')) AS relative_path,
             i.filename as original_name,
             i.downloaded_timestamp,
-            (SELECT cls_class_name FROM classifications c WHERE c.detection_id = d.detection_id ORDER BY cls_confidence DESC LIMIT 1) as cls_class_name,
-            (SELECT cls_confidence FROM classifications c WHERE c.detection_id = d.detection_id ORDER BY cls_confidence DESC LIMIT 1) as cls_confidence,
+            d.manual_species_override,
+            d.species_source,
+            {_top1_species_sql("d")} as cls_class_name,
+            {_top1_confidence_sql("d")} as cls_confidence,
+            {_effective_species_sql("d")} as species_key,
             d.rating,
             d.rating_source,
             d.is_favorite,
@@ -177,7 +237,7 @@ def fetch_random_favorites(
     Returns a random selection of favorite detections, diversified by species.
     Used for a quick 'best of' preview gallery on the homepage.
     """
-    query = """
+    query = f"""
     WITH RankedFavorites AS (
         SELECT
             d.detection_id,
@@ -188,9 +248,9 @@ def fetch_random_favorites(
              COALESCE(d.thumbnail_path, REPLACE(i.filename, '.jpg', '_crop_1.webp'))) AS thumbnail_path_virtual,
             (substr(i.timestamp, 1, 4) || '-' || substr(i.timestamp, 5, 2) || '-' || substr(i.timestamp, 7, 2) || '/' ||
              REPLACE(i.filename, '.jpg', '.webp')) AS relative_path,
-            COALESCE((SELECT cls_class_name FROM classifications c WHERE c.detection_id = d.detection_id ORDER BY cls_confidence DESC LIMIT 1), d.od_class_name, 'Unknown') as species_key,
+            {_effective_species_sql("d")} as species_key,
             ROW_NUMBER() OVER(
-                PARTITION BY COALESCE((SELECT cls_class_name FROM classifications c WHERE c.detection_id = d.detection_id ORDER BY cls_confidence DESC LIMIT 1), d.od_class_name, 'Unknown')
+                PARTITION BY {_effective_species_sql("d")}
                 ORDER BY RANDOM()
             ) as rn
         FROM detections d
@@ -214,7 +274,7 @@ def fetch_sibling_detections(
     Used to display all birds when viewing a multi-detection image in the modal.
     Includes bbox coordinates for bounding box visualization.
     """
-    query = """
+    query = f"""
         SELECT
             d.detection_id,
             d.od_class_name,
@@ -225,8 +285,11 @@ def fetch_sibling_detections(
             d.bbox_w,
             d.bbox_h,
             d.decision_state,
-            (SELECT cls_class_name FROM classifications c WHERE c.detection_id = d.detection_id ORDER BY cls_confidence DESC LIMIT 1) as cls_class_name,
-            (SELECT cls_confidence FROM classifications c WHERE c.detection_id = d.detection_id ORDER BY cls_confidence DESC LIMIT 1) as cls_confidence,
+            d.manual_species_override,
+            d.species_source,
+            {_top1_species_sql("d")} as cls_class_name,
+            {_top1_confidence_sql("d")} as cls_confidence,
+            {_effective_species_sql("d")} as species_key,
             (substr(i.timestamp, 1, 4) || '-' || substr(i.timestamp, 5, 2) || '-' || substr(i.timestamp, 7, 2) || '/' ||
              COALESCE(d.thumbnail_path, REPLACE(i.filename, '.jpg', '_crop_1.webp'))) AS thumbnail_path_virtual
         FROM detections d
@@ -342,13 +405,11 @@ def fetch_detection_species_summary(
     date_prefix = date_str_iso.replace("-", "")
 
     cur = conn.execute(
-        """
+        f"""
         SELECT
-            COALESCE(cls.cls_class_name, 'Unclassified') as species,
+            {_effective_species_sql("d")} as species,
             COUNT(d.detection_id) as count
         FROM detections d
-        LEFT JOIN classifications cls ON d.detection_id = cls.detection_id AND cls.status = 'active'
-            AND cls.rank = 1 -- Assuming rank 1 is top choice
         WHERE d.image_filename LIKE ? || '%'
         AND d.status = 'active'
         GROUP BY species
@@ -438,6 +499,53 @@ def reject_detections(conn: sqlite3.Connection, detection_ids: Iterable[int]) ->
         ids,
     )
     conn.commit()
+
+
+def apply_species_override(
+    conn: sqlite3.Connection,
+    detection_id: int,
+    species: str,
+    source: str = "manual",
+) -> None:
+    """Persist a final/manual species override on the detection row only."""
+    conn.execute(
+        """
+        UPDATE detections
+        SET manual_species_override = ?,
+            species_source = ?,
+            species_updated_at = ?
+        WHERE detection_id = ?
+        """,
+        (species, source, datetime.now(UTC).isoformat(), detection_id),
+    )
+    conn.commit()
+
+
+def apply_species_override_many(
+    conn: sqlite3.Connection,
+    detection_ids: Iterable[int],
+    species: str,
+    source: str = "manual",
+) -> int:
+    """Persist one override species for multiple detections."""
+    ids = [int(det_id) for det_id in detection_ids]
+    if not ids:
+        return 0
+
+    placeholders = ",".join("?" for _ in ids)
+    cur = conn.execute(
+        f"""
+        UPDATE detections
+        SET manual_species_override = ?,
+            species_source = ?,
+            species_updated_at = ?
+        WHERE detection_id IN ({placeholders})
+          AND status = 'active'
+        """,
+        [species, source, datetime.now(UTC).isoformat(), *ids],
+    )
+    conn.commit()
+    return cur.rowcount
 
 
 def restore_detections(conn: sqlite3.Connection, detection_ids: Iterable[int]) -> None:
@@ -591,8 +699,11 @@ def fetch_detections_last_24h(
              REPLACE(i.filename, '.jpg', '.webp')) AS relative_path,
             i.filename as original_name,
             i.downloaded_timestamp,
-            (SELECT cls_class_name FROM classifications c WHERE c.detection_id = d.detection_id ORDER BY cls_confidence DESC LIMIT 1) as cls_class_name,
-            (SELECT cls_confidence FROM classifications c WHERE c.detection_id = d.detection_id ORDER BY cls_confidence DESC LIMIT 1) as cls_confidence,
+            d.manual_species_override,
+            d.species_source,
+            {_top1_species_sql("d")} as cls_class_name,
+            {_top1_confidence_sql("d")} as cls_confidence,
+            {_effective_species_sql("d")} as species_key,
             d.is_favorite,
             (SELECT COUNT(*) FROM detections d2 WHERE d2.image_filename = d.image_filename AND d2.status = 'active') as sibling_count
         FROM detections d
@@ -631,13 +742,7 @@ def fetch_bbox_centers(
             (d.bbox_y + d.bbox_h / 2.0) AS center_y,
             d.bbox_w,
             d.bbox_h,
-            COALESCE(
-                (SELECT c.cls_class_name
-                 FROM classifications c
-                 WHERE c.detection_id = d.detection_id
-                 ORDER BY c.cls_confidence DESC LIMIT 1),
-                d.od_class_name
-            ) AS species,
+            {_effective_species_sql("d")} AS species,
             d.score,
             i.timestamp AS image_timestamp
         FROM detections d

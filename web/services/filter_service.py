@@ -20,6 +20,23 @@ logger = get_logger(__name__)
 UNKNOWN_SPECIES_KEY = "Unknown_species"
 
 
+def _resolved_species_key(row_dict: dict) -> str:
+    od_species = row_dict.get("od_class_name")
+    if od_species and str(od_species).strip().lower() in {
+        "bird",
+        "unknown",
+        "unclassified",
+    }:
+        od_species = None
+    return (
+        row_dict.get("species_key")
+        or row_dict.get("manual_species_override")
+        or row_dict.get("cls_class_name")
+        or od_species
+        or UNKNOWN_SPECIES_KEY
+    )
+
+
 # ---------------------------------------------------------------------------
 # FilterContext — the single contract for what "filtered" means
 # ---------------------------------------------------------------------------
@@ -166,11 +183,7 @@ def _resolve_species_overview(ctx: FilterContext) -> ResolvedSelection:
     ids = []
     for row in rows:
         row_dict = dict(row)
-        det_species = (
-            row_dict.get("cls_class_name")
-            or row_dict.get("od_class_name")
-            or UNKNOWN_SPECIES_KEY
-        )
+        det_species = _resolved_species_key(row_dict)
         if det_species != ctx.species_key:
             continue
         score = row_dict.get("score") or 0.0
@@ -202,11 +215,7 @@ def _resolve_edit(ctx: FilterContext) -> ResolvedSelection:
 
         # Species filter
         if ctx.species_key and ctx.species_key != "all":
-            sp = (
-                row_dict.get("cls_class_name")
-                or row_dict.get("od_class_name")
-                or UNKNOWN_SPECIES_KEY
-            )
+            sp = _resolved_species_key(row_dict)
             if sp != ctx.species_key:
                 continue
 

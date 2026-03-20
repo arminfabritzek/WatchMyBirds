@@ -6,6 +6,12 @@ serving as an abstraction over utils.db.
 """
 
 from utils.db import (
+    apply_species_override as _apply_species_override,
+)
+from utils.db import (
+    apply_species_override_many as _apply_species_override_many,
+)
+from utils.db import (
     closing_connection as _closing_connection,
 )
 from utils.db import (
@@ -115,6 +121,18 @@ def fetch_active_detection_selection_by_source_type(
 def reject_detections(conn, detection_ids: list[int]) -> None:
     """Reject detections (move to trash)."""
     _reject_detections(conn, detection_ids)
+
+
+def apply_species_override(conn, detection_id: int, species: str, source: str) -> None:
+    """Persist a manual/final species override on a detection."""
+    _apply_species_override(conn, detection_id, species, source)
+
+
+def apply_species_override_many(
+    conn, detection_ids: list[int], species: str, source: str
+) -> int:
+    """Persist one override species for multiple detections."""
+    return _apply_species_override_many(conn, detection_ids, species, source)
 
 
 def restore_detections(conn, detection_ids: list[int]) -> None:

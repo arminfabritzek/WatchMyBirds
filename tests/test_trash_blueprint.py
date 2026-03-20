@@ -41,11 +41,15 @@ def test_species_list_returns_sorted_species(client):
     data = response.get_json()
     assert data["status"] == "success"
     # Unknown_species is always pinned at position 0
-    assert data["species"][0] == {
-        "scientific": "Unknown_species",
-        "common": "Unknown species",
-    }
-    assert {"scientific": "Parus_major", "common": "Great Tit"} in data["species"]
+    assert data["species"][0]["scientific"] == "Unknown_species"
+    assert data["species"][0]["common"] == "Unknown species"
+    assert data["species"][0]["source"] == "model"
+    assert any(
+        sp["scientific"] == "Parus_major"
+        and sp["common"] == "Great Tit"
+        and sp["source"] == "model"
+        for sp in data["species"]
+    )
 
 
 def test_species_list_deduplicates_unknown_species(client):
@@ -78,7 +82,54 @@ def test_species_list_uses_locale_no(client):
 
     data = response.get_json()
     assert data["species"][0]["scientific"] == "Unknown_species"
-    assert {"scientific": "Parus_major", "common": "Kjøttmeis"} in data["species"]
+    assert any(
+        sp["scientific"] == "Parus_major"
+        and sp["common"] == "Kjøttmeis"
+        and sp["source"] == "model"
+        for sp in data["species"]
+    )
+
+
+def test_species_list_with_detection_id_includes_predictions_first(client):
+    mock_conn = MagicMock()
+    mock_conn.execute.return_value.fetchall.return_value = [
+        {"cls_class_name": "Parus_major", "cls_confidence": 0.85, "rank": 1},
+        {
+            "cls_class_name": "Cyanistes_caeruleus",
+            "cls_confidence": 0.07,
+            "rank": 2,
+        },
+    ]
+    names = {
+        "Unknown_species": "Unknown species",
+        "Parus_major": "Great Tit",
+        "Cyanistes_caeruleus": "Blue Tit",
+    }
+    extended = [{"scientific": "Picus_canus", "common": "Grey-headed Woodpecker"}]
+
+    with patch(
+        "web.blueprints.trash.db_service.get_connection", return_value=mock_conn
+    ), patch(
+        "utils.species_names.load_common_names", return_value=names
+    ), patch(
+        "utils.species_names.load_extended_species", return_value=extended
+    ), patch(
+        "config.get_config",
+        return_value={"SPECIES_COMMON_NAME_LOCALE": "DE"},
+    ):
+        response = client.get("/api/species-list?detection_id=42")
+
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data["species"][0]["scientific"] == "Parus_major"
+    assert data["species"][0]["source"] == "prediction"
+    assert data["species"][0]["score"] == 0.85
+    assert data["species"][1]["scientific"] == "Cyanistes_caeruleus"
+    assert data["species"][1]["source"] == "prediction"
+    assert any(
+        sp["scientific"] == "Picus_canus" and sp["source"] == "extended"
+        for sp in data["species"]
+    )
 
 
 def test_relabel_requires_detection_and_species(client):
@@ -91,6 +142,17 @@ def test_relabel_updates_detection_and_classification(client):
     mock_conn = MagicMock()
     with patch(
         "web.blueprints.trash.db_service.get_connection", return_value=mock_conn
+    ), patch(
+        "web.blueprints.trash.build_species_picker_entries",
+        return_value=[
+            {
+                "scientific": "False_Positive",
+                "common": "False Positive",
+                "source": "extended",
+                "score": None,
+                "rank": None,
+            }
+        ],
     ):
         response = client.post(
             "/api/detections/relabel",
@@ -101,7 +163,9 @@ def test_relabel_updates_detection_and_classification(client):
     data = response.get_json()
     assert data["status"] == "success"
     assert data["new_species"] == "False_Positive"
-    assert mock_conn.execute.call_count == 2
+    assert mock_conn.execute.call_count == 1
+    assert "manual_species_override" in mock_conn.execute.call_args[0][0]
+    assert "UPDATE classifications" not in mock_conn.execute.call_args[0][0]
     mock_conn.commit.assert_called_once()
     mock_conn.close.assert_called_once()
 

@@ -6,6 +6,7 @@ Defines the contract for persisting images, detections, and thumbnails.
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from dataclasses import field
 from datetime import datetime
 from pathlib import Path
 
@@ -82,6 +83,7 @@ class DetectionData:
     unknown_score: float | None = None
     decision_reasons: str | None = None
     policy_version: str | None = None
+    top_k_predictions: list[tuple[str, float]] = field(default_factory=list)
 
 
 class PersistenceInterface(ABC):

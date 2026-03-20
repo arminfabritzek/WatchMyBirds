@@ -50,6 +50,18 @@ def reject_detections(conn, detection_ids: list[int]) -> None:
     db_core.reject_detections(conn, detection_ids)
 
 
+def apply_species_override(conn, detection_id: int, species: str, source: str) -> None:
+    """Persist a manual/final species override on a detection."""
+    db_core.apply_species_override(conn, detection_id, species, source)
+
+
+def apply_species_override_many(
+    conn, detection_ids: list[int], species: str, source: str
+) -> int:
+    """Persist one override species for multiple detections."""
+    return db_core.apply_species_override_many(conn, detection_ids, species, source)
+
+
 def restore_detections(conn, detection_ids: list[int]) -> None:
     """Restore detections from trash."""
     db_core.restore_detections(conn, detection_ids)

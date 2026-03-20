@@ -308,6 +308,9 @@ class PersistenceService(PersistenceInterface):
                     "unknown_score": detection.unknown_score,
                     "decision_reasons": detection.decision_reasons,
                     "policy_version": detection.policy_version,
+                    "species_source": (
+                        "model_top1" if detection.cls_class_name else "unknown"
+                    ),
                 },
             )
 
@@ -323,6 +326,20 @@ class PersistenceService(PersistenceInterface):
                         "created_at": created_at_iso,
                     },
                 )
+                for rank_idx, (cls_name, cls_conf) in enumerate(
+                    detection.top_k_predictions[:4], start=2
+                ):
+                    insert_classification(
+                        self._db_conn,
+                        {
+                            "detection_id": det_id,
+                            "cls_class_name": cls_name,
+                            "cls_confidence": cls_conf,
+                            "cls_model_id": classifier_model_id,
+                            "rank": rank_idx,
+                            "created_at": created_at_iso,
+                        },
+                    )
 
             return DetectionPersistenceResult(
                 success=True,

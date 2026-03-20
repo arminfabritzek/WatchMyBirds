@@ -42,6 +42,7 @@ class ClassificationResult:
     class_name: str
     confidence: float
     model_id: str = ""
+    top_k_classes: list[str] = field(default_factory=list)
     top_k_confidences: list[float] = field(default_factory=list)
 
 

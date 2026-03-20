@@ -8,6 +8,12 @@ fetching, counting, and managing rejected items.
 import sqlite3
 from typing import Any
 
+from utils.db.detections import (
+    _effective_species_sql,
+    _top1_confidence_sql,
+    _top1_species_sql,
+)
+
 
 def fetch_trash_items(
     conn: sqlite3.Connection,
@@ -84,14 +90,17 @@ def fetch_trash_items(
             d.bbox_x, d.bbox_y, d.bbox_w, d.bbox_h,
             d.od_class_name,
             d.od_confidence,
+            d.manual_species_override,
+            d.species_source,
             d.created_at,
             REPLACE(i.filename, '.jpg', '.webp') as optimized_name_virtual,
             (substr(i.timestamp, 1, 4) || '-' || substr(i.timestamp, 5, 2) || '-' || substr(i.timestamp, 7, 2) || '/' ||
              REPLACE(i.filename, '.jpg', '.webp')) as relative_path,
             (substr(i.timestamp, 1, 4) || '-' || substr(i.timestamp, 5, 2) || '-' || substr(i.timestamp, 7, 2) || '/' ||
              COALESCE(d.thumbnail_path, REPLACE(i.filename, '.jpg', '_crop_1.webp'))) as thumbnail_path_virtual,
-            (SELECT cls_class_name FROM classifications c WHERE c.detection_id = d.detection_id ORDER BY cls_confidence DESC LIMIT 1) as cls_class_name,
-            (SELECT cls_confidence FROM classifications c WHERE c.detection_id = d.detection_id ORDER BY cls_confidence DESC LIMIT 1) as cls_confidence
+            {_top1_species_sql("d")} as cls_class_name,
+            {_top1_confidence_sql("d")} as cls_confidence,
+            {_effective_species_sql("d")} as species_key
         FROM detections d
         JOIN images i ON d.image_filename = i.filename
         WHERE {det_where_sql}
@@ -142,8 +151,11 @@ def fetch_trash_items(
                 "bbox_h": row["bbox_h"],
                 "od_class_name": row["od_class_name"],
                 "od_confidence": row["od_confidence"],
+                "manual_species_override": row["manual_species_override"],
+                "species_source": row["species_source"],
                 "cls_class_name": row["cls_class_name"],
                 "cls_confidence": row["cls_confidence"],
+                "species_key": row["species_key"],
                 "created_at": row["created_at"],
             }
         )

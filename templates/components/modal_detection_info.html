@@ -56,7 +56,7 @@ can_moderate (bool): Whether to show moderation controls (relabel/delete)
             {% endif %}
             {% if can_moderate %}
             <button type="button"
-                onclick="relabelDetection(event, {{ sib.detection_id }}, '{{ sib.cls_class_name or sib.od_class_name }}')"
+                onclick="relabelDetection(event, {{ sib.detection_id }}, '{{ sib.species_key or sib.cls_class_name or sib.od_class_name }}')"
                 title="Relabel species"
                 style="position:absolute;top:4px;right:24px;background:none;border:none;cursor:pointer;font-size:0.7rem;opacity:0.4;padding:2px 4px;border-radius:3px;transition:opacity 0.15s;"
                 onmouseenter="this.style.opacity='1';this.style.background='rgba(167,139,250,0.15)'"
@@ -113,7 +113,7 @@ can_moderate (bool): Whether to show moderation controls (relabel/delete)
             {% endif %}
             {% if can_moderate %}
             <button type="button"
-                onclick="relabelDetection(event, {{ det.detection_id }}, '{{ det.cls_class_name or det.od_class_name }}')"
+                onclick="relabelDetection(event, {{ det.detection_id }}, '{{ det.species_key or det.cls_class_name or det.od_class_name }}')"
                 title="Relabel species"
                 style="position:absolute;top:4px;right:24px;background:none;border:none;cursor:pointer;font-size:0.7rem;opacity:0.4;padding:2px 4px;border-radius:3px;transition:opacity 0.15s;"
                 onmouseenter="this.style.opacity='1';this.style.background='rgba(167,139,250,0.15)'"

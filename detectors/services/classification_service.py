@@ -58,6 +58,9 @@ class ClassificationService(ClassificationInterface):
                 class_name=class_name,
                 confidence=confidence,
                 model_id=self.get_model_id(),
+                top_k_classes=[
+                    self._classifier.classes[int(idx)] for idx in top_k_indices
+                ],
                 top_k_confidences=[float(c) for c in top_k_confs],
             )
         except Exception as e:

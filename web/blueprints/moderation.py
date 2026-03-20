@@ -17,7 +17,9 @@ from datetime import datetime
 
 from flask import Blueprint, jsonify, request
 
+from config import get_config
 from logging_config import get_logger
+from utils.species_names import build_species_picker_entries
 from web.blueprints.auth import login_required
 from web.services import db_service, gallery_service
 from web.services.filter_service import FilterContext, resolve_filtered_ids
@@ -177,35 +179,33 @@ def bulk_relabel() -> tuple:
     if not new_species:
         return jsonify({"status": "error", "message": "species required"}), 400
 
-    succeeded: list[int] = []
-    failed: list[dict] = []
-
     with db_service.closing_connection() as conn:
-        for det_id in detection_ids:
-            try:
-                conn.execute(
-                    "UPDATE detections SET od_class_name = ? WHERE detection_id = ? AND status = 'active'",
-                    (new_species, det_id),
-                )
-                conn.execute(
-                    "UPDATE classifications SET cls_class_name = ? WHERE detection_id = ?",
-                    (new_species, det_id),
-                )
-                succeeded.append(det_id)
-            except Exception as exc:
-                failed.append({"detection_id": det_id, "error": str(exc)})
+        cfg = get_config()
+        locale = cfg.get("SPECIES_COMMON_NAME_LOCALE", "DE")
+        allowed_species = {
+            entry["scientific"]
+            for entry in build_species_picker_entries(conn, locale=locale)
+        }
+        if new_species not in allowed_species:
+            return jsonify({"status": "error", "message": "unknown species"}), 400
+
+        relabeled = db_service.apply_species_override_many(
+            conn, detection_ids, new_species, "manual"
+        )
+        if not isinstance(relabeled, int):
+            relabeled = len(detection_ids)
 
     # Invalidate gallery cache
     gallery_service.invalidate_cache()
 
     logger.info(
-        f"Bulk relabel: {len(succeeded)} succeeded, {len(failed)} failed → {new_species}"
+        f"Bulk relabel: {relabeled} succeeded, 0 failed → {new_species}"
     )
     return jsonify(
         {
             "status": "success",
-            "relabeled": len(succeeded),
-            "failed": failed,
+            "relabeled": relabeled,
+            "failed": [],
             "new_species": new_species,
         }
     )
@@ -458,14 +458,8 @@ def apply_rescan_proposal(proposal_id: int) -> tuple:
         new_species = proposal.get("suggested_species")
 
         if target_id and new_species:
-            # Apply relabel to the original detection
-            conn.execute(
-                "UPDATE detections SET od_class_name = ? WHERE detection_id = ?",
-                (new_species, target_id),
-            )
-            conn.execute(
-                "UPDATE classifications SET cls_class_name = ? WHERE detection_id = ?",
-                (new_species, target_id),
+            db_service.apply_species_override(
+                conn, target_id, new_species, "proposal_applied"
             )
 
         # Mark proposal as applied

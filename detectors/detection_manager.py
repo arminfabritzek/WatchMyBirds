@@ -531,6 +531,19 @@ class DetectionManager:
                     unknown_score=signals.unknown_score,
                     decision_reasons=signals.decision_reasons_json,
                     policy_version=signals.policy_version,
+                    top_k_predictions=list(
+                        zip(
+                            (getattr(cls_result, "top_k_classes", []) or [])[1:],
+                            [
+                                float(c)
+                                for c in (
+                                    getattr(cls_result, "top_k_confidences", []) or []
+                                )[1:]
+                            ],
+                        )
+                    )
+                    if cls_conf > 0
+                    else [],
                 )
 
                 try:

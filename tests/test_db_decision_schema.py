@@ -27,6 +27,9 @@ def test_additive_decision_columns_created(tmp_path):
         assert "unknown_score" in cols
         assert "decision_reasons" in cols
         assert "policy_version" in cols
+        assert "manual_species_override" in cols
+        assert "species_source" in cols
+        assert "species_updated_at" in cols
 
 
 def test_insert_detection_with_decision_fields(tmp_path):

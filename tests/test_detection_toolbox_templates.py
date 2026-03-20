@@ -58,6 +58,9 @@ def test_species_templates_use_toolbox_without_legacy_badge():
 
     assert "{% from 'partials/tile_toolbox.html' import tile_toolbox %}" in species_content
     assert "details_href=('/gallery/' ~ det.gallery_date" in species_content
+    assert "source-link-badge" in species_content
+    assert "wikipedia_species_url(" in species_content
+    assert "cover-jump-badge" not in species_content
     assert "partials/rating_badge.html" not in species_content
     assert "{{ tile_toolbox(" in overview_content
     assert "partials/rating_badge.html" not in overview_content

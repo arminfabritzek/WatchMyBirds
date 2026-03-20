@@ -96,6 +96,37 @@ def create_web_interface(detection_manager, system_monitor=None):
     COMMON_NAMES = load_common_names(_species_locale)
     UNKNOWN_SPECIES_KEY = "Unknown_species"
 
+    def _get_species_key_local(det: dict | None) -> str:
+        if not det:
+            return UNKNOWN_SPECIES_KEY
+
+        species_key = det.get("species_key")
+        if species_key:
+            return species_key
+
+        manual_species = det.get("manual_species_override")
+        if manual_species:
+            return manual_species
+
+        cls_species = det.get("cls_class_name")
+        if cls_species:
+            return cls_species
+
+        od_species = det.get("od_class_name")
+        if od_species and str(od_species).strip().lower() not in {
+            "bird",
+            "unknown",
+            "unclassified",
+        }:
+            return od_species
+
+        return UNKNOWN_SPECIES_KEY
+
+    def _get_common_name_local(species_key: str | None) -> str:
+        if not species_key:
+            return COMMON_NAMES.get(UNKNOWN_SPECIES_KEY, "Unknown species")
+        return COMMON_NAMES.get(species_key, species_key.replace("_", " "))
+
     def _compute_auto_rating_local(od_confidence, cls_confidence, bbox_w, bbox_h):
         """
         Local auto-rating fallback.
@@ -931,9 +962,7 @@ def create_web_interface(detection_manager, system_monitor=None):
             species_list = sorted(
                 list(
                     set(
-                        det["cls_class_name"]
-                        or det["od_class_name"]
-                        or UNKNOWN_SPECIES_KEY
+                        _get_species_key_local(det)
                         for det in detections
                     )
                 )
@@ -955,11 +984,7 @@ def create_web_interface(detection_manager, system_monitor=None):
                     continue
 
                 # Species filter
-                sp = (
-                    det["cls_class_name"]
-                    or det["od_class_name"]
-                    or UNKNOWN_SPECIES_KEY
-                )
+                sp = _get_species_key_local(det)
                 if filters["species"] != "all" and sp != filters["species"]:
                     continue
 
@@ -991,17 +1016,10 @@ def create_web_interface(detection_manager, system_monitor=None):
                 det["original_path"] = (
                     f"/uploads/originals/{date_folder}/{original_name}"
                 )
-                species_key = (
-                    det.get("cls_class_name")
-                    or det.get("od_class_name")
-                    or UNKNOWN_SPECIES_KEY
-                )
-                det["common_name"] = COMMON_NAMES.get(
-                    species_key, species_key.replace("_", " ")
-                )
-                det["latin_name"] = (
-                    det.get("cls_class_name") or det.get("od_class_name") or ""
-                )
+                species_key = _get_species_key_local(det)
+                det["species_key"] = species_key
+                det["common_name"] = _get_common_name_local(species_key)
+                det["latin_name"] = species_key or ""
 
                 filtered.append(det)
 
@@ -1214,13 +1232,7 @@ def create_web_interface(detection_manager, system_monitor=None):
             # Group detections per species and pick one curated cover per species.
             species_candidates = {}
             for det in all_detections:
-                cls_class = det.get("cls_class_name")
-                od_class = det.get("od_class_name")
-                species_key = (
-                    cls_class
-                    if cls_class
-                    else (od_class if od_class else "Unknown_species")
-                )
+                species_key = _get_species_key_local(det)
                 species_candidates.setdefault(species_key, []).append(det)
 
             # One cover per species (favorites preferred, random rotation).
@@ -1274,9 +1286,7 @@ def create_web_interface(detection_manager, system_monitor=None):
                         "display_path": display_url,
                         "full_path": full_url,
                         "original_path": original_url,
-                        "common_name": COMMON_NAMES.get(
-                            species, species.replace("_", " ")
-                        ),
+                        "common_name": _get_common_name_local(species),
                         "od_class_name": det.get("od_class_name", ""),
                         "od_confidence": det.get("od_confidence", 0.0) or 0.0,
                         "cls_class_name": det.get("cls_class_name", ""),
@@ -1339,11 +1349,7 @@ def create_web_interface(detection_manager, system_monitor=None):
 
             filtered = []
             for det in all_detections:
-                det_species_key = (
-                    det.get("cls_class_name")
-                    or det.get("od_class_name")
-                    or UNKNOWN_SPECIES_KEY
-                )
+                det_species_key = _get_species_key_local(det)
                 if det_species_key != species_key:
                     continue
                 if (
@@ -1396,9 +1402,7 @@ def create_web_interface(detection_manager, system_monitor=None):
                         "display_path": display_url,
                         "full_path": full_url,
                         "original_path": original_url,
-                        "common_name": COMMON_NAMES.get(
-                            species_key, species_key.replace("_", " ")
-                        ),
+                        "common_name": _get_common_name_local(species_key),
                         "od_class_name": det.get("od_class_name", ""),
                         "od_confidence": det.get("od_confidence", 0.0) or 0.0,
                         "cls_class_name": det.get("cls_class_name", ""),
@@ -1446,9 +1450,7 @@ def create_web_interface(detection_manager, system_monitor=None):
                 "species_overview.html",
                 current_path="/species",
                 species_key=species_key,
-                species_common_name=COMMON_NAMES.get(
-                    species_key, species_key.replace("_", " ")
-                ),
+                species_common_name=_get_common_name_local(species_key),
                 current_threshold=current_threshold,
                 detections=detections,
                 page=page,
@@ -1615,9 +1617,7 @@ def create_web_interface(detection_manager, system_monitor=None):
                     formatted_date = ""
                     formatted_time = ""
 
-                species_key = (
-                    det.get("cls_class_name") or det.get("od_class_name") or ""
-                )
+                species_key = _get_species_key_local(det)
                 sibling_count = det.get("sibling_count", 1) or 1
 
                 # Load sibling detections if multiple birds on same image
@@ -1629,16 +1629,14 @@ def create_web_interface(detection_manager, system_monitor=None):
                             original_name
                         )
                         for sib in sibling_rows:
-                            sib_species_key = (
-                                sib["cls_class_name"] or sib["od_class_name"] or ""
-                            )
+                            sib_species_key = _get_species_key_local(sib)
                             sib_thumb = sib["thumbnail_path_virtual"]
                             siblings.append(
                                 {
                                     "detection_id": sib["detection_id"],
-                                    "common_name": COMMON_NAMES.get(
-                                        sib_species_key,
-                                        sib_species_key.replace("_", " "),
+                                    "species_key": sib_species_key,
+                                    "common_name": _get_common_name_local(
+                                        sib_species_key
                                     ),
                                     "od_class_name": sib["od_class_name"] or "",
                                     "od_confidence": sib["od_confidence"] or 0.0,
@@ -1667,9 +1665,8 @@ def create_web_interface(detection_manager, system_monitor=None):
                     "display_path": display_url,
                     "full_path": full_url,
                     "original_path": original_url,
-                    "common_name": COMMON_NAMES.get(
-                        species_key, species_key.replace("_", " ")
-                    ),
+                    "species_key": species_key,
+                    "common_name": _get_common_name_local(species_key),
                     "od_class_name": det.get("od_class_name", ""),
                     "od_confidence": det.get("od_confidence", 0.0) or 0.0,
                     "cls_class_name": det.get("cls_class_name", ""),
@@ -1721,9 +1718,7 @@ def create_web_interface(detection_manager, system_monitor=None):
                     {
                         "observation_id": obs["observation_id"],
                         "species": obs["species"],
-                        "common_name": COMMON_NAMES.get(
-                            obs["species"], obs["species"].replace("_", " ")
-                        ),
+                        "common_name": _get_common_name_local(obs["species"]),
                         "photo_count": obs["photo_count"],
                         "duration_sec": obs["duration_sec"],
                         "duration_display": _format_duration(obs["duration_sec"]),
@@ -1741,13 +1736,7 @@ def create_web_interface(detection_manager, system_monitor=None):
             if page == 1:
                 species_candidates = {}
                 for det in detections_raw:
-                    cls_class = det.get("cls_class_name")
-                    od_class = det.get("od_class_name")
-                    species_key = (
-                        cls_class
-                        if cls_class
-                        else (od_class if od_class else UNKNOWN_SPECIES_KEY)
-                    )
+                    species_key = _get_species_key_local(det)
                     species_candidates.setdefault(species_key, []).append(det)
 
                 species_groups = {}
@@ -2011,13 +2000,11 @@ def create_web_interface(detection_manager, system_monitor=None):
                     latest_detections.append(
                         {
                             "detection_id": det.get("detection_id"),
-                            "common_name": COMMON_NAMES.get(
-                                det.get("cls_class_name") or det.get("od_class_name"),
-                                "Unknown",
+                            "species_key": _get_species_key_local(det),
+                            "common_name": _get_common_name_local(
+                                _get_species_key_local(det)
                             ),
-                            "latin_name": det.get("cls_class_name")
-                            or det.get("od_class_name")
-                            or "",
+                            "latin_name": _get_species_key_local(det),
                             "od_class_name": det.get("od_class_name") or "",
                             "od_confidence": det.get("od_confidence") or 0.0,
                             "cls_class_name": det.get("cls_class_name") or "",
@@ -2054,9 +2041,7 @@ def create_web_interface(detection_manager, system_monitor=None):
                 # Group by species and pick one curated cover per species
                 species_candidates = {}
                 for det in all_24h:
-                    cls = det.get("cls_class_name")
-                    od = det.get("od_class_name")
-                    s_key = cls if cls else (od if od else "Unknown_species")
+                    s_key = _get_species_key_local(det)
                     species_candidates.setdefault(s_key, []).append(det)
 
                 species_groups = {}
@@ -2098,16 +2083,11 @@ def create_web_interface(detection_manager, system_monitor=None):
                     visual_summary.append(
                         {
                             "detection_id": det.get("detection_id"),
-                            "species_key": det.get("cls_class_name")
-                            or det.get("od_class_name")
-                            or "Unknown_species",
-                            "common_name": COMMON_NAMES.get(
-                                det.get("cls_class_name") or det.get("od_class_name"),
-                                "Unknown",
+                            "species_key": _get_species_key_local(det),
+                            "common_name": _get_common_name_local(
+                                _get_species_key_local(det)
                             ),
-                            "latin_name": det.get("cls_class_name")
-                            or det.get("od_class_name")
-                            or "",
+                            "latin_name": _get_species_key_local(det),
                             "od_class_name": det.get("od_class_name") or "",
                             "od_confidence": det.get("od_confidence") or 0.0,
                             "cls_class_name": det.get("cls_class_name") or "",
@@ -2139,7 +2119,7 @@ def create_web_interface(detection_manager, system_monitor=None):
 
             # Enrich visual_summary with visit count (not detection count)
             for det in visual_summary:
-                species_key = det.get("species") or det.get("latin_name", "")
+                species_key = det.get("species_key") or det.get("latin_name", "")
                 det["count"] = species_visit_counts.get(species_key, 0)
 
         except Exception as e:
@@ -2156,11 +2136,7 @@ def create_web_interface(detection_manager, system_monitor=None):
                 seen_species = set()
                 for row in rows:
                     det = dict(row)
-                    species_key = (
-                        det.get("cls_class_name")
-                        or det.get("od_class_name")
-                        or "Unknown"
-                    )
+                    species_key = _get_species_key_local(det)
 
                     # Skip if we already have this species
                     if species_key in seen_species:
@@ -2183,7 +2159,7 @@ def create_web_interface(detection_manager, system_monitor=None):
                     recent_archive_preview.append(
                         {
                             "detection_id": det.get("detection_id"),
-                            "common_name": COMMON_NAMES.get(species_key, "Unknown"),
+                            "common_name": _get_common_name_local(species_key),
                             "display_path": display_url,
                             "formatted_time": formatted_time,
                             "formatted_date": formatted_date,
@@ -2204,7 +2180,7 @@ def create_web_interface(detection_manager, system_monitor=None):
                 rows = db_service.fetch_random_favorites(conn, limit=12)
                 for row in rows:
                     det = dict(row)
-                    species_key = det.get("species_key") or "Unknown"
+                    species_key = _get_species_key_local(det)
 
                     full_path = det.get("relative_path") or ""
                     thumb_virtual = det.get("thumbnail_path_virtual")
@@ -2221,7 +2197,7 @@ def create_web_interface(detection_manager, system_monitor=None):
                         {
                             "detection_id": det.get("detection_id"),
                             "species_key": species_key,
-                            "common_name": COMMON_NAMES.get(species_key, "Unknown"),
+                            "common_name": _get_common_name_local(species_key),
                             "display_path": display_url,
                             "gallery_date": gallery_date,
                             "is_favorite": bool(int(det.get("is_favorite") or 0)),

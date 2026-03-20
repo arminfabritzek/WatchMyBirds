@@ -35,6 +35,8 @@ from utils.db.connection import (
 
 # Detection Operations
 from utils.db.detections import (
+    apply_species_override,
+    apply_species_override_many,
     fetch_active_detection_ids_in_date_range,
     fetch_active_detection_selection_by_source_type,
     fetch_bbox_centers,
@@ -100,6 +102,8 @@ __all__ = [
     # Detections
     "insert_detection",
     "insert_classification",
+    "apply_species_override",
+    "apply_species_override_many",
     "fetch_active_detection_ids_in_date_range",
     "fetch_active_detection_selection_by_source_type",
     "fetch_bbox_centers",

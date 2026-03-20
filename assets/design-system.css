@@ -4397,8 +4397,9 @@ body {
     background: rgba(245, 158, 11, 1);
 }
 
-/* Cover Jump Badge (📌) - hover-reveal link to specific detection */
-.cover-jump-badge {
+/* Left-corner media badges (cover jump / source link) */
+.cover-jump-badge,
+.source-link-badge {
     position: absolute;
     bottom: 6px;
     left: 6px;
@@ -4421,12 +4422,14 @@ body {
 }
 
 .date-card__image:hover .cover-jump-badge,
-.wm-tile__media:hover .cover-jump-badge {
+.wm-tile__media:hover .cover-jump-badge,
+.wm-tile__media:hover .source-link-badge {
     opacity: 1;
     transform: scale(1);
 }
 
-.cover-jump-badge:hover {
+.cover-jump-badge:hover,
+.source-link-badge:hover {
     transform: scale(1.15) !important;
     background: rgba(13, 148, 136, 0.85);
     box-shadow: 0 2px 8px rgba(13, 148, 136, 0.4);

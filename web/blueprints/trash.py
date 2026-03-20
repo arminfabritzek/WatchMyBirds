@@ -17,7 +17,13 @@ from datetime import datetime
 
 from flask import Blueprint, jsonify, render_template, request
 
+from config import get_config
 from logging_config import get_logger
+from utils.species_names import (
+    UNKNOWN_SPECIES_KEY,
+    build_species_picker_entries,
+    load_common_names,
+)
 from web.blueprints.auth import login_required
 from web.services import db_service, detections_service
 
@@ -36,6 +42,9 @@ def trash_page():
     """Trash page showing rejected detections and no_bird images."""
     page = request.args.get("page", 1, type=int)
     limit = 50
+    cfg = get_config()
+    locale = cfg.get("SPECIES_COMMON_NAME_LOCALE", "DE")
+    names = load_common_names(locale)
 
     conn = db_service.get_connection()
     try:
@@ -59,9 +68,8 @@ def trash_page():
             else:
                 display_path = f"/uploads/derivatives/optimized/{full_path}"
 
-            common_name = (
-                item.get("cls_class_name") or item.get("od_class_name") or "Unknown"
-            )
+            species_key = item.get("species_key") or UNKNOWN_SPECIES_KEY
+            common_name = names.get(species_key, species_key.replace("_", " "))
         else:
             # Image (no_bird): use on-demand review thumbnail
             filename = item.get("filename", "")
@@ -264,23 +272,19 @@ def reject_detection():
 @trash_bp.route("/api/species-list", methods=["GET"])
 def species_list():
     """Returns the list of known species for relabeling (locale-aware)."""
-    from config import get_config
-    from utils.species_names import load_common_names
-
     try:
         cfg = get_config()
         locale = cfg.get("SPECIES_COMMON_NAME_LOCALE", "DE")
-        names = load_common_names(locale)
-
-        # Return sorted by scientific name for dropdown
-        species = [
-            {"scientific": k, "common": v}
-            for k, v in sorted(names.items(), key=lambda x: x[0])
-        ]
-        # Pin Unknown_species as system fallback at position 0
-        species = [s for s in species if s["scientific"] != "Unknown_species"]
-        unknown_label = names.get("Unknown_species", "Unknown species")
-        species.insert(0, {"scientific": "Unknown_species", "common": unknown_label})
+        detection_id = request.args.get("detection_id", type=int)
+        conn = db_service.get_connection()
+        try:
+            species = build_species_picker_entries(
+                conn,
+                locale=locale,
+                detection_id=detection_id,
+            )
+        finally:
+            conn.close()
         return jsonify({"status": "success", "species": species})
     except Exception as e:
         logger.error(f"Failed to load species list: {e}")
@@ -293,7 +297,7 @@ def relabel_detection():
     """
     Relabels a detection to a different species.
     Accepts: { detection_id: int, species: "Scientific_name" }
-    Updates both od_class_name in detections and cls_class_name in classifications.
+    Updates the final/manual species override on the detection only.
     """
     data = request.get_json() or {}
     detection_id = data.get("detection_id")
@@ -304,19 +308,16 @@ def relabel_detection():
 
     conn = db_service.get_connection()
     try:
-        # Update detection record
-        conn.execute(
-            "UPDATE detections SET od_class_name = ? WHERE detection_id = ?",
-            (new_species, detection_id),
-        )
+        cfg = get_config()
+        locale = cfg.get("SPECIES_COMMON_NAME_LOCALE", "DE")
+        allowed_species = {
+            entry["scientific"]
+            for entry in build_species_picker_entries(conn, locale=locale)
+        }
+        if new_species not in allowed_species:
+            return jsonify({"error": "unknown species"}), 400
 
-        # Update classification records (all for this detection)
-        conn.execute(
-            "UPDATE classifications SET cls_class_name = ? WHERE detection_id = ?",
-            (new_species, detection_id),
-        )
-
-        conn.commit()
+        db_service.apply_species_override(conn, detection_id, new_species, "manual")
         # Invalidate gallery cache so the change shows immediately
         try:
             from web.web_interface import _cached_images

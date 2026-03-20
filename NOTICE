@@ -29,11 +29,17 @@ Data Sources
     International (CC BY 4.0) license.
     See: https://creativecommons.org/licenses/by/4.0/
 
+  - iNaturalist — The extended bird species catalog included with this
+    project is generated from iNaturalist taxa data.
+    See: https://www.inaturalist.org/
+
 
 Software & Tools
 ----------------
   - Label Studio — Annotation tool by HumanSignal, Inc., used under the
-    terms of the Label Studio Academic Program.
+    Label Studio Academic Program, which provides eligible academic users
+    with free access to Label Studio Enterprise Cloud for non-commercial
+    teaching and research.
     See: https://labelstud.io
 
   - go2rtc — WebRTC/RTSP relay used for low-latency camera streaming.

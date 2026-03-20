@@ -324,6 +324,7 @@ async function relabelDetection(event, detectionId, currentSpecies) {
     // Open the shared species picker
     const choice = await WmSpeciesPicker.pickSpecies({
         currentSpecies: currentSpecies,
+        detectionId: detectionId,
         mountEl: mountEl,
         title: '🏷️ Relabel Species'
     });
@@ -349,6 +350,7 @@ async function relabelDetection(event, detectionId, currentSpecies) {
                 const nameEl = card.querySelector('div[style*="font-weight: 600"]');
                 if (nameEl) nameEl.textContent = choice.common;
                 card.dataset.bboxName = choice.common;
+                card.dataset.currentSpecies = choice.scientific;
                 // Flash green briefly
                 card.style.transition = 'background 0.3s';
                 card.style.background = 'rgba(52,211,153,0.2)';
