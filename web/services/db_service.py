@@ -38,6 +38,13 @@ def fetch_active_detection_ids_in_date_range(
     return db_core.fetch_active_detection_ids_in_date_range(conn, from_date, to_date)
 
 
+def fetch_active_detection_selection_by_source_type(
+    conn, source_type: str
+) -> dict:
+    """Fetch active detection IDs plus distinct image count for a source type."""
+    return db_core.fetch_active_detection_selection_by_source_type(conn, source_type)
+
+
 def reject_detections(conn, detection_ids: list[int]) -> None:
     """Reject detections (move to trash)."""
     db_core.reject_detections(conn, detection_ids)

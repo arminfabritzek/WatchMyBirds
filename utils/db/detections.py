@@ -384,6 +384,38 @@ def fetch_active_detection_ids_in_date_range(
     return [int(row["detection_id"]) for row in cur.fetchall()]
 
 
+def fetch_active_detection_selection_by_source_type(
+    conn: sqlite3.Connection, source_type: str
+) -> dict[str, Any]:
+    """
+    Return active detections for a given source type together with the number
+    of distinct images those detections belong to.
+    """
+    cur = conn.execute(
+        """
+        SELECT
+            d.detection_id,
+            i.filename AS image_filename
+        FROM detections d
+        JOIN images i ON i.filename = d.image_filename
+        JOIN sources s ON s.source_id = i.source_id
+        WHERE d.status = 'active'
+          AND s.type = ?
+        ORDER BY i.timestamp ASC, d.detection_id ASC
+        """,
+        (source_type,),
+    )
+
+    rows = cur.fetchall()
+    detection_ids = [int(row["detection_id"]) for row in rows]
+    image_filenames = {str(row["image_filename"]) for row in rows}
+
+    return {
+        "detection_ids": detection_ids,
+        "image_count": len(image_filenames),
+    }
+
+
 def reject_detections(conn: sqlite3.Connection, detection_ids: Iterable[int]) -> None:
     """
     Semantic Reject: Sets status of specific detections to 'rejected'.

@@ -12,6 +12,9 @@ from utils.db import (
     fetch_active_detection_ids_in_date_range as _fetch_active_detection_ids_in_date_range,
 )
 from utils.db import (
+    fetch_active_detection_selection_by_source_type as _fetch_active_detection_selection_by_source_type,
+)
+from utils.db import (
     fetch_all_detection_times as _fetch_all_detection_times,
 )
 from utils.db import (
@@ -100,6 +103,13 @@ def fetch_active_detection_ids_in_date_range(
 ) -> list[int]:
     """Fetch active detection IDs in the inclusive capture-date range."""
     return _fetch_active_detection_ids_in_date_range(conn, from_date, to_date)
+
+
+def fetch_active_detection_selection_by_source_type(
+    conn, source_type: str
+) -> dict:
+    """Fetch active detection IDs plus distinct image count for a source type."""
+    return _fetch_active_detection_selection_by_source_type(conn, source_type)
 
 
 def reject_detections(conn, detection_ids: list[int]) -> None:

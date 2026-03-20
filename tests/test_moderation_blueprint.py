@@ -174,6 +174,66 @@ class TestResolveSelection:
         assert resp.status_code == 400
         assert "from_date must be on or before to_date" in resp.get_json()["message"]
 
+    @patch("web.blueprints.moderation.db_service")
+    def test_logical_filter_resolves_user_import_selection(self, mock_db, client):
+        mock_conn = MagicMock()
+        mock_db.closing_connection.return_value.__enter__ = MagicMock(
+            return_value=mock_conn
+        )
+        mock_db.closing_connection.return_value.__exit__ = MagicMock(return_value=False)
+        mock_db.fetch_active_detection_selection_by_source_type.return_value = {
+            "detection_ids": [9, 10],
+            "image_count": 1,
+        }
+
+        resp = client.post(
+            "/api/moderation/resolve-selection",
+            json={"mode": "logical_filter", "source_type": "folder_upload"},
+        )
+
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert data["status"] == "success"
+        assert data["detection_ids"] == [9, 10]
+        assert data["image_filenames"] == []
+        assert data["total_count"] == 2
+        assert data["image_count"] == 1
+        mock_db.fetch_active_detection_selection_by_source_type.assert_called_once_with(
+            mock_conn, "folder_upload"
+        )
+
+    @patch("web.blueprints.moderation.db_service")
+    def test_logical_filter_returns_zero_matches(self, mock_db, client):
+        mock_conn = MagicMock()
+        mock_db.closing_connection.return_value.__enter__ = MagicMock(
+            return_value=mock_conn
+        )
+        mock_db.closing_connection.return_value.__exit__ = MagicMock(return_value=False)
+        mock_db.fetch_active_detection_selection_by_source_type.return_value = {
+            "detection_ids": [],
+            "image_count": 0,
+        }
+
+        resp = client.post(
+            "/api/moderation/resolve-selection",
+            json={"mode": "logical_filter", "source_type": "folder_upload"},
+        )
+
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert data["detection_ids"] == []
+        assert data["total_count"] == 0
+        assert data["image_count"] == 0
+
+    def test_logical_filter_requires_source_type(self, client):
+        resp = client.post(
+            "/api/moderation/resolve-selection",
+            json={"mode": "logical_filter"},
+        )
+
+        assert resp.status_code == 400
+        assert "source_type required" in resp.get_json()["message"]
+
     def test_unknown_mode_returns_400(self, client):
         resp = client.post(
             "/api/moderation/resolve-selection",

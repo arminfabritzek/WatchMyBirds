@@ -51,11 +51,12 @@ def resolve_selection() -> tuple:
     """Resolve a selection to concrete detection IDs / filenames.
 
     Accepts:
-        { mode: "explicit" | "all_filtered" | "date_range",
+        { mode: "explicit" | "all_filtered" | "date_range" | "logical_filter",
           ids: [int, ...],              // only for mode=explicit
           filter_context: { ... },      // only for mode=all_filtered
           from_date: "YYYY-MM-DD",      // only for mode=date_range
-          to_date: "YYYY-MM-DD"         // only for mode=date_range
+          to_date: "YYYY-MM-DD",        // only for mode=date_range
+          source_type: "folder_upload"  // only for mode=logical_filter
         }
 
     Returns:
@@ -126,6 +127,28 @@ def resolve_selection() -> tuple:
                 "detection_ids": detection_ids,
                 "image_filenames": [],
                 "total_count": len(detection_ids),
+            }
+        )
+
+    if mode == "logical_filter":
+        source_type = data.get("source_type")
+        if not source_type:
+            return jsonify({"status": "error", "message": "source_type required"}), 400
+
+        with db_service.closing_connection() as conn:
+            selection = db_service.fetch_active_detection_selection_by_source_type(
+                conn, source_type
+            )
+
+        detection_ids = selection.get("detection_ids", [])
+        image_count = selection.get("image_count", 0)
+        return jsonify(
+            {
+                "status": "success",
+                "detection_ids": detection_ids,
+                "image_filenames": [],
+                "total_count": len(detection_ids),
+                "image_count": image_count,
             }
         )
 

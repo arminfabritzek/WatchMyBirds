@@ -36,6 +36,7 @@ from utils.db.connection import (
 # Detection Operations
 from utils.db.detections import (
     fetch_active_detection_ids_in_date_range,
+    fetch_active_detection_selection_by_source_type,
     fetch_bbox_centers,
     fetch_count_last_24h,
     fetch_daily_covers,
@@ -100,6 +101,7 @@ __all__ = [
     "insert_detection",
     "insert_classification",
     "fetch_active_detection_ids_in_date_range",
+    "fetch_active_detection_selection_by_source_type",
     "fetch_bbox_centers",
     "fetch_detections_for_gallery",
     "fetch_sibling_detections",
