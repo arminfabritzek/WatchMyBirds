@@ -267,9 +267,10 @@ go2rtc.yaml
 # Local docker-compose (user creates from docker-compose.example.yml)
 docker-compose.yml
 
+# Flask secret key (auto-generated per instance)
+.flask_secret_key
+
 # Codex agent metadata
 .agent/
-AGENTS.md
-private_docs/
 /_debug_logs
 tools/onvif_ptz_tester/.onvif_tester_settings.json
