@@ -1,5 +1,6 @@
 """Tests for trash blueprint relabel/rate/species-list APIs."""
 
+import json
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -88,6 +89,56 @@ def test_species_list_uses_locale_no(client):
         and sp["source"] == "model"
         for sp in data["species"]
     )
+
+
+def test_species_list_uses_common_nb_for_extended_species(client, tmp_path, monkeypatch):
+    assets_dir = tmp_path / "assets"
+    assets_dir.mkdir()
+
+    (assets_dir / "common_names_DE.json").write_text(
+        json.dumps({"Unknown_species": "Unknown species"}),
+        encoding="utf-8",
+    )
+    (assets_dir / "extended_species_global.json").write_text(
+        json.dumps(
+            [
+                {
+                    "scientific": "Picus_canus",
+                    "common_de": "Grauspecht",
+                    "common_en": "Grey-headed Woodpecker",
+                    "common_nb": "Gråspett",
+                },
+                {
+                    "scientific": "Corvus_corax",
+                    "common_de": "Kolkrabe",
+                    "common_en": "Common Raven",
+                    "common_nb": "",
+                },
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    from utils import species_names
+
+    monkeypatch.setattr(species_names, "_ASSETS_DIR", assets_dir)
+
+    mock_conn = MagicMock()
+    mock_conn.execute.return_value.fetchall.return_value = []
+    with patch(
+        "web.blueprints.trash.db_service.get_connection", return_value=mock_conn
+    ), patch(
+        "web.blueprints.trash.get_config",
+        return_value={"SPECIES_COMMON_NAME_LOCALE": "NO"},
+    ):
+        response = client.get("/api/species-list")
+
+    assert response.status_code == 200
+    data = response.get_json()
+    species_by_key = {row["scientific"]: row for row in data["species"]}
+    assert species_by_key["Picus_canus"]["common"] == "Gråspett"
+    assert species_by_key["Corvus_corax"]["common"] == "Common Raven"
+    assert species_by_key["Picus_canus"]["source"] == "extended"
 
 
 def test_species_list_with_detection_id_includes_predictions_first(client):

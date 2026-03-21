@@ -237,7 +237,8 @@ Weather data is provided by the Open-Meteo API.
 Data is available under the <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank">Creative Commons Attribution 4.0 International (CC BY 4.0)</a> license.
 
 #### <a href="https://www.inaturalist.org/" target="_blank">iNaturalist</a>
-The extended bird species list is generated from iNaturalist taxa data.
+The extended bird species catalog uses iNaturalist for localized common-name enrichment.
+Taxonomy policy and refresh details are documented in `docs/EXTENDED_SPECIES_CATALOG_POLICY.md`.
 
 ### Software & Tools
 

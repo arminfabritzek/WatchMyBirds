@@ -17,7 +17,7 @@ TAXON_ID_AVES = 3
 PER_PAGE = 200
 LOCALE_FIELDS = {
     "de": "common_de",
-    "nb": "common_no",
+    "nb": "common_nb",
 }
 
 
@@ -110,7 +110,7 @@ def build_entries() -> list[dict[str, str]]:
             "scientific": scientific,
             "common_de": "",
             "common_en": "",
-            "common_no": "",
+            "common_nb": "",
         }
         for field_name, rows in localized_entries.items():
             localized = rows.get(scientific) or {}

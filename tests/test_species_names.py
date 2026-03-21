@@ -29,31 +29,31 @@ def test_load_extended_species_uses_multilang_fields_and_fallbacks(tmp_path, mon
                     "scientific": "Picus_canus",
                     "common_de": "Grauspecht",
                     "common_en": "Grey-headed Woodpecker",
-                    "common_no": "Gråspett",
+                    "common_nb": "Gråspett",
                 },
                 {
                     "scientific": "Corvus_corax",
                     "common_de": "Kolkrabe",
                     "common_en": "Common Raven",
-                    "common_no": "",
+                    "common_nb": "",
                 },
                 {
                     "scientific": "Aquila_test",
                     "common_de": "",
                     "common_en": "Test Eagle",
-                    "common_no": "",
+                    "common_nb": "",
                 },
                 {
                     "scientific": "Species_only",
                     "common_de": "",
                     "common_en": "",
-                    "common_no": "",
+                    "common_nb": "",
                 },
                 {
                     "scientific": "Parus_major",
                     "common_de": "Kohlmeise",
                     "common_en": "Great Tit",
-                    "common_no": "Kjøttmeis",
+                    "common_nb": "Kjøttmeis",
                 },
             ]
         ),
@@ -67,6 +67,78 @@ def test_load_extended_species_uses_multilang_fields_and_fallbacks(tmp_path, mon
 
     assert "Parus_major" not in common_by_scientific
     assert common_by_scientific["Picus_canus"] == "Gråspett"
-    assert common_by_scientific["Corvus_corax"] == "Kolkrabe"
+    assert common_by_scientific["Corvus_corax"] == "Common Raven"
     assert common_by_scientific["Aquila_test"] == "Test Eagle"
     assert common_by_scientific["Species_only"] == "Species only"
+
+
+def test_load_extended_species_uses_de_fallback_order(tmp_path, monkeypatch):
+    assets_dir = tmp_path / "assets"
+    assets_dir.mkdir()
+
+    (assets_dir / "common_names_DE.json").write_text(
+        json.dumps({"Unknown_species": "Unknown species"}),
+        encoding="utf-8",
+    )
+    (assets_dir / "extended_species_global.json").write_text(
+        json.dumps(
+            [
+                {
+                    "scientific": "Species_de",
+                    "common_de": "Deutsch",
+                    "common_en": "English",
+                    "common_nb": "Norsk",
+                },
+                {
+                    "scientific": "Species_en",
+                    "common_de": "",
+                    "common_en": "English only",
+                    "common_nb": "",
+                },
+                {
+                    "scientific": "Species_only",
+                    "common_de": "",
+                    "common_en": "",
+                    "common_nb": "",
+                },
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(species_names, "_ASSETS_DIR", assets_dir)
+
+    entries = species_names.load_extended_species("DE")
+    common_by_scientific = {row["scientific"]: row["common"] for row in entries}
+
+    assert common_by_scientific["Species_de"] == "Deutsch"
+    assert common_by_scientific["Species_en"] == "English only"
+    assert common_by_scientific["Species_only"] == "Species only"
+
+
+def test_load_extended_species_ignores_legacy_common_no_field(tmp_path, monkeypatch):
+    assets_dir = tmp_path / "assets"
+    assets_dir.mkdir()
+
+    (assets_dir / "common_names_DE.json").write_text(
+        json.dumps({"Unknown_species": "Unknown species"}),
+        encoding="utf-8",
+    )
+    (assets_dir / "extended_species_global.json").write_text(
+        json.dumps(
+            [
+                {
+                    "scientific": "Legacy_species",
+                    "common_de": "",
+                    "common_en": "English fallback",
+                    "common_no": "Legacy Norwegian",
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(species_names, "_ASSETS_DIR", assets_dir)
+
+    entries = species_names.load_extended_species("NO")
+    assert entries == [{"scientific": "Legacy_species", "common": "English fallback"}]

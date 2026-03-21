@@ -71,10 +71,8 @@ def load_extended_species(locale: str = "DE") -> list[dict[str, str]]:
 
     Species already covered by the model/common-name base map are excluded.
     Locale fallback order:
-    - requested locale-specific common name
-    - German
-    - English
-    - scientific name with spaces
+    - DE: common_de -> common_en -> scientific name with spaces
+    - NO: common_nb -> common_en -> common_de -> scientific name with spaces
     """
     locale = str(locale).strip().upper()
     if locale not in ("DE", "NO"):
@@ -92,8 +90,6 @@ def load_extended_species(locale: str = "DE") -> list[dict[str, str]]:
         return []
 
     model_species = set(load_common_names("DE").keys())
-    locale_key = f"common_{locale.lower()}"
-
     entries: list[dict[str, str]] = []
     for item in raw_entries:
         scientific = str(item.get("scientific") or "").strip()
@@ -102,12 +98,19 @@ def load_extended_species(locale: str = "DE") -> list[dict[str, str]]:
         if scientific in model_species or scientific == UNKNOWN_SPECIES_KEY:
             continue
 
-        common = (
-            item.get(locale_key)
-            or item.get("common_de")
-            or item.get("common_en")
-            or scientific.replace("_", " ")
-        )
+        if locale == "NO":
+            common = (
+                item.get("common_nb")
+                or item.get("common_en")
+                or item.get("common_de")
+                or scientific.replace("_", " ")
+            )
+        else:
+            common = (
+                item.get("common_de")
+                or item.get("common_en")
+                or scientific.replace("_", " ")
+            )
         entries.append({"scientific": scientific, "common": str(common)})
 
     entries.sort(key=lambda row: row["scientific"])
