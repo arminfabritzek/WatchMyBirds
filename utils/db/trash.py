@@ -115,13 +115,16 @@ def fetch_trash_items(
             NULL as bbox_x, NULL as bbox_y, NULL as bbox_w, NULL as bbox_h,
             NULL as od_class_name,
             NULL as od_confidence,
+            NULL as manual_species_override,
+            NULL as species_source,
             i.review_updated_at as created_at,
             REPLACE(i.filename, '.jpg', '.webp') as optimized_name_virtual,
             (substr(i.timestamp, 1, 4) || '-' || substr(i.timestamp, 5, 2) || '-' || substr(i.timestamp, 7, 2) || '/' ||
              REPLACE(i.filename, '.jpg', '.webp')) as relative_path,
             NULL as thumbnail_path_virtual,
             NULL as cls_class_name,
-            NULL as cls_confidence
+            NULL as cls_confidence,
+            NULL as species_key
         FROM images i
         WHERE {img_where_sql}
 
