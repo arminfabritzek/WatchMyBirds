@@ -8,12 +8,14 @@ Handles inbox routes for web upload with explicit processing:
 - POST /api/inbox/process - Start processing
 """
 
+import io
 import os
 import threading
 import time
 from datetime import datetime
 
 from flask import Blueprint, jsonify, render_template, request
+from PIL import Image
 from werkzeug.utils import secure_filename
 
 from config import get_config
@@ -97,6 +99,19 @@ def inbox_upload():
             if size > MAX_FILE_SIZE:
                 errors.append(f"{f.filename}: File too large (max 50 MB)")
                 continue
+
+            # Magic-bytes check: verify file is actually a valid image
+            try:
+                img = Image.open(f)
+                if img.format not in ("JPEG", "PNG"):
+                    errors.append(f"{f.filename}: Not a valid JPEG/PNG image")
+                    continue
+                img.close()
+            except Exception:
+                errors.append(f"{f.filename}: Not a valid image file")
+                continue
+            finally:
+                f.seek(0)  # Reset for save
 
             # Safe filename
             safe_name = secure_filename(f.filename)

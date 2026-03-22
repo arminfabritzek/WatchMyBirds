@@ -88,6 +88,11 @@ class DetectionManager:
         self.previous_frame_hash = None
         self.consecutive_identical_frames = 0
 
+        # Detection timing summary (logged periodically instead of per-frame)
+        self._det_times: list[int] = []
+        self._det_summary_interval = 60  # seconds
+        self._det_summary_last = time.monotonic()
+
         # Statistics
         self.detection_occurred = False
         self.last_notification_time = time.time()
@@ -390,20 +395,33 @@ class DetectionManager:
             target_duration = 1.0 / self.config["MAX_FPS_DETECTION"]
             sleep_time = max(0.01, target_duration - detection_time)
 
+            det_ms = int(detection_time * 1000)
+
             if object_detected:
                 self._enqueue_processing_job(
                     {
                         "capture_time_precise": capture_time_precise,
                         "original_frame": original_frame,
                         "detection_info_list": detection_info_list,
-                        "detection_time_ms": int(detection_time * 1000),
+                        "detection_time_ms": det_ms,
                         "sleep_time_ms": int(sleep_time * 1000),
                     }
                 )
-            else:
+
+            # Collect timing and log a periodic summary
+            self._det_times.append(det_ms)
+            now_mono = time.monotonic()
+            if now_mono - self._det_summary_last >= self._det_summary_interval:
+                n = len(self._det_times)
+                avg = sum(self._det_times) // n
+                lo = min(self._det_times)
+                hi = max(self._det_times)
                 logger.info(
-                    f"[DET] {int(detection_time * 1000)}ms | sleep {int(sleep_time * 1000)}ms"
+                    "[DET] %ds summary: %d frames | avg %dms | min %dms | max %dms",
+                    int(now_mono - self._det_summary_last), n, avg, lo, hi,
                 )
+                self._det_times.clear()
+                self._det_summary_last = now_mono
 
             time.sleep(sleep_time)
 

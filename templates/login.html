@@ -22,6 +22,7 @@
                     </p>
 
                     <form method="POST" action="/login">
+                        <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
                         <input type="hidden" name="next" value="{{ next_url or '/gallery' }}">
 
                         <div class="mb-3">

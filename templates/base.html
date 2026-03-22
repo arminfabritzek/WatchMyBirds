@@ -19,12 +19,20 @@
     <!-- Design System (Source of Truth for all styling) -->
     <link rel="stylesheet" href="/assets/design-system.css?v=20260222">
 
+    <meta name="csrf-token" content="{{ csrf_token }}">
     {% block head %}{% endblock %}
 </head>
 
 <body>
     {# Single App Bar - no duplicates #}
     {% include 'partials/appbar.html' %}
+
+    {% if warn_default_password %}
+    <div style="background:#b91c1c;color:#fff;text-align:center;padding:.5rem 1rem;font-size:.9rem;">
+        &#9888; Default password is active. Please change it in
+        <a href="/settings" style="color:#fde68a;text-decoration:underline;">Settings</a>.
+    </div>
+    {% endif %}
 
     <main class="page">
         <div class="container">
@@ -50,6 +58,27 @@
             </svg>
         </a>
     </footer>
+    <script>
+        // CSRF: patch fetch() to include X-CSRF-Token on mutating requests
+        (function(){
+            var csrfMeta = document.querySelector('meta[name="csrf-token"]');
+            var csrfToken = csrfMeta ? csrfMeta.getAttribute('content') : '';
+            var _origFetch = window.fetch;
+            window.fetch = function(url, opts) {
+                opts = opts || {};
+                var method = (opts.method || 'GET').toUpperCase();
+                if (csrfToken && method !== 'GET' && method !== 'HEAD') {
+                    opts.headers = opts.headers || {};
+                    if (opts.headers instanceof Headers) {
+                        opts.headers.set('X-CSRF-Token', csrfToken);
+                    } else {
+                        opts.headers['X-CSRF-Token'] = csrfToken;
+                    }
+                }
+                return _origFetch.call(this, url, opts);
+            };
+        })();
+    </script>
     <script>
         (function(){
             fetch('/api/v1/system/versions')

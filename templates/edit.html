@@ -66,6 +66,7 @@
 
     {# Download form (kept separate — download stays on /api/edit/actions) #}
     <form id="download-form" method="POST" action="/api/edit/actions" style="display:none;">
+        <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
         <input type="hidden" name="date_iso" value="{{ date_iso }}">
         <input type="hidden" name="action" value="download">
         <div id="download-ids-container"></div>

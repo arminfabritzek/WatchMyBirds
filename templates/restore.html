@@ -305,6 +305,8 @@
             };
 
             xhr.open('POST', '/api/restore/upload');
+            var csrfMeta = document.querySelector('meta[name="csrf-token"]');
+            if (csrfMeta) xhr.setRequestHeader('X-CSRF-Token', csrfMeta.getAttribute('content'));
             xhr.send(formData);
 
         } catch (err) {

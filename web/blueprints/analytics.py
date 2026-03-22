@@ -262,7 +262,7 @@ def analytics_simulation_api():
 
 @analytics_bp.route("/analytics", methods=["GET"])
 def analytics_page():
-    """Server-rendered analytics dashboard without Svelte - pure Jinja2/CSS."""
+    """Server-rendered analytics dashboard."""
     # 1. Summary Stats
     summary = {
         "total_detections": 0,

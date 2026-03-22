@@ -2273,20 +2273,21 @@ code {
     width: 100%;
     display: block;
     object-fit: cover;
+    object-position: center top;
     background: var(--color-surface-2);
 }
 
 .best-species-card__image--featured {
-    aspect-ratio: 5 / 4;
+    aspect-ratio: 1 / 1;
 }
 
 .best-species-card__image--grid {
-    aspect-ratio: 4 / 3;
+    aspect-ratio: 1 / 1;
 }
 
 .best-species-card__placeholder {
     width: 100%;
-    aspect-ratio: 4 / 3;
+    aspect-ratio: 1 / 1;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -2295,7 +2296,7 @@ code {
 }
 
 .best-species-card__placeholder--featured {
-    aspect-ratio: 5 / 4;
+    aspect-ratio: 1 / 1;
 }
 
 .best-species-card__story-strip {
@@ -2321,12 +2322,13 @@ code {
 .best-species-card__story-image,
 .best-species-card__story-empty {
     width: 100%;
-    aspect-ratio: 16 / 10;
+    aspect-ratio: 1 / 1;
     display: block;
 }
 
 .best-species-card__story-image {
     object-fit: cover;
+    object-position: center top;
 }
 
 .best-species-card__story-empty {

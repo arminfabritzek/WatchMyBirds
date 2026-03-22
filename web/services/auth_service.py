@@ -4,6 +4,8 @@ Auth Service - Web Layer Service for Authentication.
 Handles authentication logic and redirect target validation.
 """
 
+from urllib.parse import urlparse
+
 from core import settings_core
 
 
@@ -27,6 +29,15 @@ def authenticate(provided_password: str) -> bool:
     return provided_password == target
 
 
+_DEFAULT_PASSWORDS = {"watchmybirds", "SECRET_PASSWORD", "default_pass", ""}
+
+
+def is_default_password() -> bool:
+    """Return True if the configured password is a known insecure default."""
+    stored = settings_core.get_setting("EDIT_PASSWORD", "") or ""
+    return stored in _DEFAULT_PASSWORDS
+
+
 def get_redirect_target(next_param: str | None, default: str = "/gallery") -> str:
     """
     Determine the redirect target URL.
@@ -41,6 +52,9 @@ def get_redirect_target(next_param: str | None, default: str = "/gallery") -> st
     if not next_param:
         return default
 
-    # Basic safety check could go here, but matching legacy "trust it" behavior
-    # Legacy just used .get("next", "/gallery")
+    # Only allow relative paths (no scheme, no netloc) to prevent open redirect.
+    parsed = urlparse(next_param)
+    if parsed.scheme or parsed.netloc:
+        return default
+
     return next_param

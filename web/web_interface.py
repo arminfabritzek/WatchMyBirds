@@ -8,6 +8,7 @@ import os
 import platform
 import random
 import re
+import secrets
 import subprocess
 import time
 from datetime import datetime
@@ -22,6 +23,7 @@ from flask import (
     render_template,
     request,
     send_from_directory,
+    session,
     url_for,
 )
 
@@ -470,9 +472,59 @@ def create_web_interface(detection_manager, system_monitor=None):
     server.config["MAX_CONTENT_LENGTH"] = 10 * 1024 * 1024 * 1024  # 10 GB
 
     # Configure Flask Session for server-side auth
-    server.secret_key = os.environ.get(
-        "FLASK_SECRET_KEY", "watchmybirds-dev-key-change-in-production"
-    )
+    def _load_or_create_secret_key(key_file: Path) -> str:
+        """Load persisted secret key or generate a new one."""
+        if key_file.exists():
+            return key_file.read_text().strip()
+        key = secrets.token_hex(32)
+        key_file.write_text(key)
+        key_file.chmod(0o600)
+        return key
+
+    secret_key_path = Path(output_dir) / ".flask_secret_key"
+    server.secret_key = os.environ.get("FLASK_SECRET_KEY") or _load_or_create_secret_key(secret_key_path)
+    server.config["PERMANENT_SESSION_LIFETIME"] = 28800  # 8 hours in seconds
+    server.config["SESSION_COOKIE_HTTPONLY"] = True
+    server.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+
+    # Inject a default-password warning and CSRF token into every template context
+    _DEFAULT_PASSWORDS = {"watchmybirds", "SECRET_PASSWORD", "default_pass", ""}
+
+    @server.context_processor
+    def inject_security_context():
+        from web.services import auth_service as _auth
+
+        # CSRF token: generate once per session, reuse until session ends
+        if "_csrf_token" not in session:
+            session["_csrf_token"] = secrets.token_hex(32)
+
+        warn = (
+            session.get("authenticated")
+            and _auth.is_default_password()
+        )
+        return {
+            "warn_default_password": warn,
+            "csrf_token": session["_csrf_token"],
+        }
+
+    # CSRF validation for state-changing requests
+    _CSRF_EXEMPT_PATHS = frozenset()  # add paths here if needed
+
+    @server.before_request
+    def check_csrf_token():
+        if request.method in ("GET", "HEAD", "OPTIONS"):
+            return
+        if request.path in _CSRF_EXEMPT_PATHS:
+            return
+
+        # Token from form field or X-CSRF-Token header
+        token = (
+            request.form.get("_csrf_token")
+            or request.headers.get("X-CSRF-Token")
+        )
+        if not token or token != session.get("_csrf_token"):
+            from flask import abort
+            abort(403)
 
     # Register Blueprints
     server.register_blueprint(auth_bp)
@@ -2850,6 +2902,57 @@ def create_web_interface(detection_manager, system_monitor=None):
     # ==========================================================================
     # BACKUP/RESTORE ROUTES --- MOVED TO web/blueprints/backup.py ---
     # ==========================================================================
+
+    # -----------------------------
+    # Security: Request Audit Logging
+    # -----------------------------
+    security_logger = logging.getLogger("security.access")
+
+    # Paths that are polled by the frontend or serve static content
+    _LOG_SKIP_PREFIXES = (
+        "/assets/", "/favicon", "/uploads/",
+        "/api/review-thumb/", "/api/thumb/",
+        "/api/v1/health", "/api/v1/weather/",
+        "/api/v1/system/versions", "/api/v1/system/diagnostics",
+        "/api/v1/public/go2rtc/health", "/api/v1/cameras",
+        "/logs",
+    )
+
+    @server.after_request
+    def log_request(response):
+        if not request.path.startswith(_LOG_SKIP_PREFIXES):
+            security_logger.info(
+                "%s %s %s ip=%s user=%s",
+                request.method,
+                request.path,
+                response.status_code,
+                request.remote_addr,
+                "authenticated" if session.get("authenticated") else "anonymous",
+            )
+        return response
+
+    # -----------------------------
+    # Security Headers
+    # -----------------------------
+    @server.after_request
+    def set_security_headers(response):
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        # go2rtc runs on the same host but port 1984 — allow it in CSP
+        host = request.host.split(":")[0]
+        go2rtc_origin = f"http://{host}:1984"
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self'; "
+            "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+            "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com; "
+            "font-src 'self' https://fonts.gstatic.com; "
+            "img-src 'self' data: blob:; "
+            f"connect-src 'self' {go2rtc_origin}; "
+            f"frame-src 'self' {go2rtc_origin}; "
+            "frame-ancestors 'none';"
+        )
+        return response
 
     # -----------------------------
     # Function to Start the Web Interface

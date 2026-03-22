@@ -1233,6 +1233,7 @@
                     <small>💡 For normal uploads, use the <a href="/inbox">Inbox</a>.</small>
                 </p>
                 <form method="POST" action="{{ url_for('start_ingest_endpoint') }}">
+                    <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
                     <button type="submit" class="btn btn-secondary btn-sm">Start Ingest from /ingest</button>
                 </form>
             </div>
