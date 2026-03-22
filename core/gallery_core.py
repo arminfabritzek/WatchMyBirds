@@ -6,6 +6,7 @@ Provides all gallery-related operations separated from the web layer.
 
 import logging
 import os
+import random
 import re
 import time
 from pathlib import Path
@@ -458,6 +459,254 @@ def group_detections_into_observations(
         )
 
     return observations
+
+
+def _story_board_bbox_touches_edge(det: dict, margin: float = 0.01) -> bool:
+    """Return True if the bbox touches the image edge."""
+    bx = det.get("bbox_x") or 0.0
+    by = det.get("bbox_y") or 0.0
+    bw = det.get("bbox_w") or 0.0
+    bh = det.get("bbox_h") or 0.0
+    if bw <= 0 or bh <= 0:
+        return True
+    return (
+        bx <= margin
+        or by <= margin
+        or (bx + bw) >= (1.0 - margin)
+        or (by + bh) >= (1.0 - margin)
+    )
+
+
+def _story_board_candidate_quality(det: dict) -> tuple[int, int, float, str, int]:
+    """Quality key for story-board cover candidates."""
+    is_favorite = 1 if int(det.get("is_favorite") or 0) else 0
+    is_interior = 0 if _story_board_bbox_touches_edge(det) else 1
+    score = float(det.get("score") or 0.0)
+    ts = det.get("image_timestamp", "") or ""
+    det_id = int(det.get("detection_id") or 0)
+    return (is_favorite, is_interior, score, ts, det_id)
+
+
+def _rank_story_board_candidates(candidates: list[dict]) -> list[dict]:
+    """Sort cover candidates by favorite/interior/score/recency quality."""
+    return sorted(
+        candidates,
+        key=_story_board_candidate_quality,
+        reverse=True,
+    )
+
+
+def _build_story_board_candidate_pool(
+    detections: list[dict],
+    cover_detection_ids: set[int],
+    limit: int = 12,
+) -> list[dict]:
+    """Build a species-level candidate pool with favorites ahead of covers.
+
+    The story board still uses observation-derived ranking for visit counts, but
+    image rotation should not be restricted to one cover per observation. We
+    therefore promote:
+    - favorited detections first
+    - observation cover detections second
+    - then other high-quality detections as fallback
+    """
+    if not detections:
+        return []
+
+    ranked = _rank_story_board_candidates(detections)
+    pool: list[dict] = []
+    seen_ids: set[int] = set()
+
+    def _append_unique(items: list[dict]) -> None:
+        for det in items:
+            det_id = int(det.get("detection_id") or 0)
+            if det_id <= 0 or det_id in seen_ids:
+                continue
+            pool.append(det)
+            seen_ids.add(det_id)
+            if len(pool) >= limit:
+                break
+
+    favorites = [d for d in ranked if int(d.get("is_favorite") or 0)]
+    covers = [d for d in ranked if int(d.get("detection_id") or 0) in cover_detection_ids]
+
+    _append_unique(favorites)
+    if len(pool) < limit:
+        _append_unique(covers)
+    if len(pool) < limit:
+        _append_unique(ranked)
+
+    return pool
+
+
+def _choose_story_board_frames(
+    candidates: list[dict],
+    rng: random.Random | None = None,
+    frame_count: int = 3,
+) -> tuple[dict | None, list[dict]]:
+    """Pick one primary cover and up to ``frame_count`` rotating frames."""
+    if not candidates:
+        return None, []
+
+    if rng is None:
+        rng = random.Random()
+
+    ranked = _rank_story_board_candidates(candidates)
+    favorites = [d for d in ranked if int(d.get("is_favorite") or 0)]
+    fallback_pool = ranked[: min(3, len(ranked))]
+    if len(favorites) >= 2:
+        primary_pool = favorites
+    elif len(favorites) == 1 and len(ranked) > 1:
+        primary_pool = [favorites[0], favorites[0]]
+        primary_pool.extend(
+            det
+            for det in fallback_pool
+            if det.get("detection_id") != favorites[0].get("detection_id")
+        )
+    else:
+        primary_pool = fallback_pool
+    primary = rng.choice(primary_pool)
+
+    frames = [primary]
+    remaining = [
+        det for det in ranked if det.get("detection_id") != primary.get("detection_id")
+    ]
+    if remaining and frame_count > 1:
+        extra_pool = remaining[: min(len(remaining), 6)]
+        shuffled = extra_pool[:]
+        rng.shuffle(shuffled)
+        frames.extend(shuffled[: frame_count - 1])
+
+    return primary, frames
+
+
+def build_species_story_board(
+    detections: list[dict],
+    since_timestamp: str = "",
+    total_limit: int = 12,
+    featured_count: int = 3,
+    excluded_species: set[str] | None = None,
+    rng: random.Random | None = None,
+) -> dict[str, list[dict]]:
+    """Build a stable species board with rotating imagery.
+
+    The board ranks species deterministically by visit count, last seen, and
+    best cover score, while allowing per-render image rotation within the
+    chosen species set.
+    """
+    if not detections or total_limit <= 0:
+        return {"featured": [], "grid": []}
+
+    if excluded_species is None:
+        excluded_species = set()
+
+    if rng is None:
+        rng = random.Random()
+
+    filtered: list[dict] = []
+    species_detections: dict[str, list[dict]] = {}
+    for det in detections:
+        ts = det.get("image_timestamp", "") or ""
+        if not ts:
+            continue
+        if since_timestamp and ts < since_timestamp:
+            continue
+
+        species = (
+            det.get("species_key")
+            or det.get("manual_species_override")
+            or det.get("cls_class_name")
+            or det.get("od_class_name")
+            or ""
+        )
+        if not species or species in excluded_species:
+            continue
+        filtered.append(det)
+        species_detections.setdefault(species, []).append(det)
+
+    if not filtered:
+        return {"featured": [], "grid": []}
+
+    observations = group_detections_into_observations(filtered)
+    if not observations:
+        return {"featured": [], "grid": []}
+
+    det_by_id = {det.get("detection_id"): det for det in filtered}
+    species_rows: dict[str, dict[str, Any]] = {}
+
+    for obs in observations:
+        species_key = obs.get("species") or ""
+        if not species_key or species_key in excluded_species:
+            continue
+
+        cover_det = det_by_id.get(obs.get("cover_detection_id"))
+        if not cover_det:
+            continue
+
+        row = species_rows.setdefault(
+            species_key,
+            {
+                "species_key": species_key,
+                "visit_count": 0,
+                "last_seen_timestamp": "",
+                "best_cover_score": 0.0,
+                "is_favorite_available": False,
+                "_cover_detection_ids": set(),
+            },
+        )
+        row["visit_count"] += 1
+        row["last_seen_timestamp"] = max(
+            row["last_seen_timestamp"],
+            obs.get("end_time", "") or "",
+        )
+        row["best_cover_score"] = max(
+            float(row["best_cover_score"] or 0.0),
+            float(obs.get("best_score") or 0.0),
+        )
+        row["_cover_detection_ids"].add(int(cover_det.get("detection_id") or 0))
+
+    ranked_species = sorted(
+        species_rows.values(),
+        key=lambda row: (
+            -int(row["visit_count"]),
+            -(int(row["last_seen_timestamp"][:8]) if row["last_seen_timestamp"] else 0),
+            row["last_seen_timestamp"],
+            -float(row["best_cover_score"] or 0.0),
+            row["species_key"],
+        ),
+    )
+
+    board_items: list[dict[str, Any]] = []
+    for row in ranked_species:
+        species_key = row["species_key"]
+        candidates = _build_story_board_candidate_pool(
+            species_detections.get(species_key, []),
+            row.get("_cover_detection_ids") or set(),
+        )
+        primary, frames = _choose_story_board_frames(candidates, rng=rng, frame_count=3)
+        if not primary:
+            continue
+
+        board_items.append(
+            {
+                "species_key": species_key,
+                "visit_count": int(row["visit_count"]),
+                "last_seen_timestamp": row["last_seen_timestamp"],
+                "best_cover_score": float(row["best_cover_score"] or 0.0),
+                "is_favorite_available": any(
+                    int(det.get("is_favorite") or 0) for det in candidates
+                ),
+                "primary_detection": primary,
+                "story_detections": frames,
+            }
+        )
+        if len(board_items) >= total_limit:
+            break
+
+    return {
+        "featured": board_items[:featured_count],
+        "grid": board_items[featured_count:total_limit],
+    }
 
 
 def invalidate_cache() -> None:

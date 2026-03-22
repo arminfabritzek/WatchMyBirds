@@ -299,6 +299,17 @@ def create_web_interface(detection_manager, system_monitor=None):
             return ""
         return f"{ts[:4]}-{ts[4:6]}-{ts[6:8]}"
 
+    def _format_stream_timestamp(ts: str) -> str:
+        """Format stream timestamps for compact card metadata."""
+        if not ts:
+            return "Unknown"
+        try:
+            return datetime.strptime(ts[:15], "%Y%m%d_%H%M%S").strftime(
+                "%d.%m.%Y %H:%M"
+            )
+        except ValueError:
+            return "Unknown"
+
     def _pick_cover_for_group(candidates: list[dict], **_kwargs) -> dict | None:
         """
         Pick one cover candidate.
@@ -337,6 +348,71 @@ def create_web_interface(detection_manager, system_monitor=None):
         except Exception as e:
             logger.error(f"Error reading detections from SQLite: {e}")
             return []
+
+    def _build_stream_media_payload(det: dict | None) -> dict:
+        """Return stream-friendly media URLs and basic detection metadata."""
+        if not det:
+            return {
+                "detection_id": None,
+                "display_path": "",
+                "gallery_date": "",
+                "is_favorite": False,
+                "score": 0.0,
+            }
+
+        full_path = det.get("relative_path") or det.get("optimized_name_virtual", "")
+        thumb_virtual = det.get("thumbnail_path_virtual")
+        if thumb_virtual:
+            display_url = f"/uploads/derivatives/thumbs/{thumb_virtual}"
+        else:
+            display_url = f"/uploads/derivatives/optimized/{full_path}"
+
+        ts = det.get("image_timestamp", "") or ""
+        return {
+            "detection_id": det.get("detection_id"),
+            "display_path": display_url,
+            "gallery_date": _date_iso_from_timestamp(ts),
+            "is_favorite": bool(int(det.get("is_favorite") or 0)),
+            "score": float(det.get("score") or 0.0),
+        }
+
+    def _enrich_species_board(board: dict[str, list[dict]]) -> dict[str, list[dict]]:
+        """Attach stream/UI fields to the species story board payload."""
+        enriched_board = {"featured": [], "grid": []}
+        for section in ("featured", "grid"):
+            for item in board.get(section, []):
+                species_key = item.get("species_key") or UNKNOWN_SPECIES_KEY
+                primary = item.get("primary_detection")
+                primary_payload = _build_stream_media_payload(primary)
+                story_frames = []
+                for story_det in item.get("story_detections", []):
+                    frame_payload = _build_stream_media_payload(story_det)
+                    frame_payload["detection_id"] = story_det.get("detection_id")
+                    story_frames.append(frame_payload)
+
+                enriched_board[section].append(
+                    {
+                        "species_key": species_key,
+                        "common_name": _get_common_name_local(species_key),
+                        "latin_name": species_key,
+                        "visit_count": int(item.get("visit_count") or 0),
+                        "last_seen_timestamp": item.get("last_seen_timestamp") or "",
+                        "last_seen_display": _format_stream_timestamp(
+                            item.get("last_seen_timestamp") or ""
+                        ),
+                        "is_favorite_available": bool(
+                            item.get("is_favorite_available")
+                        ),
+                        "best_cover_score": float(item.get("best_cover_score") or 0.0),
+                        "detection_id": primary_payload["detection_id"],
+                        "display_path": primary_payload["display_path"],
+                        "gallery_date": primary_payload["gallery_date"],
+                        "is_favorite": primary_payload["is_favorite"],
+                        "score": primary_payload["score"],
+                        "story_frames": story_frames,
+                    }
+                )
+        return enriched_board
 
     def get_captured_detections_by_date():
         """
@@ -1841,6 +1917,7 @@ def create_web_interface(detection_manager, system_monitor=None):
         threshold_str = threshold_24h.strftime("%Y%m%d_%H%M%S")
         today_iso = now.strftime("%Y-%m-%d")
         today_midnight_str = now.strftime("%Y%m%d") + "_000000"  # Since midnight
+        current_year_start_str = now.strftime("%Y") + "0101_000000"
 
         def _format_ts_parts(ts: str) -> tuple[str, str, str]:
             if not ts or len(ts) < 15:
@@ -2173,38 +2250,25 @@ def create_web_interface(detection_manager, system_monitor=None):
         except Exception as e:
             logger.error(f"Error fetching archive preview: {e}")
 
-        # 5b. Best Species Favorites Preview
+        # 5b. Best Species Story Board
+        best_species_board = {"featured": [], "grid": []}
         best_species_preview = []
         try:
-            with db_service.closing_connection() as conn:
-                rows = db_service.fetch_random_favorites(conn, limit=12)
-                for row in rows:
-                    det = dict(row)
-                    species_key = _get_species_key_local(det)
+            best_species_board = _enrich_species_board(
+                gallery_service.build_species_story_board(
+                    get_captured_detections(),
 
-                    full_path = det.get("relative_path") or ""
-                    thumb_virtual = det.get("thumbnail_path_virtual")
-                    if thumb_virtual:
-                        display_url = f"/uploads/derivatives/thumbs/{thumb_virtual}"
-                    else:
-                        display_url = f"/uploads/derivatives/optimized/{full_path}"
-
-                    gallery_date = _date_iso_from_timestamp(
-                        det.get("image_timestamp", "")
-                    )
-
-                    best_species_preview.append(
-                        {
-                            "detection_id": det.get("detection_id"),
-                            "species_key": species_key,
-                            "common_name": _get_common_name_local(species_key),
-                            "display_path": display_url,
-                            "gallery_date": gallery_date,
-                            "is_favorite": bool(int(det.get("is_favorite") or 0)),
-                        }
-                    )
+                    total_limit=12,
+                    featured_count=3,
+                    excluded_species={UNKNOWN_SPECIES_KEY},
+                )
+            )
+            best_species_preview = (
+                best_species_board.get("featured", [])
+                + best_species_board.get("grid", [])
+            )
         except Exception as e:
-            logger.error(f"Error fetching best species preview: {e}")
+            logger.error(f"Error fetching best species board: {e}")
 
         # 6. Landing Status Row
         landing_status = {
@@ -2297,6 +2361,7 @@ def create_web_interface(detection_manager, system_monitor=None):
             today_detection_count=today_detection_count,
             is_quiet_today=is_quiet_today,
             recent_archive_preview=recent_archive_preview,
+            best_species_board=best_species_board,
             best_species_preview=best_species_preview,
             landing_status=landing_status,
             noise_hourly=noise_hourly,

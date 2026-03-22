@@ -71,6 +71,23 @@ def group_detections_into_observations(detections: list[dict]) -> list[dict]:
     return gallery_core.group_detections_into_observations(detections)
 
 
+def build_species_story_board(
+    detections: list[dict],
+    since_timestamp: str = "",
+    total_limit: int = 12,
+    featured_count: int = 3,
+    excluded_species: set[str] | None = None,
+) -> dict[str, list[dict]]:
+    """Build the observation-based Best of Species board."""
+    return gallery_core.build_species_story_board(
+        detections,
+        since_timestamp=since_timestamp,
+        total_limit=total_limit,
+        featured_count=featured_count,
+        excluded_species=excluded_species,
+    )
+
+
 def invalidate_cache() -> None:
     """Invalidate gallery cache."""
     gallery_core.invalidate_cache()

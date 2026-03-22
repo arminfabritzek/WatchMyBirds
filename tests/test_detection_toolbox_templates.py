@@ -72,6 +72,9 @@ def test_stream_detection_previews_use_toolbox():
     assert "{% from 'partials/tile_toolbox.html' import tile_toolbox %}" in content
     assert content.count("{{ tile_toolbox(") >= 2
     assert "quiet-preview__item fade-in-item wm-toolbox-host" in content
+    assert "best-species-board__featured" in content
+    assert 'class="best-species-card__media wm-toolbox-host"' in content
+    assert "best-species-board__grid" in content
     assert "details_href='/gallery/' ~ det.gallery_date" in content
     assert "filter: drop-shadow(0 2px 4px rgba(0,0,0,0.5));" not in content
 
