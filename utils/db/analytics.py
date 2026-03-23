@@ -28,57 +28,109 @@ def fetch_all_time_daily_counts(conn: sqlite3.Connection) -> list[sqlite3.Row]:
     return cur.fetchall()
 
 
-def fetch_all_detection_times(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+def fetch_all_detection_times(
+    conn: sqlite3.Connection,
+    min_score: float = 0.0,
+) -> list[sqlite3.Row]:
     """
-    Returns time part (HHMMSS) of all active detections for KDE calculation.
+    Returns time part (HHMMSS) of classified detections for KDE calculation.
+
+    Filters: active, not no_bird, score >= min_score, must have classification.
     """
     cur = conn.execute("""
         SELECT substr(i.timestamp, 10, 6) as time_str
         FROM detections d
         JOIN images i ON d.image_filename = i.filename
         WHERE d.status = 'active'
-        """)
+          AND (i.review_status IS NULL OR i.review_status != 'no_bird')
+          AND (d.score IS NULL OR d.score >= ?)
+          AND EXISTS (
+              SELECT 1 FROM classifications c
+              WHERE c.detection_id = d.detection_id
+                AND c.status = 'active'
+          )
+        """, (min_score,))
     return cur.fetchall()
 
 
-def fetch_species_timestamps(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+def fetch_species_timestamps(
+    conn: sqlite3.Connection,
+    min_score: float = 0.0,
+) -> list[sqlite3.Row]:
     """
-    Returns (species, timestamp) for all active detections.
+    Returns (species, timestamp) for active, classified detections.
     Used for Ridgeplot/Heatmap activity analysis.
+
+    Filters:
+    - d.status = 'active'
+    - Not no_bird (trash)
+    - Must have an active classification
+    - score >= min_score (GALLERY_DISPLAY_THRESHOLD)
+    - Species resolved via manual_override > classification > od_class_name
     """
-    cur = conn.execute("""
+    from utils.db.detections import _effective_species_sql
+
+    cur = conn.execute(f"""
         SELECT
-            COALESCE(c.cls_class_name, d.od_class_name, 'Unknown') AS species,
+            {_effective_species_sql("d")} AS species,
             i.timestamp as image_timestamp
         FROM detections d
         JOIN images i ON d.image_filename = i.filename
-        LEFT JOIN classifications c ON d.detection_id = c.detection_id AND c.status = 'active'
         WHERE d.status = 'active'
-        """)
+          AND (i.review_status IS NULL OR i.review_status != 'no_bird')
+          AND (d.score IS NULL OR d.score >= ?)
+          AND EXISTS (
+              SELECT 1 FROM classifications c
+              WHERE c.detection_id = d.detection_id
+                AND c.status = 'active'
+          )
+        """, (min_score,))
     return cur.fetchall()
 
 
-def fetch_analytics_summary(conn: sqlite3.Connection) -> dict[str, Any]:
+def fetch_analytics_summary(
+    conn: sqlite3.Connection,
+    min_score: float = 0.0,
+) -> dict[str, Any]:
     """
     Returns high-level summary stats for analytics dashboard.
+
+    Filters: active, not no_bird, score >= min_score, must have classification.
+    Uses _effective_species_sql for species resolution.
     """
+    from utils.db.detections import _effective_species_sql
+
+    _base_where = """
+        d.status = 'active'
+        AND (i.review_status IS NULL OR i.review_status != 'no_bird')
+        AND (d.score IS NULL OR d.score >= ?)
+        AND EXISTS (
+            SELECT 1 FROM classifications c
+            WHERE c.detection_id = d.detection_id
+              AND c.status = 'active'
+        )
+    """
+
     # Total detections
-    total_cursor = conn.execute(
-        "SELECT COUNT(*) FROM detections WHERE status = 'active'"
-    )
+    total_cursor = conn.execute(f"""
+        SELECT COUNT(*)
+        FROM detections d
+        JOIN images i ON d.image_filename = i.filename
+        WHERE {_base_where}
+        """, (min_score,))
     total_detections = total_cursor.fetchone()[0] or 0
 
     # Total unique species
-    species_cursor = conn.execute("""
-        SELECT COUNT(DISTINCT COALESCE(c.cls_class_name, d.od_class_name)) AS total
+    species_cursor = conn.execute(f"""
+        SELECT COUNT(DISTINCT {_effective_species_sql("d")}) AS total
         FROM detections d
-        LEFT JOIN classifications c ON d.detection_id = c.detection_id AND c.status = 'active'
-        WHERE d.status = 'active'
-        """)
+        JOIN images i ON d.image_filename = i.filename
+        WHERE {_base_where}
+        """, (min_score,))
     total_species = species_cursor.fetchone()[0] or 0
 
     # Date range
-    range_cursor = conn.execute("""
+    range_cursor = conn.execute(f"""
         SELECT
             MIN(substr(i.timestamp, 1, 4) || '-' ||
                 substr(i.timestamp, 5, 2) || '-' ||
@@ -88,8 +140,8 @@ def fetch_analytics_summary(conn: sqlite3.Connection) -> dict[str, Any]:
                 substr(i.timestamp, 7, 2)) AS last_date
         FROM detections d
         JOIN images i ON d.image_filename = i.filename
-        WHERE d.status = 'active'
-        """)
+        WHERE {_base_where}
+        """, (min_score,))
     range_row = range_cursor.fetchone()
 
     return {

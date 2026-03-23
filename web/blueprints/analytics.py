@@ -14,6 +14,7 @@ from datetime import date, datetime, timedelta
 import numpy as np
 from flask import Blueprint, jsonify, render_template, request
 
+from config import get_config
 from logging_config import get_logger
 from utils.db.analytics import (
     fetch_all_time_daily_counts,
@@ -54,9 +55,11 @@ def _sort_species_activity_by_peak_hour(items: list[dict]) -> list[dict]:
 
 @analytics_bp.route("/api/analytics/summary", methods=["GET"])
 def analytics_summary():
+    cfg = get_config()
+    min_score = cfg["GALLERY_DISPLAY_THRESHOLD"]
     conn = db_service.get_connection()
     try:
-        summary = db_service.fetch_analytics_summary(conn)
+        summary = db_service.fetch_analytics_summary(conn, min_score=min_score)
     finally:
         conn.close()
     return jsonify(summary)
@@ -64,9 +67,11 @@ def analytics_summary():
 
 @analytics_bp.route("/api/analytics/time-of-day", methods=["GET"])
 def analytics_time_of_day():
+    cfg = get_config()
+    min_score = cfg["GALLERY_DISPLAY_THRESHOLD"]
     conn = db_service.get_connection()
     try:
-        rows = db_service.fetch_all_detection_times(conn)
+        rows = db_service.fetch_all_detection_times(conn, min_score=min_score)
     finally:
         conn.close()
 
@@ -145,9 +150,11 @@ def analytics_time_of_day():
 
 @analytics_bp.route("/api/analytics/species-activity", methods=["GET"])
 def analytics_species_activity():
+    cfg = get_config()
+    min_score = cfg["GALLERY_DISPLAY_THRESHOLD"]
     conn = db_service.get_connection()
     try:
-        rows = db_service.fetch_species_timestamps(conn)
+        rows = db_service.fetch_species_timestamps(conn, min_score=min_score)
     finally:
         conn.close()
 
@@ -269,10 +276,12 @@ def analytics_page():
         "total_species": 0,
         "date_range": {"first": None, "last": None},
     }
+    cfg = get_config()
+    min_score = cfg["GALLERY_DISPLAY_THRESHOLD"]
     try:
         conn = db_service.get_connection()
         try:
-            summary = db_service.fetch_analytics_summary(conn)
+            summary = db_service.fetch_analytics_summary(conn, min_score=min_score)
         finally:
             conn.close()
     except Exception as e:
@@ -299,7 +308,7 @@ def analytics_page():
     try:
         conn = db_service.get_connection()
         try:
-            rows = db_service.fetch_all_detection_times(conn)
+            rows = db_service.fetch_all_detection_times(conn, min_score=min_score)
         finally:
             conn.close()
 
@@ -549,7 +558,9 @@ def analytics_page():
     try:
         conn = db_service.get_connection()
         try:
-            rows = db_service.fetch_species_timestamps(conn)
+            cfg = get_config()
+            min_score = cfg["GALLERY_DISPLAY_THRESHOLD"]
+            rows = db_service.fetch_species_timestamps(conn, min_score=min_score)
         finally:
             conn.close()
 
@@ -570,8 +581,8 @@ def analytics_page():
                     pass
 
         for sp, times in species_times.items():
-            if len(times) < 3:
-                continue  # Skip species with very few detections
+            if len(times) < 1:
+                continue
 
             # Create histogram for sparkline
             hist, edges = np.histogram(times, bins=24, range=(0, 24))

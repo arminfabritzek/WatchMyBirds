@@ -189,19 +189,19 @@ def restore_no_bird_images(conn, image_filenames: list[str]) -> int:
 # --- Analytics Operations ---
 
 
-def fetch_analytics_summary(conn) -> dict:
+def fetch_analytics_summary(conn, min_score: float = 0.0) -> dict:
     """Fetch analytics summary."""
-    return _fetch_analytics_summary(conn)
+    return _fetch_analytics_summary(conn, min_score=min_score)
 
 
-def fetch_all_detection_times(conn) -> list:
+def fetch_all_detection_times(conn, min_score: float = 0.0) -> list:
     """Fetch all detection timestamps."""
-    return _fetch_all_detection_times(conn)
+    return _fetch_all_detection_times(conn, min_score=min_score)
 
 
-def fetch_species_timestamps(conn) -> list:
+def fetch_species_timestamps(conn, min_score: float = 0.0) -> list:
     """Fetch timestamps grouped by species."""
-    return _fetch_species_timestamps(conn)
+    return _fetch_species_timestamps(conn, min_score=min_score)
 
 
 def fetch_day_count(conn, date_str_iso: str) -> int:

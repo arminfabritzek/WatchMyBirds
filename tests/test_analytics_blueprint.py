@@ -56,7 +56,7 @@ def test_species_activity_api_sorts_by_peak_hour(monkeypatch, client):
         analytics_module.db_service, "get_connection", lambda: mock_conn
     )
     monkeypatch.setattr(
-        analytics_module.db_service, "fetch_species_timestamps", lambda conn: rows
+        analytics_module.db_service, "fetch_species_timestamps", lambda conn, **kw: rows
     )
 
     response = client.get("/api/analytics/species-activity")
