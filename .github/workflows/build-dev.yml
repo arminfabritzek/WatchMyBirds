@@ -92,11 +92,9 @@ jobs:
           sudo cp -r wheelhouse/* mount_point/opt/wheelhouse/
 
           # Write Version Metadata
-          # Overwrite APP_VERSION with a dev-qualified string so the running app
-          # always shows which commit is deployed (format: 0.1.0+dev.abc1234).
-          BASE_VER=$(sed 's/+.*//' app_code/APP_VERSION | tr -d '[:space:]')
-          SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
-          echo "${BASE_VER}+dev.${SHORT_SHA}" | sudo tee mount_point/opt/app/APP_VERSION
+          # Derive the running DEV version as next-patch semver + short SHA.
+          DEV_VERSION=$(bash app_code/scripts/version_info.sh dev-version app_code "${{ github.sha }}")
+          echo "${DEV_VERSION}" | sudo tee mount_point/opt/app/APP_VERSION
           echo "${{ github.sha }}" | sudo tee mount_point/opt/app/commit.txt
           date -u +%Y-%m-%dT%H:%M:%SZ | sudo tee mount_point/opt/app/build_date.txt
 

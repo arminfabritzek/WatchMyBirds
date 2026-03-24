@@ -16,9 +16,9 @@ jobs:
       - name: Read App Version
         id: version
         run: |
-          # Strip any dev build metadata (+dev.sha) so Docker tags are always
-          # clean semver — Docker does not allow '+' in image tags.
-          VERSION=$(sed 's/+.*//' APP_VERSION 2>/dev/null | tr -d '[:space:]' || echo "0.0.0")
+          # Resolve the actual release base even if APP_VERSION currently holds
+          # a next-patch dev prerelease such as 0.1.1-dev.abc1234.
+          VERSION=$(bash scripts/version_info.sh release-base . 2>/dev/null || echo "0.0.0")
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
       - name: Set up QEMU
