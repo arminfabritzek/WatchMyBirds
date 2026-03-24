@@ -5,8 +5,7 @@ Defines the contract for persisting images, detections, and thumbnails.
 """
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
-from dataclasses import field
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 

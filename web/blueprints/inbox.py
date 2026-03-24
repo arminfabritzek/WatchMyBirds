@@ -8,7 +8,6 @@ Handles inbox routes for web upload with explicit processing:
 - POST /api/inbox/process - Start processing
 """
 
-import io
 import os
 import threading
 import time

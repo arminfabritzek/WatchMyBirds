@@ -558,6 +558,7 @@ class DetectionManager:
                                     getattr(cls_result, "top_k_confidences", []) or []
                                 )[1:]
                             ],
+                            strict=False,
                         )
                     )
                     if cls_conf > 0

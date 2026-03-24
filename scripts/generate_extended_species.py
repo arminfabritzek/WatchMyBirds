@@ -7,10 +7,8 @@ import argparse
 import json
 import sys
 import time
-import urllib.parse
-import urllib.request
 from pathlib import Path
-
+from urllib import parse, request
 
 API_URL = "https://api.inaturalist.org/v1/taxa"
 TAXON_ID_AVES = 3
@@ -32,8 +30,8 @@ def fetch_batch(locale: str, id_above: int | None = None) -> dict:
     }
     if id_above is not None:
         params["id_above"] = id_above
-    url = f"{API_URL}?{urllib.parse.urlencode(params)}"
-    with urllib.request.urlopen(url, timeout=30) as response:
+    url = f"{API_URL}?{parse.urlencode(params)}"
+    with request.urlopen(url, timeout=30) as response:
         return json.load(response)
 
 

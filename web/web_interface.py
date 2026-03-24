@@ -2000,7 +2000,6 @@ def create_web_interface(detection_manager, system_monitor=None):
         threshold_24h = now - timedelta(hours=24)
         threshold_str = threshold_24h.strftime("%Y%m%d_%H%M%S")
         today_iso = now.strftime("%Y-%m-%d")
-        current_year_start_str = now.strftime("%Y") + "0101_000000"
         gallery_threshold = config["GALLERY_DISPLAY_THRESHOLD"]
 
         def _format_ts_parts(ts: str) -> tuple[str, str, str]:
