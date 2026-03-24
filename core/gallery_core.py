@@ -461,6 +461,74 @@ def group_detections_into_observations(
     return observations
 
 
+def summarize_observations(
+    detections: list[dict],
+    min_score: float = 0.0,
+) -> dict[str, Any]:
+    """Summarize detections through the gallery observation model.
+
+    This keeps stream-side counters aligned with the observation grouping used
+    by the day gallery. The optional ``min_score`` matches subgallery behavior:
+    filter on ``observation.best_score`` after grouping, not per detection row.
+    """
+    if not detections:
+        return {
+            "observations": [],
+            "detections": [],
+            "summary": {
+                "total_observations": 0,
+                "total_detections": 0,
+                "species_counts": {},
+                "avg_score": 0.0,
+            },
+        }
+
+    observations = group_detections_into_observations(detections)
+    if min_score > 0:
+        observations = [
+            obs
+            for obs in observations
+            if float(obs.get("best_score") or 0.0) >= min_score
+        ]
+
+    included_ids: set[int] = set()
+    species_counts: dict[str, int] = {}
+    for obs in observations:
+        species = obs.get("species") or ""
+        if species:
+            species_counts[species] = species_counts.get(species, 0) + 1
+        for det_id in obs.get("detection_ids") or []:
+            if det_id is not None:
+                included_ids.add(int(det_id))
+
+    included_detections: list[dict] = []
+    total_score = 0.0
+    scored_count = 0
+    for det in detections:
+        det_id = det.get("detection_id")
+        if det_id is None or int(det_id) not in included_ids:
+            continue
+        included_detections.append(det)
+        try:
+            total_score += float(det.get("score") or 0.0)
+            scored_count += 1
+        except (TypeError, ValueError):
+            continue
+
+    avg_score = round(total_score / scored_count, 2) if scored_count else 0.0
+
+    return {
+        "observations": observations,
+        "detections": included_detections,
+        "summary": {
+            "total_observations": len(observations),
+            "total_detections": len(included_detections),
+            "species_counts": species_counts,
+            "avg_score": avg_score,
+        },
+    }
+
+
 def _story_board_bbox_touches_edge(det: dict, margin: float = 0.01) -> bool:
     """Return True if the bbox touches the image edge."""
     bx = det.get("bbox_x") or 0.0

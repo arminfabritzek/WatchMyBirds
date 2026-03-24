@@ -71,6 +71,14 @@ def group_detections_into_observations(detections: list[dict]) -> list[dict]:
     return gallery_core.group_detections_into_observations(detections)
 
 
+def summarize_observations(
+    detections: list[dict],
+    min_score: float = 0.0,
+) -> dict:
+    """Summarize detections via the gallery observation model."""
+    return gallery_core.summarize_observations(detections, min_score=min_score)
+
+
 def build_species_story_board(
     detections: list[dict],
     since_timestamp: str = "",

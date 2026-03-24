@@ -1,10 +1,13 @@
-"""Tests for gallery_core.group_detections_into_observations().
+"""Tests for gallery_core observation grouping and summaries.
 
 Tests the in-memory spatio-temporal clustering logic used by the
 observation-based gallery view (Issue #12).
 """
 
-from core.gallery_core import group_detections_into_observations
+from core.gallery_core import (
+    group_detections_into_observations,
+    summarize_observations,
+)
 
 
 def _det(
@@ -159,3 +162,71 @@ def test_microsecond_timestamps_compute_duration():
     assert obs[0]["photo_count"] == 4
     # 08:41:26 - 08:41:16 = 10 seconds
     assert obs[0]["duration_sec"] == 10.0
+
+
+def test_summarize_observations_uses_species_key_and_threshold():
+    """Summary must align with gallery species resolution and thresholding."""
+    dets = [
+        {
+            **_det(
+                1,
+                "20260101_120000",
+                species="wrong_species",
+                score=0.90,
+            ),
+            "species_key": "Columba_palumbus",
+        },
+        {
+            **_det(
+                2,
+                "20260101_120030",
+                species="wrong_species",
+                score=0.80,
+            ),
+            "species_key": "Columba_palumbus",
+        },
+        {
+            **_det(
+                3,
+                "20260101_120200",
+                species="wrong_species",
+                score=0.70,
+            ),
+            "species_key": "Columba_palumbus",
+        },
+        {
+            **_det(
+                4,
+                "20260101_120400",
+                species="parus_major",
+                score=0.05,
+            ),
+            "species_key": "Parus_major",
+        },
+    ]
+
+    result = summarize_observations(dets, min_score=0.10)
+
+    assert result["summary"]["total_observations"] == 2
+    assert result["summary"]["total_detections"] == 3
+    assert result["summary"]["species_counts"] == {"Columba_palumbus": 2}
+    assert result["summary"]["avg_score"] == 0.8
+    assert {det["detection_id"] for det in result["detections"]} == {1, 2, 3}
+    assert all(obs["species"] == "Columba_palumbus" for obs in result["observations"])
+
+
+def test_summarize_observations_filters_by_observation_best_score():
+    """Gallery threshold must keep all rows from a qualifying observation."""
+    dets = [
+        _det(1, "20260101_120000", score=0.90),
+        _det(2, "20260101_120020", score=0.05),
+        _det(3, "20260101_120200", score=0.09),
+    ]
+
+    result = summarize_observations(dets, min_score=0.10)
+
+    assert result["summary"]["total_observations"] == 1
+    assert result["summary"]["total_detections"] == 2
+    assert result["summary"]["species_counts"] == {"parus_major": 1}
+    assert result["summary"]["avg_score"] == 0.48
+    assert {det["detection_id"] for det in result["detections"]} == {1, 2}

@@ -1968,8 +1968,8 @@ def create_web_interface(detection_manager, system_monitor=None):
         threshold_24h = now - timedelta(hours=24)
         threshold_str = threshold_24h.strftime("%Y%m%d_%H%M%S")
         today_iso = now.strftime("%Y-%m-%d")
-        today_midnight_str = now.strftime("%Y%m%d") + "_000000"  # Since midnight
         current_year_start_str = now.strftime("%Y") + "0101_000000"
+        gallery_threshold = config["GALLERY_DISPLAY_THRESHOLD"]
 
         def _format_ts_parts(ts: str) -> tuple[str, str, str]:
             if not ts or len(ts) < 15:
@@ -2020,9 +2020,19 @@ def create_web_interface(detection_manager, system_monitor=None):
 
         # 1. 24h Count & Title
         last_24h_count = 0
+        last_24h_rows: list[dict] = []
         try:
             with db_service.closing_connection() as conn:
-                last_24h_count = db_service.fetch_count_last_24h(conn, threshold_str)
+                last_24h_rows = [
+                    dict(row)
+                    for row in db_service.fetch_detections_last_24h(
+                        conn, threshold_str, order_by="time"
+                    )
+                ]
+            last_24h_summary = gallery_service.summarize_observations(
+                last_24h_rows, min_score=gallery_threshold
+            )
+            last_24h_count = last_24h_summary["summary"]["total_observations"]
             title = f"🎥 Live • {last_24h_count} Observations (24h)"
         except Exception as e:
             logger.error(f"Error fetching 24h count: {e}")
@@ -2051,192 +2061,154 @@ def create_web_interface(detection_manager, system_monitor=None):
         except Exception as e:
             logger.error(f"Error fetching dashboard stats: {e}")
 
-        # 1c. Bird Visit Stats (spatio-temporal clustering, read-only)
+        # 1c. Today Observation Stats (aligned with gallery grouping)
         species_visit_counts: dict[str, int] = {}
+        today_rows: list[dict] = []
         try:
-            from utils.db.analytics import fetch_bird_visits
-
             with db_service.closing_connection() as conn:
-                visit_data = fetch_bird_visits(conn, since_timestamp=today_midnight_str)
-            visit_summary = visit_data.get("summary", {})
-            dashboard_stats["today_visits"] = visit_summary.get("total_visits", 0)
-            dashboard_stats["avg_visit_duration_sec"] = visit_summary.get(
-                "avg_visit_duration_sec", 0
+                today_rows = [
+                    dict(row)
+                    for row in db_service.fetch_detections_for_gallery(
+                        conn, today_iso, order_by="time"
+                    )
+                ]
+            today_summary = gallery_service.summarize_observations(
+                today_rows, min_score=gallery_threshold
             )
-            species_visit_counts = visit_summary.get("species_visit_counts", {})
-
-            # Compute today's average confidence from visit detections
-            visits_list = visit_data.get("visits", [])
-            all_det_ids: list[int] = []
-            for v in visits_list:
-                all_det_ids.extend(v.get("detection_ids", []))
-            if all_det_ids:
-                try:
-                    with db_service.closing_connection() as conn2:
-                        placeholders = ",".join("?" for _ in all_det_ids)
-                        row = conn2.execute(
-                            f"SELECT ROUND(AVG(score), 2) AS avg_score "
-                            f"FROM detections WHERE detection_id IN ({placeholders}) "
-                            f"AND status = 'active'",
-                            all_det_ids,
-                        ).fetchone()
-                        dashboard_stats["today_avg_confidence"] = (
-                            row["avg_score"] if row and row["avg_score"] else 0.0
-                        )
-                except Exception:
-                    dashboard_stats["today_avg_confidence"] = 0.0
-            else:
-                dashboard_stats["today_avg_confidence"] = 0.0
+            today_summary_stats = today_summary["summary"]
+            dashboard_stats["today_visits"] = today_summary_stats["total_observations"]
+            dashboard_stats["today_avg_confidence"] = today_summary_stats["avg_score"]
+            species_visit_counts = today_summary_stats["species_counts"]
+            today_rows = today_summary["detections"]
         except Exception as e:
-            logger.error(f"Error fetching visit stats: {e}")
-
-        # Override title with visit-grouped count (observations, not raw detections)
-        today_visits = dashboard_stats.get("today_visits", 0)
-        if today_visits > 0:
-            title = f"🎥 Live • {today_visits} Observations (24h)"
+            logger.error(f"Error fetching today observation stats: {e}")
 
         # 2. Latest Detections (Top 5 from last 24h)
         latest_detections = []
         try:
-            with db_service.closing_connection() as conn:
-                rows = db_service.fetch_detections_last_24h(
-                    conn, threshold_str, limit=5, order_by="time"
+            for det in last_24h_rows[:5]:
+                full_path = det.get("relative_path") or det.get(
+                    "optimized_name_virtual", ""
                 )
-                # Enrich for template
-                for row in rows:
-                    det = dict(row)
-                    full_path = det.get("relative_path") or det.get(
-                        "optimized_name_virtual", ""
-                    )
-                    thumb_virtual = det.get("thumbnail_path_virtual")
+                thumb_virtual = det.get("thumbnail_path_virtual")
 
-                    if thumb_virtual:
-                        display_url = f"/uploads/derivatives/thumbs/{thumb_virtual}"
-                    else:
-                        display_url = f"/uploads/derivatives/optimized/{full_path}"
+                if thumb_virtual:
+                    display_url = f"/uploads/derivatives/thumbs/{thumb_virtual}"
+                else:
+                    display_url = f"/uploads/derivatives/optimized/{full_path}"
 
-                    full_url = f"/uploads/derivatives/optimized/{full_path}"
-                    original_url = (
-                        f"/uploads/originals/{full_path.replace('.webp', '.jpg')}"
-                    )
+                full_url = f"/uploads/derivatives/optimized/{full_path}"
+                original_url = (
+                    f"/uploads/originals/{full_path.replace('.webp', '.jpg')}"
+                )
 
-                    # Compat variables
-                    display_path = display_url
-                    original_path = original_url
-                    ts = det.get("image_timestamp", "")
-                    formatted_time, formatted_date, _ = _format_ts_parts(ts)
+                # Compat variables
+                display_path = display_url
+                original_path = original_url
+                ts = det.get("image_timestamp", "")
+                formatted_time, formatted_date, _ = _format_ts_parts(ts)
 
-                    latest_detections.append(
-                        {
-                            "detection_id": det.get("detection_id"),
-                            "species_key": _get_species_key_local(det),
-                            "common_name": _get_common_name_local(
-                                _get_species_key_local(det)
-                            ),
-                            "latin_name": _get_species_key_local(det),
-                            "od_class_name": det.get("od_class_name") or "",
-                            "od_confidence": det.get("od_confidence") or 0.0,
-                            "cls_class_name": det.get("cls_class_name") or "",
-                            "cls_confidence": det.get("cls_confidence") or 0.0,
-                            "score": det.get("score", 0.0) or 0.0,
-                            "display_path": display_path,
-                            "full_path": full_url,
-                            "original_path": original_path,
-                            "formatted_time": formatted_time,
-                            "formatted_date": formatted_date,
-                            "gallery_date": today_iso,  # For "Go to Day" button in modal
-                            "sibling_count": det.get("sibling_count", 1) or 1,
-                            "siblings": [],  # Stream page doesn't need to load all siblings for now, just prevent crash
-                            "bbox_x": det.get("bbox_x", 0.0) or 0.0,
-                            "bbox_y": det.get("bbox_y", 0.0) or 0.0,
-                            "bbox_w": det.get("bbox_w", 0.0) or 0.0,
-                            "bbox_h": det.get("bbox_h", 0.0) or 0.0,
-                        }
-                    )
+                latest_detections.append(
+                    {
+                        "detection_id": det.get("detection_id"),
+                        "species_key": _get_species_key_local(det),
+                        "common_name": _get_common_name_local(
+                            _get_species_key_local(det)
+                        ),
+                        "latin_name": _get_species_key_local(det),
+                        "od_class_name": det.get("od_class_name") or "",
+                        "od_confidence": det.get("od_confidence") or 0.0,
+                        "cls_class_name": det.get("cls_class_name") or "",
+                        "cls_confidence": det.get("cls_confidence") or 0.0,
+                        "score": det.get("score", 0.0) or 0.0,
+                        "display_path": display_path,
+                        "full_path": full_url,
+                        "original_path": original_path,
+                        "formatted_time": formatted_time,
+                        "formatted_date": formatted_date,
+                        "gallery_date": today_iso,  # For "Go to Day" button in modal
+                        "sibling_count": det.get("sibling_count", 1) or 1,
+                        "siblings": [],  # Stream page doesn't need to load all siblings for now, just prevent crash
+                        "bbox_x": det.get("bbox_x", 0.0) or 0.0,
+                        "bbox_y": det.get("bbox_y", 0.0) or 0.0,
+                        "bbox_w": det.get("bbox_w", 0.0) or 0.0,
+                        "bbox_h": det.get("bbox_h", 0.0) or 0.0,
+                    }
+                )
         except Exception as e:
             logger.error(f"Error fetching latest detections: {e}")
 
-        # 3. 24h Summary (Gallery Style - Best per species)
-        # Used for "Last 24h Summary" section - visual grid
+        # 3. Today's Visitors Summary (gallery-aligned observation scope)
         visual_summary = []
         try:
-            with db_service.closing_connection() as conn:
-                # fetch all since midnight (not rolling 24h) for "Today's Visitors"
-                rows = db_service.fetch_detections_last_24h(
-                    conn, today_midnight_str, order_by="score"
+            species_candidates = {}
+            for det in today_rows:
+                s_key = _get_species_key_local(det)
+                species_candidates.setdefault(s_key, []).append(det)
+
+            species_groups = {}
+            for s_key, candidates in species_candidates.items():
+                chosen = _pick_cover_for_group(
+                    candidates, seed_key=f"day:{s_key}", date_iso=today_iso
                 )
-                all_24h = [dict(r) for r in rows]
+                if chosen:
+                    species_groups[s_key] = chosen
 
-                # Group by species and pick one curated cover per species
-                species_candidates = {}
-                for det in all_24h:
-                    s_key = _get_species_key_local(det)
-                    species_candidates.setdefault(s_key, []).append(det)
+            # Sort by quality (favorite first, then score)
+            sorted_summary = sorted(
+                species_groups.values(),
+                key=_cover_quality_tuple,
+                reverse=True,
+            )
 
-                species_groups = {}
-                today_iso = datetime.now().strftime("%Y-%m-%d")
-                for s_key, candidates in species_candidates.items():
-                    chosen = _pick_cover_for_group(
-                        candidates, seed_key=f"24h:{s_key}", date_iso=today_iso
-                    )
-                    if chosen:
-                        species_groups[s_key] = chosen
+            for det in sorted_summary:
+                # Clean Slate URL construction
+                full_path = det.get("relative_path") or det.get(
+                    "optimized_name_virtual", ""
+                )
+                thumb_virtual = det.get("thumbnail_path_virtual")
 
-                # Sort by quality (favorite first, then score)
-                sorted_summary = sorted(
-                    species_groups.values(),
-                    key=_cover_quality_tuple,
-                    reverse=True,
+                if thumb_virtual:
+                    display_url = f"/uploads/derivatives/thumbs/{thumb_virtual}"
+                else:
+                    display_url = f"/uploads/derivatives/optimized/{full_path}"
+
+                full_url = f"/uploads/derivatives/optimized/{full_path}"
+                original_url = (
+                    f"/uploads/originals/{full_path.replace('.webp', '.jpg')}"
                 )
 
-                for det in sorted_summary:
-                    # Clean Slate URL construction
-                    full_path = det.get("relative_path") or det.get(
-                        "optimized_name_virtual", ""
-                    )
-                    thumb_virtual = det.get("thumbnail_path_virtual")
+                ts = det.get("image_timestamp", "")
+                formatted_time, formatted_date, _ = _format_ts_parts(ts)
 
-                    if thumb_virtual:
-                        display_url = f"/uploads/derivatives/thumbs/{thumb_virtual}"
-                    else:
-                        display_url = f"/uploads/derivatives/optimized/{full_path}"
-
-                    full_url = f"/uploads/derivatives/optimized/{full_path}"
-                    original_url = (
-                        f"/uploads/originals/{full_path.replace('.webp', '.jpg')}"
-                    )
-
-                    ts = det.get("image_timestamp", "")
-                    formatted_time, formatted_date, _ = _format_ts_parts(ts)
-
-                    visual_summary.append(
-                        {
-                            "detection_id": det.get("detection_id"),
-                            "species_key": _get_species_key_local(det),
-                            "common_name": _get_common_name_local(
-                                _get_species_key_local(det)
-                            ),
-                            "latin_name": _get_species_key_local(det),
-                            "od_class_name": det.get("od_class_name") or "",
-                            "od_confidence": det.get("od_confidence") or 0.0,
-                            "cls_class_name": det.get("cls_class_name") or "",
-                            "cls_confidence": det.get("cls_confidence") or 0.0,
-                            "score": det.get("score", 0.0) or 0.0,
-                            "display_path": display_url,
-                            "full_path": full_url,
-                            "original_path": original_url,
-                            "formatted_time": formatted_time,
-                            "formatted_date": formatted_date,
-                            "gallery_date": today_iso,  # For "Go to Day" button in modal
-                            "sibling_count": det.get("sibling_count", 1) or 1,
-                            "siblings": [],
-                            "bbox_x": det.get("bbox_x", 0.0) or 0.0,
-                            "bbox_y": det.get("bbox_y", 0.0) or 0.0,
-                            "bbox_w": det.get("bbox_w", 0.0) or 0.0,
-                            "bbox_h": det.get("bbox_h", 0.0) or 0.0,
-                            "is_favorite": bool(int(det.get("is_favorite") or 0)),
-                        }
-                    )
+                visual_summary.append(
+                    {
+                        "detection_id": det.get("detection_id"),
+                        "species_key": _get_species_key_local(det),
+                        "common_name": _get_common_name_local(
+                            _get_species_key_local(det)
+                        ),
+                        "latin_name": _get_species_key_local(det),
+                        "od_class_name": det.get("od_class_name") or "",
+                        "od_confidence": det.get("od_confidence") or 0.0,
+                        "cls_class_name": det.get("cls_class_name") or "",
+                        "cls_confidence": det.get("cls_confidence") or 0.0,
+                        "score": det.get("score", 0.0) or 0.0,
+                        "display_path": display_url,
+                        "full_path": full_url,
+                        "original_path": original_url,
+                        "formatted_time": formatted_time,
+                        "formatted_date": formatted_date,
+                        "gallery_date": today_iso,  # For "Go to Day" button in modal
+                        "sibling_count": det.get("sibling_count", 1) or 1,
+                        "siblings": [],
+                        "bbox_x": det.get("bbox_x", 0.0) or 0.0,
+                        "bbox_y": det.get("bbox_y", 0.0) or 0.0,
+                        "bbox_w": det.get("bbox_w", 0.0) or 0.0,
+                        "bbox_h": det.get("bbox_h", 0.0) or 0.0,
+                        "is_favorite": bool(int(det.get("is_favorite") or 0)),
+                    }
+                )
 
         except Exception as e:
             logger.error(f"Error fetching visual summary: {e}")
