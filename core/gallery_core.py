@@ -307,7 +307,7 @@ def group_detections_into_observations(
             "photo_count": int,
             "duration_sec": float,
             "best_score": float,
-            "cover_detection_id": int,   # detection_id of best photo
+            "cover_detection_id": int,   # detection_id of newest photo
             "start_time": str,           # YYYYMMDD_HHMMSS
             "end_time": str,
         }
@@ -415,8 +415,7 @@ def group_detections_into_observations(
                     "_last_bh": bh,
                     "detection_ids": [item["det_id"]],
                     "_best_score": item["score"],
-                    "_best_det_id": item["det_id"],
-                    "_best_ts": item["ts"],
+                    "_cover_det_id": item["det_id"],
                 }
             )
         else:
@@ -427,18 +426,16 @@ def group_detections_into_observations(
             best["_last_bw"] = bw
             best["_last_bh"] = bh
             best["detection_ids"].append(item["det_id"])
-            # Update cover: higher score wins, tiebreak by recency
-            if item["score"] > best["_best_score"] or (
-                item["score"] == best["_best_score"] and item["ts"] > best["_best_ts"]
-            ):
+            # Keep best_score for filtering, but cover follows the newest detection.
+            if item["score"] > best["_best_score"]:
                 best["_best_score"] = item["score"]
-                best["_best_det_id"] = item["det_id"]
-                best["_best_ts"] = item["ts"]
+            best["_cover_det_id"] = item["det_id"]
 
     closed.extend(open_visits)
 
     # ── Format output ───────────────────────────────────────────────
-    # Sort by start_time descending (most recent first)
+    # Keep observation output stable by visit start time descending.
+    # Surfaces that want newest-photo ordering can resort by end_time.
     closed.sort(key=lambda v: v.get("_start_epoch", 0), reverse=True)
 
     observations: list[dict] = []
@@ -452,7 +449,7 @@ def group_detections_into_observations(
                 "photo_count": len(v["detection_ids"]),
                 "duration_sec": max(dur, 0.0),
                 "best_score": v["_best_score"],
-                "cover_detection_id": v["_best_det_id"],
+                "cover_detection_id": v["_cover_det_id"],
                 "start_time": v["start_time"],
                 "end_time": v["end_time"],
             }

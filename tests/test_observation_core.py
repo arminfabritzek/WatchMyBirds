@@ -84,8 +84,8 @@ def test_group_detections_different_species():
     assert species_set == {"parus_major", "erithacus_rubecula"}
 
 
-def test_cover_picks_best_score():
-    """Cover detection = highest score, not first or last."""
+def test_cover_uses_most_recent_detection():
+    """Cover detection follows the newest image in the observation."""
     dets = [
         _det(1, "20260101_120000", score=0.70),
         _det(2, "20260101_120020", score=0.95),
@@ -93,12 +93,12 @@ def test_cover_picks_best_score():
     ]
     obs = group_detections_into_observations(dets)
     assert len(obs) == 1
-    assert obs[0]["cover_detection_id"] == 2
+    assert obs[0]["cover_detection_id"] == 3
     assert obs[0]["best_score"] == 0.95
 
 
 def test_cover_tiebreak_by_recency():
-    """Same score → cover is the most recent detection."""
+    """Same score still keeps the most recent detection as cover."""
     dets = [
         _det(1, "20260101_120000", score=0.90),
         _det(2, "20260101_120020", score=0.90),

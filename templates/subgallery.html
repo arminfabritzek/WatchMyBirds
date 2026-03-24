@@ -69,7 +69,7 @@
 
 {# Main Gallery Grid — Observation Tiles #}
 <section class="section">
-    <h2 class="section__title">All Observations</h2>
+    <h2 class="section__title">All observations from today</h2>
     <div class="gallery-grid" id="subgallery-grid">
         {% for obs in observations %}
         {# ── Observation tile (standard wm-tile, clickable → expands filmstrip) ── #}
@@ -77,7 +77,9 @@
             data-detection-id="{{ obs.cover_detection.detection_id }}" data-batch-target="detection"
             data-batch-ids="{{ obs.detection_ids | join(',') }}"
             data-obs-id="{{ obs.observation_id }}"
-            onclick="toggleObsFilmstrip(this)" style="cursor:pointer;">
+            data-has-filmstrip="{{ 'true' if obs.photo_count > 1 else 'false' }}"
+            data-modal-target="#modal-obs{{ obs.observation_id }}-{{ obs.cover_detection.detection_id }}"
+            onclick="handleObservationCardClick(this, event)" style="cursor:pointer;">
             <div class="wm-tile__media">
                 <img class="wm-tile__image" loading="lazy" src="{{ obs.cover_detection.display_url }}"
                     alt="{{ obs.common_name }}" data-thumb-src="{{ obs.cover_detection.display_url }}"
@@ -104,6 +106,7 @@
         </div>
 
         {# ── Hidden filmstrip (all photos in this observation) ── #}
+        {% if obs.photo_count > 1 %}
         <div class="obs-filmstrip" id="filmstrip-{{ obs.observation_id }}" style="display:none;">
             <div class="obs-filmstrip__header">
                 <span class="obs-filmstrip__title">{{ obs.common_name }} — {{ obs.photo_count }} photo{{ 's' if
@@ -117,7 +120,8 @@
             </div>
             <div class="obs-filmstrip__grid">
                 {% for det in obs.all_detections %}
-                <div class="obs-filmstrip__item" data-detection-id="{{ det.detection_id }}">
+                <div class="obs-filmstrip__item" id="filmstrip-item-{{ det.detection_id }}"
+                    data-detection-id="{{ det.detection_id }}">
                     <div class="obs-filmstrip__media wm-toolbox-host">
                         <button type="button" class="obs-filmstrip__button" data-bs-toggle="modal"
                             data-bs-target="#modal-obs{{ obs.observation_id }}-{{ det.detection_id }}">
@@ -139,6 +143,7 @@
                 {% endfor %}
             </div>
         </div>
+        {% endif %}
         {% endfor %}
     </div>
 </section>
@@ -194,16 +199,14 @@
 {% endfor %}
 
 {# Observation Modals — each observation renders modals for all its detections #}
-{% set nav = namespace(index=0) %}
 {% for obs in observations %}
 {% for det in obs.all_detections %}
 {{ render_modal(
 det,
 'obs' ~ obs.observation_id,
 nav_scope='subgallery-all-observations',
-nav_index=nav.index
+nav_index=det.nav_index
 ) }}
-{% set nav.index = nav.index + 1 %}
 {% endfor %}
 {% endfor %}
 {% endblock %}
@@ -215,23 +218,50 @@ nav_index=nav.index
 <script src="/assets/js/batch_actions.js?v=1"></script>
 <script>
     const focusObservationId = {{ focus_observation_id | tojson }};
+    const focusDetectionId = {{ focus_detection_id | tojson }};
 
     function highlightObservationTarget(targetEl) {
         if (!targetEl) return;
 
         setTimeout(() => {
             targetEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
-            targetEl.style.outline = '3px solid var(--color-primary)';
-            targetEl.style.outlineOffset = '2px';
+
+            targetEl.classList.remove('wm-tile--focus-target', 'wm-tile--focus-target-fade');
+            void targetEl.offsetWidth;
+            targetEl.classList.add('wm-tile--focus-target');
+
             setTimeout(() => {
-                targetEl.style.outline = '';
-                targetEl.style.outlineOffset = '';
-            }, 2000);
+                targetEl.classList.add('wm-tile--focus-target-fade');
+                setTimeout(() => {
+                    targetEl.classList.remove('wm-tile--focus-target', 'wm-tile--focus-target-fade');
+                }, 1600);
+            }, 10000);
         }, 100);
     }
 
-    /** Toggle the filmstrip for an observation card. */
-    function toggleObsFilmstrip(card) {
+    function highlightFocusedDetection(targetEl) {
+        if (!targetEl) return;
+
+        targetEl.classList.remove(
+            'obs-filmstrip__item--focus-target',
+            'obs-filmstrip__item--focus-target-fade'
+        );
+        void targetEl.offsetWidth;
+        targetEl.classList.add('obs-filmstrip__item--focus-target');
+
+        setTimeout(() => {
+            targetEl.classList.add('obs-filmstrip__item--focus-target-fade');
+            setTimeout(() => {
+                targetEl.classList.remove(
+                    'obs-filmstrip__item--focus-target',
+                    'obs-filmstrip__item--focus-target-fade'
+                );
+            }, 1600);
+        }, 10000);
+    }
+
+    function openObsFilmstrip(card) {
+        if (!card) return;
         if (document.body.classList.contains('inline-edit-active')) return;
 
         const obsId = card.getAttribute('data-obs-id');
@@ -240,9 +270,6 @@ nav_index=nav.index
         const filmstrip = document.getElementById('filmstrip-' + obsId);
         if (!filmstrip) return;
 
-        const isOpen = filmstrip.style.display !== 'none';
-
-        // Close all other filmstrips first
         document.querySelectorAll('.obs-filmstrip').forEach(fs => {
             fs.style.display = 'none';
         });
@@ -250,10 +277,51 @@ nav_index=nav.index
             c.classList.remove('obs-card--expanded');
         });
 
-        if (!isOpen) {
-            filmstrip.style.display = 'block';
-            card.classList.add('obs-card--expanded');
+        filmstrip.style.display = 'block';
+        card.classList.add('obs-card--expanded');
+    }
+
+    function openObservationModal(card) {
+        if (!card) return;
+
+        const modalTarget = card.getAttribute('data-modal-target');
+        if (!modalTarget) return;
+
+        const modalEl = document.querySelector(modalTarget);
+        if (!modalEl) return;
+
+        const modal = bootstrap.Modal.getOrCreateInstance
+            ? bootstrap.Modal.getOrCreateInstance(modalEl)
+            : new bootstrap.Modal(modalEl);
+        modal.show();
+    }
+
+    function handleObservationCardClick(card, event) {
+        if (event?.target?.closest('.wm-toolbox')) return;
+
+        if (card.getAttribute('data-has-filmstrip') === 'true') {
+            toggleObsFilmstrip(card);
+            return;
         }
+
+        openObservationModal(card);
+    }
+
+    /** Toggle the filmstrip for an observation card. */
+    function toggleObsFilmstrip(card) {
+        const obsId = card?.getAttribute('data-obs-id');
+        const filmstrip = obsId ? document.getElementById('filmstrip-' + obsId) : null;
+        if (!obsId || !filmstrip) return;
+
+        const isOpen = filmstrip.style.display !== 'none';
+
+        if (!isOpen) {
+            openObsFilmstrip(card);
+            return;
+        }
+
+        filmstrip.style.display = 'none';
+        card.classList.remove('obs-card--expanded');
     }
 
     /** Close a specific filmstrip. */
@@ -269,7 +337,16 @@ nav_index=nav.index
         if (focusObservationId) {
             const targetEl = document.getElementById('observation-' + focusObservationId);
             if (targetEl) {
+                if (targetEl.getAttribute('data-has-filmstrip') === 'true') {
+                    openObsFilmstrip(targetEl);
+                }
                 highlightObservationTarget(targetEl);
+                if (focusDetectionId && targetEl.getAttribute('data-has-filmstrip') === 'true') {
+                    const detectionEl = document.getElementById('filmstrip-item-' + focusDetectionId);
+                    if (detectionEl) {
+                        highlightFocusedDetection(detectionEl);
+                    }
+                }
                 return;
             }
         }

@@ -38,10 +38,8 @@ def test_subgallery_cover_and_filmstrip_use_toolbox():
 def test_subgallery_observation_modals_define_global_nav_scope():
     content = _read("templates/subgallery.html")
 
-    assert "{% set nav = namespace(index=0) %}" in content
     assert "nav_scope='subgallery-all-observations'" in content
-    assert "nav_index=nav.index" in content
-    assert "{% set nav.index = nav.index + 1 %}" in content
+    assert "nav_index=det.nav_index" in content
 
 
 def test_detection_modal_supports_optional_nav_scope_and_index():
@@ -103,3 +101,13 @@ def test_detection_toolbox_css_and_js_support_scroll_strip_and_sync():
     assert "let modalNavigationInFlight = false;" in js
     assert "hidden.bs.modal" in js
     assert "shown.bs.modal" in js
+
+
+def test_subgallery_focus_styles_live_in_design_system():
+    css = _read("assets/design-system.css")
+
+    assert ".wm-tile--focus-target" in css
+    assert ".wm-tile--focus-target-fade" in css
+    assert ".obs-filmstrip__item--focus-target" in css
+    assert ".obs-filmstrip__item--focus-target-fade" in css
+    assert "@keyframes subgallery-focus-pulse" in css

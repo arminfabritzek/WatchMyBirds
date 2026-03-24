@@ -1682,7 +1682,7 @@ def create_web_interface(detection_manager, system_monitor=None):
 
             # ── Sort observations ──────────────────────────────────────
             if sort_by == "time_asc":
-                observations_all.sort(key=lambda o: o["start_time"])
+                observations_all.sort(key=lambda o: o["end_time"])
             elif sort_by == "score":
                 observations_all.sort(key=lambda o: o["best_score"], reverse=True)
             elif sort_by == "species":
@@ -1690,9 +1690,8 @@ def create_web_interface(detection_manager, system_monitor=None):
                     key=lambda o: COMMON_NAMES.get(o["species"], o["species"]).lower()
                 )
             else:
-                # Default: time_desc — already sorted by start_time desc
-                # from group_detections_into_observations
-                pass
+                # Default: time_desc — newest detection in the observation first.
+                observations_all.sort(key=lambda o: o["end_time"], reverse=True)
 
             total_items = len(observations_all)
             total_pages = math.ceil(total_items / PAGE_SIZE) or 1
@@ -1787,6 +1786,7 @@ def create_web_interface(detection_manager, system_monitor=None):
 
                 return {
                     "detection_id": det.get("detection_id"),
+                    "image_timestamp": ts,
                     "display_url": display_url,
                     "full_url": full_url,
                     "original_url": original_url,
@@ -1841,6 +1841,13 @@ def create_web_interface(detection_manager, system_monitor=None):
                     raw = det_by_id.get(did)
                     if raw:
                         all_dets_enriched.append(enrich_detection(raw))
+                all_dets_enriched.sort(
+                    key=lambda det: (
+                        det.get("image_timestamp", ""),
+                        int(det.get("detection_id") or 0),
+                    ),
+                    reverse=True,
+                )
 
                 enriched_observations.append(
                     {
@@ -1858,6 +1865,30 @@ def create_web_interface(detection_manager, system_monitor=None):
                         "end_time": obs["end_time"],
                     }
                 )
+
+            # Modal navigation should follow the visible gallery sequence:
+            # observation cards stay in grid order, and filmstrip detections
+            # remain adjacent to their observation instead of being interleaved
+            # globally across other observations.
+            nav_index_by_detection_id: dict[int, int] = {}
+            nav_order = [
+                det
+                for obs in enriched_observations
+                for det in obs["all_detections"]
+            ]
+            for idx, det in enumerate(nav_order):
+                det_id = int(det.get("detection_id") or 0)
+                if det_id > 0:
+                    nav_index_by_detection_id[det_id] = idx
+
+            for obs in enriched_observations:
+                obs["cover_detection"]["nav_index"] = nav_index_by_detection_id.get(
+                    int(obs["cover_detection"].get("detection_id") or 0)
+                )
+                for det in obs["all_detections"]:
+                    det["nav_index"] = nav_index_by_detection_id.get(
+                        int(det.get("detection_id") or 0)
+                    )
 
             # Species of the Day (page 1 only) — unchanged logic
             species_of_day = []
@@ -1918,6 +1949,7 @@ def create_web_interface(detection_manager, system_monitor=None):
                 pagination_range=pagination_range,
                 image_width=IMAGE_WIDTH,
                 focus_observation_id=focus_observation_id,
+                focus_detection_id=focus_id_param,
             )
 
         server.add_url_rule(

@@ -27,11 +27,13 @@ def test_subgallery_targets_observation_covers_for_inline_edit():
         'data-batch-target="detection"'
     ) in content
     assert 'data-batch-ids="{{ obs.detection_ids | join(\',\') }}"' in content
+    assert 'data-has-filmstrip="{{ \'true\' if obs.photo_count > 1 else \'false\' }}"' in content
+    assert 'data-modal-target="#modal-obs{{ obs.observation_id }}-{{ obs.cover_detection.detection_id }}"' in content
     assert (
         '<div class="wm-tile fade-in-item" data-detection-id="{{ det.detection_id }}">'
     ) in content
     assert (
-        '<div class="obs-filmstrip__item" data-detection-id="{{ det.detection_id }}">'
+        '<div class="obs-filmstrip__item" id="filmstrip-item-{{ det.detection_id }}"'
     ) in content
 
 

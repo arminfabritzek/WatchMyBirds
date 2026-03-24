@@ -4797,6 +4797,51 @@ body {
     margin-bottom: 0;
 }
 
+#subgallery-grid>.wm-tile[data-obs-id] {
+    transition:
+        transform var(--transition-fast),
+        box-shadow 1.6s ease,
+        border-color 1.6s ease,
+        background-color 1.6s ease;
+}
+
+#subgallery-grid>.wm-tile--focus-target[data-obs-id] {
+    border-color: #1f6f2e;
+    background:
+        linear-gradient(180deg, rgba(47, 125, 50, 0.2), rgba(47, 125, 50, 0.08)),
+        var(--color-surface);
+    box-shadow:
+        0 0 0 6px rgba(47, 125, 50, 0.3),
+        0 0 0 12px rgba(47, 125, 50, 0.12),
+        0 22px 42px rgba(31, 111, 46, 0.24);
+    transform: translateY(-2px) scale(1.01);
+    animation: subgallery-focus-pulse 1.6s ease-in-out 4;
+}
+
+#subgallery-grid>.wm-tile--focus-target-fade[data-obs-id] {
+    border-color: var(--color-border);
+    background: var(--color-surface);
+    box-shadow: var(--shadow-sm);
+    animation: none;
+}
+
+@keyframes subgallery-focus-pulse {
+    0%,
+    100% {
+        box-shadow:
+            0 0 0 6px rgba(47, 125, 50, 0.24),
+            0 0 0 12px rgba(47, 125, 50, 0.1),
+            0 18px 34px rgba(31, 111, 46, 0.18);
+    }
+
+    50% {
+        box-shadow:
+            0 0 0 9px rgba(47, 125, 50, 0.38),
+            0 0 0 18px rgba(47, 125, 50, 0.14),
+            0 26px 46px rgba(31, 111, 46, 0.28);
+    }
+}
+
 .obs-card__cover {
     position: relative;
     flex-shrink: 0;
@@ -4931,6 +4976,26 @@ body {
     gap: 4px;
     min-width: 0;
     scroll-snap-align: start;
+    border-radius: var(--radius-md);
+    padding: 6px;
+    transition:
+        box-shadow 1.6s ease,
+        background-color 1.6s ease,
+        transform var(--transition-fast);
+}
+
+.obs-filmstrip__item--focus-target {
+    background: rgba(47, 125, 50, 0.16);
+    box-shadow:
+        0 0 0 4px rgba(47, 125, 50, 0.28),
+        0 12px 24px rgba(31, 111, 46, 0.22);
+    transform: translateY(-2px);
+}
+
+.obs-filmstrip__item--focus-target-fade {
+    background: transparent;
+    box-shadow: none;
+    transform: none;
 }
 
 .obs-filmstrip__media {
