@@ -274,3 +274,6 @@ docker-compose.yml
 .agent/
 /_debug_logs
 tools/onvif_ptz_tester/.onvif_tester_settings.json
+
+# Local-only agent handoff directory (may be a symlink to an external workspace)
+agent_handoff/
