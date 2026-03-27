@@ -58,7 +58,7 @@
 - 📖 **Species encyclopedia** — Wikipedia descriptions for every detected species
 - ✅ **Review queue** — Triage new detections — keep, reclassify, or trash in one swipe
 - 🗑️ **Trash & restore** — Soft-delete with easy restore — nothing lost by accident
-- 🎥 **ONVIF & PTZ** — Auto-discover IP cameras with pan-tilt-zoom control from the UI
+- 🎥 **ONVIF discovery & PTZ control** — Implements ONVIF-based IP camera discovery and PTZ control from the UI
 
 ---
 

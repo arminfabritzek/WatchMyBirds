@@ -16,7 +16,7 @@ If you have tested a camera not listed here, please open an issue or PR to add i
 | Camera | Protocol | Resolution | Status | Notes | Reported by | Date |
 |--------|----------|------------|--------|-------|-------------|------|
 | D-Link DCS-6100LH | RTSP | 1080p | ✅ Working | — | Community | 2026-02 |
-| SV3C PTZ (15× Optical Zoom) | RTSP | 2560×1920, 2560×1440 | ✅ Working | ONVIF supported but unreliable; RTSP recommended | Developer | 2026-02 |
+| SV3C PTZ (15× Optical Zoom) | RTSP | 2560×1920, 2560×1440 | ✅ Working | Advanced camera control was unreliable in testing; RTSP recommended | Developer | 2026-02 |
 | Raspberry Pi Camera Module (CSI) | CSI / USB | 1080p | ✅ Working | Also works via motionEyeOS | Developer | 2026-02 |
 | USB Webcam + motionEyeOS | RTSP | 1080p | ✅ Working | Stream via motionEyeOS on Raspberry Pi | Developer | 2026-02 |
 

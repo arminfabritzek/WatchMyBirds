@@ -150,7 +150,7 @@ Updates application settings. Only runtime-modifiable keys are accepted.
 ### 3. ONVIF Camera Discovery
 
 #### GET `/api/onvif/discover`
-Scans network for ONVIF-compatible cameras.
+Scans the network for supported IP cameras.
 
 **Response:**
 ```json
@@ -179,7 +179,7 @@ Scans network for ONVIF-compatible cameras.
 ---
 
 #### POST `/api/onvif/get_stream_uri`
-Retrieves RTSP stream URI for a camera.
+Retrieves an RTSP stream URI for a configured camera.
 
 **Request Body:**
 ```json

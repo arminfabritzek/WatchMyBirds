@@ -36,6 +36,12 @@ Data Sources
 
 Software & Tools
 ----------------
+  - ONVIF WSDL/XSD documents — This project includes unmodified ONVIF WSDL/XSD
+    documents under `assets/onvif_wsdl/`. Retain the embedded ONVIF copyright,
+    license, and disclaimer notices with any redistributed copies. No ONVIF
+    certification, conformance claim, or trademark license is implied by their
+    inclusion here.
+
   - Label Studio — Annotation tool by HumanSignal, Inc., used under the
     Label Studio Academic Program, which provides eligible academic users
     with free access to Label Studio Enterprise Cloud for non-commercial
