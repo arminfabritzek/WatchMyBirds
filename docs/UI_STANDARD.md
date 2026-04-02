@@ -1,16 +1,156 @@
-# WatchMyBirds UI Standard (mandatory)
+# WatchMyBirds UI Standard
 
-This file defines the mandatory DOM structure for:
+This file defines the current branch frontend conventions and the preferred
+shared DOM structures for:
 - Modals (including types/variants)
+- Review-stage panels
 - Thumbnails / Tiles (including types/variants)
-- Action-Bar
-- Image-Viewer
+- Action bars
+- Image viewers
 
-From Phase A Task A.5 onwards, templates must exclusively use these structures.
-No deviations. No custom interpretations.
+This is migration-aware guidance for the current branch state. It is not a claim
+that every legacy surface has already been converted.
 
-Variants follow the BEM modifier `--` and are always set in addition to the base class
-(e.g., `wm-modal wm-modal--form`, `wm-tile wm-tile--review`).
+Variants follow the BEM modifier `--` and are always set in addition to the base
+class (for example `wm-modal wm-modal--form`, `wm-tile wm-tile--review`).
+
+## Current Branch Conventions
+
+- `assets/design-system.css` is the authoritative source for shared UI
+  primitives such as buttons, badges, review-stage controls, tiles, and modal
+  subcomponents.
+- Detection-bearing surfaces currently belong to one of two shells:
+  `public shell` for Stream, Gallery, Species, and Species Overview, and
+  `workbench shell` for Review and Trash. Layout density may differ, but shared
+  detection components must not fork semantics or wording between shells.
+- New shared buttons must use `btn` plus the design-system modifiers such as
+  `btn--primary`, `btn--secondary`, `btn--danger`, `btn--sm`, `btn--lg`, and
+  `btn--block`.
+- Legacy Bootstrap-era button classes still exist in older surfaces such as
+  `settings`, `edit`, `login`, and `partials/taskbar`. They are tolerated only
+  as migration debt. Do not introduce new `btn btn-primary`,
+  `btn btn-outline-*`, `btn-light`, or similar legacy-only patterns.
+- Detection modal composition should continue to flow through
+  `templates/components/detection_modal.html`, which already composes
+  `modal_image_viewer.html`, `modal_detection_info.html`, and
+  `modal_action_bar.html`.
+- Review-stage composition should continue to flow through
+  `templates/components/review_stage_panel.html` and
+  `templates/components/orphan_modal.html`.
+- Review-stage panels should read as one operator workbench:
+  queue rail on the left, image viewer in the center, inspector/action rail on
+  the right. Keep utility copy short and prefer compact section labels such as
+  `Actions`, `BBox`, `Species`, and `Approve`.
+- The inline Review viewer should sit inside one stable stage frame with a
+  consistent aspect ratio and `contain` behavior so portrait vs landscape images
+  do not reflow the workbench or misalign the control strip.
+- Review bbox overlays must stay bound to the real rendered image frame inside
+  that stage, not to the outer stage container, so inline bbox geometry matches
+  the modal viewer.
+- The Review facts row, viewer stage, and under-image control strip should share
+  the same content width so the workbench reads as one aligned column rather
+  than separate floating blocks.
+- Review previous/next controls should read as compact centered stage buttons,
+  not as stretched side rails that change the perceived height of the viewer.
+- Review metrics/facts should not live as a permanent full-width badge row above
+  the stage. When shown, prefer a compact toggle-revealed metadata panel inside
+  the Review viewer shell so the image remains primary.
+- The Review workbench viewer may stay inline for fast triage, but clicking the
+  image should open the same larger `wm-modal` viewer style used elsewhere in
+  the app when closer inspection is needed.
+- When practical, the prominent inline Review image should reuse the same
+  shared image-viewer composition (`render_image_viewer` plus toolbox/zoom
+  affordances) as the detail modal instead of maintaining a separate Review-only
+  image engine.
+- Detection-backed Review zoom must reuse
+  `templates/components/detection_modal.html` instead of forking a review-only
+  modal shell. Only true no-detection review items may fall back to a simpler
+  image-backed modal.
+- Trash should follow the same `workbench shell` logic:
+  summary bar above, left-side ops rail for batch/range/import controls, and
+  the item surface on the right.
+- Review and modal status text mapping must come from one shared helper or
+  macro, not from duplicated inline label logic.
+- If markup or decision logic repeats in 2 or more surfaces, extract a shared
+  partial, macro, or Python helper instead of duplicating it again.
+- `assets/js/gallery_utils.js` is still an oversized compatibility module.
+  New unrelated behavior should go into a dedicated JS file rather than growing
+  that file further.
+
+## Detection Action Frame Contract
+
+The shared detection action frame is the canonical control surface for
+detection-bearing tiles, filmstrips, and modal/detail surfaces.
+
+- Canonical action vocabulary:
+  `View Details`, `Favorite`, `Change Species`, `Move to Trash`, `Restore`,
+  `BBox Confirm`, `BBox Reject`, `Approve Detection`, `Deep Scan`
+- Surfaces may omit actions only when the subject identity or route does not
+  support them. They must not rename the same underlying action on another
+  surface.
+- New detection controls must use delegated `data-action` handlers. Do not add
+  new inline `onclick` handlers for detection actions.
+- Public surfaces must render the same frame for guests and authenticated users.
+  Protected actions must stay visible in a disabled/login-required state rather
+  than disappearing.
+- Workbench surfaces may stay authenticated-only, but when they reuse the frame
+  they should keep the same wording and ordering.
+- Review-side utility panels may keep short section headings, but action labels
+  themselves should stay canonical, for example `Change Species`,
+  `BBox Confirm`, and `BBox Reject`.
+- Viewer/navigation controls such as zoom, close, next/previous, and download
+  are not canonical detection actions. They may sit next to the frame, but they
+  must not replace it.
+- In detail modals, object actions such as `Favorite` and `Change Species`
+  should prefer the image hover toolbox itself. The modal footer should stay a
+  calmer viewer/navigation strip instead of duplicating object actions.
+
+## Detection Presentation Anti-Drift Rules
+
+`docs/UI_STANDARD.md` defines shared frontend composition rules. The architecture
+lane in
+`agent_handoff/workflow/active/main/2026-03-28_ARCHITECTURE_detection-presentation-source-of-truth_ACTIVE.md`
+defines the semantic migration target for detection presentation.
+
+To prevent future drift between surfaces:
+
+- Detection badge meaning, species/title trust semantics, and review approval
+  semantics must come from one shared source per concern.
+- Templates may compose shared values, but they must not re-derive badge labels,
+  manual-vs-AI meaning, or species/title trust rules from raw DB fields in new
+  local inline logic.
+- When a detection surface needs status text, species/title display values, or
+  review-state display values, prefer a presenter/helper or shared macro input
+  over branching directly in the template.
+- New review actions should use `data-*` attributes plus delegated JS handlers.
+  Do not add new inline `onclick="..."` handlers with serialized dynamic data.
+- If a modal/detail footer exposes detection actions, it must consume the same
+  action-frame vocabulary used by tile and filmstrip surfaces instead of
+  inventing modal-only wording such as `Relabel` or `Delete`.
+- If a semantic rule changes in one detection surface and should apply to other
+  detection surfaces, the shared helper/macro contract must be updated first, or
+  in the same change.
+- Any PR that changes shared detection semantics must update this file if the
+  contract, ownership, or allowed patterns changed.
+
+## Review Checklist
+
+- Use `assets/design-system.css` for shared primitives; page-local CSS should be
+  limited to surface-specific layout.
+- Prefer shared modal and review-stage compositions over building another local
+  variant.
+- Do not add new legacy Bootstrap button variants to templates.
+- Do not duplicate decision-state or badge semantics in templates.
+- Do not rename canonical detection actions per surface.
+- Do not add new inline event handlers for review/detection interactions; use
+  delegated handlers with `data-*` attributes.
+- If a JS file is already a mixed-responsibility module, add new work in a
+  dedicated file unless it is the same responsibility.
+- If a template pattern repeats in 2 or more places, extract it before the
+  third copy lands.
+- If a shared detection semantic changed, verify whether
+  `docs/UI_STANDARD.md` and the active detection-presentation workflow need the
+  same update.
 
 ---
 
