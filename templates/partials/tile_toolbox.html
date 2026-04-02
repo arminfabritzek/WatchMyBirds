@@ -13,6 +13,8 @@ can_moderate (bool): Whether destructive actions are available.
 review_reason (str|None): 'orphan' | 'low_confidence' | None — gates Deep Scan.
 modal_target (str|None): CSS selector for the detail modal (e.g. '#modal-species-42').
 details_href (str|None): Fallback navigation target for details when no modal exists.
+current_species (str|None): Current species key for relabel/change-species flows.
+frame_variant (str): 'overlay' for tiles, 'bar' for modal/action-footers.
 #}
 {% macro tile_toolbox(
 detection_id=none,
@@ -22,81 +24,105 @@ is_favorite=false,
 can_moderate=false,
 review_reason=none,
 modal_target=none,
-details_href=none
+details_href=none,
+current_species=none,
+frame_variant='overlay',
+show_viewer_tools=false,
+show_boxes=false,
+current_bbox_json='{}'
 ) %}
-<div class="wm-toolbox" role="toolbar" aria-label="Tile actions">
+{% set can_open_details = modal_target or details_href %}
+{% set show_favorite = detection_id %}
+{% set show_change_species = detection_id %}
+{% set show_move_to_trash = detection_id and surface != 'trash' %}
+{% set show_restore = surface == 'trash' %}
+{% set show_deep_scan = surface == 'review' and review_reason == 'orphan' and filename %}
+
+<div class="wm-toolbox{% if frame_variant == 'bar' %} wm-toolbox--bar{% endif %}" role="toolbar"
+    aria-label="Detection actions">
+    {% if show_viewer_tools %}
+    <button type="button" class="wm-toolbox__btn smart-zoom-toggle" data-review-viewer-tool="zoom"
+        title="Toggle between bird close-up and full image">⌕ Full</button>
+    {% if show_boxes %}
+    <button type="button" class="wm-toolbox__btn bbox-toggle" data-review-viewer-tool="bbox"
+        data-detection-id="{{ detection_id or 0 }}" data-siblings="[]" data-current-bbox='{{ current_bbox_json }}'
+        title="Toggle bounding boxes">Boxes</button>
+    {% endif %}
+    {% endif %}
+
     {# ── Favorite toggle (only for detection tiles) ── #}
-    {% if detection_id %}
-    <button type="button" class="wm-toolbox__btn wm-toolbox__fav{% if is_favorite %} wm-toolbox__fav--active{% endif %}"
+    {% if show_favorite %}
+    <button type="button"
+        class="wm-toolbox__btn wm-toolbox__fav{% if is_favorite %} wm-toolbox__fav--active{% endif %}{% if not can_moderate %} wm-toolbox__btn--locked{% endif %}"
         data-action="favorite" data-detection-id="{{ detection_id }}"
+        {% if not can_moderate %}data-login-required="true" aria-disabled="true"{% endif %}
         aria-label="{{ 'Remove from favorites' if is_favorite else 'Add to favorites' }}"
         aria-pressed="{{ 'true' if is_favorite else 'false' }}"
-        title="{{ 'Unfavorite' if is_favorite else 'Favorite' }}">
+        title="{{ 'Login required for Favorite' if not can_moderate else ('Unfavorite' if is_favorite else 'Favorite') }}">
         {{ '⭐' if is_favorite else '☆' }}
     </button>
     {% endif %}
 
     {# ── Tools menu trigger ── #}
-    {% if can_moderate or modal_target or details_href %}
+    {% if can_open_details or show_change_species or show_move_to_trash or show_restore or show_deep_scan %}
     <div class="wm-toolbox__menu" role="group" aria-label="More actions">
         <button type="button" class="wm-toolbox__btn wm-toolbox__more" data-action="toggle-menu" aria-haspopup="true"
             aria-expanded="false" aria-label="More actions" title="More actions">⋮</button>
 
         <div class="wm-toolbox__dropdown" role="menu" aria-label="Actions">
             {# Details — opens the detection modal (Top-K, Confidences, Wiki) #}
-            {% if modal_target or details_href %}
-            <button type="button" class="wm-toolbox__item" role="menuitem" data-action="details"
+            {% if can_open_details %}
+            <button type="button" class="wm-toolbox__item" role="menuitem" data-action="view-details"
                 {% if modal_target %}data-modal-target="{{ modal_target }}" {% endif %}
-                {% if details_href %}data-details-href="{{ details_href }}" {% endif %}aria-label="Show details">
-                ℹ️ <span>Details</span>
+                {% if details_href %}data-details-href="{{ details_href }}" {% endif %}aria-label="View details">
+                ℹ️ <span>View Details</span>
             </button>
             {% endif %}
 
             {# Relabel — only if we have a detection_id #}
-            {% if detection_id and can_moderate %}
-            <button type="button" class="wm-toolbox__item" role="menuitem" data-action="relabel"
-                data-detection-id="{{ detection_id }}" aria-label="Relabel species">
-                🏷️ <span>Relabel</span>
+            {% if show_change_species %}
+            <button type="button"
+                class="wm-toolbox__item{% if not can_moderate %} wm-toolbox__item--disabled{% endif %}"
+                role="menuitem" data-action="change-species" data-detection-id="{{ detection_id }}"
+                data-current-species="{{ current_species or '' }}"
+                {% if not can_moderate %}data-login-required="true" aria-disabled="true"{% endif %}
+                aria-label="Change species">
+                🏷️ <span>Change Species</span>
             </button>
             {% endif %}
 
             {# Delete / Reject #}
-            {% if detection_id and can_moderate %}
-            <button type="button" class="wm-toolbox__item wm-toolbox__item--danger" role="menuitem" data-action="delete"
-                data-detection-id="{{ detection_id }}" aria-label="Move to trash">
-                🗑️ <span>Delete</span>
+            {% if show_move_to_trash %}
+            <button type="button"
+                class="wm-toolbox__item wm-toolbox__item--danger{% if not can_moderate %} wm-toolbox__item--disabled{% endif %}"
+                role="menuitem" data-action="move-trash" data-detection-id="{{ detection_id }}"
+                {% if not can_moderate %}data-login-required="true" aria-disabled="true"{% endif %}
+                aria-label="Move to trash">
+                🗑️ <span>Move to Trash</span>
             </button>
             {% endif %}
 
             {# Review-specific: Deep Scan (orphan only) #}
-            {% if surface == 'review' and review_reason == 'orphan' and filename %}
+            {% if show_deep_scan %}
             <button type="button" class="wm-toolbox__item" role="menuitem" data-action="deep-scan"
                 data-filename="{{ filename }}" aria-label="Deep Scan this image">
                 🔍 <span>Deep Scan</span>
             </button>
             {% endif %}
 
-            {# Review-specific: Bird Present (non-orphan) #}
-            {% if surface == 'review' and review_reason != 'orphan' and filename %}
-            <button type="button" class="wm-toolbox__item" role="menuitem" data-action="review-confirm"
-                data-filename="{{ filename }}" aria-label="Mark as Bird Present">
-                ✓ <span>Bird Present</span>
-            </button>
-            {% endif %}
-
-            {# Review-specific: No Bird / Trash #}
-            {% if surface == 'review' and filename %}
-            <button type="button" class="wm-toolbox__item wm-toolbox__item--danger" role="menuitem"
-                data-action="review-no-bird" data-filename="{{ filename }}" aria-label="Mark as No Bird">
-                ✗ <span>No Bird</span>
-            </button>
-            {% endif %}
-
             {# Trash-specific: Restore #}
-            {% if surface == 'trash' %}
+            {% if show_restore %}
             <button type="button" class="wm-toolbox__item" role="menuitem" data-action="restore"
                 data-detection-id="{{ detection_id }}" data-filename="{{ filename }}" aria-label="Restore from trash">
                 ↩ <span>Restore</span>
+            </button>
+            {% endif %}
+
+            {# Review-specific: image-backed no-bird state still lives on the image #}
+            {% if surface == 'review' and filename %}
+            <button type="button" class="wm-toolbox__item wm-toolbox__item--danger" role="menuitem"
+                data-action="review-no-bird" data-filename="{{ filename }}" aria-label="Mark as no bird">
+                ✗ <span>Mark No Bird</span>
             </button>
             {% endif %}
         </div>

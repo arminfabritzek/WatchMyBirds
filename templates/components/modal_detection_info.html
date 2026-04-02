@@ -10,6 +10,24 @@ siblings (list): List of sibling detections (if multi-detection image)
 sibling_count (int): Total number of detections on this image
 can_moderate (bool): Whether to show moderation controls (relabel/delete)
 #}
+{% macro render_review_status_text(item, style='') %}
+{% set has_manual_species_review = (item.species_source == 'manual') and item.manual_species_override %}
+{% set has_manual_review_approval = has_manual_species_review and (item.review_status == REVIEW_STATUS_CONFIRMED_BIRD) %}
+{% if has_manual_review_approval %}
+<span{% if style %} style="{{ style }} color: var(--color-success, #22c55e);"{% else %} style="color: var(--color-success, #22c55e);"{% endif %} title="Confirmed by a human reviewer">🧑👍 Human confirmed</span>
+{% elif item.decision_state %}
+    {% if item.decision_state == 'confirmed' %}
+<span{% if style %} style="{{ style }} color: var(--color-success, #22c55e);"{% else %} style="color: var(--color-success, #22c55e);"{% endif %} title="Automatic AI/policy assessment">🤖 AI confirmed</span>
+    {% elif item.decision_state == 'uncertain' %}
+<span{% if style %} style="{{ style }} color: var(--color-warning, #eab308);"{% else %} style="color: var(--color-warning, #eab308);"{% endif %} title="Automatic AI/policy assessment">🤖 AI uncertain</span>
+    {% elif item.decision_state == 'unknown' %}
+<span{% if style %} style="{{ style }} color: var(--color-info, #3b82f6);"{% else %} style="color: var(--color-info, #3b82f6);"{% endif %} title="Automatic AI/policy assessment">🤖 AI unknown</span>
+    {% elif item.decision_state == 'rejected' %}
+<span{% if style %} style="{{ style }} color: var(--color-danger, #ef4444);"{% else %} style="color: var(--color-danger, #ef4444);"{% endif %} title="Automatic AI/policy assessment">🤖 AI rejected</span>
+    {% endif %}
+{% endif %}
+{% endmacro %}
+
 {% macro render_detection_info(det, siblings=none, sibling_count=1, can_moderate=false) %}
 <div class="detection-info small text-muted mt-2 text-center">
     {% if sibling_count and sibling_count > 1 and siblings %}
@@ -40,18 +58,10 @@ can_moderate (bool): Whether to show moderation controls (relabel/delete)
                 {{ "%.0f"|format(sib.od_confidence * 100) }}%
                 {% if sib.cls_class_name %} / {{ "%.0f"|format(sib.cls_confidence * 100) }}%{% endif %}
             </div>
-            {# Decision state badge (P1-04) #}
-            {% if sib.decision_state %}
+            {% set sib_review_status = render_review_status_text(sib) %}
+            {% if sib_review_status|trim %}
             <div style="font-size: 0.6rem; margin-top: 2px;">
-                {% if sib.decision_state == 'confirmed' %}
-                <span style="color: var(--color-success, #22c55e);" title="Decision: Confirmed">✅</span>
-                {% elif sib.decision_state == 'uncertain' %}
-                <span style="color: var(--color-warning, #eab308);" title="Decision: Uncertain">⚠️ uncertain</span>
-                {% elif sib.decision_state == 'unknown' %}
-                <span style="color: var(--color-info, #3b82f6);" title="Decision: Unknown">❓ unknown</span>
-                {% elif sib.decision_state == 'rejected' %}
-                <span style="color: var(--color-danger, #ef4444);" title="Decision: Rejected">🚫 rejected</span>
-                {% endif %}
+                {{ sib_review_status }}
             </div>
             {% endif %}
             {% if can_moderate %}
@@ -97,18 +107,10 @@ can_moderate (bool): Whether to show moderation controls (relabel/delete)
                 {{ "%.0f"|format(det.od_confidence * 100) }}%
                 {% if det.cls_class_name %} / {{ "%.0f"|format(det.cls_confidence * 100) }}%{% endif %}
             </div>
-            {# Decision state badge (P1-04) #}
-            {% if det.decision_state %}
+            {% set det_review_status = render_review_status_text(det) %}
+            {% if det_review_status|trim %}
             <div style="font-size: 0.6rem; margin-top: 2px;">
-                {% if det.decision_state == 'confirmed' %}
-                <span style="color: var(--color-success, #22c55e);" title="Decision: Confirmed">✅</span>
-                {% elif det.decision_state == 'uncertain' %}
-                <span style="color: var(--color-warning, #eab308);" title="Decision: Uncertain">⚠️ uncertain</span>
-                {% elif det.decision_state == 'unknown' %}
-                <span style="color: var(--color-info, #3b82f6);" title="Decision: Unknown">❓ unknown</span>
-                {% elif det.decision_state == 'rejected' %}
-                <span style="color: var(--color-danger, #ef4444);" title="Decision: Rejected">🚫 rejected</span>
-                {% endif %}
+                {{ det_review_status }}
             </div>
             {% endif %}
             {% if can_moderate %}

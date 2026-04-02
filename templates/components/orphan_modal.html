@@ -1,80 +1,334 @@
-{% macro render_orphan_modal(orphan) %}
-{#
-Renders a review modal for an image in the Review Queue.
-(UI_STANDARD.md compliant)
+{% from "components/modal_image_viewer.html" import render_image_viewer %}
+{% from "components/modal_action_bar.html" import render_action_bar %}
+{% from "components/detection_modal.html" import render_modal %}
+{% from "partials/tile_toolbox.html" import tile_toolbox %}
+{% macro render_orphan_modal(orphan, is_active=false) %}
+{% set has_bbox = orphan.bbox_w and orphan.bbox_h and orphan.bbox_w > 0 and orphan.bbox_h > 0 %}
+{% set zoom_modal_id = 'review-zoom-' ~ (orphan.item_key | replace(':', '-') | replace('.', '_')) %}
+{% set facts_panel_id = 'review-facts-' ~ (orphan.item_key | replace(':', '-') | replace('.', '_')) %}
+{% set detection_modal_target = '#modal-review-' ~ orphan.best_detection_id if orphan.has_detection and orphan.best_detection_id else none %}
+{% set viewer_modal_target = detection_modal_target or ('#' ~ zoom_modal_id) %}
+<div class="review-stage-panel__content">
+    <div class="review-stage-panel__workbench">
+        <div class="review-stage-panel__canvas">
+            <div class="review-stage-panel__viewer-shell">
+                <button type="button" class="review-stage-panel__nav review-stage-panel__nav--prev"
+                    data-review-nav="-1" aria-label="Previous item">‹</button>
+                <button type="button" class="review-stage-panel__facts-toggle"
+                    data-review-facts-toggle aria-expanded="true" aria-controls="{{ facts_panel_id }}">
+                    Metrics
+                </button>
+                <div class="review-stage-panel__facts-panel" id="{{ facts_panel_id }}" data-review-facts-panel>
+                    <div class="review-stage-panel__facts-grid">
+                        <div class="review-stage-panel__facts-item review-stage-panel__facts-item--strong">
+                            <span class="review-stage-panel__facts-label">Status</span>
+                            <span class="review-stage-panel__facts-value">{{ orphan.reason_label }}</span>
+                        </div>
+                        {% if orphan.current_species_common %}
+                        <div class="review-stage-panel__facts-item">
+                            <span class="review-stage-panel__facts-label">Species</span>
+                            <span class="review-stage-panel__facts-value">{{ orphan.current_species_common }}</span>
+                        </div>
+                        {% endif %}
+                        {% if orphan.max_score is not none %}
+                        <div class="review-stage-panel__facts-item">
+                            <span class="review-stage-panel__facts-label">Score</span>
+                            <span class="review-stage-panel__facts-value">{{ "%.0f"|format(orphan.max_score * 100) }}%</span>
+                        </div>
+                        {% endif %}
+                        {% if orphan.cls_confidence_pct is not none %}
+                        <div class="review-stage-panel__facts-item">
+                            <span class="review-stage-panel__facts-label">CLS</span>
+                            <span class="review-stage-panel__facts-value">{{ orphan.cls_confidence_pct }}%</span>
+                        </div>
+                        {% endif %}
+                        {% if orphan.od_confidence_pct is not none %}
+                        <div class="review-stage-panel__facts-item">
+                            <span class="review-stage-panel__facts-label">OD</span>
+                            <span class="review-stage-panel__facts-value">{{ orphan.od_confidence_pct }}%</span>
+                        </div>
+                        {% endif %}
+                        {% if orphan.bbox_quality_pct is not none %}
+                        <div class="review-stage-panel__facts-item">
+                            <span class="review-stage-panel__facts-label">BBox</span>
+                            <span class="review-stage-panel__facts-value">{{ orphan.bbox_quality_pct }}%</span>
+                        </div>
+                        {% endif %}
+                        {% if orphan.unknown_score_pct is not none %}
+                        <div class="review-stage-panel__facts-item">
+                            <span class="review-stage-panel__facts-label">Unknown</span>
+                            <span class="review-stage-panel__facts-value">{{ orphan.unknown_score_pct }}%</span>
+                        </div>
+                        {% endif %}
+                        {% if orphan.manual_bbox_review == 'wrong' %}
+                        <div class="review-stage-panel__facts-item review-stage-panel__facts-item--danger">
+                            <span class="review-stage-panel__facts-label">BBox Review</span>
+                            <span class="review-stage-panel__facts-value">Reject</span>
+                        </div>
+                        {% elif orphan.manual_bbox_review == 'correct' %}
+                        <div class="review-stage-panel__facts-item review-stage-panel__facts-item--success">
+                            <span class="review-stage-panel__facts-label">BBox Review</span>
+                            <span class="review-stage-panel__facts-value">Confirm</span>
+                        </div>
+                        {% endif %}
+                        <div class="review-stage-panel__facts-item">
+                            <span class="review-stage-panel__facts-label">Time</span>
+                            <span class="review-stage-panel__facts-value">{{ orphan.formatted_date }}</span>
+                        </div>
+                    </div>
+                    <div class="review-stage-panel__facts-divider"></div>
+                    <div class="review-stage-panel__facts-grid review-stage-panel__facts-grid--global">
+                        <div class="review-stage-panel__facts-item">
+                            <span class="review-stage-panel__facts-label">Auto</span>
+                            <span class="review-stage-panel__facts-value" data-review-global-metric="auto_accepted">-</span>
+                        </div>
+                        <div class="review-stage-panel__facts-item">
+                            <span class="review-stage-panel__facts-label">Manual</span>
+                            <span class="review-stage-panel__facts-value" data-review-global-metric="manual_confirmed">-</span>
+                        </div>
+                        <div class="review-stage-panel__facts-item">
+                            <span class="review-stage-panel__facts-label">Policy</span>
+                            <span class="review-stage-panel__facts-value" data-review-global-metric="policy_confirmed">-</span>
+                        </div>
+                        <div class="review-stage-panel__facts-item">
+                            <span class="review-stage-panel__facts-label">Uncertain</span>
+                            <span class="review-stage-panel__facts-value" data-review-global-metric="uncertain">-</span>
+                        </div>
+                        <div class="review-stage-panel__facts-item">
+                            <span class="review-stage-panel__facts-label">Unknown</span>
+                            <span class="review-stage-panel__facts-value" data-review-global-metric="unknown">-</span>
+                        </div>
+                        <div class="review-stage-panel__facts-item">
+                            <span class="review-stage-panel__facts-label">Rejected</span>
+                            <span class="review-stage-panel__facts-value" data-review-global-metric="rejected">-</span>
+                        </div>
+                        <div class="review-stage-panel__facts-item review-stage-panel__facts-item--strong">
+                            <span class="review-stage-panel__facts-label">Queue</span>
+                            <span class="review-stage-panel__facts-value" data-review-global-metric="review_queue">-</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="review-stage-panel__viewer wm-viewer-scope">
+                    <div class="review-stage-panel__viewer-media wm-toolbox-host">
+                        <div class="review-stage-panel__image-frame">
+                            {{ render_image_viewer(
+                            image_url=orphan.full_url if is_active else orphan.thumb_url,
+                            image_alt=orphan.current_species_common or orphan.source_image_filename,
+                            detection_id=orphan.best_detection_id or 0,
+                            bbox={'x': orphan.bbox_x, 'y': orphan.bbox_y, 'w': orphan.bbox_w, 'h': orphan.bbox_h} if has_bbox else none,
+                            dismissable=false
+                            ) }}
+                        </div>
+                        {{ tile_toolbox(
+                        detection_id=orphan.best_detection_id,
+                        filename=orphan.filename,
+                        surface='review',
+                        can_moderate=true,
+                        review_reason=orphan.review_reason,
+                        modal_target=viewer_modal_target,
+                        current_species=orphan.selected_species or orphan.species_key,
+                        show_viewer_tools=true,
+                        show_boxes=has_bbox,
+                        current_bbox_json={
+                            "x": orphan.bbox_x,
+                            "y": orphan.bbox_y,
+                            "w": orphan.bbox_w,
+                            "h": orphan.bbox_h,
+                            "name": orphan.current_species_common or "Detection",
+                            "id": orphan.best_detection_id or 0
+                        } | tojson
+                        ) }}
+                    </div>
+                </div>
+                <button type="button" class="review-stage-panel__nav review-stage-panel__nav--next"
+                    data-review-nav="1" aria-label="Next item">›</button>
+            </div>
+        </div>
 
-Args:
-orphan (dict): The image object containing:
-- filename, formatted_date
-- thumb_url, full_url
-- review_reason, reason_label
-- max_score
-#}
-<div class="modal fade gallery-modal wm-modal" id="modal-review-{{ orphan.filename|replace('.', '_') }}" tabindex="-1"
-    aria-hidden="true" data-modal-group="review" data-image-path="{{ orphan.full_url }}">
+        {% if orphan.has_detection %}
+        <aside class="review-stage-panel__controls" data-review-controls data-filename="{{ orphan.filename }}"
+            data-item-kind="{{ orphan.item_kind }}" data-item-id="{{ orphan.item_id }}" data-item-key="{{ orphan.item_key }}"
+            data-detection-id="{{ orphan.best_detection_id }}" data-bbox-review="{{ orphan.selected_bbox_review or '' }}"
+            data-bbox-review-explicit="{% if orphan.selected_bbox_review_origin == 'manual' %}1{% else %}0{% endif %}"
+            data-selected-species="{{ orphan.selected_species or '' }}">
+            <div class="review-stage-panel__decision-rail">
+                <div class="review-stage-panel__section review-stage-panel__section--bbox">
+                    <div class="review-stage-panel__section-label">BBox</div>
+                    <div class="review-stage-panel__bbox-actions">
+                        <button type="button"
+                            class="review-stage-panel__toggle{% if orphan.selected_bbox_review == BBOX_REVIEW_CORRECT %} is-correct{% elif orphan.selected_bbox_review == BBOX_REVIEW_WRONG %} is-wrong{% endif %}"
+                            data-bbox-review-toggle
+                            data-bbox-review-value="{{ orphan.selected_bbox_review or BBOX_REVIEW_CORRECT }}"
+                            aria-label="Toggle bbox review state">
+                            <span class="review-stage-panel__toggle-title">BBox</span>
+                            <span class="review-stage-panel__toggle-copy" data-bbox-review-copy>
+                                {% if orphan.selected_bbox_review == BBOX_REVIEW_WRONG %}Wrong{% else %}Correct{% endif %}
+                            </span>
+                        </button>
+                    </div>
+                </div>
 
-    <div
-        class="modal-dialog modal-xl modal-dialog-centered modal-dialog-scrollable modal-fullscreen-md-down wm-modal__dialog">
+                <div class="review-stage-panel__section review-stage-panel__section--approve">
+                    <div class="review-stage-panel__section-label">Decision</div>
+                    <button type="button" class="review-stage-panel__action review-stage-panel__action--primary"
+                        data-review-panel-action="approve_review" data-item-key="{{ orphan.item_key }}" data-filename="{{ orphan.filename }}"
+                        {% if not orphan.can_approve %}disabled{% endif %}>
+                        <span class="review-stage-panel__action-icon">✓</span>
+                        <span class="review-stage-panel__action-copy">Approve</span>
+                    </button>
+                </div>
+
+                <div class="review-stage-panel__section review-stage-panel__section--actions">
+                    <div class="review-stage-panel__section-label">Utilities</div>
+                    <div class="review-stage-panel__action-stack">
+                        {% if orphan.review_reason == 'orphan' %}
+                        <button type="button" class="review-stage-panel__action review-stage-panel__action--scan"
+                            id="btn-analyze-panel-{{ orphan.filename|replace('.', '_') }}"
+                            data-review-panel-action="deep_scan" data-item-key="{{ orphan.item_key }}" data-filename="{{ orphan.filename }}">
+                            <span class="review-stage-panel__action-icon">🔍</span>
+                            <span class="review-stage-panel__action-copy">Deep Scan</span>
+                        </button>
+                        {% endif %}
+                        <button type="button" class="review-stage-panel__action review-stage-panel__action--danger"
+                            data-review-panel-action="trash" data-item-key="{{ orphan.item_key }}" data-filename="{{ orphan.filename }}"
+                            {% if orphan.best_detection_id %}data-detection-id="{{ orphan.best_detection_id }}"{% endif %}
+                            title="Moves the image to Trash. It can still be restored or deleted permanently there.">
+                            <span class="review-stage-panel__action-icon">🗑</span>
+                            <span class="review-stage-panel__action-copy">Move to Trash</span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="review-stage-panel__section review-stage-panel__section--species">
+                <div class="review-stage-panel__section-label">Species</div>
+
+                {% if orphan.quick_species %}
+                <div class="review-stage-panel__species-strip" role="list">
+                    {% for species in orphan.quick_species %}
+                    <button type="button" class="review-stage-panel__species-btn{% if orphan.selected_species == species.scientific %} is-selected{% endif %}"
+                        data-review-panel-action="{% if orphan.selected_species == species.scientific %}confirm_species{% else %}select_species{% endif %}"
+                        data-item-key="{{ orphan.item_key }}" data-filename="{{ orphan.filename }}"
+                        data-detection-id="{{ orphan.best_detection_id }}" data-species="{{ species.scientific }}"
+                        data-current-species="{{ orphan.selected_species or orphan.species_key or '' }}" role="listitem">
+                        <span class="review-stage-panel__species-media" aria-hidden="true">
+                            {% if species.thumb_url %}
+                            <img class="review-stage-panel__species-image" src="{{ species.thumb_url }}" alt=""
+                                loading="eager" decoding="async">
+                            {% endif %}
+                        </span>
+                        <span class="review-stage-panel__species-overlay">
+                            <span class="review-stage-panel__species-name">{{ species.common }}</span>
+                            <span class="review-stage-panel__species-meta">
+                            {% if orphan.selected_species == species.scientific %}
+                            Selected · Click again to confirm
+                            {% elif species.source == 'current' %}
+                            {% if species.score_pct is not none %}
+                            Current · CLS {{ species.score_pct }}%
+                            {% else %}
+                            Current
+                            {% endif %}
+                            {% elif species.source == 'cls' %}
+                            CLS {{ species.score_pct }}%
+                            {% else %}
+                            Recent days
+                            {% endif %}
+                            </span>
+                        </span>
+                    </button>
+                    {% endfor %}
+                </div>
+                {% else %}
+                <div class="review-stage-panel__hint">Use Deep Scan or Change Species.</div>
+                {% endif %}
+            </div>
+        </aside>
+        {% else %}
+        <aside class="review-stage-panel__controls review-stage-panel__controls--empty">
+            <div class="review-stage-panel__section review-stage-panel__section--actions">
+                <div class="review-stage-panel__section-label">Actions</div>
+                <div class="review-stage-panel__action-stack">
+                    <button type="button" class="review-stage-panel__action review-stage-panel__action--danger"
+                        data-review-panel-action="trash" data-item-key="{{ orphan.item_key }}" data-filename="{{ orphan.filename }}"
+                        title="Moves the image to Trash. It can still be restored or deleted permanently there.">
+                        <span class="review-stage-panel__action-icon">🗑</span>
+                        <span>Move to Trash</span>
+                    </button>
+                    <button type="button" class="review-stage-panel__action review-stage-panel__action--scan"
+                        id="btn-analyze-panel-{{ orphan.filename|replace('.', '_') }}"
+                        data-review-panel-action="deep_scan" data-item-key="{{ orphan.item_key }}" data-filename="{{ orphan.filename }}">
+                        <span class="review-stage-panel__action-icon">🔍</span>
+                        <span>Deep Scan</span>
+                    </button>
+                </div>
+            </div>
+            <div class="review-stage-panel__hint review-stage-panel__hint--orphan">
+                No active detection. Use Deep Scan for this image.
+            </div>
+        </aside>
+        {% endif %}
+    </div>
+</div>
+
+{% if orphan.modal_detection %}
+{{ render_modal(orphan.modal_detection, 'review', show_nav=false) }}
+{% else %}
+<div class="modal fade gallery-modal wm-modal" id="{{ zoom_modal_id }}" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-xl modal-dialog-centered modal-dialog-scrollable modal-fullscreen-md-down wm-modal__dialog">
         <div class="modal-content wm-modal__content">
-
             <div class="modal-header wm-modal__header">
                 <div class="wm-modal__title">
-                    <span class="wm-modal__title-text">{{ orphan.formatted_date }}</span>
-                    <span
-                        class="wm-modal__title-sub badge {% if orphan.review_reason == 'orphan' %}bg-warning text-dark{% else %}bg-info{% endif %}">{{
-                        orphan.reason_label }}</span>
+                    <span class="wm-modal__title-text"><em>{{ orphan.current_species_common or orphan.source_image_filename }}</em></span>
+                    <span class="wm-modal__title-sub">{{ orphan.formatted_date }}{% if orphan.reason_label %} · {{ orphan.reason_label }}{% endif %}</span>
                 </div>
                 <button type="button" class="btn-close wm-modal__close" data-bs-dismiss="modal"></button>
             </div>
 
-            <div class="wm-modal__body">
-                <div class="wm-modal__image">
-                    {% set has_bbox = orphan.review_reason == 'low_score' and orphan.bbox_w and orphan.bbox_h and orphan.bbox_w > 0 and orphan.bbox_h > 0 %}
-                    <div class="modal-image-viewer wm-image-viewer" {% if has_bbox %}
-                        data-bbox-x="{{ orphan.bbox_x }}"
-                        data-bbox-y="{{ orphan.bbox_y }}"
-                        data-bbox-w="{{ orphan.bbox_w }}"
-                        data-bbox-h="{{ orphan.bbox_h }}"
-                        data-bbox-name="Low score candidate" {% endif %}>
-                        <img class="wm-image-viewer__img" src="{{ orphan.full_url }}" alt="{{ orphan.filename }}"
-                            onerror="this.src='{{ orphan.thumb_url }}'; this.closest('.wm-image-viewer').classList.add('wm-image-viewer--fallback');"
-                            onload="if(typeof initBboxOverlay==='function')initBboxOverlay(this);if(typeof initReviewDefaultBboxes==='function')initReviewDefaultBboxes(this);">
-                        <canvas class="wm-image-viewer__overlay bbox-overlay"></canvas>
-                        <span class="wm-image-viewer__fallback-badge">Preview only</span>
-                    </div>
+            <div class="wm-modal__body wm-modal__body--review">
+                <div class="wm-modal__image wm-modal__image--solo wm-toolbox-host">
+                    {{ render_image_viewer(
+                    image_url=orphan.full_url,
+                    image_alt=orphan.current_species_common or orphan.source_image_filename,
+                    detection_id=orphan.best_detection_id or 0,
+                    bbox={'x': orphan.bbox_x, 'y': orphan.bbox_y, 'w': orphan.bbox_w, 'h': orphan.bbox_h} if has_bbox else none,
+                    dismissable=false
+                    ) }}
+                    {{ tile_toolbox(
+                    detection_id=orphan.best_detection_id,
+                    filename=orphan.filename,
+                    surface='review',
+                    can_moderate=true,
+                    review_reason=orphan.review_reason,
+                    modal_target=viewer_modal_target,
+                    current_species=orphan.selected_species or orphan.species_key
+                    ) }}
                 </div>
             </div>
 
             <div class="wm-modal__action">
-                <div class="modal-action-bar">
-                    <div class="modal-action-bar__group">
-                        {% if orphan.review_reason == 'orphan' %}
-                        <button type="button" class="btn btn--info btn--sm"
-                            id="btn-analyze-modal-{{ orphan.filename|replace('.', '_') }}"
-                            onclick="analyzeAction(event, '{{ orphan.filename }}')">
-                            <i class="bi bi-search"></i> Scan
-                        </button>
-                        {% endif %}
-                        {% if orphan.review_reason != 'orphan' %}
-                        <button type="button" class="btn btn--primary btn--sm"
-                            onclick="modalAction('{{ orphan.filename }}', 'confirm')">✓ Bird</button>
-                        {% endif %}
-                        <button type="button" class="btn btn--secondary btn--sm"
-                            onclick="modalAction('{{ orphan.filename }}', 'skip')">Skip</button>
-                        <button type="button" class="btn btn--danger btn--sm"
-                            onclick="modalAction('{{ orphan.filename }}', 'no_bird')">✗ Move to Trash</button>
-                    </div>
-                    <div class="modal-action-bar__group">
-                        <button type="button" class="btn btn--secondary btn--sm prev-btn"
-                            onclick="navigateModal(this, 'prev')">← Prev</button>
-                        <button type="button" class="btn btn--secondary btn--sm next-btn"
-                            onclick="navigateModal(this, 'next')">Next →</button>
-                        <button type="button" class="btn btn--primary btn--sm" data-bs-dismiss="modal">Close</button>
-                    </div>
-                </div>
+                {{ render_action_bar(
+                detection_id=orphan.best_detection_id or 0,
+                original_url=orphan.full_url or none,
+                bbox={
+                    'x': orphan.bbox_x,
+                    'y': orphan.bbox_y,
+                    'w': orphan.bbox_w,
+                    'h': orphan.bbox_h,
+                    'name': orphan.current_species_common or 'Detection',
+                    'id': orphan.best_detection_id or 0
+                } if has_bbox else none,
+                siblings=[],
+                show_nav=false,
+                show_bbox_toggle=has_bbox,
+                show_download=orphan.full_url,
+                gallery_date=orphan.gallery_date,
+                is_favorite=false,
+                can_moderate=true,
+                current_species=orphan.selected_species or orphan.species_key
+                ) }}
             </div>
-
         </div>
     </div>
 </div>
+{% endif %}
 {% endmacro %}

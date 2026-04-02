@@ -15,49 +15,37 @@ show_trash=true,
 show_download=true,
 gallery_date=none,
 is_favorite=false,
-can_moderate=false
+can_moderate=false,
+current_species=none
 ) %}
 <div class="modal-action-bar">
-    {# Left: Actions #}
+    {# Left: Viewer actions #}
     <div class="modal-action-bar__group">
         <button type="button" class="btn btn--secondary btn--sm smart-zoom-toggle" onclick="toggleSmartZoom(this)"
-            title="Toggle between bird close-up and full image">🔍 Zoom</button>
+            title="Toggle between bird close-up and full image">⌕ Zoom</button>
         {% if show_bbox_toggle %}
         <button type="button" class="btn btn--secondary btn--sm bbox-toggle" onclick="toggleBboxOverlay(this)"
             data-detection-id="{{ detection_id }}" data-siblings='{{ (siblings | default([])) | tojson }}'
-            data-current-bbox='{{ (bbox | default({})) | tojson }}'>Boxes</button>
+            data-current-bbox='{{ (bbox | default({})) | tojson }}'>□ Boxes</button>
         {% endif %}
         {% if show_download and original_url %}
-        <a href="{{ original_url }}" download class="btn btn--secondary btn--sm">DL</a>
-        {% endif %}
-        {% if show_trash and can_moderate %}
-        <button type="button" class="btn btn--danger btn--sm"
-            onclick="deleteDetection(event, {{ detection_id }})">🗑</button>
+        <a href="{{ original_url }}" download class="btn btn--secondary btn--sm">↓ Download</a>
         {% endif %}
         {% if gallery_date %}
         <a href="/gallery/{{ gallery_date }}?focus={{ detection_id }}#detection-{{ detection_id }}"
-            class="btn btn--secondary btn--sm" title="Go to Day">📅</a>
+            class="btn btn--secondary btn--sm" title="Go to Day">📅 Day</a>
         {% endif %}
-    </div>
-
-    {# Center: Favorite Toggle #}
-    <div class="modal-action-bar__group">
-        <button type="button" class="fav-btn{% if is_favorite %} fav-btn--active{% endif %}"
-            data-detection-id="{{ detection_id }}" onclick="toggleFavorite(event, {{ detection_id }}, this)"
-            title="Toggle favorite for cover images">
-            {% if is_favorite %}⭐{% else %}☆{% endif %}
-        </button>
     </div>
 
     {# Right: Navigation + Close #}
     <div class="modal-action-bar__group">
         {% if show_nav %}
         <button type="button" class="btn btn--secondary btn--sm prev-btn"
-            onclick="navigateModal(this, 'prev')">←</button>
+            onclick="navigateModal(this, 'prev')">← Prev</button>
         <button type="button" class="btn btn--secondary btn--sm next-btn"
-            onclick="navigateModal(this, 'next')">→</button>
+            onclick="navigateModal(this, 'next')">→ Next</button>
         {% endif %}
-        <button type="button" class="btn btn--primary btn--sm" data-bs-dismiss="modal">Close</button>
+        <button type="button" class="btn btn--primary btn--sm" data-bs-dismiss="modal">✕ Close</button>
     </div>
 </div>
 

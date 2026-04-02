@@ -3,85 +3,37 @@
 {% block title %}Review Queue - WatchMyBirds{% endblock %}
 
 {% block content %}
-{% from 'partials/tile_toolbox.html' import tile_toolbox %}
-{% set can_moderate = true %}
-{# Page Control Bar - Unified Design #}
-<nav class="page-control-bar" role="navigation" aria-label="Review Queue controls">
+<nav class="page-control-bar review-desk-bar" role="navigation" aria-label="Review workspace controls">
     <div class="page-control-bar__left">
-        <span class="page-control-bar__title">Review Queue</span>
-        <span class="page-control-bar__badge">{{ orphans|length }}</span>
-        {% if orphans %}
-        {% set confirmable_items = orphans | selectattr('review_reason', 'ne', 'orphan') | list %}
-        <label class="page-control-bar__select-all">
-            <input type="checkbox" id="select-all" class="page-control-bar__checkbox" onclick="toggleSelectAll(this)" {%
-                if orphans|length==0 %}disabled{% endif %} aria-label="Select all items">
-            <span class="page-control-bar__select-label">Select All</span>
-        </label>
-        <label class="page-control-bar__select-all" style="margin-left: 12px;"
-            title="Focus on low-confidence observations">
-            <input type="checkbox" id="hide-orphans" class="page-control-bar__checkbox"
-                onchange="toggleOrphanFilter(this)" aria-label="Hide No Detection items">
-            <span class="page-control-bar__select-label">Hide No Detection</span>
-        </label>
-        {% endif %}
+        <span class="page-control-bar__title">Review Desk</span>
+        <span class="page-control-bar__badge" id="review-visible-count">{{ orphans|length }}</span>
     </div>
     <div class="page-control-bar__meta">
-        <span id="selected-counter">0 items selected</span>
-        <span id="deep-scan-status" style="margin-left: 12px;">Deep Scan: Loading...</span>
+        <span id="review-focus-meta">Queue {{ orphans|length }}</span>
+        <span id="deep-scan-status" style="margin-left: 12px;" hidden></span>
     </div>
     <div class="page-control-bar__right">
         {% if orphans %}
-        {% if confirmable_items %}
-        <button type="button" class="btn btn--primary" onclick="bulkAction('confirm')" id="btn-bird-present"
-            aria-label="Bird Present">
-            <span aria-hidden="true">✓</span> <span class="btn__label">Bird Present</span>
-        </button>
-        {% endif %}
-        <button type="button" class="btn btn--secondary" onclick="bulkAction('skip')" id="btn-skip" aria-label="Skip">
-            <span aria-hidden="true">→</span> <span class="btn__label">Skip</span>
-        </button>
-        <button type="button" class="btn btn--danger" onclick="bulkAction('no_bird')" id="btn-no-bird"
-            aria-label="Move to Trash">
-            <span aria-hidden="true">✗</span> <span class="btn__label">Move to Trash</span>
-        </button>
+        <label class="page-control-bar__select-all" title="Focus on low-confidence observations">
+            <input type="checkbox" id="hide-orphans" class="page-control-bar__checkbox"
+                aria-label="Hide No Detection items">
+            <span class="page-control-bar__select-label">Hide No Detection</span>
+        </label>
         {% endif %}
         <a href="/" class="btn btn--secondary">← Stream</a>
     </div>
 </nav>
 
-{# Decision State Summary Strip (P1-05) — answers "how many uncertain/unknown?" #}
-<div class="decision-stats-strip" id="decisionStatsStrip" style="display: none;
-    max-width: 1280px; margin: 0 auto; padding: 6px 16px;
-    font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 0.72rem;
-    color: var(--color-text-muted); opacity: 0.7; transition: opacity 0.2s ease;
-    display: none;">
-    <span id="dsConfirmed" style="margin-right: 12px;">✅ Confirmed: –</span>
-    <span id="dsUncertain" style="margin-right: 12px; color: var(--color-warning, #eab308);">⚠️ Uncertain: –</span>
-    <span id="dsUnknown" style="margin-right: 12px; color: var(--color-info, #3b82f6);">❓ Unknown: –</span>
-    <span id="dsRejected" style="margin-right: 12px; color: var(--color-danger, #ef4444);">🚫 Rejected: –</span>
-    <span id="dsReview" style="color: var(--color-text-muted);">📋 Review Queue: –</span>
-</div>
-<script>
-    (function () {
-        fetch('/api/v1/analytics/decisions', { credentials: 'same-origin', cache: 'no-store' })
-            .then(function (r) { return r.json(); })
-            .then(function (data) {
-                if (data.status !== 'success') return;
-                var s = data.states || {};
-                document.getElementById('dsConfirmed').textContent = '✅ Confirmed: ' + (s.confirmed || 0);
-                document.getElementById('dsUncertain').textContent = '⚠️ Uncertain: ' + (s.uncertain || 0);
-                document.getElementById('dsUnknown').textContent = '❓ Unknown: ' + (s.unknown || 0);
-                document.getElementById('dsRejected').textContent = '🚫 Rejected: ' + (s.rejected || 0);
-                document.getElementById('dsReview').textContent = '📋 Review Queue: ' + (data.review_queue_count || 0);
-                document.getElementById('decisionStatsStrip').style.display = 'flex';
-                document.getElementById('decisionStatsStrip').style.flexWrap = 'wrap';
-                document.getElementById('decisionStatsStrip').style.gap = '4px 0';
-            })
-            .catch(function () { /* silent - strip stays hidden */ });
-    })();
-</script>
+<section class="review-insight-strip" id="decisionStatsStrip" aria-label="Review status overview" hidden>
+    <span id="dsAutoAccepted">Auto-accepted –</span>
+    <span id="dsManualConfirmed">Manual confirmed –</span>
+    <span id="dsConfirmed">Policy confirmed –</span>
+    <span id="dsUncertain">Uncertain –</span>
+    <span id="dsUnknown">Unknown –</span>
+    <span id="dsRejected">Rejected –</span>
+    <span id="dsReview">Review Queue –</span>
+</section>
 
-<!-- Flash Messages -->
 {% with messages = get_flashed_messages(with_categories=true) %}
 {% if messages %}
 {% for category, message in messages %}
@@ -94,411 +46,54 @@
 {% endwith %}
 
 {% if orphans %}
-<div class="orphan-grid">
-    {% for img in orphans %}
-    <div class="wm-tile wm-tile--review" data-filename="{{ img.filename }}" data-reason="{{ img.review_reason }}">
-        <div class="wm-tile__select">
-            <input class="form-check-input wm-tile__checkbox" type="checkbox" value="{{ img.filename }}"
-                onchange="updateCounter()">
-        </div>
-
-        <span
-            class="wm-tile__badge wm-tile__badge--reason {% if img.review_reason == 'orphan' %}bg-warning text-dark{% else %}bg-info{% endif %}">
-            {{ img.reason_label }}
-        </span>
-
-        <button type="button" class="wm-tile__button" data-bs-toggle="modal"
-            data-bs-target="#modal-review-{{ img.filename|replace('.', '_') }}">
-            <div class="wm-tile__media">
-                <img class="wm-tile__image" src="{{ img.thumb_url }}" alt="{{ img.filename }}"
-                    onerror="this.src='/assets/placeholder.svg'; this.onerror=null;">
+<section class="review-workspace" id="reviewWorkspace">
+    <aside class="review-queue" aria-label="Review queue">
+        <div class="review-queue__head">
+            <div>
+                <h2 class="review-queue__title">Queue</h2>
             </div>
-        </button>
-
-        <div class="wm-tile__body">
-            <span class="wm-tile__meta">{{ img.formatted_date }}</span>
-            <span class="wm-tile__name">{{ img.filename }}</span>
-            <span class="wm-tile__size">{{ img.file_size_str }}</span>
         </div>
 
-        <div class="wm-tile__actions">
-            {% if img.review_reason == 'orphan' %}
-            <button type="button" class="btn btn-sm btn-info" onclick="analyzeAction(event, '{{ img.filename }}')"
-                title="Deep Scan">
-                <i class="bi bi-search"></i>
+        <div class="review-queue__list" id="reviewQueueList">
+            {% for img in orphans %}
+            <button type="button"
+                class="review-queue__item{% if loop.first %} is-active{% endif %}"
+                data-review-item data-item-kind="{{ img.item_kind }}" data-item-id="{{ img.item_id }}"
+                data-item-key="{{ img.item_key }}" data-filename="{{ img.filename }}" data-reason="{{ img.review_reason }}">
+                <img class="review-queue__thumb" src="{{ img.thumb_url }}" alt="{{ img.source_image_filename }}"
+                    onerror="this.src='/assets/placeholder.svg'; this.onerror=null;">
+                <div class="review-queue__copy">
+                    <span class="review-queue__reason">{{ img.reason_label }}</span>
+                    <span class="review-queue__name">{{ img.current_species_common or img.source_image_filename }}</span>
+                </div>
             </button>
-            {% endif %}
-            {% if img.review_reason != 'orphan' %}
-            <button type="button" class="btn btn-sm btn-success" onclick="singleAction('{{ img.filename }}', 'confirm')"
-                title="Bird Present">
-                <i class="bi bi-check"></i>
-            </button>
-            {% endif %}
-            <button type="button" class="btn btn-sm btn-outline-secondary"
-                onclick="singleAction('{{ img.filename }}', 'skip')" title="Skip">
-                <i class="bi bi-arrow-right"></i>
-            </button>
-            <button type="button" class="btn btn-sm btn-danger" onclick="singleAction('{{ img.filename }}', 'no_bird')"
-                title="Move to Trash">
-                <i class="bi bi-x"></i>
-            </button>
+            {% endfor %}
         </div>
+    </aside>
 
-        {{ tile_toolbox(
-        filename=img.filename,
-        surface='review',
-        can_moderate=true,
-        review_reason=img.review_reason
-        ) }}
-    </div>
-    {% endfor %}
-</div>
+    <section class="review-stage" aria-label="Review workspace">
+        <article class="review-stage-panel is-active" id="reviewActivePanel" data-review-panel
+            {% if active_orphan %}data-item-kind="{{ active_orphan.item_kind }}" data-item-id="{{ active_orphan.item_id }}" data-item-key="{{ active_orphan.item_key }}" data-filename="{{ active_orphan.filename }}" data-reason="{{ active_orphan.review_reason }}"{% endif %}>
+            {% if active_orphan %}
+            {% set orphan = active_orphan %}
+            {% include "components/review_stage_panel.html" %}
+            {% endif %}
+        </article>
+    </section>
+</section>
+<script id="review-queue-data" type="application/json">{{ orphans|tojson }}</script>
 {% else %}
 <div class="empty-state">
     <div class="empty-state__icon">🎉</div>
-    <h4>Review Queue Empty!</h4>
-    <p>All images have been reviewed. Good job!</p>
+    <h4>Review Queue Empty</h4>
+    <p>Nothing is waiting for review right now.</p>
 </div>
 {% endif %}
-
-{# Styles migrated to design-system.css: ORPHAN GRID section #}
-{% endblock %}
-
-{% block modals %}
-{% from "components/orphan_modal.html" import render_orphan_modal %}
-{% for img in orphans %}
-{{ render_orphan_modal(img) }}
-{% endfor %}
 {% endblock %}
 
 {% block scripts %}
+<script src="/assets/js/species_picker.js?v=1"></script>
 <script src="/assets/js/gallery_utils.js?v=test_v3"></script>
 <script src="/assets/js/tile_actions.js?v=1"></script>
-<script>
-    // Track if user has confirmed "Move to Trash" action once this session
-    let noBirdConfirmed = localStorage.getItem('noBirdConfirmed') === 'true';
-
-    function initReviewDefaultBboxes(img) {
-        const viewer = img.closest('.wm-image-viewer');
-        if (!viewer) return;
-
-        // Fallback preview is generated independently, bbox coordinates no longer match.
-        if (viewer.classList.contains('wm-image-viewer--fallback')) return;
-
-        const bx = parseFloat(viewer.dataset.bboxX);
-        const by = parseFloat(viewer.dataset.bboxY);
-        const bw = parseFloat(viewer.dataset.bboxW);
-        const bh = parseFloat(viewer.dataset.bboxH);
-        if (isNaN(bx) || isNaN(by) || isNaN(bw) || isNaN(bh) || bw <= 0 || bh <= 0) return;
-
-        const canvas = viewer.querySelector('.bbox-overlay');
-        if (!canvas || typeof drawBoundingBoxes !== 'function') return;
-
-        canvas.style.display = 'block';
-        drawBoundingBoxes(canvas, img, [{
-            x: bx,
-            y: by,
-            w: bw,
-            h: bh,
-            name: viewer.dataset.bboxName || 'Detection',
-            isCurrent: true
-        }], null);
-    }
-
-    async function refreshDeepScanStatus() {
-        const statusEl = document.getElementById('deep-scan-status');
-        if (!statusEl) return;
-
-        try {
-            const response = await fetch('/api/status', { cache: 'no-store' });
-            if (!response.ok) {
-                throw new Error(`HTTP ${response.status}`);
-            }
-
-            const data = await response.json();
-            const active = data.deep_scan_active === true;
-            const pending = Number.isFinite(data.deep_scan_queue_pending) ? data.deep_scan_queue_pending : 0;
-            const remaining = Number.isFinite(data.deep_scan_candidates_remaining) ? data.deep_scan_candidates_remaining : 0;
-
-            statusEl.textContent = `Deep Scan: ${active ? 'Running' : 'Idle'} | Queue: ${pending} | Remaining: ${remaining}`;
-        } catch (error) {
-            statusEl.textContent = 'Deep Scan: Status unavailable';
-        }
-    }
-
-    async function analyzeAction(event, filename) {
-        if (event) event.stopPropagation();
-
-        const btn = event ? event.currentTarget : null;
-        const originalHtml = btn ? btn.innerHTML : '';
-
-        if (btn) {
-            btn.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>';
-            btn.disabled = true;
-        }
-
-        try {
-            const response = await fetch(`/api/review/analyze/${filename}`, {
-                method: 'POST'
-            });
-            const data = await response.json();
-
-            if (data.status === 'success') {
-                if (btn) {
-                    btn.classList.remove('btn-info');
-                    btn.classList.add('btn-secondary');
-                    btn.title = "Analysis Queued";
-                    btn.innerHTML = '<i class="bi bi-hourglass-split"></i>';
-                }
-                // Also update modal button if exists
-                const modalBtn = document.getElementById(`btn-analyze-modal-${filename.replace(/\./g, '_')}`);
-                if (modalBtn) {
-                    modalBtn.disabled = true;
-                    modalBtn.innerHTML = '<i class="bi bi-hourglass-split"></i> Queued';
-                }
-            } else {
-                alert('Error: ' + data.message);
-                if (btn) {
-                    btn.innerHTML = originalHtml;
-                    btn.disabled = false;
-                }
-            }
-        } catch (error) {
-            console.error('Analysis error:', error);
-            alert('Network error.');
-            if (btn) {
-                btn.innerHTML = originalHtml;
-                btn.disabled = false;
-            }
-        }
-    }
-
-    function toggleSelectAll(source) {
-
-        const checkboxes = document.querySelectorAll('.wm-tile__checkbox');
-        checkboxes.forEach(cb => cb.checked = source.checked);
-        updateCounter();
-    }
-
-    function updateCounter() {
-        const count = document.querySelectorAll('.wm-tile__checkbox:checked').length;
-        document.getElementById('selected-counter').innerText = count + ' items selected';
-    }
-
-    function getSelectedFilenames() {
-        const checkboxes = document.querySelectorAll('.wm-tile__checkbox:checked');
-        return Array.from(checkboxes).map(cb => cb.value);
-    }
-
-    async function sendReviewDecision(filenames, action) {
-        try {
-            const response = await fetch('/api/review/decision', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ filenames, action })
-            });
-
-            const data = await response.json();
-            if (data.status === 'success') {
-                // Remove processed tiles from DOM
-                filenames.forEach(fn => {
-                    const tile = document.querySelector(`.wm-tile--review[data-filename="${fn}"]`);
-                    if (tile) {
-                        tile.style.transition = 'opacity 0.3s, transform 0.3s';
-                        tile.style.opacity = '0';
-                        tile.style.transform = 'scale(0.8)';
-                        setTimeout(() => tile.remove(), 300);
-                    }
-                    // Also close any open modals for this file (using new ID format with underscores)
-                    const safeFilename = fn.replace(/\./g, '_');
-                    const modal = document.getElementById(`modal-review-${safeFilename}`);
-                    if (modal) {
-                        const bsModal = bootstrap.Modal.getInstance(modal);
-                        if (bsModal) bsModal.hide();
-                    }
-                });
-
-                // Update counter after DOM changes
-                setTimeout(() => {
-                    updateCounter();
-                    // Update the total count in header
-                    const remaining = document.querySelectorAll('.wm-tile--review').length;
-                    const subtitle = document.querySelector('.text-muted.mb-0');
-                    if (subtitle) {
-                        subtitle.textContent = `Images waiting for your decision (${remaining} total)`;
-                    }
-                    // Show empty state if no more items
-                    if (remaining === 0) {
-                        location.reload();
-                    }
-                }, 350);
-
-                return true;
-            } else {
-                alert('Error: ' + (data.message || 'Unknown error'));
-                return false;
-            }
-        } catch (error) {
-            console.error('Review decision error:', error);
-            alert('Network error. Please try again.');
-            return false;
-        }
-    }
-
-    function bulkAction(action) {
-        const filenames = getSelectedFilenames();
-        if (filenames.length === 0) {
-            alert('Please select images first.');
-            return;
-        }
-
-        // One-time confirmation for "Move to Trash"
-        if (action === 'no_bird' && !noBirdConfirmed) {
-            if (!confirm('Move ' + filenames.length + ' image(s) to Trash?\n\nThese will be moved to Trash (recoverable). Files are NOT deleted.\n\n(This confirmation won\'t show again this session)')) {
-                return;
-            }
-            noBirdConfirmed = true;
-            localStorage.setItem('noBirdConfirmed', 'true');
-        }
-
-        sendReviewDecision(filenames, action);
-    }
-
-    function singleAction(filename, action) {
-        // One-time confirmation for "Move to Trash"
-        if (action === 'no_bird' && !noBirdConfirmed) {
-            if (!confirm('Move this image to Trash?\n\nIt will be moved to Trash (recoverable). File is NOT deleted.\n\n(This confirmation won\'t show again this session)')) {
-                return;
-            }
-            noBirdConfirmed = true;
-            localStorage.setItem('noBirdConfirmed', 'true');
-        }
-
-        sendReviewDecision([filename], action);
-    }
-
-    // Handle modal actions - close current modal and navigate to next
-    async function modalAction(filename, action) {
-        const safeFilename = filename.replace(/\./g, '_');
-        const currentModal = document.getElementById(`modal-review-${safeFilename}`);
-
-        // Find next modal before we process
-        const allModals = Array.from(document.querySelectorAll('.modal[data-modal-group="review"]'));
-        const currentIndex = allModals.findIndex(m => m.id === `modal-review-${safeFilename}`);
-        const nextModal = allModals[currentIndex + 1] || allModals[0]; // Loop to first if at end
-
-        // Process the decision
-        const success = await sendReviewDecision([filename], action);
-
-        if (success && nextModal && nextModal.id !== `modal-review-${safeFilename}`) {
-            // Close current and open next
-            if (currentModal) {
-                const bsCurrentModal = bootstrap.Modal.getInstance(currentModal);
-                if (bsCurrentModal) bsCurrentModal.hide();
-            }
-
-            // Wait for hide animation, then show next
-            setTimeout(() => {
-                // Check if next modal still exists (wasn't also removed)
-                if (document.getElementById(nextModal.id)) {
-                    const bsNextModal = new bootstrap.Modal(nextModal);
-                    bsNextModal.show();
-                }
-            }, 350);
-        }
-    }
-
-    // Shift+Click range selection support
-    let lastClickedCheckbox = null;
-
-    function handleCheckboxClick(checkbox, shiftKey) {
-        const allCheckboxes = Array.from(document.querySelectorAll('.wm-tile__checkbox'));
-
-        if (shiftKey && lastClickedCheckbox && lastClickedCheckbox !== checkbox) {
-            // Range select
-            const currentIndex = allCheckboxes.indexOf(checkbox);
-            const lastIndex = allCheckboxes.indexOf(lastClickedCheckbox);
-
-            const start = Math.min(currentIndex, lastIndex);
-            const end = Math.max(currentIndex, lastIndex);
-
-            // Set all checkboxes in range to match the target state
-            const targetState = checkbox.checked;
-            for (let i = start; i <= end; i++) {
-                allCheckboxes[i].checked = targetState;
-            }
-        }
-
-        lastClickedCheckbox = checkbox;
-        updateCounter();
-    }
-
-    // Attach click handlers to checkboxes for shift+click
-    document.querySelectorAll('.wm-tile__checkbox').forEach(checkbox => {
-        checkbox.addEventListener('click', (e) => {
-            handleCheckboxClick(checkbox, e.shiftKey);
-        });
-    });
-
-    // Click on tile to toggle checkbox, but ignore clicks on checkbox itself, thumbnail button, or action buttons
-    document.querySelectorAll('.wm-tile--review').forEach(tile => {
-        tile.addEventListener('click', (e) => {
-            if (e.target.closest('.wm-tile__select')) return;
-            if (e.target.closest('.wm-tile__button')) return;
-            if (e.target.closest('.wm-tile__actions')) return;
-
-            const checkbox = tile.querySelector('.wm-tile__checkbox');
-            checkbox.checked = !checkbox.checked;
-            handleCheckboxClick(checkbox, e.shiftKey);
-        });
-    });
-
-    // --- Hide No Detection filter ---
-    function toggleOrphanFilter(checkbox) {
-        const hide = checkbox.checked;
-        localStorage.setItem('reviewHideOrphans', hide ? 'true' : 'false');
-        applyOrphanFilter(hide);
-    }
-
-    function applyOrphanFilter(hide) {
-        document.querySelectorAll('.wm-tile--review[data-reason="orphan"]').forEach(tile => {
-            tile.style.display = hide ? 'none' : '';
-            // Uncheck hidden tiles
-            if (hide) {
-                const cb = tile.querySelector('.wm-tile__checkbox');
-                if (cb) cb.checked = false;
-            }
-        });
-        updateCounter();
-        // Update badge count
-        const visible = document.querySelectorAll('.wm-tile--review').length
-            - (hide ? document.querySelectorAll('.wm-tile--review[data-reason="orphan"]').length : 0);
-        const badge = document.querySelector('.page-control-bar__badge');
-        if (badge) badge.textContent = visible;
-    }
-
-    // Restore filter state from localStorage
-    (function () {
-        const saved = localStorage.getItem('reviewHideOrphans') === 'true';
-        const cb = document.getElementById('hide-orphans');
-        if (cb && saved) {
-            cb.checked = true;
-            applyOrphanFilter(true);
-        }
-    })();
-
-    document.addEventListener('shown.bs.modal', function (event) {
-        const modal = event.target;
-        if (!modal.classList.contains('gallery-modal')) return;
-        if (modal.getAttribute('data-modal-group') !== 'review') return;
-
-        const img = modal.querySelector('.wm-image-viewer__img');
-        if (img && img.complete && img.naturalWidth > 0) {
-            initReviewDefaultBboxes(img);
-        }
-    });
-
-    refreshDeepScanStatus();
-    setInterval(refreshDeepScanStatus, 15000);
-</script>
+<script src="/assets/js/review_workspace.js?v=4"></script>
 {% endblock %}

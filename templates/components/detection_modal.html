@@ -12,9 +12,10 @@ nav_index (int|None): Optional index within nav_scope
 #}
 {% from "components/modal_image_viewer.html" import render_image_viewer %}
 {% from "components/modal_action_bar.html" import render_action_bar %}
-{% from "components/modal_detection_info.html" import render_detection_info %}
+{% from "components/modal_detection_info.html" import render_detection_info, render_review_status_text %}
+{% from "partials/tile_toolbox.html" import tile_toolbox %}
 
-{% macro render_modal(det, group_id, nav_scope=none, nav_index=none) %}
+{% macro render_modal(det, group_id, nav_scope=none, nav_index=none, show_nav=true) %}
 {% set can_moderate = session.get('authenticated') %}
 <div class="modal fade gallery-modal wm-modal" id="modal-{{ group_id }}-{{ det.detection_id }}" tabindex="-1"
     aria-hidden="true" data-modal-group="{{ group_id }}" data-image-path="{{ det.full_path }}"
@@ -28,8 +29,11 @@ nav_index (int|None): Optional index within nav_scope
             <div class="modal-header wm-modal__header">
                 <div class="wm-modal__title">
                     {# P1-06: Trusted-species rendering — non-confirmed show tentative label #}
-                    {% set is_trusted = (det.decision_state == 'confirmed') or (det.decision_state is none) %}
-                    {% set wiki_url = wikipedia_species_url(det.common_name, det.cls_class_name or det.od_class_name) %}
+                    {% set has_manual_species_review = (det.species_source == 'manual') and det.manual_species_override %}
+                    {% set is_trusted = has_manual_species_review or (det.decision_state == 'confirmed') or (det.decision_state is none) %}
+                    {% set title_species = det.species_key or det.manual_species_override or det.cls_class_name or det.od_class_name %}
+                    {% set review_status_text = render_review_status_text(det, "font-size: 0.7rem; opacity: 0.8;") %}
+                    {% set wiki_url = wikipedia_species_url(det.common_name, title_species) %}
                     {% if wiki_url %}
                     <a class="wm-modal__title-text" href="{{ wiki_url }}" target="_blank"
                         rel="noopener noreferrer nofollow external"
@@ -43,21 +47,26 @@ nav_index (int|None): Optional index within nav_scope
                             if not is_trusted %}~ {% endif %}{{ det.common_name }}</em></span>
                     {% endif %}
                     <span class="wm-modal__title-sub">{{ det.formatted_date }} {{ det.formatted_time }}{% if
-                        det.cls_class_name or det.od_class_name %} · <em>{{ (det.cls_class_name or det.od_class_name)
-                            | replace('_', ' ') }}</em>{% endif %}{% if not is_trusted and det.decision_state %} · <span
-                            style="font-size: 0.7rem; opacity: 0.7;">{{ det.decision_state }}</span>{% endif %}</span>
+                        title_species %} · <em>{{ title_species | replace('_', ' ') }}</em>{% endif %}{% if review_status_text|trim %} · {{ review_status_text }}{% endif %}</span>
                 </div>
                 <button type="button" class="btn-close wm-modal__close" data-bs-dismiss="modal"></button>
             </div>
 
             <div class="wm-modal__body">
-                <div class="wm-modal__image">
+                <div class="wm-modal__image wm-toolbox-host">
                     {{ render_image_viewer(
                     image_url=det.full_path,
                     image_alt=det.common_name,
                     detection_id=det.detection_id,
                     bbox={'x': det.bbox_x, 'y': det.bbox_y, 'w': det.bbox_w, 'h': det.bbox_h},
                     dismissable=true
+                    ) }}
+                    {{ tile_toolbox(
+                    detection_id=det.detection_id,
+                    surface='gallery',
+                    is_favorite=det.is_favorite,
+                    can_moderate=can_moderate,
+                    current_species=det.species_key or det.manual_species_override or det.cls_class_name or det.od_class_name
                     ) }}
                 </div>
                 <div class="wm-modal__info">
@@ -83,13 +92,14 @@ nav_index (int|None): Optional index within nav_scope
                 'id': det.detection_id
                 },
                 siblings=det.siblings,
-                show_nav=true,
+                show_nav=show_nav,
                 show_bbox_toggle=true,
                 show_trash=true,
                 show_download=true,
                 gallery_date=det.gallery_date,
                 is_favorite=det.is_favorite,
-                can_moderate=can_moderate
+                can_moderate=can_moderate,
+                current_species=det.species_key or det.manual_species_override or det.cls_class_name or det.od_class_name
                 ) }}
             </div>
 
