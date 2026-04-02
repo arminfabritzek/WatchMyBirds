@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import os
+from functools import lru_cache
 from pathlib import Path
 
 from logging_config import get_logger
@@ -26,6 +27,17 @@ _ASSETS_DIR = (
 )
 
 
+def resolve_common_name(
+    scientific_name: str | None, common_names: dict[str, str]
+) -> str:
+    """Resolve a species key to a display name using the provided lookup map."""
+    scientific_name = str(scientific_name or "").strip()
+    if not scientific_name:
+        return ""
+    return common_names.get(scientific_name, scientific_name.replace("_", " "))
+
+
+@lru_cache(maxsize=4)
 def load_common_names(locale: str = "DE") -> dict[str, str]:
     """Return a ``{scientific_key: display_name}`` dict for *locale*.
 

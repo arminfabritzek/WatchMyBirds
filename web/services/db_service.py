@@ -34,10 +34,30 @@ def fetch_active_detection_ids_in_date_range(
     return db_core.fetch_active_detection_ids_in_date_range(conn, from_date, to_date)
 
 
+def fetch_active_detection_selection_in_date_range(
+    conn, from_date: str, to_date: str
+) -> dict:
+    return db_core.fetch_active_detection_selection_in_date_range(
+        conn, from_date, to_date
+    )
+
+
 def fetch_active_detection_selection_by_source_type(
     conn, source_type: str
 ) -> dict:
     return db_core.fetch_active_detection_selection_by_source_type(conn, source_type)
+
+
+def fetch_trash_candidate_selection_in_date_range(
+    conn, from_date: str, to_date: str
+) -> dict:
+    return db_core.fetch_trash_candidate_selection_in_date_range(
+        conn, from_date, to_date
+    )
+
+
+def fetch_trash_candidate_selection_by_source_type(conn, source_type: str) -> dict:
+    return db_core.fetch_trash_candidate_selection_by_source_type(conn, source_type)
 
 
 def reject_detections(conn, detection_ids: list[int]) -> None:

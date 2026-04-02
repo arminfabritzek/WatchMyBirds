@@ -33,6 +33,11 @@ from config import (
     get_settings_payload,
     update_runtime_settings,
 )
+from utils.review_metadata import (
+    BBOX_REVIEW_CORRECT,
+    BBOX_REVIEW_WRONG,
+    REVIEW_STATUS_CONFIRMED_BIRD,
+)
 from utils.settings import mask_rtsp_url
 from web.blueprints.auth import auth_bp, login_required
 from web.power_actions import (
@@ -295,6 +300,51 @@ def create_web_interface(detection_manager, system_monitor=None):
         """True when a detection is marked as ❤️ favorite."""
         return bool(int(det.get("is_favorite") or 0))
 
+    def _build_detection_view_dict(
+        det: dict,
+        *,
+        species_key: str,
+        common_name: str,
+        formatted_date: str = "",
+        formatted_time: str = "",
+        gallery_date: str = "",
+        siblings: list | None = None,
+        sibling_count: int = 1,
+        include_decision_state: bool = False,
+        extra: dict | None = None,
+    ) -> dict:
+        """Build the shared detection view payload used by frontend templates."""
+        payload = {
+            "detection_id": det.get("detection_id"),
+            "species_key": species_key,
+            "common_name": common_name,
+            "od_class_name": det.get("od_class_name", ""),
+            "od_confidence": det.get("od_confidence", 0.0) or 0.0,
+            "cls_class_name": det.get("cls_class_name", ""),
+            "cls_confidence": det.get("cls_confidence", 0.0) or 0.0,
+            "score": det.get("score", 0.0) or 0.0,
+            "review_status": det.get("review_status"),
+            "manual_species_override": det.get("manual_species_override"),
+            "species_source": det.get("species_source"),
+            "formatted_date": formatted_date,
+            "formatted_time": formatted_time,
+            "gallery_date": gallery_date,
+            "siblings": siblings or [],
+            "sibling_count": sibling_count,
+            "bbox_x": det.get("bbox_x", 0.0) or 0.0,
+            "bbox_y": det.get("bbox_y", 0.0) or 0.0,
+            "bbox_w": det.get("bbox_w", 0.0) or 0.0,
+            "bbox_h": det.get("bbox_h", 0.0) or 0.0,
+            "rating": det.get("rating"),
+            "rating_source": det.get("rating_source", "auto"),
+            "is_favorite": _is_favorite(det),
+        }
+        if include_decision_state:
+            payload["decision_state"] = det.get("decision_state")
+        if extra:
+            payload.update(extra)
+        return payload
+
     def _date_iso_from_timestamp(ts: str) -> str:
         """Convert YYYYMMDD_HHMMSS -> YYYY-MM-DD."""
         if not ts or len(ts) < 8:
@@ -467,6 +517,11 @@ def create_web_interface(detection_manager, system_monitor=None):
     server.jinja_env.globals["wikipedia_species_url"] = (
         gallery_service.get_species_wikipedia_url
     )
+    server.jinja_env.globals["REVIEW_STATUS_CONFIRMED_BIRD"] = (
+        REVIEW_STATUS_CONFIRMED_BIRD
+    )
+    server.jinja_env.globals["BBOX_REVIEW_CORRECT"] = BBOX_REVIEW_CORRECT
+    server.jinja_env.globals["BBOX_REVIEW_WRONG"] = BBOX_REVIEW_WRONG
 
     # Configure Flask for large file uploads (backups can be several GB)
     server.config["MAX_CONTENT_LENGTH"] = 10 * 1024 * 1024 * 1024  # 10 GB
@@ -1408,34 +1463,19 @@ def create_web_interface(detection_manager, system_monitor=None):
                     gallery_date = ""
 
                 detections.append(
-                    {
-                        "detection_id": det.get("detection_id"),
-                        "species_key": species,
-                        "display_path": display_url,
-                        "full_path": full_url,
-                        "original_path": original_url,
-                        "common_name": _get_common_name_local(species),
-                        "od_class_name": det.get("od_class_name", ""),
-                        "od_confidence": det.get("od_confidence", 0.0) or 0.0,
-                        "cls_class_name": det.get("cls_class_name", ""),
-                        "cls_confidence": det.get("cls_confidence", 0.0) or 0.0,
-                        "score": det.get("score", 0.0) or 0.0,
-                        "formatted_date": formatted_date,
-                        "formatted_time": formatted_time,
-                        "gallery_date": gallery_date,
-                        # Fields required by detection_modal.html
-                        "siblings": [],
-                        "sibling_count": 1,
-                        "bbox_x": det.get("bbox_x", 0.0) or 0.0,
-                        "bbox_y": det.get("bbox_y", 0.0) or 0.0,
-                        "bbox_w": det.get("bbox_w", 0.0) or 0.0,
-                        "bbox_h": det.get("bbox_h", 0.0) or 0.0,
-                        # Rating (legacy)
-                        "rating": det.get("rating"),
-                        "rating_source": det.get("rating_source", "auto"),
-                        # Favorite
-                        "is_favorite": bool(int(det.get("is_favorite") or 0)),
-                    }
+                    _build_detection_view_dict(
+                        det,
+                        species_key=species,
+                        common_name=_get_common_name_local(species),
+                        formatted_date=formatted_date,
+                        formatted_time=formatted_time,
+                        gallery_date=gallery_date,
+                        extra={
+                            "display_path": display_url,
+                            "full_path": full_url,
+                            "original_path": original_url,
+                        },
+                    )
                 )
 
             return render_template(
@@ -1524,35 +1564,20 @@ def create_web_interface(detection_manager, system_monitor=None):
                     gallery_date = ""
 
                 detections.append(
-                    {
-                        "detection_id": det.get("detection_id"),
-                        "species_key": species_key,
-                        "display_path": display_url,
-                        "full_path": full_url,
-                        "original_path": original_url,
-                        "common_name": _get_common_name_local(species_key),
-                        "od_class_name": det.get("od_class_name", ""),
-                        "od_confidence": det.get("od_confidence", 0.0) or 0.0,
-                        "cls_class_name": det.get("cls_class_name", ""),
-                        "cls_confidence": det.get("cls_confidence", 0.0) or 0.0,
-                        "score": det.get("score", 0.0) or 0.0,
-                        "formatted_date": formatted_date,
-                        "formatted_time": formatted_time,
-                        "gallery_date": gallery_date,
-                        "siblings": [],
-                        "sibling_count": 1,
-                        "bbox_x": det.get("bbox_x", 0.0) or 0.0,
-                        "bbox_y": det.get("bbox_y", 0.0) or 0.0,
-                        "bbox_w": det.get("bbox_w", 0.0) or 0.0,
-                        "bbox_h": det.get("bbox_h", 0.0) or 0.0,
-                        # Rating (legacy)
-                        "rating": det.get("rating"),
-                        "rating_source": det.get("rating_source", "auto"),
-                        # Favorite
-                        "is_favorite": bool(int(det.get("is_favorite") or 0)),
-                        # Decision policy (P1-04)
-                        "decision_state": det.get("decision_state"),
-                    }
+                    _build_detection_view_dict(
+                        det,
+                        species_key=species_key,
+                        common_name=_get_common_name_local(species_key),
+                        formatted_date=formatted_date,
+                        formatted_time=formatted_time,
+                        gallery_date=gallery_date,
+                        include_decision_state=True,
+                        extra={
+                            "display_path": display_url,
+                            "full_path": full_url,
+                            "original_path": original_url,
+                        },
+                    )
                 )
 
             # Build pagination range
@@ -1759,64 +1784,43 @@ def create_web_interface(detection_manager, system_monitor=None):
                             sib_species_key = _get_species_key_local(sib)
                             sib_thumb = sib["thumbnail_path_virtual"]
                             siblings.append(
-                                {
-                                    "detection_id": sib["detection_id"],
-                                    "species_key": sib_species_key,
-                                    "common_name": _get_common_name_local(
+                                _build_detection_view_dict(
+                                    sib,
+                                    species_key=sib_species_key,
+                                    common_name=_get_common_name_local(
                                         sib_species_key
                                     ),
-                                    "od_class_name": sib["od_class_name"] or "",
-                                    "od_confidence": sib["od_confidence"] or 0.0,
-                                    "cls_class_name": sib["cls_class_name"] or "",
-                                    "cls_confidence": sib["cls_confidence"] or 0.0,
-                                    "score": sib["score"] or 0.0,
-                                    "thumb_url": (
-                                        f"/uploads/derivatives/thumbs/{sib_thumb}"
-                                        if sib_thumb
-                                        else ""
-                                    ),
-                                    "bbox_x": sib["bbox_x"] or 0.0,
-                                    "bbox_y": sib["bbox_y"] or 0.0,
-                                    "bbox_w": sib["bbox_w"] or 0.0,
-                                    "bbox_h": sib["bbox_h"] or 0.0,
-                                    # Decision policy (P1-04)
-                                    "decision_state": sib.get("decision_state"),
-                                }
+                                    include_decision_state=True,
+                                    extra={
+                                        "thumb_url": (
+                                            f"/uploads/derivatives/thumbs/{sib_thumb}"
+                                            if sib_thumb
+                                            else ""
+                                        ),
+                                    },
+                                )
                             )
 
-                return {
-                    "detection_id": det.get("detection_id"),
-                    "image_timestamp": ts,
-                    "display_url": display_url,
-                    "full_url": full_url,
-                    "original_url": original_url,
-                    "display_path": display_url,
-                    "full_path": full_url,
-                    "original_path": original_url,
-                    "species_key": species_key,
-                    "common_name": _get_common_name_local(species_key),
-                    "od_class_name": det.get("od_class_name", ""),
-                    "od_confidence": det.get("od_confidence", 0.0) or 0.0,
-                    "cls_class_name": det.get("cls_class_name", ""),
-                    "cls_confidence": det.get("cls_confidence", 0.0) or 0.0,
-                    "score": det.get("score", 0.0) or 0.0,
-                    "formatted_date": formatted_date,
-                    "formatted_time": formatted_time,
-                    "gallery_date": date,  # For "Go to Day" button in modal
-                    "sibling_count": sibling_count,
-                    "siblings": siblings,
-                    "bbox_x": det.get("bbox_x", 0.0) or 0.0,
-                    "bbox_y": det.get("bbox_y", 0.0) or 0.0,
-                    "bbox_w": det.get("bbox_w", 0.0) or 0.0,
-                    "bbox_h": det.get("bbox_h", 0.0) or 0.0,
-                    # Rating (legacy)
-                    "rating": det.get("rating"),
-                    "rating_source": det.get("rating_source", "auto"),
-                    # Favorite
-                    "is_favorite": bool(int(det.get("is_favorite") or 0)),
-                    # Decision policy (P1-04)
-                    "decision_state": det.get("decision_state"),
-                }
+                return _build_detection_view_dict(
+                    det,
+                    species_key=species_key,
+                    common_name=_get_common_name_local(species_key),
+                    formatted_date=formatted_date,
+                    formatted_time=formatted_time,
+                    gallery_date=date,
+                    siblings=siblings,
+                    sibling_count=sibling_count,
+                    include_decision_state=True,
+                    extra={
+                        "image_timestamp": ts,
+                        "display_url": display_url,
+                        "full_url": full_url,
+                        "original_url": original_url,
+                        "display_path": display_url,
+                        "full_path": full_url,
+                        "original_path": original_url,
+                    },
+                )
 
             # ── Enrich observations for template ───────────────────────
             def _format_duration(sec: float) -> str:
@@ -2049,7 +2053,7 @@ def create_web_interface(detection_manager, system_monitor=None):
             except ValueError:
                 return "n/a"
 
-        # 1. 24h Count & Title
+        # 1. 24h Count (kept for downstream preview/feed usage)
         last_24h_count = 0
         last_24h_rows: list[dict] = []
         try:
@@ -2064,10 +2068,8 @@ def create_web_interface(detection_manager, system_monitor=None):
                 last_24h_rows, min_score=gallery_threshold
             )
             last_24h_count = last_24h_summary["summary"]["total_observations"]
-            title = f"🎥 Live • {last_24h_count} Observations (24h)"
         except Exception as e:
             logger.error(f"Error fetching 24h count: {e}")
-            title = "🎥 Live Stream"
 
         # 1b. Dashboard Stats (All-time stats for engagement)
         dashboard_stats = {
@@ -2113,6 +2115,8 @@ def create_web_interface(detection_manager, system_monitor=None):
             today_rows = today_summary["detections"]
         except Exception as e:
             logger.error(f"Error fetching today observation stats: {e}")
+
+        title = f"Live • {dashboard_stats.get('today_visits', 0)} Observations Today"
 
         # 2. Latest Detections (Top 5 from last 24h)
         latest_detections = []
@@ -2393,7 +2397,7 @@ def create_web_interface(detection_manager, system_monitor=None):
                     f"Last good frame: {_format_age_short(last_good_age)}"
                 )
             elif landing_status["stream_state"] == "Starting":
-                landing_status["stream_detail"] = "Waiting for first frame..."
+                landing_status["stream_detail"] = ""
         except Exception as e:
             logger.debug(f"Could not compute stream status for landing: {e}")
 

@@ -119,16 +119,20 @@ def resolve_selection() -> tuple:
             ), 400
 
         with db_service.closing_connection() as conn:
-            detection_ids = db_service.fetch_active_detection_ids_in_date_range(
+            selection = db_service.fetch_trash_candidate_selection_in_date_range(
                 conn, from_date, to_date
             )
 
         return jsonify(
             {
                 "status": "success",
-                "detection_ids": detection_ids,
-                "image_filenames": [],
-                "total_count": len(detection_ids),
+                "detection_ids": selection.get("detection_ids", []),
+                "image_filenames": selection.get("image_filenames", []),
+                "total_count": len(selection.get("detection_ids", []))
+                + int(selection.get("orphan_count", 0) or 0),
+                "detection_count": len(selection.get("detection_ids", [])),
+                "image_count": selection.get("image_count", 0),
+                "orphan_count": int(selection.get("orphan_count", 0) or 0),
             }
         )
 
@@ -138,7 +142,7 @@ def resolve_selection() -> tuple:
             return jsonify({"status": "error", "message": "source_type required"}), 400
 
         with db_service.closing_connection() as conn:
-            selection = db_service.fetch_active_detection_selection_by_source_type(
+            selection = db_service.fetch_trash_candidate_selection_by_source_type(
                 conn, source_type
             )
 
@@ -148,9 +152,12 @@ def resolve_selection() -> tuple:
             {
                 "status": "success",
                 "detection_ids": detection_ids,
-                "image_filenames": [],
-                "total_count": len(detection_ids),
+                "image_filenames": selection.get("image_filenames", []),
+                "total_count": len(detection_ids)
+                + int(selection.get("orphan_count", 0) or 0),
+                "detection_count": len(detection_ids),
                 "image_count": image_count,
+                "orphan_count": int(selection.get("orphan_count", 0) or 0),
             }
         )
 

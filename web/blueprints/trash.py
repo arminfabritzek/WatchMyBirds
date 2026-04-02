@@ -13,12 +13,12 @@ Handles all trash-related routes:
 """
 
 import math
-from datetime import datetime
 
 from flask import Blueprint, jsonify, render_template, request
 
 from config import get_config
 from logging_config import get_logger
+from utils.review_metadata import format_review_timestamp
 from utils.species_names import (
     UNKNOWN_SPECIES_KEY,
     build_species_picker_entries,
@@ -76,12 +76,7 @@ def trash_page():
             display_path = f"/api/review-thumb/{filename}"
             common_name = "No Bird"  # Label for no-bird images
 
-        # Format timestamp
-        try:
-            dt = datetime.strptime(ts, "%Y%m%d_%H%M%S")
-            formatted_time = dt.strftime("%Y-%m-%d %H:%M:%S")
-        except ValueError:
-            formatted_time = ts if ts else "Unknown"
+        formatted_time = format_review_timestamp(ts) or "Unknown"
 
         processed_items.append(
             {
@@ -91,6 +86,7 @@ def trash_page():
                 ),  # Unified ID (detection_id str or filename)
                 "detection_id": item.get("detection_id"),  # Only for detections
                 "filename": item.get("filename"),  # For images
+                "species_key": item.get("species_key"),
                 "display_path": display_path,
                 "common_name": common_name,
                 "formatted_time": formatted_time,

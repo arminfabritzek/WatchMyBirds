@@ -92,7 +92,7 @@ DEFAULTS = {
     "MOTION_DETECTION_ENABLED": False,
     "MOTION_SENSITIVITY": 500,
     "CAMERA_URL": "",
-    "ENABLE_NIGHTLY_DEEP_SCAN": True,
+    "ENABLE_NIGHTLY_DEEP_SCAN": False,
     "STREAM_SOURCE_MODE": "auto",  # "auto", "relay", "direct"
     "GO2RTC_STREAM_NAME": "camera",
     "GO2RTC_API_BASE": "http://127.0.0.1:1984",

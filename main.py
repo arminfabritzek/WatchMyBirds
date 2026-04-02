@@ -168,7 +168,7 @@ def _create_runtime():
         )
 
         # Start nightly sweep (feature-flag gated)
-        if config.get("ENABLE_NIGHTLY_DEEP_SCAN", True):
+        if config.get("ENABLE_NIGHTLY_DEEP_SCAN", False):
             start_nightly_analysis_sweep()
         else:
             logger.info("Nightly deep scan disabled by feature flag")
