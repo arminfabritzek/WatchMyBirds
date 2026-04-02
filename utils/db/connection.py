@@ -161,6 +161,8 @@ def _init_schema(conn: sqlite3.Connection) -> None:
     _ensure_column_on_table(conn, "detections", "manual_species_override", "TEXT")
     _ensure_column_on_table(conn, "detections", "species_source", "TEXT")
     _ensure_column_on_table(conn, "detections", "species_updated_at", "TEXT")
+    _ensure_column_on_table(conn, "detections", "manual_bbox_review", "TEXT")
+    _ensure_column_on_table(conn, "detections", "bbox_reviewed_at", "TEXT")
 
     # Frame resolution at capture time (tracks camera/resolution changes)
     _ensure_column_on_table(conn, "detections", "frame_width", "INTEGER")

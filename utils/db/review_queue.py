@@ -7,7 +7,9 @@ orphan images, review status updates, and queue management.
 
 import sqlite3
 from collections.abc import Iterable
-from datetime import datetime
+from datetime import datetime, timedelta
+
+from utils.db.detections import UNKNOWN_SPECIES_KEY, effective_species_sql
 
 
 def fetch_orphan_images(conn: sqlite3.Connection) -> list[sqlite3.Row]:
@@ -65,121 +67,182 @@ def fetch_review_queue_images(
     conn: sqlite3.Connection,
     gallery_threshold: float = 0.7,
     exclude_deep_scanned: bool = False,
+    filename: str | None = None,
 ) -> list[sqlite3.Row]:
     """
-    Returns images that need review:
-    - review_status = 'untagged' AND
-    - (no detections OR max(score) < gallery_threshold
-       OR best detection has decision_state IN ('uncertain', 'unknown'))
+    Returns review items that need review:
+    - true orphan images as image-backed items
+    - active unresolved detections as detection-backed items
 
-    Sorted by timestamp ASC (oldest first).
+    Sorted by source image timestamp DESC (newest first).
     """
-    where_clauses = [
+    species_sql = effective_species_sql("d")
+
+    orphan_where = [
+        "(i.review_status IS NULL OR i.review_status = 'untagged')",
+        "NOT EXISTS (SELECT 1 FROM detections d WHERE d.image_filename = i.filename)",
+        "i.filename IS NOT NULL",
+    ]
+    orphan_params: list[object] = []
+
+    detection_where = [
+        "COALESCE(d.status, 'active') = 'active'",
+        "COALESCE(d.decision_state, '') NOT IN ('confirmed', 'rejected')",
         "(i.review_status IS NULL OR i.review_status = 'untagged')",
         """(
-            NOT EXISTS (SELECT 1 FROM detections d WHERE d.image_filename = i.filename)
-            OR (SELECT MAX(COALESCE(d.score, 0.0)) FROM detections d WHERE d.image_filename = i.filename) < ?
-            OR EXISTS (
-                SELECT 1 FROM detections d
-                WHERE d.image_filename = i.filename
-                AND d.status = 'active'
-                AND d.decision_state IN ('uncertain', 'unknown')
-            )
+            COALESCE(d.score, 0.0) < ?
+            OR d.decision_state IN ('uncertain', 'unknown')
         )""",
         "i.filename IS NOT NULL",
     ]
-    params = [gallery_threshold]
+    detection_params: list[object] = [gallery_threshold]
 
     if exclude_deep_scanned:
-        where_clauses.append(
+        orphan_where.append(
             "NOT EXISTS (SELECT 1 FROM detections d WHERE d.image_filename = i.filename AND d.od_model_id LIKE 'deep_scan_%')"
         )
+        detection_where.append("COALESCE(d.od_model_id, '') NOT LIKE 'deep_scan_%'")
 
-    where_sql = " AND ".join(where_clauses)
+    if filename:
+        orphan_where.append("i.filename = ?")
+        orphan_params.append(filename)
+        detection_where.append("i.filename = ?")
+        detection_params.append(filename)
+
+    orphan_where_sql = " AND ".join(orphan_where)
+    detection_where_sql = " AND ".join(detection_where)
+
+    query = f"""
+    SELECT *
+    FROM (
+        SELECT
+            'image' as item_kind,
+            i.filename as item_id,
+            i.filename,
+            i.filename as source_image_filename,
+            i.timestamp,
+            i.review_status,
+            NULL as max_score,
+            NULL as best_detection_id,
+            NULL as active_detection_id,
+            NULL as bbox_x,
+            NULL as bbox_y,
+            NULL as bbox_w,
+            NULL as bbox_h,
+            'orphan' as review_reason,
+            NULL as decision_state,
+            NULL as bbox_quality,
+            NULL as unknown_score,
+            NULL as decision_reasons,
+            NULL as od_confidence,
+            NULL as cls_confidence,
+            NULL as species_key,
+            NULL as manual_species_override,
+            NULL as species_source,
+            NULL as manual_bbox_review,
+            0 as sibling_detection_count
+        FROM images i
+        WHERE {orphan_where_sql}
+
+        UNION ALL
+
+        SELECT
+            'detection' as item_kind,
+            CAST(d.detection_id AS TEXT) as item_id,
+            i.filename,
+            i.filename as source_image_filename,
+            i.timestamp,
+            i.review_status,
+            d.score as max_score,
+            d.detection_id as best_detection_id,
+            d.detection_id as active_detection_id,
+            d.bbox_x,
+            d.bbox_y,
+            d.bbox_w,
+            d.bbox_h,
+            CASE
+                WHEN d.decision_state = 'unknown' THEN 'unknown_species'
+                WHEN d.decision_state = 'uncertain' THEN 'uncertain'
+                ELSE 'low_score'
+            END as review_reason,
+            d.decision_state,
+            d.bbox_quality,
+            d.unknown_score,
+            d.decision_reasons,
+            d.od_confidence,
+            (
+                SELECT c.cls_confidence
+                FROM classifications c
+                WHERE c.detection_id = d.detection_id
+                  AND c.rank = 1
+                  AND COALESCE(c.status, 'active') = 'active'
+                LIMIT 1
+            ) as cls_confidence,
+            {species_sql} as species_key,
+            d.manual_species_override,
+            d.species_source,
+            d.manual_bbox_review,
+            (
+                SELECT COUNT(*)
+                FROM detections ds
+                WHERE ds.image_filename = d.image_filename
+                  AND COALESCE(ds.status, 'active') = 'active'
+                  AND COALESCE(ds.decision_state, '') NOT IN ('confirmed', 'rejected')
+            ) as sibling_detection_count
+        FROM detections d
+        JOIN images i ON i.filename = d.image_filename
+        WHERE {detection_where_sql}
+    ) review_items
+    ORDER BY timestamp DESC, item_kind DESC, CAST(COALESCE(active_detection_id, 0) AS INTEGER) ASC;
+    """
+    cur = conn.execute(query, [*orphan_params, *detection_params])
+    return cur.fetchall()
+
+
+def fetch_review_queue_image(
+    conn: sqlite3.Connection,
+    filename: str,
+    gallery_threshold: float = 0.7,
+    exclude_deep_scanned: bool = False,
+) -> sqlite3.Row | None:
+    """Return the first review-queue row for a filename, or ``None`` if absent."""
+    rows = fetch_review_queue_images(
+        conn,
+        gallery_threshold=gallery_threshold,
+        exclude_deep_scanned=exclude_deep_scanned,
+        filename=filename,
+    )
+    return rows[0] if rows else None
+
+
+def fetch_recent_review_species(
+    conn: sqlite3.Connection,
+    limit: int = 8,
+    lookback_days: int = 7,
+) -> list[sqlite3.Row]:
+    """Return recently common active species for review quick-picks."""
+    species_sql = effective_species_sql("d")
+    cutoff = (datetime.now() - timedelta(days=max(1, lookback_days))).strftime(
+        "%Y%m%d_%H%M%S"
+    )
 
     query = f"""
     SELECT
-        i.filename,
-        i.timestamp,
-        i.review_status,
-        (SELECT MAX(COALESCE(d.score, 0.0)) FROM detections d WHERE d.image_filename = i.filename) as max_score,
-        (
-            SELECT d.bbox_x
-            FROM detections d
-            WHERE d.image_filename = i.filename
-            ORDER BY COALESCE(d.score, 0.0) DESC, d.detection_id DESC
-            LIMIT 1
-        ) as bbox_x,
-        (
-            SELECT d.bbox_y
-            FROM detections d
-            WHERE d.image_filename = i.filename
-            ORDER BY COALESCE(d.score, 0.0) DESC, d.detection_id DESC
-            LIMIT 1
-        ) as bbox_y,
-        (
-            SELECT d.bbox_w
-            FROM detections d
-            WHERE d.image_filename = i.filename
-            ORDER BY COALESCE(d.score, 0.0) DESC, d.detection_id DESC
-            LIMIT 1
-        ) as bbox_w,
-        (
-            SELECT d.bbox_h
-            FROM detections d
-            WHERE d.image_filename = i.filename
-            ORDER BY COALESCE(d.score, 0.0) DESC, d.detection_id DESC
-            LIMIT 1
-        ) as bbox_h,
-        CASE
-            WHEN NOT EXISTS (SELECT 1 FROM detections d WHERE d.image_filename = i.filename)
-            THEN 'orphan'
-            WHEN EXISTS (
-                SELECT 1 FROM detections d
-                WHERE d.image_filename = i.filename
-                AND d.status = 'active'
-                AND d.decision_state = 'unknown'
-            )
-            THEN 'unknown_species'
-            WHEN EXISTS (
-                SELECT 1 FROM detections d
-                WHERE d.image_filename = i.filename
-                AND d.status = 'active'
-                AND d.decision_state = 'uncertain'
-            )
-            THEN 'uncertain'
-            ELSE 'low_score'
-        END as review_reason,
-        -- Best detection's decision fields
-        (
-            SELECT d.decision_state
-            FROM detections d
-            WHERE d.image_filename = i.filename AND d.status = 'active'
-            ORDER BY COALESCE(d.score, 0.0) DESC LIMIT 1
-        ) as decision_state,
-        (
-            SELECT d.bbox_quality
-            FROM detections d
-            WHERE d.image_filename = i.filename AND d.status = 'active'
-            ORDER BY COALESCE(d.score, 0.0) DESC LIMIT 1
-        ) as bbox_quality,
-        (
-            SELECT d.unknown_score
-            FROM detections d
-            WHERE d.image_filename = i.filename AND d.status = 'active'
-            ORDER BY COALESCE(d.score, 0.0) DESC LIMIT 1
-        ) as unknown_score,
-        (
-            SELECT d.decision_reasons
-            FROM detections d
-            WHERE d.image_filename = i.filename AND d.status = 'active'
-            ORDER BY COALESCE(d.score, 0.0) DESC LIMIT 1
-        ) as decision_reasons
-    FROM images i
-    WHERE {where_sql}
-    ORDER BY i.timestamp ASC;
+        {species_sql} as species_key,
+        COUNT(*) as hit_count,
+        MAX(i.timestamp) as last_seen
+    FROM detections d
+    JOIN images i ON i.filename = d.image_filename
+    WHERE COALESCE(d.status, 'active') = 'active'
+      AND i.timestamp IS NOT NULL
+      AND i.timestamp >= ?
+      AND {species_sql} IS NOT NULL
+      AND {species_sql} != ?
+    GROUP BY {species_sql}
+    ORDER BY hit_count DESC, last_seen DESC
+    LIMIT ?
     """
-    cur = conn.execute(query, params)
+    cur = conn.execute(query, (cutoff, UNKNOWN_SPECIES_KEY, limit))
     return cur.fetchall()
 
 
@@ -187,27 +250,37 @@ def fetch_review_queue_count(
     conn: sqlite3.Connection, gallery_threshold: float = 0.7
 ) -> int:
     """
-    Returns count of images needing review (for badge).
+    Returns count of review items needing review (for badge).
     Same criteria as fetch_review_queue_images.
     """
     query = """
-    SELECT COUNT(*)
-    FROM images i
-    WHERE (i.review_status IS NULL OR i.review_status = 'untagged')
-    AND (
-        NOT EXISTS (SELECT 1 FROM detections d WHERE d.image_filename = i.filename)
-        OR (SELECT MAX(COALESCE(d.score, 0.0)) FROM detections d WHERE d.image_filename = i.filename) < ?
-        OR EXISTS (
-            SELECT 1 FROM detections d
-            WHERE d.image_filename = i.filename
-            AND d.status = 'active'
-            AND d.decision_state IN ('uncertain', 'unknown')
+    SELECT
+        (
+            SELECT COUNT(*)
+            FROM images i
+            WHERE (i.review_status IS NULL OR i.review_status = 'untagged')
+              AND NOT EXISTS (
+                  SELECT 1 FROM detections d WHERE d.image_filename = i.filename
+              )
+              AND i.filename IS NOT NULL
         )
-    )
-    AND i.filename IS NOT NULL;
+        +
+        (
+            SELECT COUNT(*)
+            FROM detections d
+            JOIN images i ON i.filename = d.image_filename
+            WHERE COALESCE(d.status, 'active') = 'active'
+              AND COALESCE(d.decision_state, '') NOT IN ('confirmed', 'rejected')
+              AND (i.review_status IS NULL OR i.review_status = 'untagged')
+              AND (
+                  COALESCE(d.score, 0.0) < ?
+                  OR d.decision_state IN ('uncertain', 'unknown')
+              )
+              AND i.filename IS NOT NULL
+        ) AS review_count
     """
     row = conn.execute(query, (gallery_threshold,)).fetchone()
-    return row[0] if row else 0
+    return row["review_count"] if row else 0
 
 
 def restore_no_bird_images(conn: sqlite3.Connection, filenames: Iterable[str]) -> int:

@@ -34,6 +34,7 @@ from utils.db import (  # noqa: F401
     fetch_hourly_counts,
     fetch_orphan_count,
     fetch_orphan_images,
+    fetch_review_queue_image,
     fetch_review_queue_count,
     fetch_review_queue_images,
     fetch_sibling_detections,

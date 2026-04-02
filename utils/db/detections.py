@@ -10,7 +10,21 @@ from collections.abc import Iterable
 from datetime import UTC, datetime
 from typing import Any
 
-UNKNOWN_SPECIES_KEY = "Unknown_species"
+from utils.review_metadata import (
+    REVIEW_STATUS_NO_BIRD,
+    REVIEW_STATUS_UNTAGGED,
+    VALID_BBOX_REVIEW_STATES,
+)
+from utils.species_names import UNKNOWN_SPECIES_KEY
+
+
+def _gallery_visibility_sql(det_alias: str = "d", image_alias: str = "i") -> str:
+    """Shared visibility policy for gallery-like detection surfaces."""
+    return f"""
+        {det_alias}.status = 'active'
+        AND ({image_alias}.review_status IS NULL OR {image_alias}.review_status != '{REVIEW_STATUS_NO_BIRD}')
+        AND lower(COALESCE({det_alias}.decision_state, '')) NOT IN ('uncertain', 'unknown')
+    """
 
 
 def _normalized_detector_species_sql(det_alias: str = "d") -> str:
@@ -51,7 +65,7 @@ def _top1_confidence_sql(det_alias: str = "d") -> str:
     """
 
 
-def _effective_species_sql(det_alias: str = "d") -> str:
+def effective_species_sql(det_alias: str = "d") -> str:
     return f"""
         COALESCE(
             NULLIF({det_alias}.manual_species_override, ''),
@@ -163,7 +177,7 @@ def fetch_detections_for_gallery(
     Returns detection-centric records for gallery display.
     """
     params = []
-    where_clauses = ["d.status = 'active'"]
+    where_clauses = [_gallery_visibility_sql("d", "i")]
 
     if date_str_iso:
         date_prefix = date_str_iso.replace("-", "")
@@ -200,16 +214,23 @@ def fetch_detections_for_gallery(
              REPLACE(i.filename, '.jpg', '.webp')) AS relative_path,
             i.filename as original_name,
             i.downloaded_timestamp,
+            i.review_status,
             d.manual_species_override,
             d.species_source,
             {_top1_species_sql("d")} as cls_class_name,
             {_top1_confidence_sql("d")} as cls_confidence,
-            {_effective_species_sql("d")} as species_key,
+            {effective_species_sql("d")} as species_key,
             d.rating,
             d.rating_source,
             d.is_favorite,
             -- Count of sibling detections on the same image (for multi-bird display)
-            (SELECT COUNT(*) FROM detections d2 WHERE d2.image_filename = d.image_filename AND d2.status = 'active') as sibling_count,
+            (
+                SELECT COUNT(*)
+                FROM detections d2
+                JOIN images i2 ON i2.filename = d2.image_filename
+                WHERE d2.image_filename = d.image_filename
+                  AND {_gallery_visibility_sql("d2", "i2")}
+            ) as sibling_count,
             -- Decision policy fields (P1-04)
             d.decision_state,
             d.bbox_quality,
@@ -248,14 +269,14 @@ def fetch_random_favorites(
              COALESCE(d.thumbnail_path, REPLACE(i.filename, '.jpg', '_crop_1.webp'))) AS thumbnail_path_virtual,
             (substr(i.timestamp, 1, 4) || '-' || substr(i.timestamp, 5, 2) || '-' || substr(i.timestamp, 7, 2) || '/' ||
              REPLACE(i.filename, '.jpg', '.webp')) AS relative_path,
-            {_effective_species_sql("d")} as species_key,
+            {effective_species_sql("d")} as species_key,
             ROW_NUMBER() OVER(
-                PARTITION BY {_effective_species_sql("d")}
+                PARTITION BY {effective_species_sql("d")}
                 ORDER BY RANDOM()
             ) as rn
         FROM detections d
         JOIN images i ON d.image_filename = i.filename
-        WHERE d.status = 'active' AND d.is_favorite = 1
+        WHERE {_gallery_visibility_sql("d", "i")} AND d.is_favorite = 1
     )
     SELECT * FROM RankedFavorites
     WHERE rn = 1
@@ -280,6 +301,7 @@ def fetch_sibling_detections(
             d.od_class_name,
             d.od_confidence,
             d.score,
+            i.review_status,
             d.bbox_x,
             d.bbox_y,
             d.bbox_w,
@@ -289,12 +311,12 @@ def fetch_sibling_detections(
             d.species_source,
             {_top1_species_sql("d")} as cls_class_name,
             {_top1_confidence_sql("d")} as cls_confidence,
-            {_effective_species_sql("d")} as species_key,
+            {effective_species_sql("d")} as species_key,
             (substr(i.timestamp, 1, 4) || '-' || substr(i.timestamp, 5, 2) || '-' || substr(i.timestamp, 7, 2) || '/' ||
              COALESCE(d.thumbnail_path, REPLACE(i.filename, '.jpg', '_crop_1.webp'))) AS thumbnail_path_virtual
         FROM detections d
         JOIN images i ON d.image_filename = i.filename
-        WHERE d.image_filename = ? AND d.status = 'active'
+        WHERE d.image_filename = ? AND {_gallery_visibility_sql("d", "i")}
         ORDER BY d.score DESC
     """
     cur = conn.execute(query, (image_filename,))
@@ -305,11 +327,12 @@ def fetch_day_count(conn: sqlite3.Connection, date_str_iso: str) -> int:
     """Returns COUNT(*) for a given date (YYYY-MM-DD)."""
     date_prefix = date_str_iso.replace("-", "")
     cur = conn.execute(
-        """
+        f"""
         SELECT COUNT(*) AS cnt
         FROM detections d
+        JOIN images i ON i.filename = d.image_filename
         WHERE d.image_filename LIKE ? || '%'
-        AND d.status = 'active';
+        AND {_gallery_visibility_sql("d", "i")};
         """,
         (date_prefix,),
     )
@@ -323,13 +346,14 @@ def fetch_hourly_counts(
     """Returns hourly counts for a given date (YYYY-MM-DD)."""
     date_prefix = date_str_iso.replace("-", "")
     cur = conn.execute(
-        """
+        f"""
         SELECT
             substr(d.image_filename, 10, 2) AS hour,
             COUNT(*) AS count
         FROM detections d
+        JOIN images i ON i.filename = d.image_filename
         WHERE d.image_filename LIKE ? || '%'
-        AND d.status = 'active'
+        AND {_gallery_visibility_sql("d", "i")}
         GROUP BY hour
         ORDER BY hour;
         """,
@@ -348,7 +372,7 @@ def fetch_daily_covers(
     Args:
         min_score: Minimum score threshold for counting images (to match gallery display filter)
     """
-    query = """
+    query = f"""
     WITH DailyBest AS (
         SELECT
             (substr(d.image_filename, 1, 4) || '-' || substr(d.image_filename, 5, 2) || '-' || substr(d.image_filename, 7, 2)) as date_iso,
@@ -364,14 +388,15 @@ def fetch_daily_covers(
             ) as rn
         FROM detections d
         JOIN images i ON d.image_filename = i.filename
-        WHERE d.status = 'active'
+        WHERE {_gallery_visibility_sql("d", "i")}
     ),
     DayCounts AS (
         SELECT
             (substr(d.image_filename, 1, 4) || '-' || substr(d.image_filename, 5, 2) || '-' || substr(d.image_filename, 7, 2)) as date_iso,
             COUNT(*) as image_count
         FROM detections d
-        WHERE d.status = 'active'
+        JOIN images i ON d.image_filename = i.filename
+        WHERE {_gallery_visibility_sql("d", "i")}
         AND (d.score IS NULL OR d.score >= ?)
         GROUP BY (substr(d.image_filename, 1, 4) || '-' || substr(d.image_filename, 5, 2) || '-' || substr(d.image_filename, 7, 2))
     )
@@ -407,11 +432,12 @@ def fetch_detection_species_summary(
     cur = conn.execute(
         f"""
         SELECT
-            {_effective_species_sql("d")} as species,
+            {effective_species_sql("d")} as species,
             COUNT(d.detection_id) as count
         FROM detections d
+        JOIN images i ON i.filename = d.image_filename
         WHERE d.image_filename LIKE ? || '%'
-        AND d.status = 'active'
+        AND {_gallery_visibility_sql("d", "i")}
         GROUP BY species
         ORDER BY count DESC;
         """,
@@ -431,11 +457,11 @@ def fetch_active_detection_ids_in_date_range(
     to_prefix = to_date.replace("-", "")
 
     cur = conn.execute(
-        """
+        f"""
         SELECT d.detection_id
         FROM detections d
         JOIN images i ON i.filename = d.image_filename
-        WHERE d.status = 'active'
+        WHERE {_gallery_visibility_sql("d", "i")}
           AND substr(i.timestamp, 1, 8) >= ?
           AND substr(i.timestamp, 1, 8) <= ?
         ORDER BY i.timestamp ASC, d.detection_id ASC
@@ -443,6 +469,105 @@ def fetch_active_detection_ids_in_date_range(
         (from_prefix, to_prefix),
     )
     return [int(row["detection_id"]) for row in cur.fetchall()]
+
+
+def fetch_active_detection_selection_in_date_range(
+    conn: sqlite3.Connection, from_date: str, to_date: str
+) -> dict[str, Any]:
+    """
+    Return active detections for an inclusive date range together with the
+    distinct source images they belong to.
+    """
+    from_prefix = from_date.replace("-", "")
+    to_prefix = to_date.replace("-", "")
+
+    cur = conn.execute(
+        f"""
+        SELECT
+            d.detection_id,
+            i.filename AS image_filename
+        FROM detections d
+        JOIN images i ON i.filename = d.image_filename
+        WHERE {_gallery_visibility_sql("d", "i")}
+          AND substr(i.timestamp, 1, 8) >= ?
+          AND substr(i.timestamp, 1, 8) <= ?
+        ORDER BY i.timestamp ASC, d.detection_id ASC
+        """,
+        (from_prefix, to_prefix),
+    )
+
+    rows = cur.fetchall()
+    detection_ids = [int(row["detection_id"]) for row in rows]
+    image_filenames = list(dict.fromkeys(str(row["image_filename"]) for row in rows))
+
+    return {
+        "detection_ids": detection_ids,
+        "image_filenames": image_filenames,
+        "image_count": len(image_filenames),
+    }
+
+
+def fetch_trash_candidate_selection_in_date_range(
+    conn: sqlite3.Connection, from_date: str, to_date: str
+) -> dict[str, Any]:
+    """
+    Return untrashed review/gallery candidates for an inclusive date range.
+
+    This is used by Trash bulk actions, so it must operate on image-level
+    eligibility (`untagged` / NULL) rather than gallery visibility rules.
+    """
+    from_prefix = from_date.replace("-", "")
+    to_prefix = to_date.replace("-", "")
+
+    orphan_rows = conn.execute(
+        """
+        SELECT i.filename AS image_filename
+        FROM images i
+        WHERE (i.review_status IS NULL OR i.review_status = ?)
+          AND NOT EXISTS (
+              SELECT 1
+              FROM detections d
+              WHERE d.image_filename = i.filename
+          )
+          AND substr(i.timestamp, 1, 8) >= ?
+          AND substr(i.timestamp, 1, 8) <= ?
+        ORDER BY i.timestamp ASC, i.filename ASC
+        """,
+        (REVIEW_STATUS_UNTAGGED, from_prefix, to_prefix),
+    ).fetchall()
+
+    detection_rows = conn.execute(
+        """
+        SELECT
+            d.detection_id,
+            i.filename AS image_filename
+        FROM detections d
+        JOIN images i ON i.filename = d.image_filename
+        WHERE d.status = 'active'
+          AND (i.review_status IS NULL OR i.review_status = ?)
+          AND substr(i.timestamp, 1, 8) >= ?
+          AND substr(i.timestamp, 1, 8) <= ?
+        ORDER BY i.timestamp ASC, d.detection_id ASC
+        """,
+        (REVIEW_STATUS_UNTAGGED, from_prefix, to_prefix),
+    ).fetchall()
+
+    detection_ids = [int(row["detection_id"]) for row in detection_rows]
+    detection_image_filenames = [
+        str(row["image_filename"]) for row in detection_rows
+    ]
+    orphan_image_filenames = [str(row["image_filename"]) for row in orphan_rows]
+    image_filenames = list(
+        dict.fromkeys([*detection_image_filenames, *orphan_image_filenames])
+    )
+
+    return {
+        "detection_ids": detection_ids,
+        "image_filenames": image_filenames,
+        "orphan_image_filenames": orphan_image_filenames,
+        "orphan_count": len(orphan_image_filenames),
+        "image_count": len(image_filenames),
+    }
 
 
 def fetch_active_detection_selection_by_source_type(
@@ -453,14 +578,14 @@ def fetch_active_detection_selection_by_source_type(
     of distinct images those detections belong to.
     """
     cur = conn.execute(
-        """
+        f"""
         SELECT
             d.detection_id,
             i.filename AS image_filename
         FROM detections d
         JOIN images i ON i.filename = d.image_filename
         JOIN sources s ON s.source_id = i.source_id
-        WHERE d.status = 'active'
+        WHERE {_gallery_visibility_sql("d", "i")}
           AND s.type = ?
         ORDER BY i.timestamp ASC, d.detection_id ASC
         """,
@@ -469,10 +594,71 @@ def fetch_active_detection_selection_by_source_type(
 
     rows = cur.fetchall()
     detection_ids = [int(row["detection_id"]) for row in rows]
-    image_filenames = {str(row["image_filename"]) for row in rows}
+    image_filenames = list(dict.fromkeys(str(row["image_filename"]) for row in rows))
 
     return {
         "detection_ids": detection_ids,
+        "image_filenames": image_filenames,
+        "image_count": len(image_filenames),
+    }
+
+
+def fetch_trash_candidate_selection_by_source_type(
+    conn: sqlite3.Connection, source_type: str
+) -> dict[str, Any]:
+    """
+    Return untrashed review/gallery candidates for a given source type.
+
+    Unlike the gallery visibility resolver, this includes review-only detections
+    and orphan images as long as the image itself is still `untagged`.
+    """
+    orphan_rows = conn.execute(
+        """
+        SELECT i.filename AS image_filename
+        FROM images i
+        JOIN sources s ON s.source_id = i.source_id
+        WHERE (i.review_status IS NULL OR i.review_status = ?)
+          AND NOT EXISTS (
+              SELECT 1
+              FROM detections d
+              WHERE d.image_filename = i.filename
+          )
+          AND s.type = ?
+        ORDER BY i.timestamp ASC, i.filename ASC
+        """,
+        (REVIEW_STATUS_UNTAGGED, source_type),
+    ).fetchall()
+
+    detection_rows = conn.execute(
+        """
+        SELECT
+            d.detection_id,
+            i.filename AS image_filename
+        FROM detections d
+        JOIN images i ON i.filename = d.image_filename
+        JOIN sources s ON s.source_id = i.source_id
+        WHERE d.status = 'active'
+          AND (i.review_status IS NULL OR i.review_status = ?)
+          AND s.type = ?
+        ORDER BY i.timestamp ASC, d.detection_id ASC
+        """,
+        (REVIEW_STATUS_UNTAGGED, source_type),
+    ).fetchall()
+
+    detection_ids = [int(row["detection_id"]) for row in detection_rows]
+    detection_image_filenames = [
+        str(row["image_filename"]) for row in detection_rows
+    ]
+    orphan_image_filenames = [str(row["image_filename"]) for row in orphan_rows]
+    image_filenames = list(
+        dict.fromkeys([*detection_image_filenames, *orphan_image_filenames])
+    )
+
+    return {
+        "detection_ids": detection_ids,
+        "image_filenames": image_filenames,
+        "orphan_image_filenames": orphan_image_filenames,
+        "orphan_count": len(orphan_image_filenames),
         "image_count": len(image_filenames),
     }
 
@@ -546,6 +732,29 @@ def apply_species_override_many(
     )
     conn.commit()
     return cur.rowcount
+
+
+def set_manual_bbox_review(
+    conn: sqlite3.Connection,
+    detection_id: int,
+    review_state: str | None,
+) -> None:
+    """Persist the manual review state for a detection bounding box."""
+    normalized = (review_state or "").strip().lower() or None
+    if normalized not in {None, *VALID_BBOX_REVIEW_STATES}:
+        raise ValueError(f"invalid bbox review state: {review_state}")
+
+    reviewed_at = datetime.now(UTC).isoformat() if normalized else None
+    conn.execute(
+        """
+        UPDATE detections
+        SET manual_bbox_review = ?,
+            bbox_reviewed_at = ?
+        WHERE detection_id = ?
+        """,
+        (normalized, reviewed_at, detection_id),
+    )
+    conn.commit()
 
 
 def restore_detections(conn: sqlite3.Connection, detection_ids: Iterable[int]) -> None:
@@ -642,11 +851,11 @@ def fetch_count_last_24h(conn: sqlite3.Connection, threshold_timestamp: str) -> 
         Total count of detections since threshold
     """
     cur = conn.execute(
-        """
+        f"""
         SELECT COUNT(*) AS cnt
         FROM detections d
         JOIN images i ON d.image_filename = i.filename
-        WHERE d.status = 'active'
+        WHERE {_gallery_visibility_sql("d", "i")}
         AND i.timestamp >= ?
         """,
         (threshold_timestamp,),
@@ -699,16 +908,23 @@ def fetch_detections_last_24h(
              REPLACE(i.filename, '.jpg', '.webp')) AS relative_path,
             i.filename as original_name,
             i.downloaded_timestamp,
+            i.review_status,
             d.manual_species_override,
             d.species_source,
             {_top1_species_sql("d")} as cls_class_name,
             {_top1_confidence_sql("d")} as cls_confidence,
-            {_effective_species_sql("d")} as species_key,
+            {effective_species_sql("d")} as species_key,
             d.is_favorite,
-            (SELECT COUNT(*) FROM detections d2 WHERE d2.image_filename = d.image_filename AND d2.status = 'active') as sibling_count
+            (
+                SELECT COUNT(*)
+                FROM detections d2
+                JOIN images i2 ON i2.filename = d2.image_filename
+                WHERE d2.image_filename = d.image_filename
+                  AND {_gallery_visibility_sql("d2", "i2")}
+            ) as sibling_count
         FROM detections d
         JOIN images i ON d.image_filename = i.filename
-        WHERE d.status = 'active'
+        WHERE {_gallery_visibility_sql("d", "i")}
         AND i.timestamp >= ?
         {order_clause}
         {limit_clause}
@@ -742,12 +958,12 @@ def fetch_bbox_centers(
             (d.bbox_y + d.bbox_h / 2.0) AS center_y,
             d.bbox_w,
             d.bbox_h,
-            {_effective_species_sql("d")} AS species,
+            {effective_species_sql("d")} AS species,
             d.score,
             i.timestamp AS image_timestamp
         FROM detections d
         JOIN images i ON d.image_filename = i.filename
-        WHERE d.status = 'active'
+        WHERE {_gallery_visibility_sql("d", "i")}
           AND d.bbox_x IS NOT NULL
           AND d.bbox_y IS NOT NULL
           AND d.bbox_w > 0

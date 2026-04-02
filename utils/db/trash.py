@@ -9,7 +9,7 @@ import sqlite3
 from typing import Any
 
 from utils.db.detections import (
-    _effective_species_sql,
+    effective_species_sql,
     _top1_confidence_sql,
     _top1_species_sql,
 )
@@ -100,7 +100,7 @@ def fetch_trash_items(
              COALESCE(d.thumbnail_path, REPLACE(i.filename, '.jpg', '_crop_1.webp'))) as thumbnail_path_virtual,
             {_top1_species_sql("d")} as cls_class_name,
             {_top1_confidence_sql("d")} as cls_confidence,
-            {_effective_species_sql("d")} as species_key
+            {effective_species_sql("d")} as species_key
         FROM detections d
         JOIN images i ON d.image_filename = i.filename
         WHERE {det_where_sql}

@@ -68,11 +68,11 @@ def fetch_species_timestamps(
     - score >= min_score (GALLERY_DISPLAY_THRESHOLD)
     - Species resolved via manual_override > classification > od_class_name
     """
-    from utils.db.detections import _effective_species_sql
+    from utils.db.detections import effective_species_sql
 
     cur = conn.execute(f"""
         SELECT
-            {_effective_species_sql("d")} AS species,
+            {effective_species_sql("d")} AS species,
             i.timestamp as image_timestamp
         FROM detections d
         JOIN images i ON d.image_filename = i.filename
@@ -96,9 +96,9 @@ def fetch_analytics_summary(
     Returns high-level summary stats for analytics dashboard.
 
     Filters: active, not no_bird, score >= min_score, must have classification.
-    Uses _effective_species_sql for species resolution.
+    Uses effective_species_sql for species resolution.
     """
-    from utils.db.detections import _effective_species_sql
+    from utils.db.detections import effective_species_sql
 
     _base_where = """
         d.status = 'active'
@@ -122,7 +122,7 @@ def fetch_analytics_summary(
 
     # Total unique species
     species_cursor = conn.execute(f"""
-        SELECT COUNT(DISTINCT {_effective_species_sql("d")}) AS total
+        SELECT COUNT(DISTINCT {effective_species_sql("d")}) AS total
         FROM detections d
         JOIN images i ON d.image_filename = i.filename
         WHERE {_base_where}
