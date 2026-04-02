@@ -17,6 +17,15 @@ function isAuthRedirect(resp) {
     return false;
 }
 
+function getViewerScope(el) {
+    if (!el || !el.closest) return null;
+    return el.closest('.wm-viewer-scope') || el.closest('.modal');
+}
+
+function isReviewViewerScope(scope) {
+    return Boolean(scope && scope.classList && scope.classList.contains('wm-viewer-scope'));
+}
+
 function redirectToLogin() {
     if (window.wmToast) window.wmToast('Session expired. Please log in.', 'error');
     window.location.href = '/login?next=' + encodeURIComponent(
@@ -410,6 +419,7 @@ const BBOX_COLORS = [
 function initBboxOverlay(img) {
     const container = img.closest('.modal-image-viewer');
     if (!container) return;
+    const scope = getViewerScope(img);
 
     const canvas = container.querySelector('.bbox-overlay');
     if (!canvas) return;
@@ -422,13 +432,15 @@ function initBboxOverlay(img) {
     canvas.dataset.naturalWidth = img.naturalWidth;
     canvas.dataset.naturalHeight = img.naturalHeight;
 
-    // Apply stored preference
-    if (localStorage.getItem('wmb_modal_bbox_pref') === 'on') {
-        const modal = img.closest('.modal');
-        const btn = modal?.querySelector('.bbox-toggle');
-        if (btn && !btn.classList.contains('active')) {
-            toggleBboxOverlay(btn);
-        }
+    const prefKey = isReviewViewerScope(scope) ? 'wmb_review_bbox_pref' : 'wmb_modal_bbox_pref';
+    const defaultPref = isReviewViewerScope(scope) ? 'on' : 'off';
+    if (localStorage.getItem(prefKey) !== 'off' && localStorage.getItem(prefKey) !== 'on') {
+        localStorage.setItem(prefKey, defaultPref);
+    }
+
+    if (localStorage.getItem(prefKey) === 'on') {
+        const btn = scope?.querySelector('.bbox-toggle');
+        if (btn && !btn.classList.contains('active')) toggleBboxOverlay(btn);
     }
 }
 
@@ -436,10 +448,11 @@ function initBboxOverlay(img) {
  * Toggle bounding box overlay visibility
  */
 function toggleBboxOverlay(btn) {
-    const modal = btn.closest('.modal');
-    if (!modal) return;
+    const scope = getViewerScope(btn);
+    if (!scope) return;
+    const prefKey = isReviewViewerScope(scope) ? 'wmb_review_bbox_pref' : 'wmb_modal_bbox_pref';
 
-    const container = modal.querySelector('.modal-image-viewer');
+    const container = scope.querySelector('.modal-image-viewer');
     const canvas = container?.querySelector('.bbox-overlay');
     const img = container?.querySelector('.bbox-base-image');
 
@@ -453,14 +466,14 @@ function toggleBboxOverlay(btn) {
         btn.textContent = 'Boxes';
         btn.classList.remove('active', 'btn-secondary', 'btn--secondary');
         btn.classList.add('btn-outline-secondary', 'btn--outline-secondary');
-        localStorage.setItem('wmb_modal_bbox_pref', 'off');
+        localStorage.setItem(prefKey, 'off');
     } else {
         // Show and draw overlay
         canvas.style.display = 'block';
         btn.textContent = 'Boxes ✓';
         btn.classList.add('active', 'btn-secondary', 'btn--secondary');
         btn.classList.remove('btn-outline-secondary', 'btn--outline-secondary');
-        localStorage.setItem('wmb_modal_bbox_pref', 'on');
+        localStorage.setItem(prefKey, 'on');
 
         // Collect all bounding boxes
         const currentBbox = JSON.parse(btn.dataset.currentBbox || '{}');
@@ -647,6 +660,8 @@ function hideHoverBbox(cardEl) {
 function initSmartZoom(img) {
     const viewer = img.closest('.wm-image-viewer');
     if (!viewer) return;
+    const scope = getViewerScope(viewer);
+    const prefKey = isReviewViewerScope(scope) ? 'wmb_review_zoom_pref' : 'wmb_modal_zoom_pref';
 
     const bx = parseFloat(viewer.dataset.bboxX);
     const by = parseFloat(viewer.dataset.bboxY);
@@ -656,24 +671,25 @@ function initSmartZoom(img) {
     // Only zoom if we have valid bbox data
     if (isNaN(bx) || isNaN(by) || isNaN(bw) || isNaN(bh) || bw <= 0 || bh <= 0) {
         // No bbox → hide zoom button
-        const modal = viewer.closest('.modal');
-        if (modal) {
-            const zoomBtn = modal.querySelector('.smart-zoom-toggle');
+        if (scope) {
+            const zoomBtn = scope.querySelector('.smart-zoom-toggle');
             if (zoomBtn) zoomBtn.style.display = 'none';
         }
         return;
     }
 
     // Respect stored zoom preference: if user chose 'full', skip auto-zoom
-    const storedPref = localStorage.getItem('wmb_modal_zoom_pref');
+    if (localStorage.getItem(prefKey) !== 'full' && localStorage.getItem(prefKey) !== 'zoom') {
+        localStorage.setItem(prefKey, 'zoom');
+    }
+    const storedPref = localStorage.getItem(prefKey);
     if (storedPref === 'full') {
         // Ensure full-image state
         viewer.classList.remove('wm-image-viewer--zoomed');
         img.style.transform = '';
         img.style.transformOrigin = '';
-        const modal = viewer.closest('.modal');
-        if (modal) {
-            const zoomBtn = modal.querySelector('.smart-zoom-toggle');
+        if (scope) {
+            const zoomBtn = scope.querySelector('.smart-zoom-toggle');
             if (zoomBtn) {
                 zoomBtn.classList.remove('active');
                 zoomBtn.textContent = '🔍 Zoom';
@@ -753,9 +769,9 @@ function applySmartZoom(viewer, img, bx, by, bw, bh) {
     }
 
     // Update button state
-    const modal = viewer.closest('.modal');
-    if (modal) {
-        const zoomBtn = modal.querySelector('.smart-zoom-toggle');
+    const scope = getViewerScope(viewer);
+    if (scope) {
+        const zoomBtn = scope.querySelector('.smart-zoom-toggle');
         if (zoomBtn) {
             zoomBtn.classList.add('active');
             zoomBtn.textContent = '🖼 Full';
@@ -767,11 +783,11 @@ function applySmartZoom(viewer, img, bx, by, bw, bh) {
  * Toggle between zoomed (bbox close-up) and full image view.
  */
 function toggleSmartZoom(btn) {
-    const modal = btn.closest('.modal');
-    if (!modal) return;
+    const scope = getViewerScope(btn);
+    if (!scope) return;
 
-    const viewer = modal.querySelector('.wm-image-viewer');
-    const img = modal.querySelector('.wm-image-viewer__img');
+    const viewer = scope.querySelector('.wm-image-viewer');
+    const img = scope.querySelector('.wm-image-viewer__img');
     if (!viewer || !img) return;
 
     const isZoomed = viewer.classList.contains('wm-image-viewer--zoomed');
@@ -787,7 +803,7 @@ function toggleSmartZoom(btn) {
         btn.classList.remove('active');
         btn.textContent = '🔍 Zoom';
         // Persist preference: user wants full view
-        localStorage.setItem('wmb_modal_zoom_pref', 'full');
+        localStorage.setItem(isReviewViewerScope(scope) ? 'wmb_review_zoom_pref' : 'wmb_modal_zoom_pref', 'full');
     } else {
         // Zoom in → read bbox from viewer data attributes
         const bx = parseFloat(viewer.dataset.bboxX);
@@ -798,7 +814,7 @@ function toggleSmartZoom(btn) {
         if (!isNaN(bx) && !isNaN(by) && bw > 0 && bh > 0) {
             applySmartZoom(viewer, img, bx, by, bw, bh);
             // Persist preference: user wants zoom
-            localStorage.setItem('wmb_modal_zoom_pref', 'zoom');
+            localStorage.setItem(isReviewViewerScope(scope) ? 'wmb_review_zoom_pref' : 'wmb_modal_zoom_pref', 'zoom');
         }
     }
 }

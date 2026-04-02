@@ -58,6 +58,18 @@
 
         var detectionId = actionEl.getAttribute('data-detection-id');
         var filename = actionEl.getAttribute('data-filename');
+        var loginRequired = actionEl.getAttribute('data-login-required') === 'true';
+
+        if (loginRequired) {
+            closeAllMenus(null);
+            if (window.wmToast) {
+                window.wmToast('Please log in to use this action.', 'info', 2200);
+            }
+            if (typeof redirectToLogin === 'function') {
+                redirectToLogin();
+            }
+            return;
+        }
 
         // Close dropdown after action
         closeAllMenus(null);
@@ -68,6 +80,7 @@
                 return; // Don't close menu, we just opened it
 
             case 'details':
+            case 'view-details':
                 var modalTarget = actionEl.getAttribute('data-modal-target');
                 var detailsHref = actionEl.getAttribute('data-details-href');
                 if (modalTarget && typeof bootstrap !== 'undefined') {
@@ -90,6 +103,7 @@
                 break;
 
             case 'relabel':
+            case 'change-species':
                 if (typeof relabelDetection === 'function' && detectionId) {
                     var currentSpecies = actionEl.getAttribute('data-current-species') || '';
                     relabelDetection(null, parseInt(detectionId, 10), currentSpecies);
@@ -97,6 +111,7 @@
                 break;
 
             case 'delete':
+            case 'move-trash':
                 if (typeof deleteDetection === 'function' && detectionId) {
                     deleteDetection(null, parseInt(detectionId, 10));
                 }
