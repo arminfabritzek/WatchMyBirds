@@ -2,19 +2,10 @@
 
 {% block title %}Trash - WatchMyBirds{% endblock %}
 
-{% block head %}
-{# Styles migrated to design-system.css: TRASH GRID and PAGINATION sections #}
-<style>
-    .trash-range-input {
-        width: 11rem;
-    }
-</style>
-{% endblock %}
-
 {% block content %}
 {% from 'partials/tile_toolbox.html' import tile_toolbox %}
 {# Page Control Bar - Unified Design #}
-<nav class="page-control-bar" role="navigation" aria-label="Trash controls">
+<nav class="page-control-bar page-control-bar--trash-summary" role="navigation" aria-label="Trash controls">
     <div class="page-control-bar__left">
         <span class="page-control-bar__title">Trash</span>
         <span class="page-control-bar__badge">{{ total_items }}</span>
@@ -43,119 +34,126 @@
     </div>
 </nav>
 
-<section class="page-control-bar" aria-label="Date range trash controls">
-    <div class="page-control-bar__left">
-        <span class="page-control-bar__title">Date Range Trash</span>
-        <label class="page-control-bar__select-all" for="trash-range-from">
-            <span class="page-control-bar__select-label">From</span>
-            <input type="date" id="trash-range-from" class="form-control trash-range-input" aria-label="From date">
-        </label>
-        <label class="page-control-bar__select-all" for="trash-range-to">
-            <span class="page-control-bar__select-label">To</span>
-            <input type="date" id="trash-range-to" class="form-control trash-range-input" aria-label="To date">
-        </label>
-    </div>
-    <div class="page-control-bar__meta">
-        <span id="trash-range-preview-status">Choose an inclusive date range to preview detections.</span>
-    </div>
-    <div class="page-control-bar__right">
-        <button id="trash-range-preview-btn" type="button" class="btn btn--secondary">
-            Preview
-        </button>
-        <button id="trash-range-confirm-btn" type="button" class="btn btn--danger" disabled>
-            Move to Trash
-        </button>
-    </div>
-</section>
-
-<section class="page-control-bar" aria-label="Imported source trash controls">
-    <div class="page-control-bar__left">
-        <span class="page-control-bar__title">Imported Source Trash</span>
-        <span class="page-control-bar__select-all">
-            <span class="page-control-bar__select-label">Source: User Import</span>
-        </span>
-    </div>
-    <div class="page-control-bar__meta">
-        <span id="trash-import-preview-status">Preview imported detections before moving them to trash.</span>
-    </div>
-    <div class="page-control-bar__right">
-        <button id="trash-import-preview-btn" type="button" class="btn btn--secondary">
-            Preview
-        </button>
-        <button id="trash-import-confirm-btn" type="button" class="btn btn--danger" disabled>
-            Move to Trash
-        </button>
-    </div>
-</section>
-
-{% if items %}
-<div class="trash-grid">
-    {% for item in items %}
-    <div class="trash-item" data-id="{{ item.item_id }}" data-type="{{ item.trash_type }}"
-        data-index="{{ loop.index0 }}">
-        <input type="checkbox" class="trash-item__checkbox trash-checkbox" value="{{ item.item_id }}"
-            data-type="{{ item.trash_type }}" data-index="{{ loop.index0 }}">
-        {# Type Badge #}
-        <span
-            class="trash-item__type-badge {% if item.trash_type == 'image' %}trash-item__type-badge--image{% endif %}">
-            {% if item.trash_type == 'detection' %}Rejected{% else %}No Bird{% endif %}
-        </span>
-        <img src="{{ item.display_path }}" alt="{{ item.common_name }}" class="trash-item__image"
-            onerror="this.src='/assets/placeholder.svg'; this.onerror=null;">
-        <div class="trash-item__info">
-            <div class="trash-item__name">{{ item.common_name }}</div>
-            <div class="trash-item__time">{{ item.formatted_time }}</div>
-            <div class="trash-item__actions">
-                {% if item.trash_type == 'detection' %}
-                <button class="btn btn--sm btn--secondary restore-single" data-id="{{ item.detection_id }}"
-                    data-type="detection">Restore</button>
-                {% else %}
-                <button class="btn btn--sm btn--secondary restore-single" data-id="{{ item.filename }}"
-                    data-type="image">Restore</button>
-                {% endif %}
+<section class="trash-workbench" aria-label="Trash workbench">
+    <aside class="trash-workbench__ops" aria-label="Trash filters and batch actions">
+        <section class="page-control-bar page-control-bar--trash-panel" aria-label="Date range trash controls">
+            <div class="page-control-bar__left">
+                <span class="page-control-bar__title">Date Range</span>
+                <label class="page-control-bar__select-all" for="trash-range-from">
+                    <span class="page-control-bar__select-label">From</span>
+                    <input type="date" id="trash-range-from" class="form-control trash-range-input" aria-label="From date">
+                </label>
+                <label class="page-control-bar__select-all" for="trash-range-to">
+                    <span class="page-control-bar__select-label">To</span>
+                    <input type="date" id="trash-range-to" class="form-control trash-range-input" aria-label="To date">
+                </label>
             </div>
-        </div>
-        {{ tile_toolbox(
-        detection_id=item.detection_id if item.trash_type == 'detection' else none,
-        filename=item.filename if item.trash_type == 'image' else none,
-        surface='trash',
-        can_moderate=true
-        ) }}
-    </div>
-    {% endfor %}
-</div>
+            <div class="page-control-bar__meta">
+                <span id="trash-range-preview-status">Preview an inclusive date range.</span>
+            </div>
+            <div class="page-control-bar__right">
+                <button id="trash-range-preview-btn" type="button" class="btn btn--secondary">
+                    Preview
+                </button>
+                <button id="trash-range-confirm-btn" type="button" class="btn btn--danger" disabled>
+                    Move to Trash
+                </button>
+            </div>
+        </section>
 
-{# Pagination #}
-{% if total_pages > 1 %}
-<nav class="pagination-wrapper" aria-label="Trash pagination">
-    <ul class="pagination">
-        {% if page > 1 %}
-        <li><a href="/trash?page={{ page - 1 }}">«</a></li>
+        <section class="page-control-bar page-control-bar--trash-panel" aria-label="Imported source trash controls">
+            <div class="page-control-bar__left">
+                <span class="page-control-bar__title">User Import</span>
+                <span class="page-control-bar__select-all">
+                    <span class="page-control-bar__select-label">Imported detections</span>
+                </span>
+            </div>
+            <div class="page-control-bar__meta">
+                <span id="trash-import-preview-status">Preview imported detections.</span>
+            </div>
+            <div class="page-control-bar__right">
+                <button id="trash-import-preview-btn" type="button" class="btn btn--secondary">
+                    Preview
+                </button>
+                <button id="trash-import-confirm-btn" type="button" class="btn btn--danger" disabled>
+                    Move to Trash
+                </button>
+            </div>
+        </section>
+    </aside>
+
+    <section class="trash-workbench__content" aria-label="Trash items">
+        {% if items %}
+        <div class="trash-grid">
+            {% for item in items %}
+            <div class="trash-item" data-id="{{ item.item_id }}" data-type="{{ item.trash_type }}"
+                data-index="{{ loop.index0 }}">
+                <input type="checkbox" class="trash-item__checkbox trash-checkbox" value="{{ item.item_id }}"
+                    data-type="{{ item.trash_type }}" data-index="{{ loop.index0 }}">
+                {# Type Badge #}
+                <span
+                    class="trash-item__type-badge {% if item.trash_type == 'image' %}trash-item__type-badge--image{% endif %}">
+                    {% if item.trash_type == 'detection' %}Rejected{% else %}No Bird{% endif %}
+                </span>
+                <img src="{{ item.display_path }}" alt="{{ item.common_name }}" class="trash-item__image"
+                    onerror="this.src='/assets/placeholder.svg'; this.onerror=null;">
+                <div class="trash-item__info">
+                    <div class="trash-item__name">{{ item.common_name }}</div>
+                    <div class="trash-item__time">{{ item.formatted_time }}</div>
+                    <div class="trash-item__actions">
+                        {% if item.trash_type == 'detection' %}
+                        <button class="btn btn--sm btn--secondary restore-single" data-id="{{ item.detection_id }}"
+                            data-type="detection">Restore</button>
+                        {% else %}
+                        <button class="btn btn--sm btn--secondary restore-single" data-id="{{ item.filename }}"
+                            data-type="image">Restore</button>
+                        {% endif %}
+                    </div>
+                </div>
+                {{ tile_toolbox(
+                detection_id=item.detection_id if item.trash_type == 'detection' else none,
+                filename=item.filename if item.trash_type == 'image' else none,
+                surface='trash',
+                current_species=item.species_key if item.trash_type == 'detection' else none,
+                can_moderate=true
+                ) }}
+            </div>
+            {% endfor %}
+        </div>
+
+        {# Pagination #}
+        {% if total_pages > 1 %}
+        <nav class="pagination-wrapper" aria-label="Trash pagination">
+            <ul class="pagination">
+                {% if page > 1 %}
+                <li><a href="/trash?page={{ page - 1 }}">«</a></li>
+                {% endif %}
+
+                {% for p in range(1, total_pages + 1) %}
+                {% if p == page %}
+                <li class="active"><span>{{ p }}</span></li>
+                {% elif p <= 3 or p> total_pages - 3 or (p >= page - 2 and p <= page + 2) %} <li><a
+                            href="/trash?page={{ p }}">{{ p }}</a></li>
+                        {% elif p == 4 or p == total_pages - 3 %}
+                        <li class="disabled"><span>…</span></li>
+                        {% endif %}
+                        {% endfor %}
+
+                        {% if page < total_pages %} <li><a href="/trash?page={{ page + 1 }}">»</a></li>
+                            {% endif %}
+            </ul>
+        </nav>
         {% endif %}
 
-        {% for p in range(1, total_pages + 1) %}
-        {% if p == page %}
-        <li class="active"><span>{{ p }}</span></li>
-        {% elif p <= 3 or p> total_pages - 3 or (p >= page - 2 and p <= page + 2) %} <li><a
-                    href="/trash?page={{ p }}">{{ p }}</a></li>
-                {% elif p == 4 or p == total_pages - 3 %}
-                <li class="disabled"><span>…</span></li>
-                {% endif %}
-                {% endfor %}
-
-                {% if page < total_pages %} <li><a href="/trash?page={{ page + 1 }}">»</a></li>
-                    {% endif %}
-    </ul>
-</nav>
-{% endif %}
-
-{% else %}
-<div class="empty-state">
-    <div class="empty-state__icon">🗑️</div>
-    <p>Trash is empty.</p>
-    <a href="/gallery" class="btn btn--primary mt-md">Back to Gallery</a>
-</div>
-{% endif %}
+        {% else %}
+        <div class="empty-state">
+            <div class="empty-state__icon">🗑️</div>
+            <p>Trash is empty.</p>
+            <a href="/gallery" class="btn btn--primary mt-md">Back to Gallery</a>
+        </div>
+        {% endif %}
+    </section>
+</section>
 {% endblock %}
 
 {% block scripts %}
@@ -360,9 +358,22 @@
 
                 if (resolved.total_count > 0) {
                     rangeConfirmBtn.disabled = false;
-                    rangeStatus.textContent = resolved.total_count + ' active detection(s) will be moved to trash.';
+                    if ((resolved.detection_count || 0) > 0 && (resolved.orphan_count || 0) > 0) {
+                        rangeStatus.textContent =
+                            (resolved.detection_count || 0) + ' detection(s) plus ' +
+                            (resolved.orphan_count || 0) + ' orphan image(s) across ' +
+                            (resolved.image_count || 0) + ' image(s) will be moved to trash.';
+                    } else if ((resolved.detection_count || 0) > 0) {
+                        rangeStatus.textContent =
+                            (resolved.detection_count || 0) + ' detection(s) across ' +
+                            (resolved.image_count || 0) +
+                            ' image(s) will be moved to trash.';
+                    } else {
+                        rangeStatus.textContent =
+                            (resolved.orphan_count || 0) + ' orphan image(s) will be moved to trash.';
+                    }
                 } else {
-                    rangeStatus.textContent = 'No active detections found in that date range.';
+                    rangeStatus.textContent = 'No trash candidates found in that date range.';
                 }
             } catch (err) {
                 console.error('[trash-date-range] Preview failed:', err);
@@ -379,8 +390,11 @@
             }
 
             const count = previewedDateRangeSelection.total_count;
+            const detectionCount = previewedDateRangeSelection.detection_count || 0;
+            const orphanCount = previewedDateRangeSelection.orphan_count || 0;
             const confirmed = confirm(
-                'Move ' + count + ' detection(s) to Trash?\n\n' +
+                'Move ' + count + ' trash candidate(s) to Trash?\n\n' +
+                detectionCount + ' detection(s), ' + orphanCount + ' orphan image(s)\n' +
                 'This is reversible and will not delete files.'
             );
             if (!confirmed) return;
@@ -390,12 +404,13 @@
 
             try {
                 const result = await WmBatchActions.executeBatchAction('/api/moderation/bulk/reject', {
-                    detection_ids: previewedDateRangeSelection.detection_ids
+                    detection_ids: previewedDateRangeSelection.detection_ids,
+                    image_filenames: previewedDateRangeSelection.image_filenames || []
                 });
 
                 if (window.wmToast) {
                     window.wmToast(
-                        (result.rejected_detections || count) + ' items moved to trash',
+                        count + ' items moved to trash',
                         'success',
                         3000
                     );
@@ -424,12 +439,22 @@
 
                 if (resolved.total_count > 0) {
                     importConfirmBtn.disabled = false;
-                    importStatus.textContent =
-                        resolved.total_count + ' active detection(s) across ' +
-                        (resolved.image_count || 0) +
-                        ' imported image(s) will be moved to trash.';
+                    if ((resolved.detection_count || 0) > 0 && (resolved.orphan_count || 0) > 0) {
+                        importStatus.textContent =
+                            (resolved.detection_count || 0) + ' detection(s) plus ' +
+                            (resolved.orphan_count || 0) + ' orphan imported image(s) across ' +
+                            (resolved.image_count || 0) + ' image(s) will be moved to trash.';
+                    } else if ((resolved.detection_count || 0) > 0) {
+                        importStatus.textContent =
+                            (resolved.detection_count || 0) + ' detection(s) across ' +
+                            (resolved.image_count || 0) +
+                            ' imported image(s) will be moved to trash.';
+                    } else {
+                        importStatus.textContent =
+                            (resolved.orphan_count || 0) + ' orphan imported image(s) will be moved to trash.';
+                    }
                 } else {
-                    importStatus.textContent = 'No active detections found for Source = User Import.';
+                    importStatus.textContent = 'No trash candidates found for Source = User Import.';
                 }
             } catch (err) {
                 console.error('[trash-import-filter] Preview failed:', err);
@@ -447,8 +472,11 @@
 
             const count = previewedImportSelection.total_count;
             const imageCount = previewedImportSelection.image_count || 0;
+            const detectionCount = previewedImportSelection.detection_count || 0;
+            const orphanCount = previewedImportSelection.orphan_count || 0;
             const confirmed = confirm(
-                'Move ' + count + ' detection(s) across ' + imageCount + ' imported image(s) to Trash?\n\n' +
+                'Move ' + count + ' trash candidate(s) across ' + imageCount + ' imported image(s) to Trash?\n\n' +
+                detectionCount + ' detection(s), ' + orphanCount + ' orphan image(s)\n' +
                 'This is reversible and will not delete files.'
             );
             if (!confirmed) return;
@@ -458,12 +486,13 @@
 
             try {
                 const result = await WmBatchActions.executeBatchAction('/api/moderation/bulk/reject', {
-                    detection_ids: previewedImportSelection.detection_ids
+                    detection_ids: previewedImportSelection.detection_ids,
+                    image_filenames: previewedImportSelection.image_filenames || []
                 });
 
                 if (window.wmToast) {
                     window.wmToast(
-                        (result.rejected_detections || count) + ' imported items moved to trash',
+                        count + ' imported items moved to trash',
                         'success',
                         3000
                     );

@@ -40,8 +40,8 @@
         {% for det in species_of_day %}
         <div class="wm-tile fade-in-item" data-detection-id="{{ det.detection_id }}">
             <div class="wm-tile__media">
-                <button type="button" class="wm-tile__button" data-bs-toggle="modal"
-                    data-bs-target="#modal-species-{{ det.detection_id }}" style="height:100%; display:block;">
+                <button type="button" class="wm-tile__button wm-tile__button--fill" data-bs-toggle="modal"
+                    data-bs-target="#modal-species-{{ det.detection_id }}">
                     <img class="wm-tile__image" loading="lazy" src="{{ det.display_url }}" alt="{{ det.common_name }}"
                         data-thumb-src="{{ det.display_url }}" data-full-src="{{ det.full_url }}">
                 </button>
@@ -51,6 +51,7 @@
             surface='gallery',
             is_favorite=det.is_favorite|default(false),
             can_moderate=can_moderate,
+            current_species=det.species_key or det.manual_species_override or det.cls_class_name or det.od_class_name,
             modal_target='#modal-species-' ~ det.detection_id
             ) }}
 
@@ -73,13 +74,13 @@
     <div class="gallery-grid" id="subgallery-grid">
         {% for obs in observations %}
         {# ── Observation tile (standard wm-tile, clickable → expands filmstrip) ── #}
-        <div class="wm-tile fade-in-item" id="observation-{{ obs.observation_id }}"
+        <div class="wm-tile wm-tile--interactive fade-in-item" id="observation-{{ obs.observation_id }}"
             data-detection-id="{{ obs.cover_detection.detection_id }}" data-batch-target="detection"
             data-batch-ids="{{ obs.detection_ids | join(',') }}"
             data-obs-id="{{ obs.observation_id }}"
             data-has-filmstrip="{{ 'true' if obs.photo_count > 1 else 'false' }}"
             data-modal-target="#modal-obs{{ obs.observation_id }}-{{ obs.cover_detection.detection_id }}"
-            onclick="handleObservationCardClick(this, event)" style="cursor:pointer;">
+            data-observation-card="true">
             <div class="wm-tile__media">
                 <img class="wm-tile__image" loading="lazy" src="{{ obs.cover_detection.display_url }}"
                     alt="{{ obs.common_name }}" data-thumb-src="{{ obs.cover_detection.display_url }}"
@@ -94,6 +95,7 @@
             surface='gallery',
             is_favorite=obs.cover_detection.is_favorite|default(false),
             can_moderate=can_moderate,
+            current_species=obs.cover_detection.species_key or obs.cover_detection.manual_species_override or obs.cover_detection.cls_class_name or obs.cover_detection.od_class_name,
             modal_target='#modal-obs' ~ obs.observation_id ~ '-' ~ obs.cover_detection.detection_id
             ) }}
             <div class="wm-tile__body">
@@ -116,7 +118,7 @@
                     · {{ obs.duration_display }}{% endif %}</span>
                 {% endif %}
                 <button type="button" class="btn btn--sm btn--secondary obs-filmstrip__close"
-                    onclick="event.stopPropagation(); closeFilmstrip('{{ obs.observation_id }}')">✕ Close</button>
+                    data-close-filmstrip="{{ obs.observation_id }}">✕ Close</button>
             </div>
             <div class="obs-filmstrip__grid">
                 {% for det in obs.all_detections %}
@@ -134,6 +136,7 @@
                         surface='gallery',
                         is_favorite=det.is_favorite|default(false),
                         can_moderate=can_moderate,
+                        current_species=det.species_key or det.manual_species_override or det.cls_class_name or det.od_class_name,
                         modal_target='#modal-obs' ~ obs.observation_id ~ '-' ~ det.detection_id
                         ) }}
                     </div>
@@ -331,6 +334,20 @@ nav_index=det.nav_index
         if (filmstrip) filmstrip.style.display = 'none';
         if (card) card.classList.remove('obs-card--expanded');
     }
+
+    document.addEventListener('click', function (event) {
+        const closeBtn = event.target.closest('[data-close-filmstrip]');
+        if (closeBtn) {
+            event.preventDefault();
+            event.stopPropagation();
+            closeFilmstrip(closeBtn.dataset.closeFilmstrip);
+            return;
+        }
+
+        const card = event.target.closest('[data-observation-card="true"]');
+        if (!card) return;
+        handleObservationCardClick(card, event);
+    });
 
     // Scroll to focused observation or anchor target after navigation.
     document.addEventListener('DOMContentLoaded', function () {
