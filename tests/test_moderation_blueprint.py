@@ -108,7 +108,11 @@ class TestResolveSelection:
             return_value=mock_conn
         )
         mock_db.closing_connection.return_value.__exit__ = MagicMock(return_value=False)
-        mock_db.fetch_active_detection_ids_in_date_range.return_value = [4, 5, 6]
+        mock_db.fetch_trash_candidate_selection_in_date_range.return_value = {
+            "detection_ids": [4, 5, 6],
+            "image_filenames": ["a.jpg", "b.jpg"],
+            "image_count": 2,
+        }
 
         resp = client.post(
             "/api/moderation/resolve-selection",
@@ -123,9 +127,10 @@ class TestResolveSelection:
         data = resp.get_json()
         assert data["status"] == "success"
         assert data["detection_ids"] == [4, 5, 6]
-        assert data["image_filenames"] == []
+        assert data["image_filenames"] == ["a.jpg", "b.jpg"]
         assert data["total_count"] == 3
-        mock_db.fetch_active_detection_ids_in_date_range.assert_called_once_with(
+        assert data["image_count"] == 2
+        mock_db.fetch_trash_candidate_selection_in_date_range.assert_called_once_with(
             mock_conn, "2026-03-01", "2026-03-03"
         )
 
@@ -136,7 +141,11 @@ class TestResolveSelection:
             return_value=mock_conn
         )
         mock_db.closing_connection.return_value.__exit__ = MagicMock(return_value=False)
-        mock_db.fetch_active_detection_ids_in_date_range.return_value = []
+        mock_db.fetch_trash_candidate_selection_in_date_range.return_value = {
+            "detection_ids": [],
+            "image_filenames": [],
+            "image_count": 0,
+        }
 
         resp = client.post(
             "/api/moderation/resolve-selection",
@@ -150,7 +159,40 @@ class TestResolveSelection:
         assert resp.status_code == 200
         data = resp.get_json()
         assert data["detection_ids"] == []
+        assert data["image_filenames"] == []
         assert data["total_count"] == 0
+        assert data["image_count"] == 0
+
+    @patch("web.blueprints.moderation.db_service")
+    def test_date_range_counts_orphan_images_in_total(self, mock_db, client):
+        mock_conn = MagicMock()
+        mock_db.closing_connection.return_value.__enter__ = MagicMock(
+            return_value=mock_conn
+        )
+        mock_db.closing_connection.return_value.__exit__ = MagicMock(return_value=False)
+        mock_db.fetch_trash_candidate_selection_in_date_range.return_value = {
+            "detection_ids": [],
+            "image_filenames": ["orphan-a.jpg", "orphan-b.jpg"],
+            "image_count": 2,
+            "orphan_count": 2,
+        }
+
+        resp = client.post(
+            "/api/moderation/resolve-selection",
+            json={
+                "mode": "date_range",
+                "from_date": "2026-03-01",
+                "to_date": "2026-03-03",
+            },
+        )
+
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert data["detection_ids"] == []
+        assert data["image_filenames"] == ["orphan-a.jpg", "orphan-b.jpg"]
+        assert data["orphan_count"] == 2
+        assert data["image_count"] == 2
+        assert data["total_count"] == 2
 
     def test_date_range_requires_both_dates(self, client):
         resp = client.post(
@@ -181,8 +223,9 @@ class TestResolveSelection:
             return_value=mock_conn
         )
         mock_db.closing_connection.return_value.__exit__ = MagicMock(return_value=False)
-        mock_db.fetch_active_detection_selection_by_source_type.return_value = {
+        mock_db.fetch_trash_candidate_selection_by_source_type.return_value = {
             "detection_ids": [9, 10],
+            "image_filenames": ["import-a.jpg"],
             "image_count": 1,
         }
 
@@ -195,10 +238,10 @@ class TestResolveSelection:
         data = resp.get_json()
         assert data["status"] == "success"
         assert data["detection_ids"] == [9, 10]
-        assert data["image_filenames"] == []
+        assert data["image_filenames"] == ["import-a.jpg"]
         assert data["total_count"] == 2
         assert data["image_count"] == 1
-        mock_db.fetch_active_detection_selection_by_source_type.assert_called_once_with(
+        mock_db.fetch_trash_candidate_selection_by_source_type.assert_called_once_with(
             mock_conn, "folder_upload"
         )
 
@@ -209,8 +252,9 @@ class TestResolveSelection:
             return_value=mock_conn
         )
         mock_db.closing_connection.return_value.__exit__ = MagicMock(return_value=False)
-        mock_db.fetch_active_detection_selection_by_source_type.return_value = {
+        mock_db.fetch_trash_candidate_selection_by_source_type.return_value = {
             "detection_ids": [],
+            "image_filenames": [],
             "image_count": 0,
         }
 
@@ -222,8 +266,36 @@ class TestResolveSelection:
         assert resp.status_code == 200
         data = resp.get_json()
         assert data["detection_ids"] == []
+        assert data["image_filenames"] == []
         assert data["total_count"] == 0
         assert data["image_count"] == 0
+
+    @patch("web.blueprints.moderation.db_service")
+    def test_logical_filter_counts_orphan_images_in_total(self, mock_db, client):
+        mock_conn = MagicMock()
+        mock_db.closing_connection.return_value.__enter__ = MagicMock(
+            return_value=mock_conn
+        )
+        mock_db.closing_connection.return_value.__exit__ = MagicMock(return_value=False)
+        mock_db.fetch_trash_candidate_selection_by_source_type.return_value = {
+            "detection_ids": [],
+            "image_filenames": ["orphan-import.jpg"],
+            "image_count": 1,
+            "orphan_count": 1,
+        }
+
+        resp = client.post(
+            "/api/moderation/resolve-selection",
+            json={"mode": "logical_filter", "source_type": "folder_upload"},
+        )
+
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert data["detection_ids"] == []
+        assert data["image_filenames"] == ["orphan-import.jpg"]
+        assert data["orphan_count"] == 1
+        assert data["image_count"] == 1
+        assert data["total_count"] == 1
 
     def test_logical_filter_requires_source_type(self, client):
         resp = client.post(

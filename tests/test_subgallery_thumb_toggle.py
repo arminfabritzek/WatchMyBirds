@@ -54,6 +54,12 @@ def test_single_image_observations_open_modal_instead_of_filmstrip():
     assert "function handleObservationCardClick(card, event)" in content
     assert "if (card.getAttribute('data-has-filmstrip') === 'true')" in content
     assert "openObservationModal(card);" in content
+    assert 'data-observation-card="true"' in content
+    assert "event.target.closest('[data-observation-card=\"true\"]')" in content
+    assert 'data-close-filmstrip="{{ obs.observation_id }}"' in content
+    assert "closeFilmstrip(closeBtn.dataset.closeFilmstrip);" in content
+    assert 'onclick="handleObservationCardClick(' not in content
+    assert 'onclick="event.stopPropagation(); closeFilmstrip(' not in content
     assert "{% if obs.photo_count > 1 %}" in content
 
 

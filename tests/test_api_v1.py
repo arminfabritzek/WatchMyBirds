@@ -193,6 +193,117 @@ class TestApiV1Analytics:
             assert "total_species" in data
             assert "total_days" in data
 
+
+class TestApiV1SpeciesThumbnails:
+    """Test /api/v1/species/thumbnails priority rules."""
+
+    def test_species_thumbnails_fall_back_to_favorites_when_no_static_exists(
+        self, client
+    ):
+        detections = [
+            {
+                "species_key": "Parus_major",
+                "thumbnail_path_virtual": "2026-04-02/fav.webp",
+                "is_favorite": 1,
+                "score": 0.9,
+            },
+            {
+                "species_key": "Parus_major",
+                "thumbnail_path_virtual": "2026-04-02/other.webp",
+                "is_favorite": 0,
+                "score": 0.4,
+            },
+        ]
+
+        with patch("utils.species_names.load_common_names") as mock_names:
+            with patch("web.species_thumbnails.gallery_service.get_all_detections") as mock_get:
+                with patch("web.species_thumbnails.Path.exists", autospec=True, return_value=False):
+                    mock_names.return_value = {"Parus_major": "Kohlmeise"}
+                    mock_get.return_value = detections
+
+                    response = client.get("/api/v1/species/thumbnails")
+
+        assert response.status_code == 200
+        data = response.get_json()
+        assert data["status"] == "success"
+        assert (
+            data["thumbnails"]["Parus_major"]
+            == "/uploads/derivatives/thumbs/2026-04-02/fav.webp"
+        )
+        assert (
+            data["thumbnails"]["Kohlmeise"]
+            == "/uploads/derivatives/thumbs/2026-04-02/fav.webp"
+        )
+
+    def test_species_thumbnails_prefer_local_static_art_over_favorite_capture(
+        self, client
+    ):
+        detections = [
+            {
+                "species_key": "Turdus_merula",
+                "thumbnail_path_virtual": "2026-04-02/fav.webp",
+                "is_favorite": 1,
+                "score": 0.95,
+            }
+        ]
+
+        def _fake_exists(path_obj):
+            return str(path_obj).endswith("/assets/review_species/Turdus_merula.webp")
+
+        with patch("utils.species_names.load_common_names") as mock_names:
+            with patch("web.species_thumbnails.gallery_service.get_all_detections") as mock_get:
+                with patch("web.species_thumbnails.Path.exists", autospec=True, side_effect=_fake_exists):
+                    mock_names.return_value = {"Turdus_merula": "Amsel"}
+                    mock_get.return_value = detections
+
+                    response = client.get("/api/v1/species/thumbnails")
+
+        assert response.status_code == 200
+        data = response.get_json()
+        assert data["status"] == "success"
+        assert (
+            data["thumbnails"]["Turdus_merula"]
+            == "/assets/review_species/Turdus_merula.webp"
+        )
+        assert data["thumbnails"]["Amsel"] == "/assets/review_species/Turdus_merula.webp"
+
+    def test_species_thumbnails_fall_back_to_optimized_detection_when_thumb_missing(
+        self, client
+    ):
+        detections = [
+            {
+                "species_key": "Sitta_europaea",
+                "thumbnail_path_virtual": "",
+                "relative_path": "2026-04-02/nuthatch.webp",
+                "is_favorite": 0,
+                "score": 0.61,
+            }
+        ]
+
+        with patch("utils.species_names.load_common_names") as mock_names:
+            with patch("web.species_thumbnails.gallery_service.get_all_detections") as mock_get:
+                with patch("web.species_thumbnails.Path.exists", autospec=True, return_value=False):
+                    mock_names.return_value = {"Sitta_europaea": "Kleiber"}
+                    mock_get.return_value = detections
+
+                    response = client.get("/api/v1/species/thumbnails")
+
+        assert response.status_code == 200
+        data = response.get_json()
+        assert data["status"] == "success"
+        assert (
+            data["thumbnails"]["Sitta_europaea"]
+            == "/uploads/derivatives/optimized/2026-04-02/nuthatch.webp"
+        )
+        assert (
+            data["thumbnails"]["Kleiber"]
+            == "/uploads/derivatives/optimized/2026-04-02/nuthatch.webp"
+        )
+
+
+class TestApiV1AnalyticsDecisionMetrics:
+    """Test /api/v1 analytics decision metric endpoints."""
+
     def _mock_decisions_db(self):
         """Create a mock connection that returns decision state rows."""
         mock_conn = MagicMock()
@@ -201,12 +312,16 @@ class TestApiV1Analytics:
         mock_row_uncertain = {"state": "uncertain", "cnt": 15}
         mock_row_unknown = {"state": "unknown", "cnt": 8}
         mock_row_null = {"state": "null", "cnt": 5}
-        mock_conn.execute.return_value.fetchall.return_value = [
+        mock_states_cursor = MagicMock()
+        mock_states_cursor.fetchall.return_value = [
             mock_row_confirmed,
             mock_row_uncertain,
             mock_row_unknown,
             mock_row_null,
         ]
+        mock_manual_cursor = MagicMock()
+        mock_manual_cursor.fetchone.return_value = [12]
+        mock_conn.execute.side_effect = [mock_states_cursor, mock_manual_cursor]
         return mock_conn
 
     def test_analytics_decisions_returns_structure(self, client):
@@ -229,6 +344,7 @@ class TestApiV1Analytics:
             assert data["states"]["uncertain"] == 15
             assert data["states"]["unknown"] == 8
             assert data["review_queue_count"] == 23
+            assert data["manual_confirmed_count"] == 12
 
     def test_decision_metrics_alias_returns_same_structure(self, client):
         """GET /api/v1/decision-metrics is an alias for analytics/decisions."""
@@ -248,6 +364,7 @@ class TestApiV1Analytics:
             assert data["total"] == 118
             assert "states" in data
             assert data["review_queue_count"] == 23
+            assert data["manual_confirmed_count"] == 12
 
 
 class TestApiV1DetectionControl:

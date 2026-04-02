@@ -213,6 +213,13 @@ def test_process_deep_analysis_job_uses_standard_persistence_path(monkeypatch):
                 class_name="Parus_major",
                 confidence=0.8,
                 model_id="cls_model_v1",
+                top_k_classes=[
+                    "Parus_major",
+                    "Cyanistes_caeruleus",
+                    "Sitta_europaea",
+                    "Erithacus_rubecula",
+                    "Passer_domesticus",
+                ],
                 top_k_confidences=[0.8, 0.05, 0.03, 0.02, 0.01],
             )
 
@@ -297,6 +304,13 @@ def test_process_deep_analysis_job_uses_standard_persistence_path(monkeypatch):
     assert det.cls_confidence == 0.8
     assert det.score == pytest.approx(0.85)  # 0.5*0.9 + 0.5*0.8
     assert det.agreement_score == 0.8
+    assert det.top_k_predictions == [
+        ("Parus_major", 0.8),
+        ("Cyanistes_caeruleus", 0.05),
+        ("Sitta_europaea", 0.03),
+        ("Erithacus_rubecula", 0.02),
+        ("Passer_domesticus", 0.01),
+    ]
 
     # Verify DB recording
     row = conn.execute(
