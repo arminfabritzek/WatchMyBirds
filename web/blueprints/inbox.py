@@ -8,6 +8,7 @@ Handles inbox routes for web upload with explicit processing:
 - POST /api/inbox/process - Start processing
 """
 
+import io
 import os
 import threading
 import time
@@ -84,6 +85,12 @@ def inbox_upload():
             if not f or not f.filename:
                 continue
 
+            try:
+                file_bytes = f.read()
+            except Exception as e:
+                errors.append(f"{f.filename}: Read failed ({e})")
+                continue
+
             # Extension check
             ext = os.path.splitext(f.filename.lower())[1]
             if ext not in ALLOWED_EXTENSIONS:
@@ -91,9 +98,7 @@ def inbox_upload():
                 continue
 
             # Size check
-            f.seek(0, 2)  # Seek to end
-            size = f.tell()
-            f.seek(0)  # Reset
+            size = len(file_bytes)
 
             if size > MAX_FILE_SIZE:
                 errors.append(f"{f.filename}: File too large (max 50 MB)")
@@ -101,16 +106,15 @@ def inbox_upload():
 
             # Magic-bytes check: verify file is actually a valid image
             try:
-                img = Image.open(f)
-                if img.format not in ("JPEG", "PNG"):
+                with Image.open(io.BytesIO(file_bytes)) as img:
+                    img.load()
+                    image_format = img.format
+                if image_format not in ("JPEG", "PNG"):
                     errors.append(f"{f.filename}: Not a valid JPEG/PNG image")
                     continue
-                img.close()
             except Exception:
                 errors.append(f"{f.filename}: Not a valid image file")
                 continue
-            finally:
-                f.seek(0)  # Reset for save
 
             # Safe filename
             safe_name = secure_filename(f.filename)
@@ -124,7 +128,8 @@ def inbox_upload():
                 continue
 
             try:
-                f.save(str(target_path))
+                pending_dir.mkdir(parents=True, exist_ok=True)
+                target_path.write_bytes(file_bytes)
                 uploaded.append(safe_name)
             except Exception as e:
                 errors.append(f"{f.filename}: Save failed ({e})")
