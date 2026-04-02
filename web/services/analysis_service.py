@@ -1,7 +1,7 @@
 import logging
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 
 import cv2
@@ -32,6 +32,7 @@ class _DeepReviewDetectionData:
     unknown_score: float | None = None
     decision_reasons: str | None = None
     policy_version: str | None = None
+    top_k_predictions: list[tuple[str, float]] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -235,6 +236,15 @@ def _build_detection_payload(
         unknown_score=signals.unknown_score,
         decision_reasons=signals.decision_reasons_json,
         policy_version=signals.policy_version,
+        top_k_predictions=list(
+            zip(
+                getattr(cls_result, "top_k_classes", []) or [],
+                getattr(cls_result, "top_k_confidences", []) or [],
+                strict=False,
+            )
+        )
+        if cls_result is not None and cls_conf > 0
+        else [],
     )
     return payload, classifier_model_id
 
@@ -528,7 +538,7 @@ def start_nightly_analysis_sweep(interval=900):
     Gated by ``ENABLE_NIGHTLY_DEEP_SCAN`` config flag.
     """
     config = get_config()
-    if not config.get("ENABLE_NIGHTLY_DEEP_SCAN", True):
+    if not config.get("ENABLE_NIGHTLY_DEEP_SCAN", False):
         logger.info("Nightly deep scan disabled by feature flag (inner guard)")
         return
 

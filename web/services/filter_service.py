@@ -14,10 +14,10 @@ from typing import Literal
 
 from config import get_config
 from logging_config import get_logger
+from utils.species_names import UNKNOWN_SPECIES_KEY
 from web.services import db_service, gallery_service
 
 logger = get_logger(__name__)
-UNKNOWN_SPECIES_KEY = "Unknown_species"
 
 
 def _resolved_species_key(row_dict: dict) -> str:
@@ -244,7 +244,7 @@ def _resolve_review_queue(ctx: FilterContext) -> ResolvedSelection:
     with db_service.closing_connection() as conn:
         rows = db_service.fetch_review_queue_images(conn, gallery_threshold=threshold)
 
-    filenames = [dict(r)["filename"] for r in rows]
+    filenames = list(dict.fromkeys(dict(r)["filename"] for r in rows))
     return ResolvedSelection(image_filenames=filenames, total_count=len(filenames))
 
 

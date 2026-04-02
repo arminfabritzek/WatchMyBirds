@@ -32,6 +32,7 @@ from web.power_actions import (
     is_power_management_available,
     schedule_power_action,
 )
+from web.species_thumbnails import get_species_thumbnail_map
 from web.services import (
     backup_restore_service,
     db_service,
@@ -43,8 +44,6 @@ config = get_config()
 
 # Create Blueprint
 api_v1 = Blueprint("api_v1", __name__, url_prefix="/api/v1")
-
-
 def _read_file_tail(path: Path, max_lines: int = 200) -> dict:
     """Read the last lines of a text file safely for diagnostics endpoints."""
     result = {
@@ -239,80 +238,14 @@ def get_species_thumbnails():
     locale = cfg.get("SPECIES_COMMON_NAME_LOCALE", "DE")
     common_names = load_common_names(locale)
 
-    from web.services import gallery_service
-
-    mapping = {}
     try:
-        # Use existing gallery service - same pattern as species_route
-        all_detections = gallery_service.get_captured_detections()
-
-        # Build mapping: best thumbnail per species (later entries overwrite)
-        for det in all_detections:
-            species_lat = det.get("species_key")
-            thumb_virt = det.get("thumbnail_path_virtual")
-
-            if not species_lat or not thumb_virt:
-                continue
-
-            url = f"/uploads/derivatives/thumbs/{thumb_virt}"
-
-            # Key by scientific (underscore), scientific (spaces), German
-            mapping[species_lat] = url
-            mapping[species_lat.replace("_", " ")] = url
-            german = common_names.get(species_lat)
-            if german:
-                mapping[german] = url
-
+        mapping = get_species_thumbnail_map(
+            common_names=common_names,
+            cache_key=f"api:{locale}",
+        )
     except Exception as e:
         logger.error(f"Failed to fetch species thumbnails: {e}")
         return jsonify({"status": "error", "message": str(e)}), 500
-
-    # Fallback: Wikipedia thumbnails from DB cache (fast, no HTTP calls)
-    missing_species = []
-    try:
-        conn = db_service.get_connection()
-        try:
-            # 1. Read all cached Wikipedia thumbnails
-            cached = conn.execute(
-                "SELECT scientific_name, image_url FROM species_meta "
-                "WHERE image_url IS NOT NULL AND image_url != ''"
-            ).fetchall()
-
-            for row in cached:
-                sci = row[0]
-                url = row[1]
-                sci_u = sci.replace(" ", "_")
-                if sci not in mapping and sci_u not in mapping:
-                    mapping[sci] = url
-                    mapping[sci_u] = url
-                    german = common_names.get(sci_u) or common_names.get(sci)
-                    if german:
-                        mapping[german] = url
-
-        finally:
-            conn.close()
-    except Exception as cache_err:
-        logger.debug(f"Wikipedia cache read failed: {cache_err}")
-
-    # 3. Trigger background fetch for missing species (non-blocking)
-    if missing_species:
-        import threading
-
-        def _prime_wiki_cache(species_list):
-            from utils.wikipedia import get_cached_species_thumbnail
-
-            for sci in species_list:
-                try:
-                    get_cached_species_thumbnail(sci)
-                except Exception:
-                    pass
-            logger.info(f"Wiki cache primed for {len(species_list)} species")
-
-        t = threading.Thread(
-            target=_prime_wiki_cache, args=(missing_species,), daemon=True
-        )
-        t.start()
-        logger.info(f"Background wiki fetch started for {len(missing_species)} species")
 
     return jsonify({"status": "success", "thumbnails": mapping})
 
@@ -858,7 +791,8 @@ def analytics_decisions():
                 "rejected": 54,
                 "null": 50
             },
-            "review_queue_count": 230
+            "review_queue_count": 230,
+            "manual_confirmed_count": 42
         }
     """
     conn = db_service.get_connection()
@@ -880,6 +814,16 @@ def analytics_decisions():
         review_count = db_service.fetch_review_queue_count(
             conn, config["GALLERY_DISPLAY_THRESHOLD"]
         )
+        manual_confirmed_row = conn.execute(
+            """
+            SELECT COUNT(*)
+            FROM images
+            WHERE review_status = 'confirmed_bird'
+            """
+        ).fetchone()
+        manual_confirmed_count = (
+            int(manual_confirmed_row[0]) if manual_confirmed_row else 0
+        )
     finally:
         conn.close()
 
@@ -889,6 +833,7 @@ def analytics_decisions():
             "total": total,
             "states": states,
             "review_queue_count": review_count,
+            "manual_confirmed_count": manual_confirmed_count,
         }
     )
 

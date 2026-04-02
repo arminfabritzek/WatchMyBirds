@@ -113,6 +113,10 @@ class DetectionManager:
 
         # Control flags
         self.paused = False
+        self._deep_scan_active = False
+        self._deep_scan_gate_count = 0
+        self._paused_before_deep_scan = False
+        self._deep_scan_lock = threading.Lock()
         self.last_detection_had_frame = True
         self._last_components_ready_state = True
         self._last_frame_was_stale = False
@@ -196,6 +200,13 @@ class DetectionManager:
             species_key=species_key,
         )
 
+    def run_exhaustive_scan(self, frame):
+        """Compatibility adapter for orphan deep-scan workflows."""
+        detections = self.detection_service.exhaustive_detect(frame)
+        if not self.detector_model_id:
+            self.detector_model_id = self.detection_service.get_model_id()
+        return detections
+
     # =========================================================================
     # LIFECYCLE - Exact copy from original
     # =========================================================================
@@ -229,6 +240,33 @@ class DetectionManager:
                 logger.error(f"Error releasing video capture: {e}")
 
         logger.info("DetectionManager V2 stopped.")
+
+    def enter_deep_scan_mode(self):
+        """Pause live loops while a manual/nightly deep scan is running."""
+        with self._deep_scan_lock:
+            if self._deep_scan_gate_count == 0:
+                self._paused_before_deep_scan = self.paused
+                self.paused = True
+                self._deep_scan_active = True
+            self._deep_scan_gate_count += 1
+
+    def exit_deep_scan_mode(self):
+        """Restore live loops after deep scan completes."""
+        with self._deep_scan_lock:
+            if self._deep_scan_gate_count <= 0:
+                self._deep_scan_gate_count = 0
+                self._deep_scan_active = False
+                return
+
+            self._deep_scan_gate_count -= 1
+            if self._deep_scan_gate_count == 0:
+                self._deep_scan_active = False
+                self.paused = self._paused_before_deep_scan
+
+    def is_deep_scan_active(self) -> bool:
+        """Whether deep-scan gating is currently active."""
+        with self._deep_scan_lock:
+            return self._deep_scan_active
 
     # =========================================================================
     # COMPONENT INITIALIZATION - Exact copy from original
