@@ -113,14 +113,25 @@ jobs:
       - name: Compress Golden Image
         run: xz -z -1 -T0 golden.img
 
-      - name: Get Date
-        id: date
-        run: echo "date=$(date +'%Y-%m-%d')" >> $GITHUB_OUTPUT
-
-      - name: Upload Release
-        uses: softprops/action-gh-release@v1
+      - name: Upload Golden Artifact
+        uses: actions/upload-artifact@v4
         with:
-          tag_name: golden-bookworm-${{ steps.date.outputs.date }}-${{ github.sha }}
-          files: golden.img.xz
-          name: Golden Image (${{ steps.date.outputs.date }})
-          prerelease: true
+          name: golden-image
+          path: golden.img.xz
+          retention-days: 90
+
+      - name: Delete Legacy Golden Releases
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash scripts/cleanup_releases.sh "${{ github.repository }}" "golden-bookworm-" 0
+
+      - name: Write Build Summary
+        run: |
+          {
+            echo "## Golden Base Artifact"
+            echo
+            echo "- Artifact: \`golden.img.xz\`"
+            echo "- Storage: GitHub Actions artifact"
+            echo "- Purpose: internal base image for downstream Raspberry Pi builds"
+            echo "- This workflow no longer creates a GitHub release."
+          } >> "$GITHUB_STEP_SUMMARY"

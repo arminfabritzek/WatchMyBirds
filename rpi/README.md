@@ -37,11 +37,11 @@ If the device cannot connect to WiFi after 60 seconds (or has no config), it cre
 
 ---
 
-## 3. Development vs. Production Images
+## 3. Production vs. Development Images
 
 We produce two types of images:
 
-| Feature | Golden Image (Production) | Dev Image (Development) |
+| Feature | Appliance Image (Production) | Dev Image (Development) |
 | :--- | :--- | :--- |
 | **Service** | `app.service` (Hardened) | `app-dev.service` (Relaxed) |
 | **SSH** | Disabled | **Enabled** |

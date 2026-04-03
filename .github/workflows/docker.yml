@@ -95,3 +95,5 @@ jobs:
               --notes-file release_notes.md \
               --generate-notes \
               --latest
+
+          bash scripts/cleanup_releases.sh "${{ github.repository }}" "docker-" 1

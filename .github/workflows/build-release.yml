@@ -7,7 +7,8 @@ jobs:
   build-release:
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      actions: read
+      contents: read
 
     steps:
       - name: Checkout App Code
@@ -16,21 +17,10 @@ jobs:
           path: app_code
 
 
-      - name: Download Configured Golden Image
+      - name: Download Golden Base Artifact
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          # Find latest Release matching 'golden-bookworm'
-          # We sort by created at desc to get the true latest even if prerelease
-          LATEST_TAG=$(gh release list --repo ${{ github.repository }} --limit 50 --json tagName,isPrerelease,createdAt --jq 'sort_by(.createdAt) | reverse | .[] | select(.tagName | startswith("golden-bookworm")) | .tagName' | head -n 1)
-          
-          if [ -z "$LATEST_TAG" ]; then
-            echo "::error::No Golden Image Release found!"
-            exit 1
-          fi
-          
-          echo "Downloading Golden Image: $LATEST_TAG"
-          gh release download "$LATEST_TAG" --repo ${{ github.repository }} --pattern "golden.img.xz"
+        run: bash app_code/scripts/download_golden_artifact.sh "${{ github.repository }}"
 
       - name: Decompress Image
         run: |
@@ -188,42 +178,20 @@ jobs:
       - name: Compress Release Image
         run: xz -z -1 -T0 watchmybirds-rpi-${{ steps.builddate.outputs.date }}.img
 
-      - name: Create Release and Upload
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          
-          TAG="rpi-${{ steps.builddate.outputs.date }}"
-          IMG_FILE="watchmybirds-rpi-${{ steps.builddate.outputs.date }}.img.xz"
-          DATE_SHORT="${{ steps.builddate.outputs.date_short }}"
-          
-          # Create Release Notes File (content at column 0 to avoid Markdown indentation issues)
-          cat > release_notes.md << 'RELEASE_EOF'
-          ## WatchMyBirds Raspberry Pi Appliance Image
-          
-          **Build Date:** PLACEHOLDER_DATE
-          **Commit:** PLACEHOLDER_COMMIT
-          
-          Flash to SD card with [Raspberry Pi Imager](https://www.raspberrypi.com/software/) and boot on Raspberry Pi 4 or 5.
-          
-          See [Installation Guide](https://github.com/PLACEHOLDER_REPO#raspberry-pi-appliance) for setup instructions.
-          RELEASE_EOF
-          sed -i "s/PLACEHOLDER_DATE/${DATE_SHORT}/g" release_notes.md
-          sed -i "s/PLACEHOLDER_COMMIT/${{ github.sha }}/g" release_notes.md
-          sed -i "s|PLACEHOLDER_REPO|${{ github.repository }}|g" release_notes.md
-          
-          echo "Creating release $TAG..."
-          gh release create "$TAG" \
-            --repo "${{ github.repository }}" \
-            --title "🍓 Raspberry Pi Image – ${DATE_SHORT}" \
-            --notes-file release_notes.md \
-            --generate-notes \
-            --latest
+      - name: Upload Manual Build Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: watchmybirds-rpi-${{ steps.builddate.outputs.date }}.img.xz
+          path: watchmybirds-rpi-${{ steps.builddate.outputs.date }}.img.xz
+          retention-days: 14
 
-          # Upload Asset
-          echo "Uploading $IMG_FILE to release $TAG..."
-          gh release upload "$TAG" \
-            "$IMG_FILE" \
-            --repo "${{ github.repository }}" \
-            --clobber
+      - name: Write Build Summary
+        run: |
+          {
+            echo "## Manual Raspberry Pi Build"
+            echo
+            echo "- Artifact: \`watchmybirds-rpi-${{ steps.builddate.outputs.date }}.img.xz\`"
+            echo "- This workflow now publishes a workflow artifact instead of creating a GitHub release."
+            echo "- Golden is now an internal Actions artifact."
+            echo "- Raspberry Pi Dev and Docker remain the rolling release channels."
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -13,6 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     permissions:
+      actions: read
       contents: write
 
     steps:
@@ -32,20 +33,15 @@ jobs:
             echo "SSH key injected from secret"
           fi
 
-      - name: Download Configured Golden Image
+      - name: Download Golden Base Artifact
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # Get latest Golden Release tag
-          LATEST_TAG=$(gh release list --repo ${{ github.repository }} --limit 50 --json tagName,isPrerelease,createdAt --jq 'sort_by(.createdAt) | reverse | .[] | select(.tagName | startswith("golden-bookworm")) | .tagName' | head -n 1)
-          
-          if [ -z "$LATEST_TAG" ]; then
-            echo "::error::No Golden Image Release found!"
-            exit 1
+          if [ "${{ github.event_name }}" = "workflow_run" ]; then
+            bash app_code/scripts/download_golden_artifact.sh "${{ github.repository }}" "${{ github.event.workflow_run.id }}"
+          else
+            bash app_code/scripts/download_golden_artifact.sh "${{ github.repository }}"
           fi
-          
-          echo "Downloading Golden Image: $LATEST_TAG"
-          gh release download "$LATEST_TAG" --repo ${{ github.repository }} --pattern "golden.img.xz"
 
       - name: Decompress Image
         run: |
@@ -234,3 +230,5 @@ jobs:
             "$IMG_FILE" \
             --repo "${{ github.repository }}" \
             --clobber
+
+          bash app_code/scripts/cleanup_releases.sh "${{ github.repository }}" "rpi-dev-" 1
