@@ -60,6 +60,7 @@ decrement_patch() {
 latest_semver_tag() {
   local repo_root="${1:-.}"
   git -C "$repo_root" tag --list \
+    --merged HEAD \
     | sed -nE 's/^(v?[0-9]+\.[0-9]+\.[0-9]+)$/\1/p' \
     | sed 's/^v//' \
     | sort -V \

@@ -2,6 +2,21 @@ name: Docker
 
 on:
   workflow_dispatch:
+    inputs:
+      ref:
+        description: "Git ref to build (branch, tag, or SHA). Leave empty for the current branch."
+        required: false
+        default: ""
+      publish_latest:
+        description: "Also publish the image as :latest"
+        required: false
+        type: boolean
+        default: true
+      create_github_release:
+        description: "Create/update the dated GitHub docker release entry"
+        required: false
+        type: boolean
+        default: true
 
 jobs:
   build:
@@ -12,6 +27,9 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ inputs.ref != '' && inputs.ref || github.ref }}
 
       - name: Read App Version
         id: version
@@ -41,7 +59,7 @@ jobs:
           tags: |
             type=raw,value=${{ steps.version.outputs.version }}
             type=sha
-            type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=latest,enable=${{ inputs.publish_latest }}
 
       - name: Build and Push Docker Image
         uses: docker/build-push-action@v5
@@ -59,21 +77,25 @@ jobs:
             VERSION=${{ steps.version.outputs.version }}
 
       - name: Create GitHub Release
+        if: ${{ inputs.create_github_release }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           DATE=$(date +%Y-%m-%d)
-          TAG="docker-${DATE}"
+          VERSION="${{ steps.version.outputs.version }}"
+          TAG="docker-${DATE}-${VERSION}"
 
           # Create Release Notes File (content at column 0 to avoid Markdown indentation issues)
           cat > release_notes.md << 'RELEASE_EOF'
           ## WatchMyBirds Docker Image
           
+          **Version:** PLACEHOLDER_VERSION
           **Build Date:** PLACEHOLDER_DATE
           **Commit:** PLACEHOLDER_COMMIT
           
           ### Docker Hub
           ```bash
+          docker pull starminworks/watchmybirds:PLACEHOLDER_VERSION
           docker pull starminworks/watchmybirds:latest
           ```
           
@@ -83,6 +105,7 @@ jobs:
           
           See [Docker Setup Guide](https://github.com/PLACEHOLDER_REPO#docker) for usage instructions.
           RELEASE_EOF
+          sed -i "s/PLACEHOLDER_VERSION/${VERSION}/g" release_notes.md
           sed -i "s/PLACEHOLDER_DATE/${DATE}/g" release_notes.md
           sed -i "s/PLACEHOLDER_COMMIT/${{ github.sha }}/g" release_notes.md
           sed -i "s|PLACEHOLDER_REPO|${{ github.repository }}|g" release_notes.md
@@ -91,9 +114,11 @@ jobs:
           gh release view "$TAG" --repo "${{ github.repository }}" >/dev/null 2>&1 || \
             gh release create "$TAG" \
               --repo "${{ github.repository }}" \
-              --title "🐳 Docker Image – ${DATE}" \
+              --title "🐳 Docker Image – ${DATE} (${VERSION})" \
               --notes-file release_notes.md \
-              --generate-notes \
-              --latest
+              --generate-notes
 
-          bash scripts/cleanup_releases.sh "${{ github.repository }}" "docker-" 1
+          if [[ "${{ inputs.publish_latest }}" == "true" ]]; then
+            gh release edit "$TAG" --repo "${{ github.repository }}" --latest
+            bash scripts/cleanup_releases.sh "${{ github.repository }}" "docker-" 5
+          fi
