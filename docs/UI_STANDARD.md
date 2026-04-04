@@ -98,6 +98,12 @@ detection-bearing tiles, filmstrips, and modal/detail surfaces.
 - Review-side utility panels may keep short section headings, but action labels
   themselves should stay canonical, for example `Change Species`,
   `BBox Confirm`, and `BBox Reject`.
+- Review quick-species strips may stay on the local select/confirm path, but
+  the Review species section must still expose one explicit route into the full
+  species picker such as `Choose another species`.
+- Review quick-species state should be legible at a glance: the default
+  suggestion and the current selection should use distinct visual markers
+  instead of relying on helper copy alone.
 - Viewer/navigation controls such as zoom, close, next/previous, and download
   are not canonical detection actions. They may sit next to the frame, but they
   must not replace it.

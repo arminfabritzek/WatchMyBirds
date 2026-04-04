@@ -5410,6 +5410,11 @@ body {
     border-color: rgba(114, 130, 73, 0.22);
 }
 
+.review-stage-panel__action--picker {
+    background: rgba(235, 241, 248, 0.92);
+    border-color: rgba(88, 110, 148, 0.2);
+}
+
 .review-stage-panel__action.is-queued {
     opacity: 0.72;
 }
@@ -5540,6 +5545,13 @@ body {
     scrollbar-width: thin;
 }
 
+.review-stage-panel__species-actions {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
+    margin-top: 10px;
+}
+
 .review-stage-panel__species-btn {
     position: relative;
     display: block;
@@ -5555,10 +5567,61 @@ body {
     aspect-ratio: 3 / 4;
 }
 
+.review-stage-panel__species-btn[data-default-suggestion="1"] {
+    box-shadow:
+        0 0 0 1px rgba(174, 134, 52, 0.42),
+        0 10px 20px rgba(24, 19, 13, 0.1);
+}
+
+.review-stage-panel__species-btn[data-default-suggestion="1"]::before {
+    content: "✦";
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    z-index: 2;
+    display: grid;
+    place-items: center;
+    width: 26px;
+    height: 26px;
+    border-radius: 999px;
+    background: rgba(255, 247, 220, 0.92);
+    color: #8a671d;
+    font-size: 0.82rem;
+    font-weight: 900;
+    box-shadow: 0 8px 16px rgba(24, 19, 13, 0.18);
+    pointer-events: none;
+}
+
 .review-stage-panel__species-btn.is-selected {
     box-shadow:
         0 0 0 2px rgba(47, 111, 62, 0.44),
         0 10px 20px rgba(24, 19, 13, 0.16);
+}
+
+.review-stage-panel__species-btn.is-selected::after {
+    content: "✓";
+    position: absolute;
+    top: 10px;
+    left: 10px;
+    z-index: 2;
+    display: grid;
+    place-items: center;
+    width: 26px;
+    height: 26px;
+    border-radius: 999px;
+    background: rgba(223, 246, 228, 0.94);
+    color: #20582e;
+    font-size: 0.9rem;
+    font-weight: 900;
+    box-shadow: 0 8px 16px rgba(24, 19, 13, 0.18);
+    pointer-events: none;
+}
+
+.review-stage-panel__species-btn.is-selected[data-default-suggestion="1"] {
+    box-shadow:
+        0 0 0 2px rgba(47, 111, 62, 0.44),
+        0 0 0 4px rgba(174, 134, 52, 0.2),
+        0 12px 24px rgba(24, 19, 13, 0.18);
 }
 
 .review-stage-panel__species-btn.is-selected:hover {

@@ -132,6 +132,28 @@ def _build_review_quick_species(
     return quick_species[:limit]
 
 
+def _resolve_review_default_species(
+    quick_species: list[dict],
+    *,
+    common_names: dict[str, str],
+) -> tuple[str | None, str | None]:
+    default_entry = next(
+        (entry for entry in quick_species if entry.get("source") == "cls"),
+        quick_species[0] if quick_species else None,
+    )
+    if not default_entry:
+        return None, None
+
+    scientific_name = str(default_entry.get("scientific") or "").strip()
+    if not scientific_name:
+        return None, None
+
+    return (
+        scientific_name,
+        default_entry.get("common") or resolve_common_name(scientific_name, common_names),
+    )
+
+
 def _resolve_review_selected_species(
     quick_species: list[dict],
     *,
@@ -146,20 +168,16 @@ def _resolve_review_selected_species(
             "manual",
         )
 
-    default_entry = next(
-        (entry for entry in quick_species if entry.get("source") == "cls"),
-        quick_species[0] if quick_species else None,
+    scientific_name, common_name = _resolve_review_default_species(
+        quick_species,
+        common_names=common_names,
     )
-    if not default_entry:
-        return None, None, None
-
-    scientific_name = str(default_entry.get("scientific") or "").strip()
     if not scientific_name:
         return None, None, None
 
     return (
         scientific_name,
-        default_entry.get("common") or resolve_common_name(scientific_name, common_names),
+        common_name,
         "default",
     )
 
@@ -385,6 +403,8 @@ def _build_review_item(
     current_species = row["species_key"]
     picker_entries = []
     quick_species: list[dict] = []
+    default_species = None
+    default_species_common = None
     selected_species = None
     selected_species_common = None
     selected_species_origin = None
@@ -402,6 +422,10 @@ def _build_review_item(
             species_thumbnail_map=species_thumbnail_map,
             thumbnail_cache_key=f"review:{species_locale}",
         )
+        default_species, default_species_common = _resolve_review_default_species(
+            quick_species,
+            common_names=common_names,
+        )
         selected_species, selected_species_common, selected_species_origin = (
             _resolve_review_selected_species(
                 quick_species,
@@ -410,6 +434,10 @@ def _build_review_item(
             )
         )
     elif include_detail:
+        default_species, default_species_common = _resolve_review_default_species(
+            quick_species,
+            common_names=common_names,
+        )
         selected_species, selected_species_common, selected_species_origin = (
             _resolve_review_selected_species(
                 quick_species,
@@ -460,6 +488,10 @@ def _build_review_item(
         ),
         "species_source": row["species_source"],
         "quick_species": quick_species if include_detail else [],
+        "default_species": default_species if include_detail else None,
+        "default_species_common": (
+            default_species_common if include_detail else None
+        ),
         "selected_species": selected_species if include_detail else None,
         "selected_species_common": (
             selected_species_common if include_detail else None

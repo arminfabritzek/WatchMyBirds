@@ -150,7 +150,8 @@
             data-item-kind="{{ orphan.item_kind }}" data-item-id="{{ orphan.item_id }}" data-item-key="{{ orphan.item_key }}"
             data-detection-id="{{ orphan.best_detection_id }}" data-bbox-review="{{ orphan.selected_bbox_review or '' }}"
             data-bbox-review-explicit="{% if orphan.selected_bbox_review_origin == 'manual' %}1{% else %}0{% endif %}"
-            data-selected-species="{{ orphan.selected_species or '' }}">
+            data-selected-species="{{ orphan.selected_species or '' }}"
+            data-selected-species-origin="{{ orphan.selected_species_origin or '' }}">
             <div class="review-stage-panel__decision-rail">
                 <div class="review-stage-panel__section review-stage-panel__section--bbox">
                     <div class="review-stage-panel__section-label">BBox</div>
@@ -210,6 +211,7 @@
                         data-review-panel-action="{% if orphan.selected_species == species.scientific %}confirm_species{% else %}select_species{% endif %}"
                         data-item-key="{{ orphan.item_key }}" data-filename="{{ orphan.filename }}"
                         data-detection-id="{{ orphan.best_detection_id }}" data-species="{{ species.scientific }}"
+                        data-default-suggestion="{% if species.scientific == orphan.default_species %}1{% else %}0{% endif %}"
                         data-current-species="{{ orphan.selected_species or orphan.species_key or '' }}" role="listitem">
                         <span class="review-stage-panel__species-media" aria-hidden="true">
                             {% if species.thumb_url %}
@@ -220,7 +222,9 @@
                         <span class="review-stage-panel__species-overlay">
                             <span class="review-stage-panel__species-name">{{ species.common }}</span>
                             <span class="review-stage-panel__species-meta">
-                            {% if orphan.selected_species == species.scientific %}
+                            {% if orphan.selected_species == species.scientific and orphan.selected_species_origin == 'manual' %}
+                            Selected manually
+                            {% elif orphan.selected_species == species.scientific and orphan.selected_species_origin != 'default' %}
                             Selected · Click again to confirm
                             {% elif species.source == 'current' %}
                             {% if species.score_pct is not none %}
@@ -238,6 +242,16 @@
                     </button>
                     {% endfor %}
                 </div>
+                <div class="review-stage-panel__species-actions">
+                    <button type="button" class="review-stage-panel__action review-stage-panel__action--picker"
+                        data-review-panel-action="open_species_picker" data-item-key="{{ orphan.item_key }}"
+                        data-filename="{{ orphan.filename }}" data-detection-id="{{ orphan.best_detection_id }}"
+                        data-current-species="{{ orphan.selected_species or orphan.species_key or '' }}">
+                        <span class="review-stage-panel__action-icon">🏷️</span>
+                        <span class="review-stage-panel__action-copy">Choose another species</span>
+                    </button>
+                </div>
+                <div class="review-stage-panel__hint">Quick picks stay local until you approve. Use the picker button to search the full catalog.</div>
                 {% else %}
                 <div class="review-stage-panel__hint">Use Deep Scan or Change Species.</div>
                 {% endif %}

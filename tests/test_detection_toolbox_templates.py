@@ -152,6 +152,7 @@ def test_review_modal_uses_quick_review_layout():
     assert 'data-review-panel-action="approve_review"' in content
     assert 'data-review-panel-action="select_species"' in content
     assert 'data-review-panel-action="confirm_species"' in content
+    assert 'data-review-panel-action="open_species_picker"' in content
     assert 'data-review-panel-action="deep_scan"' in content
     assert 'data-review-nav="-1"' in content
     assert 'data-review-nav="1"' in content
@@ -168,8 +169,12 @@ def test_review_modal_uses_quick_review_layout():
     assert "show_boxes=has_bbox" in content
     assert "review-stage-panel__decision-rail" in content
     assert "review-stage-panel__species-strip" in content
+    assert "review-stage-panel__species-actions" in content
     assert "species.thumb_url" in content
     assert "review-stage-panel__species-image" in content
+    assert "Choose another species" in content
+    assert 'data-default-suggestion="{% if species.scientific == orphan.default_species %}1{% else %}0{% endif %}"' in content
+    assert "Default suggestion · Click to confirm" not in content
     assert 'data-review-viewer-tool="zoom"' in content
     assert 'data-review-viewer-tool="bbox"' in content
     assert 'data-bbox-review-toggle' in content
@@ -183,9 +188,14 @@ def test_review_modal_uses_quick_review_layout():
     assert ".review-stage-panel__viewer-media" in css
     assert ".review-stage-panel__decision-rail" in css
     assert ".review-stage-panel__species-strip" in css
+    assert ".review-stage-panel__species-actions" in css
     assert ".review-stage-panel__species-media" in css
     assert ".review-stage-panel__species-image" in css
     assert ".review-stage-panel__species-overlay" in css
+    assert '.review-stage-panel__species-btn[data-default-suggestion="1"]' in css
+    assert '.review-stage-panel__species-btn[data-default-suggestion="1"]::before' in css
+    assert ".review-stage-panel__species-btn.is-selected::after" in css
+    assert ".review-stage-panel__action--picker" in css
     assert ".review-stage-panel__toggle.is-correct" in css
     assert ".review-stage-panel__toggle.is-wrong" in css
     assert "overflow-wrap: anywhere;" in css
@@ -257,6 +267,7 @@ def test_review_modal_uses_quick_review_layout():
     assert "function getPendingReviewSpecies(itemKey)" in review_js
     assert "function setPendingReviewSpecies(itemKey, species)" in review_js
     assert "function clearPendingReviewSpecies(itemKey)" in review_js
+    assert "persistPending: Boolean(pendingSpecies)" in review_js
     assert "new Image()" in review_js
     assert "hydrateReviewSpeciesThumbs(panel);" in review_js
     assert "async function hydrateReviewSpeciesThumbs()" in review_js
@@ -272,7 +283,7 @@ def test_review_modal_uses_quick_review_layout():
     assert "action === 'approve_review'" in review_js
     assert "const pendingSpecies = getPendingReviewSpecies(itemKey);" in review_js
     assert "clearPendingReviewSpecies(itemKey);" in review_js
-    assert "applyReviewSpeciesUi(controls, species);" in review_js
+    assert "applyReviewSpeciesUi(controls, species, { origin: 'pending' });" in review_js
     assert "currentPendingSpecies && currentPendingSpecies === species" in review_js
     assert "document.addEventListener('dblclick'" in review_js
     assert "Species selected. Click again to confirm." in review_js

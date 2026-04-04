@@ -385,15 +385,25 @@
         return currentState === 'wrong' ? 'correct' : 'wrong';
     }
 
-    function applyReviewSpeciesUi(controls, species) {
+    function applyReviewSpeciesUi(controls, species, options = {}) {
         if (!controls) return;
+        const selectedOrigin = species
+            ? (options.origin !== undefined ? options.origin : (controls.dataset.selectedSpeciesOrigin || ''))
+            : '';
+        const persistPending = options.persistPending !== false;
         controls.dataset.selectedSpecies = species || '';
+        controls.dataset.selectedSpeciesOrigin = selectedOrigin;
         controls.querySelectorAll('.review-stage-panel__species-btn').forEach(btn => {
             const isSelected = (btn.dataset.species || '') === (species || '');
             btn.classList.toggle('is-selected', isSelected);
             btn.dataset.reviewPanelAction = isSelected ? 'confirm_species' : 'select_species';
         });
-        setPendingReviewSpecies(controls.dataset.itemKey || '', species || '');
+        controls.querySelectorAll('[data-current-species]').forEach(btn => {
+            btn.dataset.currentSpecies = species || '';
+        });
+        if (persistPending) {
+            setPendingReviewSpecies(controls.dataset.itemKey || '', species || '');
+        }
         updateReviewApproveState(controls);
     }
 
@@ -422,7 +432,10 @@
         const controls = getReviewControls(itemKey);
         if (!controls) return;
         const pendingSpecies = getPendingReviewSpecies(itemKey);
-        applyReviewSpeciesUi(controls, pendingSpecies || controls.dataset.selectedSpecies || '');
+        applyReviewSpeciesUi(controls, pendingSpecies || controls.dataset.selectedSpecies || '', {
+            origin: pendingSpecies ? 'pending' : (controls.dataset.selectedSpeciesOrigin || ''),
+            persistPending: Boolean(pendingSpecies)
+        });
         applyReviewBboxUi(controls, controls.dataset.bboxReview || '');
     }
 
@@ -613,7 +626,7 @@
         });
 
         if (choice && controls) {
-            applyReviewSpeciesUi(controls, choice.scientific);
+            applyReviewSpeciesUi(controls, choice.scientific, { origin: 'pending' });
             if (window.wmToast) window.wmToast('Species selected. Click again to confirm.', 'success', 2800);
         }
     }
@@ -811,7 +824,7 @@
                 confirmReviewSpeciesSelection(actionBtn, panel, itemKey, filename);
                 return;
             }
-            applyReviewSpeciesUi(controls, species);
+            applyReviewSpeciesUi(controls, species, { origin: 'pending' });
             if (window.wmToast) window.wmToast('Species selected. Click again to confirm.', 'success', 2400);
             return;
         }
@@ -860,7 +873,7 @@
         event.preventDefault();
         const controls = panel.querySelector('[data-review-controls]');
         if (controls && (controls.dataset.selectedSpecies || '') !== species) {
-            applyReviewSpeciesUi(controls, species);
+            applyReviewSpeciesUi(controls, species, { origin: 'pending' });
         }
         confirmReviewSpeciesSelection(actionBtn, panel, itemKey, filename);
     });
