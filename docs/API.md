@@ -414,7 +414,7 @@ Returns system and build metadata (legacy route).
   "build_date": "2026-03-11T10:00:00Z",
   "deploy_type": "rpi",
   "kernel": "6.6.51+rpt-rpi-v8",
-  "os": "Debian GNU/Linux 12 (bookworm)",
+  "os": "Debian GNU/Linux 13 (trixie)",
   "bootloader": "2024-09-23"
 }
 ```
@@ -443,9 +443,9 @@ Returns system and build metadata plus V1-only extras.
   "build_date": "2026-03-11T10:00:00Z",
   "deploy_type": "rpi",
   "kernel": "6.6.51+rpt-rpi-v8",
-  "os": "Debian GNU/Linux 12 (bookworm)",
+  "os": "Debian GNU/Linux 13 (trixie)",
   "bootloader": "2024-09-23",
-  "python_version": "3.11.6",
+  "python_version": "3.12.12",
   "opencv_version": "4.8.1"
 }
 ```

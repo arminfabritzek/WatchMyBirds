@@ -26,7 +26,7 @@
   <a href="https://github.com/arminfabritzek/WatchMyBirds/releases">
     <img src="https://img.shields.io/badge/Raspberry%20Pi-Image-C51A4A?logo=raspberrypi&logoColor=white" />
   </a>   <!-- Python -->
-  <img src="https://img.shields.io/badge/python-3.11-blue?logo=python&logoColor=white" />  <!-- License -->
+  <img src="https://img.shields.io/badge/python-3.12-blue?logo=python&logoColor=white" />  <!-- License -->
   <img src="https://img.shields.io/badge/license-Apache%202.0-green" />  <!-- Sponsor -->
   <a href="https://github.com/sponsors/arminfabritzek">
     <img src="https://img.shields.io/badge/Sponsor-Me-ea4aaa?logo=github" />
@@ -70,7 +70,7 @@
 
 ## Requirements
 
-- Python 3.11+ or Docker 20.10+
+- Python 3.12+ or Docker 20.10+
 - Raspberry Pi 4 or 5 with 4 GB RAM minimum
 - USB webcam or IP camera (RTSP/HTTP)
 
@@ -89,6 +89,7 @@ docker-compose up -d
 
 > **Streaming default:** The Docker stack starts **WatchMyBirds + go2rtc** together using host networking for WebRTC compatibility.
 > Set only `CAMERA_URL`; the app resolves relay/direct mode automatically.
+> Replace `EDIT_PASSWORD` with your own value before first start, and leave `TELEGRAM_ENABLED=False` unless you also set real Telegram credentials.
 > `go2rtc.yaml` is synchronized in the mounted output folder (`/output/go2rtc.yaml` in app, `/config/go2rtc.yaml` in go2rtc).
 > Bridge networking is also supported — the app will automatically fall back to ffmpeg-based streaming if WebRTC is unavailable. See `docker-compose.example.yml` for details.
 
@@ -99,6 +100,8 @@ python -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
 python main.py
 ```
+
+Recommended local/runtime target: **Python 3.12**. The Raspberry Pi pipeline now starts from a Trixie Lite golden image and bakes CPython 3.12 into that shared base once before downstream image builds create the app virtualenv.
 
 App available at: **http://localhost:8050**
 
@@ -135,10 +138,11 @@ WatchMyBirds runs as a standalone appliance on Raspberry Pi with pre-built OS im
    - **SSID:** `WatchMyBirds-XXXX`
    - **Password:** `watchmybirds`
 3. Connect to AP and open **http://192.168.4.1:8050/setup**
-4. Enter your WiFi credentials — device reboots into client mode
-5. Access at **http://watchmybirds.local:8050**
+4. Enter your WiFi credentials and choose an admin password for protected pages
+5. Device reboots into client mode
+6. Access at **http://watchmybirds.local:8050**
 
-> ⚠️ **Change the default password immediately after first login!**
+> Public pages stay available without login. Settings, review, delete, and other protected actions use the admin password you set during first setup.
 
 See [rpi/README.md](rpi/README.md) for detailed setup instructions.
 
@@ -164,7 +168,7 @@ Configuration is loaded from environment variables and `settings.yaml`:
 | `CAMERA_URL` | `""` | User-facing camera RTSP/HTTP URL |
 | `STREAM_SOURCE_MODE` | `auto` | Source policy: `auto`, `relay`, `direct` |
 | `OUTPUT_DIR` | `/output` | Storage for images and database |
-| `EDIT_PASSWORD` | `watchmybirds` | UI authentication password |
+| `EDIT_PASSWORD` | `watchmybirds` | UI authentication password; Raspberry Pi appliances require you to replace this during first setup |
 | `DETECTION_INTERVAL_SECONDS` | `2.0` | Pause between detection cycles |
 
 Full reference: [docs/CONFIGURATION.md](docs/CONFIGURATION.md)

@@ -95,10 +95,10 @@ Deployment-specific `GO2RTC_CONFIG_PATH` values:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `EDIT_PASSWORD` | `watchmybirds` | Password for protected UI actions |
+| `EDIT_PASSWORD` | `watchmybirds` | Password for protected UI actions; Raspberry Pi appliances force an initial replacement during setup |
 | `FLASK_SECRET_KEY` | (auto-generated) | Session signing key |
 
-> ⚠️ **Change the default password immediately in production!**
+> Raspberry Pi appliance images keep public pages open, but protected pages stay locked until an admin password is chosen during setup.
 
 ### Performance
 
@@ -195,10 +195,13 @@ DETECTION_INTERVAL_SECONDS=2.0
 EDIT_PASSWORD=your-secure-password
 
 # Notifications (optional)
-TELEGRAM_ENABLED=True
+TELEGRAM_ENABLED=False
 TELEGRAM_BOT_TOKEN=123456:ABC-DEF...
 TELEGRAM_CHAT_ID=987654321
 ```
+
+Set `TELEGRAM_ENABLED=True` only after `TELEGRAM_BOT_TOKEN` and
+`TELEGRAM_CHAT_ID` are configured.
 
 ---
 

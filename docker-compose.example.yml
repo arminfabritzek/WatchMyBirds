@@ -47,12 +47,14 @@ services:
       - CLASSIFIER_CONFIDENCE_THRESHOLD=0.55
       - DAY_AND_NIGHT_CAPTURE=True
       - DAY_AND_NIGHT_CAPTURE_LOCATION=Berlin
-      - LOCATION_DATA="52.516, 13.377"
+      - LOCATION_DATA=52.516, 13.377
       - CPU_LIMIT=0
       - TELEGRAM_COOLDOWN=5
-      - TELEGRAM_ENABLED=True
-      - EDIT_PASSWORD=SECRET_PASSWORD
-      # Telegram credentials (required if TELEGRAM_ENABLED=True)
+      # Leave disabled until bot token + chat id are configured.
+      - TELEGRAM_ENABLED=False
+      # Required: replace with your own strong password before first start.
+      - EDIT_PASSWORD=change-this-password
+      # Telegram credentials (required only if TELEGRAM_ENABLED=True)
       - TELEGRAM_BOT_TOKEN=your_token_here
       - TELEGRAM_CHAT_ID=your_chat_id_here
       - DETECTOR_MODEL_CHOICE=yolo
