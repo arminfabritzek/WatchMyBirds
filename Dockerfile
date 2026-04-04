@@ -1,5 +1,5 @@
 # ---------- Python runtime ----------
-FROM python:3.11-slim-bookworm
+FROM python:3.12-slim-bookworm
 
 # Install system dependencies
 RUN apt-get update && \

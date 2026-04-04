@@ -11,7 +11,7 @@ version = "0.1.0"
 description = "AI-powered bird detection and classification from live camera streams"
 readme = "README.md"
 license = {text = "Apache-2.0"}
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 
 # =============================================================================
 # Black - Code Formatter (DEPRECATED - use `ruff format` instead)
@@ -22,7 +22,7 @@ requires-python = ">=3.11"
 
 [tool.black]
 line-length = 88
-target-version = ["py311"]
+target-version = ["py312"]
 include = '\.pyi?$'
 exclude = '''
 /(
@@ -46,7 +46,7 @@ exclude = '''
 
 [tool.ruff]
 line-length = 88
-target-version = "py311"
+target-version = "py312"
 
 # Rule groups:
 # F  = Pyflakes (real bugs: undefined names, unused imports)
@@ -134,7 +134,7 @@ filterwarnings = [
 # Run: mypy .
 
 [tool.mypy]
-python_version = "3.11"
+python_version = "3.12"
 warn_return_any = false
 warn_unused_ignores = true
 ignore_missing_imports = true

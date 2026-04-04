@@ -38,7 +38,11 @@ APT_OPTIONS="-y -o Dpkg::Options::=--force-confnew -o Dpkg::Options::=--force-co
 # Retry logic
 apt-get $APT_OPTIONS upgrade || (sleep 10 && apt-get $APT_OPTIONS upgrade)
 
-apt-get $APT_OPTIONS install ufw hostapd dnsmasq unattended-upgrades dhcpcd5 libglib2.0-0 ffmpeg v4l-utils policykit-1 curl ca-certificates
+apt-get $APT_OPTIONS install ufw hostapd dnsmasq unattended-upgrades dhcpcd5 libglib2.0-0 ffmpeg v4l-utils polkitd curl ca-certificates
+
+# Bootstrap Python 3.12 into the shared golden image once so downstream RPi
+# build lanes can create cp312 virtualenvs without reinstalling it each time.
+/tmp/install-python312.sh
 
 # Restrict dhcpcd to wlan0 entirely to avoid race-conditions with NetworkManager on eth0
 echo "allowinterfaces wlan0" >> /etc/dhcpcd.conf

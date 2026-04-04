@@ -34,15 +34,27 @@ jobs:
       - name: Create Wheelhouse (Host)
         run: |
           mkdir -p wheelhouse
-          # Download wheels for ARM64/Python3.11 (Bookworm standard)
-          # We use --only-binary=:all: to ensure we don't get source tarballs that need compiling
+          grep -v '^onnxruntime==' app_code/requirements.txt > /tmp/wmb-base-requirements.txt
+          # The shared golden image now bakes in Python 3.12 once, so the
+          # release lane can reuse a fully offline cp312 wheelhouse.
           pip download \
-            -r app_code/requirements.txt \
+            -r /tmp/wmb-base-requirements.txt \
             --dest ./wheelhouse \
             --platform manylinux2014_aarch64 \
-            --python-version 3.11 \
+            --python-version 3.12 \
             --only-binary=:all: \
             --extra-index-url https://www.piwheels.org/simple
+
+          # onnxruntime 1.24.x uses newer ARM64 manylinux wheel tags than the
+          # rest of the stack, so download it separately into the same wheelhouse.
+          pip download \
+            --dest ./wheelhouse \
+            --platform manylinux_2_27_aarch64 \
+            --python-version 3.12 \
+            --implementation cp \
+            --abi cp312 \
+            --only-binary=:all: \
+            onnxruntime==1.24.4
 
       - name: Install QEMU
         run: sudo apt-get update && sudo apt-get install -y qemu-user-static
@@ -73,7 +85,6 @@ jobs:
           # Inject Wheelhouse
           sudo mkdir -p mount_point/opt/wheelhouse
           sudo cp -r wheelhouse/* mount_point/opt/wheelhouse/
-
           # Write Version Metadata
           # Resolve the current release base even if APP_VERSION currently holds
           # a next-patch dev build marker.
@@ -120,12 +131,17 @@ jobs:
           sudo mount --bind /dev/pts mount_point/dev/pts
           sudo mount --bind /proc mount_point/proc
           sudo mount --bind /sys mount_point/sys
+          sudo mount --bind /etc/resolv.conf mount_point/etc/resolv.conf
           
           sudo chroot mount_point /bin/bash -c "
             set -ex
+            command -v python3.12 >/dev/null 2>&1 || {
+              echo 'python3.12 missing from golden image; rebuild the Trixie golden artifact first' >&2
+              exit 1
+            }
             
             # Create Venv
-            python3 -m venv /opt/app/.venv
+            python3.12 -m venv /opt/app/.venv
             
             # Upgrade pip (using wheelhouse if available, or just use system pip to install? 
             # Ideally we have pip wheel in wheelhouse too. If not, use ensurepip version)
@@ -156,12 +172,40 @@ jobs:
           # ---------------------------------------------------------
           # CLEANUP
           # ---------------------------------------------------------
-          sudo umount mount_point/sys
-          sudo umount mount_point/proc
-          sudo umount mount_point/dev/pts || true
-          sudo umount mount_point/dev
+          cleanup_mount() {
+            local target="$1"
+            local attempt
+
+            if ! mountpoint -q "$target"; then
+              return 0
+            fi
+
+            for attempt in 1 2 3; do
+              if sudo umount "$target"; then
+                return 0
+              fi
+              echo "umount failed for $target (attempt ${attempt}/3); killing remaining processes..."
+              sudo fuser -km "$target" 2>/dev/null || true
+              sleep 2
+            done
+
+            echo "umount still failed for $target; falling back to lazy unmount"
+            sudo umount -l "$target"
+          }
+
+          sync
+
+          # Kill any leftover chroot processes before cleanup
+          sudo fuser -km mount_point 2>/dev/null || true
+          sleep 1
+
+          cleanup_mount mount_point/sys
+          cleanup_mount mount_point/proc
+          cleanup_mount mount_point/etc/resolv.conf
+          cleanup_mount mount_point/dev/pts
+          cleanup_mount mount_point/dev
           sudo rm mount_point/usr/bin/qemu-aarch64-static
-          
+
           sudo umount mount_point/boot/firmware
           sudo umount mount_point
           sudo losetup -d $LOOP_DEV

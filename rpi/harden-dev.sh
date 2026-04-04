@@ -29,7 +29,7 @@ apt-get update
 
 APT_OPTIONS="-y -o Dpkg::Options::=--force-confnew -o Dpkg::Options::=--force-confdef"
 apt-get $APT_OPTIONS upgrade || (sleep 10 && apt-get $APT_OPTIONS upgrade)
-apt-get $APT_OPTIONS install ufw hostapd dnsmasq unattended-upgrades dhcpcd5 libglib2.0-0 ffmpeg v4l-utils openssh-server policykit-1 curl ca-certificates
+apt-get $APT_OPTIONS install ufw hostapd dnsmasq unattended-upgrades dhcpcd5 libglib2.0-0 ffmpeg v4l-utils openssh-server polkitd curl ca-certificates
 
 echo "allowinterfaces wlan0" >> /etc/dhcpcd.conf
 
