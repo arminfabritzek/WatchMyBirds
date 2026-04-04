@@ -8,8 +8,7 @@ Usage:
   version_info.sh dev-version [repo_root] [git_sha]
 
 Rules:
-  - Prefer the latest semver git tag (vX.Y.Z or X.Y.Z) as the release base.
-  - If no semver tag exists, derive the release base from APP_VERSION.
+  - Use APP_VERSION as the release base.
   - If APP_VERSION already contains a dev suffix for the next patch
     (for example 0.1.1-dev.abc1234), map it back to the current release base
     (0.1.0) so repeated runs stay idempotent.
@@ -57,16 +56,6 @@ decrement_patch() {
   printf '%s\n' "${major}.${minor}.$((patch - 1))"
 }
 
-latest_semver_tag() {
-  local repo_root="${1:-.}"
-  git -C "$repo_root" tag --list \
-    --merged HEAD \
-    | sed -nE 's/^(v?[0-9]+\.[0-9]+\.[0-9]+)$/\1/p' \
-    | sed 's/^v//' \
-    | sort -V \
-    | tail -n 1
-}
-
 read_raw_app_version() {
   local repo_root="${1:-.}"
   local version_file="${repo_root}/APP_VERSION"
@@ -92,13 +81,6 @@ release_base_from_raw_app_version() {
 
 resolve_release_base() {
   local repo_root="${1:-.}"
-  local tag_version
-  tag_version="$(latest_semver_tag "$repo_root")"
-  if [[ -n "$tag_version" ]]; then
-    printf '%s\n' "$tag_version"
-    return
-  fi
-
   release_base_from_raw_app_version "$(read_raw_app_version "$repo_root")"
 }
 
