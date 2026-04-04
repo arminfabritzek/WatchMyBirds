@@ -94,7 +94,7 @@ jobs:
           gh release view "$TAG" --repo "${{ github.repository }}" >/dev/null 2>&1 || \
             gh release create "$TAG" \
               --repo "${{ github.repository }}" \
-              --title "🐳 Docker Image – ${STAMP} (${VERSION})" \
+              --title "🐳 Docker Image ${STAMP} v${VERSION}" \
               --notes-file release_notes.md \
               --generate-notes \
               --latest
