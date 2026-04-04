@@ -34,6 +34,13 @@
     </div>
     {% endif %}
 
+    {% if setup_password_required %}
+    <div style="background:#b45309;color:#fff;text-align:center;padding:.5rem 1rem;font-size:.9rem;">
+        Protected pages are locked until you choose an admin password.
+        <a href="/setup/password" style="color:#fde68a;text-decoration:underline;">Set password now</a>.
+    </div>
+    {% endif %}
+
     <main class="page">
         <div class="container">
             {% block content %}{% endblock %}

@@ -78,10 +78,18 @@ def create_web_interface(detection_manager, system_monitor=None):
     config["CLASSIFIER_CONFIDENCE_THRESHOLD"]
     EDIT_PASSWORD = config["EDIT_PASSWORD"]
     logger.info(
-        f"Loaded EDIT_PASSWORD: {'***' if EDIT_PASSWORD and EDIT_PASSWORD != 'default_pass' else '<Not Set or Default>'}"
+        "Loaded EDIT_PASSWORD: %s",
+        "***"
+        if EDIT_PASSWORD
+        and EDIT_PASSWORD not in ["watchmybirds", "SECRET_PASSWORD", "default_pass"]
+        else "<Not Set or Default>",
     )
 
-    if not EDIT_PASSWORD or EDIT_PASSWORD in ["SECRET_PASSWORD", "default_pass"]:
+    if not EDIT_PASSWORD or EDIT_PASSWORD in [
+        "watchmybirds",
+        "SECRET_PASSWORD",
+        "default_pass",
+    ]:
         logger.warning(
             "EDIT_PASSWORD not set securely in .env or settings.yaml. Access might be restricted or insecure."
         )
@@ -543,8 +551,6 @@ def create_web_interface(detection_manager, system_monitor=None):
     server.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 
     # Inject a default-password warning and CSRF token into every template context
-    _DEFAULT_PASSWORDS = {"watchmybirds", "SECRET_PASSWORD", "default_pass", ""}
-
     @server.context_processor
     def inject_security_context():
         from web.services import auth_service as _auth
@@ -559,6 +565,7 @@ def create_web_interface(detection_manager, system_monitor=None):
         )
         return {
             "warn_default_password": warn,
+            "setup_password_required": _auth.should_require_password_setup(),
             "csrf_token": session["_csrf_token"],
         }
 

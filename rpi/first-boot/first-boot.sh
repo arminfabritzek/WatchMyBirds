@@ -26,6 +26,86 @@ echo "==========================================================================
 echo "WatchMyBirds First Boot Log - Started at $(date)"
 echo "================================================================================"
 
+queue_app_service_start() {
+    echo "Queueing WatchMyBirds application start..."
+    systemctl enable app.service 2>/dev/null || true
+    systemctl --no-block start app.service || true
+}
+
+get_status_file_path() {
+    if [ -d "/boot/firmware" ]; then
+        echo "/boot/firmware/STATUS.txt"
+    else
+        echo "/boot/STATUS.txt"
+    fi
+}
+
+get_wlan_ipv4() {
+    ip -4 addr show wlan0 2>/dev/null | awk '/inet / {print $2}' | cut -d/ -f1 | head -n1
+}
+
+read_watchdog_failures() {
+    local failure_file="/var/lib/watchmybirds/wifi_watchdog_failures"
+    if [ -f "$failure_file" ]; then
+        cat "$failure_file" 2>/dev/null || echo 0
+    else
+        echo 0
+    fi
+}
+
+write_status_snapshot() {
+    local stage="$1"
+    local status_file
+    local mode="UNKNOWN"
+    local ssid=""
+    local iw_status
+    local ipv4
+    local default_route
+
+    status_file="$(get_status_file_path)"
+
+    if [ "${IS_AP:-0}" -eq 1 ] || systemctl is-active --quiet hostapd; then
+        mode="AP"
+        ssid="WatchMyBirds-$(grep "Serial" /proc/cpuinfo | awk '{print $3}' | tail -c 5)"
+        [ "$ssid" = "WatchMyBirds-" ] && ssid="WatchMyBirds-XXXX"
+    else
+        mode="CLIENT"
+        ssid="$(iw dev wlan0 link 2>/dev/null | awk '/SSID/ {print $2; exit}')"
+    fi
+
+    iw_status="$(iw dev wlan0 link 2>/dev/null | grep 'Connected' || echo 'Not Connected')"
+    ipv4="$(get_wlan_ipv4)"
+    default_route="$(ip route 2>/dev/null | awk '/^default/ {print $3; exit}')"
+
+    {
+        echo "TIMESTAMP=$(date '+%Y-%m-%d %H:%M:%S')"
+        echo "STAGE=$stage"
+        echo "MODE=$mode"
+        echo "SSID=$ssid"
+        echo "IW_STATUS=$iw_status"
+        echo "IPV4=$ipv4"
+        echo "DEFAULT_ROUTE=$default_route"
+        echo "APP_ACTIVE=$(systemctl is-active app.service 2>/dev/null || true)"
+        echo "APP_ENABLED=$(systemctl is-enabled app.service 2>/dev/null || true)"
+        echo "APP_RESULT=$(systemctl show app.service -p Result --value 2>/dev/null || true)"
+        echo "HOSTAPD_ACTIVE=$(systemctl is-active hostapd 2>/dev/null || true)"
+        echo "WPA_WLAN0_ACTIVE=$(systemctl is-active wpa_supplicant@wlan0 2>/dev/null || true)"
+        echo "WIFI_WATCHDOG_TIMER=$(systemctl is-active wmb-wifi-watchdog.timer 2>/dev/null || true)"
+        echo "WATCHDOG_FAILURES=$(read_watchdog_failures)"
+        echo "PENDING_WIFI_CONFIG=$([ -f /opt/app/data/pending_wifi.conf ] && echo yes || echo no)"
+        echo "PENDING_ADMIN_PASSWORD=$([ -f /opt/app/data/pending_admin_password ] && echo yes || echo no)"
+        echo "FIRST_BOOT_MARKER=$([ -n "${MARKER:-}" ] && [ -f "$MARKER" ] && echo present || echo missing)"
+        echo "--- APP STATUS ---"
+        systemctl status app.service --no-pager || true
+        echo "--- WIFI STATUS ---"
+        systemctl status hostapd --no-pager || true
+        systemctl status wpa_supplicant@wlan0 --no-pager || true
+        systemctl status wpa_supplicant --no-pager || true
+        echo "--- FIRST BOOT STATUS ---"
+        systemctl status wmb-first-boot.service --no-pager || true
+    } > "$status_file"
+}
+
 # Debug: List boot partition contents to verify trigger file presence
 echo "DEBUG: Listing Boot Partition Contents:"
 ls -la /boot/firmware/ || true
@@ -56,6 +136,7 @@ fi
 mkdir -p "$(dirname "$MARKER")"
 chown watchmybirds:watchmybirds /opt/app/data || true
 chmod 0750 /opt/app/data || true
+write_status_snapshot "first-boot-entered"
 
 # 0. Ingest WiFi Config (Headless Support)
 # ----------------------------------------------------------------------
@@ -113,6 +194,7 @@ if grep -qE "ssid=\"[^\"]+\"" /etc/wpa_supplicant/wpa_supplicant.conf && \
 fi
 
 IS_AP=0
+START_APP_AFTER_FIREWALL=0
 
 if [ "$FORCE_AP" -eq 1 ]; then
     echo "Trigger present. Forcing AP Mode for setup."
@@ -187,16 +269,8 @@ elif [ "$HAS_NM" -gt 0 ] || [ "$HAS_WPA" -eq 1 ]; then
         # --------------------------------------------------------------
         # SUCCESS PATH
         # --------------------------------------------------------------
-        echo "Enabling WatchMyBirds application..."
-        systemctl enable app.service 2>/dev/null || true
-        systemctl start app.service || true
-        
-        # Diagnostics for App Start
-        sleep 5
-        if ! systemctl is-active --quiet app.service; then
-            echo "ERROR: App failed to start! Dumping logs to bootfs..."
-            journalctl -u app.service -n 50 --no-pager
-        fi
+        echo "WiFi connected. App start will be deferred until firewall rules are active."
+        START_APP_AFTER_FIREWALL=1
         
     else
         # --------------------------------------------------------------
@@ -361,46 +435,23 @@ fi
 # Enable
 ufw --force enable
 
+if [ "$IS_AP" -eq 0 ]; then
+    if [ "$START_APP_AFTER_FIREWALL" -eq 1 ]; then
+        echo "Starting WatchMyBirds application after firewall activation..."
+    else
+        echo "WiFi not yet confirmed during first-boot validation; queueing app start for client mode anyway."
+    fi
+    queue_app_service_start
+    write_status_snapshot "post-firewall-app-queued"
+fi
+
 # 4. Cleanup & Self-Disable
 # ----------------------------------------------------------------------
 echo "Marking First-Boot Complete..."
 touch "$MARKER"
 rm -f "$TRIGGER_BOOT" "$TRIGGER_BOOT_LEGACY"
 
-# Snapshot State / STATUS.txt (Item #1)
-STATUS_FILE="/boot/firmware/STATUS.txt"
-if [ ! -d "/boot/firmware" ] && [ -d "/boot" ]; then
-    STATUS_FILE="/boot/STATUS.txt"
-fi
-
-{
-    echo "TIMESTAMP=$(date '+%Y-%m-%d %H:%M:%S')"
-    if [ "$IS_AP" -eq 1 ]; then
-        echo "MODE=AP"
-        SUFFIX=$(grep "Serial" /proc/cpuinfo | awk '{print $3}' | tail -c 5)
-        [ -z "$SUFFIX" ] && SUFFIX="XXXX"
-        echo "SSID=WatchMyBirds-$SUFFIX"
-    else
-        echo "MODE=CLIENT"
-        CURRENT_SSID=$(iw dev wlan0 link | grep SSID | awk '{print $2}')
-        echo "SSID=$CURRENT_SSID"
-    fi
-    echo "IW_STATUS=$(iw dev wlan0 link | grep 'Connected' || echo 'Not Connected')"
-    echo "IPV4=$(ip -4 addr show wlan0 | grep -oP '(?<=inet\s)\d+(\.\d+){3}')"
-    # Fallback grep for systems without -P
-    if [ -z "$IPV4" ]; then
-         echo "IPV4=$(ip -4 addr show wlan0 | grep 'inet ' | awk '{print $2}' | cut -d/ -f1)"
-    fi
-    echo "DEFAULT_ROUTE=$(ip route | grep default | awk '{print $3}')"
-    
-    echo "--- APP STATUS ---"
-    systemctl status app.service || true
-    echo "--- WIFI STATUS ---"
-    systemctl status hostapd || true
-    systemctl status wpa_supplicant@wlan0 || true
-    systemctl status wpa_supplicant || true
-
-} > "$STATUS_FILE"
+write_status_snapshot "first-boot-marked-complete"
 
 # ----------------------------------------------------------------------
 # ENHANCED DIAGNOSTICS (Headless Verification)
@@ -449,5 +500,7 @@ v4l2-ctl --version >> "$DIAG_DIR/tools.txt" 2>&1 || echo "v4l-utils MISSING" >> 
 
 journalctl -u app.service -b --no-pager -n 200 > "$DIAG_DIR/app_journal.log" 2>&1
 journalctl -b --no-pager -n 200 > "$DIAG_DIR/sys_journal.log" 2>&1  # Full system log snippet
+
+write_status_snapshot "first-boot-diagnostics-complete"
 
 echo "Diagnostics complete. Logs written to $DIAG_DIR"

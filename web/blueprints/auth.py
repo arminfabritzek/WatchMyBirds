@@ -11,7 +11,7 @@ from functools import wraps
 
 from flask import Blueprint, redirect, render_template, request, session, url_for
 
-from web.services import auth_service
+from web.services import auth_service, settings_service
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +43,11 @@ def login_required(f):
 
     @wraps(f)
     def decorated_function(*args, **kwargs):
+        if auth_service.should_require_password_setup():
+            next_url = auth_service.get_redirect_target(
+                request.full_path.rstrip("?"), default="/settings"
+            )
+            return redirect(url_for("auth.setup_password", next=next_url))
         if not session.get("authenticated"):
             return redirect(url_for("auth.login", next=request.path))
         return f(*args, **kwargs)
@@ -55,6 +60,12 @@ def login():
     """Login page and authentication handler."""
     error = None
     next_url = auth_service.get_redirect_target(request.args.get("next"))
+
+    if auth_service.should_require_password_setup():
+        setup_next = auth_service.get_redirect_target(
+            request.args.get("next"), default="/settings"
+        )
+        return redirect(url_for("auth.setup_password", next=setup_next))
 
     if request.method == "POST":
         ip = request.remote_addr
@@ -83,6 +94,53 @@ def login():
             logger.warning("Login FAILED ip=%s attempts=%d", ip, len(_login_attempts[ip]))
 
     return render_template("login.html", error=error, next_url=next_url)
+
+
+@auth_bp.route("/setup/password", methods=["GET", "POST"])
+def setup_password():
+    """Public first-run flow to choose the admin password on appliance builds."""
+    next_url = auth_service.get_redirect_target(
+        request.args.get("next"), default="/settings"
+    )
+    error = None
+
+    if not auth_service.should_require_password_setup():
+        if session.get("authenticated"):
+            return redirect(next_url)
+        return redirect(url_for("auth.login", next=next_url))
+
+    if request.method == "POST":
+        next_url = auth_service.get_redirect_target(
+            request.form.get("next"), default="/settings"
+        )
+        password = request.form.get("password", "")
+        password_confirm = request.form.get("password_confirm", "")
+
+        ok, cleaned_password, error = auth_service.validate_new_password(
+            password, password_confirm
+        )
+        if ok:
+            success, errors = settings_service.update_settings(
+                {"EDIT_PASSWORD": cleaned_password}
+            )
+            if success:
+                session["authenticated"] = True
+                session.permanent = True
+                _login_attempts.pop(request.remote_addr, None)
+                logger.info("Initial password configured ip=%s", request.remote_addr)
+                return redirect(next_url)
+
+            if errors:
+                error = errors[0]
+            else:
+                error = "Could not save the password. Please try again."
+
+    return render_template(
+        "setup_password.html",
+        error=error,
+        next_url=next_url,
+        min_password_length=auth_service.MIN_PASSWORD_LENGTH,
+    )
 
 
 @auth_bp.route("/logout")

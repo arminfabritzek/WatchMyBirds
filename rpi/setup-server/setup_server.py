@@ -15,10 +15,13 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("wmb-setup")
 
 PENDING_FILE = "/opt/app/data/pending_wifi.conf"
+PENDING_PASSWORD_FILE = "/opt/app/data/pending_admin_password"
 SSID_SCAN_FILE = "/opt/app/data/ssid_scan.txt"
+MIN_PASSWORD_LENGTH = 8
+DISALLOWED_PASSWORDS = {"watchmybirds", "SECRET_PASSWORD", "default_pass", ""}
 
 
-def _write_pending_config(ssid: str, password: str) -> None:
+def _write_pending_config(ssid: str, password: str, admin_password: str) -> None:
     safe_ssid = ssid.replace('"', '\\"')
     safe_pass = password.replace('"', '\\"')
 
@@ -38,6 +41,11 @@ def _write_pending_config(ssid: str, password: str) -> None:
         handle.write(config_content)
 
     os.chmod(PENDING_FILE, 0o600)
+
+    with open(PENDING_PASSWORD_FILE, "w", encoding="utf-8") as handle:
+        handle.write(admin_password)
+
+    os.chmod(PENDING_PASSWORD_FILE, 0o600)
     os.sync()
 
 
@@ -66,6 +74,8 @@ def _create_app() -> Flask:
         if request.method == "POST":
             ssid = (request.form.get("ssid") or "").strip()
             password = request.form.get("password") or ""
+            admin_password = request.form.get("admin_password") or ""
+            admin_password_confirm = request.form.get("admin_password_confirm") or ""
 
             if not ssid or not password:
                 return render_template(
@@ -75,9 +85,33 @@ def _create_app() -> Flask:
                     ssids=ssids,
                 )
 
+            if len(admin_password.strip()) < MIN_PASSWORD_LENGTH:
+                return render_template(
+                    "setup.html",
+                    error=f"Admin password must be at least {MIN_PASSWORD_LENGTH} characters long.",
+                    ssid=ssid,
+                    ssids=ssids,
+                )
+
+            if admin_password.strip() in DISALLOWED_PASSWORDS:
+                return render_template(
+                    "setup.html",
+                    error="Please choose an admin password that is not a known default.",
+                    ssid=ssid,
+                    ssids=ssids,
+                )
+
+            if admin_password != admin_password_confirm:
+                return render_template(
+                    "setup.html",
+                    error="Admin password confirmation does not match.",
+                    ssid=ssid,
+                    ssids=ssids,
+                )
+
             try:
-                _write_pending_config(ssid, password)
-                logger.info("WiFi config saved to pending file.")
+                _write_pending_config(ssid, password, admin_password.strip())
+                logger.info("WiFi config and admin password saved to pending files.")
                 return render_template("setup.html", success=True, ssids=ssids)
             except Exception as exc:
                 logger.exception("Failed to write pending WiFi config.")

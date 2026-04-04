@@ -105,7 +105,7 @@
     <div class="wrap">
         <div class="card">
             <h1>WatchMyBirds Setup</h1>
-            <p>Enter WLAN credentials and save.</p>
+            <p>Connect the device to your WLAN and choose the admin password for protected pages.</p>
 
             {% if error %}
             <div class="status error">{{ error }}</div>
@@ -113,7 +113,7 @@
 
             {% if success %}
             <div class="status success">Saved. The device is now restarting.</div>
-            <p class="hint">Please connect to your new WiFi and then open the app.</p>
+            <p class="hint">Please connect to your new WiFi and then open the app. Protected pages will use the admin password you just chose.</p>
             {% else %}
             <form method="POST" action="/">
                 <label for="ssid">SSID</label>
@@ -132,8 +132,14 @@
                 <label for="password">Password</label>
                 <input type="password" id="password" name="password" required>
 
+                <label for="admin_password">Admin Password</label>
+                <input type="password" id="admin_password" name="admin_password" minlength="8" required>
+
+                <label for="admin_password_confirm">Confirm Admin Password</label>
+                <input type="password" id="admin_password_confirm" name="admin_password_confirm" minlength="8" required>
+
                 <button type="submit">Save</button>
-                <p class="hint">Setup is only accessible in AP mode.</p>
+                <p class="hint">Public pages stay visible later, but settings, review, delete and other protected actions require this admin password.</p>
             </form>
             {% endif %}
         </div>

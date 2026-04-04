@@ -10,6 +10,5 @@ ignore_broadcast_ssid=0
 wpa=2
 wpa_passphrase=watchmybirds
 wpa_key_mgmt=WPA-PSK
-wpa_pairwise=TKIP
 rsn_pairwise=CCMP
 country_code=DE

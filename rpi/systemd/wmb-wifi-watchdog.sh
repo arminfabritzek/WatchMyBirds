@@ -16,6 +16,16 @@ BOOT_GRACE_SEC="${WMB_WD_BOOT_GRACE_SEC:-600}"
 
 mkdir -p "$STATE_DIR"
 
+ensure_app_service_started() {
+    if systemctl is-active --quiet app.service; then
+        return 0
+    fi
+
+    echo "WiFi has IPv4 but app.service is inactive. Queueing start..."
+    systemctl enable app.service 2>/dev/null || true
+    systemctl --no-block start app.service || true
+}
+
 has_ipv4() {
     ip -4 addr show "$INTERFACE" | grep -q "inet "
 }
@@ -63,6 +73,7 @@ fi
 # Healthy client mode: reset failure counter.
 if has_ipv4; then
     reset_failures
+    ensure_app_service_started
     echo "WiFi connected. Counter reset."
     exit 0
 fi
@@ -73,6 +84,7 @@ if [ "$uptime_sec" -lt "$BOOT_GRACE_SEC" ]; then
     recover_client_mode_once
     if has_ipv4; then
         reset_failures
+        ensure_app_service_started
         echo "Recovered during boot grace."
         exit 0
     fi
@@ -84,6 +96,7 @@ fi
 recover_client_mode_once
 if has_ipv4; then
     reset_failures
+    ensure_app_service_started
     echo "Recovered after restart."
     exit 0
 fi

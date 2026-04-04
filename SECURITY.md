@@ -102,7 +102,8 @@ The WatchMyBirds Raspberry Pi image is designed as a secure-by-default appliance
 ### 5. Updates & Hygiene
 - **Unattended Upgrades:** Package is installed; activation relies on OS defaults or user configuration.
 - **Dependency Audit:** `pip-audit` is not executed in the current CI workflows.
-- **Config Permissions:** If `/etc/app/app.env` is used, it should be `chmod 600` (not enforced by hardening scripts).
+- **Config Permissions:** If `/etc/app/app.env` is used, the systemd app units now enforce `root:root` ownership and `chmod 600` before startup.
+- **Python Bootstrap Verification:** The Golden Image's CPython 3.12 source bootstrap is verified against the official Python release signature before compilation.
 - **Log Hygiene:** 
   - Boot logs (`first-boot.log`) are rotated.
   - Diagnostic logs (`debuglogs/`) on the boot partition are automatically cleaned up after 48h to prevent Denial-of-Service via disk filling.

@@ -13,6 +13,7 @@ from config import (
     update_runtime_settings,
     validate_runtime_updates,
 )
+from utils.deploy_info import detect_deploy_type
 
 logger = logging.getLogger(__name__)
 
@@ -95,6 +96,11 @@ def get_edit_password() -> str | None:
     """
     config = get_config()
     password = config.get("EDIT_PASSWORD")
-    if not password or password in ["SECRET_PASSWORD", "default_pass"]:
+    if not password or password in ["watchmybirds", "SECRET_PASSWORD", "default_pass"]:
         return None
     return password
+
+
+def get_deploy_type() -> str:
+    """Return the current deployment type label."""
+    return detect_deploy_type()
