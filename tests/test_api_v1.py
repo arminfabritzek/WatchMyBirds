@@ -194,6 +194,34 @@ class TestApiV1Analytics:
             assert "total_days" in data
 
 
+class TestApiV1Weather:
+    """Test /api/v1/weather endpoints."""
+
+    def test_weather_now_returns_current_weather_with_humidity(self, client):
+        """GET /api/v1/weather/now exposes humidity for the stream overlay."""
+        weather_payload = {
+            "temp_c": 10.2,
+            "relative_humidity_pct": 90,
+            "precip_mm": 0.0,
+            "wind_kph": 4.8,
+            "condition_code": 3,
+            "condition_text": "Overcast",
+            "condition_emoji": "☁️",
+            "is_day": 1,
+            "timestamp": "2026-04-04T19:16:00+00:00",
+        }
+
+        with patch("web.services.weather_service.get_current_weather", return_value=weather_payload):
+            response = client.get("/api/v1/weather/now")
+
+        assert response.status_code == 200
+        data = response.get_json()
+
+        assert data["status"] == "success"
+        assert data["weather"]["temp_c"] == 10.2
+        assert data["weather"]["relative_humidity_pct"] == 90
+
+
 class TestApiV1SpeciesThumbnails:
     """Test /api/v1/species/thumbnails priority rules."""
 

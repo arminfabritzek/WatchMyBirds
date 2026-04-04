@@ -53,6 +53,7 @@ WMO_CODES = {
 # Global cache for the latest weather
 _current_weather_cache = {
     "temp_c": None,
+    "relative_humidity_pct": None,
     "precip_mm": None,
     "wind_kph": None,
     "condition_code": None,
@@ -88,7 +89,7 @@ def fetch_weather_data():
     url = (
         f"https://api.open-meteo.com/v1/forecast?"
         f"latitude={lat}&longitude={lon}&"
-        f"current=temperature_2m,precipitation,wind_speed_10m,weather_code,is_day&"
+        f"current=temperature_2m,relative_humidity_2m,precipitation,wind_speed_10m,weather_code,is_day&"
         f"timezone=auto"
     )
 
@@ -101,6 +102,7 @@ def fetch_weather_data():
         current = data.get("current", {})
 
         temp_c = current.get("temperature_2m")
+        relative_humidity_pct = current.get("relative_humidity_2m")
         wind_kph = current.get("wind_speed_10m")
         condition_code = current.get("weather_code")
         is_day = current.get("is_day", 1)
@@ -118,6 +120,7 @@ def fetch_weather_data():
         global _current_weather_cache
         _current_weather_cache = {
             "temp_c": temp_c,
+            "relative_humidity_pct": relative_humidity_pct,
             "precip_mm": precip_mm,
             "wind_kph": wind_kph,
             "condition_code": condition_code,

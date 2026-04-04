@@ -114,26 +114,44 @@
         {# Combined overlay: clock + weather (bottom-left, avoids camera RTC top-right) #}
         <div class="stream-info" id="streamInfo">
             <div class="stream-info__row">
-                <span class="stream-info__dot"></span>
-                <span id="clockDisplay">--:--:--</span>
+                <span id="clockDisplay">--:--</span>
             </div>
             <div class="stream-info__weather" id="streamWeatherTemp" style="display: none;">
                 <span id="streamWeatherTempContent"></span>
             </div>
-            <div class="stream-info__weather" id="streamWeatherPrecip" style="display: none;">
-                <span id="streamWeatherPrecipContent"></span>
+            <div class="stream-info__weather" id="streamWeatherHumidity" style="display: none;">
+                <span id="streamWeatherHumidityContent"></span>
             </div>
         </div>
 
         <script>
+            (function () {
+                const streamInfoEl = document.getElementById('streamInfo');
+                const streamEmbedEl = document.querySelector('.stream-embed');
+                if (!streamInfoEl || !streamEmbedEl) return;
+
+                function syncStreamInfoScale() {
+                    const rect = streamEmbedEl.getBoundingClientRect();
+                    const scale = Math.max(0.72, Math.min(1.25, rect.width / 1100));
+                    streamInfoEl.style.setProperty('--stream-info-scale', scale.toFixed(3));
+                }
+
+                syncStreamInfoScale();
+                window.addEventListener('resize', syncStreamInfoScale);
+
+                if (typeof ResizeObserver === 'function') {
+                    const resizeObserver = new ResizeObserver(syncStreamInfoScale);
+                    resizeObserver.observe(streamEmbedEl);
+                }
+            })();
+
             function updateClock() {
                 const clockEl = document.getElementById('clockDisplay');
                 if (!clockEl) return;
                 const now = new Date();
                 clockEl.textContent = now.toLocaleTimeString('de-DE', {
                     hour: '2-digit',
-                    minute: '2-digit',
-                    second: '2-digit'
+                    minute: '2-digit'
                 });
             }
             setInterval(updateClock, 1000);
@@ -150,11 +168,15 @@
                             if (data.status !== 'success' || !data.weather || data.weather.temp_c === null) return;
                             var w = data.weather;
                             var temp = Math.round(w.temp_c) + '°C';
-                            var precip = (w.precip_mm != null ? w.precip_mm : 0).toFixed(1) + ' mm';
                             document.getElementById('streamWeatherTempContent').textContent = temp;
                             document.getElementById('streamWeatherTemp').style.display = 'block';
-                            document.getElementById('streamWeatherPrecipContent').textContent = precip;
-                            document.getElementById('streamWeatherPrecip').style.display = 'block';
+
+                            if (w.relative_humidity_pct != null) {
+                                document.getElementById('streamWeatherHumidityContent').textContent = Math.round(w.relative_humidity_pct) + '% rH humidity';
+                                document.getElementById('streamWeatherHumidity').style.display = 'block';
+                            } else {
+                                document.getElementById('streamWeatherHumidity').style.display = 'none';
+                            }
                         })
                         .catch(function () { /* silent */ });
                 }

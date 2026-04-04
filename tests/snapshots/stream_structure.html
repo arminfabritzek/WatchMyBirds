@@ -1,7 +1,6 @@
 {% extends 'base.html' %}
+{% from 'components/detection_modal.html' import render_modal %}
 {% block title %}
-{% endblock %}
-{% block head %}
 {% endblock %}
 {% block content %}
 {% from 'partials/tile_toolbox.html' import tile_toolbox %}
@@ -10,14 +9,13 @@
 {% endblock %}
 {% block scripts %}
 {% endblock %}
-<div."page__header">
 <div."stream-wrapper">
 <div."stream-container">
-<div."go2rtc-wrapper">
+<div."stream-embed">
 <div#"streamInfo"."stream-info">
 <div."stream-info__row">
 <div#"streamWeatherTemp"."stream-info__weather">
-<div#"streamWeatherPrecip"."stream-info__weather">
+<div#"streamWeatherHumidity"."stream-info__weather">
 <div."stats-row">
 <div."stat-item">
 <div."stat-item__value">
@@ -31,8 +29,6 @@
 <div."stat-item">
 <div."stat-item__value">
 <div."stat-item__label">
-<div."landing-health">
-<div."landing-health__item">
 <section#"last24hSummarySection"."section">
 <div."quiet-preview">
 <div."quiet-preview__head">
@@ -48,8 +44,10 @@
 <div."best-species-card__media">
 <div."best-species-card__placeholder">
 <div."best-species-card__body">
+<div."best-species-card__facts">
 <div."best-species-board__grid">
 <article."best-species-card">
 <div."best-species-card__media">
 <div."best-species-card__placeholder">
 <div."best-species-card__body">
+<div."best-species-card__facts">

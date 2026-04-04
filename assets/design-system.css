@@ -2004,31 +2004,32 @@ code {
 }
 
 .stream-info {
+    --stream-info-scale: 1;
     position: absolute;
-    top: 50px;
-    left: 15px;
+    top: calc(16px * var(--stream-info-scale));
+    left: calc(16px * var(--stream-info-scale));
     z-index: 10;
-    display: flex;
-    flex-direction: column;
+    display: inline-flex;
     align-items: center;
-    gap: 2px;
-    padding: 6px 12px;
-    border-radius: 6px;
+    gap: calc(10px * var(--stream-info-scale));
+    padding: calc(7px * var(--stream-info-scale)) calc(12px * var(--stream-info-scale));
+    border-radius: calc(8px * var(--stream-info-scale));
     border: 1px solid rgba(196, 165, 104, 0.22);
     background: rgba(33, 27, 20, 0.72);
     color: white;
     font-family: 'JetBrains Mono', monospace;
-    font-size: 0.82rem;
+    font-size: calc(0.92rem * var(--stream-info-scale));
     font-weight: 500;
-    line-height: 1.4;
+    font-variant-numeric: tabular-nums;
+    line-height: 1;
     pointer-events: none;
+    white-space: nowrap;
 }
 
 .stream-info__row {
     display: flex;
     align-items: center;
-    gap: 6px;
-    white-space: nowrap;
+    gap: calc(6px * var(--stream-info-scale));
 }
 
 .stream-info__dot {
@@ -2041,10 +2042,10 @@ code {
 }
 
 .stream-info__weather {
-    opacity: 0.85;
-    font-size: 0.78rem;
-    padding-left: 13px;
-    white-space: nowrap;
+    display: flex;
+    align-items: center;
+    opacity: 0.92;
+    font-size: 1em;
 }
 
 @keyframes pulse {
