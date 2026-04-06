@@ -80,6 +80,7 @@ from utils.db.review_queue import (
     fetch_review_queue_image,
     fetch_review_queue_count,
     fetch_review_queue_images,
+    fetch_review_queue_item_by_identity,
     restore_no_bird_images,
     update_review_status,
 )
@@ -144,6 +145,7 @@ __all__ = [
     "fetch_orphan_count",
     "fetch_review_queue_image",
     "fetch_review_queue_images",
+    "fetch_review_queue_item_by_identity",
     "fetch_recent_review_species",
     "fetch_review_queue_count",
     "restore_no_bird_images",

@@ -171,6 +171,20 @@ def fetch_review_queue_image(
     )
 
 
+def fetch_review_queue_item_by_identity(
+    conn,
+    item_kind: str,
+    item_id: str,
+    gallery_threshold: float,
+):
+    return db_core.fetch_review_queue_item_by_identity(
+        conn,
+        item_kind,
+        item_id,
+        gallery_threshold=gallery_threshold,
+    )
+
+
 def fetch_recent_review_species(
     conn, limit: int = 8, lookback_days: int = 7
 ) -> list:

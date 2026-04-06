@@ -236,6 +236,44 @@ def _get_allowed_review_species(
 
     return allowed_species
 
+def _fetch_prediction_entries(
+    conn, detection_id: int, common_names: dict[str, str]
+) -> list[dict]:
+    """Return top classifier predictions for a detection (lightweight).
+
+    This replaces the full ``build_species_picker_entries()`` call on the
+    panel-render hot path.  The complete picker list is lazy-loaded via
+    ``/api/species-list`` only when the user actually opens the picker.
+    """
+    rows = conn.execute(
+        """
+        SELECT cls_class_name, cls_confidence, rank
+        FROM classifications
+        WHERE detection_id = ?
+          AND COALESCE(status, 'active') = 'active'
+        ORDER BY rank ASC
+        LIMIT 5
+        """,
+        (detection_id,),
+    ).fetchall()
+    entries: list[dict] = []
+    for row in rows:
+        scientific = row["cls_class_name"]
+        if not scientific:
+            continue
+        common = common_names.get(scientific, scientific.replace("_", " "))
+        entries.append(
+            {
+                "scientific": scientific,
+                "common": common,
+                "source": "prediction",
+                "score": float(row["cls_confidence"] or 0.0),
+                "rank": int(row["rank"] or 0),
+            }
+        )
+    return entries
+
+
 def _review_reason_label(review_reason: str, max_score: float | None) -> str:
     if review_reason == "orphan":
         return "No Detection"
@@ -409,10 +447,8 @@ def _build_review_item(
     selected_species_common = None
     selected_species_origin = None
     if include_detail and best_detection_id:
-        picker_entries = build_species_picker_entries(
-            conn,
-            locale=species_locale,
-            detection_id=best_detection_id,
+        picker_entries = _fetch_prediction_entries(
+            conn, best_detection_id, common_names
         )
         quick_species = _build_review_quick_species(
             current_species,
@@ -621,18 +657,11 @@ def _load_single_review_item_by_identity(
     recent_species: list[dict] | None = None,
     species_thumbnail_map: dict[str, str] | None = None,
 ) -> dict | None:
-    rows = db_service.fetch_review_queue_images(
+    row = db_service.fetch_review_queue_item_by_identity(
         conn,
+        item_kind,
+        item_id,
         gallery_threshold=gallery_threshold,
-    )
-    row = next(
-        (
-            candidate
-            for candidate in rows
-            if str(candidate["item_kind"] or "") == item_kind
-            and str(candidate["item_id"] or "") == item_id
-        ),
-        None,
     )
     if not row:
         return None
@@ -724,9 +753,10 @@ def review_panel_fragment(item_kind, item_id):
             common_names=common_names,
             cache_key=f"review:{species_locale}",
         )
-        orphan = _load_single_review_item(
+        orphan = _load_single_review_item_by_identity(
             conn,
-            filename=item_id if item_kind == "image" else "",
+            item_kind=item_kind,
+            item_id=item_id,
             gallery_threshold=gallery_threshold,
             output_dir=output_dir,
             species_locale=species_locale,
@@ -734,18 +764,6 @@ def review_panel_fragment(item_kind, item_id):
             recent_species=recent_species,
             species_thumbnail_map=species_thumbnail_map,
         )
-        if item_kind != "image":
-            orphan = _load_single_review_item_by_identity(
-                conn,
-                item_kind=item_kind,
-                item_id=item_id,
-                gallery_threshold=gallery_threshold,
-                output_dir=output_dir,
-                species_locale=species_locale,
-                common_names=common_names,
-                recent_species=recent_species,
-                species_thumbnail_map=species_thumbnail_map,
-            )
 
     if not orphan:
         abort(404)

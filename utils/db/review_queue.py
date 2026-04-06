@@ -215,6 +215,117 @@ def fetch_review_queue_image(
     return rows[0] if rows else None
 
 
+def fetch_review_queue_item_by_identity(
+    conn: sqlite3.Connection,
+    item_kind: str,
+    item_id: str,
+    gallery_threshold: float = 0.7,
+) -> sqlite3.Row | None:
+    """Return a single review-queue row by (item_kind, item_id).
+
+    For ``item_kind='image'`` this filters orphan images by filename.
+    For ``item_kind='detection'`` this filters detections by detection_id.
+    Returns ``None`` when the item is not in the queue (already resolved, etc.).
+    """
+    species_sql = effective_species_sql("d")
+
+    if item_kind == "image":
+        query = f"""
+        SELECT
+            'image' as item_kind,
+            i.filename as item_id,
+            i.filename,
+            i.filename as source_image_filename,
+            i.timestamp,
+            i.review_status,
+            NULL as max_score,
+            NULL as best_detection_id,
+            NULL as active_detection_id,
+            NULL as bbox_x,
+            NULL as bbox_y,
+            NULL as bbox_w,
+            NULL as bbox_h,
+            'orphan' as review_reason,
+            NULL as decision_state,
+            NULL as bbox_quality,
+            NULL as unknown_score,
+            NULL as decision_reasons,
+            NULL as od_confidence,
+            NULL as cls_confidence,
+            NULL as species_key,
+            NULL as manual_species_override,
+            NULL as species_source,
+            NULL as manual_bbox_review,
+            0 as sibling_detection_count
+        FROM images i
+        WHERE (i.review_status IS NULL OR i.review_status = 'untagged')
+          AND NOT EXISTS (SELECT 1 FROM detections d WHERE d.image_filename = i.filename)
+          AND i.filename = ?
+        LIMIT 1
+        """
+        row = conn.execute(query, (item_id,)).fetchone()
+    else:
+        query = f"""
+        SELECT
+            'detection' as item_kind,
+            CAST(d.detection_id AS TEXT) as item_id,
+            i.filename,
+            i.filename as source_image_filename,
+            i.timestamp,
+            i.review_status,
+            d.score as max_score,
+            d.detection_id as best_detection_id,
+            d.detection_id as active_detection_id,
+            d.bbox_x,
+            d.bbox_y,
+            d.bbox_w,
+            d.bbox_h,
+            CASE
+                WHEN d.decision_state = 'unknown' THEN 'unknown_species'
+                WHEN d.decision_state = 'uncertain' THEN 'uncertain'
+                ELSE 'low_score'
+            END as review_reason,
+            d.decision_state,
+            d.bbox_quality,
+            d.unknown_score,
+            d.decision_reasons,
+            d.od_confidence,
+            (
+                SELECT c.cls_confidence
+                FROM classifications c
+                WHERE c.detection_id = d.detection_id
+                  AND c.rank = 1
+                  AND COALESCE(c.status, 'active') = 'active'
+                LIMIT 1
+            ) as cls_confidence,
+            {species_sql} as species_key,
+            d.manual_species_override,
+            d.species_source,
+            d.manual_bbox_review,
+            (
+                SELECT COUNT(*)
+                FROM detections ds
+                WHERE ds.image_filename = d.image_filename
+                  AND COALESCE(ds.status, 'active') = 'active'
+                  AND COALESCE(ds.decision_state, '') NOT IN ('confirmed', 'rejected')
+            ) as sibling_detection_count
+        FROM detections d
+        JOIN images i ON i.filename = d.image_filename
+        WHERE COALESCE(d.status, 'active') = 'active'
+          AND COALESCE(d.decision_state, '') NOT IN ('confirmed', 'rejected')
+          AND (i.review_status IS NULL OR i.review_status = 'untagged')
+          AND (
+              COALESCE(d.score, 0.0) < ?
+              OR d.decision_state IN ('uncertain', 'unknown')
+          )
+          AND d.detection_id = ?
+        LIMIT 1
+        """
+        row = conn.execute(query, (gallery_threshold, int(item_id))).fetchone()
+
+    return row
+
+
 def fetch_recent_review_species(
     conn: sqlite3.Connection,
     limit: int = 8,
