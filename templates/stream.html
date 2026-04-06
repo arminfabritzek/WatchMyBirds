@@ -172,7 +172,7 @@
                             document.getElementById('streamWeatherTemp').style.display = 'block';
 
                             if (w.relative_humidity_pct != null) {
-                                document.getElementById('streamWeatherHumidityContent').textContent = Math.round(w.relative_humidity_pct) + '% rH humidity';
+                                document.getElementById('streamWeatherHumidityContent').textContent = Math.round(w.relative_humidity_pct) + '% RH';
                                 document.getElementById('streamWeatherHumidity').style.display = 'block';
                             } else {
                                 document.getElementById('streamWeatherHumidity').style.display = 'none';
