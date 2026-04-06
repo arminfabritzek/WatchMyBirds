@@ -3,13 +3,11 @@
 {% block title %}Settings - WatchMyBirds{% endblock %}
 
 {% block modals %}
-<!-- ONVIF Credentials Modal (UI_STANDARD.md: wm-modal--form) -->
+<!-- ONVIF Credentials Modal -->
 <div class="modal fade wm-modal wm-modal--form" id="onvifModal" tabindex="-1" data-bs-backdrop="static"
     aria-hidden="true">
-
     <div class="modal-dialog modal-lg modal-dialog-centered wm-modal__dialog">
         <div class="modal-content wm-modal__content">
-
             <div class="modal-header wm-modal__header">
                 <div class="wm-modal__title">
                     <span class="wm-modal__title-text">ONVIF Camera Credentials</span>
@@ -17,12 +15,10 @@
                 </div>
                 <button type="button" class="btn-close wm-modal__close" data-bs-dismiss="modal"></button>
             </div>
-
             <div class="wm-modal__body">
                 <div class="wm-modal__fields">
                     <input type="hidden" id="modalCamIp">
                     <input type="hidden" id="modalCamPort">
-
                     <div class="mb-3">
                         <label for="onvifUser" class="form-label">Username</label>
                         <input type="text" class="form-control" id="onvifUser" placeholder="admin">
@@ -36,7 +32,6 @@
                     </div>
                 </div>
             </div>
-
             <div class="wm-modal__action wm-modal__action--form">
                 <div class="wm-modal__actions">
                     <button type="button" class="btn btn--secondary" data-bs-dismiss="modal">Cancel</button>
@@ -46,18 +41,15 @@
                     </button>
                 </div>
             </div>
-
         </div>
     </div>
 </div>
 
-<!-- Add Camera Modal (UI_STANDARD.md: wm-modal--form) -->
+<!-- Add Camera Modal -->
 <div class="modal fade wm-modal wm-modal--form" id="addCameraModal" tabindex="-1" data-bs-backdrop="static"
     data-bs-keyboard="false" aria-hidden="true">
-
     <div class="modal-dialog modal-lg modal-dialog-centered wm-modal__dialog">
         <div class="modal-content wm-modal__content">
-
             <div class="modal-header wm-modal__header">
                 <div class="wm-modal__title">
                     <span class="wm-modal__title-text">Add Camera</span>
@@ -65,7 +57,6 @@
                 </div>
                 <button type="button" class="btn-close wm-modal__close" data-bs-dismiss="modal"></button>
             </div>
-
             <div class="wm-modal__body">
                 <div class="wm-modal__fields">
                     <div class="mb-3">
@@ -74,8 +65,7 @@
                     </div>
                     <div class="row mb-3">
                         <div class="col-8">
-                            <label for="addCamIp" class="form-label">IP Address <span
-                                    class="text-danger">*</span></label>
+                            <label for="addCamIp" class="form-label">IP Address <span class="text-danger">*</span></label>
                             <input type="text" class="form-control" id="addCamIp" placeholder="192.168.1.100" required>
                         </div>
                         <div class="col-4">
@@ -96,7 +86,6 @@
                     <div class="alert alert-success py-2 mb-0 d-none" id="addCameraSuccess"></div>
                 </div>
             </div>
-
             <div class="wm-modal__action wm-modal__action--form">
                 <div class="wm-modal__actions">
                     <button type="button" class="btn btn--secondary" data-bs-dismiss="modal">Cancel</button>
@@ -106,17 +95,14 @@
                     </button>
                 </div>
             </div>
-
         </div>
     </div>
 </div>
 
-<!-- Edit Camera Modal (UI_STANDARD.md: wm-modal--form) -->
+<!-- Edit Camera Modal -->
 <div class="modal fade wm-modal wm-modal--form" id="editCameraModal" tabindex="-1" aria-hidden="true">
-
     <div class="modal-dialog modal-lg modal-dialog-centered wm-modal__dialog">
         <div class="modal-content wm-modal__content">
-
             <div class="modal-header wm-modal__header">
                 <div class="wm-modal__title">
                     <span class="wm-modal__title-text">Edit Camera</span>
@@ -124,7 +110,6 @@
                 </div>
                 <button type="button" class="btn-close wm-modal__close" data-bs-dismiss="modal"></button>
             </div>
-
             <div class="wm-modal__body">
                 <div class="wm-modal__fields">
                     <input type="hidden" id="editCamId">
@@ -148,14 +133,12 @@
                         <input type="text" class="form-control" id="editCamUser">
                     </div>
                     <div class="mb-3">
-                        <label for="editCamPass" class="form-label">Password <small class="text-muted">(leave blank to
-                                keep)</small></label>
+                        <label for="editCamPass" class="form-label">Password <small class="text-muted">(leave blank to keep)</small></label>
                         <input type="password" class="form-control" id="editCamPass" placeholder="••••••••">
                     </div>
                     <div class="alert alert-danger py-2 mb-0 d-none" id="editCameraError"></div>
                 </div>
             </div>
-
             <div class="wm-modal__action wm-modal__action--form">
                 <div class="wm-modal__actions">
                     <button type="button" class="btn btn--secondary" data-bs-dismiss="modal">Cancel</button>
@@ -165,7 +148,6 @@
                     </button>
                 </div>
             </div>
-
         </div>
     </div>
 </div>
@@ -190,7 +172,6 @@
             .then(data => {
                 loading.classList.add('d-none');
                 btn.disabled = false;
-
                 if (data.status === 'success' && data.cameras.length > 0) {
                     data.cameras.forEach(cam => {
                         const item = document.createElement('button');
@@ -198,12 +179,11 @@
                         item.className = "list-group-item list-group-item-action d-flex justify-content-between align-items-center";
                         item.style.fontSize = "0.85rem";
                         item.innerHTML = `
-                                <div>
-                                    <div class="fw-bold">${cam.name || 'Generic ONVIF'}</div>
-                                    <div class="text-muted small">${cam.ip}:${cam.port}</div>
-                                </div>
-                                <span class="badge bg-primary rounded-pill">Select</span>
-                            `;
+                            <div>
+                                <div class="fw-bold">${cam.name || 'Generic ONVIF'}</div>
+                                <div class="text-muted small">${cam.ip}:${cam.port}</div>
+                            </div>
+                            <span class="badge bg-primary rounded-pill">Select</span>`;
                         item.onclick = () => showOnvifConfigModal(cam);
                         listGroup.appendChild(item);
                     });
@@ -223,10 +203,7 @@
         document.getElementById('modalCamInfo').innerText = `Configuring: ${cam.name || 'Unknown Camera'} (${cam.ip}:${cam.port})`;
         document.getElementById('modalCamIp').value = cam.ip;
         document.getElementById('modalCamPort').value = cam.port;
-
-        // Clear previous errors
         document.getElementById('onvifModalError').classList.add('d-none');
-
         const modal = new bootstrap.Modal(document.getElementById('onvifModal'));
         modal.show();
     }
@@ -251,16 +228,10 @@
             .then(data => {
                 spinner.classList.add('d-none');
                 if (data.status === 'success') {
-                    // Success! Fill the RTSP URL
                     document.getElementById('cameraUrlInput').value = data.uri;
                     updateCameraUrl(data.uri);
-
-                    // Close modal
                     const modalEl = document.getElementById('onvifModal');
-                    const modal = bootstrap.Modal.getInstance(modalEl);
-                    modal.hide();
-
-                    // Hide results
+                    bootstrap.Modal.getInstance(modalEl).hide();
                     document.getElementById('onvifResults').classList.add('d-none');
                 } else {
                     errorDiv.classList.remove('d-none');
@@ -278,20 +249,14 @@
     function toggleUrlVisibility() {
         const input = document.getElementById('cameraUrlInput');
         const btn = document.getElementById('btnToggleUrl');
-        if (input.type === 'password') {
-            input.type = 'text';
-            btn.innerHTML = '🔒';
-        } else {
-            input.type = 'password';
-            btn.innerHTML = '👁';
-        }
+        if (input.type === 'password') { input.type = 'text'; btn.innerHTML = '🔒'; }
+        else { input.type = 'password'; btn.innerHTML = '👁'; }
     }
 
     // --- Camera Management Logic ---
     function loadSavedCameras() {
         const container = document.getElementById('savedCamerasList');
         if (!container) return;
-
         container.innerHTML = '<div class="text-center p-3"><div class="spinner-border spinner-border-sm"></div></div>';
 
         fetch('/api/v1/cameras')
@@ -305,7 +270,6 @@
                             : cam.last_test_success === false
                                 ? '<span class="badge bg-danger">✗ Failed</span>'
                                 : '<span class="badge bg-secondary">Not Tested</span>';
-
                         const item = document.createElement('div');
                         item.className = 'list-group-item d-flex justify-content-between align-items-center';
                         item.innerHTML = `
@@ -325,8 +289,7 @@
                                     <button type="button" class="btn btn-outline-secondary" onclick="editCamera(${cam.id})" title="Edit camera settings">✏️</button>
                                     <button type="button" class="btn btn-outline-danger" onclick="deleteCamera(${cam.id})" title="Delete camera">🗑️</button>
                                 </div>
-                            </div>
-                        `;
+                            </div>`;
                         container.appendChild(item);
                     });
                 } else {
@@ -340,7 +303,6 @@
     }
 
     function showAddCameraModal() {
-        // Reset form
         document.getElementById('addCamName').value = '';
         document.getElementById('addCamIp').value = '';
         document.getElementById('addCamPort').value = '80';
@@ -348,7 +310,6 @@
         document.getElementById('addCamPass').value = '';
         document.getElementById('addCameraError').classList.add('d-none');
         document.getElementById('addCameraSuccess').classList.add('d-none');
-
         const modal = new bootstrap.Modal(document.getElementById('addCameraModal'));
         modal.show();
     }
@@ -357,7 +318,6 @@
         const spinner = document.getElementById('addCameraSpinner');
         const errorDiv = document.getElementById('addCameraError');
         const successDiv = document.getElementById('addCameraSuccess');
-
         const payload = {
             name: document.getElementById('addCamName').value,
             ip: document.getElementById('addCamIp').value,
@@ -365,21 +325,11 @@
             username: document.getElementById('addCamUser').value,
             password: document.getElementById('addCamPass').value
         };
-
-        if (!payload.ip) {
-            errorDiv.innerText = 'IP address is required.';
-            errorDiv.classList.remove('d-none');
-            return;
-        }
-
+        if (!payload.ip) { errorDiv.innerText = 'IP address is required.'; errorDiv.classList.remove('d-none'); return; }
         spinner.classList.remove('d-none');
         errorDiv.classList.add('d-none');
 
-        fetch('/api/v1/cameras', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
-        })
+        fetch('/api/v1/cameras', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
             .then(res => res.json())
             .then(data => {
                 spinner.classList.add('d-none');
@@ -387,43 +337,25 @@
                     successDiv.innerText = 'Camera saved successfully!';
                     successDiv.classList.remove('d-none');
                     loadSavedCameras();
-                    setTimeout(() => {
-                        const modal = bootstrap.Modal.getInstance(document.getElementById('addCameraModal'));
-                        modal.hide();
-                    }, 1000);
-                } else {
-                    errorDiv.innerText = data.message || 'Failed to save camera.';
-                    errorDiv.classList.remove('d-none');
-                }
+                    setTimeout(() => { bootstrap.Modal.getInstance(document.getElementById('addCameraModal')).hide(); }, 1000);
+                } else { errorDiv.innerText = data.message || 'Failed to save camera.'; errorDiv.classList.remove('d-none'); }
             })
-            .catch(err => {
-                spinner.classList.add('d-none');
-                errorDiv.innerText = 'Connection error.';
-                errorDiv.classList.remove('d-none');
-                console.error('Save camera error:', err);
-            });
+            .catch(err => { spinner.classList.add('d-none'); errorDiv.innerText = 'Connection error.'; errorDiv.classList.remove('d-none'); console.error('Save camera error:', err); });
     }
 
     function testCamera(camId) {
         const spinner = document.getElementById('testSpinner' + camId);
         if (spinner) spinner.classList.remove('d-none');
-
         fetch(`/api/v1/cameras/${camId}/test`, { method: 'POST' })
             .then(res => res.json())
             .then(data => {
                 if (spinner) spinner.classList.add('d-none');
                 if (data.status === 'success') {
                     alert(`✅ Connection successful!\n\nManufacturer: ${data.details.manufacturer || 'N/A'}\nModel: ${data.details.model || 'N/A'}\nPTZ Support: ${data.details.has_ptz ? 'Yes' : 'No'}`);
-                } else {
-                    alert(`❌ Connection failed: ${data.message}`);
-                }
-                loadSavedCameras(); // Refresh to show status badge
+                } else { alert(`❌ Connection failed: ${data.message}`); }
+                loadSavedCameras();
             })
-            .catch(err => {
-                if (spinner) spinner.classList.add('d-none');
-                alert('Connection test failed. Network error.');
-                console.error('Test camera error:', err);
-            });
+            .catch(err => { if (spinner) spinner.classList.add('d-none'); alert('Connection test failed. Network error.'); console.error('Test camera error:', err); });
     }
 
     function editCamera(camId) {
@@ -440,7 +372,6 @@
                         document.getElementById('editCamUser').value = cam.username || '';
                         document.getElementById('editCamPass').value = '';
                         document.getElementById('editCameraError').classList.add('d-none');
-
                         const modal = new bootstrap.Modal(document.getElementById('editCameraModal'));
                         modal.show();
                     }
@@ -452,106 +383,53 @@
         const camId = document.getElementById('editCamId').value;
         const spinner = document.getElementById('editCameraSpinner');
         const errorDiv = document.getElementById('editCameraError');
-
         const payload = {
             name: document.getElementById('editCamName').value,
             ip: document.getElementById('editCamIp').value,
             port: parseInt(document.getElementById('editCamPort').value) || 80,
             username: document.getElementById('editCamUser').value
         };
-
-        // Only include password if provided
         const pass = document.getElementById('editCamPass').value;
         if (pass) payload.password = pass;
-
         spinner.classList.remove('d-none');
 
-        fetch(`/api/v1/cameras/${camId}`, {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
-        })
+        fetch(`/api/v1/cameras/${camId}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
             .then(res => res.json())
             .then(data => {
                 spinner.classList.add('d-none');
-                if (data.status === 'success') {
-                    const modal = bootstrap.Modal.getInstance(document.getElementById('editCameraModal'));
-                    modal.hide();
-                    loadSavedCameras();
-                } else {
-                    errorDiv.innerText = data.message || 'Failed to update camera.';
-                    errorDiv.classList.remove('d-none');
-                }
+                if (data.status === 'success') { bootstrap.Modal.getInstance(document.getElementById('editCameraModal')).hide(); loadSavedCameras(); }
+                else { errorDiv.innerText = data.message || 'Failed to update camera.'; errorDiv.classList.remove('d-none'); }
             })
-            .catch(err => {
-                spinner.classList.add('d-none');
-                errorDiv.innerText = 'Connection error.';
-                errorDiv.classList.remove('d-none');
-            });
+            .catch(err => { spinner.classList.add('d-none'); errorDiv.innerText = 'Connection error.'; errorDiv.classList.remove('d-none'); });
     }
 
     function deleteCamera(camId) {
         if (!confirm('Are you sure you want to delete this camera?')) return;
-
         fetch(`/api/v1/cameras/${camId}`, { method: 'DELETE' })
             .then(res => res.json())
-            .then(data => {
-                if (data.status === 'success') {
-                    loadSavedCameras();
-                } else {
-                    alert('Failed to delete camera: ' + (data.message || 'Unknown error'));
-                }
-            })
-            .catch(err => {
-                alert('Connection error while deleting camera.');
-                console.error('Delete camera error:', err);
-            });
+            .then(data => { if (data.status === 'success') { loadSavedCameras(); } else { alert('Failed to delete camera: ' + (data.message || 'Unknown error')); } })
+            .catch(err => { alert('Connection error while deleting camera.'); console.error('Delete camera error:', err); });
     }
 
     function useCamera(camId) {
-        // Call backend to use camera with stored credentials
-        const btn = (typeof event !== 'undefined' && event && event.target)
-            ? event.target.closest('button')
-            : null;
+        const btn = (typeof event !== 'undefined' && event && event.target) ? event.target.closest('button') : null;
         const originalHtml = btn ? btn.innerHTML : null;
-        if (btn) {
-            btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
-            btn.disabled = true;
-        }
+        if (btn) { btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>'; btn.disabled = true; }
 
         fetch(`/api/v1/cameras/${camId}/use`, { method: 'POST' })
             .then(res => res.json())
             .then(data => {
-                if (btn) {
-                    btn.innerHTML = originalHtml;
-                    btn.disabled = false;
-                }
-
-                if (data.status === 'success') {
-                    // Show success feedback
-                    alert(`✅ ${data.message}\n\nVideo source has been updated. The stream will switch shortly.`);
-                    // Reload page to reflect new VIDEO_SOURCE
-                    window.location.reload();
-                } else {
-                    alert(`❌ Failed to activate camera: ${data.message}`);
-                }
+                if (btn) { btn.innerHTML = originalHtml; btn.disabled = false; }
+                if (data.status === 'success') { alert(`✅ ${data.message}\n\nVideo source has been updated. The stream will switch shortly.`); window.location.reload(); }
+                else { alert(`❌ Failed to activate camera: ${data.message}`); }
             })
-            .catch(err => {
-                if (btn) {
-                    btn.innerHTML = originalHtml;
-                    btn.disabled = false;
-                }
-                alert('Connection error while activating camera.');
-                console.error('Use camera error:', err);
-            });
+            .catch(err => { if (btn) { btn.innerHTML = originalHtml; btn.disabled = false; } alert('Connection error while activating camera.'); console.error('Use camera error:', err); });
     }
 
-    // Discovery for Camera Management Section
     function startOnvifDiscoveryCamSection() {
         const resultsDiv = document.getElementById('camSectionDiscoveryResults');
         const listGroup = document.getElementById('camSectionDiscoveryList');
         const loading = document.getElementById('camSectionDiscoveryLoading');
-
         resultsDiv.classList.remove('d-none');
         listGroup.innerHTML = '';
         loading.classList.remove('d-none');
@@ -560,41 +438,27 @@
             .then(res => res.json())
             .then(data => {
                 loading.classList.add('d-none');
-
                 if (data.status === 'success' && data.cameras.length > 0) {
                     data.cameras.forEach(cam => {
                         const item = document.createElement('div');
                         item.className = 'list-group-item d-flex justify-content-between align-items-center';
-
-                        // Escape special characters for safe inline onclick
                         const safeName = (cam.name || 'ONVIF Camera').replace(/'/g, "\\'").replace(/"/g, '&quot;');
                         const safeManufacturer = (cam.manufacturer || '').replace(/'/g, "\\'").replace(/"/g, '&quot;');
-
                         item.innerHTML = `
                             <div>
                                 <div class="fw-bold">${cam.name || 'ONVIF Camera'}</div>
                                 <div class="text-muted small">${cam.ip}:${cam.port}</div>
                                 ${cam.manufacturer ? `<div class="text-muted small">${cam.manufacturer}</div>` : ''}
                             </div>
-                            <button type="button" class="btn btn-sm btn-primary" onclick="addDiscoveredCamera('${cam.ip}', ${cam.port}, '${safeName}', '${safeManufacturer}')">
-                                ➕ Add
-                            </button>
-                        `;
+                            <button type="button" class="btn btn-sm btn--primary" onclick="addDiscoveredCamera('${cam.ip}', ${cam.port}, '${safeName}', '${safeManufacturer}')">Add</button>`;
                         listGroup.appendChild(item);
                     });
-                } else {
-                    listGroup.innerHTML = '<div class="text-center text-muted p-3">No ONVIF cameras found on the network.</div>';
-                }
+                } else { listGroup.innerHTML = '<div class="text-center text-muted p-3">No ONVIF cameras found on the network.</div>'; }
             })
-            .catch(err => {
-                loading.classList.add('d-none');
-                listGroup.innerHTML = '<div class="text-center text-danger p-3">Discovery failed. Check network connection.</div>';
-                console.error('Discovery error:', err);
-            });
+            .catch(err => { loading.classList.add('d-none'); listGroup.innerHTML = '<div class="text-center text-danger p-3">Discovery failed. Check network connection.</div>'; console.error('Discovery error:', err); });
     }
 
     function addDiscoveredCamera(ip, port, name, manufacturer) {
-        // Pre-fill the Add Camera modal with discovered camera info
         document.getElementById('addCamName').value = name || 'Camera';
         document.getElementById('addCamIp').value = ip;
         document.getElementById('addCamPort').value = port || 80;
@@ -602,763 +466,436 @@
         document.getElementById('addCamPass').value = '';
         document.getElementById('addCameraError').classList.add('d-none');
         document.getElementById('addCameraSuccess').classList.add('d-none');
-
         const modal = new bootstrap.Modal(document.getElementById('addCameraModal'));
         modal.show();
     }
 
-    // Initialize on page load
-    document.addEventListener('DOMContentLoaded', function () {
-        loadSavedCameras();
-    });
+    document.addEventListener('DOMContentLoaded', function () { loadSavedCameras(); });
 
-    // Set camera URL via API
     function setCameraUrl(value) {
-        if (!value || value.trim() === '') {
-            alert('Please enter a valid camera URL');
-            return;
-        }
-
+        if (!value || value.trim() === '') { alert('Please enter a valid camera URL'); return; }
         const trimmed = value.trim();
-
-        // Show loading feedback
-        const btn = (typeof event !== 'undefined' && event && event.target)
-            ? event.target
-            : null;
+        const btn = (typeof event !== 'undefined' && event && event.target) ? event.target : null;
         const originalText = btn ? btn.textContent : null;
-        if (btn) {
-            btn.textContent = '...';
-            btn.disabled = true;
-        }
+        if (btn) { btn.textContent = '...'; btn.disabled = true; }
 
-        // Update via settings API
         const modeSelect = document.getElementById('STREAM_SOURCE_MODE');
         const payload = { CAMERA_URL: trimmed };
         if (modeSelect) payload.STREAM_SOURCE_MODE = modeSelect.value;
-        fetch('/api/v1/settings', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
-        })
-            .then(res => {
-                if (!res.ok) {
-                    return res.json().then(err => { throw new Error(err.message || err.errors || 'API Error'); });
-                }
-                return res.json();
-            })
+        fetch('/api/v1/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
+            .then(res => { if (!res.ok) { return res.json().then(err => { throw new Error(err.message || err.errors || 'API Error'); }); } return res.json(); })
             .then(data => {
-                if (data.status === 'success') {
-                    alert(`✅ Camera URL updated!\n\nNew source: ${trimmed}\n\nPage will reload.`);
-                    window.location.reload();
-                } else {
-                    alert(`❌ Failed: ${data.message || 'Unexpected response'}`);
-                    if (btn) {
-                        btn.textContent = originalText;
-                        btn.disabled = false;
-                    }
-                }
+                if (data.status === 'success') { alert(`✅ Camera URL updated!\n\nNew source: ${trimmed}\n\nPage will reload.`); window.location.reload(); }
+                else { alert(`❌ Failed: ${data.message || 'Unexpected response'}`); if (btn) { btn.textContent = originalText; btn.disabled = false; } }
             })
-            .catch(err => {
-                alert(`❌ Error: ${err.message || 'Connection failed'}`);
-                console.error(err);
-                if (btn) {
-                    btn.textContent = originalText;
-                    btn.disabled = false;
-                }
-            });
+            .catch(err => { alert(`❌ Error: ${err.message || 'Connection failed'}`); console.error(err); if (btn) { btn.textContent = originalText; btn.disabled = false; } });
     }
 </script>
 {% endblock %}
 
 {% block content %}
-<!-- Macros for Settings Rows -->
-{% macro render_setting_row(key, meta) %}
-<tr>
-    <td>
-        <label for="{{ key }}" class="form-label mb-0 fw-semibold">{{ labels.get(key, key) }}</label>
-        {% if key in advanced_keys %}<br><small class="text-muted text-monospace" style="font-size: 0.75rem">{{ key
-            }}</small>{% endif %}
-    </td>
-    <td>
-        {% if key in bool_keys %}
-        <select name="{{ key }}" id="{{ key }}" class="form-select">
-            <option value="true" {% if meta.value %}selected{% endif %}>true</option>
-            <option value="false" {% if not meta.value %}selected{% endif %}>false</option>
-        </select>‚
-        {% elif key in number_keys %}
-        {# Define defaults #}
-        {% set step = 1 %}
-        {% set min_val = 0 %}
-        {% set max_val = "" %}
+<style>
+    /* ── Settings Accordion ─────────────────────────── */
+    .settings-accordion { margin-bottom: var(--space-xl, 1.5rem); }
 
-        {# Specific overrides based on key #}
-        {% if key in ['CONFIDENCE_THRESHOLD_DETECTION', 'SAVE_THRESHOLD', 'CLASSIFIER_CONFIDENCE_THRESHOLD',
-        'GALLERY_DISPLAY_THRESHOLD'] %}
-        {% set step = 0.05 %}
-        {% set min_val = 0.0 %}
-        {% set max_val = 1.0 %}
-        {% elif key == 'DETECTION_INTERVAL_SECONDS' %}
-        {% set step = 1 %}
-        {% set min_val = 0 %}
-        {% set max_val = 600 %}
-        {% elif key == 'TELEGRAM_COOLDOWN' %}
-        {% set step = 1 %}
-        {% set min_val = 0 %}
-        {% set max_val = 3600 %}
-        {% elif key in ['STREAM_FPS', 'STREAM_FPS_CAPTURE'] %}
-        {% set step = 1 %}
-        {% set min_val = 1 %}
-        {% set max_val = 15 %}
-        {% endif %}
+    .settings-panel { border: 1px solid var(--color-border, #dee2e6); border-radius: var(--radius-xl, 0.75rem); margin-bottom: var(--space-md, 0.75rem); overflow: hidden; background: var(--color-surface, #fff); }
 
-        {# Format value: force integer for integer fields to avoid '5,0' #}
-        {% set display_value = meta.value %}
-        {% if step == 1 or step == 10 %}
-        {% set display_value = meta.value | int %}
-        {% endif %}
+    .settings-panel__trigger {
+        display: flex; align-items: center; justify-content: space-between;
+        width: 100%; padding: var(--space-md, 0.75rem) var(--space-lg, 1rem);
+        background: var(--color-surface-2, #f8f9fa); border: none; cursor: pointer;
+        font-weight: 600; font-size: 1rem; color: var(--color-text, #212529);
+        transition: background 0.15s ease;
+    }
+    .settings-panel__trigger:hover { background: var(--color-surface-3, #e9ecef); }
 
-        <input type="text" name="{{ key }}" id="{{ key }}" class="form-control" value="{{ display_value }}">
-        {% elif key == 'LOCATION_DATA' %}
-        {# Format dict to string for display #}
-        {% set loc_val = meta.value %}
-        {% if loc_val is mapping and 'latitude' in loc_val %}
-        {% set loc_str = loc_val.latitude ~ ', ' ~ loc_val.longitude %}
-        <input type="text" name="{{ key }}" id="{{ key }}" class="form-control" value="{{ loc_str }}"
-            placeholder="lat, lon">
-        {% else %}
-        <input type="text" name="{{ key }}" id="{{ key }}" class="form-control" value="{{ meta.value }}">
-        {% endif %}
-        {% else %}
-        <input type="text" name="{{ key }}" id="{{ key }}" class="form-control" value="{{ meta.value }}">
-        {% endif %}
-    </td>
-    <td><span class="text-muted small">{{ meta.default }}</span></td>
-    <td><span class="badge bg-light text-dark border">{{ meta.source }}</span></td>
-    <td>{{ "Yes" if meta.restart_required else "No" }}</td>
-</tr>
-{% endmacro %}
+    .settings-panel__trigger-info {
+        font-weight: 400; font-size: 0.8rem; color: var(--color-text-muted, #6c757d);
+        margin-left: auto; margin-right: var(--space-md, 0.75rem);
+    }
 
-<div class="container mt-4 mb-5">
+    .settings-panel__chevron {
+        width: 20px; height: 20px; flex-shrink: 0;
+        transition: transform 0.2s ease; color: var(--color-text-muted, #6c757d);
+    }
+    .settings-panel.is-open .settings-panel__chevron { transform: rotate(180deg); }
 
-    <!-- Header -->
-    <div class="d-flex justify-content-between align-items-center mb-4">
-        <h2>Settings</h2>
-        <a href="/" class="btn btn-outline-secondary">Back to Stream</a>
-    </div>
+    .settings-panel__body {
+        max-height: 0; overflow: hidden; transition: max-height 0.3s ease, padding 0.3s ease;
+        padding: 0 var(--space-lg, 1rem);
+    }
+    .settings-panel.is-open .settings-panel__body {
+        max-height: 2000px; padding: var(--space-lg, 1rem);
+        border-top: 1px solid var(--color-border, #dee2e6);
+    }
 
-    <!-- Flash Messages -->
-    {% with messages = get_flashed_messages(with_categories=true) %}
-    {% if messages %}
-    {% for category, message in messages %}
-    <div class="alert alert-{{ category if category != 'error' else 'danger' }} alert-dismissible fade show"
-        role="alert">
-        {{ message }}
-        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
-    </div>
-    {% endfor %}
-    {% endif %}
-    {% endwith %}
+    /* ── Compact field rows inside panels ──────────── */
+    .settings-field { margin-bottom: var(--space-md, 0.75rem); }
+    .settings-field:last-child { margin-bottom: 0; }
 
-    <!-- Main Settings Form -->
-    <form id="settingsForm" onsubmit="return submitSettingsForm(event)">
+    .settings-field__label {
+        font-size: 0.85rem; font-weight: 500; margin-bottom: 0.25rem;
+        color: var(--color-text, #212529);
+    }
+    .settings-field__help {
+        font-size: 0.78rem; color: var(--color-text-muted, #6c757d); margin-top: 0.2rem;
+    }
 
-        <!-- 1. Stream & Performance -->
-        <div class="card mb-4">
-            <div class="card-header bg-primary text-white fw-bold">1. Stream & Performance</div>
-            <div class="card-body">
+    /* ── Status strip ─────────────────────────── */
+    .settings-status {
+        display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;
+        padding: var(--space-sm, 0.5rem) var(--space-md, 0.75rem);
+        background: var(--color-surface-2, #f8f9fa); border-radius: var(--radius-md, 0.5rem);
+        font-size: 0.82rem; margin-bottom: var(--space-md, 0.75rem);
+    }
 
-                <!-- Camera source -->
-                <div class="mb-4">
-                    <label class="form-label fw-bold">Camera Source</label>
+    /* ── Danger section ────────────────────────── */
+    .settings-panel--danger { border-color: var(--color-danger, #dc3545); }
+    .settings-panel--danger .settings-panel__trigger { color: var(--color-danger, #dc3545); }
+</style>
 
-                    <!-- Runtime source (live) -->
-                    <div class="alert alert-info py-2 mb-2">
-                        <strong>Runtime Source (live):</strong>
-                        <code
-                            id="runtimeSourceDisplay">{{ payload.get('STREAM_SOURCE_RUNTIME_VIDEO', {}).get('value', payload['VIDEO_SOURCE'].value) }}</code>
-                        <span
-                            class="badge ms-2 {{ 'text-bg-success' if payload.get('STREAM_SOURCE_RUNTIME_MODE', {}).get('value', 'direct') == 'relay' else 'text-bg-primary' }}"
-                            id="runtimeModeBadge">
-                            runtime: {{ payload.get('STREAM_SOURCE_RUNTIME_MODE', {}).get('value', 'direct') |
-                            default('direct') }}
-                        </span>
-                    </div>
+<!-- Flash Messages -->
+{% with messages = get_flashed_messages(with_categories=true) %}
+{% if messages %}
+{% for category, message in messages %}
+<div class="alert alert-{{ category if category != 'error' else 'danger' }} alert-dismissible fade show" role="alert">
+    {{ message }}
+    <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+</div>
+{% endfor %}
+{% endif %}
+{% endwith %}
 
-                    <!-- Resolver decision -->
-                    <div class="alert alert-light border py-2 mb-3">
-                        <strong>Resolver Decision:</strong>
-                        <span class="badge text-bg-secondary ms-2" id="resolverModeBadge">
-                            resolver: {{ payload.get('STREAM_SOURCE_EFFECTIVE_MODE', {}).get('value', 'direct') |
-                            default('direct') }}
-                        </span>
-                        <span class="badge text-bg-light border text-dark ms-1" id="streamModeSettingBadge">
-                            setting: {{ payload.get('STREAM_SOURCE_MODE', {}).get('value', 'auto') | default('auto') }}
-                        </span>
-                        <div class="form-text text-muted small mt-1" id="streamModeReason">
-                            {{ payload.get('STREAM_SOURCE_REASON', {}).get('value', '') }}
-                        </div>
-                    </div>
+<!-- Page Header -->
+<div class="section">
+    <h1 class="section__title">Settings</h1>
+</div>
 
-                    <!-- User-facing source field -->
-                    <input type="hidden" name="CAMERA_URL" id="CAMERA_URL"
-                        value="{{ payload.get('CAMERA_URL', {}).get('value', '') }}">
+<form id="settingsForm" onsubmit="return submitSettingsForm(event)">
+<input type="hidden" name="CAMERA_URL" id="CAMERA_URL" value="{{ payload.get('CAMERA_URL', {}).get('value', '') }}">
+<input type="hidden" name="LOCATION_DATA" id="LOCATION_DATA" value="{{ payload['LOCATION_DATA'].value if payload['LOCATION_DATA'].value is string else '' }}">
 
-                    <!-- Simple Input Options -->
-                    <div class="row g-2">
-                        <!-- USB Camera Quick Select -->
-                        <div class="col-md-3">
-                            <label class="small text-muted">USB Camera</label>
-                            <div class="input-group input-group-sm">
-                                <select id="usbIndexSelect" class="form-select form-select-sm">
-                                    <option value="0">Camera 0</option>
-                                    <option value="1">Camera 1</option>
-                                    <option value="2">Camera 2</option>
-                                </select>
-                                <button type="button" class="btn btn-primary btn-sm"
-                                    onclick="setCameraUrl(document.getElementById('usbIndexSelect').value)">Set</button>
-                            </div>
-                        </div>
+<div class="settings-accordion">
 
-                        <!-- Camera URL -->
-                        <div class="col-md-9">
-                            <label class="small text-muted">Camera URL (rtsp:// or http://)</label>
-                            <div class="input-group input-group-sm">
-                                <input type="text" id="cameraUrlInput" class="form-control form-control-sm"
-                                    value="{{ payload.get('CAMERA_URL', {}).get('value', '') }}"
-                                    placeholder="rtsp://user:pass@192.168.1.100:554/stream">
-                                <button type="button" class="btn btn-primary btn-sm"
-                                    onclick="setCameraUrl(document.getElementById('cameraUrlInput').value)">Apply</button>
-                            </div>
-                            <div class="form-text text-muted small mt-1">
-                                Passwords stay masked as <code>*****</code>. Replace stars only if you want to change
-                                credentials.
-                            </div>
-                        </div>
-                    </div>
+    <!-- ╔══════════════════════════════════════════════╗
+         ║ 1. Camera                                   ║
+         ╚══════════════════════════════════════════════╝ -->
+    <div class="settings-panel is-open" id="panelCamera">
+        <button type="button" class="settings-panel__trigger" onclick="togglePanel('panelCamera')">
+            Camera
+            <span class="settings-panel__trigger-info">Source, Routing & Saved Cameras</span>
+            <svg class="settings-panel__chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+        </button>
+        <div class="settings-panel__body">
 
-                    <div class="row g-2 mt-2">
-                        <div class="col-md-6">
-                            <label for="STREAM_SOURCE_MODE" class="small text-muted">Stream Routing Mode</label>
-                            <select name="STREAM_SOURCE_MODE" id="STREAM_SOURCE_MODE"
-                                class="form-select form-select-sm text-dark">
-                                <option value="auto" {{ 'selected' if payload.get('STREAM_SOURCE_MODE',
-                                    {}).get('value', 'auto' )=='auto' }}>auto (use go2rtc if available)</option>
-                                <option value="relay" {{ 'selected' if payload.get('STREAM_SOURCE_MODE',
-                                    {}).get('value', 'auto' )=='relay' }}>relay (always go2rtc)</option>
-                                <option value="direct" {{ 'selected' if payload.get('STREAM_SOURCE_MODE',
-                                    {}).get('value', 'auto' )=='direct' }}>direct (camera -> app)</option>
-                            </select>
-                            <div class="form-text text-muted small">
-                                <strong>auto:</strong> prefer go2rtc and fallback to direct. <strong>relay:</strong>
-                                force go2rtc. <strong>direct:</strong> app connects directly.
-                            </div>
-                        </div>
-                        <div class="col-md-6">
-                            <label class="small text-muted">Effective Video Source (read-only)</label>
-                            <input type="text" class="form-control form-control-sm" readonly disabled
-                                value="{{ payload['VIDEO_SOURCE'].value }}">
-                        </div>
-                    </div>
-
-                    <div class="form-text text-muted mt-2">
-                        Use the "Use" button on saved cameras below to activate them directly.
-                    </div>
-                </div>
-
-                <div class="row g-3">
-                    <div class="col-md-4">
-                        <label for="STREAM_FPS_CAPTURE" class="form-label fw-bold">Capture FPS (Throttling)</label>
-                        <input type="number" name="STREAM_FPS_CAPTURE" id="STREAM_FPS_CAPTURE" class="form-control"
-                            value="{{ payload['STREAM_FPS_CAPTURE'].value }}" min="1" max="60">
-                        <div class="form-text text-success"><small><strong>Low (1-5):</strong> Saves CPU. Good for
-                                monitoring.</small></div>
-                        <div class="form-text text-danger"><small><strong>High (20+):</strong> High CPU usage.</small>
-                        </div>
-                    </div>
-                    <div class="col-md-4">
-                        <label for="STREAM_FPS" class="form-label fw-bold">Live View FPS</label>
-                        <input type="number" name="STREAM_FPS" id="STREAM_FPS" class="form-control"
-                            value="{{ payload['STREAM_FPS'].value }}" min="1" max="30">
-                        <div class="form-text text-muted"><small>Browser refresh rate. Lower = Less bandwidth.</small>
-                        </div>
-                    </div>
-                    <div class="col-md-4">
-                        <label for="STREAM_WIDTH_OUTPUT_RESIZE" class="form-label fw-bold">Live View Width</label>
-                        <input type="number" name="STREAM_WIDTH_OUTPUT_RESIZE" id="STREAM_WIDTH_OUTPUT_RESIZE"
-                            class="form-control" value="{{ payload['STREAM_WIDTH_OUTPUT_RESIZE'].value }}">
-                        <div class="form-text text-muted"><small>Resize width (e.g., 640). Leave empty for full.</small>
-                        </div>
-                    </div>
-                </div>
+            <!-- Status strip -->
+            <div class="settings-status">
+                <span class="text-muted">Active:</span>
+                <code id="runtimeSourceDisplay" style="font-size:0.8rem;">{{ payload.get('STREAM_SOURCE_RUNTIME_VIDEO', {}).get('value', payload['VIDEO_SOURCE'].value) }}</code>
+                <span class="badge {{ 'text-bg-success' if payload.get('STREAM_SOURCE_RUNTIME_MODE', {}).get('value', 'direct') == 'relay' else 'text-bg-primary' }}" id="runtimeModeBadge">
+                    {{ payload.get('STREAM_SOURCE_RUNTIME_MODE', {}).get('value', 'direct') | default('direct') }}</span>
+                <span class="badge text-bg-secondary" id="resolverModeBadge">resolver: {{ payload.get('STREAM_SOURCE_EFFECTIVE_MODE', {}).get('value', 'direct') | default('direct') }}</span>
+                <span class="badge text-bg-light border text-dark" id="streamModeSettingBadge">setting: {{ payload.get('STREAM_SOURCE_MODE', {}).get('value', 'auto') | default('auto') }}</span>
             </div>
-        </div>
+            <div class="settings-field__help mb-3" id="streamModeReason">{{ payload.get('STREAM_SOURCE_REASON', {}).get('value', '') }}</div>
 
-        <!-- Camera Management Section -->
-        <div class="card mb-4">
-            <div class="card-header bg-info text-white fw-bold d-flex justify-content-between align-items-center">
-                📷 Camera Management
-                <div class="btn-group btn-group-sm">
-                    <button type="button" class="btn btn-light btn-sm" onclick="startOnvifDiscoveryCamSection()">
-                        🔍 Scan Network
-                    </button>
-                    <button type="button" class="btn btn-light btn-sm" onclick="showAddCameraModal()">
-                        ➕ Add Camera
-                    </button>
-                </div>
-            </div>
-            <div class="card-body">
-                <p class="text-muted small mb-3">
-                    Manage ONVIF cameras. Add cameras manually or scan the network to discover them automatically.
-                </p>
-
-                <!-- Saved Cameras List -->
-                <h6 class="fw-bold mb-2">Saved Cameras</h6>
-                <div id="savedCamerasList" class="list-group mb-3">
-                    <div class="text-center text-muted p-3">Loading...</div>
-                </div>
-
-                <!-- Discovery Results (hidden by default) -->
-                <div id="camSectionDiscoveryResults" class="d-none">
-                    <h6 class="fw-bold mb-2">Discovered Cameras</h6>
-                    <div id="camSectionDiscoveryLoading" class="text-center p-2 d-none">
-                        <div class="spinner-border spinner-border-sm text-info"></div>
-                        <span class="ms-1 small">Scanning network...</span>
-                    </div>
-                    <div id="camSectionDiscoveryList" class="list-group mb-3"></div>
-                </div>
-            </div>
-        </div>
-
-        <!-- 2. Detection Settings -->
-        <div class="card mb-4">
-            <div class="card-header bg-light fw-bold">2. Detection Logic</div>
-            <div class="card-body">
-                <div class="row g-3">
-                    <div class="col-md-6">
-                        <label for="CONFIDENCE_THRESHOLD_DETECTION" class="form-label fw-bold">Detection
-                            Sensitivity</label>
-                        <input type="number" step="0.05" name="CONFIDENCE_THRESHOLD_DETECTION"
-                            id="CONFIDENCE_THRESHOLD_DETECTION" class="form-control"
-                            value="{{ payload['CONFIDENCE_THRESHOLD_DETECTION'].value }}">
-                        <div class="form-text">0.1 (Sensitive) to 0.9 (Strict). Default: 0.5</div>
-                    </div>
-                    <div class="col-md-6">
-                        <label for="SAVE_THRESHOLD" class="form-label fw-bold">Save Threshold</label>
-                        <input type="number" step="0.05" name="SAVE_THRESHOLD" id="SAVE_THRESHOLD" class="form-control"
-                            value="{{ payload['SAVE_THRESHOLD'].value }}">
-                        <div class="form-text">Minimum score to save image to disk.</div>
-                    </div>
-                    <div class="col-md-6">
-                        <label for="DETECTION_INTERVAL_SECONDS" class="form-label fw-bold">Detection Interval
-                            (s)</label>
-                        <input type="number" name="DETECTION_INTERVAL_SECONDS" id="DETECTION_INTERVAL_SECONDS"
-                            class="form-control" value="{{ payload['DETECTION_INTERVAL_SECONDS'].value }}">
-                        <div class="form-text">Seconds to wait between detections.</div>
-                    </div>
-                    <div class="col-md-6">
-                        <label for="DAY_AND_NIGHT_CAPTURE" class="form-label fw-bold">Night Mode Capture</label>
-                        <select name="DAY_AND_NIGHT_CAPTURE" id="DAY_AND_NIGHT_CAPTURE" class="form-select">
-                            <option value="true" {% if payload['DAY_AND_NIGHT_CAPTURE'].value %}selected{% endif %}>
-                                Enabled (Capture 24/7)</option>
-                            <option value="false" {% if not payload['DAY_AND_NIGHT_CAPTURE'].value %}selected{% endif
-                                %}>Disabled (Daylight Only)</option>
+            <!-- Source inputs -->
+            <div class="row g-2 mb-3">
+                <div class="col-md-3">
+                    <div class="settings-field__label">USB Camera</div>
+                    <div class="input-group input-group-sm">
+                        <select id="usbIndexSelect" class="form-select form-select-sm">
+                            <option value="0">Camera 0</option>
+                            <option value="1">Camera 1</option>
+                            <option value="2">Camera 2</option>
                         </select>
+                        <button type="button" class="btn btn--primary btn--sm" onclick="setCameraUrl(document.getElementById('usbIndexSelect').value)">Set</button>
                     </div>
                 </div>
+                <div class="col-md-9">
+                    <div class="settings-field__label">Camera URL (rtsp:// or http://)</div>
+                    <div class="input-group input-group-sm">
+                        <input type="text" id="cameraUrlInput" class="form-control form-control-sm"
+                            value="{{ payload.get('CAMERA_URL', {}).get('value', '') }}"
+                            placeholder="rtsp://user:pass@192.168.1.100:554/stream">
+                        <button type="button" class="btn btn--primary btn--sm" onclick="setCameraUrl(document.getElementById('cameraUrlInput').value)">Apply</button>
+                    </div>
+                    <div class="settings-field__help">Passwords stay masked as <code>*****</code>. Replace stars only to change credentials.</div>
+                </div>
             </div>
-        </div>
 
-        <!-- 3. Notifications -->
-        <div class="card mb-4">
-            <div class="card-header bg-light fw-bold">3. Notifications (Telegram)</div>
-            <div class="card-body">
-                <div class="mb-3">
-                    <label for="TELEGRAM_ENABLED" class="form-label fw-bold">Telegram Enabled</label>
-                    <select name="TELEGRAM_ENABLED" id="TELEGRAM_ENABLED" class="form-select w-auto">
-                        <option value="true" {% if payload['TELEGRAM_ENABLED'].value %}selected{% endif %}>Yes</option>
-                        <option value="false" {% if not payload['TELEGRAM_ENABLED'].value %}selected{% endif %}>No
-                        </option>
+            <div class="row g-2 mb-3">
+                <div class="col-md-6">
+                    <div class="settings-field__label">Stream Routing Mode</div>
+                    <select name="STREAM_SOURCE_MODE" id="STREAM_SOURCE_MODE" class="form-select form-select-sm">
+                        <option value="auto" {{ 'selected' if payload.get('STREAM_SOURCE_MODE', {}).get('value', 'auto') == 'auto' }}>auto (use go2rtc if available)</option>
+                        <option value="relay" {{ 'selected' if payload.get('STREAM_SOURCE_MODE', {}).get('value', 'auto') == 'relay' }}>relay (always go2rtc)</option>
+                        <option value="direct" {{ 'selected' if payload.get('STREAM_SOURCE_MODE', {}).get('value', 'auto') == 'direct' }}>direct (camera -> app)</option>
                     </select>
+                    <div class="settings-field__help"><strong>auto:</strong> prefer go2rtc. <strong>relay:</strong> force go2rtc. <strong>direct:</strong> app connects directly.</div>
                 </div>
-                <div class="row g-3">
-                    <div class="col-md-6">
-                        <label for="TELEGRAM_BOT_TOKEN" class="form-label">Bot Token</label>
-                        <input type="text" name="TELEGRAM_BOT_TOKEN" id="TELEGRAM_BOT_TOKEN" class="form-control"
-                            value="{{ payload['TELEGRAM_BOT_TOKEN'].value }}">
+                <div class="col-md-6">
+                    <div class="settings-field__label">Effective Video Source (read-only)</div>
+                    <input type="text" class="form-control form-control-sm" readonly disabled value="{{ payload['VIDEO_SOURCE'].value }}">
+                </div>
+            </div>
+
+            <!-- Saved Cameras -->
+            <hr>
+            <div class="d-flex justify-content-between align-items-center mb-2">
+                <strong>Saved Cameras</strong>
+                <div class="d-flex gap-2">
+                    <button type="button" class="btn btn--secondary btn--sm" onclick="startOnvifDiscoveryCamSection()">Scan Network</button>
+                    <button type="button" class="btn btn--primary btn--sm" onclick="showAddCameraModal()">Add Camera</button>
+                </div>
+            </div>
+            <div id="savedCamerasList" class="list-group mb-3">
+                <div class="text-center text-muted p-3">Loading...</div>
+            </div>
+
+            <!-- Discovery Results (hidden) -->
+            <div id="camSectionDiscoveryResults" class="d-none">
+                <strong class="d-block mb-2">Discovered Cameras</strong>
+                <div id="camSectionDiscoveryLoading" class="text-center p-2 d-none">
+                    <div class="spinner-border spinner-border-sm text-info"></div>
+                    <span class="ms-1 small">Scanning network...</span>
+                </div>
+                <div id="camSectionDiscoveryList" class="list-group mb-3"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ╔══════════════════════════════════════════════╗
+         ║ 2. Detection & Stream                       ║
+         ╚══════════════════════════════════════════════╝ -->
+    <div class="settings-panel" id="panelDetection">
+        <button type="button" class="settings-panel__trigger" onclick="togglePanel('panelDetection')">
+            Detection
+            <span class="settings-panel__trigger-info">Sensitivity, Thresholds & Scheduling</span>
+            <svg class="settings-panel__chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+        </button>
+        <div class="settings-panel__body">
+            <div class="row g-3">
+                <div class="col-md-6">
+                    <div class="settings-field">
+                        <label for="CONFIDENCE_THRESHOLD_DETECTION" class="settings-field__label"
+                            title="How confident the AI must be before it counts something as a bird. Lower values catch more birds but also more false positives (leaves, shadows). Higher values are stricter but may miss birds that are far away, partially hidden, or in poor light. Depends on your setup: close feeder + good light = higher works well. Far away or dim = try lower.">Detection Sensitivity</label>
+                        <input type="number" step="0.05" name="CONFIDENCE_THRESHOLD_DETECTION" id="CONFIDENCE_THRESHOLD_DETECTION" class="form-control" value="{{ payload['CONFIDENCE_THRESHOLD_DETECTION'].value }}"
+                            title="How confident the AI must be before it counts something as a bird. Lower values catch more birds but also more false positives (leaves, shadows). Higher values are stricter but may miss birds that are far away, partially hidden, or in poor light. Depends on your setup: close feeder + good light = higher works well. Far away or dim = try lower.">
+                        <div class="settings-field__help">0.1 (Sensitive) to 0.9 (Strict). Default: 0.5</div>
                     </div>
-                    <div class="col-md-6">
-                        <label for="TELEGRAM_CHAT_ID" class="form-label">Chat ID</label>
-                        <input type="text" name="TELEGRAM_CHAT_ID" id="TELEGRAM_CHAT_ID" class="form-control"
-                            value="{{ payload['TELEGRAM_CHAT_ID'].value }}">
+                </div>
+                <div class="col-md-6">
+                    <div class="settings-field">
+                        <label for="SAVE_THRESHOLD" class="settings-field__label"
+                            title="Minimum AI confidence needed to actually save a bird photo to disk. Works together with Detection Sensitivity: a bird is detected first, then this threshold decides if it's worth keeping. Set lower than Detection Sensitivity to save more borderline shots. Set equal or higher to only keep clear, confident detections. In poor light or at long distance you may want to lower this so you don't lose real sightings.">Save Threshold</label>
+                        <input type="number" step="0.05" name="SAVE_THRESHOLD" id="SAVE_THRESHOLD" class="form-control" value="{{ payload['SAVE_THRESHOLD'].value }}"
+                            title="Minimum AI confidence needed to actually save a bird photo to disk. Works together with Detection Sensitivity: a bird is detected first, then this threshold decides if it's worth keeping. Set lower than Detection Sensitivity to save more borderline shots. Set equal or higher to only keep clear, confident detections. In poor light or at long distance you may want to lower this so you don't lose real sightings.">
+                        <div class="settings-field__help">Minimum score to save image to disk.</div>
                     </div>
-                    <div class="col-md-12">
-                        <label for="TELEGRAM_COOLDOWN" class="form-label">Cooldown (Seconds)</label>
-                        <input type="number" name="TELEGRAM_COOLDOWN" id="TELEGRAM_COOLDOWN" class="form-control w-auto"
-                            value="{{ payload['TELEGRAM_COOLDOWN'].value }}">
-                        <div class="form-text">Minimum time between messages.</div>
+                </div>
+                <div class="col-md-6">
+                    <div class="settings-field">
+                        <label for="DETECTION_INTERVAL_SECONDS" class="settings-field__label">Detection Interval (s)</label>
+                        <input type="number" name="DETECTION_INTERVAL_SECONDS" id="DETECTION_INTERVAL_SECONDS" class="form-control" value="{{ payload['DETECTION_INTERVAL_SECONDS'].value }}">
+                        <div class="settings-field__help">Seconds to wait between AI analysis cycles.</div>
+                    </div>
+                </div>
+                <div class="col-md-6">
+                    <div class="settings-field">
+                        <label for="DAY_AND_NIGHT_CAPTURE" class="settings-field__label">Night Mode Capture</label>
+                        <select name="DAY_AND_NIGHT_CAPTURE" id="DAY_AND_NIGHT_CAPTURE" class="form-select">
+                            <option value="true" {% if payload['DAY_AND_NIGHT_CAPTURE'].value %}selected{% endif %}>Enabled (Capture 24/7)</option>
+                            <option value="false" {% if not payload['DAY_AND_NIGHT_CAPTURE'].value %}selected{% endif %}>Disabled (Daylight Only)</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+    </div>
+
+    <!-- ╔══════════════════════════════════════════════╗
+         ║ 3. Notifications                            ║
+         ╚══════════════════════════════════════════════╝ -->
+    <div class="settings-panel" id="panelNotifications">
+        <button type="button" class="settings-panel__trigger" onclick="togglePanel('panelNotifications')">
+            Notifications
+            <span class="settings-panel__trigger-info">Telegram Alerts</span>
+            <svg class="settings-panel__chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+        </button>
+        <div class="settings-panel__body">
+            <div class="settings-field mb-3">
+                <label for="TELEGRAM_ENABLED" class="settings-field__label">Telegram Enabled</label>
+                <select name="TELEGRAM_ENABLED" id="TELEGRAM_ENABLED" class="form-select w-auto">
+                    <option value="true" {% if payload['TELEGRAM_ENABLED'].value %}selected{% endif %}>Yes</option>
+                    <option value="false" {% if not payload['TELEGRAM_ENABLED'].value %}selected{% endif %}>No</option>
+                </select>
+            </div>
+            <div class="row g-3">
+                <div class="col-md-6">
+                    <div class="settings-field">
+                        <label for="TELEGRAM_BOT_TOKEN" class="settings-field__label">Bot Token</label>
+                        <input type="text" name="TELEGRAM_BOT_TOKEN" id="TELEGRAM_BOT_TOKEN" class="form-control" value="{{ payload['TELEGRAM_BOT_TOKEN'].value }}">
+                    </div>
+                </div>
+                <div class="col-md-6">
+                    <div class="settings-field">
+                        <label for="TELEGRAM_CHAT_ID" class="settings-field__label">Chat ID</label>
+                        <input type="text" name="TELEGRAM_CHAT_ID" id="TELEGRAM_CHAT_ID" class="form-control" value="{{ payload['TELEGRAM_CHAT_ID'].value }}">
+                    </div>
+                </div>
+                <div class="col-md-6">
+                    <div class="settings-field">
+                        <label for="TELEGRAM_COOLDOWN" class="settings-field__label">Cooldown (Seconds)</label>
+                        <input type="number" name="TELEGRAM_COOLDOWN" id="TELEGRAM_COOLDOWN" class="form-control" value="{{ payload['TELEGRAM_COOLDOWN'].value }}">
+                        <div class="settings-field__help">Minimum time between messages.</div>
                     </div>
                 </div>
             </div>
         </div>
+    </div>
 
-        <!-- 4. System & Location -->
-        <div class="card mb-4">
-            <div class="card-header bg-light fw-bold">4. System & Location</div>
-            <div class="card-body">
-                <!-- Location Logic -->
-                <div class="mb-3">
-                    <label class="form-label fw-bold">Location (GPS)</label>
-                    <input type="hidden" name="LOCATION_DATA" id="LOCATION_DATA"
-                        value="{{ payload['LOCATION_DATA'].value if payload['LOCATION_DATA'].value is string else '' }}">
-                    <!-- We need to safely parse the existing dict if it comes rendered as text or check payload type -->
-
-                    <div class="row g-3">
-                        <div class="col-sm-6">
-                            <label class="small text-muted">Latitude</label>
-                            <input type="text" id="locLat" class="form-control" placeholder="52.5200"
-                                onchange="updateLocationJson()">
-                        </div>
-                        <div class="col-sm-6">
-                            <label class="small text-muted">Longitude</label>
-                            <input type="text" id="locLon" class="form-control" placeholder="13.4050"
-                                onchange="updateLocationJson()">
-                        </div>
+    <!-- ╔══════════════════════════════════════════════╗
+         ║ 4. General                                  ║
+         ╚══════════════════════════════════════════════╝ -->
+    <div class="settings-panel" id="panelGeneral">
+        <button type="button" class="settings-panel__trigger" onclick="togglePanel('panelGeneral')">
+            General
+            <span class="settings-panel__trigger-info">Location, Language, Security</span>
+            <svg class="settings-panel__chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+        </button>
+        <div class="settings-panel__body">
+            <!-- Location -->
+            <div class="settings-field mb-3">
+                <div class="settings-field__label mb-2">Location (GPS)</div>
+                <div class="row g-3">
+                    <div class="col-sm-6">
+                        <label class="settings-field__help">Latitude</label>
+                        <input type="text" id="locLat" class="form-control" placeholder="52.5200" onchange="updateLocationJson()">
+                    </div>
+                    <div class="col-sm-6">
+                        <label class="settings-field__help">Longitude</label>
+                        <input type="text" id="locLon" class="form-control" placeholder="13.4050" onchange="updateLocationJson()">
                     </div>
                 </div>
-
-                <div class="row g-3">
-                    <div class="col-md-6">
-                        <label for="EXIF_GPS_ENABLED" class="form-label">Write GPS to Metadata</label>
+            </div>
+            <div class="row g-3">
+                <div class="col-md-6">
+                    <div class="settings-field">
+                        <label for="EXIF_GPS_ENABLED" class="settings-field__label">Write GPS to Metadata</label>
                         <select name="EXIF_GPS_ENABLED" id="EXIF_GPS_ENABLED" class="form-select">
-                            <option value="true" {% if payload['EXIF_GPS_ENABLED'].value %}selected{% endif %}>Yes
-                            </option>
-                            <option value="false" {% if not payload['EXIF_GPS_ENABLED'].value %}selected{% endif %}>No
-                            </option>
+                            <option value="true" {% if payload['EXIF_GPS_ENABLED'].value %}selected{% endif %}>Yes</option>
+                            <option value="false" {% if not payload['EXIF_GPS_ENABLED'].value %}selected{% endif %}>No</option>
                         </select>
                     </div>
-                    <div class="col-md-6">
-                        <label for="SPECIES_COMMON_NAME_LOCALE" class="form-label">Species Common Names</label>
+                </div>
+                <div class="col-md-6">
+                    <div class="settings-field">
+                        <label for="SPECIES_COMMON_NAME_LOCALE" class="settings-field__label">Species Common Names</label>
                         <select name="SPECIES_COMMON_NAME_LOCALE" id="SPECIES_COMMON_NAME_LOCALE" class="form-select">
-                            <option value="DE" {% if payload.get('SPECIES_COMMON_NAME_LOCALE', {}).get('value', 'DE'
-                                )=='DE' %}selected{% endif %}>Deutsch (DE)</option>
-                            <option value="NO" {% if payload.get('SPECIES_COMMON_NAME_LOCALE', {}).get('value', 'DE'
-                                )=='NO' %}selected{% endif %}>Norsk (NO)</option>
+                            <option value="DE" {% if payload.get('SPECIES_COMMON_NAME_LOCALE', {}).get('value', 'DE') == 'DE' %}selected{% endif %}>Deutsch (DE)</option>
+                            <option value="NO" {% if payload.get('SPECIES_COMMON_NAME_LOCALE', {}).get('value', 'DE') == 'NO' %}selected{% endif %}>Norsk (NO)</option>
                         </select>
-                        <div class="form-text text-muted"><small>Language for species display names in gallery and
-                                picker.</small></div>
+                        <div class="settings-field__help">Language for species display names.</div>
                     </div>
-                    <div class="col-md-6">
-                        <label for="DEBUG_MODE" class="form-label">Debug Mode</label>
+                </div>
+                <div class="col-md-6">
+                    <div class="settings-field">
+                        <label for="DEBUG_MODE" class="settings-field__label">Debug Mode</label>
                         <select name="DEBUG_MODE" id="DEBUG_MODE" class="form-select">
-                            <option value="true" {% if payload['DEBUG_MODE'].value %}selected{% endif %}>Enabled
-                                (Verbose Logs)</option>
-                            <option value="false" {% if not payload['DEBUG_MODE'].value %}selected{% endif %}>Disabled
-                            </option>
+                            <option value="true" {% if payload['DEBUG_MODE'].value %}selected{% endif %}>Enabled (Verbose Logs)</option>
+                            <option value="false" {% if not payload['DEBUG_MODE'].value %}selected{% endif %}>Disabled</option>
                         </select>
                     </div>
-                    <div class="col-md-12">
-                        <label for="EDIT_PASSWORD" class="form-label">Settings Password (Optional)</label>
-                        <input type="text" name="EDIT_PASSWORD" id="EDIT_PASSWORD" class="form-control"
-                            value="{{ payload['EDIT_PASSWORD'].value }}">
+                </div>
+                <div class="col-md-6">
+                    <div class="settings-field">
+                        <label for="EDIT_PASSWORD" class="settings-field__label">Settings Password (Optional)</label>
+                        <input type="text" name="EDIT_PASSWORD" id="EDIT_PASSWORD" class="form-control" value="{{ payload['EDIT_PASSWORD'].value }}">
                     </div>
                 </div>
             </div>
         </div>
+    </div>
 
-        <button type="submit" class="btn btn-primary btn-lg w-100 mb-5" id="settingsSubmitBtn">Apply & Restart
-            Services</button>
-    </form>
+    <!-- ╔══════════════════════════════════════════════╗
+         ║ 5. Tools & System                           ║
+         ╚══════════════════════════════════════════════╝ -->
+    <div class="settings-panel" id="panelTools">
+        <button type="button" class="settings-panel__trigger" onclick="togglePanel('panelTools')">
+            Tools & System
+            <span class="settings-panel__trigger-info">Backup, Ingest, System Info</span>
+            <svg class="settings-panel__chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+        </button>
+        <div class="settings-panel__body">
 
-    <!-- JS Logic for Source and Location -->
-    <script>
-        // Init logic on load
-        document.addEventListener('DOMContentLoaded', function () {
-            initCameraUrl();
-            initLocation();
-            loadSystemVersions();
-        });
+            <!-- Backup -->
+            <div class="mb-4">
+                <strong class="d-block mb-2">Backup & Migration</strong>
+                <p class="settings-field__help mb-2">Create a full backup of your database, images, and settings. Detection pauses during backup.</p>
+                <div class="d-flex gap-2 flex-wrap">
+                    <a href="/backup" class="btn btn--primary btn--sm">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:4px;vertical-align:-1px;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                        Create Backup
+                    </a>
+                    <a href="/restore" class="btn btn--secondary btn--sm">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:4px;vertical-align:-1px;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                        Import Backup
+                    </a>
+                </div>
+            </div>
 
-        function loadSystemVersions() {
-            fetch('/api/v1/system/versions')
-                .then(res => res.json())
-                .then(data => {
-                    document.getElementById('si-app').innerText = data.app_version || 'N/A';
-                    document.getElementById('si-commit').innerText = data.git_commit || 'N/A';
-                    document.getElementById('si-build-date').innerText = data.build_date || 'N/A';
-                    const deployEl = document.getElementById('si-deploy');
-                    const deployType = data.deploy_type || 'N/A';
-                    deployEl.innerText = deployType;
-                    const badgeColors = { docker: 'bg-info text-dark', rpi: 'bg-success', dev: 'bg-warning text-dark' };
-                    deployEl.className = 'badge ' + (badgeColors[deployType] || 'bg-secondary');
-                    document.getElementById('si-kernel').innerText = data.kernel || 'N/A';
-                    document.getElementById('si-os').innerText = data.os || 'N/A';
-                    document.getElementById('si-boot').innerText = data.bootloader || 'N/A';
-                })
-                .catch(err => {
-                    console.error("Failed to load versions", err);
-                });
-        }
+            <!-- Stream Tuning (advanced) -->
+            <div class="mb-4">
+                <strong class="d-block mb-2">Stream Tuning</strong>
+                <div class="row g-3">
+                    <div class="col-md-4">
+                        <div class="settings-field">
+                            <label for="STREAM_FPS_CAPTURE" class="settings-field__label"
+                                title="How many frames per second the app grabs from the camera internally. Higher values use more CPU but detect birds faster. Most users never need to change this.">Capture FPS</label>
+                            <input type="number" name="STREAM_FPS_CAPTURE" id="STREAM_FPS_CAPTURE" class="form-control form-control-sm" value="{{ payload['STREAM_FPS_CAPTURE'].value }}" min="1" max="60"
+                                title="How many frames per second the app grabs from the camera internally. Higher values use more CPU but detect birds faster. Most users never need to change this.">
+                            <div class="settings-field__help">Default: 5</div>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="settings-field">
+                            <label for="STREAM_FPS" class="settings-field__label"
+                                title="How smooth the live video looks in your browser. Higher = smoother but uses more network bandwidth. Does not affect detection quality.">Live View FPS</label>
+                            <input type="number" name="STREAM_FPS" id="STREAM_FPS" class="form-control form-control-sm" value="{{ payload['STREAM_FPS'].value }}" min="1" max="30"
+                                title="How smooth the live video looks in your browser. Higher = smoother but uses more network bandwidth. Does not affect detection quality.">
+                            <div class="settings-field__help">Default: 5</div>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="settings-field">
+                            <label for="STREAM_WIDTH_OUTPUT_RESIZE" class="settings-field__label"
+                                title="Scales the live video to this pixel width before sending it to your browser. Smaller = faster loading, less bandwidth. Leave empty to send the full camera resolution.">Live View Width</label>
+                            <input type="number" name="STREAM_WIDTH_OUTPUT_RESIZE" id="STREAM_WIDTH_OUTPUT_RESIZE" class="form-control form-control-sm" value="{{ payload['STREAM_WIDTH_OUTPUT_RESIZE'].value }}"
+                                title="Scales the live video to this pixel width before sending it to your browser. Smaller = faster loading, less bandwidth. Leave empty to send the full camera resolution.">
+                            <div class="settings-field__help">Default: 640. Empty = full resolution.</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
 
-        // --- Camera URL Logic ---
-        function updateCameraUrl(forceValue) {
-            const hidden = document.getElementById('CAMERA_URL');
-            if (!hidden) return;
+            <hr>
 
-            const streamInput = document.getElementById('cameraUrlInput');
-            const usbSelect = document.getElementById('usbIndexSelect');
-
-            const streamVal = streamInput ? streamInput.value.trim() : '';
-            const usbVal = usbSelect ? usbSelect.value.trim() : '';
-
-            let nextVal = '';
-            if (forceValue !== undefined && forceValue !== null) {
-                nextVal = String(forceValue).trim();
-            } else {
-                nextVal = streamVal || usbVal;
-            }
-
-            if (!nextVal) return;
-
-            hidden.value = nextVal;
-            const display = document.getElementById('runtimeSourceDisplay');
-            if (display) display.textContent = nextVal;
-        }
-
-        function initCameraUrl() {
-            const currentVal = document.getElementById('CAMERA_URL').value;
-            // Prefill stream URL input if current source is a URL
-            if (currentVal && !(/^\d+$/.test(currentVal))) {
-                document.getElementById('cameraUrlInput').value = currentVal;
-            }
-        }
-
-        // --- Location Logic ---
-        function initLocation() {
-            const rawLat = "{{ payload['LOCATION_DATA'].value.get('latitude', '') if payload['LOCATION_DATA'].value is mapping else '' }}";
-            const rawLon = "{{ payload['LOCATION_DATA'].value.get('longitude', '') if payload['LOCATION_DATA'].value is mapping else '' }}";
-
-            document.getElementById('locLat').value = rawLat;
-            document.getElementById('locLon').value = rawLon;
-        }
-
-        function updateLocationJson() {
-            const lat = document.getElementById('locLat').value.trim();
-            const lon = document.getElementById('locLon').value.trim();
-
-            if (!lat && !lon) {
-                document.getElementById('LOCATION_DATA').value = "";
-                return;
-            }
-
-            // Format as "lat, lon" expected by backend config.py
-            document.getElementById('LOCATION_DATA').value = `${lat}, ${lon}`;
-        }
-
-        function submitSettingsForm(event) {
-            event.preventDefault();
-
-            // Ensure final sync of derived fields
-            updateCameraUrl();
-            updateLocationJson();
-
-            const form = document.getElementById('settingsForm');
-            const btn = document.getElementById('settingsSubmitBtn');
-            const originalText = btn.textContent;
-            btn.textContent = 'Saving...';
-            btn.disabled = true;
-
-            // Collect all named form fields into a JSON payload
-            const formData = new FormData(form);
-            const payload = {};
-            for (const [key, value] of formData.entries()) {
-                payload[key] = value;
-            }
-
-            fetch('/api/v1/settings', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                credentials: 'same-origin',
-                body: JSON.stringify(payload)
-            })
-                .then(res => {
-                    if (!res.ok) {
-                        return res.json().then(err => {
-                            throw new Error(err.message || JSON.stringify(err.errors) || 'API Error');
-                        });
-                    }
-                    return res.json();
-                })
-                .then(data => {
-                    if (data.status === 'success') {
-                        alert('✅ Settings saved successfully! Page will reload.');
-                        window.location.reload();
-                    } else {
-                        alert('❌ Failed: ' + (data.message || 'Unexpected response'));
-                        btn.textContent = originalText;
-                        btn.disabled = false;
-                    }
-                })
-                .catch(err => {
-                    alert('❌ Error: ' + (err.message || 'Connection failed'));
-                    console.error(err);
-                    btn.textContent = originalText;
-                    btn.disabled = false;
-                });
-
-            return false;
-        }
-    </script>
-
-    <hr class="my-5">
-
-    <!-- Tools Section -->
-    <h4 class="mb-3">Tools</h4>
-
-    <!-- Advanced Section (collapsed by default) -->
-    <details class="mb-4">
-        <summary class="card-header bg-secondary text-white fw-bold"
-            style="cursor: pointer; list-style: none; padding: 0.75rem 1rem; border-radius: 0.25rem;">
-            ⚙️ Advanced
-        </summary>
-
-        <!-- Ingest UI (for Docker mounts) -->
-        <div class="card mt-2">
-            <div class="card-header bg-light fw-bold">Image Ingest</div>
-            <div class="card-body">
-                <p class="card-text text-muted">
-                    <small>For Docker deployments: Import images from the mounted <code>/ingest</code>
-                        folder.</small>
-                </p>
-                <p class="card-text text-muted">
-                    <small>💡 For normal uploads, use the <a href="/inbox">Inbox</a>.</small>
-                </p>
+            <!-- Ingest -->
+            <div class="mb-4">
+                <strong class="d-block mb-2">Image Ingest</strong>
+                <p class="settings-field__help mb-2">Docker: Import images from mounted <code>/ingest</code> folder. For normal uploads use the <a href="/inbox">Inbox</a>.</p>
                 <form method="POST" action="{{ url_for('start_ingest_endpoint') }}">
                     <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
-                    <button type="submit" class="btn btn-secondary btn-sm">Start Ingest from /ingest</button>
+                    <button type="submit" class="btn btn--secondary btn--sm">Start Ingest from /ingest</button>
                 </form>
             </div>
-        </div>
-    </details>
 
-    <!-- Backup & Migration -->
-    <div class="card mb-4">
-        <div class="card-header bg-light fw-bold">💾 Backup & Migration</div>
-        <div class="card-body">
-            <p class="card-text">Create a full backup of your database, images, and settings.
-                Detection is automatically paused during backup.</p>
-            <div class="d-flex gap-2 flex-wrap">
-                <a href="/backup" class="btn btn-primary">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-                        style="margin-right: 6px; vertical-align: -2px;">
-                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                        <polyline points="7 10 12 15 17 10" />
-                        <line x1="12" y1="15" x2="12" y2="3" />
-                    </svg>
-                    Create Backup
-                </a>
-                <a href="/restore" class="btn btn-outline-primary">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-                        style="margin-right: 6px; vertical-align: -2px;">
-                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                        <polyline points="17 8 12 3 7 8" />
-                        <line x1="12" y1="3" x2="12" y2="15" />
-                    </svg>
-                    Import Backup
-                </a>
-            </div>
-        </div>
-    </div>
-
-
-
-
-
-
-
-    <script>
-        function confirmShutdown() {
-            if (confirm("Are you sure you want to SHUT DOWN the Raspberry Pi? The system will be unreachable until manually turned on again.")) {
-                fetch('/api/system/shutdown', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    credentials: 'same-origin'
-                })
-                    .then(response => {
-                        // Check if redirected to login
-                        if (response.redirected || response.url.includes('/login')) {
-                            throw new Error('Session expired. Please refresh and login again.');
-                        }
-                        if (!response.ok) {
-                            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-                        }
-                        // Check content type before parsing
-                        const contentType = response.headers.get('content-type');
-                        if (!contentType || !contentType.includes('application/json')) {
-                            throw new Error('Invalid response from server (not JSON)');
-                        }
-                        return response.json();
-                    })
-                    .then(data => {
-                        if (data.status === 'success') {
-                            alert("Shutdown initiated. System will power off in a few seconds.");
-                        } else {
-                            alert("Shutdown failed: " + (data.message || 'Unknown error'));
-                        }
-                    })
-                    .catch(error => {
-                        console.error('Shutdown error:', error);
-                        alert("Shutdown failed: " + error.message);
-                    });
-            }
-        }
-
-        function confirmRestart() {
-            if (confirm("Are you sure you want to RESTART the Raspberry Pi? The system will be unavailable for about a minute.")) {
-                fetch('/api/system/restart', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    credentials: 'same-origin'
-                })
-                    .then(response => {
-                        // Check if redirected to login
-                        if (response.redirected || response.url.includes('/login')) {
-                            throw new Error('Session expired. Please refresh and login again.');
-                        }
-                        if (!response.ok) {
-                            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-                        }
-                        // Check content type before parsing
-                        const contentType = response.headers.get('content-type');
-                        if (!contentType || !contentType.includes('application/json')) {
-                            throw new Error('Invalid response from server (not JSON)');
-                        }
-                        return response.json();
-                    })
-                    .then(data => {
-                        if (data.status === 'success') {
-                            alert("Restart initiated. Please refresh the page in a minute.");
-                        } else {
-                            alert("Restart failed: " + (data.message || 'Unknown error'));
-                        }
-                    })
-                    .catch(error => {
-                        console.error('Restart error:', error);
-                        alert("Restart failed: " + error.message);
-                    });
-            }
-        }
-
-    </script>
-
-    <!-- System Information (Dynamic) -->
-    <h4 class="mt-5 mb-3">System Information</h4>
-    <div class="card mb-4">
-        <div class="card-body">
-            <div class="row g-3" id="sysInfoContainer">
+            <!-- System Info -->
+            <hr>
+            <strong class="d-block mb-2">System Information</strong>
+            <div class="row g-3 mb-4" id="sysInfoContainer">
                 <div class="col-6 col-md-3">
                     <small class="text-muted d-block">WatchMyBirds</small>
                     <span class="fw-bold" id="si-app">Loading...</span>
@@ -1388,63 +925,198 @@
                     <span class="font-monospace" id="si-boot">Loading...</span>
                 </div>
             </div>
+
+            <!-- System Settings (Read-Only) -->
+            <strong class="d-block mb-2">System Settings (Read-only)</strong>
+            <div class="table-responsive">
+                <table class="table table-striped table-hover table-bordered mb-0" style="font-size:0.85rem;">
+                    <thead class="table-light">
+                        <tr><th>Key</th><th>Value</th><th>Default</th><th>Source</th><th>Restart</th></tr>
+                    </thead>
+                    <tbody>
+                        {% for key in system_keys %}
+                        {% if key in payload %}
+                        <tr>
+                            <td>{{ labels.get(key, key) }}</td>
+                            <td><code>{{ payload[key].value }}</code></td>
+                            <td><span class="text-muted">{{ payload[key].default }}</span></td>
+                            <td><span class="badge bg-secondary">{{ payload[key].source }}</span></td>
+                            <td>{{ "Yes" if payload[key].restart_required else "No" }}</td>
+                        </tr>
+                        {% endif %}
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
         </div>
     </div>
 
-    <!-- System Settings (Read-Only) -->
-    <h4 class="mt-5 mb-3">System Settings (Read-only)</h4>
-    <div class="table-responsive">
-        <table class="table table-striped table-hover table-bordered">
-            <thead class="table-light">
-                <tr>
-                    <th>Key</th>
-                    <th>Value</th>
-                    <th>Default</th>
-                    <th>Source</th>
-                    <th>Restart</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for key in system_keys %}
-                {% if key in payload %}
-                <tr>
-                    <td>{{ labels.get(key, key) }}</td>
-                    <td><code>{{ payload[key].value }}</code></td>
-                    <td><span class="text-muted">{{ payload[key].default }}</span></td>
-                    <td><span class="badge bg-secondary">{{ payload[key].source }}</span></td>
-                    <td>{{ "Yes" if payload[key].restart_required else "No" }}</td>
-                </tr>
-                {% endif %}
-                {% endfor %}
-            </tbody>
-        </table>
-    </div>
+</div><!-- /settings-accordion -->
 
+<!-- Submit Button -->
+<button type="submit" class="btn btn--primary btn--lg btn--block mb-4" id="settingsSubmitBtn">Apply & Restart Services</button>
 
-    <!-- Danger Zone (Shutdown) -->
-    <div class="card mb-4 border-danger">
-        <div class="card-header bg-danger text-white fw-bold">Danger Zone</div>
-        <div class="card-body">
+</form>
 
-            <div class="d-flex align-items-center justify-content-between">
-                <div>
-                    <p class="mb-0">System Power Management</p>
-                    <small class="text-muted">Safely restart or shut down the Raspberry Pi.</small>
-                </div>
-                <div class="d-flex flex-column align-items-end">
-                    <span class="badge bg-warning text-dark mb-1">MAINTENANCE</span>
-                    <div class="btn-group">
-                        <button type="button" class="btn btn-outline-warning" onclick="confirmRestart()">
-                            Restart
-                        </button>
-                        <button type="button" class="btn btn-outline-danger" onclick="confirmShutdown()">
-                            Shutdown
-                        </button>
-                    </div>
-                </div>
+<!-- ╔══════════════════════════════════════════════╗
+     ║ Danger Zone (outside form)                  ║
+     ╚══════════════════════════════════════════════╝ -->
+<div class="settings-panel settings-panel--danger mb-5" id="panelDanger">
+    <button type="button" class="settings-panel__trigger" onclick="togglePanel('panelDanger')">
+        Danger Zone
+        <span class="settings-panel__trigger-info">Power Management</span>
+        <svg class="settings-panel__chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+    </button>
+    <div class="settings-panel__body">
+        <div class="d-flex align-items-center justify-content-between">
+            <div>
+                <p class="mb-0 fw-bold">System Power Management</p>
+                <small class="text-muted">Safely restart or shut down the Raspberry Pi.</small>
+            </div>
+            <div class="d-flex gap-2">
+                <button type="button" class="btn btn--secondary" onclick="confirmRestart()">Restart</button>
+                <button type="button" class="btn btn--danger" onclick="confirmShutdown()">Shutdown</button>
             </div>
         </div>
     </div>
 </div>
+
+<!-- ── Accordion + Form + Power scripts ────────── -->
+<script>
+    // Accordion toggle (only one open at a time)
+    function togglePanel(id) {
+        const panel = document.getElementById(id);
+        const wasOpen = panel.classList.contains('is-open');
+
+        // Close all
+        document.querySelectorAll('.settings-panel.is-open').forEach(p => p.classList.remove('is-open'));
+
+        // Open clicked if it was closed
+        if (!wasOpen) panel.classList.add('is-open');
+    }
+
+    // Init
+    document.addEventListener('DOMContentLoaded', function () {
+        initCameraUrl();
+        initLocation();
+        loadSystemVersions();
+    });
+
+    function loadSystemVersions() {
+        fetch('/api/v1/system/versions')
+            .then(res => res.json())
+            .then(data => {
+                document.getElementById('si-app').innerText = data.app_version || 'N/A';
+                document.getElementById('si-commit').innerText = data.git_commit || 'N/A';
+                document.getElementById('si-build-date').innerText = data.build_date || 'N/A';
+                const deployEl = document.getElementById('si-deploy');
+                const deployType = data.deploy_type || 'N/A';
+                deployEl.innerText = deployType;
+                const badgeColors = { docker: 'bg-info text-dark', rpi: 'bg-success', dev: 'bg-warning text-dark' };
+                deployEl.className = 'badge ' + (badgeColors[deployType] || 'bg-secondary');
+                document.getElementById('si-kernel').innerText = data.kernel || 'N/A';
+                document.getElementById('si-os').innerText = data.os || 'N/A';
+                document.getElementById('si-boot').innerText = data.bootloader || 'N/A';
+            })
+            .catch(err => console.error("Failed to load versions", err));
+    }
+
+    function updateCameraUrl(forceValue) {
+        const hidden = document.getElementById('CAMERA_URL');
+        if (!hidden) return;
+        const streamInput = document.getElementById('cameraUrlInput');
+        const usbSelect = document.getElementById('usbIndexSelect');
+        const streamVal = streamInput ? streamInput.value.trim() : '';
+        const usbVal = usbSelect ? usbSelect.value.trim() : '';
+        let nextVal = '';
+        if (forceValue !== undefined && forceValue !== null) { nextVal = String(forceValue).trim(); }
+        else { nextVal = streamVal || usbVal; }
+        if (!nextVal) return;
+        hidden.value = nextVal;
+        const display = document.getElementById('runtimeSourceDisplay');
+        if (display) display.textContent = nextVal;
+    }
+
+    function initCameraUrl() {
+        const currentVal = document.getElementById('CAMERA_URL').value;
+        if (currentVal && !(/^\d+$/.test(currentVal))) {
+            document.getElementById('cameraUrlInput').value = currentVal;
+        }
+    }
+
+    function initLocation() {
+        const rawLat = "{{ payload['LOCATION_DATA'].value.get('latitude', '') if payload['LOCATION_DATA'].value is mapping else '' }}";
+        const rawLon = "{{ payload['LOCATION_DATA'].value.get('longitude', '') if payload['LOCATION_DATA'].value is mapping else '' }}";
+        document.getElementById('locLat').value = rawLat;
+        document.getElementById('locLon').value = rawLon;
+    }
+
+    function updateLocationJson() {
+        const lat = document.getElementById('locLat').value.trim();
+        const lon = document.getElementById('locLon').value.trim();
+        if (!lat && !lon) { document.getElementById('LOCATION_DATA').value = ""; return; }
+        document.getElementById('LOCATION_DATA').value = `${lat}, ${lon}`;
+    }
+
+    function submitSettingsForm(event) {
+        event.preventDefault();
+        updateCameraUrl();
+        updateLocationJson();
+
+        const form = document.getElementById('settingsForm');
+        const btn = document.getElementById('settingsSubmitBtn');
+        const originalText = btn.textContent;
+        btn.textContent = 'Saving...';
+        btn.disabled = true;
+
+        const formData = new FormData(form);
+        const payload = {};
+        for (const [key, value] of formData.entries()) { payload[key] = value; }
+
+        fetch('/api/v1/settings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'same-origin',
+            body: JSON.stringify(payload)
+        })
+            .then(res => { if (!res.ok) { return res.json().then(err => { throw new Error(err.message || JSON.stringify(err.errors) || 'API Error'); }); } return res.json(); })
+            .then(data => {
+                if (data.status === 'success') { alert('✅ Settings saved successfully! Page will reload.'); window.location.reload(); }
+                else { alert('❌ Failed: ' + (data.message || 'Unexpected response')); btn.textContent = originalText; btn.disabled = false; }
+            })
+            .catch(err => { alert('❌ Error: ' + (err.message || 'Connection failed')); console.error(err); btn.textContent = originalText; btn.disabled = false; });
+        return false;
+    }
+
+    function confirmShutdown() {
+        if (confirm("Are you sure you want to SHUT DOWN the Raspberry Pi? The system will be unreachable until manually turned on again.")) {
+            fetch('/api/system/shutdown', { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin' })
+                .then(response => {
+                    if (response.redirected || response.url.includes('/login')) throw new Error('Session expired. Please refresh and login again.');
+                    if (!response.ok) throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                    const ct = response.headers.get('content-type');
+                    if (!ct || !ct.includes('application/json')) throw new Error('Invalid response from server (not JSON)');
+                    return response.json();
+                })
+                .then(data => { if (data.status === 'success') alert("Shutdown initiated. System will power off in a few seconds."); else alert("Shutdown failed: " + (data.message || 'Unknown error')); })
+                .catch(error => { console.error('Shutdown error:', error); alert("Shutdown failed: " + error.message); });
+        }
+    }
+
+    function confirmRestart() {
+        if (confirm("Are you sure you want to RESTART the Raspberry Pi? The system will be unavailable for about a minute.")) {
+            fetch('/api/system/restart', { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin' })
+                .then(response => {
+                    if (response.redirected || response.url.includes('/login')) throw new Error('Session expired. Please refresh and login again.');
+                    if (!response.ok) throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                    const ct = response.headers.get('content-type');
+                    if (!ct || !ct.includes('application/json')) throw new Error('Invalid response from server (not JSON)');
+                    return response.json();
+                })
+                .then(data => { if (data.status === 'success') alert("Restart initiated. Please refresh the page in a minute."); else alert("Restart failed: " + (data.message || 'Unknown error')); })
+                .catch(error => { console.error('Restart error:', error); alert("Restart failed: " + error.message); });
+        }
+    }
+</script>
 
 {% endblock %}

@@ -6954,3 +6954,292 @@ body {
         max-width: none;
     }
 }
+
+/* ── Bootstrap overrides: theme-aware card-headers, badges, forms ── */
+
+.card-header.bg-primary {
+    background: var(--color-primary) !important;
+    color: var(--color-primary-light) !important;
+}
+
+.card-header.bg-info {
+    background: var(--color-info) !important;
+    color: var(--color-surface) !important;
+}
+
+.card-header.bg-secondary {
+    background: var(--color-secondary) !important;
+    color: var(--color-surface) !important;
+}
+
+.card-header.bg-danger {
+    background: var(--color-danger) !important;
+    color: var(--color-surface) !important;
+}
+
+.card-header.bg-light {
+    background: var(--color-surface-2) !important;
+    color: var(--color-text) !important;
+}
+
+.card-header.bg-warning {
+    background: var(--color-warning) !important;
+    color: var(--color-text) !important;
+}
+
+.badge.bg-light,
+.badge.text-bg-light {
+    background: var(--color-surface-2) !important;
+    color: var(--color-text) !important;
+}
+
+.badge.bg-secondary {
+    background: var(--color-secondary) !important;
+    color: var(--color-surface) !important;
+}
+
+.badge.bg-primary {
+    background: var(--color-primary) !important;
+    color: var(--color-primary-light) !important;
+}
+
+.badge.bg-success {
+    background: var(--color-success) !important;
+    color: var(--color-surface) !important;
+}
+
+.badge.bg-danger {
+    background: var(--color-danger) !important;
+    color: var(--color-surface) !important;
+}
+
+.badge.bg-warning {
+    background: var(--color-warning) !important;
+    color: var(--color-text) !important;
+}
+
+.badge.bg-info {
+    background: var(--color-info) !important;
+    color: var(--color-surface) !important;
+}
+
+.badge.text-dark {
+    color: var(--color-text) !important;
+}
+
+.form-control,
+.form-select {
+    background-color: var(--color-surface);
+    color: var(--color-text);
+    border-color: var(--color-border);
+}
+
+.form-control:focus,
+.form-select:focus {
+    background-color: var(--color-surface);
+    color: var(--color-text);
+    border-color: var(--color-primary);
+}
+
+.form-text {
+    color: var(--color-text-muted);
+}
+
+.text-muted {
+    color: var(--color-text-muted) !important;
+}
+
+.text-dark {
+    color: var(--color-text) !important;
+}
+
+.alert-info {
+    background: var(--color-surface-2);
+    color: var(--color-text);
+    border-color: var(--color-border);
+}
+
+.card {
+    background: var(--color-surface);
+    border-color: var(--color-border);
+}
+
+.card-body {
+    color: var(--color-text);
+}
+
+.table {
+    color: var(--color-text);
+}
+
+.btn-light {
+    background: var(--color-surface-2);
+    color: var(--color-text);
+    border-color: var(--color-border);
+}
+
+.btn-light:hover {
+    background: var(--color-surface-3);
+    color: var(--color-text);
+}
+
+.alert-light {
+    background: var(--color-surface-2);
+    color: var(--color-text);
+    border-color: var(--color-border) !important;
+}
+
+.list-group-item {
+    background-color: var(--color-surface);
+    color: var(--color-text);
+    border-color: var(--color-border);
+}
+
+.list-group-item:hover {
+    background-color: var(--color-surface-2);
+}
+
+.btn-primary {
+    background-color: var(--color-primary);
+    border-color: var(--color-primary);
+    color: var(--color-surface);
+}
+
+.btn-primary:hover {
+    background-color: var(--color-primary-dark);
+    border-color: var(--color-primary-dark);
+    color: var(--color-surface);
+}
+
+.btn-outline-primary {
+    color: var(--color-primary);
+    border-color: var(--color-primary);
+}
+
+.btn-outline-primary:hover {
+    background-color: var(--color-primary);
+    color: var(--color-surface);
+}
+
+.btn-outline-secondary {
+    color: var(--color-secondary);
+    border-color: var(--color-secondary);
+}
+
+.btn-outline-secondary:hover {
+    background-color: var(--color-secondary);
+    color: var(--color-surface);
+}
+
+.btn-outline-success {
+    color: var(--color-success);
+    border-color: var(--color-success);
+}
+
+.btn-outline-success:hover {
+    background-color: var(--color-success);
+    color: var(--color-surface);
+}
+
+.btn-outline-danger {
+    color: var(--color-danger);
+    border-color: var(--color-danger);
+}
+
+.btn-outline-danger:hover {
+    background-color: var(--color-danger);
+    color: var(--color-surface);
+}
+
+.btn-outline-warning {
+    color: var(--color-warning);
+    border-color: var(--color-warning);
+}
+
+.btn-outline-warning:hover {
+    background-color: var(--color-warning);
+    color: var(--color-text);
+}
+
+.badge.text-bg-secondary {
+    background: var(--color-secondary) !important;
+    color: var(--color-surface) !important;
+}
+
+.modal-content {
+    background-color: var(--color-surface);
+    color: var(--color-text);
+}
+
+.modal-header {
+    border-color: var(--color-border);
+}
+
+.form-label {
+    color: var(--color-text);
+}
+
+.alert-danger {
+    background: color-mix(in srgb, var(--color-danger) 12%, var(--color-surface));
+    color: var(--color-text);
+    border-color: color-mix(in srgb, var(--color-danger) 30%, var(--color-border));
+}
+
+.alert-success {
+    background: color-mix(in srgb, var(--color-success) 12%, var(--color-surface));
+    color: var(--color-text);
+    border-color: color-mix(in srgb, var(--color-success) 30%, var(--color-border));
+}
+
+.alert-warning {
+    background: color-mix(in srgb, var(--color-warning) 12%, var(--color-surface));
+    color: var(--color-text);
+    border-color: color-mix(in srgb, var(--color-warning) 30%, var(--color-border));
+}
+
+.badge.text-bg-success {
+    background: var(--color-success) !important;
+    color: var(--color-surface) !important;
+}
+
+.badge.text-bg-primary {
+    background: var(--color-primary) !important;
+    color: var(--color-primary-light) !important;
+}
+
+.btn-secondary {
+    background-color: var(--color-secondary);
+    border-color: var(--color-secondary);
+    color: var(--color-surface);
+}
+
+.btn-secondary:hover {
+    background-color: var(--color-accent-dark);
+    border-color: var(--color-accent-dark);
+    color: var(--color-surface);
+}
+
+.spinner-border {
+    color: var(--color-text-muted);
+}
+
+.text-danger {
+    color: var(--color-danger) !important;
+}
+
+.text-success {
+    color: var(--color-success) !important;
+}
+
+.border {
+    border-color: var(--color-border) !important;
+}
+
+.border-danger {
+    border-color: var(--color-danger) !important;
+}
+
+code {
+    color: var(--color-accent-dark);
+    background: var(--color-surface-2);
+}
