@@ -273,7 +273,7 @@ jobs:
           DATE_SHORT="${{ steps.builddate.outputs.date_short }}"
 
           cat > release_notes.md << 'RELEASE_EOF'
-          ## WatchMyBirds Raspberry Pi Image
+          ## Raspberry Pi Image
 
           **Version:** PLACEHOLDER_VERSION
           **Build Date:** PLACEHOLDER_DATE

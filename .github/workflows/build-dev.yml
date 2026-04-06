@@ -250,7 +250,7 @@ jobs:
           
           # Create Release Notes File (content at column 0 to avoid Markdown indentation issues)
           cat > release_notes.md << 'RELEASE_EOF'
-          ## WatchMyBirds Raspberry Pi Development Image
+          ## Raspberry Pi Development Image
           
           **Build Date:** PLACEHOLDER_DATE
           **Commit:** PLACEHOLDER_COMMIT
