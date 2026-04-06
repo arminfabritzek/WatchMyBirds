@@ -1,6 +1,8 @@
 name: Docker
 
 on:
+  schedule:
+    - cron: '0 3 * * *'   # every night at 03:00 UTC (1h after RPi build)
   workflow_dispatch:
 
 jobs:
@@ -8,6 +10,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      packages: write
 
     steps:
       - name: Checkout repository
@@ -57,46 +60,46 @@ jobs:
             GIT_COMMIT=${{ github.sha }}
             VERSION=${{ steps.version.outputs.version }}
 
-      - name: Create GitHub Release
+      - name: Update GitHub Release with Docker info
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          STAMP=$(date +%Y-%m-%d-%H-%M)
           VERSION="${{ steps.version.outputs.version }}"
-          TAG="docker-${STAMP}"
 
-          # Create Release Notes File (content at column 0 to avoid Markdown indentation issues)
-          cat > release_notes.md << 'RELEASE_EOF'
-          ## WatchMyBirds Docker Image
-          
-          **Version:** PLACEHOLDER_VERSION
-          **Build Date:** PLACEHOLDER_DATE
-          **Commit:** PLACEHOLDER_COMMIT
-          
-          ### Docker Hub
-          ```bash
-          docker pull starminworks/watchmybirds:PLACEHOLDER_VERSION
-          docker pull starminworks/watchmybirds:latest
-          ```
-          
-          ### Platforms
-          - `linux/amd64` (x86_64)
-          - `linux/arm64` (Raspberry Pi, Apple Silicon)
-          
-          See [Docker Setup Guide](https://github.com/PLACEHOLDER_REPO#docker) for usage instructions.
-          RELEASE_EOF
-          sed -i "s/PLACEHOLDER_VERSION/${VERSION}/g" release_notes.md
-          sed -i "s/PLACEHOLDER_DATE/${STAMP}/g" release_notes.md
-          sed -i "s/PLACEHOLDER_COMMIT/${{ github.sha }}/g" release_notes.md
-          sed -i "s|PLACEHOLDER_REPO|${{ github.repository }}|g" release_notes.md
+          # Find the latest non-prerelease release tag
+          TAG=$(gh release list --repo "${{ github.repository }}" --limit 10 \
+            --json tagName,isPrerelease \
+            --jq '[.[] | select(.isPrerelease == false)] | .[0].tagName // empty')
 
-          # Create Release if not exists
-          gh release view "$TAG" --repo "${{ github.repository }}" >/dev/null 2>&1 || \
-            gh release create "$TAG" \
+          if [ -z "$TAG" ]; then
+            echo "No release found to attach Docker info to, skipping."
+            exit 0
+          fi
+
+          echo "Attaching Docker info to release ${TAG}..."
+
+          # Append Docker pull instructions to existing release notes
+          EXISTING=$(gh release view "$TAG" --repo "${{ github.repository }}" --json body -q .body)
+          read -r -d '' DOCKER_SECTION << 'DOCKEREOF' || true
+---
+
+### Docker
+
+```bash
+docker pull starminworks/watchmybirds:PLACEHOLDER_DOCKER_VER
+docker pull starminworks/watchmybirds:latest
+```
+
+**Platforms:** linux/amd64, linux/arm64
+DOCKEREOF
+          DOCKER_SECTION="${DOCKER_SECTION//PLACEHOLDER_DOCKER_VER/${VERSION}}"
+
+          # Only append if not already present
+          if echo "$EXISTING" | grep -q "docker pull starminworks/watchmybirds"; then
+            echo "Docker section already present in release notes, skipping."
+          else
+            printf '%s\n%s' "$EXISTING" "$DOCKER_SECTION" > updated_notes.md
+            gh release edit "$TAG" \
               --repo "${{ github.repository }}" \
-              --title "🐳 Docker Image ${STAMP} v${VERSION}" \
-              --notes-file release_notes.md \
-              --generate-notes \
-              --latest
-
-          bash scripts/cleanup_releases.sh "${{ github.repository }}" "docker-" 1
+              --notes-file updated_notes.md
+          fi

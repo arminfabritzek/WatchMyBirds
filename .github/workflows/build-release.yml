@@ -1,10 +1,45 @@
 name: Build Release Image
 
 on:
+  schedule:
+    - cron: '0 2 * * *'   # every night at 02:00 UTC
   workflow_dispatch:
 
 jobs:
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      skip: ${{ steps.changes.outputs.skip }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check for changes since last release
+        id: changes
+        run: |
+          VERSION=$(bash scripts/version_info.sh release-base .)
+          TAG="v${VERSION}"
+          # If the tag exists, check if there are meaningful changes
+          # (ignore APP_VERSION-only bumps from the auto-bump step)
+          if git tag -l "$TAG" | grep -q "$TAG"; then
+            CHANGED=$(git diff --name-only "$TAG"..HEAD -- . ':!APP_VERSION')
+            if [ -z "$CHANGED" ]; then
+              echo "skip=true" >> $GITHUB_OUTPUT
+              echo "No meaningful changes since ${TAG}, skipping build."
+            else
+              echo "skip=false" >> $GITHUB_OUTPUT
+              echo "Changes found since ${TAG}:"
+              echo "$CHANGED"
+            fi
+          else
+            echo "skip=false" >> $GITHUB_OUTPUT
+            echo "Tag ${TAG} not found, building."
+          fi
+
   build-release:
+    needs: check
+    if: needs.check.outputs.skip != 'true'
     runs-on: ubuntu-latest
     permissions:
       actions: read
@@ -15,7 +50,6 @@ jobs:
         uses: actions/checkout@v4
         with:
           path: app_code
-
 
       - name: Download Golden Base Artifact
         env:
@@ -62,10 +96,10 @@ jobs:
       - name: Mount and Inject App
         run: |
           set -euo pipefail
-          
+
           mkdir -p mount_point
           LOOP_DEV=$(sudo losetup --find --show --partscan golden.img)
-          
+
           sudo mount ${LOOP_DEV}p2 mount_point
           sudo mount ${LOOP_DEV}p1 mount_point/boot/firmware
 
@@ -81,7 +115,7 @@ jobs:
           # Sync code (excluding git)
           sudo rsync -av --delete --exclude='.git' --exclude='.github' app_code/ mount_point/opt/app/
           sudo chroot mount_point install -d -o watchmybirds -g watchmybirds -m 0750 /opt/app/data
-          
+
           # Inject Wheelhouse
           sudo mkdir -p mount_point/opt/wheelhouse
           sudo cp -r wheelhouse/* mount_point/opt/wheelhouse/
@@ -92,7 +126,7 @@ jobs:
           echo "${BASE_VER}" | sudo tee mount_point/opt/app/APP_VERSION
           echo "${{ github.sha }}" | sudo tee mount_point/opt/app/commit.txt
           date -u +%Y-%m-%dT%H:%M:%SZ | sudo tee mount_point/opt/app/build_date.txt
-          
+
           # Fix Permissions (Resolve user inside chroot)
           sudo chroot mount_point chown -R watchmybirds:watchmybirds /opt/app
 
@@ -108,7 +142,7 @@ jobs:
           # Install WiFi Setup System (Path Unit + Script)
           sudo cp mount_point/opt/app/rpi/first-boot/setup_wifi.sh mount_point/usr/local/bin/wmb-setup-wifi.sh
           sudo chmod 755 mount_point/usr/local/bin/wmb-setup-wifi.sh
-          
+
           sudo cp mount_point/opt/app/rpi/systemd/wmb-wifi-setup.service mount_point/etc/systemd/system/
           sudo cp mount_point/opt/app/rpi/systemd/wmb-wifi-setup.path mount_point/etc/systemd/system/
           sudo cp mount_point/opt/app/rpi/systemd/wmb-setup-server.service mount_point/etc/systemd/system/
@@ -118,41 +152,41 @@ jobs:
           sudo chmod 755 mount_point/usr/local/bin/wmb-setup-server.py
           sudo mkdir -p mount_point/usr/local/share/watchmybirds/setup/templates
           sudo cp mount_point/opt/app/rpi/setup-server/templates/setup.html mount_point/usr/local/share/watchmybirds/setup/templates/setup.html
-          
+
           # Enable Path Unit
           sudo ln -sf /etc/systemd/system/wmb-wifi-setup.path mount_point/etc/systemd/system/multi-user.target.wants/wmb-wifi-setup.path
 
           # ---------------------------------------------------------
           # INSTALL DEPENDENCIES (Offline Chroot)
           # ---------------------------------------------------------
-          
+
           # Bind mounts for virtual environment creation
           sudo mount --bind /dev mount_point/dev
           sudo mount --bind /dev/pts mount_point/dev/pts
           sudo mount --bind /proc mount_point/proc
           sudo mount --bind /sys mount_point/sys
           sudo mount --bind /etc/resolv.conf mount_point/etc/resolv.conf
-          
+
           sudo chroot mount_point /bin/bash -c "
             set -ex
             command -v python3.12 >/dev/null 2>&1 || {
               echo 'python3.12 missing from golden image; rebuild the Trixie golden artifact first' >&2
               exit 1
             }
-            
+
             # Create Venv
             python3.12 -m venv /opt/app/.venv
-            
-            # Upgrade pip (using wheelhouse if available, or just use system pip to install? 
+
+            # Upgrade pip (using wheelhouse if available, or just use system pip to install?
             # Ideally we have pip wheel in wheelhouse too. If not, use ensurepip version)
-            
+
             # Install Requirements from Wheelhouse
             /opt/app/.venv/bin/pip install --no-index --find-links /opt/wheelhouse -r /opt/app/requirements.txt
-            
+
             # Cleanup Wheelhouse (Crucial for image size)
             rm -rf /opt/wheelhouse
           "
-          
+
           # ---------------------------------------------------------
           # VERIFY INJECTED CODE (Debug: remove once confirmed)
           # ---------------------------------------------------------
@@ -251,18 +285,45 @@ jobs:
           sed -i "s/PLACEHOLDER_DATE/${DATE_SHORT}/g" release_notes.md
           sed -i "s/PLACEHOLDER_COMMIT/${{ github.sha }}/g" release_notes.md
 
-          echo "Creating release $TAG..."
-          gh release create "$TAG" \
-            --repo "${{ github.repository }}" \
-            --title "WatchMyBirds ${TAG} – ${DATE_SHORT}" \
-            --notes-file release_notes.md \
-            --latest
+          # Create or update the release
+          if gh release view "$TAG" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            echo "Release $TAG exists, updating..."
+            gh release edit "$TAG" \
+              --repo "${{ github.repository }}" \
+              --title "WatchMyBirds ${TAG} – ${DATE_SHORT}" \
+              --notes-file release_notes.md
+          else
+            echo "Creating release $TAG..."
+            gh release create "$TAG" \
+              --repo "${{ github.repository }}" \
+              --title "WatchMyBirds ${TAG} – ${DATE_SHORT}" \
+              --notes-file release_notes.md \
+              --latest
+          fi
 
           echo "Uploading $IMG_FILE to release $TAG..."
           gh release upload "$TAG" \
             "$IMG_FILE" \
             --repo "${{ github.repository }}" \
             --clobber
+
+      - name: Bump APP_VERSION for next release
+        run: |
+          cd app_code
+          CURRENT="${{ steps.version.outputs.base }}"
+          NEXT=$(echo "$CURRENT" | awk -F. '{printf "%s.%s.%s", $1, $2, $3+1}')
+          echo "$NEXT" > APP_VERSION
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -B main
+          git add APP_VERSION
+          git commit -m "chore: bump version to ${NEXT} [skip ci]"
+          git push origin main
+
+      - name: Cleanup old releases (keep last 5)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash app_code/scripts/cleanup_releases.sh "${{ github.repository }}" "v" 5
 
       - name: Write Build Summary
         run: |
