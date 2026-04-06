@@ -8,7 +8,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       actions: read
-      contents: read
+      contents: write
 
     steps:
       - name: Checkout App Code
@@ -222,20 +222,54 @@ jobs:
       - name: Compress Release Image
         run: xz -z -1 -T0 watchmybirds-rpi-${{ steps.builddate.outputs.date }}.img
 
-      - name: Upload Manual Build Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: watchmybirds-rpi-${{ steps.builddate.outputs.date }}.img.xz
-          path: watchmybirds-rpi-${{ steps.builddate.outputs.date }}.img.xz
-          retention-days: 14
+      - name: Resolve Version
+        id: version
+        run: |
+          BASE_VER=$(bash app_code/scripts/version_info.sh release-base app_code)
+          echo "base=${BASE_VER}" >> $GITHUB_OUTPUT
+
+      - name: Create Release and Upload
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          TAG="v${{ steps.version.outputs.base }}"
+          IMG_FILE="watchmybirds-rpi-${{ steps.builddate.outputs.date }}.img.xz"
+          DATE_SHORT="${{ steps.builddate.outputs.date_short }}"
+
+          cat > release_notes.md << 'RELEASE_EOF'
+          ## WatchMyBirds Raspberry Pi Image
+
+          **Version:** PLACEHOLDER_VERSION
+          **Build Date:** PLACEHOLDER_DATE
+          **Commit:** PLACEHOLDER_COMMIT
+
+          Flash to SD card with [Raspberry Pi Imager](https://www.raspberrypi.com/software/) and boot on Raspberry Pi 4 or 5.
+          RELEASE_EOF
+          sed -i "s/PLACEHOLDER_VERSION/${{ steps.version.outputs.base }}/g" release_notes.md
+          sed -i "s/PLACEHOLDER_DATE/${DATE_SHORT}/g" release_notes.md
+          sed -i "s/PLACEHOLDER_COMMIT/${{ github.sha }}/g" release_notes.md
+
+          echo "Creating release $TAG..."
+          gh release create "$TAG" \
+            --repo "${{ github.repository }}" \
+            --title "WatchMyBirds ${TAG} – ${DATE_SHORT}" \
+            --notes-file release_notes.md \
+            --latest
+
+          echo "Uploading $IMG_FILE to release $TAG..."
+          gh release upload "$TAG" \
+            "$IMG_FILE" \
+            --repo "${{ github.repository }}" \
+            --clobber
 
       - name: Write Build Summary
         run: |
           {
-            echo "## Manual Raspberry Pi Build"
+            echo "## Raspberry Pi Release Image"
             echo
+            echo "- Release: \`v${{ steps.version.outputs.base }}\`"
             echo "- Artifact: \`watchmybirds-rpi-${{ steps.builddate.outputs.date }}.img.xz\`"
-            echo "- This workflow now publishes a workflow artifact instead of creating a GitHub release."
-            echo "- Golden is now an internal Actions artifact."
-            echo "- Raspberry Pi Dev and Docker remain the rolling release channels."
+            echo "- Published as GitHub Release."
           } >> "$GITHUB_STEP_SUMMARY"

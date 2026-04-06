@@ -50,7 +50,7 @@
     <footer class="app-footer py-2 text-center text-muted">
         <small>WatchMyBirds</small>
         <small class="ms-1 font-monospace" id="footer-version" style="opacity:.55"></small>
-        <a href="https://github.com/arminfabritzek/WatchMyBirds" target="_blank" rel="noopener noreferrer"
+        <a id="footer-github" href="https://github.com/arminfabritzek/WatchMyBirds" target="_blank" rel="noopener noreferrer"
            class="ms-2 text-muted" title="View on GitHub" style="opacity:.55;transition:opacity .2s;"
            onmouseover="this.style.opacity='1'" onmouseout="this.style.opacity='.55'">
             <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
@@ -96,6 +96,11 @@
                         var label='v'+d.app_version;
                         if(d.git_commit && d.git_commit!=='Unknown') label+='-'+d.git_commit;
                         el.textContent=label;
+                    }
+                    var gh=document.getElementById('footer-github');
+                    if(gh && d.git_commit && d.git_commit!=='Unknown'){
+                        gh.href='https://github.com/arminfabritzek/WatchMyBirds/commit/'+d.git_commit;
+                        gh.title='Commit '+d.git_commit;
                     }
                 })
                 .catch(function(){});
