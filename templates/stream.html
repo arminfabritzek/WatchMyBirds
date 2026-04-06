@@ -20,8 +20,11 @@
         </div>
 
         <script>
-            // Try Go2RTC first and automatically fall back to local MJPEG if unreachable.
-            // Retries once after 1 s to tolerate slow Docker DNS or cold-start delays.
+            // Two-phase go2rtc probe:
+            //   1. Server-side: /api/v1/public/go2rtc/health (is go2rtc running?)
+            //   2. Browser-side: try loading go2rtc directly on port 1984
+            //      → catches reverse-proxy setups where the port is not exposed.
+            // Falls back to /video_feed (MJPEG) when either phase fails.
             (function () {
                 const iframe = document.getElementById('go2rtc-frame');
                 const fallback = document.getElementById('video-feed-fallback');
@@ -29,8 +32,8 @@
 
                 const host = window.location.hostname;
                 const port = '1984';
-                const streamName = 'camera'; // Must match go2rtc.yaml
-                const mode = 'webrtc'; // 'webrtc', 'mse', 'hls'
+                const streamName = 'camera';
+                const mode = 'webrtc';
                 const go2rtcBase = `http://${host}:${port}`;
                 const streamUrl = `${go2rtcBase}/stream.html?src=${encodeURIComponent(streamName)}&mode=${encodeURIComponent(mode)}`;
                 const preflightUrl = '/api/v1/public/go2rtc/health';
@@ -51,60 +54,75 @@
                     }
                 }
 
+                // Phase 1: server-side health (go2rtc process alive?)
+                async function serverHealthOk() {
+                    const controller = new AbortController();
+                    const timeout = setTimeout(function () { controller.abort(); }, FETCH_TIMEOUT_MS);
+
+                    try {
+                        const resp = await fetch(preflightUrl, {
+                            method: 'GET', cache: 'no-store', signal: controller.signal
+                        });
+                        clearTimeout(timeout);
+                        if (!resp.ok) return false;
+                        const data = await resp.json();
+                        return !!(data && data.healthy);
+                    } catch (_) {
+                        clearTimeout(timeout);
+                        return false;
+                    }
+                }
+
+                // Phase 2: browser-side probe – can the browser actually reach go2rtc?
+                // Uses fetch with mode:'no-cors'. This yields an opaque response (status 0)
+                // when the port IS reachable, but throws a TypeError (network error)
+                // when the port is blocked / unreachable (e.g. reverse proxy).
+                async function browserCanReachGo2RTC() {
+                    const controller = new AbortController();
+                    const timer = setTimeout(function () { controller.abort(); }, FETCH_TIMEOUT_MS);
+                    try {
+                        await fetch(`${go2rtcBase}/api`, {
+                            method: 'HEAD',
+                            mode: 'no-cors',
+                            cache: 'no-store',
+                            signal: controller.signal
+                        });
+                        clearTimeout(timer);
+                        return true; // opaque response = port reachable
+                    } catch (_) {
+                        clearTimeout(timer);
+                        return false; // network error = port not reachable
+                    }
+                }
+
                 function enableGo2RTC() {
                     fallback.style.display = 'none';
                     iframe.style.display = 'block';
                     iframe.src = streamUrl;
-                }
 
-                iframe.addEventListener('error', function () {
-                    enableFallback('iframe error');
-                });
-
-                async function checkHealth() {
-                    const controller = new AbortController();
-                    const timeout = setTimeout(function () {
-                        controller.abort();
-                    }, FETCH_TIMEOUT_MS);
-
-                    const resp = await fetch(preflightUrl, {
-                        method: 'GET',
-                        cache: 'no-store',
-                        signal: controller.signal
+                    iframe.addEventListener('error', function () {
+                        enableFallback('iframe error');
                     });
-                    clearTimeout(timeout);
-
-                    if (!resp.ok) {
-                        throw new Error('go2rtc responded with status ' + resp.status);
-                    }
-
-                    const data = await resp.json();
-                    if (!data || typeof data !== 'object') {
-                        throw new Error('go2rtc health returned invalid data');
-                    }
-
-                    if (!data.healthy) {
-                        const detail = data.detail ? ` (${data.detail})` : '';
-                        throw new Error('go2rtc reported unhealthy' + detail);
-                    }
-
-                    return true;
                 }
 
                 (async function preflightGo2RTC() {
                     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-                        try {
-                            await checkHealth();
-                            enableGo2RTC();
-                            return;
-                        } catch (error) {
-                            const reason = error && error.message ? error.message : 'preflight failed';
-                            if (attempt < MAX_RETRIES) {
-                                console.info(`Go2RTC health attempt ${attempt + 1} failed (${reason}), retrying in ${RETRY_DELAY_MS}ms…`);
-                                await new Promise(r => setTimeout(r, RETRY_DELAY_MS));
-                            } else {
-                                enableFallback(reason);
+                        const healthy = await serverHealthOk();
+                        if (healthy) {
+                            // Phase 2: verify browser can actually reach go2rtc port
+                            const reachable = await browserCanReachGo2RTC();
+                            if (reachable) {
+                                enableGo2RTC();
+                                return;
                             }
+                            enableFallback('go2rtc running but port not reachable from browser (reverse proxy?)');
+                            return;
+                        }
+                        if (attempt < MAX_RETRIES) {
+                            console.info(`Go2RTC health attempt ${attempt + 1} failed, retrying in ${RETRY_DELAY_MS}ms…`);
+                            await new Promise(r => setTimeout(r, RETRY_DELAY_MS));
+                        } else {
+                            enableFallback('go2rtc server health check failed');
                         }
                     }
                 })();
