@@ -22,8 +22,18 @@ function getViewerScope(el) {
     return el.closest('.wm-viewer-scope') || el.closest('.modal');
 }
 
-function isReviewViewerScope(scope) {
-    return Boolean(scope && scope.classList && scope.classList.contains('wm-viewer-scope'));
+/**
+ * Read viewer preference keys from scope element's data attributes.
+ * Review scopes set data-bbox-pref-key / data-zoom-pref-key explicitly;
+ * gallery modals fall back to the default modal keys.
+ */
+function getViewerPrefKeys(scope) {
+    var isReview = Boolean(scope && scope.classList && scope.classList.contains('wm-viewer-scope'));
+    return {
+        bbox: (scope && scope.dataset && scope.dataset.bboxPrefKey) || (isReview ? 'wmb_review_bbox_pref' : 'wmb_modal_bbox_pref'),
+        bboxDefault: isReview ? 'on' : 'off',
+        zoom: (scope && scope.dataset && scope.dataset.zoomPrefKey) || (isReview ? 'wmb_review_zoom_pref' : 'wmb_modal_zoom_pref'),
+    };
 }
 
 function redirectToLogin() {
@@ -410,23 +420,34 @@ function initBboxOverlay(img) {
     const canvas = container.querySelector('.bbox-overlay');
     if (!canvas) return;
 
-    // Match canvas size to displayed image size
-    canvas.width = img.clientWidth;
-    canvas.height = img.clientHeight;
+    const apply = function () {
+        // Match canvas size to displayed image size
+        canvas.width = img.clientWidth;
+        canvas.height = img.clientHeight;
 
-    // Store natural dimensions for coordinate calculation
-    canvas.dataset.naturalWidth = img.naturalWidth;
-    canvas.dataset.naturalHeight = img.naturalHeight;
+        // Store natural dimensions for coordinate calculation
+        canvas.dataset.naturalWidth = img.naturalWidth;
+        canvas.dataset.naturalHeight = img.naturalHeight;
 
-    const prefKey = isReviewViewerScope(scope) ? 'wmb_review_bbox_pref' : 'wmb_modal_bbox_pref';
-    const defaultPref = isReviewViewerScope(scope) ? 'on' : 'off';
-    if (localStorage.getItem(prefKey) !== 'off' && localStorage.getItem(prefKey) !== 'on') {
-        localStorage.setItem(prefKey, defaultPref);
-    }
+        const prefs = getViewerPrefKeys(scope);
+        if (localStorage.getItem(prefs.bbox) !== 'off' && localStorage.getItem(prefs.bbox) !== 'on') {
+            localStorage.setItem(prefs.bbox, prefs.bboxDefault);
+        }
 
-    if (localStorage.getItem(prefKey) === 'on') {
-        const btn = scope?.querySelector('.bbox-toggle');
-        if (btn && !btn.classList.contains('active')) toggleBboxOverlay(btn);
+        if (localStorage.getItem(prefs.bbox) === 'on') {
+            const btn = scope?.querySelector('.bbox-toggle');
+            if (btn) {
+                if (!btn.classList.contains('active')) toggleBboxOverlay(btn);
+                else redrawBboxOverlay(btn);
+            }
+        }
+    };
+
+    // Defer until image has layout dimensions (may be 0 during modal transition)
+    if (img.clientWidth > 0) {
+        apply();
+    } else {
+        requestAnimationFrame(function () { requestAnimationFrame(apply); });
     }
 }
 
@@ -436,7 +457,7 @@ function initBboxOverlay(img) {
 function toggleBboxOverlay(btn) {
     const scope = getViewerScope(btn);
     if (!scope) return;
-    const prefKey = isReviewViewerScope(scope) ? 'wmb_review_bbox_pref' : 'wmb_modal_bbox_pref';
+    const prefs = getViewerPrefKeys(scope);
 
     const container = scope.querySelector('.modal-image-viewer');
     const canvas = container?.querySelector('.bbox-overlay');
@@ -452,14 +473,14 @@ function toggleBboxOverlay(btn) {
         btn.textContent = 'Boxes';
         btn.classList.remove('active', 'btn-secondary', 'btn--secondary');
         btn.classList.add('btn-outline-secondary', 'btn--outline-secondary');
-        localStorage.setItem(prefKey, 'off');
+        localStorage.setItem(prefs.bbox, 'off');
     } else {
         // Show and draw overlay
         canvas.style.display = 'block';
         btn.textContent = 'Boxes ✓';
         btn.classList.add('active', 'btn-secondary', 'btn--secondary');
         btn.classList.remove('btn-outline-secondary', 'btn--outline-secondary');
-        localStorage.setItem(prefKey, 'on');
+        localStorage.setItem(prefs.bbox, 'on');
 
         // Collect all bounding boxes
         const currentBbox = JSON.parse(btn.dataset.currentBbox || '{}');
@@ -496,6 +517,42 @@ function toggleBboxOverlay(btn) {
 
         drawBoundingBoxes(canvas, img, boxes, currentBbox.id);
     }
+}
+
+/**
+ * Redraw bounding boxes on an already-active overlay (e.g. after image load or navigation).
+ */
+function redrawBboxOverlay(btn) {
+    const scope = getViewerScope(btn);
+    if (!scope) return;
+
+    const container = scope.querySelector('.modal-image-viewer');
+    const canvas = container?.querySelector('.bbox-overlay');
+    const img = container?.querySelector('.bbox-base-image');
+    if (!canvas || !img) return;
+
+    canvas.width = img.clientWidth;
+    canvas.height = img.clientHeight;
+    canvas.dataset.naturalWidth = img.naturalWidth;
+    canvas.dataset.naturalHeight = img.naturalHeight;
+
+    const currentBbox = JSON.parse(btn.dataset.currentBbox || '{}');
+    let siblings = [];
+    try { siblings = JSON.parse(btn.dataset.siblings || '[]'); } catch (e) { /* ignore */ }
+
+    let boxes = [];
+    if (siblings && siblings.length > 0) {
+        boxes = siblings.map(function (sib) {
+            return { x: sib.bbox_x, y: sib.bbox_y, w: sib.bbox_w, h: sib.bbox_h,
+                     name: sib.common_name, id: sib.detection_id,
+                     isCurrent: sib.detection_id === currentBbox.id };
+        });
+    } else if (currentBbox.x !== undefined) {
+        boxes = [{ x: currentBbox.x, y: currentBbox.y, w: currentBbox.w, h: currentBbox.h,
+                   name: currentBbox.name, id: currentBbox.id, isCurrent: true }];
+    }
+
+    drawBoundingBoxes(canvas, img, boxes, currentBbox.id);
 }
 
 /**
@@ -647,7 +704,7 @@ function initSmartZoom(img) {
     const viewer = img.closest('.wm-image-viewer');
     if (!viewer) return;
     const scope = getViewerScope(viewer);
-    const prefKey = isReviewViewerScope(scope) ? 'wmb_review_zoom_pref' : 'wmb_modal_zoom_pref';
+    const prefs = getViewerPrefKeys(scope);
 
     const bx = parseFloat(viewer.dataset.bboxX);
     const by = parseFloat(viewer.dataset.bboxY);
@@ -665,10 +722,10 @@ function initSmartZoom(img) {
     }
 
     // Respect stored zoom preference: if user chose 'full', skip auto-zoom
-    if (localStorage.getItem(prefKey) !== 'full' && localStorage.getItem(prefKey) !== 'zoom') {
-        localStorage.setItem(prefKey, 'zoom');
+    if (localStorage.getItem(prefs.zoom) !== 'full' && localStorage.getItem(prefs.zoom) !== 'zoom') {
+        localStorage.setItem(prefs.zoom, 'zoom');
     }
-    const storedPref = localStorage.getItem(prefKey);
+    const storedPref = localStorage.getItem(prefs.zoom);
     if (storedPref === 'full') {
         // Ensure full-image state
         viewer.classList.remove('wm-image-viewer--zoomed');
@@ -776,6 +833,7 @@ function toggleSmartZoom(btn) {
     const img = scope.querySelector('.wm-image-viewer__img');
     if (!viewer || !img) return;
 
+    const prefs = getViewerPrefKeys(scope);
     const isZoomed = viewer.classList.contains('wm-image-viewer--zoomed');
 
     if (isZoomed) {
@@ -789,7 +847,7 @@ function toggleSmartZoom(btn) {
         btn.classList.remove('active');
         btn.textContent = '🔍 Zoom';
         // Persist preference: user wants full view
-        localStorage.setItem(isReviewViewerScope(scope) ? 'wmb_review_zoom_pref' : 'wmb_modal_zoom_pref', 'full');
+        localStorage.setItem(prefs.zoom, 'full');
     } else {
         // Zoom in → read bbox from viewer data attributes
         const bx = parseFloat(viewer.dataset.bboxX);
@@ -800,8 +858,14 @@ function toggleSmartZoom(btn) {
         if (!isNaN(bx) && !isNaN(by) && bw > 0 && bh > 0) {
             applySmartZoom(viewer, img, bx, by, bw, bh);
             // Persist preference: user wants zoom
-            localStorage.setItem(isReviewViewerScope(scope) ? 'wmb_review_zoom_pref' : 'wmb_modal_zoom_pref', 'zoom');
+            localStorage.setItem(prefs.zoom, 'zoom');
         }
+    }
+
+    // Redraw bbox overlay after zoom change so boxes match new image dimensions
+    const bboxBtn = scope.querySelector('.bbox-toggle');
+    if (bboxBtn && bboxBtn.classList.contains('active')) {
+        requestAnimationFrame(function () { redrawBboxOverlay(bboxBtn); });
     }
 }
 
