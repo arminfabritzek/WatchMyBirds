@@ -6392,6 +6392,41 @@ body {
     }
 }
 
+/* ── Sibling Card Actions ───────────────────────────────────────────── */
+
+.sibling-card__action {
+    position: absolute;
+    top: 4px;
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-size: 0.7rem;
+    opacity: 0.4;
+    padding: 2px 4px;
+    border-radius: 3px;
+    transition: opacity 0.15s, background 0.15s;
+}
+
+.sibling-card__action:hover {
+    opacity: 1;
+}
+
+.sibling-card__action--relabel {
+    right: 24px;
+}
+
+.sibling-card__action--relabel:hover {
+    background: rgba(167, 139, 250, 0.15);
+}
+
+.sibling-card__action--delete {
+    right: 4px;
+}
+
+.sibling-card__action--delete:hover {
+    background: rgba(220, 53, 69, 0.15);
+}
+
 /* ── Scientific / Ecological Metrics ─────────────────────────────────── */
 
 .scientific-grid {

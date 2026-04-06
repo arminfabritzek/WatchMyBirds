@@ -21,8 +21,7 @@ dismissable (bool): If true, clicking image closes modal
     {% endif %}>
     <img class="wm-image-viewer__img bbox-base-image" src="{{ image_url }}" alt="{{ image_alt }}"
         data-detection-id="{{ detection_id }}" {% if dismissable %}role="button" data-bs-dismiss="modal"
-        aria-label="Close" title="Click to close" {% endif %}
-        onload="if(typeof initBboxOverlay==='function')initBboxOverlay(this);if(typeof initSmartZoom==='function')initSmartZoom(this)">
+        aria-label="Close" title="Click to close" {% endif %}>
 
     <canvas class="wm-image-viewer__overlay bbox-overlay"></canvas>
 </div>

@@ -37,13 +37,13 @@ can_moderate (bool): Whether to show moderation controls (relabel/delete)
         {% for sib in siblings %}
         <div class="sibling-card" data-detection-id="{{ sib.detection_id }}" tabindex="-1"
             data-bbox-x="{{ sib.bbox_x }}" data-bbox-y="{{ sib.bbox_y }}" data-bbox-w="{{ sib.bbox_w }}"
-            data-bbox-h="{{ sib.bbox_h }}" data-bbox-name="{{ sib.common_name }}" onmouseenter="showHoverBbox(this)"
-            onmouseleave="hideHoverBbox(this)" style="
+            data-bbox-h="{{ sib.bbox_h }}" data-bbox-name="{{ sib.common_name }}"
+            data-current-species="{{ sib.species_key or sib.cls_class_name or sib.od_class_name }}" style="
                 position: relative;
-                min-width: 160px; 
-                max-width: 200px; 
-                padding: 0.5rem; 
-                border: 1px solid var(--color-border, #dee2e6); 
+                min-width: 160px;
+                max-width: 200px;
+                padding: 0.5rem;
+                border: 1px solid var(--color-border, #dee2e6);
                 border-radius: 0.375rem;
                 text-align: left;
                 cursor: pointer;
@@ -66,15 +66,16 @@ can_moderate (bool): Whether to show moderation controls (relabel/delete)
             {% endif %}
             {% if can_moderate %}
             <button type="button"
-                onclick="relabelDetection(event, {{ sib.detection_id }}, '{{ sib.species_key or sib.cls_class_name or sib.od_class_name }}')"
-                title="Relabel species"
-                style="position:absolute;top:4px;right:24px;background:none;border:none;cursor:pointer;font-size:0.7rem;opacity:0.4;padding:2px 4px;border-radius:3px;transition:opacity 0.15s;"
-                onmouseenter="this.style.opacity='1';this.style.background='rgba(167,139,250,0.15)'"
-                onmouseleave="this.style.opacity='0.4';this.style.background='none'">🏷️</button>
-            <button type="button" onclick="deleteDetection(event, {{ sib.detection_id }})" title="Delete this detection"
-                style="position:absolute;top:4px;right:4px;background:none;border:none;cursor:pointer;font-size:0.7rem;opacity:0.4;padding:2px 4px;border-radius:3px;transition:opacity 0.15s;"
-                onmouseenter="this.style.opacity='1';this.style.background='rgba(220,53,69,0.15)'"
-                onmouseleave="this.style.opacity='0.4';this.style.background='none'">🗑</button>
+                data-action="change-species"
+                data-detection-id="{{ sib.detection_id }}"
+                data-current-species="{{ sib.species_key or sib.cls_class_name or sib.od_class_name }}"
+                title="Change Species"
+                class="sibling-card__action sibling-card__action--relabel">🏷️</button>
+            <button type="button"
+                data-action="move-trash"
+                data-detection-id="{{ sib.detection_id }}"
+                title="Move to Trash"
+                class="sibling-card__action sibling-card__action--delete">🗑</button>
             {% endif %}
             <div style="clear: both;"></div>
         </div>
@@ -86,13 +87,13 @@ can_moderate (bool): Whether to show moderation controls (relabel/delete)
         style="display: flex; flex-wrap: wrap; justify-content: center; gap: 0.5rem; max-width: 100%;">
         <div class="sibling-card" data-detection-id="{{ det.detection_id }}" tabindex="-1"
             data-bbox-x="{{ det.bbox_x }}" data-bbox-y="{{ det.bbox_y }}" data-bbox-w="{{ det.bbox_w }}"
-            data-bbox-h="{{ det.bbox_h }}" data-bbox-name="{{ det.common_name }}" onmouseenter="showHoverBbox(this)"
-            onmouseleave="hideHoverBbox(this)" style="
+            data-bbox-h="{{ det.bbox_h }}" data-bbox-name="{{ det.common_name }}"
+            data-current-species="{{ det.species_key or det.cls_class_name or det.od_class_name }}" style="
                 position: relative;
-                min-width: 160px; 
-                max-width: 200px; 
-                padding: 0.5rem; 
-                border: 1px solid var(--color-border, #dee2e6); 
+                min-width: 160px;
+                max-width: 200px;
+                padding: 0.5rem;
+                border: 1px solid var(--color-border, #dee2e6);
                 border-radius: 0.375rem;
                 text-align: left;
                 cursor: pointer;
@@ -115,15 +116,16 @@ can_moderate (bool): Whether to show moderation controls (relabel/delete)
             {% endif %}
             {% if can_moderate %}
             <button type="button"
-                onclick="relabelDetection(event, {{ det.detection_id }}, '{{ det.species_key or det.cls_class_name or det.od_class_name }}')"
-                title="Relabel species"
-                style="position:absolute;top:4px;right:24px;background:none;border:none;cursor:pointer;font-size:0.7rem;opacity:0.4;padding:2px 4px;border-radius:3px;transition:opacity 0.15s;"
-                onmouseenter="this.style.opacity='1';this.style.background='rgba(167,139,250,0.15)'"
-                onmouseleave="this.style.opacity='0.4';this.style.background='none'">🏷️</button>
-            <button type="button" onclick="deleteDetection(event, {{ det.detection_id }})" title="Delete this detection"
-                style="position:absolute;top:4px;right:4px;background:none;border:none;cursor:pointer;font-size:0.7rem;opacity:0.4;padding:2px 4px;border-radius:3px;transition:opacity 0.15s;"
-                onmouseenter="this.style.opacity='1';this.style.background='rgba(220,53,69,0.15)'"
-                onmouseleave="this.style.opacity='0.4';this.style.background='none'">🗑</button>
+                data-action="change-species"
+                data-detection-id="{{ det.detection_id }}"
+                data-current-species="{{ det.species_key or det.cls_class_name or det.od_class_name }}"
+                title="Change Species"
+                class="sibling-card__action sibling-card__action--relabel">🏷️</button>
+            <button type="button"
+                data-action="move-trash"
+                data-detection-id="{{ det.detection_id }}"
+                title="Move to Trash"
+                class="sibling-card__action sibling-card__action--delete">🗑</button>
             {% endif %}
             <div style="clear: both;"></div>
         </div>

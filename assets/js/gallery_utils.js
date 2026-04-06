@@ -353,23 +353,9 @@ async function relabelDetection(event, detectionId, currentSpecies) {
             return;
         }
         if (resp.ok) {
-            // Update the sibling card text in-place
-            const card = openModal?.querySelector(`.sibling-card[data-detection-id="${detectionId}"]`);
-            if (card) {
-                const nameEl = card.querySelector('div[style*="font-weight: 600"]');
-                if (nameEl) nameEl.textContent = choice.common;
-                card.dataset.bboxName = choice.common;
-                card.dataset.currentSpecies = choice.scientific;
-                // Flash green briefly
-                card.style.transition = 'background 0.3s';
-                card.style.background = 'rgba(52,211,153,0.2)';
-                setTimeout(() => { card.style.background = ''; }, 1200);
-            }
-            // Also update modal title if this is the main detection
-            const titleEl = openModal?.querySelector('.wm-modal__title-text');
-            if (titleEl && titleEl.textContent.trim().includes(currentSpecies?.replace(/_/g, ' '))) {
-                titleEl.innerHTML = `<em>${choice.common}</em>`;
-            }
+            // Species changed — reload to get correct groupings and status
+            location.reload();
+            return;
         } else {
             const data = await resp.json();
             alert('Relabel failed: ' + (data.error || data.message || 'Unknown error'));
@@ -832,3 +818,48 @@ document.addEventListener('shown.bs.modal', function (event) {
         if (typeof initBboxOverlay === 'function') initBboxOverlay(img);
     }
 });
+
+/* =========================================
+   Image Viewer Init (replaces inline onload)
+   ========================================= */
+
+// Delegated load handler for modal image viewers
+document.addEventListener('load', function (event) {
+    const img = event.target;
+    if (!img.classList || !img.classList.contains('wm-image-viewer__img')) return;
+    if (typeof initBboxOverlay === 'function') initBboxOverlay(img);
+    if (typeof initSmartZoom === 'function') initSmartZoom(img);
+}, true);
+
+/* =========================================
+   Delegated Sibling Card Handlers
+   ========================================= */
+
+// Delegated click handler for sibling-card data-action buttons
+document.addEventListener('click', function (event) {
+    const btn = event.target.closest('[data-action]');
+    if (!btn) return;
+    const card = btn.closest('.sibling-card');
+    if (!card) return;
+
+    const action = btn.dataset.action;
+    const detectionId = parseInt(btn.dataset.detectionId, 10);
+
+    if (action === 'change-species') {
+        const currentSpecies = btn.dataset.currentSpecies || '';
+        relabelDetection(event, detectionId, currentSpecies);
+    } else if (action === 'move-trash') {
+        deleteDetection(event, detectionId);
+    }
+});
+
+// Delegated hover handlers for sibling-card bbox preview
+document.addEventListener('mouseenter', function (event) {
+    const card = event.target.closest('.sibling-card');
+    if (card && typeof showHoverBbox === 'function') showHoverBbox(card);
+}, true);
+
+document.addEventListener('mouseleave', function (event) {
+    const card = event.target.closest('.sibling-card');
+    if (card && typeof hideHoverBbox === 'function') hideHoverBbox(card);
+}, true);
