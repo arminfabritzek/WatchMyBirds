@@ -24,8 +24,9 @@ class (for example `wm-modal wm-modal--form`, `wm-tile wm-tile--review`).
   `workbench shell` for Review and Trash. Layout density may differ, but shared
   detection components must not fork semantics or wording between shells.
 - New shared buttons must use `btn` plus the design-system modifiers such as
-  `btn--primary`, `btn--secondary`, `btn--danger`, `btn--sm`, `btn--lg`, and
-  `btn--block`.
+  `btn--primary`, `btn--secondary`, `btn--danger`, `btn--accent`, `btn--success`,
+  `btn--info`, `btn--outline-primary`, `btn--outline-danger`, `btn--sm`,
+  `btn--lg`, and `btn--block`.
 - Legacy Bootstrap-era button classes still exist in older surfaces such as
   `settings`, `edit`, `login`, and `partials/taskbar`. They are tolerated only
   as migration debt. Do not introduce new `btn btn-primary`,
@@ -84,7 +85,7 @@ detection-bearing tiles, filmstrips, and modal/detail surfaces.
 
 - Canonical action vocabulary:
   `View Details`, `Favorite`, `Change Species`, `Move to Trash`, `Restore`,
-  `BBox Confirm`, `BBox Reject`, `Approve Detection`, `Deep Scan`
+  `Correct`, `Wrong`, `Approve`, `Deep Scan`, `Mark No Bird`
 - Surfaces may omit actions only when the subject identity or route does not
   support them. They must not rename the same underlying action on another
   surface.
@@ -115,7 +116,7 @@ detection-bearing tiles, filmstrips, and modal/detail surfaces.
 
 `docs/UI_STANDARD.md` defines shared frontend composition rules. The architecture
 lane in
-`agent_handoff/workflow/active/main/2026-03-28_ARCHITECTURE_detection-presentation-source-of-truth_ACTIVE.md`
+`agent_handoff/workflow/active/main/2026-03-28_ARCHITECTURE_detection-presentation-source-of-truth_ACTIVE_ONHOLD.md`
 defines the semantic migration target for detection presentation.
 
 To prevent future drift between surfaces:
@@ -207,6 +208,14 @@ To prevent future drift between surfaces:
 
 ---
 
+**Review-specific modifiers:**
+- `wm-modal__body--review` — applied to the modal body in the Review workbench
+  context (orphan_modal.html). Adjusts layout for the inline review stage.
+- `wm-modal__image--solo` — applied to the modal image container when displaying
+  a non-detection image without bbox overlays or sibling panels.
+
+---
+
 ### 1.2 Form Modal (wm-modal wm-modal--form)
 
 ```html
@@ -282,7 +291,12 @@ To prevent future drift between surfaces:
 
 ---
 
-### 2.2 Review Tile (wm-tile wm-tile--review)
+### 2.2 Review Tile (wm-tile wm-tile--review) — Legacy
+
+> **Note:** This tile type has been replaced by the `review-stage-panel`
+> composition (see §6). The CSS class `wm-tile--review` still exists in
+> `design-system.css` but the HTML structure below is no longer produced by any
+> template. Retained here for reference only.
 
 ```html
 <div class="wm-tile wm-tile--review" data-filename="{{ filename }}">
@@ -380,10 +394,95 @@ To prevent future drift between surfaces:
 
 ---
 
+## 5. Tile Toolbox (wm-toolbox)
+
+The tile toolbox is the shared action overlay for detection-bearing tiles,
+filmstrip items, and modal image viewers. It is rendered by the
+`tile_toolbox` macro in `templates/partials/tile_toolbox.html`.
+
+**Host pattern:** Any container that hosts a toolbox adds the class
+`wm-toolbox-host`. This enables hover/focus reveal behavior. Used on
+`wm-tile`, `obs-filmstrip__item`, and `wm-modal__image`.
+
+**Class vocabulary:**
+
+| Class | Role |
+|---|---|
+| `wm-toolbox-host` | Container that reveals the toolbox on hover/focus |
+| `wm-toolbox` | Toolbox root — positioned overlay inside the host |
+| `wm-toolbox--bar` | Bar variant — horizontal strip layout |
+| `wm-toolbox__btn` | Individual action button |
+| `wm-toolbox__fav` | Favorite toggle button (special styling) |
+| `wm-toolbox__menu` | Dropdown trigger (three-dot / more button) |
+| `wm-toolbox__more` | Alias for the menu trigger |
+| `wm-toolbox__dropdown` | Dropdown panel |
+| `wm-toolbox__item` | Individual dropdown menu item |
+
+```html
+<div class="wm-toolbox-host">
+  <img class="wm-tile__image" src="..." alt="...">
+
+  <div class="wm-toolbox">
+    <button class="wm-toolbox__fav" data-action="favorite">...</button>
+    <button class="wm-toolbox__btn" data-action="view-details">...</button>
+    <div class="wm-toolbox__menu">
+      <button class="wm-toolbox__more">...</button>
+      <div class="wm-toolbox__dropdown">
+        <button class="wm-toolbox__item" data-action="change-species">Change Species</button>
+        <button class="wm-toolbox__item" data-action="move-trash">Move to Trash</button>
+      </div>
+    </div>
+  </div>
+</div>
+```
+
+---
+
+## 6. Review Stage Panel (review-stage-panel)
+
+The Review workbench uses a dedicated composition that replaces the earlier
+`wm-tile--review` tile pattern (see §2.2 Legacy). The stage is rendered by
+`templates/components/review_stage_panel.html` and
+`templates/components/orphan_modal.html`.
+
+**Layout:** Queue rail on the left, image viewer/stage in the center,
+decision/inspector rail on the right.
+
+**Key class families:**
+
+| Class prefix | Role |
+|---|---|
+| `review-stage-panel__content` | Outer content wrapper |
+| `review-stage-panel__workbench` | Main workbench grid |
+| `review-stage-panel__canvas` | Center canvas area |
+| `review-stage-panel__viewer-shell` | Viewer container with stable aspect ratio |
+| `review-stage-panel__viewer` | Inner viewer |
+| `review-stage-panel__viewer-media` | Media container |
+| `review-stage-panel__image-frame` | Stable image frame for bbox alignment |
+| `review-stage-panel__facts-toggle` | Toggle control for metadata reveal |
+| `review-stage-panel__facts-panel` | Collapsible metadata panel |
+| `review-stage-panel__facts-grid` | Grid layout for fact items |
+| `review-stage-panel__facts-item` | Individual metadata fact |
+| `review-stage-panel__decision-rail` | Right-side decision/action rail |
+| `review-stage-panel__section` | Grouped section in the decision rail |
+| `review-stage-panel__section-label` | Section heading |
+| `review-stage-panel__bbox-actions` | BBox action group |
+| `review-stage-panel__species-strip` | Quick species selection strip |
+| `review-stage-panel__species-btn` | Individual species button |
+| `review-stage-panel__nav` | Navigation controls |
+| `review-stage-panel__controls` | General control group |
+
+**Section labels in the decision rail:**
+`BBox`, `Species`, `Decision`, `Utilities`
+
+---
+
 ## Rules
 
 1. Every modal structure uses a defined type: `wm-modal` or `wm-modal wm-modal--form`.
-2. Every tile structure uses a defined type: `wm-tile`, `wm-tile wm-tile--review`, or `wm-tile wm-tile--bbox`.
-3. No template may build its own modal or tile structures.
-4. Only these classes may be used.
-5. CSS refers exclusively to these classes.
+2. Every tile structure uses a defined type: `wm-tile`, `wm-tile wm-tile--review` (legacy), or `wm-tile wm-tile--bbox`.
+3. The Review workbench uses the `review-stage-panel` composition (§6), not standalone tiles.
+4. Every detection-bearing surface uses `tile_toolbox` (§5) for action overlays.
+5. No template may build its own modal, tile, or toolbox structures.
+6. Only these classes may be used.
+7. CSS refers exclusively to these classes.
