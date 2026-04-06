@@ -560,7 +560,7 @@ def ingest_file(
                     },
                 )
 
-        logger.info(f"Ingested {filepath} -> {original_name}")
+        logger.debug(f"Ingested {filepath} -> {original_name}")
 
     # CASE B: No Detection
     else:
@@ -594,7 +594,7 @@ def ingest_file(
                 "classifier_model_id": getattr(classifier, "model_id", "unknown"),
             },
         )
-        logger.info(f"Ingested (No Detection) {filepath}")
+        logger.debug(f"Ingested (No Detection) {filepath}")
 
     return "ingested"
 

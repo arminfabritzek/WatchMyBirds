@@ -104,7 +104,7 @@ def submit_analysis_job(filename: str, force: bool = False) -> bool:
     """
     is_eligible, reason = check_deep_analysis_eligibility(filename, force=force)
     if not is_eligible:
-        logger.info(f"Skipping deep analysis for {filename}: {reason}")
+        logger.debug(f"Skipping deep analysis for {filename}: {reason}")
         return False
 
     # Optionally reset deep_scan_last_result on force re-scan
@@ -121,7 +121,7 @@ def submit_analysis_job(filename: str, force: bool = False) -> bool:
     try:
         ok = analysis_queue.enqueue({"filename": filename})
         if not ok:
-            logger.info(f"Dedup: {filename} already pending in queue")
+            logger.debug(f"Dedup: {filename} already pending in queue")
         return ok
     except Exception as e:
         logger.error(f"Failed to submit analysis job: {e}")
@@ -159,7 +159,7 @@ def submit_moderation_rescan(
             }
         )
         if not ok:
-            logger.info(f"Dedup: {filename} already pending in queue")
+            logger.debug(f"Dedup: {filename} already pending in queue")
         return ok
     except Exception as e:
         logger.error(f"Failed to submit moderation rescan: {e}")
@@ -362,7 +362,7 @@ def process_deep_analysis_job(detection_manager, job_data: dict):
     if mode == "orphan":
         is_eligible, reason = check_deep_analysis_eligibility(filename)
         if not is_eligible:
-            logger.info(f"Skipping deep analysis for {filename}: {reason}")
+            logger.debug(f"Skipping deep analysis for {filename}: {reason}")
             return
     # moderation_rescan: no eligibility check — the image intentionally has detections
 
@@ -390,7 +390,7 @@ def process_deep_analysis_job(detection_manager, job_data: dict):
         start_ts = datetime.now()
         detections = detection_manager.run_exhaustive_scan(frame)
         duration_sec = (datetime.now() - start_ts).total_seconds()
-        logger.info(f"Deep scan: {len(detections)} objects in {duration_sec:.2f}s")
+        logger.debug(f"Deep scan: {len(detections)} objects in {duration_sec:.2f}s")
     except Exception as e:
         logger.error(f"Deep scan failed: {e}", exc_info=True)
         if mode == "orphan":
@@ -398,7 +398,7 @@ def process_deep_analysis_job(detection_manager, job_data: dict):
         return
 
     if not detections:
-        logger.info(f"Deep scan for {filename} found nothing.")
+        logger.debug(f"Deep scan for {filename} found nothing.")
         if mode == "orphan":
             _record_deep_scan_result(filename, "none")
         return
