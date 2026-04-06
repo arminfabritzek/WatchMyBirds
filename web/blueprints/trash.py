@@ -18,7 +18,11 @@ from flask import Blueprint, jsonify, render_template, request
 
 from config import get_config
 from logging_config import get_logger
-from utils.review_metadata import format_review_timestamp
+from utils.review_metadata import (
+    REVIEW_STATUS_CONFIRMED_BIRD,
+    format_review_timestamp,
+)
+from core import gallery_core as gallery_service
 from utils.species_names import (
     UNKNOWN_SPECIES_KEY,
     build_species_picker_entries,
@@ -314,13 +318,43 @@ def relabel_detection():
             return jsonify({"error": "unknown species"}), 400
 
         db_service.apply_species_override(conn, detection_id, new_species, "manual")
-        # Invalidate gallery cache so the change shows immediately
-        try:
-            from web.web_interface import _cached_images
 
-            _cached_images["images"] = None
-        except Exception:
-            pass
+        # Mark this detection as human-confirmed
+        conn.execute(
+            """
+            UPDATE detections
+            SET decision_state = 'confirmed'
+            WHERE detection_id = ?
+              AND COALESCE(status, 'active') = 'active'
+            """,
+            (detection_id,),
+        )
+
+        # If all active detections on the same image are now resolved,
+        # promote the image review_status to confirmed_bird
+        filename = conn.execute(
+            "SELECT image_filename FROM detections WHERE detection_id = ?",
+            (detection_id,),
+        ).fetchone()
+        if filename:
+            filename = filename[0]
+            unresolved = conn.execute(
+                """
+                SELECT COUNT(*)
+                FROM detections d
+                WHERE d.image_filename = ?
+                  AND COALESCE(d.status, 'active') = 'active'
+                  AND COALESCE(d.decision_state, '') NOT IN ('confirmed', 'rejected')
+                """,
+                (filename,),
+            ).fetchone()[0]
+            if unresolved == 0:
+                db_service.update_review_status(
+                    conn, [filename], REVIEW_STATUS_CONFIRMED_BIRD
+                )
+        conn.commit()
+
+        gallery_service.invalidate_cache()
         logger.info(f"Detection {detection_id} relabeled to {new_species}")
         return jsonify({"status": "success", "new_species": new_species})
     except Exception as e:

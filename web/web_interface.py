@@ -1570,6 +1570,36 @@ def create_web_interface(detection_manager, system_monitor=None):
                     formatted_time = ""
                     gallery_date = ""
 
+                # Load sibling detections if multiple birds on same image
+                sibling_count = det.get("sibling_count", 1) or 1
+                siblings = []
+                if sibling_count > 1:
+                    original_name = det.get("original_name", "")
+                    if original_name:
+                        sibling_rows = gallery_service.get_sibling_detections(
+                            original_name
+                        )
+                        for sib in sibling_rows:
+                            sib_species_key = _get_species_key_local(sib)
+                            sib_thumb = sib.get("thumbnail_path_virtual")
+                            siblings.append(
+                                _build_detection_view_dict(
+                                    sib,
+                                    species_key=sib_species_key,
+                                    common_name=_get_common_name_local(
+                                        sib_species_key
+                                    ),
+                                    include_decision_state=True,
+                                    extra={
+                                        "thumb_url": (
+                                            f"/uploads/derivatives/thumbs/{sib_thumb}"
+                                            if sib_thumb
+                                            else ""
+                                        ),
+                                    },
+                                )
+                            )
+
                 detections.append(
                     _build_detection_view_dict(
                         det,
@@ -1578,6 +1608,8 @@ def create_web_interface(detection_manager, system_monitor=None):
                         formatted_date=formatted_date,
                         formatted_time=formatted_time,
                         gallery_date=gallery_date,
+                        siblings=siblings,
+                        sibling_count=sibling_count,
                         include_decision_state=True,
                         extra={
                             "display_path": display_url,
