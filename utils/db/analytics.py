@@ -14,14 +14,17 @@ def fetch_all_time_daily_counts(conn: sqlite3.Connection) -> list[sqlite3.Row]:
     Returns daily detection counts for all-time data.
     Output: list of rows with 'date_iso' (YYYY-MM-DD) and 'count'.
     """
-    cur = conn.execute("""
+    from utils.db.detections import _gallery_visibility_sql
+
+    cur = conn.execute(f"""
         SELECT
-            (substr(image_filename, 1, 4) || '-' ||
-             substr(image_filename, 5, 2) || '-' ||
-             substr(image_filename, 7, 2)) AS date_iso,
+            (substr(d.image_filename, 1, 4) || '-' ||
+             substr(d.image_filename, 5, 2) || '-' ||
+             substr(d.image_filename, 7, 2)) AS date_iso,
             COUNT(*) AS count
-        FROM detections
-        WHERE status = 'active'
+        FROM detections d
+        JOIN images i ON d.image_filename = i.filename
+        WHERE {_gallery_visibility_sql("d", "i")}
         GROUP BY date_iso
         ORDER BY date_iso ASC
         """)
@@ -43,6 +46,7 @@ def fetch_all_detection_times(
         JOIN images i ON d.image_filename = i.filename
         WHERE d.status = 'active'
           AND (i.review_status IS NULL OR i.review_status != 'no_bird')
+          AND lower(COALESCE(d.decision_state, '')) NOT IN ('uncertain', 'unknown')
           AND (d.score IS NULL OR d.score >= ?)
           AND EXISTS (
               SELECT 1 FROM classifications c
@@ -78,6 +82,7 @@ def fetch_species_timestamps(
         JOIN images i ON d.image_filename = i.filename
         WHERE d.status = 'active'
           AND (i.review_status IS NULL OR i.review_status != 'no_bird')
+          AND lower(COALESCE(d.decision_state, '')) NOT IN ('uncertain', 'unknown')
           AND (d.score IS NULL OR d.score >= ?)
           AND EXISTS (
               SELECT 1 FROM classifications c
@@ -103,6 +108,7 @@ def fetch_analytics_summary(
     _base_where = """
         d.status = 'active'
         AND (i.review_status IS NULL OR i.review_status != 'no_bird')
+        AND lower(COALESCE(d.decision_state, '')) NOT IN ('uncertain', 'unknown')
         AND (d.score IS NULL OR d.score >= ?)
         AND EXISTS (
             SELECT 1 FROM classifications c
@@ -476,7 +482,7 @@ def fetch_weather_detection_correlation(conn: sqlite3.Connection) -> list[dict]:
             hour_key = w["timestamp"][:13]  # "YYYY-MM-DDTHH"
             weather_by_hour[hour_key] = w
 
-        # 2. Fetch detection hours
+        # 2. Fetch detection hours (gallery-aligned visibility)
         det_rows = conn.execute("""
             SELECT
                 substr(i.timestamp, 1, 4) || '-' ||
@@ -486,6 +492,8 @@ def fetch_weather_detection_correlation(conn: sqlite3.Connection) -> list[dict]:
             FROM detections d
             JOIN images i ON d.image_filename = i.filename
             WHERE d.status = 'active'
+              AND (i.review_status IS NULL OR i.review_status != 'no_bird')
+              AND lower(COALESCE(d.decision_state, '')) NOT IN ('uncertain', 'unknown')
         """).fetchall()
 
         # 3. Match in Python (O(1) per detection)
@@ -602,13 +610,16 @@ def fetch_simulation_data(
     Uses visual detections (camera data) as the primary source.
     """
     try:
-        # 1. Species list for dropdown
+        # 1. Species list for dropdown (gallery-aligned visibility)
         species_cur = conn.execute("""
             SELECT DISTINCT COALESCE(c.cls_class_name, d.od_class_name) AS species
             FROM detections d
+            JOIN images i ON d.image_filename = i.filename
             LEFT JOIN classifications c
                 ON d.detection_id = c.detection_id AND c.status = 'active'
             WHERE d.status = 'active'
+              AND (i.review_status IS NULL OR i.review_status != 'no_bird')
+              AND lower(COALESCE(d.decision_state, '')) NOT IN ('uncertain', 'unknown')
               AND COALESCE(c.cls_class_name, d.od_class_name) IS NOT NULL
             ORDER BY species ASC
         """)
@@ -624,7 +635,7 @@ def fetch_simulation_data(
                 "excluded_species": None,
             }
 
-        # 2. Daily time series – real (all species)
+        # 2. Daily time series – real (all species, gallery-aligned)
         daily_real_cur = conn.execute("""
             SELECT
                 (substr(i.timestamp, 1, 4) || '-' ||
@@ -636,6 +647,8 @@ def fetch_simulation_data(
             LEFT JOIN classifications c
                 ON d.detection_id = c.detection_id AND c.status = 'active'
             WHERE d.status = 'active'
+              AND (i.review_status IS NULL OR i.review_status != 'no_bird')
+              AND lower(COALESCE(d.decision_state, '')) NOT IN ('uncertain', 'unknown')
             GROUP BY date_iso
             ORDER BY date_iso ASC
         """)
@@ -656,6 +669,8 @@ def fetch_simulation_data(
                 LEFT JOIN classifications c
                     ON d.detection_id = c.detection_id AND c.status = 'active'
                 WHERE d.status = 'active'
+                  AND (i.review_status IS NULL OR i.review_status != 'no_bird')
+                  AND lower(COALESCE(d.decision_state, '')) NOT IN ('uncertain', 'unknown')
                   AND COALESCE(c.cls_class_name, d.od_class_name) != ?
                 GROUP BY date_iso
                 ORDER BY date_iso ASC
@@ -680,15 +695,18 @@ def fetch_simulation_data(
                 }
             )
 
-        # 4. Per-species counts for biodiversity indices
+        # 4. Per-species counts for biodiversity indices (gallery-aligned)
         count_cur = conn.execute("""
             SELECT
                 COALESCE(c.cls_class_name, d.od_class_name) AS species,
                 COUNT(*) AS n
             FROM detections d
+            JOIN images i ON d.image_filename = i.filename
             LEFT JOIN classifications c
                 ON d.detection_id = c.detection_id AND c.status = 'active'
             WHERE d.status = 'active'
+              AND (i.review_status IS NULL OR i.review_status != 'no_bird')
+              AND lower(COALESCE(d.decision_state, '')) NOT IN ('uncertain', 'unknown')
               AND COALESCE(c.cls_class_name, d.od_class_name) IS NOT NULL
             GROUP BY species
             ORDER BY n DESC
@@ -879,6 +897,8 @@ def fetch_bird_visits(
         LEFT JOIN classifications c
             ON d.detection_id = c.detection_id AND c.status = 'active'
         WHERE d.status = 'active'
+          AND (i.review_status IS NULL OR i.review_status != 'no_bird')
+          AND lower(COALESCE(d.decision_state, '')) NOT IN ('uncertain', 'unknown')
           AND COALESCE(c.cls_class_name, d.od_class_name) IS NOT NULL
           {time_filter}
         ORDER BY i.timestamp ASC, species ASC
