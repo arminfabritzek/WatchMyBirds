@@ -13,7 +13,13 @@ def test_tile_toolbox_supports_details_href():
     content = _read("templates/partials/tile_toolbox.html")
 
     assert "details_href=none" in content
+    assert "allow_favorite=true" in content
+    assert "allow_details=true" in content
+    assert "allow_change_species=true" in content
+    assert "allow_move_to_trash=true" in content
+    assert "allow_review_no_bird=true" in content
     assert "modal_target or details_href" in content
+    assert "allow_details and (modal_target or details_href)" in content
     assert "data-details-href" in content
 
 

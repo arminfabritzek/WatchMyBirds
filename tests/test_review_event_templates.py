@@ -182,7 +182,7 @@ def test_review_workspace_js_drill_down_works_without_rail_dom():
 
 
 def test_review_event_panel_mounts_tile_toolbox_on_every_grid_cell():
-    """Every actionable event grid cell hosts ``tile_toolbox``."""
+    """Every event grid cell hosts ``tile_toolbox`` for viewer tools."""
     content = _read("templates/components/review_event_panel.html")
 
     # Macro import.
@@ -193,6 +193,12 @@ def test_review_event_panel_mounts_tile_toolbox_on_every_grid_cell():
 
     # Viewer tools, including the zoom toggle, are wired on the grid cells.
     assert "show_viewer_tools=true" in content
+    assert "detection_id=member.best_detection_id" in content
+    assert "modal_target=member_modal_target if not member.context_only else none" in content
+    assert "details_href=('/gallery/' ~ member.gallery_date ~ '?focus=' ~ member.best_detection_id ~ '#detection-' ~ member.best_detection_id) if member.context_only and member.gallery_date and member.best_detection_id else none" in content
+    assert "allow_change_species=not member.context_only" in content
+    assert "allow_move_to_trash=not member.context_only" in content
+    assert "allow_review_no_bird=not member.context_only" in content
 
     # The single event grid calls tile_toolbox with `surface='review'`
     # and `can_moderate=true`.
@@ -301,6 +307,16 @@ def test_design_system_uses_neutral_event_grid_border_and_green_anchor_highlight
     assert '.review-event-panel__cell[data-context-only="1"] {' in content
     assert "border-color: rgba(47, 143, 78, 0.82);" in content
     assert ".review-event-panel__cell-badge--anchor {" in content
+
+
+def test_context_only_event_cells_keep_hover_enabled_for_viewer_tools():
+    content = _read("assets/design-system.css")
+
+    start = content.index('.review-event-panel__cell[data-context-only="1"] {')
+    end = content.index("}", start)
+    block = content[start:end]
+
+    assert "pointer-events: none;" not in block
 
 
 def test_orphan_modal_carries_species_colour_and_ref_overlay():

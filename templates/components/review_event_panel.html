@@ -162,21 +162,24 @@
                                 title="{{ member.candidate_species_common or member.current_species_common }}"
                                 aria-hidden="true">{{ (member.candidate_species_common or member.current_species_common)[0] }}</span>
                             {% endif %}
-                            {% if not member.context_only %}
                             {{ tile_toolbox(
                             detection_id=member.best_detection_id,
-                            filename=member.filename,
+                            filename=member.filename if not member.context_only else none,
                             surface='review',
+                            is_favorite=member.is_favorite | default(false),
                             can_moderate=true,
-                            review_reason=member.review_reason,
-                            modal_target=member_modal_target,
+                            review_reason=member.review_reason if not member.context_only else none,
+                            modal_target=member_modal_target if not member.context_only else none,
+                            details_href=('/gallery/' ~ member.gallery_date ~ '?focus=' ~ member.best_detection_id ~ '#detection-' ~ member.best_detection_id) if member.context_only and member.gallery_date and member.best_detection_id else none,
                             current_species=member.candidate_species or member.current_species or none,
                             show_viewer_tools=true,
                             show_boxes=member_has_bbox,
                             current_bbox_json=member_bbox | tojson if member_bbox else None,
+                            allow_change_species=not member.context_only,
+                            allow_move_to_trash=not member.context_only,
+                            allow_review_no_bird=not member.context_only,
                             frame_variant='overlay'
                             ) }}
-                            {% endif %}
                         </div>
                         <div class="review-event-panel__cell-body">
                             {# The cell species label is a button that opens

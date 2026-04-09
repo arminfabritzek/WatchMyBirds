@@ -141,7 +141,8 @@ def fetch_review_queue_images(
             NULL as manual_species_override,
             NULL as species_source,
             NULL as manual_bbox_review,
-            0 as sibling_detection_count
+            0 as sibling_detection_count,
+            0 as is_favorite
         FROM images i
         WHERE {orphan_where_sql}
 
@@ -191,6 +192,7 @@ def fetch_review_queue_images(
             d.manual_species_override,
             d.species_source,
             d.manual_bbox_review,
+            COALESCE(d.is_favorite, 0) as is_favorite,
             (
                 SELECT COUNT(*)
                 FROM detections ds
@@ -266,7 +268,8 @@ def fetch_review_queue_item_by_identity(
             NULL as manual_species_override,
             NULL as species_source,
             NULL as manual_bbox_review,
-            0 as sibling_detection_count
+            0 as sibling_detection_count,
+            0 as is_favorite
         FROM images i
         WHERE (i.review_status IS NULL OR i.review_status = 'untagged')
           AND NOT EXISTS (SELECT 1 FROM detections d WHERE d.image_filename = i.filename)
@@ -320,6 +323,7 @@ def fetch_review_queue_item_by_identity(
             d.manual_species_override,
             d.species_source,
             d.manual_bbox_review,
+            COALESCE(d.is_favorite, 0) as is_favorite,
             (
                 SELECT COUNT(*)
                 FROM detections ds
@@ -459,7 +463,8 @@ def fetch_review_cluster_context(
         d.manual_species_override,
         d.species_source,
         d.manual_bbox_review,
-        0 as sibling_detection_count
+        0 as sibling_detection_count,
+        COALESCE(d.is_favorite, 0) as is_favorite
     FROM detections d
     JOIN images i ON i.filename = d.image_filename
     WHERE COALESCE(d.status, 'active') = 'active'

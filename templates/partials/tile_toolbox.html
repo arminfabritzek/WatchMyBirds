@@ -29,12 +29,17 @@ current_species=none,
 frame_variant='overlay',
 show_viewer_tools=false,
 show_boxes=false,
-current_bbox_json='{}'
+current_bbox_json='{}',
+allow_favorite=true,
+allow_details=true,
+allow_change_species=true,
+allow_move_to_trash=true,
+allow_review_no_bird=true
 ) %}
-{% set can_open_details = modal_target or details_href %}
-{% set show_favorite = detection_id %}
-{% set show_change_species = detection_id %}
-{% set show_move_to_trash = detection_id and surface != 'trash' %}
+{% set can_open_details = allow_details and (modal_target or details_href) %}
+{% set show_favorite = detection_id and allow_favorite %}
+{% set show_change_species = detection_id and allow_change_species %}
+{% set show_move_to_trash = detection_id and surface != 'trash' and allow_move_to_trash %}
 {% set show_restore = surface == 'trash' %}
 {% set show_deep_scan = surface == 'review' and review_reason == 'orphan' and filename %}
 
@@ -119,7 +124,7 @@ current_bbox_json='{}'
             {% endif %}
 
             {# Review-specific: image-backed no-bird state still lives on the image #}
-            {% if surface == 'review' and filename %}
+            {% if surface == 'review' and filename and allow_review_no_bird %}
             <button type="button" class="wm-toolbox__item wm-toolbox__item--danger" role="menuitem"
                 data-action="review-no-bird" data-filename="{{ filename }}" aria-label="Mark as no bird">
                 ✗ <span>Mark No Bird</span>
