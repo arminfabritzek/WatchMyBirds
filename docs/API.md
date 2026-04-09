@@ -158,7 +158,7 @@ Scans the network for supported IP cameras.
   "status": "success",
   "cameras": [
     {
-      "ip": "192.168.1.100",
+      "ip": "198.51.100.10",
       "port": 80,
       "name": "Camera 1",
       "manufacturer": "Reolink",
@@ -184,10 +184,10 @@ Retrieves an RTSP stream URI for a configured camera.
 **Request Body:**
 ```json
 {
-  "ip": "192.168.1.100",
+  "ip": "198.51.100.10",
   "port": 80,
-  "username": "admin",
-  "password": "secret"
+  "username": "viewer",
+  "password": "example-password"
 }
 ```
 
@@ -195,7 +195,7 @@ Retrieves an RTSP stream URI for a configured camera.
 ```json
 {
   "status": "success",
-  "uri": "rtsp://admin:secret@192.168.1.100:554/stream"
+  "uri": "rtsp://viewer:example-password@198.51.100.10:554/stream"
 }
 ```
 
@@ -214,7 +214,7 @@ Lists all saved cameras.
     {
       "id": 1,
       "name": "Front Yard Camera",
-      "ip": "192.168.1.100",
+      "ip": "198.51.100.10",
       "port": 80,
       "username": "admin"
     }
@@ -231,10 +231,10 @@ Adds a new camera.
 ```json
 {
   "name": "Front Yard Camera",
-  "ip": "192.168.1.100",
+  "ip": "198.51.100.10",
   "port": 80,
-  "username": "admin",
-  "password": "secret"
+  "username": "viewer",
+  "password": "example-password"
 }
 ```
 
@@ -245,7 +245,7 @@ Adds a new camera.
   "camera": {
     "id": 1,
     "name": "Front Yard Camera",
-    "ip": "192.168.1.100",
+    "ip": "198.51.100.10",
     "port": 80
   }
 }

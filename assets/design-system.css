@@ -40,6 +40,20 @@
     --color-impact-dark: #6f5b4b;
     --color-impact-ratio: #74889a;
 
+    /* Species colours — Wong (2011) colour-blind-friendly palette.
+       Eight deterministic slots are assigned alphabetically by
+       scientific name. The same scientific name always gets the same
+       slot on bbox borders, cell accents, badge tints, and reference
+       image borders. */
+    --species-colour-0: #0072B2; /* blue */
+    --species-colour-1: #E69F00; /* orange */
+    --species-colour-2: #009E73; /* green */
+    --species-colour-3: #CC79A7; /* pink */
+    --species-colour-4: #56B4E9; /* sky */
+    --species-colour-5: #D55E00; /* vermilion */
+    --species-colour-6: #F0E442; /* yellow — non-text only */
+    --species-colour-7: #000000; /* black — fallback */
+
     /* Spacing Scale (8pt grid) */
     --space-2xs: 4px;
     --space-xs: 8px;
@@ -80,6 +94,96 @@
     --z-appbar: 1000;
     --z-modal: 1100;
     --z-tooltip: 1200;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   DARK-MODE PALETTE
+   Redefines every load-bearing token inside the OS-level dark scope.
+   Every Review surface rule that uses `var(--color-*)` or
+   `var(--species-colour-N)` picks the dark variant up automatically,
+   including highlight accents, species colour bindings, receipt accents,
+   and zoom-toggle states. Token-only; no surface rules are touched apart
+   from a handful of hardcoded light backgrounds that must be overridden
+   explicitly (see the "Review-surface dark-mode overrides" block
+   further down this file).
+
+   Scope mechanism: `@media (prefers-color-scheme: dark)` so the dark
+   palette follows the OS preference without any JS toggle
+   infrastructure. If a manual theme toggle lands later, the same rule
+   set can live inside a `:root[data-theme="dark"]` selector by simply
+   duplicating the block.
+
+   Wong palette dark variants: same hues as the light palette, but
+   slightly lifted toward the "bright" Wong variants so they remain
+   readable on a dark surface without breaking the colour-blind-friendly
+   relationships between slots. The two slots that meaningfully change:
+     - slot 6 (yellow) is now text-safe on dark; the "non-text only"
+       constraint from the light scope no longer applies.
+     - slot 7 (black) becomes near-white — a dark background needs a
+       light fallback, same semantic role.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+@media (prefers-color-scheme: dark) {
+    :root {
+        /* Core surfaces — dark stone, cool graphite tint. */
+        --color-bg: #15181a;
+        --color-surface: #1e2326;
+        --color-surface-2: #262c2f;
+        --color-surface-3: #2f3539;
+
+        /* Primary family — lifted from #53676b toward a readable warm
+           slate so review highlights, the stage-connecting cue, the
+           grid border, and the species change-receipt accent all stay
+           visible on dark backgrounds. */
+        --color-primary: #92a7ab;
+        --color-primary-dark: #c9d3d5;
+        --color-primary-light: #394649;
+
+        --color-accent: #b4bcbd;
+        --color-accent-dark: #cfd5d6;
+        --color-accent-light: #394042;
+
+        --color-secondary: #9aa3a3;
+        --color-secondary-light: #343a3a;
+
+        /* Text — high-contrast cool white on dark stone. */
+        --color-text: #e8ebec;
+        --color-text-muted: #a0a7a8;
+        --color-text-subtle: #7b8284;
+
+        --color-border: #3a4145;
+        --color-border-light: #2c3235;
+
+        /* Semantic states — same hues, lifted lightness. */
+        --color-success: #8fb396;
+        --color-warning: #e1b87c;
+        --color-danger: #d89089;
+        --color-info: #8fb0b9;
+
+        /* Human Impact (Noise Analysis) — warm wood tint stays, but
+           the pair of light/dark swap roles inside the dark scope. */
+        --color-impact: #c6ae95;
+        --color-impact-light: #4a3d30;
+        --color-impact-dark: #e8d8c3;
+        --color-impact-ratio: #a0b5c6;
+
+        /* Wong palette dark variants. Same hues, lifted for
+           dark-background readability. Slot indices stay stable. */
+        --species-colour-0: #4aa3d9; /* blue — lifted from #0072B2 */
+        --species-colour-1: #f3b340; /* orange — lifted from #E69F00 */
+        --species-colour-2: #3fbe93; /* green — lifted from #009E73 */
+        --species-colour-3: #e09bc2; /* pink — lifted from #CC79A7 */
+        --species-colour-4: #7bc4ee; /* sky — lifted from #56B4E9 */
+        --species-colour-5: #e8793a; /* vermilion — lifted from #D55E00 */
+        --species-colour-6: #f5ea63; /* yellow — text-safe on dark */
+        --species-colour-7: #ececec; /* near-white — fallback flipped from black */
+
+        /* Shadows — stronger on dark so cards stay visibly lifted. */
+        --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+        --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.4), 0 2px 4px -1px rgba(0, 0, 0, 0.25);
+        --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.42), 0 4px 6px -2px rgba(0, 0, 0, 0.22);
+        --shadow-xl: 0 20px 25px -5px rgba(0, 0, 0, 0.5);
+    }
 }
 
 /* --- Global Base Styles --- */
@@ -1492,9 +1596,9 @@ code {
 
 .page-control-bar--trash-summary {
     margin-bottom: var(--space-md);
-    background: linear-gradient(180deg, rgba(247, 240, 225, 0.98), rgba(237, 226, 201, 0.96));
-    border-color: rgba(95, 71, 37, 0.18);
-    box-shadow: 0 20px 40px rgba(61, 45, 24, 0.08);
+    background: var(--color-surface);
+    border-color: var(--color-border-light);
+    box-shadow: var(--shadow-sm);
 }
 
 .trash-workbench {
@@ -1524,9 +1628,9 @@ code {
     align-items: stretch;
     gap: 12px;
     padding: 16px;
-    background: linear-gradient(180deg, rgba(247, 240, 225, 0.98), rgba(237, 226, 201, 0.96));
-    border-color: rgba(95, 71, 37, 0.18);
-    box-shadow: 0 20px 40px rgba(61, 45, 24, 0.08);
+    background: var(--color-surface);
+    border-color: var(--color-border-light);
+    box-shadow: var(--shadow-sm);
 }
 
 .page-control-bar--trash-panel .page-control-bar__left,
@@ -1551,13 +1655,13 @@ code {
 }
 
 .page-control-bar--trash-panel .page-control-bar__title {
-    background: rgba(255, 252, 247, 0.72);
-    border-color: rgba(95, 71, 37, 0.18);
+    background: var(--color-surface-2);
+    border-color: var(--color-border);
 }
 
 .page-control-bar--trash-panel .page-control-bar__select-all {
     border-radius: var(--radius-lg);
-    background: rgba(255, 255, 255, 0.82);
+    background: var(--color-surface);
 }
 
 .trash-grid {
@@ -1568,24 +1672,24 @@ code {
 }
 
 .trash-item {
-    background: linear-gradient(180deg, rgba(247, 240, 225, 0.98), rgba(233, 220, 193, 0.96));
-    border: 1px solid rgba(95, 71, 37, 0.18);
+    background: var(--color-surface);
+    border: 1px solid var(--color-border-light);
     border-radius: var(--radius-xl);
     overflow: hidden;
     position: relative;
     cursor: pointer;
     transition: all var(--transition-fast);
-    box-shadow: 0 18px 36px rgba(61, 45, 24, 0.08);
+    box-shadow: var(--shadow-sm);
 }
 
 .trash-item:hover {
-    border-color: rgba(111, 88, 51, 0.28);
+    border-color: var(--color-border);
     transform: translateY(-2px);
 }
 
 .trash-item.selected {
-    border-color: rgba(91, 121, 69, 0.78);
-    box-shadow: 0 0 0 2px rgba(91, 121, 69, 0.22), 0 18px 36px rgba(61, 45, 24, 0.12);
+    border-color: var(--color-primary);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-primary) 22%, transparent), var(--shadow-sm);
 }
 
 .trash-item__image {
@@ -1619,14 +1723,14 @@ code {
     letter-spacing: 0.05em;
     padding: 4px 8px;
     border-radius: var(--radius-full);
-    background: rgba(166, 46, 33, 0.92);
+    background: var(--color-danger);
     color: white;
     z-index: 1;
 }
 
 .trash-item__type-badge--image {
-    background: rgba(188, 144, 42, 0.92);
-    color: #23180e;
+    background: var(--color-warning, #d4a017);
+    color: var(--color-text);
 }
 
 .trash-item__info {
@@ -4845,6 +4949,75 @@ body {
     background: rgba(245, 158, 11, 1);
 }
 
+/* ═══════════════════════════════════════════════════════════════════════════
+   SPECIES COLOUR BINDINGS (Gallery / Stream / Trash)
+   Mirrors the `.review-event-panel__cell[data-species-colour]` and
+   `.review-batch-cell[data-species-colour]` patterns so every tile on
+   these surfaces that carries a `data-species-colour` attribute picks
+   up the Wong palette token automatically.
+
+   The `--cell-species-colour` custom property is set both by the
+   template's inline `style` attribute (via the server-side
+   `assign_species_colours` slot) and by the CSS `[data-species-colour="N"]`
+   selector below. The inline style wins (higher specificity), so the
+   CSS selectors serve as a readable mapping and as a fallback when
+   the inline attribute is present but the inline style is missing.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Shared host rule: the same variable feeds badge tint, border accent,
+   and the canvas bbox stroke on all three surfaces. */
+.wm-tile[data-species-colour],
+.quiet-preview__item[data-species-colour],
+.trash-item[data-species-colour] {
+    --cell-species-colour: var(--species-colour-0);
+    border-top: 2px solid var(--cell-species-colour, var(--color-border));
+}
+
+/* Slot-by-slot overrides (0..7). */
+.wm-tile[data-species-colour="0"],
+.quiet-preview__item[data-species-colour="0"],
+.trash-item[data-species-colour="0"] { --cell-species-colour: var(--species-colour-0); }
+
+.wm-tile[data-species-colour="1"],
+.quiet-preview__item[data-species-colour="1"],
+.trash-item[data-species-colour="1"] { --cell-species-colour: var(--species-colour-1); }
+
+.wm-tile[data-species-colour="2"],
+.quiet-preview__item[data-species-colour="2"],
+.trash-item[data-species-colour="2"] { --cell-species-colour: var(--species-colour-2); }
+
+.wm-tile[data-species-colour="3"],
+.quiet-preview__item[data-species-colour="3"],
+.trash-item[data-species-colour="3"] { --cell-species-colour: var(--species-colour-3); }
+
+.wm-tile[data-species-colour="4"],
+.quiet-preview__item[data-species-colour="4"],
+.trash-item[data-species-colour="4"] { --cell-species-colour: var(--species-colour-4); }
+
+.wm-tile[data-species-colour="5"],
+.quiet-preview__item[data-species-colour="5"],
+.trash-item[data-species-colour="5"] { --cell-species-colour: var(--species-colour-5); }
+
+.wm-tile[data-species-colour="6"],
+.quiet-preview__item[data-species-colour="6"],
+.trash-item[data-species-colour="6"] { --cell-species-colour: var(--species-colour-6); }
+
+.wm-tile[data-species-colour="7"],
+.quiet-preview__item[data-species-colour="7"],
+.trash-item[data-species-colour="7"] { --cell-species-colour: var(--species-colour-7); }
+
+/* Species-badge tint on the tile body: a 15%-opacity background of the
+   species colour token so the species name reads as the same hue as the
+   bbox border, exactly matching the Review cell behaviour. */
+.wm-tile[data-species-colour] .wm-tile__name,
+.quiet-preview__item[data-species-colour] .quiet-preview__name {
+    color: var(--cell-species-colour, inherit);
+}
+
+.trash-item[data-species-colour] .trash-item__name {
+    color: var(--cell-species-colour, inherit);
+}
+
 /* Left-corner media badges (cover jump / source link) */
 .cover-jump-badge,
 .source-link-badge {
@@ -4997,11 +5170,30 @@ body {
 }
 
 .review-workspace {
-    display: grid;
-    grid-template-columns: minmax(180px, 228px) minmax(0, 1fr);
+    /* Flex instead of Grid because the Review Desk can render with
+       just an event rail, just a queue rail, or both rails side by
+       side (event rail primary + queue rail for orphan images that
+       are not part of any event). The stage always takes the rest. */
+    display: flex;
     gap: clamp(14px, 1.8vw, 24px);
     align-items: start;
     min-height: calc(100svh - 220px);
+}
+
+.review-workspace > .review-queue,
+.review-workspace > .review-event-browser {
+    flex: 0 0 auto;
+    width: minmax(180px, 228px);
+    min-width: 180px;
+}
+
+.review-workspace > .review-event-browser {
+    width: clamp(220px, 24vw, 320px);
+}
+
+.review-workspace > .review-stage {
+    flex: 1 1 auto;
+    min-width: 0;
 }
 
 .review-queue {
@@ -5018,6 +5210,38 @@ body {
     border-radius: calc(var(--radius-xl) - 2px);
     overflow: hidden;
     box-shadow: 0 12px 24px rgba(61, 45, 24, 0.05);
+}
+
+.review-event-browser {
+    position: sticky;
+    top: calc(var(--space-lg) + 96px);
+    align-self: start;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    max-height: calc(100svh - 150px);
+    padding: 0 0 8px;
+    background: linear-gradient(180deg, rgba(238, 244, 232, 0.94), rgba(221, 231, 214, 0.88));
+    border: 1px solid rgba(74, 97, 63, 0.14);
+    border-radius: calc(var(--radius-xl) - 2px);
+    overflow: hidden;
+    box-shadow: 0 12px 24px rgba(43, 65, 37, 0.06);
+}
+
+.review-event-browser__grid {
+    display: grid;
+    gap: 12px;
+    padding: 0 10px 10px;
+    overflow: auto;
+    align-items: start;
+}
+
+.review-event-browser__empty {
+    display: grid;
+    gap: 6px;
+    padding: 16px 14px;
+    color: var(--color-text-muted);
+    font-size: var(--font-size-sm);
 }
 
 .review-queue__head {
@@ -5102,6 +5326,299 @@ body {
     text-overflow: ellipsis;
 }
 
+/* ═══════════════════════════════════════════════════════════════════════════
+   REVIEW EVENT CARD
+   Compact text row: species, time window, frame count, eligibility badge.
+   Thumbnails and trail preview are removed because the detail view owns
+   the trail.
+
+   Active cards use:
+     - a tinted accent fill
+     - a thicker border so the card stands out in the rail
+     - a left accent bar via the __accent pseudo-slot
+     - a matching stage cue via a left border on the stage panel
+     - quieter styling for non-active cards so the contrast stays clear
+     - token-driven colours so dark mode inherits the same structure
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.review-event-card {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
+    min-width: 0;
+    box-sizing: border-box;
+    padding: var(--space-sm) var(--space-md) var(--space-sm) 14px;
+    border: 1px solid rgba(74, 97, 63, 0.08);
+    border-radius: calc(var(--radius-lg) - 2px);
+    background: rgba(252, 255, 248, 0.9);
+    color: inherit;
+    text-align: left;
+    opacity: 0.92;
+    transition:
+        transform 0.18s ease,
+        border-color 0.18s ease,
+        background-color 0.18s ease,
+        box-shadow 0.18s ease,
+        opacity 0.18s ease;
+}
+
+.review-event-card__row {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    width: 100%;
+    min-width: 0;
+}
+
+/* Per-card trail map inside the left events rail.
+   Full card width lets the motion trail read at a glance while scanning
+   the rail. It mirrors the detail-view mini-map markup and positioning
+   rules so the two surfaces stay visually consistent. */
+.review-event-card__trail-map {
+    position: relative;
+    display: block;
+    width: 100%;
+    max-width: 100%;
+    aspect-ratio: 16 / 9;
+    box-sizing: border-box;
+    border-radius: var(--radius-sm);
+    border: 1px dashed rgba(74, 97, 63, 0.2);
+    background:
+        radial-gradient(circle at top, rgba(255, 255, 255, 0.88), rgba(255, 255, 255, 0) 60%),
+        linear-gradient(180deg, rgba(242, 247, 238, 0.96), rgba(226, 234, 220, 0.96));
+    overflow: hidden;
+}
+
+.review-event-card__trail-box {
+    position: absolute;
+    border-radius: 2px;
+    background: rgba(74, 97, 63, 0.32);
+    border: 1px solid rgba(74, 97, 63, 0.7);
+    min-width: 3px;
+    min-height: 3px;
+    pointer-events: none;
+}
+
+.review-event-card__trail-box--start {
+    background: rgba(82, 141, 62, 0.55);
+    border-color: rgba(58, 110, 42, 0.95);
+}
+
+.review-event-card__trail-box--end {
+    background: rgba(196, 87, 55, 0.45);
+    border-color: rgba(148, 55, 30, 0.9);
+}
+
+.review-event-card__trail-box--context {
+    background: rgba(120, 130, 120, 0.18);
+    border-style: dashed;
+    border-color: rgba(120, 130, 120, 0.55);
+}
+
+.review-event-card:hover {
+    border-color: rgba(74, 97, 63, 0.22);
+    box-shadow: 0 8px 18px rgba(43, 65, 37, 0.08);
+    opacity: 1;
+}
+
+/* Left accent bar — absolute slot. Transparent until the card is active. */
+.review-event-card__accent {
+    position: absolute;
+    top: 8px;
+    bottom: 8px;
+    left: 4px;
+    width: 4px;
+    border-radius: var(--radius-full);
+    background: transparent;
+    pointer-events: none;
+    transition: background-color 0.18s ease;
+}
+
+.review-event-card.is-active {
+    border-width: 2px;
+    border-color: var(--color-primary, rgba(74, 97, 63, 0.62));
+    /* Accent fill — a tinted background that reuses the same warm-green
+       family as the left accent bar. Keeps the card in the same visual
+       family as the stage panel. */
+    background:
+        linear-gradient(
+            180deg,
+            rgba(223, 236, 214, 0.95),
+            rgba(238, 246, 230, 0.92)
+        );
+    box-shadow:
+        0 10px 22px rgba(43, 65, 37, 0.14),
+        0 0 0 1px rgba(74, 97, 63, 0.18);
+    opacity: 1;
+    /* Compensate the 1 px border-width increase so the card geometry
+       doesn't jitter between active and non-active states. */
+    padding: calc(var(--space-sm) - 1px) calc(var(--space-md) - 1px) calc(var(--space-sm) - 1px) 13px;
+}
+
+.review-event-card.is-active .review-event-card__accent {
+    background: var(--color-primary, rgba(74, 97, 63, 0.72));
+    box-shadow: 0 0 6px rgba(74, 97, 63, 0.28);
+}
+
+.review-event-card.is-active .review-event-card__count {
+    background: rgba(74, 97, 63, 0.14);
+}
+
+/* Stage-connecting cue — when the workspace has an active event, the
+   stage panel picks up a matching left border so the rail → stage
+   visual link is obvious at a glance. Uses the same --color-primary
+   token as the active rail card, so a future dark-mode scope only has
+   to re-theme --color-primary to carry both surfaces. */
+.review-stage-panel.is-active {
+    border-left: 3px solid var(--color-primary, rgba(74, 97, 63, 0.62));
+    padding-left: calc(var(--space-md) - 3px);
+}
+
+.review-event-card__count {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    min-height: 36px;
+    padding: 4px 8px;
+    border-radius: 12px;
+    background: rgba(74, 97, 63, 0.08);
+    flex: 0 0 auto;
+    color: var(--color-primary-dark, #39484b);
+}
+
+.review-event-card__count-birds {
+    display: inline-flex;
+    align-items: center;
+    gap: 1px;
+}
+
+.bird-count-icon {
+    width: 20px;
+    height: 20px;
+    display: block;
+    flex: 0 0 auto;
+}
+
+/* Slight overlap so 2–4 birds look like a flock, not a row of stickers. */
+.review-event-card__count-birds .bird-count-icon + .bird-count-icon {
+    margin-left: -6px;
+}
+
+.review-event-card__count-overflow {
+    font-size: 0.78rem;
+    font-weight: 900;
+    line-height: 1;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0.02em;
+}
+
+.review-event-card__count-value {
+    /* Kept as a hidden payload hook for JS / tests — CSS never shows it. */
+    display: none;
+}
+
+.review-event-card__body {
+    display: grid;
+    gap: 3px;
+    min-width: 0;
+    flex: 1 1 auto;
+}
+
+.review-event-card__species {
+    min-width: 0;
+    color: var(--color-text-muted);
+    font-size: 0.74rem;
+    font-weight: 700;
+    line-height: 1.2;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.review-event-card__time {
+    color: var(--color-text);
+    font-size: 0.88rem;
+    font-weight: 800;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
+/* Shared by the rail badge (below) and the event-panel badge (right rail).
+   Kept as a shared selector because both surfaces use the exact same pill. */
+.review-event-card__badge,
+.review-event-panel__badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 24px;
+    padding: 4px 10px;
+    border-radius: var(--radius-full);
+    font-size: 0.68rem;
+    font-weight: 800;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+}
+
+.review-event-card__badge {
+    flex: 0 0 auto;
+    /* The rail badge is a pure status dot. The old text label took too
+       much horizontal space in the rail row. Accessibility still reads
+       the label via aria-label/title. The right-rail badge keeps its
+       text. */
+    width: 10px;
+    min-height: 10px;
+    height: 10px;
+    padding: 0;
+    border-radius: 50%;
+    border: 1px solid rgba(0, 0, 0, 0.12);
+}
+
+.review-event-card__badge--ready {
+    background: #3ea35b;
+    border-color: rgba(31, 93, 48, 0.55);
+}
+
+.review-event-panel__badge--ready {
+    background: rgba(223, 246, 228, 0.96);
+    color: #1f5d30;
+}
+
+.review-event-card__badge--fallback {
+    background: #d9a24d;
+    border-color: rgba(122, 77, 31, 0.55);
+}
+
+.review-event-panel__badge--fallback {
+    background: rgba(248, 234, 214, 0.96);
+    color: #7a4d1f;
+}
+
+/* Trail-box markers — used exclusively by the event-panel mini-map
+   inside the right control rail. The rail card itself no longer
+   renders a trail preview. */
+.review-event-panel__trail-box {
+    position: absolute;
+    border: 2px solid rgba(74, 97, 63, 0.28);
+    border-radius: 10px;
+    background: rgba(74, 97, 63, 0.06);
+}
+
+.review-event-panel__trail-box--start {
+    border-color: rgba(14, 116, 144, 0.56);
+    background: rgba(14, 116, 144, 0.12);
+}
+
+.review-event-panel__trail-box--mid {
+    border-color: rgba(202, 138, 4, 0.56);
+    background: rgba(202, 138, 4, 0.12);
+}
+
+.review-event-panel__trail-box--end {
+    border-color: rgba(22, 163, 74, 0.56);
+    background: rgba(22, 163, 74, 0.14);
+}
+
 .review-stage {
     min-width: 0;
     position: relative;
@@ -5125,6 +5642,29 @@ body {
     display: flex;
     flex-direction: column;
     gap: 10px;
+}
+
+.review-stage-panel__empty {
+    display: grid;
+    gap: 10px;
+    place-items: center;
+    min-height: calc(100svh - 220px);
+    padding: 24px;
+    border-radius: var(--radius-xl);
+    border: 1px dashed rgba(95, 71, 37, 0.22);
+    background: rgba(255, 252, 246, 0.74);
+    text-align: center;
+}
+
+.review-stage-panel__empty h3 {
+    margin: 0;
+    font-size: 1.05rem;
+}
+
+.review-stage-panel__empty p {
+    max-width: 460px;
+    margin: 0;
+    color: var(--color-text-muted);
 }
 
 .review-stage-panel__canvas {
@@ -5485,6 +6025,10 @@ body {
     width: 100%;
 }
 
+.review-stage-panel__action-stack--single {
+    grid-template-columns: minmax(0, 1fr);
+}
+
 .review-stage-panel__bbox-actions {
     display: grid;
     grid-template-columns: minmax(0, 1fr);
@@ -5534,6 +6078,97 @@ body {
     display: block;
     font-size: 1rem;
     line-height: 1.05;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   REVIEW SPECIES CHANGE RECEIPT
+   Inline before/after diff shown above the quick-pick species strip
+   whenever the operator changes the species of the currently active
+   review item. The receipt carries an Undo button that reverts the
+   in-flight change. Rendered by the shared partial
+   `templates/partials/review_species_receipt.html` and rebuilt by JS
+   (`review_workspace.js`) in the same DOM mutation as the quick-pick
+   `is-selected` toggle. Cleared atomically on rail navigation.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.review-species-receipt-slot {
+    min-height: 0;
+}
+
+.review-species-receipt-slot:empty,
+.review-species-receipt-slot:not(.is-active) {
+    /* Server-side initial slot is empty until JS writes into it. */
+    display: none;
+}
+
+.review-species-receipt-slot.is-active {
+    display: block;
+    margin-bottom: var(--space-sm);
+}
+
+.review-species-receipt {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: var(--space-xs) var(--space-sm);
+    padding: var(--space-xs) var(--space-sm);
+    border-left: 3px solid var(--color-primary, rgba(74, 97, 63, 0.62));
+    background: rgba(245, 250, 239, 0.95);
+    border-radius: var(--radius-sm);
+    font-size: 0.82rem;
+    font-weight: 700;
+    line-height: 1.35;
+}
+
+.review-species-receipt__prev {
+    color: var(--color-text-muted);
+    text-decoration: line-through;
+    text-decoration-color: rgba(74, 97, 63, 0.4);
+}
+
+.review-species-receipt__arrow {
+    color: var(--color-primary, rgba(74, 97, 63, 0.7));
+    font-weight: 900;
+}
+
+.review-species-receipt__new {
+    color: var(--color-primary-dark, #39484b);
+    font-weight: 800;
+}
+
+.review-species-receipt__origin {
+    color: var(--color-text-muted);
+    font-size: 0.72rem;
+    font-weight: 700;
+    font-variant: small-caps;
+    letter-spacing: 0.03em;
+    flex: 1 1 auto;
+}
+
+.review-species-receipt__undo {
+    margin-left: auto;
+    padding: 2px 10px;
+    border: 1px solid var(--color-primary, rgba(74, 97, 63, 0.4));
+    border-radius: var(--radius-full);
+    background: transparent;
+    color: var(--color-primary-dark, #39484b);
+    font-size: 0.72rem;
+    font-weight: 800;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    cursor: pointer;
+    transition: background-color 0.18s ease, color 0.18s ease;
+}
+
+.review-species-receipt__undo:hover {
+    background: var(--color-primary, rgba(74, 97, 63, 0.62));
+    color: #fdfbf7;
+}
+
+/* Compact variant for the event panel's narrow controls aside. */
+.review-species-receipt-slot[data-scope="event"] .review-species-receipt {
+    font-size: 0.78rem;
+    padding: 4px var(--space-xs);
 }
 
 .review-stage-panel__species-strip {
@@ -5680,18 +6315,1258 @@ body {
     border-radius: 14px;
     border: 1px dashed rgba(95, 71, 37, 0.24);
     background: rgba(255, 255, 255, 0.62);
+    color: var(--color-text);
 }
 
 .review-stage-panel__controls--empty {
     grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
+.review-event-panel__controls {
+    display: grid;
+    gap: 14px;
+    width: min(100%, 1180px);
+    margin: 0 auto;
+}
+
+/* Decision-first proximity fix.
+   The operator's judgment (Approve / Trash) must sit close to the
+   subject being judged. Two levers:
+     1. Inside the aside, hoist the Decision section above Trail,
+        Species, BBox — without reordering the DOM (tests + JS rely
+        on source order). CSS `order` on a single modifier class is
+        enough.
+     2. Inside the Decision section, draw a faint lifted frame so
+        the eye lands on it the instant the aside scrolls into view.
+   Scoped to `.review-event-panel__controls` so the orphan modal
+   (which uses `.review-stage-panel__controls`) is unaffected. */
+.review-event-panel__controls > .review-stage-panel__section--decision {
+    order: -1;
+    padding: 12px 14px 14px;
+    border-radius: 16px;
+    border: 1px solid rgba(95, 71, 37, 0.28);
+    background: linear-gradient(180deg, rgba(255, 253, 248, 0.92), rgba(250, 244, 231, 0.88));
+    box-shadow: 0 10px 22px -14px rgba(58, 40, 12, 0.32);
+}
+
+.review-event-panel__controls > .review-stage-panel__section--decision > .review-stage-panel__section-label {
+    color: rgba(58, 40, 12, 0.72);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    font-size: 0.66rem;
+}
+
+/* Two-column workbench — Decision proximity, part 2.
+   The UI standard expects a three-column operator workbench
+   (queue rail left, image center, inspector/action rail right). The
+   base `.review-stage-panel__workbench` rule has always been single
+   column, which collapses that intent: the aside stacks below the
+   canvas, so the Decision buttons sit far below the image on a
+   1080p monitor. Restore the intended layout specifically for the
+   event workbench (`--event`), so the orphan modal's bare workbench
+   stays unaffected. `1100px` is the breakpoint where the left
+   review/event rails (<=320px) + a 560px minimum canvas + a 300px
+   minimum aside + two gutters still fit comfortably. */
+@media (min-width: 1100px) {
+    .review-stage-panel__workbench--event {
+        grid-template-columns: minmax(0, 1fr) minmax(300px, 360px);
+        width: 100%;
+        max-width: none;
+    }
+
+    /* Let the canvas fill its grid track. The inner viewer shell and
+       detection grid both default to `width: min(100%, 1180px); margin:
+       0 auto` which centers them at <=1180px with big gutters on both
+       sides — fine when the workbench is single column, wasteful when
+       it's two column. Drop the auto-centering so they fill the track
+       fluidly and the aside can sit right next to the frame grid. */
+    .review-stage-panel__workbench--event .review-stage-panel__viewer-shell,
+    .review-stage-panel__workbench--event .review-event-panel__grid {
+        width: 100%;
+        margin-left: 0;
+        margin-right: 0;
+        max-width: none;
+    }
+
+    /* The aside itself also had `width: min(100%, 1180px); margin: 0
+       auto` (designed for the stacked layout). Let it fill its own
+       grid track instead, and pin it sticky so the Decision buttons
+       stay in view while the operator scrolls the frame grid. The
+       72px top offset clears the site topbar; refine if the topbar
+       height changes. */
+    .review-stage-panel__workbench--event > .review-event-panel__controls {
+        width: 100%;
+        max-width: none;
+        margin: 0;
+        position: sticky;
+        top: 72px;
+        align-self: start;
+        max-height: calc(100vh - 96px);
+        overflow-y: auto;
+    }
+}
+
+/* Trail section — it lives inside the right control rail
+   (`.review-event-panel__controls`) as the first element, not inside
+   the central stage area. Base rules stay minimal; the `--aside`
+   modifier pins the aside-scoped sizing. */
+.review-event-panel__trail-section {
+    display: grid;
+    gap: 8px;
+    padding: 0;
+    border: 0;
+    background: none;
+}
+
+.review-event-panel__trail-section--aside {
+    margin: 0 0 var(--space-md);
+}
+
+.review-event-panel__trail-head {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.review-event-panel__meta {
+    margin: 0;
+    color: var(--color-text-muted);
+    font-size: 0.76rem;
+    font-weight: 700;
+    line-height: 1.3;
+}
+
+.review-event-panel__trail-map {
+    position: relative;
+    max-width: 160px;
+    min-height: 64px;
+    aspect-ratio: 16 / 9;
+    margin: 0 auto;
+    border-radius: var(--radius-md);
+    border: 1px dashed rgba(74, 97, 63, 0.2);
+    background:
+        radial-gradient(circle at top, rgba(255, 255, 255, 0.88), rgba(255, 255, 255, 0) 60%),
+        linear-gradient(180deg, rgba(242, 247, 238, 0.96), rgba(226, 234, 220, 0.96));
+    overflow: hidden;
+}
+
+/* Grid caption — short line under the detection grid that tells the
+   operator how many frames of which species across what duration are
+   shown. This stays under the grid instead of living in the trail
+   section header. */
+.review-event-panel__grid-caption {
+    margin: var(--space-sm) auto 0;
+    max-width: min(100%, 1180px);
+    padding: 0 var(--space-md);
+    color: var(--color-text-muted);
+    font-size: 0.82rem;
+    font-weight: 700;
+    line-height: 1.4;
+    text-align: center;
+}
+
+.review-event-panel__grid-caption strong {
+    color: var(--color-text, inherit);
+    font-weight: 800;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   REVIEW EVENT PANEL
+   Equal-size detection grid. Every frame is a first-class cell.
+   Grid-cell colour and reference-image wiring ride on this block via
+   `data-species-colour` + `--cell-species-colour`.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.review-event-panel__grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+    gap: var(--space-md);
+    width: min(100%, 1180px);
+    margin: 14px auto 0;
+    padding: 14px 16px 16px;
+    border-radius: var(--radius-xl);
+    /* The grid picks up the same --color-primary accent as the active
+       rail card and the stage-connecting cue, so the visual bridge
+       from active rail card to stage to event frames is obvious. */
+    border: 1px solid var(--color-primary-light, rgba(31, 64, 115, 0.16));
+    border-top: 2px solid var(--color-primary, rgba(74, 97, 63, 0.4));
+    background: linear-gradient(180deg, rgba(225, 234, 248, 0.78), rgba(212, 224, 244, 0.84));
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.4);
+}
+
+.review-event-panel__cell {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-xs);
+    padding: 10px;
+    border-radius: 14px;
+    border: 1px solid rgba(31, 64, 115, 0.18);
+    background: rgba(255, 255, 255, 0.94);
+    box-shadow: 0 4px 10px rgba(31, 64, 115, 0.08);
+}
+
+.review-event-panel__grid-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin: 8px 0 10px;
+}
+
+.review-event-panel__multi-toggle {
+    min-height: 38px;
+    padding: 0 14px;
+    border-radius: 999px;
+    border: 1px solid rgba(74, 97, 63, 0.22);
+    background: rgba(248, 252, 244, 0.96);
+    color: var(--color-text);
+    font-size: 0.84rem;
+    font-weight: 800;
+    cursor: pointer;
+}
+
+.review-event-panel__multi-toggle.is-active {
+    border-color: rgba(74, 97, 63, 0.42);
+    background: rgba(228, 238, 218, 0.96);
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.55);
+}
+
+.review-event-panel__multi-hint {
+    margin: 0;
+    color: var(--color-text-muted);
+    font-size: 0.75rem;
+    font-weight: 700;
+    text-align: right;
+}
+
+/* Cover cell carries the same structural size as every other cell.
+   The data attribute is a hook for a future "jump to cover" button,
+   not a layout change. */
+.review-event-panel__cell[data-cover-detection="true"] {
+    /* no visual change today; reserved hook */
+}
+
+.review-event-panel__cell[data-context-only="1"] {
+    opacity: 1;
+    border-color: rgba(47, 143, 78, 0.82);
+    background: linear-gradient(180deg, rgba(244, 251, 245, 0.98), rgba(233, 246, 236, 0.96));
+    box-shadow:
+        0 0 0 2px rgba(47, 143, 78, 0.18),
+        0 8px 18px rgba(47, 143, 78, 0.14);
+    pointer-events: none;
+}
+
+.review-event-panel__cell.is-selected {
+    box-shadow:
+        0 0 0 2px color-mix(in srgb, var(--cell-species-colour, var(--color-primary)) 45%, white),
+        0 8px 18px rgba(31, 64, 115, 0.16);
+}
+
+.review-event-panel__cell-select {
+    position: absolute;
+    top: 8px;
+    left: 8px;
+    z-index: 5;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    height: 26px;
+    cursor: pointer;
+}
+
+.review-event-panel__cell-checkbox {
+    position: absolute;
+    inset: 0;
+    margin: 0;
+    opacity: 0;
+    cursor: pointer;
+}
+
+.review-event-panel__cell-select-indicator {
+    width: 24px;
+    height: 24px;
+    border-radius: 999px;
+    border: 2px solid rgba(255, 255, 255, 0.96);
+    background: rgba(21, 31, 22, 0.46);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.28);
+}
+
+.review-event-panel__cell-checkbox:checked + .review-event-panel__cell-select-indicator {
+    background: var(--cell-species-colour, var(--color-primary));
+}
+
+.review-event-panel__cell-checkbox:checked + .review-event-panel__cell-select-indicator::after {
+    content: '';
+    display: block;
+    width: 6px;
+    height: 11px;
+    margin: 3px 0 0 7px;
+    border-right: 2px solid #fff;
+    border-bottom: 2px solid #fff;
+    transform: rotate(42deg);
+}
+
+.review-event-panel__cell-media {
+    position: relative;
+    border-radius: 12px;
+    overflow: hidden;
+    background: rgba(15, 23, 42, 0.08);
+    /* `.review-species-ref` uses position: absolute, so the media
+       container is its positioning parent. This pins the overlay to
+       the image frame, not the full cell. */
+}
+
+.review-event-panel__cell-media .wm-image-viewer,
+.review-event-panel__cell-media img {
+    width: 100%;
+    display: block;
+}
+
+.review-event-panel__cell-time {
+    position: absolute;
+    left: 10px;
+    bottom: 10px;
+    display: inline-flex;
+    align-items: center;
+    min-height: 24px;
+    padding: 2px 8px;
+    border-radius: var(--radius-full);
+    background: rgba(20, 17, 13, 0.74);
+    color: #fff7ea;
+    font-size: 0.7rem;
+    font-weight: 800;
+    font-variant-numeric: tabular-nums;
+    pointer-events: none;
+}
+
+.review-event-panel__cell-badge {
+    position: absolute;
+    top: 10px;
+    left: 10px;
+    display: inline-flex;
+    align-items: center;
+    min-height: 24px;
+    padding: 2px 9px;
+    border-radius: var(--radius-full);
+    font-size: 0.66rem;
+    font-weight: 800;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    pointer-events: none;
+    z-index: 3;
+}
+
+.review-event-panel__cell-badge--anchor {
+    background: rgba(47, 143, 78, 0.94);
+    color: #fff;
+}
+
+.review-event-panel__cell-body {
+    display: grid;
+    gap: 2px;
+}
+
+.review-event-panel__cell-species {
+    font-size: 0.88rem;
+    font-weight: 800;
+    color: var(--cell-species-colour, inherit);
+    /* When rendered as a button, strip the browser chrome so it still
+       reads as a label, with a subtle dotted underline that signals
+       clickability. */
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    text-align: left;
+    cursor: pointer;
+    text-decoration: underline dotted rgba(74, 97, 63, 0.35);
+    text-underline-offset: 2px;
+}
+
+button.review-event-panel__cell-species:hover {
+    text-decoration-color: var(--cell-species-colour, var(--color-primary));
+}
+
+button.review-event-panel__cell-species.is-relabel-pending {
+    opacity: 0.55;
+    cursor: wait;
+}
+
+button.review-event-panel__cell-species.is-relabel-applied::after {
+    content: ' ✓';
+    color: var(--cell-species-colour, var(--color-primary));
+    font-size: 0.72rem;
+}
+
+span.review-event-panel__cell-species {
+    /* Context-only cells keep the plain span form — no click affordance. */
+    cursor: default;
+    text-decoration: none;
+}
+
+.review-event-panel__cell-reason {
+    color: var(--color-text-muted);
+    font-size: 0.74rem;
+    font-weight: 700;
+}
+
+.review-event-panel__cell[data-context-only="1"] .review-event-panel__cell-reason {
+    color: rgba(47, 143, 78, 0.92);
+}
+
+.review-event-panel__cell-action {
+    min-height: 36px;
+    border: 1px solid rgba(88, 110, 148, 0.2);
+    border-radius: 10px;
+    background: rgba(235, 241, 248, 0.92);
+    color: #304966;
+    font-size: 0.78rem;
+    font-weight: 800;
+    cursor: pointer;
+}
+
+.review-event-panel__cell-action:hover {
+    background: rgba(219, 229, 242, 0.98);
+    border-color: rgba(88, 110, 148, 0.32);
+}
+
+.review-event-panel__grid.is-multi-select .review-event-panel__cell-select {
+    display: inline-flex;
+}
+
+.review-event-panel__grid.is-multi-select .review-event-panel__cell-media {
+    pointer-events: none;
+    opacity: 0.78;
+}
+
+.review-event-panel__grid.is-multi-select .review-event-panel__cell-body {
+    opacity: 0.74;
+}
+
+.review-event-panel__grid.is-multi-select .review-event-panel__cell-action:disabled,
+.review-event-panel__grid.is-multi-select .review-event-panel__cell-species:disabled {
+    cursor: default;
+}
+
+.review-event-panel__multi-footer {
+    margin-top: 10px;
+}
+
+.review-event-panel__batch-footer {
+    justify-content: flex-start;
+}
+
+.review-event-panel__batch-footer button:disabled {
+    opacity: 0.52;
+    cursor: not-allowed;
+}
+
+/* Species colour binding — mirror of the `.review-batch-cell` pattern
+   so grid-cell colour wiring stays consistent. */
+.review-event-panel__cell[data-species-colour] {
+    --cell-species-colour: var(--species-colour-0);
+}
+
+.review-event-panel__cell[data-species-colour="0"] { --cell-species-colour: var(--species-colour-0); }
+.review-event-panel__cell[data-species-colour="1"] { --cell-species-colour: var(--species-colour-1); }
+.review-event-panel__cell[data-species-colour="2"] { --cell-species-colour: var(--species-colour-2); }
+.review-event-panel__cell[data-species-colour="3"] { --cell-species-colour: var(--species-colour-3); }
+.review-event-panel__cell[data-species-colour="4"] { --cell-species-colour: var(--species-colour-4); }
+.review-event-panel__cell[data-species-colour="5"] { --cell-species-colour: var(--species-colour-5); }
+.review-event-panel__cell[data-species-colour="6"] { --cell-species-colour: var(--species-colour-6); }
+.review-event-panel__cell[data-species-colour="7"] { --cell-species-colour: var(--species-colour-7); }
+
+/* Mobile: single-column grid, tighter padding. */
+@media (max-width: 640px) {
+    .review-event-panel__grid-toolbar {
+        align-items: flex-start;
+        flex-direction: column;
+    }
+
+    .review-event-panel__multi-hint {
+        text-align: left;
+    }
+
+    .review-event-panel__grid {
+        grid-template-columns: 1fr;
+        padding: 10px;
+    }
+}
+
+.review-event-panel__species-pill {
+    display: grid;
+    gap: 4px;
+    padding: 12px 14px;
+    border-radius: 16px;
+    border: 1px solid rgba(74, 97, 63, 0.14);
+    background: rgba(251, 255, 248, 0.92);
+}
+
+.review-event-panel__species-name {
+    font-size: 0.96rem;
+    font-weight: 800;
+}
+
+.review-event-panel__species-meta {
+    color: var(--color-text-muted);
+    font-size: 0.78rem;
+    font-weight: 700;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   REVIEW-SURFACE DARK-MODE OVERRIDES
+   The base `:root` dark scope above (line ~100) already handles every
+   surface that uses `var(--color-*)` tokens. The rules below override
+   the handful of Review-scope surfaces that were historically painted
+   with hardcoded rgba() light backgrounds or borders, which token
+   redefinition alone cannot reach.
+
+   Scope rule: only Review surfaces are touched here.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+@media (prefers-color-scheme: dark) {
+    /* Rail aside — the warm-green linear gradient flips to a cool slate
+       gradient so the rail stays visually distinct from the main content
+       without fighting the dark surface. */
+    .review-workspace > .review-event-browser {
+        background: linear-gradient(180deg, rgba(46, 54, 58, 0.94), rgba(32, 38, 42, 0.92));
+        border-color: var(--color-border);
+        box-shadow: 0 12px 24px rgba(0, 0, 0, 0.35);
+    }
+
+    /* Rail cards — non-active and active cards both swap to dark
+       surfaces. The token-based accent rules still drive the active
+       highlight. */
+    .review-event-card {
+        background: var(--color-surface-2);
+        border-color: var(--color-border);
+    }
+
+    .review-event-card__count {
+        background: rgba(146, 167, 171, 0.14);
+    }
+
+    .review-event-card__count-value {
+        color: var(--color-primary-light);
+    }
+
+    .review-event-card:hover {
+        border-color: var(--color-primary-dark);
+        box-shadow: 0 8px 18px rgba(0, 0, 0, 0.42);
+    }
+
+    .review-event-card.is-active {
+        background: linear-gradient(
+            180deg,
+            rgba(146, 167, 171, 0.22),
+            rgba(146, 167, 171, 0.12)
+        );
+        box-shadow:
+            0 10px 22px rgba(0, 0, 0, 0.48),
+            0 0 0 1px rgba(146, 167, 171, 0.3);
+    }
+
+    .review-event-card.is-active .review-event-card__count {
+        background: rgba(146, 167, 171, 0.22);
+    }
+
+    .review-event-panel__trail-map {
+        border-color: var(--color-border);
+        background:
+            radial-gradient(circle at top, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0) 60%),
+            linear-gradient(180deg, rgba(38, 44, 47, 0.96), rgba(30, 35, 38, 0.96));
+    }
+
+    /* Detection grid — the light-theme gradient becomes a cool-slate
+       gradient so nested cells still read as living inside the grid
+       shell on dark. Border-top keeps the primary accent. */
+    .review-event-panel__grid {
+        background: linear-gradient(180deg, rgba(38, 48, 52, 0.88), rgba(28, 35, 38, 0.92));
+        box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.06);
+    }
+
+    /* Grid cell — swap the hardcoded white background to a dark
+       surface. The species colour border still takes precedence via
+       the existing `var(--cell-species-colour, ...)` fallback. */
+    .review-event-panel__cell {
+        background: var(--color-surface-3);
+        border-color: var(--cell-species-colour, var(--color-border));
+        box-shadow: 0 4px 10px rgba(0, 0, 0, 0.35);
+    }
+
+    .review-event-panel__cell-media {
+        background: rgba(0, 0, 0, 0.35);
+    }
+
+    .review-event-panel__cell-action {
+        background: var(--color-surface-2);
+        border-color: var(--color-border);
+        color: var(--color-text);
+    }
+
+    .review-event-panel__cell-action:hover {
+        background: var(--color-surface-3);
+        border-color: var(--color-primary);
+    }
+
+    /* Species pill in the control aside. */
+    .review-event-panel__species-pill {
+        background: var(--color-surface-2);
+        border-color: var(--color-border);
+    }
+
+    /* Hoisted Decision section — see the matching light-mode block
+       near `.review-event-panel__controls`. The cream gradient from
+       the light theme would read as a bright smear on dark; swap it
+       for a warm low-chroma surface that still reads as "lifted."
+       Kept inside the canonical review-surface dark block so
+       test_design_system_defines_review_surface_dark_overrides stays
+       green — all review-surface dark overrides live in one place. */
+    .review-event-panel__controls > .review-stage-panel__section--decision {
+        border-color: rgba(196, 165, 104, 0.28);
+        background: linear-gradient(180deg, rgba(44, 38, 29, 0.92), rgba(32, 28, 22, 0.92));
+        box-shadow: 0 12px 24px -14px rgba(0, 0, 0, 0.6);
+    }
+
+    .review-event-panel__controls > .review-stage-panel__section--decision > .review-stage-panel__section-label {
+        color: rgba(255, 232, 178, 0.76);
+    }
+
+    /* Species change-receipt — the accent bar still carries
+       --color-primary automatically; only the tinted background needs
+       an explicit dark override so the receipt reads as a highlight
+       band inside the dark control aside. */
+    .review-species-receipt {
+        background: rgba(146, 167, 171, 0.14);
+    }
+
+    .review-species-receipt__prev {
+        text-decoration-color: rgba(200, 210, 212, 0.42);
+    }
+
+    /* Rail eligibility badges — the light-theme tints read wrong on
+       dark. Flip to a desaturated dark surface with the matching hue. */
+    .review-event-card__badge--ready,
+    .review-event-panel__badge--ready {
+        background: rgba(75, 125, 92, 0.32);
+        color: #a9d4b2;
+    }
+
+    .review-event-card__badge--fallback,
+    .review-event-panel__badge--fallback {
+        background: rgba(138, 98, 46, 0.32);
+        color: #e6c79a;
+    }
+
+    /* Quick-pick species button — the warm-stone media-fallback
+       gradient reads wrong on dark. Swap to a cool slate fallback so
+       species without a thumbnail still show a legible tile. */
+    .review-stage-panel__species-media {
+        background: linear-gradient(180deg, rgba(60, 68, 72, 0.72), rgba(42, 48, 52, 0.92));
+    }
+
+    /* Stats facts grid in the review stage panel — the hardcoded
+       rgba(255,255,255,0.06) background carries enough through but
+       gets a cleaner contrast with a token-based border. */
+    .review-stage-panel__facts-item {
+        background: rgba(255, 255, 255, 0.04);
+    }
+
+    /* Continuity batch panel — the shell uses
+       `var(--color-surface-raised, rgba(47,143,78,0.06))`. That token
+       is not defined anywhere, so in both light and dark scopes the
+       fallback takes effect. Fix the dark fallback explicitly so the
+       shell reads as a dim raised card on dark, not a green tint. */
+    .review-batch-panel {
+        background: rgba(146, 167, 171, 0.08);
+        border-color: rgba(146, 167, 171, 0.5);
+    }
+
+    /* Batch decision strip — same story with `--color-surface`. */
+    .review-batch-panel__decision {
+        background: var(--color-surface-2);
+        border-color: var(--color-border);
+    }
+
+    /* Batch minimap — ensure the sunken backplate reads on dark. */
+    .review-batch-panel__minimap {
+        background: rgba(0, 0, 0, 0.4);
+    }
+}
+
+/* --- Continuity batch stage --------------------------------------------- */
+
+/* Inside a continuity batch the rail-selected split event is rendered as
+   a dimmed detail grid under the primary batch panel. The trail section
+   lives in the right control rail instead of the stage, so the dim
+   targets the detection grid plus its caption while the aside stays
+   bright. */
+.review-stage-panel__content--batch .review-event-panel__grid,
+.review-stage-panel__content--batch .review-event-panel__grid-caption {
+    opacity: 0.72;
+    filter: saturate(0.9);
+}
+
+.review-stage-panel__content--batch .review-event-panel__grid::before {
+    content: "Focused split event";
+    display: block;
+    grid-column: 1 / -1;
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--color-text-muted);
+    margin-bottom: 6px;
+}
+
+.review-batch-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+    padding: 20px 22px;
+    margin-bottom: 18px;
+    border: 2px solid var(--color-accent, #2f8f4e);
+    border-radius: 14px;
+    background: var(--color-surface-raised, rgba(47, 143, 78, 0.06));
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
+}
+
+.review-batch-panel__head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 14px;
+}
+
+.review-batch-panel__title-block {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+}
+
+.review-batch-panel__eyebrow {
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--color-accent, #2f8f4e);
+}
+
+.review-batch-panel__title {
+    margin: 0;
+    font-size: 1.2rem;
+    font-weight: 700;
+    line-height: 1.2;
+    color: var(--color-text, inherit);
+}
+
+.review-batch-panel__meta {
+    margin: 0;
+    font-size: 0.82rem;
+    color: var(--color-text-muted);
+}
+
+.review-batch-panel__anchor-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+.review-batch-panel__anchor-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 10px;
+    border-radius: 999px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    background: rgba(47, 143, 78, 0.14);
+    color: var(--color-accent, #2f8f4e);
+    border: 1px solid rgba(47, 143, 78, 0.35);
+}
+
+.review-batch-panel__anchor-chip-count {
+    font-weight: 700;
+    opacity: 0.85;
+}
+
+.review-batch-panel__minimap {
+    position: relative;
+    width: 100%;
+    aspect-ratio: 16 / 4;
+    min-height: 64px;
+    border-radius: 10px;
+    background: var(--color-surface-sunken, rgba(0, 0, 0, 0.08));
+    border: 1px dashed var(--color-border, rgba(0, 0, 0, 0.18));
+    overflow: hidden;
+}
+
+.review-batch-panel__minimap-box {
+    position: absolute;
+    border-radius: 3px;
+    border: 2px solid transparent;
+    box-sizing: border-box;
+    transition: transform 120ms ease, box-shadow 120ms ease;
+}
+
+.review-batch-panel__minimap-box--context {
+    background: rgba(120, 120, 120, 0.18);
+    border-color: rgba(120, 120, 120, 0.65);
+    border-style: dashed;
+}
+
+.review-batch-panel__minimap-box--review {
+    background: rgba(47, 143, 78, 0.22);
+    border-color: rgba(47, 143, 78, 0.9);
+}
+
+.review-batch-panel__minimap-box.is-active-event {
+    box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.9),
+        0 0 0 4px var(--color-accent, #2f8f4e);
+    transform: scale(1.04);
+    z-index: 2;
+}
+
+.review-batch-panel__decision {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 14px;
+    border-radius: 10px;
+    background: var(--color-surface, rgba(255, 255, 255, 0.6));
+    border: 1px solid var(--color-border, rgba(0, 0, 0, 0.12));
+}
+
+.review-batch-panel__cta {
+    flex: 1 1 auto;
+    min-width: 260px;
+    padding: 10px 18px;
+    border: 0;
+    border-radius: 8px;
+    font-size: 0.95rem;
+    font-weight: 700;
+    color: #fff;
+    background: var(--color-accent, #2f8f4e);
+    cursor: pointer;
+    transition: background 120ms ease, transform 80ms ease;
+}
+
+.review-batch-panel__cta:hover {
+    background: var(--color-accent-strong, #247a3f);
+}
+
+.review-batch-panel__cta:active {
+    transform: translateY(1px);
+}
+
+.review-batch-panel__cta[disabled] {
+    opacity: 0.55;
+    cursor: not-allowed;
+}
+
+.review-batch-panel__decision-hint {
+    flex: 1 1 auto;
+    min-width: 260px;
+    margin: 0;
+    font-size: 0.85rem;
+    color: var(--color-text-muted);
+    font-style: italic;
+}
+
+.review-batch-panel__approve {
+    padding: 10px 16px;
+    border: 2px solid var(--color-accent, #2f8f4e);
+    border-radius: 8px;
+    background: transparent;
+    color: var(--color-accent, #2f8f4e);
+    font-size: 0.9rem;
+    font-weight: 700;
+    cursor: pointer;
+    transition: background 120ms ease, color 120ms ease;
+}
+
+.review-batch-panel__approve:not([disabled]):hover {
+    background: var(--color-accent, #2f8f4e);
+    color: #fff;
+}
+
+.review-batch-panel__approve[disabled] {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+
+.review-batch-panel__receipt {
+    flex: 1 0 100%;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 12px;
+    border-radius: 8px;
+    background: rgba(47, 143, 78, 0.12);
+    border: 1px solid rgba(47, 143, 78, 0.35);
+    font-size: 0.85rem;
+    color: var(--color-text, inherit);
+}
+
+.review-batch-panel__receipt[hidden] {
+    display: none;
+}
+
+.review-batch-panel__receipt-text {
+    flex: 1 1 auto;
+    font-weight: 600;
+}
+
+.review-batch-panel__receipt-undo {
+    padding: 4px 12px;
+    border: 1px solid var(--color-accent, #2f8f4e);
+    border-radius: 6px;
+    background: transparent;
+    color: var(--color-accent, #2f8f4e);
+    font-size: 0.8rem;
+    font-weight: 700;
+    cursor: pointer;
+}
+
+.review-batch-panel__receipt-undo:hover {
+    background: var(--color-accent, #2f8f4e);
+    color: #fff;
+}
+
+.review-batch-panel__section {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.review-batch-panel__section-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
+    padding-bottom: 4px;
+    border-bottom: 1px solid var(--color-border, rgba(0, 0, 0, 0.12));
+}
+
+.review-batch-panel__section-title {
+    margin: 0;
+    font-size: 0.88rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--color-text, inherit);
+}
+
+.review-batch-panel__section--anchors .review-batch-panel__section-title {
+    color: var(--color-text-muted);
+}
+
+.review-batch-panel__section-count {
+    font-size: 0.78rem;
+    font-weight: 700;
+    color: var(--color-text-muted);
+}
+
+.review-batch-panel__grid {
+    display: grid;
+    gap: 10px;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+}
+
+.review-batch-panel__grid--anchors {
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+}
+
+.review-batch-cell {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 6px;
+    border-radius: 10px;
+    background: var(--color-surface, rgba(255, 255, 255, 0.55));
+    border: 1px solid var(--color-border, rgba(0, 0, 0, 0.12));
+    transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+
+.review-batch-cell--context {
+    opacity: 0.72;
+    filter: saturate(0.85);
+    border-style: dashed;
+    pointer-events: none;
+}
+
+.review-batch-cell--context .review-batch-cell__open {
+    display: none;
+}
+
+.review-batch-cell--review.is-active-event-member {
+    border-color: var(--color-accent, #2f8f4e);
+    box-shadow: 0 0 0 2px rgba(47, 143, 78, 0.25);
+}
+
+.review-batch-cell__media {
+    position: relative;
+    aspect-ratio: 4 / 3;
+    border-radius: 8px;
+    overflow: hidden;
+    background: var(--color-surface-sunken, rgba(0, 0, 0, 0.08));
+}
+
+.review-batch-cell__image {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+}
+
+.review-batch-cell__time {
+    position: absolute;
+    left: 6px;
+    bottom: 6px;
+    padding: 2px 6px;
+    border-radius: 4px;
+    background: rgba(0, 0, 0, 0.62);
+    color: #fff;
+    font-size: 0.7rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+}
+
+.review-batch-cell__badge {
+    position: absolute;
+    top: 6px;
+    right: 6px;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-size: 0.65rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+
+.review-batch-cell__badge--anchor {
+    background: rgba(120, 120, 120, 0.72);
+    color: #fff;
+}
+
+.review-batch-cell__badge--active {
+    background: var(--color-accent, #2f8f4e);
+    color: #fff;
+}
+
+.review-batch-cell__copy {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 0 2px 2px;
+}
+
+.review-batch-cell__species {
+    font-size: 0.82rem;
+    font-weight: 700;
+    color: var(--color-text, inherit);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.review-batch-cell__open {
+    align-self: flex-start;
+    padding: 3px 10px;
+    border: 1px solid var(--color-border, rgba(0, 0, 0, 0.2));
+    border-radius: 6px;
+    background: transparent;
+    color: var(--color-text-muted);
+    font-size: 0.72rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 120ms ease, color 120ms ease;
+}
+
+.review-batch-cell__open:hover {
+    background: var(--color-accent, #2f8f4e);
+    border-color: var(--color-accent, #2f8f4e);
+    color: #fff;
+}
+
+.review-event-panel__trail-box--context {
+    border-style: dashed !important;
+    opacity: 0.55;
+}
+
+/* --- Species reference image overlay + colour wiring -------------------- */
+
+/*
+  Hosts that carry a species colour set ``--cell-species-colour`` from
+  the Jinja side. Every coloured surface inside the host reads from
+  this single CSS var, so re-tinting one frame is a one-line change.
+*/
+.review-batch-cell[data-species-colour] {
+    --cell-species-colour: var(--species-colour-0);
+}
+.review-batch-cell[data-species-colour="0"] { --cell-species-colour: var(--species-colour-0); }
+.review-batch-cell[data-species-colour="1"] { --cell-species-colour: var(--species-colour-1); }
+.review-batch-cell[data-species-colour="2"] { --cell-species-colour: var(--species-colour-2); }
+.review-batch-cell[data-species-colour="3"] { --cell-species-colour: var(--species-colour-3); }
+.review-batch-cell[data-species-colour="4"] { --cell-species-colour: var(--species-colour-4); }
+.review-batch-cell[data-species-colour="5"] { --cell-species-colour: var(--species-colour-5); }
+.review-batch-cell[data-species-colour="6"] { --cell-species-colour: var(--species-colour-6); }
+.review-batch-cell[data-species-colour="7"] { --cell-species-colour: var(--species-colour-7); }
+
+/* Cell-level accent: a small left bar that picks up the species token. */
+.review-batch-cell--review[data-species-colour] {
+    border-left: 3px solid var(--cell-species-colour, var(--color-border));
+}
+
+.review-event-panel__cell[data-species-colour] .review-event-panel__cell-media {
+    box-shadow: inset 3px 0 0 0 var(--cell-species-colour, transparent);
+}
+
+/* Quick-pick species buttons get a 2 px coloured left border tying them
+   visually to the same species in the detection grid. */
+.review-stage-panel__species-btn[data-species-colour="0"] { box-shadow: inset 2px 0 0 0 var(--species-colour-0); }
+.review-stage-panel__species-btn[data-species-colour="1"] { box-shadow: inset 2px 0 0 0 var(--species-colour-1); }
+.review-stage-panel__species-btn[data-species-colour="2"] { box-shadow: inset 2px 0 0 0 var(--species-colour-2); }
+.review-stage-panel__species-btn[data-species-colour="3"] { box-shadow: inset 2px 0 0 0 var(--species-colour-3); }
+.review-stage-panel__species-btn[data-species-colour="4"] { box-shadow: inset 2px 0 0 0 var(--species-colour-4); }
+.review-stage-panel__species-btn[data-species-colour="5"] { box-shadow: inset 2px 0 0 0 var(--species-colour-5); }
+.review-stage-panel__species-btn[data-species-colour="6"] { box-shadow: inset 2px 0 0 0 var(--species-colour-6); }
+.review-stage-panel__species-btn[data-species-colour="7"] { box-shadow: inset 2px 0 0 0 var(--species-colour-7); }
+
+/* Species reference image overlay. Top-right of the host frame so it
+   stays out of the typical bird focal area and sits away from the tile
+   toolbox strip which anchors to the bottom edge. Remains visually tied
+   to the cell-level species tint. pointer-events: none so it does not
+   eat toolbox-hover events from the wm-toolbox-host underneath. */
+.review-species-ref {
+    position: absolute;
+    right: 6px;
+    top: 6px;
+    bottom: auto;
+    width: 88px;
+    height: 88px;
+    border-radius: 50%;
+    border: 3px solid var(--cell-species-colour, var(--color-accent));
+    background: #ffffff;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.22);
+    object-fit: cover;
+    pointer-events: none;
+    z-index: 3;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+}
+
+img.review-species-ref {
+    display: block;
+    width: 88px;
+    height: 88px;
+    aspect-ratio: 1 / 1;
+    object-fit: cover;
+}
+
+.review-species-ref--initial {
+    font-size: 1.9rem;
+    font-weight: 800;
+    color: var(--cell-species-colour, var(--color-text));
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+    background: #ffffff;
+}
+
+@media (max-width: 720px) {
+    .review-species-ref {
+        width: 64px;
+        height: 64px;
+        right: 4px;
+        top: 4px;
+        bottom: auto;
+        border-width: 2px;
+    }
+    img.review-species-ref {
+        width: 64px;
+        height: 64px;
+    }
+    .review-species-ref--initial {
+        font-size: 1.45rem;
+    }
+}
+
+/* Tinted species badge — 15% opacity background, full-saturation text.
+   Honours the host cell's --cell-species-colour token via color-mix. */
+.species-badge--coloured {
+    display: inline-flex;
+    align-items: center;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    color: var(--cell-species-colour, var(--color-text));
+    background: color-mix(in srgb, var(--cell-species-colour, var(--color-accent)) 15%, transparent);
+    border: 1px solid color-mix(in srgb, var(--cell-species-colour, var(--color-accent)) 35%, transparent);
+}
+
+/* Responsive bbox label class used by the canvas overlay and any
+   future HTML-rendered labels. The actual font sizing happens in JS
+   via measureText, but the container clamps to a sensible minimum so
+   tiny boxes can fall back to initials without overflowing. */
+.bbox-label--responsive {
+    font-size: clamp(11px, 2.4vw, 13px);
+    line-height: 1.1;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+@media (max-width: 720px) {
+    .review-batch-panel__grid {
+        grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+    }
+
+    .review-batch-panel__decision {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .review-batch-panel__cta,
+    .review-batch-panel__approve {
+        width: 100%;
+    }
+}
+
 @media (max-width: 960px) {
     .review-workspace {
-        grid-template-columns: 1fr;
+        flex-direction: column;
+    }
+
+    .review-workspace > .review-queue,
+    .review-workspace > .review-event-browser {
+        width: 100%;
+        max-width: 100%;
     }
 
     .review-queue {
+        position: static;
+        max-height: none;
+    }
+
+    .review-event-browser {
         position: static;
         max-height: none;
     }
@@ -5720,6 +7595,11 @@ body {
 
     .review-queue {
         max-height: 240px;
+    }
+
+    .review-event-browser__grid {
+        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+        max-height: 280px;
     }
 }
 
@@ -5848,6 +7728,63 @@ body {
 
 /* Filmstrip must span all grid columns */
 #subgallery-grid>.obs-filmstrip {
+    grid-column: 1 / -1;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   CONCURRENT VISIT SHELL
+   Visual-only grouping for BirdEvents whose intervals overlap within
+   +/-5 min. Same-species observations stay separate tiles; the shell
+   only clarifies "these visits happened at the same time".
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* The shell is a full-row child of the subgallery grid so its own inner
+   grid can manage the tiles inside. */
+#subgallery-grid>.concurrent-visit {
+    grid-column: 1 / -1;
+}
+
+.concurrent-visit {
+    background: var(--color-surface-2);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-lg);
+    padding: var(--space-sm) var(--space-md) var(--space-md);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
+}
+
+.concurrent-visit__header {
+    display: flex;
+    align-items: baseline;
+    gap: var(--space-sm);
+    color: var(--color-text-muted, #5a605d);
+    font-size: 0.875rem;
+    font-weight: 500;
+}
+
+.concurrent-visit__time {
+    font-variant-numeric: tabular-nums;
+    color: var(--color-text, #1a1f1d);
+    font-weight: 600;
+}
+
+.concurrent-visit__meta::before {
+    content: "·";
+    margin-right: var(--space-xs);
+    opacity: 0.6;
+}
+
+/* Nested grid mirrors the parent gallery grid so tiles inside the shell
+   line up visually with tiles outside the shell. */
+.concurrent-visit__shell {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+    gap: var(--space-md);
+}
+
+/* Filmstrips inside a shell still span the full row of the inner grid. */
+.concurrent-visit__shell>.obs-filmstrip {
     grid-column: 1 / -1;
 }
 
@@ -6174,7 +8111,7 @@ body {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   WM-TOOLBOX — Shared tile hover action dock (Phase C)
+   WM-TOOLBOX — Shared tile hover action dock
    Hover-reveal toolbar at bottom-right of any wm-tile.
    Desktop: shows on hover. Mobile: shows on tap via :focus-within.
    ═══════════════════════════════════════════════════════════════════════════ */
@@ -6306,6 +8243,23 @@ body {
 .wm-toolbox__btn--locked::after {
     content: "·";
     margin-left: 1px;
+}
+
+/* Pressed state for stateful toolbox buttons.
+   Used by the Smart Zoom toggle (`gallery_utils.js:toggleSmartZoom`)
+   and any future stateful toolbox button such as star ratings or
+   bbox-overlay toggles. Stateful buttons must carry `aria-pressed`
+   and the `--toggled` modifier so the pressed state is visible in the
+   CSS and in the accessibility tree at the same time. */
+.wm-toolbox__btn--toggled {
+    background: linear-gradient(180deg, rgba(74, 97, 63, 0.96), rgba(60, 80, 50, 0.98));
+    border-color: rgba(60, 80, 50, 0.42);
+    color: #fdfbf7;
+    box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.2);
+}
+
+.wm-toolbox__btn--toggled:hover {
+    background: linear-gradient(180deg, rgba(82, 108, 68, 0.98), rgba(66, 88, 55, 1));
 }
 
 /* Menu wrapper */

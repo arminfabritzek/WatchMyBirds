@@ -1,5 +1,5 @@
 /**
- * Batch Action Engine (Phase D)
+ * Batch Action Engine
  *
  * Shared client module for batch selection + action execution.
  * Used by both edit.html and inline_edit.html.

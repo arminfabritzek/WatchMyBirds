@@ -54,7 +54,7 @@
                     }
                 }
 
-                // Phase 1: server-side health (go2rtc process alive?)
+                // Server-side health check: is go2rtc running?
                 async function serverHealthOk() {
                     const controller = new AbortController();
                     const timeout = setTimeout(function () { controller.abort(); }, FETCH_TIMEOUT_MS);
@@ -73,7 +73,7 @@
                     }
                 }
 
-                // Phase 2: browser-side probe – can the browser actually reach go2rtc?
+                // Browser-side probe: can the client actually reach go2rtc?
                 // Uses fetch with mode:'no-cors'. This yields an opaque response (status 0)
                 // when the port IS reachable, but throws a TypeError (network error)
                 // when the port is blocked / unreachable (e.g. reverse proxy).
@@ -109,7 +109,7 @@
                     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
                         const healthy = await serverHealthOk();
                         if (healthy) {
-                            // Phase 2: verify browser can actually reach go2rtc port
+                            // Verify that the browser can actually reach the go2rtc port
                             const reachable = await browserCanReachGo2RTC();
                             if (reachable) {
                                 enableGo2RTC();
@@ -250,7 +250,9 @@
 
             <div class="quiet-preview__list" id="summaryGrid">
                 {% for det in visual_summary %}
-                <div class="quiet-preview__item fade-in-item wm-toolbox-host">
+                <div class="quiet-preview__item fade-in-item wm-toolbox-host"
+                    {% if det.species_colour is not none %}data-species-colour="{{ det.species_colour }}"
+                    style="--cell-species-colour: var(--species-colour-{{ det.species_colour }})"{% endif %}>
                     <button type="button" class="quiet-preview__link"
                         style="display: block; width: 100%; padding: 0; border: 0; background: none; text-align: inherit;"
                         data-bs-toggle="modal" data-bs-target="#modal-stream-summary-{{ det.detection_id }}"

@@ -66,6 +66,9 @@ from utils.db import (
     fetch_review_queue_item_by_identity as _fetch_review_queue_item_by_identity,
 )
 from utils.db import (
+    fetch_review_cluster_context as _fetch_review_cluster_context,
+)
+from utils.db import (
     fetch_review_queue_images as _fetch_review_queue_images,
 )
 from utils.db import (
@@ -260,6 +263,21 @@ def fetch_review_queue_image(
         filename,
         gallery_threshold=gallery_threshold,
         exclude_deep_scanned=exclude_deep_scanned,
+    )
+
+
+def fetch_review_cluster_context(
+    conn,
+    *,
+    untagged_time_range,
+    context_window_minutes: int = 30,
+    max_context_rows: int = 200,
+):
+    return _fetch_review_cluster_context(
+        conn,
+        untagged_time_range=untagged_time_range,
+        context_window_minutes=context_window_minutes,
+        max_context_rows=max_context_rows,
     )
 
 

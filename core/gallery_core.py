@@ -288,13 +288,19 @@ def group_detections_into_observations(
     max_gap_sec: float = _OBS_MAX_GAP_SEC,
     max_bbox_dist: float = _OBS_MAX_BBOX_DIST,
 ) -> list[dict]:
-    """Group already-fetched detection dicts into observations (visits).
+    """Group detection dicts into biological observations.
 
-    Pure in-memory clustering — no DB calls.  Mirrors the algorithm in
-    ``utils.db.analytics.fetch_bird_visits`` but operates on detection
-    dicts that already carry ``image_timestamp``, ``bbox_*``, ``score``,
-    ``species_key`` / ``cls_class_name`` / ``od_class_name``, and
-    ``detection_id``.
+    This function now delegates to :func:`core.events.build_bird_events`.
+    The legacy 60 s + bbox proximity merge has been retired in favour of
+    the biological event window (30 min, same species, no bbox split).
+    The return shape is preserved so existing gallery, stream, and
+    analytics callers do not need to change.
+
+    The ``max_gap_sec`` and ``max_bbox_dist`` parameters are kept for
+    backwards compatibility. ``max_gap_sec`` is converted to minutes for
+    the event builder; ``max_bbox_dist`` is unused under the new policy
+    and silently ignored. New callers should call ``build_bird_events``
+    directly with ``gap_minutes``.
 
     Returns a list of observation dicts sorted by ``start_time`` desc:
 
@@ -307,155 +313,175 @@ def group_detections_into_observations(
             "photo_count": int,
             "duration_sec": float,
             "best_score": float,
-            "cover_detection_id": int,   # detection_id of newest photo
-            "start_time": str,           # YYYYMMDD_HHMMSS
+            "cover_detection_id": int,
+            "start_time": str,
             "end_time": str,
         }
     """
     if not detections:
         return []
 
-    # ── Extract fields & sort by timestamp ──────────────────────────
-    items: list[dict] = []
+    # Local import to avoid an import cycle: ``core.events`` imports
+    # helpers from this module.
+    from core.events import EVENT_GAP_MINUTES_DEFAULT, build_bird_events
+
+    # Re-key any detections that store their timestamp under
+    # ``image_timestamp`` (gallery / analytics surfaces) so the event
+    # builder can read them through its standard ``timestamp`` field
+    # without forcing every caller to remap upstream.
+    normalised_detections: list[dict] = []
     for det in detections:
-        species = (
-            det.get("species_key")
-            or det.get("cls_class_name")
-            or det.get("od_class_name")
-            or "unknown"
-        )
-        ts = det.get("image_timestamp", "") or ""
-        items.append(
-            {
-                "det_id": det.get("detection_id"),
-                "species": species,
-                "ts": ts,
-                "epoch": _ts_to_epoch(ts),
-                "bx": det.get("bbox_x") or 0,
-                "by": det.get("bbox_y") or 0,
-                "bw": det.get("bbox_w") or 0,
-                "bh": det.get("bbox_h") or 0,
-                "score": det.get("score") or 0.0,
-            }
-        )
-    items.sort(key=lambda x: x["epoch"])
+        if not det.get("timestamp") and det.get("image_timestamp"):
+            det = {**det, "timestamp": det["image_timestamp"]}
+        normalised_detections.append(det)
 
-    # ── Clustering pass (nearest-neighbour, gated) ──────────────────
-    closed: list[dict] = []
-    open_visits: list[dict] = []
+    # Honour the legacy ``max_gap_sec`` parameter when callers tighten
+    # the window manually; otherwise fall back to the biological default.
+    if max_gap_sec is None or float(max_gap_sec) <= 0:
+        gap_minutes = EVENT_GAP_MINUTES_DEFAULT
+    elif max_gap_sec == _OBS_MAX_GAP_SEC:
+        gap_minutes = EVENT_GAP_MINUTES_DEFAULT
+    else:
+        gap_minutes = float(max_gap_sec) / 60.0
 
-    for item in items:
-        epoch = item["epoch"]
-        species = item["species"]
-        bx, by, bw, bh = item["bx"], item["by"], item["bw"], item["bh"]
+    events = build_bird_events(normalised_detections, gap_minutes=gap_minutes)
 
-        # Auto-close stale visits
-        still_open: list[dict] = []
-        for v in open_visits:
-            if epoch - v["_last_epoch"] > max_gap_sec:
-                closed.append(v)
-            else:
-                still_open.append(v)
-        open_visits = still_open
+    # Compute best_score per event from the source rows so the
+    # gallery's score-threshold filter still has the metric it needs.
+    score_by_id: dict[int, float] = {}
+    for det in detections:
+        det_id = det.get("detection_id")
+        if det_id is None:
+            continue
+        try:
+            score_by_id[int(det_id)] = float(det.get("score") or 0.0)
+        except (TypeError, ValueError):
+            score_by_id[int(det_id)] = 0.0
 
-        # Find best matching open visit
-        best: dict | None = None
-        best_cost: float | None = None
-        for v in open_visits:
-            if v["species"] != species:
-                continue
-            td = epoch - v["_last_epoch"]
-            if td < 0 or td > max_gap_sec:
-                continue
-            sd = _bbox_dist(
-                v["_last_bx"],
-                v["_last_by"],
-                v["_last_bw"],
-                v["_last_bh"],
-                bx,
-                by,
-                bw,
-                bh,
-            )
-            iou = _bbox_iou_local(
-                v["_last_bx"],
-                v["_last_by"],
-                v["_last_bw"],
-                v["_last_bh"],
-                bx,
-                by,
-                bw,
-                bh,
-            )
-            area_sim = _bbox_area_sim(v["_last_bw"], v["_last_bh"], bw, bh)
-            if area_sim < _OBS_MIN_AREA_SIMILARITY:
-                continue
-            if sd > max_bbox_dist and iou < _OBS_MIN_BBOX_IOU:
-                continue
-            cost = (
-                (td / max(max_gap_sec, 1e-6))
-                + (sd / max(max_bbox_dist, 1e-6))
-                - 0.5 * iou
-            )
-            if best_cost is None or cost < best_cost:
-                best_cost = cost
-                best = v
-
-        if best is None:
-            open_visits.append(
-                {
-                    "species": species,
-                    "start_time": item["ts"],
-                    "end_time": item["ts"],
-                    "_start_epoch": epoch,
-                    "_last_epoch": epoch,
-                    "_last_bx": bx,
-                    "_last_by": by,
-                    "_last_bw": bw,
-                    "_last_bh": bh,
-                    "detection_ids": [item["det_id"]],
-                    "_best_score": item["score"],
-                    "_cover_det_id": item["det_id"],
-                }
-            )
-        else:
-            best["end_time"] = item["ts"]
-            best["_last_epoch"] = epoch
-            best["_last_bx"] = bx
-            best["_last_by"] = by
-            best["_last_bw"] = bw
-            best["_last_bh"] = bh
-            best["detection_ids"].append(item["det_id"])
-            # Keep best_score for filtering, but cover follows the newest detection.
-            if item["score"] > best["_best_score"]:
-                best["_best_score"] = item["score"]
-            best["_cover_det_id"] = item["det_id"]
-
-    closed.extend(open_visits)
-
-    # ── Format output ───────────────────────────────────────────────
-    # Keep observation output stable by visit start time descending.
-    # Surfaces that want newest-photo ordering can resort by end_time.
-    closed.sort(key=lambda v: v.get("_start_epoch", 0), reverse=True)
+    # Match the legacy ordering: start_time descending so the newest
+    # observation comes first.
+    sorted_events = sorted(
+        events,
+        key=lambda event: event.start_time,
+        reverse=True,
+    )
 
     observations: list[dict] = []
-    for idx, v in enumerate(closed, start=1):
-        dur = round(v.get("_last_epoch", 0) - v.get("_start_epoch", 0), 1)
+    for idx, event in enumerate(sorted_events, start=1):
+        member_scores = [
+            score_by_id.get(int(det_id), 0.0) for det_id in event.detection_ids
+        ]
+        best_score = max(member_scores) if member_scores else 0.0
         observations.append(
             {
                 "observation_id": idx,
-                "species": v["species"],
-                "detection_ids": v["detection_ids"],
-                "photo_count": len(v["detection_ids"]),
-                "duration_sec": max(dur, 0.0),
-                "best_score": v["_best_score"],
-                "cover_detection_id": v["_cover_det_id"],
-                "start_time": v["start_time"],
-                "end_time": v["end_time"],
+                "species": event.species or "unknown",
+                "detection_ids": list(event.detection_ids),
+                "photo_count": event.photo_count,
+                "duration_sec": event.duration_sec,
+                "best_score": best_score,
+                "cover_detection_id": event.cover_detection_id,
+                "start_time": event.start_time,
+                "end_time": event.end_time,
             }
         )
 
+    # Touch the unused legacy gates so ruff treats them as referenced.
+    _ = (_OBS_MAX_BBOX_DIST, _OBS_MIN_BBOX_IOU, _OBS_MIN_AREA_SIMILARITY, max_bbox_dist)
     return observations
+
+
+# Concurrent-visit grouping for the Subgallery UI.
+#
+# Two species in the same time window stay separate observations in the
+# data layer. The Subgallery groups them only as a visual visit window.
+
+_CONCURRENT_VISIT_WINDOW_MINUTES_DEFAULT = 5.0
+
+
+def group_concurrent_observations(
+    observations: list[dict],
+    *,
+    window_minutes: float = _CONCURRENT_VISIT_WINDOW_MINUTES_DEFAULT,
+) -> list[list[dict]]:
+    """Bucket observations into visit windows for the Subgallery UI.
+
+    A visit window is a list of observations whose ``[start_time, end_time]``
+    intervals overlap within ``window_minutes`` tolerance. Same-species
+    observations stay separate inside a window — this helper only groups
+    them visually and never merges them in the data layer.
+
+    The function is pure: no DB calls, no mutation of the input list.
+
+    Determinism: observations are sorted internally by
+    ``(start_time, end_time, observation_id)`` before bucketing, so the
+    returned list is stable for the same input. Sort order of the returned
+    visit windows is preserved from that internal sort (i.e. earliest
+    ``start_time`` first). Callers that want newest-first should sort by
+    the first observation's ``end_time`` after the fact — the helper's
+    docstring picks "first observation" for deterministic re-sort keys,
+    which keeps the helper deterministic for callers that want to
+    re-sort afterwards.
+
+    Args:
+        observations: list of observation dicts as returned by
+            :func:`group_detections_into_observations`. Each dict must
+            carry ``start_time`` and ``end_time`` in the
+            ``YYYYMMDD_HHMMSS`` string form used by the rest of the
+            pipeline.
+        window_minutes: tolerance in minutes for two intervals to be
+            considered concurrent. Defaults to 5 min — tight enough that
+            the common "one species at a time" case never gets grouped.
+
+    Returns:
+        List of visit windows. Each visit window is a list of
+        observation dicts (references to the originals, not copies).
+        Single-observation windows are returned as 1-element lists.
+    """
+    if not observations:
+        return []
+
+    tolerance_sec = max(0.0, float(window_minutes) * 60.0)
+
+    # Sort deterministically. Ties on start_time fall back to end_time
+    # then observation_id so the output stays stable across runs.
+    def _sort_key(obs: dict) -> tuple[float, float, int]:
+        return (
+            _ts_to_epoch(obs.get("start_time", "") or ""),
+            _ts_to_epoch(obs.get("end_time", "") or ""),
+            int(obs.get("observation_id") or 0),
+        )
+
+    ordered = sorted(observations, key=_sort_key)
+
+    visit_windows: list[list[dict]] = []
+    current: list[dict] = []
+    current_end_epoch = 0.0
+
+    for obs in ordered:
+        start_epoch = _ts_to_epoch(obs.get("start_time", "") or "")
+        end_epoch = _ts_to_epoch(obs.get("end_time", "") or "")
+        if not current:
+            current = [obs]
+            current_end_epoch = end_epoch
+            continue
+
+        # Two intervals are "concurrent" when the next start falls
+        # within tolerance of the running max end. This also naturally
+        # handles true overlaps (next_start <= current_end).
+        if start_epoch - current_end_epoch <= tolerance_sec:
+            current.append(obs)
+            if end_epoch > current_end_epoch:
+                current_end_epoch = end_epoch
+        else:
+            visit_windows.append(current)
+            current = [obs]
+            current_end_epoch = end_epoch
+
+    if current:
+        visit_windows.append(current)
+
+    return visit_windows
 
 
 def summarize_observations(

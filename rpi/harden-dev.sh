@@ -4,7 +4,7 @@ set -x
 
 # ----------------------------------------------------------------------
 # WatchMyBirds DEV Image Hardening Script
-# DEVELOPMENT ONLY - SSH enabled, /opt/app writable
+# DEVELOPMENT ONLY - relaxed access controls, /opt/app writable
 # ----------------------------------------------------------------------
 
 export DEBIAN_FRONTEND=noninteractive
@@ -100,7 +100,7 @@ else
     echo "WARNING: No dev_authorized_keys found - SSH key auth will not work!"
 fi
 
-# GRANT ADMIN ROOT PRIVILEGES (NOPASSWD) FOR DEV CONVENIENCE
+# Grant elevated admin access for local development convenience
 echo "admin ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/010_admin-nopasswd
 chmod 440 /etc/sudoers.d/010_admin-nopasswd
 

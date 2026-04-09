@@ -86,7 +86,7 @@ def _create_runtime():
     # old post-resolve sync only ran when mode was already 'relay'.
     ensure_go2rtc_stream_synced(config, with_retry=True)
 
-    # --- Resolve effective stream sources (§5) ---
+    # Resolve effective stream sources
     resolved = resolve_effective_sources(config)
     config["VIDEO_SOURCE"] = resolved["video_source"]
     logger.info(

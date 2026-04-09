@@ -36,7 +36,7 @@ class TestONVIFDiscovery:
         # Create mock service
         mock_service = MagicMock()
         mock_service.getXAddrs.return_value = [
-            "http://192.168.1.100:80/onvif/device_service"
+            "http://198.51.100.10:80/onvif/device_service"
         ]
         mock_service.getScopes.return_value = [
             "onvif://www.onvif.org/name/TestCam",
@@ -51,7 +51,7 @@ class TestONVIFDiscovery:
         result = discovery.discover_cameras(timeout=1)
 
         assert len(result) == 1
-        assert result[0]["ip"] == "192.168.1.100"
+        assert result[0]["ip"] == "198.51.100.10"
         assert result[0]["port"] == 80
         assert result[0]["name"] == "TestCam"
         assert result[0]["manufacturer"] == "Hikvision"
@@ -125,9 +125,9 @@ class TestONVIFDiscovery:
         mock_camera_class.return_value = mock_camera
 
         discovery = ONVIFDiscovery()
-        result = discovery.get_camera_details("192.168.1.100", 80)
+        result = discovery.get_camera_details("198.51.100.10", 80)
 
-        assert result["ip"] == "192.168.1.100"
+        assert result["ip"] == "198.51.100.10"
         assert result["manufacturer"] == "Hikvision"
         assert result["model"] == "DS-2CD2343G0"
         assert result["has_ptz"] is True
@@ -141,7 +141,7 @@ class TestONVIFDiscovery:
         mock_camera_class.side_effect = ONVIFError("Connection refused")
 
         discovery = ONVIFDiscovery()
-        result = discovery.get_camera_details("192.168.1.100", 80)
+        result = discovery.get_camera_details("198.51.100.10", 80)
 
         assert result is None
 
@@ -156,16 +156,16 @@ class TestONVIFDiscovery:
         mock_media.GetProfiles.return_value = [mock_profile]
 
         mock_uri_response = MagicMock()
-        mock_uri_response.Uri = "rtsp://192.168.1.100:554/stream1"
+        mock_uri_response.Uri = "rtsp://198.51.100.10:554/stream1"
         mock_media.GetStreamUri.return_value = mock_uri_response
 
         mock_camera.create_media_service.return_value = mock_media
         mock_camera_class.return_value = mock_camera
 
         discovery = ONVIFDiscovery()
-        result = discovery.get_stream_uri("192.168.1.100", 80)
+        result = discovery.get_stream_uri("198.51.100.10", 80)
 
-        assert result == "rtsp://192.168.1.100:554/stream1"
+        assert result == "rtsp://198.51.100.10:554/stream1"
 
     @patch("camera.onvif_discovery.ONVIFCamera")
     def test_get_stream_uri_injects_credentials(self, mock_camera_class):
@@ -178,7 +178,7 @@ class TestONVIFDiscovery:
         mock_media.GetProfiles.return_value = [mock_profile]
 
         mock_uri_response = MagicMock()
-        mock_uri_response.Uri = "rtsp://192.168.1.100:554/stream1"
+        mock_uri_response.Uri = "rtsp://198.51.100.10:554/stream1"
         mock_media.GetStreamUri.return_value = mock_uri_response
 
         mock_camera.create_media_service.return_value = mock_media
@@ -186,8 +186,8 @@ class TestONVIFDiscovery:
 
         discovery = ONVIFDiscovery()
         result = discovery.get_stream_uri(
-            "192.168.1.100", 80, username="admin", password="secret123"
+            "198.51.100.10", 80, username="viewer", password="example-password"
         )
 
-        assert "admin:secret123@" in result
-        assert "192.168.1.100" in result
+        assert "viewer:example-password@" in result
+        assert "198.51.100.10" in result

@@ -87,7 +87,9 @@
         <div class="trash-grid">
             {% for item in items %}
             <div class="trash-item" data-id="{{ item.item_id }}" data-type="{{ item.trash_type }}"
-                data-index="{{ loop.index0 }}">
+                data-index="{{ loop.index0 }}"
+                {% if item.species_colour is not none %}data-species-colour="{{ item.species_colour }}"
+                style="--cell-species-colour: var(--species-colour-{{ item.species_colour }})"{% endif %}>
                 <input type="checkbox" class="trash-item__checkbox trash-checkbox" value="{{ item.item_id }}"
                     data-type="{{ item.trash_type }}" data-index="{{ loop.index0 }}">
                 {# Type Badge #}

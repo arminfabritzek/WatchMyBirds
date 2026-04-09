@@ -6,15 +6,19 @@
 <nav class="page-control-bar review-desk-bar" role="navigation" aria-label="Review workspace controls">
     <div class="page-control-bar__left">
         <span class="page-control-bar__title">Review Desk</span>
-        <span class="page-control-bar__badge" id="review-visible-count">{{ orphans|length }}</span>
+        <span class="page-control-bar__badge" id="review-visible-count">{{ review_events|length if review_events else orphans|length }}</span>
     </div>
     <div class="page-control-bar__meta">
+        {% if review_events %}
+        <span id="review-focus-meta">{{ review_events|length }} event{{ 's' if review_events|length != 1 }}</span>
+        {% else %}
         <span id="review-focus-meta">Queue {{ orphans|length }}</span>
+        {% endif %}
         <span id="deep-scan-status" style="margin-left: 12px;" hidden></span>
     </div>
     <div class="page-control-bar__right">
         {% if orphans %}
-        <label class="page-control-bar__select-all" title="Focus on low-confidence observations">
+        <label class="page-control-bar__select-all" id="hideOrphansToggleWrap" title="Focus on low-confidence observations">
             <input type="checkbox" id="hide-orphans" class="page-control-bar__checkbox"
                 aria-label="Hide No Detection items">
             <span class="page-control-bar__select-label">Hide No Detection</span>
@@ -45,19 +49,88 @@
 {% endif %}
 {% endwith %}
 
-{% if orphans %}
-<section class="review-workspace" id="reviewWorkspace">
-    <aside class="review-queue" aria-label="Review queue">
+{% if review_events or orphans %}
+<section class="review-workspace{% if review_events %} review-workspace--event{% endif %}" id="reviewWorkspace">
+    {% if review_events %}
+    <aside class="review-event-browser" id="reviewEventBrowser" aria-label="Review events">
+        <div class="review-queue__head">
+            <div>
+                <h2 class="review-queue__title">Events</h2>
+                <p class="review-queue__subtitle">Same species, gap ≤ 30 min</p>
+            </div>
+        </div>
+        <div class="review-event-browser__grid" id="reviewEventList">
+            {# Per-card trail map at full rail width so the operator
+               always keeps the motion trail in sight while scanning
+               the rail. This restores only the bbox-trail visual, not
+               a cover thumbnail. #}
+            {% for event in review_events %}
+            <button type="button"
+                class="review-event-card{% if loop.first %} is-active{% endif %}"
+                data-review-event
+                data-event-key="{{ event.event_key }}"
+                data-cover-detection-id="{{ event.cover_detection_id }}"
+                data-eligibility="{{ event.eligibility }}"
+                title="{{ event.photo_count }} frame{{ 's' if event.photo_count != 1 }} · {{ event.window_time or event.window_date }} · {{ event.candidate_species_common }}"
+                {% if loop.first %}aria-current="true"{% endif %}>
+                <span class="review-event-card__accent" aria-hidden="true"></span>
+                <span class="review-event-card__row">
+                    {# Replace the numeric count with up to 4 bird icons
+                       plus an `×N` overflow label when the event carries
+                       more than 4 frames. The icons use `currentColor`
+                       so they can inherit a species tint. #}
+                    {% set bird_count = event.photo_count or 0 %}
+                    {% set bird_cap = 4 %}
+                    {% set bird_visible = bird_count if bird_count < bird_cap else bird_cap %}
+                    <span class="review-event-card__count"
+                        aria-label="{{ bird_count }} frame{{ 's' if bird_count != 1 }}">
+                        <span class="review-event-card__count-birds" aria-hidden="true">
+                            {% for _ in range(bird_visible) %}
+                                {% include 'partials/_bird_count_icon.svg' %}
+                            {% endfor %}
+                        </span>
+                        {% if bird_count > bird_cap %}
+                        <span class="review-event-card__count-overflow" aria-hidden="true">×{{ bird_count }}</span>
+                        {% endif %}
+                        <span class="review-event-card__count-value" hidden>{{ bird_count }}</span>
+                    </span>
+                    <span class="review-event-card__body">
+                        <span class="review-event-card__time">{{ event.window_time or event.window_date }}</span>
+                        <span class="review-event-card__species">{{ event.candidate_species_common }}</span>
+                    </span>
+                    <span class="review-event-card__badge review-event-card__badge--{{ 'ready' if event.eligibility == 'event_eligible' else 'fallback' }}"
+                        aria-label="{{ event.eligibility_label }}"
+                        title="{{ event.eligibility_label }}"></span>
+                </span>
+                {% if event.bbox_trail %}
+                <span class="review-event-card__trail-map" aria-hidden="true"
+                    {% if event.cover_frame_width and event.cover_frame_height %}style="aspect-ratio: {{ event.cover_frame_width }} / {{ event.cover_frame_height }};"{% endif %}>
+                    {% for trail in event.bbox_trail %}
+                    <span class="review-event-card__trail-box review-event-card__trail-box--{{ trail.trail_role }}{% if trail.context_only %} review-event-card__trail-box--context{% endif %}"
+                        style="left: {{ trail.bbox_x_pct }}%; top: {{ trail.bbox_y_pct }}%; width: {{ trail.bbox_w_pct }}%; height: {{ trail.bbox_h_pct }}%;"></span>
+                    {% endfor %}
+                </span>
+                {% endif %}
+            </button>
+            {% endfor %}
+        </div>
+    </aside>
+    {% endif %}
+
+    {% if queue_orphans and not review_events %}
+    <aside class="review-queue" id="reviewQueueBrowser" aria-label="Review queue">
         <div class="review-queue__head">
             <div>
                 <h2 class="review-queue__title">Queue</h2>
+                <p class="review-queue__subtitle">
+                    {% if review_events %}Images still needing per-item review{% else %}Per-detection review{% endif %}
+                </p>
             </div>
         </div>
-
         <div class="review-queue__list" id="reviewQueueList">
-            {% for img in orphans %}
+            {% for img in queue_orphans %}
             <button type="button"
-                class="review-queue__item{% if loop.first %} is-active{% endif %}"
+                class="review-queue__item{% if not review_events and loop.first %} is-active{% endif %}"
                 data-review-item data-item-kind="{{ img.item_kind }}" data-item-id="{{ img.item_id }}"
                 data-item-key="{{ img.item_key }}" data-filename="{{ img.filename }}" data-reason="{{ img.review_reason }}">
                 <img class="review-queue__thumb" src="{{ img.thumb_url }}" alt="{{ img.source_image_filename }}"
@@ -70,18 +143,16 @@
             {% endfor %}
         </div>
     </aside>
+    {% endif %}
 
     <section class="review-stage" aria-label="Review workspace">
         <article class="review-stage-panel is-active" id="reviewActivePanel" data-review-panel
-            {% if active_orphan %}data-item-kind="{{ active_orphan.item_kind }}" data-item-id="{{ active_orphan.item_id }}" data-item-key="{{ active_orphan.item_key }}" data-filename="{{ active_orphan.filename }}" data-reason="{{ active_orphan.review_reason }}"{% endif %}>
-            {% if active_orphan %}
-            {% set orphan = active_orphan %}
-            {% include "components/review_stage_panel.html" %}
-            {% endif %}
+            data-panel-type="{% if review_events %}event{% else %}queue{% endif %}">
         </article>
     </section>
 </section>
 <script id="review-queue-data" type="application/json">{{ orphans|tojson }}</script>
+<script id="review-event-data" type="application/json">{{ review_events|tojson }}</script>
 {% else %}
 <div class="empty-state">
     <div class="empty-state__icon">🎉</div>
@@ -93,7 +164,8 @@
 
 {% block scripts %}
 <script src="/assets/js/species_picker.js?v=1"></script>
-<script src="/assets/js/gallery_utils.js?v=test_v3"></script>
+<script src="/assets/js/gallery_utils.js?v=test_v4"></script>
 <script src="/assets/js/tile_actions.js?v=1"></script>
-<script src="/assets/js/review_workspace.js?v=4"></script>
+<script src="/assets/js/batch_actions.js?v=1"></script>
+<script src="/assets/js/review_workspace.js?v=10"></script>
 {% endblock %}

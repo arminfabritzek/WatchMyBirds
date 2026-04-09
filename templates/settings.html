@@ -66,7 +66,7 @@
                     <div class="row mb-3">
                         <div class="col-8">
                             <label for="addCamIp" class="form-label">IP Address <span class="text-danger">*</span></label>
-                            <input type="text" class="form-control" id="addCamIp" placeholder="192.168.1.100" required>
+                            <input type="text" class="form-control" id="addCamIp" placeholder="198.51.100.10" required>
                         </div>
                         <div class="col-4">
                             <label for="addCamPort" class="form-label">ONVIF Port</label>
@@ -617,7 +617,7 @@
                     <div class="input-group input-group-sm">
                         <input type="text" id="cameraUrlInput" class="form-control form-control-sm"
                             value="{{ payload.get('CAMERA_URL', {}).get('value', '') }}"
-                            placeholder="rtsp://user:pass@192.168.1.100:554/stream">
+                            placeholder="rtsp://viewer:example-password@198.51.100.10:554/stream">
                         <button type="button" class="btn btn--primary btn--sm" onclick="setCameraUrl(document.getElementById('cameraUrlInput').value)">Apply</button>
                     </div>
                     <div class="settings-field__help">Passwords stay masked as <code>*****</code>. Replace stars only to change credentials.</div>

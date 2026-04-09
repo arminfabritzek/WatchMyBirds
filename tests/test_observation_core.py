@@ -1,7 +1,11 @@
 """Tests for gallery_core observation grouping and summaries.
 
-Tests the in-memory spatio-temporal clustering logic used by the
-observation-based gallery view (Issue #12).
+The legacy 60 s + bbox proximity merge was retired in favour of the
+biological event window (30 min, same species, no bbox split). The
+assertions in this file have been updated to reflect that policy. The
+function under test, ``group_detections_into_observations``, is now a
+thin shim around ``core.events.build_bird_events`` that preserves the
+legacy dict shape for callers that have not been migrated yet.
 """
 
 from core.gallery_core import (
@@ -48,7 +52,7 @@ def test_group_detections_single_detection():
 
 
 def test_group_detections_basic_grouping():
-    """Nearby detections (same species, close time, close bbox) → 1 observation."""
+    """Nearby detections (same species, close time) → 1 observation."""
     dets = [
         _det(1, "20260101_120000", bbox=(0.10, 0.10, 0.20, 0.20)),
         _det(2, "20260101_120030", bbox=(0.12, 0.11, 0.21, 0.21)),
@@ -61,11 +65,22 @@ def test_group_detections_basic_grouping():
     assert set(obs[0]["detection_ids"]) == {1, 2, 3}
 
 
-def test_group_detections_time_gap_splits():
-    """Large time gap (>60s) → 2 separate observations."""
+def test_group_detections_within_event_window_stay_together():
+    """Same species, gap below 30 min → still one biological observation."""
     dets = [
         _det(1, "20260101_120000"),
-        _det(2, "20260101_120200"),  # 2 min gap
+        _det(2, "20260101_120200"),  # 2 min gap, well inside the 30 min window
+    ]
+    obs = group_detections_into_observations(dets)
+    assert len(obs) == 1
+    assert obs[0]["photo_count"] == 2
+
+
+def test_group_detections_gap_above_event_window_splits():
+    """Same species, gap above 30 min → two separate observations."""
+    dets = [
+        _det(1, "20260101_120000"),
+        _det(2, "20260101_124000"),  # 40 min gap
     ]
     obs = group_detections_into_observations(dets)
     assert len(obs) == 2
@@ -113,7 +128,7 @@ def test_observations_sorted_by_time_desc():
     """Observations are returned sorted by start_time descending."""
     dets = [
         _det(1, "20260101_100000"),
-        _det(2, "20260101_130000"),  # later, separate visit
+        _det(2, "20260101_130000"),  # 3 hours later, separate event
     ]
     obs = group_detections_into_observations(dets)
     assert len(obs) == 2
@@ -122,35 +137,39 @@ def test_observations_sorted_by_time_desc():
     assert obs[1]["start_time"] == "20260101_100000"
 
 
-def test_bbox_scale_change_splits_observation():
-    """Drastically different bbox size → separate observations."""
+def test_same_species_at_distinct_positions_merge_into_one_event():
+    """Two birds of the same species in the same window collapse into one event.
+
+    Bbox proximity is no longer a split criterion. The biological event
+    is "same species, gap <= 30 min". A bbox jump still surfaces in the
+    upstream BirdEvent ``fallback_reason`` for the Review surface, but
+    the gallery observation shape stays one row.
+    """
+    dets = [
+        _det(1, "20260101_120000", bbox=(0.10, 0.10, 0.16, 0.16)),
+        _det(2, "20260101_120005", bbox=(0.70, 0.70, 0.16, 0.16)),
+        _det(3, "20260101_120010", bbox=(0.11, 0.11, 0.16, 0.16)),
+        _det(4, "20260101_120015", bbox=(0.69, 0.69, 0.16, 0.16)),
+    ]
+    obs = group_detections_into_observations(dets)
+    assert len(obs) == 1
+    assert obs[0]["photo_count"] == 4
+    assert sorted(obs[0]["detection_ids"]) == [1, 2, 3, 4]
+
+
+def test_bbox_scale_change_no_longer_splits_event():
+    """Drastic bbox size change is no longer a split criterion."""
     dets = [
         _det(1, "20260101_120000", bbox=(0.10, 0.10, 0.30, 0.30)),
         _det(2, "20260101_120020", bbox=(0.12, 0.12, 0.05, 0.05)),
     ]
     obs = group_detections_into_observations(dets)
-    assert len(obs) == 2
-
-
-def test_parallel_same_species_stays_separate():
-    """Two birds of same species at different positions → 2 observations."""
-    dets = [
-        _det(1, "20260101_120000", bbox=(0.10, 0.10, 0.16, 0.16)),  # Bird A
-        _det(2, "20260101_120005", bbox=(0.70, 0.70, 0.16, 0.16)),  # Bird B
-        _det(3, "20260101_120010", bbox=(0.11, 0.11, 0.16, 0.16)),  # Bird A
-        _det(4, "20260101_120015", bbox=(0.69, 0.69, 0.16, 0.16)),  # Bird B
-    ]
-    obs = group_detections_into_observations(dets)
-    assert len(obs) == 2
-    assert sorted(o["photo_count"] for o in obs) == [2, 2]
+    assert len(obs) == 1
+    assert obs[0]["photo_count"] == 2
 
 
 def test_microsecond_timestamps_compute_duration():
-    """Real DB timestamps (YYYYMMDD_HHMMSS_ffffff) must parse correctly.
-
-    Previous bug: `_ts_to_epoch` failed on the _ffffff suffix, returning 0.0
-    for every detection, making all durations 0.
-    """
+    """Real DB timestamps (YYYYMMDD_HHMMSS_ffffff) must parse correctly."""
     dets = [
         _det(1, "20260225_084116_427121"),
         _det(2, "20260225_084118_430501"),
@@ -165,7 +184,14 @@ def test_microsecond_timestamps_compute_duration():
 
 
 def test_summarize_observations_uses_species_key_and_threshold():
-    """Summary must align with gallery species resolution and thresholding."""
+    """Summary must align with gallery species resolution and thresholding.
+
+    All four detections in the fixture span 4 minutes, so under the 30
+    min biological event window the three Columba_palumbus rows collapse
+    into a single event. The Parus_major detection has score 0.05, below
+    the 0.10 threshold, so its single-row event is filtered out at the
+    observation-best-score stage.
+    """
     dets = [
         {
             **_det(
@@ -207,16 +233,16 @@ def test_summarize_observations_uses_species_key_and_threshold():
 
     result = summarize_observations(dets, min_score=0.10)
 
-    assert result["summary"]["total_observations"] == 2
+    assert result["summary"]["total_observations"] == 1
     assert result["summary"]["total_detections"] == 3
-    assert result["summary"]["species_counts"] == {"Columba_palumbus": 2}
+    assert result["summary"]["species_counts"] == {"Columba_palumbus": 1}
     assert result["summary"]["avg_score"] == 0.8
     assert {det["detection_id"] for det in result["detections"]} == {1, 2, 3}
     assert all(obs["species"] == "Columba_palumbus" for obs in result["observations"])
 
 
-def test_summarize_observations_filters_by_observation_best_score():
-    """Gallery threshold must keep all rows from a qualifying observation."""
+def test_summarize_observations_keeps_full_event_when_best_score_passes():
+    """A single biological event keeps all member detections once it passes the score gate."""
     dets = [
         _det(1, "20260101_120000", score=0.90),
         _det(2, "20260101_120020", score=0.05),
@@ -226,7 +252,8 @@ def test_summarize_observations_filters_by_observation_best_score():
     result = summarize_observations(dets, min_score=0.10)
 
     assert result["summary"]["total_observations"] == 1
-    assert result["summary"]["total_detections"] == 2
+    assert result["summary"]["total_detections"] == 3
     assert result["summary"]["species_counts"] == {"parus_major": 1}
-    assert result["summary"]["avg_score"] == 0.48
-    assert {det["detection_id"] for det in result["detections"]} == {1, 2}
+    # avg_score = (0.90 + 0.05 + 0.09) / 3 ≈ 0.35
+    assert result["summary"]["avg_score"] == 0.35
+    assert {det["detection_id"] for det in result["detections"]} == {1, 2, 3}

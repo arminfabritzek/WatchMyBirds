@@ -135,6 +135,7 @@ def fetch_review_queue_images(
             NULL as unknown_score,
             NULL as decision_reasons,
             NULL as od_confidence,
+            NULL as cls_class_name,
             NULL as cls_confidence,
             NULL as species_key,
             NULL as manual_species_override,
@@ -170,6 +171,14 @@ def fetch_review_queue_images(
             d.unknown_score,
             d.decision_reasons,
             d.od_confidence,
+            (
+                SELECT c.cls_class_name
+                FROM classifications c
+                WHERE c.detection_id = d.detection_id
+                  AND c.rank = 1
+                  AND COALESCE(c.status, 'active') = 'active'
+                LIMIT 1
+            ) as cls_class_name,
             (
                 SELECT c.cls_confidence
                 FROM classifications c
@@ -230,7 +239,7 @@ def fetch_review_queue_item_by_identity(
     species_sql = effective_species_sql("d")
 
     if item_kind == "image":
-        query = f"""
+        query = """
         SELECT
             'image' as item_kind,
             i.filename as item_id,
@@ -251,6 +260,7 @@ def fetch_review_queue_item_by_identity(
             NULL as unknown_score,
             NULL as decision_reasons,
             NULL as od_confidence,
+            NULL as cls_class_name,
             NULL as cls_confidence,
             NULL as species_key,
             NULL as manual_species_override,
@@ -291,6 +301,14 @@ def fetch_review_queue_item_by_identity(
             d.decision_reasons,
             d.od_confidence,
             (
+                SELECT c.cls_class_name
+                FROM classifications c
+                WHERE c.detection_id = d.detection_id
+                  AND c.rank = 1
+                  AND COALESCE(c.status, 'active') = 'active'
+                LIMIT 1
+            ) as cls_class_name,
+            (
                 SELECT c.cls_confidence
                 FROM classifications c
                 WHERE c.detection_id = d.detection_id
@@ -324,6 +342,147 @@ def fetch_review_queue_item_by_identity(
         row = conn.execute(query, (gallery_threshold, int(item_id))).fetchone()
 
     return row
+
+
+def _shift_review_timestamp(ts: str, *, minutes: int) -> str:
+    """Shift a ``YYYYMMDD_HHMMSS`` Review timestamp by ``minutes`` (may be negative).
+
+    Returns the shifted timestamp in the same string format. Falls back to
+    the input string when parsing fails so callers never crash on
+    malformed historical rows.
+    """
+    try:
+        dt = datetime.strptime(ts, "%Y%m%d_%H%M%S")
+    except (TypeError, ValueError):
+        return ts
+    return (dt + timedelta(minutes=minutes)).strftime("%Y%m%d_%H%M%S")
+
+
+def fetch_review_cluster_context(
+    conn: sqlite3.Connection,
+    *,
+    untagged_time_range: tuple[str, str] | None,
+    context_window_minutes: int = 30,
+    max_context_rows: int = 200,
+) -> tuple[list[dict], bool]:
+    """Return confirmed-bird detections that anchor a Review cluster.
+
+    The Review desk needs to see ``confirmed_bird`` Gallery detections
+    that fall inside the same biological independence window as the
+    currently loaded untagged set so the BirdEvent clusterer can place
+    new uncertain frames into an existing visit instead of inventing a
+    fresh, isolated event.
+
+    Parameters
+    ----------
+    conn:
+        Open SQLite connection. The function never commits or mutates.
+    untagged_time_range:
+        ``(min_timestamp, max_timestamp)`` of the currently loaded
+        untagged Review rows in ``YYYYMMDD_HHMMSS`` form, or ``None`` /
+        empty when there are no untagged rows. With no anchor range
+        there is no neighbourhood to widen, and the function returns
+        ``([], False)``.
+    context_window_minutes:
+        Symmetric widening (default 30 min, matching the
+        ``EVENT_GAP_MINUTES_DEFAULT`` independence rule).
+    max_context_rows:
+        Hard safety cap. Defaults to 200. When the cap is hit the
+        second tuple element is ``True`` so the Review blueprint can
+        surface an operator-visible truncation hint.
+
+    Returns
+    -------
+    tuple[list[dict], bool]
+        A list of plain dicts shaped like ``fetch_review_queue_images``
+        rows (so they can be concatenated and fed straight into
+        ``core.events.build_bird_events``) plus a ``context_truncated``
+        flag.
+
+    Notes
+    -----
+    Every returned row carries ``context_only=True`` so the BirdEvent
+    layer and the Review blueprint can distinguish read-only Gallery
+    anchors from actionable untagged frames.
+    """
+    if not untagged_time_range:
+        return [], False
+    raw_min, raw_max = untagged_time_range
+    if not raw_min or not raw_max:
+        return [], False
+
+    window_min = _shift_review_timestamp(raw_min, minutes=-int(context_window_minutes))
+    window_max = _shift_review_timestamp(raw_max, minutes=int(context_window_minutes))
+
+    species_sql = effective_species_sql("d")
+    # Pull one extra row so we can detect when we hit the cap exactly.
+    fetch_limit = int(max_context_rows) + 1
+
+    query = f"""
+    SELECT
+        'detection' as item_kind,
+        CAST(d.detection_id AS TEXT) as item_id,
+        i.filename,
+        i.filename as source_image_filename,
+        i.timestamp,
+        i.review_status,
+        d.score as max_score,
+        d.detection_id as best_detection_id,
+        d.detection_id as active_detection_id,
+        d.bbox_x,
+        d.bbox_y,
+        d.bbox_w,
+        d.bbox_h,
+        'context' as review_reason,
+        d.decision_state,
+        d.bbox_quality,
+        d.unknown_score,
+        d.decision_reasons,
+        d.od_confidence,
+        (
+            SELECT c.cls_class_name
+            FROM classifications c
+            WHERE c.detection_id = d.detection_id
+              AND c.rank = 1
+              AND COALESCE(c.status, 'active') = 'active'
+            LIMIT 1
+        ) as cls_class_name,
+        (
+            SELECT c.cls_confidence
+            FROM classifications c
+            WHERE c.detection_id = d.detection_id
+              AND c.rank = 1
+              AND COALESCE(c.status, 'active') = 'active'
+            LIMIT 1
+        ) as cls_confidence,
+        {species_sql} as species_key,
+        d.manual_species_override,
+        d.species_source,
+        d.manual_bbox_review,
+        0 as sibling_detection_count
+    FROM detections d
+    JOIN images i ON i.filename = d.image_filename
+    WHERE COALESCE(d.status, 'active') = 'active'
+      AND i.review_status = 'confirmed_bird'
+      AND i.timestamp IS NOT NULL
+      AND i.timestamp >= ?
+      AND i.timestamp <= ?
+    ORDER BY i.timestamp ASC, d.detection_id ASC
+    LIMIT ?
+    """
+    cur = conn.execute(query, (window_min, window_max, fetch_limit))
+    rows = cur.fetchall()
+
+    truncated = len(rows) > int(max_context_rows)
+    if truncated:
+        rows = rows[: int(max_context_rows)]
+
+    context_rows: list[dict] = []
+    for row in rows:
+        row_dict = dict(row)
+        row_dict["context_only"] = True
+        context_rows.append(row_dict)
+    return context_rows, truncated
 
 
 def fetch_recent_review_species(

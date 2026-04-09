@@ -37,7 +37,7 @@ The WatchMyBirds Raspberry Pi image is designed as a secure-by-default appliance
   - Flask sessions use `FLASK_SECRET_KEY`; if unset, a static dev key is used and should be overridden in production.
 - **Root Locked:** The `root` account is locked (`passwd -l root`) and has no password access.
 - **No Interactive Access:** There are no interactive users enabled by default.
-- **Dev Images (Non-Production):** `build-dev` images enable SSH and leave the `admin` user unlocked with passwordless sudo for convenience.
+- **Dev Images (Non-Production):** `build-dev` images relax access controls for local debugging and faster iteration.
 
 ### 2. Environment Differences (Prod vs Dev)
 | Feature | Production (`app.service`) | Development (`app-dev.service`) |
@@ -46,11 +46,11 @@ The WatchMyBirds Raspberry Pi image is designed as a secure-by-default appliance
 | **Home Access** | Blocked (`ProtectHome=yes`) | Allowed (`ProtectHome=yes` with exceptions or disabled) |
 | **Privileges** | `NoNewPrivileges=true`, SUID blocked | `NoNewPrivileges=false`, relaxed for debugging |
 | **Power Management** | Via Polkit/logind (no sudo) | Via Polkit/logind (no sudo) |
-| **Admin User** | Locked | Unlocked, NOPASSWD sudo |
+| **Admin User** | Locked | Unlocked with elevated local debugging access |
 | **SSH** | Disabled | Enabled by default |
 
 > [!WARNING]
-> **Dev Image Risk:** The development image is significantly less secure than the production image. It is designed for rapid iteration and debugging, not for exposure to untrusted networks. Never deploy a Dev image in a production environment.
+> **Dev Image Risk:** The development image relaxes several hardening controls for rapid iteration and debugging. Never deploy a Dev image in a production environment.
 
 ### 3. Network Security
 - **SSH Disabled by Default:** SSH is disabled on the image. It must be explicitly enabled by the user.
@@ -86,7 +86,7 @@ The WatchMyBirds Raspberry Pi image is designed as a secure-by-default appliance
     RestrictRealtime=true
     RestrictSUIDSGID=true         # Block SUID/SGID bit execution
     ```
-  - **Dev Mode:** `app-dev.service` relaxes sandboxing (`NoNewPrivileges=false`, `RestrictSUIDSGID=false`) to allow rsync-based updates and debugging.
+  - **Dev Mode:** `app-dev.service` relaxes sandboxing to allow local updates and debugging workflows.
 
 - **Power Management (Polkit/logind):**
   - Reboot/Shutdown from the Web UI uses `systemctl` via DBus, not `sudo`.

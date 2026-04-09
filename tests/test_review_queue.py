@@ -3,6 +3,7 @@ import sqlite3
 from utils.db.detections import set_manual_bbox_review
 from utils.db.review_queue import (
     fetch_recent_review_species,
+    fetch_review_cluster_context,
     fetch_review_queue_count,
     fetch_review_queue_images,
 )
@@ -26,6 +27,7 @@ def _make_conn() -> sqlite3.Connection:
             bbox_y REAL,
             bbox_w REAL,
             bbox_h REAL,
+            od_class_name TEXT,
             od_confidence REAL,
             score REAL,
             od_model_id TEXT,
@@ -35,6 +37,7 @@ def _make_conn() -> sqlite3.Connection:
             bbox_quality REAL,
             unknown_score REAL,
             decision_reasons TEXT,
+            species_source TEXT,
             manual_species_override TEXT,
             manual_bbox_review TEXT,
             bbox_reviewed_at TEXT
@@ -276,6 +279,140 @@ def test_review_queue_excludes_images_marked_no_bird():
 
         count = fetch_review_queue_count(conn, gallery_threshold=0.7)
         assert count == 0
+    finally:
+        conn.close()
+
+
+def _insert_confirmed_detection(
+    conn,
+    *,
+    filename,
+    timestamp,
+    species,
+    score=0.95,
+):
+    conn.execute(
+        "INSERT INTO images (filename, timestamp, review_status) VALUES (?, ?, ?)",
+        (filename, timestamp, "confirmed_bird"),
+    )
+    cur = conn.execute(
+        """
+        INSERT INTO detections (image_filename, od_confidence, score, od_model_id)
+        VALUES (?, ?, ?, ?)
+        """,
+        (filename, 0.9, score, "yolo"),
+    )
+    conn.execute(
+        """
+        INSERT INTO classifications (detection_id, cls_class_name, cls_confidence, rank, status)
+        VALUES (?, ?, ?, ?, ?)
+        """,
+        (cur.lastrowid, species, 0.9, 1, "active"),
+    )
+
+
+def test_review_cluster_context_returns_empty_for_empty_range():
+    conn = _make_conn()
+    try:
+        rows, truncated = fetch_review_cluster_context(
+            conn, untagged_time_range=None
+        )
+        assert rows == []
+        assert truncated is False
+    finally:
+        conn.close()
+
+
+def test_review_cluster_context_returns_neighbour_inside_window():
+    conn = _make_conn()
+    try:
+        _insert_confirmed_detection(
+            conn,
+            filename="confirmed_close.jpg",
+            timestamp="20260210_120500",
+            species="Pica_pica",
+        )
+        conn.commit()
+        # Untagged window 12:30 → ±30 min covers 12:00..13:00
+        rows, truncated = fetch_review_cluster_context(
+            conn,
+            untagged_time_range=("20260210_123000", "20260210_123500"),
+        )
+        assert truncated is False
+        assert len(rows) == 1
+        row = rows[0]
+        assert row["context_only"] is True
+        assert row["filename"] == "confirmed_close.jpg"
+        assert row["species_key"] == "Pica_pica"
+        assert row["item_kind"] == "detection"
+        assert row["review_reason"] == "context"
+    finally:
+        conn.close()
+
+
+def test_review_cluster_context_excludes_neighbour_outside_window():
+    conn = _make_conn()
+    try:
+        _insert_confirmed_detection(
+            conn,
+            filename="confirmed_far.jpg",
+            timestamp="20260210_100000",
+            species="Pica_pica",
+        )
+        conn.commit()
+        rows, truncated = fetch_review_cluster_context(
+            conn,
+            untagged_time_range=("20260210_123000", "20260210_123500"),
+        )
+        assert rows == []
+        assert truncated is False
+    finally:
+        conn.close()
+
+
+def test_review_cluster_context_truncates_at_safety_cap():
+    conn = _make_conn()
+    try:
+        for index in range(7):
+            _insert_confirmed_detection(
+                conn,
+                filename=f"confirmed_{index}.jpg",
+                timestamp=f"20260210_1230{index:02d}",
+                species="Pica_pica",
+            )
+        conn.commit()
+        rows, truncated = fetch_review_cluster_context(
+            conn,
+            untagged_time_range=("20260210_123000", "20260210_123500"),
+            max_context_rows=3,
+        )
+        assert len(rows) == 3
+        assert truncated is True
+    finally:
+        conn.close()
+
+
+def test_review_cluster_context_excludes_unconfirmed_neighbours():
+    conn = _make_conn()
+    try:
+        # Untagged neighbour — must be ignored, only confirmed_bird counts.
+        conn.execute(
+            "INSERT INTO images (filename, timestamp, review_status) VALUES (?, ?, ?)",
+            ("untagged_neighbour.jpg", "20260210_123100", "untagged"),
+        )
+        conn.execute(
+            """
+            INSERT INTO detections (image_filename, od_confidence, score, od_model_id)
+            VALUES (?, ?, ?, ?)
+            """,
+            ("untagged_neighbour.jpg", 0.6, 0.6, "yolo"),
+        )
+        conn.commit()
+        rows, _ = fetch_review_cluster_context(
+            conn,
+            untagged_time_range=("20260210_123000", "20260210_123500"),
+        )
+        assert rows == []
     finally:
         conn.close()
 

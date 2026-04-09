@@ -1,5 +1,5 @@
 /**
- * Tile Action Engine (Phase C)
+ * Tile Action Engine
  *
  * Central event-delegation engine for all wm-toolbox actions.
  * Uses data-action attributes to route clicks to the correct handler.

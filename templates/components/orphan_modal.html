@@ -108,7 +108,9 @@
                         </div>
                     </div>
                 </div>
-                <div class="review-stage-panel__viewer wm-viewer-scope">
+                <div class="review-stage-panel__viewer wm-viewer-scope"
+                    {% if orphan.species_colour is not none %}data-species-colour="{{ orphan.species_colour }}"
+                    style="--cell-species-colour: var(--species-colour-{{ orphan.species_colour }})"{% endif %}>
                     <div class="review-stage-panel__viewer-media wm-toolbox-host">
                         <div class="review-stage-panel__image-frame">
                             {{ render_image_viewer(
@@ -118,6 +120,16 @@
                             bbox={'x': orphan.bbox_x, 'y': orphan.bbox_y, 'w': orphan.bbox_w, 'h': orphan.bbox_h} if has_bbox else none,
                             dismissable=false
                             ) }}
+                            {% if orphan.species_ref_image_url %}
+                            <img class="review-species-ref"
+                                src="{{ orphan.species_ref_image_url }}"
+                                alt="" aria-hidden="true"
+                                title="{{ orphan.current_species_common or orphan.species_key }}">
+                            {% elif orphan.current_species_common %}
+                            <span class="review-species-ref review-species-ref--initial"
+                                title="{{ orphan.current_species_common }}"
+                                aria-hidden="true">{{ orphan.current_species_common[0] }}</span>
+                            {% endif %}
                         </div>
                         {{ tile_toolbox(
                         detection_id=orphan.best_detection_id,
@@ -151,7 +163,11 @@
             data-detection-id="{{ orphan.best_detection_id }}" data-bbox-review="{{ orphan.selected_bbox_review or '' }}"
             data-bbox-review-explicit="{% if orphan.selected_bbox_review_origin == 'manual' %}1{% else %}0{% endif %}"
             data-selected-species="{{ orphan.selected_species or '' }}"
-            data-selected-species-origin="{{ orphan.selected_species_origin or '' }}">
+            data-selected-species-origin="{{ orphan.selected_species_origin or '' }}"
+            {# Original species key: the server-side anchor the Undo
+               button reverts to. Never changes after initial render. #}
+            data-original-species="{{ orphan.species_key or orphan.selected_species or '' }}"
+            data-original-species-common="{{ orphan.current_species_common or orphan.selected_species_common or '' }}">
             <div class="review-stage-panel__decision-rail">
                 <div class="review-stage-panel__section review-stage-panel__section--bbox">
                     <div class="review-stage-panel__section-label">BBox</div>
@@ -204,6 +220,18 @@
             <div class="review-stage-panel__section review-stage-panel__section--species">
                 <div class="review-stage-panel__section-label">Species</div>
 
+                {# Persistent receipt slot above the quick-pick strip.
+                   `review_workspace.js` rebuilds the inner markup on
+                   each species-change click and clears it on rail step. #}
+                {% with previous_species='',
+                        current_species='',
+                        origin=orphan.selected_species_origin or '',
+                        item_key=orphan.item_key,
+                        detection_id=orphan.best_detection_id,
+                        scope='orphan' %}
+                    {% include 'partials/review_species_receipt.html' %}
+                {% endwith %}
+
                 {% if orphan.quick_species %}
                 <div class="review-stage-panel__species-strip" role="list">
                     {% for species in orphan.quick_species %}
@@ -212,7 +240,9 @@
                         data-item-key="{{ orphan.item_key }}" data-filename="{{ orphan.filename }}"
                         data-detection-id="{{ orphan.best_detection_id }}" data-species="{{ species.scientific }}"
                         data-default-suggestion="{% if species.scientific == orphan.default_species %}1{% else %}0{% endif %}"
-                        data-current-species="{{ orphan.selected_species or orphan.species_key or '' }}" role="listitem">
+                        data-current-species="{{ orphan.selected_species or orphan.species_key or '' }}"
+                        {% if species.species_colour is not none %}data-species-colour="{{ species.species_colour }}"{% endif %}
+                        role="listitem">
                         <span class="review-stage-panel__species-media" aria-hidden="true">
                             {% if species.thumb_url %}
                             <img class="review-stage-panel__species-image" src="{{ species.thumb_url }}" alt=""

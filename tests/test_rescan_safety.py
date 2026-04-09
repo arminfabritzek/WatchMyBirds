@@ -1,4 +1,4 @@
-"""Tests for the Rescan Safety Layer (Phase B).
+"""Tests for the Rescan Safety Layer.
 
 Verifies:
 - Moderation rescan writes to rescan_proposals, NEVER to detections.

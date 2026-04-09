@@ -210,7 +210,7 @@ class CameraStorage:
         return self._save_cameras(cameras)
 
     def get_credentials(self, camera_id: int) -> tuple[str, str]:
-        """Get username and password for a camera (internal use only)."""
+        """Get stored credentials for a camera."""
         cam = self.get_camera(camera_id, include_password=True)
         if cam:
             return cam.get("username", ""), cam.get("password", "")

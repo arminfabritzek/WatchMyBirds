@@ -1,0 +1,444 @@
+{% from "components/modal_image_viewer.html" import render_image_viewer %}
+{% from "partials/batch_action_footer.html" import render_batch_action_footer %}
+{% from "partials/tile_toolbox.html" import tile_toolbox %}
+{% set cover_bbox = event.cover_item.active_detection_bbox %}
+{% set cover_has_bbox = cover_bbox and cover_bbox.get('w') and cover_bbox.get('h') %}
+{% set cover_modal_target = '#modal-review-' ~ event.cover_detection_id if event.cover_detection_id else none %}
+{#
+    Fixed-5 frame budget (2026-04-08): the event panel renders at most
+    five cells per event. Review-frames (``member.context_only == false``)
+    win the first slots in timestamp order; remaining slots are filled
+    with context-frames (``context_only == true`` — Gallery anchors or
+    same-species continuation frames) so the operator sees "enough of
+    the event to decide" without the old dual-surface duplication.
+
+    ``event.members`` is already sorted by (timestamp, detection_id) in
+    `_build_review_event` (web/blueprints/review.py:1184), so splitting
+    is stable. We clip at 5 total and surface an overflow hint if any
+    frame is hidden.
+
+    The ``continuity_batch`` data block stays on the payload for JS +
+    backend consumers, but the template no longer reads it. The old
+    dual-surface continuity-batch rendering has been retired in favour
+    of this single 5-frame grid.
+#}
+{% set _review_members = event.members | rejectattr('context_only') | list %}
+{% set _context_members = event.members | selectattr('context_only') | list %}
+{% set _frame_budget = 5 %}
+{% set _review_budget = _review_members[:_frame_budget] %}
+{% set _context_budget = _context_members[:_frame_budget - (_review_budget | length)] %}
+{% set display_members = _review_budget + _context_budget %}
+{% set _hidden_count = (event.members | length) - (display_members | length) %}
+<div class="review-stage-panel__content review-stage-panel__content--event">
+    <div class="review-stage-panel__workbench review-stage-panel__workbench--event">
+        <div class="review-stage-panel__canvas">
+            <div class="review-stage-panel__viewer-shell review-stage-panel__viewer-shell--event">
+                <button type="button" class="review-stage-panel__nav review-stage-panel__nav--prev"
+                    data-review-nav="-1" aria-label="Previous event"
+                    title="Previous event">‹</button>
+                <button type="button" class="review-stage-panel__facts-toggle"
+                    data-review-facts-toggle aria-expanded="true" aria-controls="review-event-facts-{{ event.event_key }}"
+                    title="Toggle event metrics panel">
+                    Metrics
+                </button>
+                <div class="review-stage-panel__facts-panel" id="review-event-facts-{{ event.event_key }}" data-review-facts-panel>
+                    <div class="review-stage-panel__facts-grid">
+                        <div class="review-stage-panel__facts-item review-stage-panel__facts-item--strong">
+                            <span class="review-stage-panel__facts-label">State</span>
+                            <span class="review-stage-panel__facts-value">{{ event.eligibility_label }}</span>
+                        </div>
+                        <div class="review-stage-panel__facts-item">
+                            <span class="review-stage-panel__facts-label">Species</span>
+                            <span class="review-stage-panel__facts-value">{{ event.candidate_species_common }}</span>
+                        </div>
+                        <div class="review-stage-panel__facts-item">
+                            <span class="review-stage-panel__facts-label">Frames</span>
+                            <span class="review-stage-panel__facts-value">{{ event.photo_count }}</span>
+                        </div>
+                        <div class="review-stage-panel__facts-item">
+                            <span class="review-stage-panel__facts-label">Duration</span>
+                            <span class="review-stage-panel__facts-value">{{ event.duration_display }}</span>
+                        </div>
+                        <div class="review-stage-panel__facts-item">
+                            <span class="review-stage-panel__facts-label">Window</span>
+                            <span class="review-stage-panel__facts-value">{{ event.window_time }}</span>
+                        </div>
+                        <div class="review-stage-panel__facts-item">
+                            <span class="review-stage-panel__facts-label">Source</span>
+                            <span class="review-stage-panel__facts-value">{{ event.species_source|capitalize }}</span>
+                        </div>
+                        {% if event.fallback_reason %}
+                        <div class="review-stage-panel__facts-item review-stage-panel__facts-item--danger">
+                            <span class="review-stage-panel__facts-label">Fallback</span>
+                            <span class="review-stage-panel__facts-value">{{ event.fallback_label }}</span>
+                        </div>
+                        {% endif %}
+                        <div class="review-stage-panel__facts-item">
+                            <span class="review-stage-panel__facts-label">Files</span>
+                            <span class="review-stage-panel__facts-value">{{ event.touched_filenames|length }}</span>
+                        </div>
+                    </div>
+                </div>
+                {# Equal-size detection grid: every member is a first-class
+                   cell, so there is no cover-frame special case and no
+                   secondary filmstrip strip. Cover detection is simply the
+                   first cell in DOM order when members are sorted by
+                   (timestamp, detection_id). Species colour and reference
+                   image hooks attach to each cell.
+
+                   The grid is also the shared wm-viewer scope for every
+                   cell inside it. One workspace-scoped zoom preference key
+                   (`wmb_review_zoom_pref`) keeps zoom intent stable across
+                   rail navigation, across cells, and across the orphan
+                   modal. #}
+                <div class="review-event-panel__grid-toolbar">
+                    <button type="button"
+                        class="review-event-panel__multi-toggle"
+                        data-review-multi-select-toggle
+                        aria-pressed="false">
+                        Select multiple
+                    </button>
+                    <p class="review-event-panel__multi-hint" data-review-multi-select-hint hidden>
+                        Click frames to select them. Shift+Click selects a range.
+                    </p>
+                </div>
+                <div class="review-event-panel__grid wm-viewer-scope"
+                     role="list"
+                     aria-label="Frames in this event"
+                     data-review-event-grid
+                     data-multi-select-mode="0"
+                     data-zoom-pref-key="wmb_review_zoom_pref"
+                     data-bbox-pref-key="wmb_review_bbox_pref">
+                    {% for member in display_members %}
+                    {% set member_has_bbox = member.bbox_w and member.bbox_h and member.bbox_w > 0 and member.bbox_h > 0 %}
+                    {% set member_modal_target = '#modal-review-' ~ member.best_detection_id if member.best_detection_id else none %}
+                    {% set member_bbox = {
+                        "x": member.bbox_x,
+                        "y": member.bbox_y,
+                        "w": member.bbox_w,
+                        "h": member.bbox_h,
+                        "name": member.candidate_species_common or member.current_species_common or "Detection",
+                        "id": member.best_detection_id or 0,
+                        "speciesColour": member.species_colour
+                    } if member_has_bbox else none %}
+                    <article class="review-event-panel__cell wm-toolbox-host"
+                        role="listitem"
+                        data-detection-id="{{ member.best_detection_id }}"
+                        {% if loop.first %}data-cover-detection="true"{% endif %}
+                        {% if member.context_only %}data-context-only="1"{% endif %}
+                        data-species-is-manual="{% if member.species_is_manual %}1{% else %}0{% endif %}"
+                        {% if member.species_colour is not none %}data-species-colour="{{ member.species_colour }}"
+                        style="--cell-species-colour: var(--species-colour-{{ member.species_colour }})"{% endif %}>
+                        {% if not member.context_only and member.best_detection_id %}
+                        <label class="review-event-panel__cell-select" data-review-multi-select-control>
+                            <input type="checkbox"
+                                class="review-event-panel__cell-checkbox"
+                                data-review-multi-select-checkbox
+                                data-detection-id="{{ member.best_detection_id }}"
+                                data-index="{{ loop.index0 }}"
+                                aria-label="Select frame {{ loop.index }} for batch actions">
+                            <span class="review-event-panel__cell-select-indicator" aria-hidden="true"></span>
+                        </label>
+                        {% endif %}
+                        <div class="review-event-panel__cell-media">
+                            {{ render_image_viewer(
+                            image_url=member.full_url or member.thumb_url,
+                            image_alt=member.candidate_species_common or member.current_species_common or member.filename,
+                            detection_id=member.best_detection_id,
+                            bbox=member_bbox,
+                            dismissable=false
+                            ) }}
+                            <span class="review-event-panel__cell-time">{{ member.formatted_time or member.formatted_date }}</span>
+                            {% if member.context_only %}
+                            <span class="review-event-panel__cell-badge review-event-panel__cell-badge--anchor">In Gallery</span>
+                            {% endif %}
+                            {% if member.species_ref_image_url %}
+                            <img class="review-species-ref"
+                                src="{{ member.species_ref_image_url }}"
+                                alt="" aria-hidden="true"
+                                title="{{ member.candidate_species_common or member.current_species_common }}">
+                            {% elif member.candidate_species_common or member.current_species_common %}
+                            <span class="review-species-ref review-species-ref--initial"
+                                title="{{ member.candidate_species_common or member.current_species_common }}"
+                                aria-hidden="true">{{ (member.candidate_species_common or member.current_species_common)[0] }}</span>
+                            {% endif %}
+                            {% if not member.context_only %}
+                            {{ tile_toolbox(
+                            detection_id=member.best_detection_id,
+                            filename=member.filename,
+                            surface='review',
+                            can_moderate=true,
+                            review_reason=member.review_reason,
+                            modal_target=member_modal_target,
+                            current_species=member.candidate_species or member.current_species or none,
+                            show_viewer_tools=true,
+                            show_boxes=member_has_bbox,
+                            current_bbox_json=member_bbox | tojson if member_bbox else None,
+                            frame_variant='overlay'
+                            ) }}
+                            {% endif %}
+                        </div>
+                        <div class="review-event-panel__cell-body">
+                            {# The cell species label is a button that opens
+                               WmSpeciesPicker for this single detection.
+                               Relabels persist immediately via
+                               /api/moderation/bulk/relabel, and the
+                               event-resolve backend respects the manual
+                               override so the event-level species never
+                               overwrites it. Per-frame choice wins. #}
+                            {% if not member.context_only and member.best_detection_id %}
+                            <button type="button"
+                                class="review-event-panel__cell-species"
+                                data-review-cell-relabel
+                                data-detection-id="{{ member.best_detection_id }}"
+                                data-current-species="{{ member.candidate_species or member.current_species or '' }}"
+                                data-current-species-common="{{ member.candidate_species_common or member.current_species_common or '' }}"
+                                title="Click to relabel this frame's species">{{ member.candidate_species_common or member.current_species_common or member.filename }}</button>
+                            {% else %}
+                            <span class="review-event-panel__cell-species">{{ member.candidate_species_common or member.current_species_common or member.filename }}</span>
+                            {% endif %}
+                            <span class="review-event-panel__cell-reason">{{ member.reason_label }}</span>
+                        </div>
+                        {% if not member.context_only %}
+                        {# Mixed-event direct actions.
+                           Per-frame decision toggle. Default = Keep.
+                           Clicking switches to Trash. Decisions stay
+                           local until `Approve Event` commits them in
+                           one resolve call. #}
+                        <button type="button"
+                            class="review-event-panel__cell-action is-keep"
+                            data-review-frame-decision
+                            data-frame-state="keep"
+                            data-detection-id="{{ member.best_detection_id }}"
+                            aria-pressed="false"
+                            title="Keep this frame. Click to mark as Trash.">
+                            <span class="review-event-panel__cell-action-icon" aria-hidden="true">✓</span>
+                            <span class="review-event-panel__cell-action-copy" data-frame-decision-copy>Keep this frame</span>
+                        </button>
+                        {% endif %}
+                    </article>
+                    {% endfor %}
+                </div>
+                <button type="button" class="review-stage-panel__nav review-stage-panel__nav--next"
+                    data-review-nav="1" aria-label="Next event"
+                    title="Next event">›</button>
+            </div>
+
+            {# One-line caption under the grid. The duplicate species
+               headline from the old trail-section header is gone — the
+               Species pill in the right control rail is now the single
+               source of the name. Only the fallback hint stays here as
+               a data-driven caption.
+
+               Fixed-5: if the event has more frames than the 5-slot budget,
+               surface the hidden count inline so the operator knows the
+               view is clipped (e.g. "… +4 weitere Frames ausgeblendet"). #}
+            {% if event.fallback_reason %}
+            <p class="review-event-panel__grid-caption">{{ event.fallback_label }}.{% if _hidden_count > 0 %} <span class="review-event-panel__grid-caption-overflow">+{{ _hidden_count }} weitere Frame{{ 's' if _hidden_count != 1 }} ausgeblendet.</span>{% endif %}</p>
+            {% else %}
+            <p class="review-event-panel__grid-caption">
+                {{ event.photo_count }} frame{{ 's' if event.photo_count != 1 }} of
+                <strong>{{ event.candidate_species_common }}</strong>
+                across {{ event.duration_display }}. Approve once the pattern is consistent.{% if _hidden_count > 0 %} <span class="review-event-panel__grid-caption-overflow">+{{ _hidden_count }} weitere Frame{{ 's' if _hidden_count != 1 }} ausgeblendet.</span>{% endif %}
+            </p>
+            {% endif %}
+            <div class="review-event-panel__multi-footer" data-review-multi-select-footer hidden>
+                {{ render_batch_action_footer(
+                    footer_id='reviewEventBatchFooter',
+                    footer_class='review-event-panel__batch-footer',
+                    always_visible=true,
+                    counter_id='reviewEventBatchCounter',
+                    counter_text='0 selected',
+                    trash_selected_onclick='window.reviewEventBatchTrashSelected()',
+                    trash_selected_id='reviewEventBatchTrashBtn',
+                    trash_selected_label='Trash Selected',
+                    relabel_selected_onclick='window.reviewEventBatchRelabelSelected()',
+                    relabel_selected_id='reviewEventBatchRelabelBtn',
+                    relabel_selected_label='Relabel Selected',
+                    cancel_onclick='window.reviewEventBatchCancelMultiSelect()',
+                    cancel_id='reviewEventBatchCancelBtn',
+                    cancel_label='Cancel'
+                ) }}
+            </div>
+        </div>
+
+        {# Fixed-5 approve path: the actionable (non-context) IDs drive both
+           the fastpath event-approve and the resolve path for ineligible
+           events. Context (Gallery anchor) IDs never participate in the
+           write — the resolve endpoint refuses to touch them. #}
+        {% set _actionable_ids = event.members | rejectattr('context_only') | map(attribute='best_detection_id') | select | list %}
+        <aside class="review-event-panel__controls"
+            data-review-event-controls
+            data-event-key="{{ event.event_key }}"
+            data-item-key="{{ event.event_key }}"
+            data-detection-ids="{{ event.detection_ids | join(',') }}"
+            data-actionable-detection-ids="{{ _actionable_ids | join(',') }}"
+            data-species="{{ event.selected_species or event.candidate_species or '' }}"
+            {# Event-ineligible events (fallback_reason set — multi-bird,
+               bbox-jump, species-ambiguous, …) cannot use the fastpath
+               event-approve endpoint; JS must route through event-resolve
+               with the manually-confirmed species. The Approve Event button
+               stays enabled as long as a species + bbox review are set,
+               so the operator can still commit after resolving the
+               ambiguity by picking a species. #}
+            data-event-ineligible="{% if event.eligibility != 'event_eligible' %}1{% else %}0{% endif %}"
+            data-can-approve="{% if event.candidate_species or event.selected_species %}1{% else %}0{% endif %}"
+            data-bbox-review="correct"
+            data-selected-species-origin="{{ event.selected_species_origin or event.species_source or '' }}"
+            {# Original species anchor for the Undo button. #}
+            data-original-species="{{ event.candidate_species or '' }}"
+            data-original-species-common="{{ event.candidate_species_common or '' }}"
+            data-original-species-origin="{{ event.species_source or '' }}"
+            data-original-species-meta="{% if event.species_source == 'cls' %}CLS{% elif event.species_source %}{{ event.species_source|capitalize }}{% endif %}"
+           >
+            {# The mini-map lives as the first element of the right
+               control rail. It stays visible and provides per-event
+               trail context. #}
+            <section class="review-event-panel__trail-section review-event-panel__trail-section--aside"
+                     aria-label="Event motion trail">
+                <div class="review-event-panel__trail-head">
+                    <p class="review-event-panel__meta">{{ event.window_date }}{% if event.window_time %} · {{ event.window_time }}{% endif %} · {{ event.photo_count }} frame{{ 's' if event.photo_count != 1 }}</p>
+                    <span class="review-event-panel__badge review-event-panel__badge--{{ 'ready' if event.eligibility == 'event_eligible' else 'fallback' }}">
+                        {{ event.eligibility_label }}
+                    </span>
+                </div>
+                <div class="review-event-panel__trail-map" aria-hidden="true">
+                    {% for trail in event.bbox_trail %}
+                    <span class="review-event-panel__trail-box review-event-panel__trail-box--{{ trail.trail_role }}{% if trail.context_only %} review-event-panel__trail-box--context{% endif %}"
+                        style="left: {{ trail.bbox_x_pct }}%; top: {{ trail.bbox_y_pct }}%; width: {{ trail.bbox_w_pct }}%; height: {{ trail.bbox_h_pct }}%;"></span>
+                    {% endfor %}
+                </div>
+            </section>
+
+            <div class="review-stage-panel__section review-stage-panel__section--species">
+                <div class="review-stage-panel__section-label">Species</div>
+                {# Receipt slot using the same shared partial as the
+                   orphan modal, scoped as 'event' for the narrow
+                   controls aside. #}
+                {% with previous_species='',
+                        current_species='',
+                        origin=event.selected_species_origin or event.species_source or '',
+                        item_key=event.event_key,
+                        detection_id=event.cover_detection_id,
+                        scope='event' %}
+                    {% include 'partials/review_species_receipt.html' %}
+                {% endwith %}
+                <div class="review-event-panel__species-pill">
+                    <span class="review-event-panel__species-name" data-review-event-species-name>{{ event.selected_species_common or event.candidate_species_common }}</span>
+                    <span class="review-event-panel__species-meta" data-review-event-species-meta>{% if (event.selected_species_origin or event.species_source) == 'cls' %}CLS{% elif (event.selected_species_origin or event.species_source) %}{{ (event.selected_species_origin or event.species_source)|capitalize }}{% endif %}</span>
+                </div>
+                {% if event.quick_species %}
+                <div class="review-stage-panel__species-strip" role="list">
+                    {% for species in event.quick_species %}
+                    <button type="button" class="review-stage-panel__species-btn{% if (event.selected_species or event.candidate_species) == species.scientific %} is-selected{% endif %}"
+                        data-review-panel-action="select_event_species"
+                        data-item-key="{{ event.event_key }}"
+                        data-detection-id="{{ event.cover_detection_id }}"
+                        data-species="{{ species.scientific }}"
+                        data-default-suggestion="{% if species.scientific == event.default_species %}1{% else %}0{% endif %}"
+                        data-current-species="{{ event.selected_species or event.candidate_species or '' }}"
+                        {% if species.species_ref_image_url %}data-species-ref-image-url="{{ species.species_ref_image_url }}"{% endif %}
+                        {% if species.species_colour is not none %}data-species-colour="{{ species.species_colour }}"{% endif %}
+                        role="listitem">
+                        <span class="review-stage-panel__species-media" aria-hidden="true">
+                            {% if species.thumb_url %}
+                            <img class="review-stage-panel__species-image" src="{{ species.thumb_url }}" alt=""
+                                loading="eager" decoding="async">
+                            {% endif %}
+                        </span>
+                        <span class="review-stage-panel__species-overlay">
+                            <span class="review-stage-panel__species-name">{{ species.common }}</span>
+                            <span class="review-stage-panel__species-meta">
+                            {% if (event.selected_species or event.candidate_species) == species.scientific and (event.selected_species_origin or event.species_source) == 'manual' %}
+                            Manual candidate
+                            {% elif (event.selected_species or event.candidate_species) == species.scientific and (event.selected_species_origin or event.species_source) == 'cls' %}
+                            CLS candidate
+                            {% elif species.source == 'current' %}
+                            {% if species.score_pct is not none %}
+                            Current · CLS {{ species.score_pct }}%
+                            {% else %}
+                            Current
+                            {% endif %}
+                            {% elif species.source == 'cls' %}
+                            CLS {{ species.score_pct }}%
+                            {% else %}
+                            Recent days
+                            {% endif %}
+                            </span>
+                        </span>
+                    </button>
+                    {% endfor %}
+                </div>
+                <div class="review-stage-panel__species-actions">
+                    <button type="button" class="review-stage-panel__action review-stage-panel__action--picker"
+                        data-review-panel-action="open_event_species_picker"
+                        data-item-key="{{ event.event_key }}"
+                        data-detection-id="{{ event.cover_detection_id }}"
+                        data-current-species="{{ event.selected_species or event.candidate_species or '' }}">
+                        <span class="review-stage-panel__action-icon">🏷️</span>
+                        <span class="review-stage-panel__action-copy">Choose another species</span>
+                    </button>
+                </div>
+                <div class="review-stage-panel__hint">Event-wide species choice stays local until you approve the event. With selected frames, a quick-pick relabels them immediately.</div>
+                {% endif %}
+            </div>
+
+            <div class="review-stage-panel__section">
+                <div class="review-stage-panel__section-label">BBox</div>
+                <button type="button"
+                    class="review-stage-panel__toggle is-correct"
+                    data-review-event-bbox-toggle
+                    data-bbox-review-value="correct"
+                    aria-label="Toggle event bbox review state"
+                    title="Toggle event bounding box review state">
+                    <span class="review-stage-panel__toggle-title">BBox</span>
+                    <span class="review-stage-panel__toggle-copy" data-review-event-bbox-copy>Correct</span>
+                </button>
+            </div>
+
+            <div class="review-stage-panel__section review-stage-panel__section--decision">
+                <div class="review-stage-panel__section-label">Decision</div>
+                <div class="review-stage-panel__action-stack">
+                    {# Post fixed-5 (2026-04-08): the disabled gate no longer
+                       checks ``event.eligibility``. Event-ineligible events
+                       (fallback_reason set) stay approvable as long as a
+                       species is present — the JS routes them through the
+                       event-approve no-event_key fastpath which skips the
+                       server-side eligibility check. This mirrors the
+                       ``data-can-approve`` rule on the aside. #}
+                    <button type="button" class="review-stage-panel__action review-stage-panel__action--primary"
+                        data-review-panel-action="approve_event"
+                        data-event-key="{{ event.event_key }}"
+                        title="Approve every detection in this event"
+                        {% if not (event.candidate_species or event.selected_species) %}disabled{% endif %}>
+                        <span class="review-stage-panel__action-icon">✓</span>
+                        <span class="review-stage-panel__action-copy">Approve Event</span>
+                    </button>
+                    <button type="button" class="review-stage-panel__action review-stage-panel__action--danger"
+                        data-review-panel-action="trash_event"
+                        data-event-key="{{ event.event_key }}"
+                        title="Reject every detection in this event and move images with no active detections left to Trash">
+                        <span class="review-stage-panel__action-icon">🗑</span>
+                        <span class="review-stage-panel__action-copy">Move Event to Trash</span>
+                    </button>
+                </div>
+                <div class="review-stage-panel__hint">Images with no active detections left move to Trash; otherwise they follow their remaining active detections.</div>
+            </div>
+
+            <div class="review-stage-panel__section">
+                <div class="review-stage-panel__section-label">Utilities</div>
+                <div class="review-stage-panel__action-stack review-stage-panel__action-stack--single">
+                    <button type="button" class="review-stage-panel__action review-stage-panel__action--picker"
+                        data-review-open-item
+                        data-item-kind="{{ event.cover_item.item_kind }}"
+                        data-item-id="{{ event.cover_item.item_id }}"
+                        data-item-key="{{ event.cover_item.item_key }}"
+                        title="Open the cover frame in the per-detection queue">
+                        <span class="review-stage-panel__action-icon">↗</span>
+                        <span class="review-stage-panel__action-copy">Review in Queue</span>
+                    </button>
+                </div>
+            </div>
+        </aside>
+    </div>
+</div>

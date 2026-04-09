@@ -23,6 +23,7 @@ from utils.review_metadata import (
     format_review_timestamp,
 )
 from core import gallery_core as gallery_service
+from core.species_colours import assign_species_colours as _assign_species_colours
 from utils.species_names import (
     UNKNOWN_SPECIES_KEY,
     build_species_picker_entries,
@@ -95,6 +96,16 @@ def trash_page():
                 "common_name": common_name,
                 "formatted_time": formatted_time,
             }
+        )
+
+    # Stamp species_colour so the trash template can apply the Wong
+    # palette token to each tile.
+    _trash_colour_map = _assign_species_colours(
+        [item.get("species_key") or "" for item in processed_items]
+    )
+    for item in processed_items:
+        item["species_colour"] = _trash_colour_map.get(
+            item.get("species_key") or "", None
         )
 
     total_pages = math.ceil(total_count / limit) if limit > 0 else 1

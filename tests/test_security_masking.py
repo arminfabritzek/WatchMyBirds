@@ -92,41 +92,41 @@ def unmask_rtsp_url(new_url, original_url):
 
 class TestSecurityMasking:
     def test_mask_rtsp_url_simple(self):
-        url = "rtsp://admin:secret123@192.168.1.55:554/stream"
+        url = "rtsp://viewer:example-password@198.51.100.55:554/stream"
         masked = mask_rtsp_url(url)
-        assert masked == "rtsp://admin:*****@192.168.1.55:554/stream"
+        assert masked == "rtsp://viewer:*****@198.51.100.55:554/stream"
 
     def test_mask_rtsp_url_complex_chars(self):
-        url = "rtsp://user.name:P@$$w0rd!@10.0.0.1"
+        url = "rtsp://user.name:P@$$w0rd!@203.0.113.10"
         masked = mask_rtsp_url(url)
-        assert masked == "rtsp://user.name:*****@10.0.0.1"
+        assert masked == "rtsp://user.name:*****@203.0.113.10"
 
     def test_mask_no_credentials(self):
-        url = "rtsp://192.168.1.55/stream"
+        url = "rtsp://198.51.100.55/stream"
         masked = mask_rtsp_url(url)
-        assert masked == "rtsp://192.168.1.55/stream"
+        assert masked == "rtsp://198.51.100.55/stream"
 
     def test_unmask_unchanged(self):
-        original = "rtsp://admin:secret123@192.168.1.55:554/stream"
+        original = "rtsp://viewer:example-password@198.51.100.55:554/stream"
         # User submits marked URL
-        submitted = "rtsp://admin:*****@192.168.1.55:554/stream"
+        submitted = "rtsp://viewer:*****@198.51.100.55:554/stream"
 
         unmasked = unmask_rtsp_url(submitted, original)
         assert unmasked == original
 
     def test_unmask_changed_ip(self):
-        original = "rtsp://admin:secret123@192.168.1.55:554/stream"
+        original = "rtsp://viewer:example-password@198.51.100.55:554/stream"
         # User changed IP but kept stars
-        submitted = "rtsp://admin:*****@192.168.1.99:554/stream"
+        submitted = "rtsp://viewer:*****@198.51.100.99:554/stream"
 
-        expected = "rtsp://admin:secret123@192.168.1.99:554/stream"
+        expected = "rtsp://viewer:example-password@198.51.100.99:554/stream"
         unmasked = unmask_rtsp_url(submitted, original)
         assert unmasked == expected
 
     def test_unmask_new_password(self):
-        original = "rtsp://admin:secret123@192.168.1.55:554/stream"
+        original = "rtsp://viewer:example-password@198.51.100.55:554/stream"
         # User changed password (no stars)
-        submitted = "rtsp://admin:newpass@192.168.1.55:554/stream"
+        submitted = "rtsp://viewer:new-password@198.51.100.55:554/stream"
 
         unmasked = unmask_rtsp_url(submitted, original)
         assert unmasked == submitted

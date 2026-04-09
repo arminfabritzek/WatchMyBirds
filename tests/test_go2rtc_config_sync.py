@@ -32,13 +32,15 @@ def sample_config(tmp_config_dir):
     config_data = {
         "streams": {
             "test": ["ffmpeg:http://example.com/video.mp4#video=h264"],
-            "camera": ["rtsp://admin:instar@192.168.178.92:554/11?transport=tcp"],
+            "camera": [
+                "rtsp://viewer:example-password@198.51.100.24:554/stream1?transport=tcp"
+            ],
         },
         "api": {"listen": ":1984", "origin": "*"},
         "rtsp": {"listen": ":8554"},
         "webrtc": {
             "listen": ":8555",
-            "candidates": ["192.168.178.129:8555", "stun:8555"],
+            "candidates": ["198.51.100.20:8555", "stun:8555"],
         },
         "log": {"level": "info", "format": "text"},
     }
@@ -59,7 +61,10 @@ class TestReadCameraStreamSource:
         from utils.go2rtc_config import read_camera_stream_source
 
         url = read_camera_stream_source(sample_config, "camera")
-        assert url == "rtsp://admin:instar@192.168.178.92:554/11?transport=tcp"
+        assert (
+            url
+            == "rtsp://viewer:example-password@198.51.100.24:554/stream1?transport=tcp"
+        )
 
     def test_reads_test_stream(self, sample_config):
         from utils.go2rtc_config import read_camera_stream_source
@@ -148,7 +153,7 @@ class TestSetCameraStreamSource:
         with open(bak_path, encoding="utf-8") as fh:
             backup = yaml.safe_load(fh)
         assert backup["streams"]["camera"] == [
-            "rtsp://admin:instar@192.168.178.92:554/11?transport=tcp"
+            "rtsp://viewer:example-password@198.51.100.24:554/stream1?transport=tcp"
         ]
 
     def test_returns_false_for_missing_file(self):
@@ -189,7 +194,7 @@ class TestSyncCameraStreamSource:
         )
 
         config_path = tmp_config_dir / "missing" / "go2rtc.yaml"
-        camera_url = "rtsp://user:pass@192.168.1.10:554/stream"
+        camera_url = "rtsp://viewer:example-password@198.51.100.11:554/stream"
 
         ok = sync_camera_stream_source(str(config_path), camera_url, "camera")
         assert ok is True
@@ -214,7 +219,7 @@ class TestSyncCameraStreamSource:
         config_path = tmp_config_dir / "new" / "go2rtc.yaml"
         ok = sync_camera_stream_source(
             str(config_path),
-            "rtsp://admin:secret@192.168.1.50:554/live",
+            "rtsp://viewer:example-password@198.51.100.50:554/live",
             "camera",
             template_path=str(template_path),
         )
@@ -226,7 +231,7 @@ class TestSyncCameraStreamSource:
         assert config["api"]["origin"] == "*"
         assert config["webrtc"]["listen"] == ":8555"
         assert config["streams"]["camera"] == [
-            "rtsp://admin:secret@192.168.1.50:554/live"
+            "rtsp://viewer:example-password@198.51.100.50:554/live"
         ]
 
     def test_returns_false_if_ensure_fails(self):
@@ -309,15 +314,17 @@ class TestCredentialMasking:
     def test_masks_rtsp_password(self):
         from utils.go2rtc_config import _mask_credentials
 
-        masked = _mask_credentials("rtsp://admin:secret@192.168.1.100:554/stream")
-        assert "secret" not in masked
+        masked = _mask_credentials(
+            "rtsp://viewer:example-password@198.51.100.10:554/stream"
+        )
+        assert "example-password" not in masked
         assert "*****" in masked
-        assert "admin" in masked
+        assert "viewer" in masked
 
     def test_no_password_unchanged(self):
         from utils.go2rtc_config import _mask_credentials
 
-        url = "rtsp://192.168.1.100:554/stream"
+        url = "rtsp://198.51.100.10:554/stream"
         assert _mask_credentials(url) == url
 
     def test_non_url_unchanged(self):
@@ -361,7 +368,7 @@ class TestReloadGo2rtcStream:
             result = reload_go2rtc_stream(
                 api_base="http://127.0.0.1:1984",
                 stream_name="camera",
-                camera_url="rtsp://admin:pass@192.168.1.100:554/stream",
+                camera_url="rtsp://viewer:example-password@198.51.100.10:554/stream",
             )
 
         assert result is True
@@ -396,7 +403,7 @@ class TestReloadGo2rtcStream:
         with patch("urllib.request.urlopen", side_effect=mock_urlopen):
             reload_go2rtc_stream(
                 stream_name="camera",
-                camera_url="rtsp://admin:p@ss@192.168.1.100:554/stream?transport=tcp",
+                camera_url="rtsp://viewer:p@ss@example@198.51.100.10:554/stream?transport=tcp",
             )
 
         url = captured_requests[0].full_url
@@ -417,7 +424,7 @@ class TestReloadGo2rtcStream:
         with patch("urllib.request.urlopen", side_effect=mock_urlopen):
             result = reload_go2rtc_stream(
                 stream_name="camera",
-                camera_url="rtsp://192.168.1.100:554/stream",
+                camera_url="rtsp://198.51.100.10:554/stream",
             )
 
         assert result is False
@@ -432,7 +439,7 @@ class TestReloadGo2rtcStream:
         with patch("urllib.request.urlopen", side_effect=mock_urlopen):
             result = reload_go2rtc_stream(
                 stream_name="camera",
-                camera_url="rtsp://192.168.1.100:554/stream",
+                camera_url="rtsp://198.51.100.10:554/stream",
             )
 
         assert result is False
@@ -458,7 +465,7 @@ class TestReloadGo2rtcStreamWithRetry:
             "utils.go2rtc_config.reload_go2rtc_stream", return_value=True
         ) as mock_reload:
             result = reload_go2rtc_stream_with_retry(
-                camera_url="rtsp://192.168.1.100:554/stream",
+                camera_url="rtsp://198.51.100.10:554/stream",
                 max_attempts=3,
             )
 
@@ -478,7 +485,7 @@ class TestReloadGo2rtcStreamWithRetry:
         with patch("utils.go2rtc_config.reload_go2rtc_stream", side_effect=side_effect):
             with patch("time.sleep") as mock_sleep:
                 result = reload_go2rtc_stream_with_retry(
-                    camera_url="rtsp://192.168.1.100:554/stream",
+                camera_url="rtsp://198.51.100.10:554/stream",
                     max_attempts=3,
                     backoff_steps=(0.1, 0.2, 0.4),
                 )
@@ -497,7 +504,7 @@ class TestReloadGo2rtcStreamWithRetry:
         ) as mock_reload:
             with patch("time.sleep"):
                 result = reload_go2rtc_stream_with_retry(
-                    camera_url="rtsp://192.168.1.100:554/stream",
+                    camera_url="rtsp://198.51.100.10:554/stream",
                     max_attempts=3,
                 )
 
@@ -516,7 +523,7 @@ class TestReloadGo2rtcStreamWithRetry:
         with patch("utils.go2rtc_config.reload_go2rtc_stream", return_value=False):
             with patch("time.sleep", side_effect=track_sleep):
                 reload_go2rtc_stream_with_retry(
-                    camera_url="rtsp://192.168.1.100:554/stream",
+                    camera_url="rtsp://198.51.100.10:554/stream",
                     max_attempts=5,
                     backoff_steps=(1.0, 2.0),  # Only 2 steps for 5 attempts
                 )

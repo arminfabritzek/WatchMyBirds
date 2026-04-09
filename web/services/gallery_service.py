@@ -71,6 +71,17 @@ def group_detections_into_observations(detections: list[dict]) -> list[dict]:
     return gallery_core.group_detections_into_observations(detections)
 
 
+def group_concurrent_observations(
+    observations: list[dict],
+    *,
+    window_minutes: float = 5.0,
+) -> list[list[dict]]:
+    """Bucket observations into concurrent-visit windows for the Subgallery."""
+    return gallery_core.group_concurrent_observations(
+        observations, window_minutes=window_minutes
+    )
+
+
 def summarize_observations(
     detections: list[dict],
     min_score: float = 0.0,

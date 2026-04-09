@@ -181,7 +181,7 @@ INGEST_DIR=/data/watchmybirds/ingest
 MODEL_BASE_PATH=/data/watchmybirds/models
 
 # Camera
-CAMERA_URL=rtsp://admin:password@192.168.1.100:554/stream1
+CAMERA_URL=rtsp://viewer:example-password@198.51.100.10:554/stream1
 STREAM_SOURCE_MODE=auto
 GO2RTC_API_BASE=http://go2rtc:1984
 GO2RTC_CONFIG_PATH=/output/go2rtc.yaml

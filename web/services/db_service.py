@@ -171,6 +171,21 @@ def fetch_review_queue_image(
     )
 
 
+def fetch_review_cluster_context(
+    conn,
+    *,
+    untagged_time_range,
+    context_window_minutes: int = 30,
+    max_context_rows: int = 200,
+):
+    return db_core.fetch_review_cluster_context(
+        conn,
+        untagged_time_range=untagged_time_range,
+        context_window_minutes=context_window_minutes,
+        max_context_rows=max_context_rows,
+    )
+
+
 def fetch_review_queue_item_by_identity(
     conn,
     item_kind: str,

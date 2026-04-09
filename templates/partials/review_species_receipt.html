@@ -1,0 +1,52 @@
+{#
+  Species change-receipt strip shared by both the orphan modal
+  (above the quick-pick species strip) and the event-panel controls
+  aside (above the species pill). Renders the inline "previous → new"
+  diff with an Undo affordance so the operator has a clear before/after
+  anchor for species changes.
+
+  Rendering model:
+    - The server always renders the *slot wrapper* (`data-review-species-receipt`)
+      so the client can write into it without creating a new node.
+    - The slot is initially empty unless the server already has a
+      pending species change — in practice it is nearly always empty on
+      first render because the diff is a client-side state (what the
+      operator just clicked).
+    - `review_workspace.js` rebuilds the slot contents atomically in
+      the same DOM mutation as the quick-pick `is-selected` update and
+      clears it on rail navigation.
+
+  Inputs (all optional, fall back to empty):
+    previous_species     — common name before the change (server-side
+                           initial: usually matches current)
+    current_species      — common name after the change
+    origin               — 'manual' | 'default' | 'cls' (drives the
+                           meta line; no meta for 'default')
+    item_key             — stable key of the review item
+    detection_id         — detection id for the receipt's undo target
+    scope                — 'orphan' | 'event' (lets CSS tighten spacing
+                           per surface without a second class family)
+#}
+{% set has_change = previous_species and current_species and previous_species != current_species %}
+<div class="review-species-receipt-slot{% if has_change %} is-active{% endif %}"
+     data-review-species-receipt
+     data-scope="{{ scope or 'orphan' }}"
+     data-item-key="{{ item_key or '' }}"
+     data-detection-id="{{ detection_id or 0 }}">
+{% if has_change %}
+    <div class="review-species-receipt" role="status" aria-live="polite">
+        <span class="review-species-receipt__prev" title="Previous species">{{ previous_species }}</span>
+        <span class="review-species-receipt__arrow" aria-hidden="true">→</span>
+        <span class="review-species-receipt__new" title="New species">{{ current_species }}</span>
+        {% if origin == 'manual' %}
+        <span class="review-species-receipt__origin">Manually changed</span>
+        {% elif origin == 'cls' %}
+        <span class="review-species-receipt__origin">From CLS suggestion</span>
+        {% endif %}
+        <button type="button"
+                class="review-species-receipt__undo"
+                data-review-panel-action="undo_species_change"
+                title="Revert species change">Undo</button>
+    </div>
+{% endif %}
+</div>

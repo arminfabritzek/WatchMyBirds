@@ -46,6 +46,7 @@ from web.power_actions import (
     is_power_management_available,
     schedule_power_action,
 )
+from core.species_colours import assign_species_colours as _assign_species_colours
 from web.services import (
     db_service,
     gallery_service,
@@ -1113,11 +1114,11 @@ def create_web_interface(detection_manager, system_monitor=None):
 
         # --- Analytics API Routes --- MOVED TO web/blueprints/analytics.py ---
 
-        # --- Phase 5: Trash Routes --- MOVED TO web/blueprints/trash.py ---
+        # Trash routes moved to web/blueprints/trash.py
 
         # --- Auth Routes now handled by auth_bp (registered in create_web_interface) ---
 
-        # --- Phase 6: Edit Page (server-rendered) ---
+        # Edit page (server-rendered)
         @login_required
         def edit_route(date_iso):
             """Server-rendered edit page with filtering and batch actions."""
@@ -1212,6 +1213,16 @@ def create_web_interface(detection_manager, system_monitor=None):
                 det["latin_name"] = species_key or ""
 
                 filtered.append(det)
+
+            # Stamp a deterministic species_colour slot on every
+            # detection so the template can apply the Wong palette token.
+            _stream_colour_map = _assign_species_colours(
+                [d.get("species_key") or "" for d in filtered]
+            )
+            for d in filtered:
+                d["species_colour"] = _stream_colour_map.get(
+                    d.get("species_key") or "", None
+                )
 
             # Apply Sorting
             if filters["sort"] == "time_asc":
@@ -1393,7 +1404,7 @@ def create_web_interface(detection_manager, system_monitor=None):
 
         # --- Analytics Dashboard Routes --- MOVED TO web/blueprints/analytics.py ---
 
-        # --- Phase 2: Species Summary (server-rendered) ---
+        # Species summary (server-rendered)
         def species_route():
             """Server-rendered species summary page using Jinja2 templates."""
 
@@ -1659,7 +1670,7 @@ def create_web_interface(detection_manager, system_monitor=None):
             methods=["GET"],
         )
 
-        # --- Phase 3: Gallery Routes (server-rendered) ---
+        # Gallery routes (server-rendered)
         def gallery_route():
             """Server-rendered main gallery page with daily covers."""
             daily_covers = get_daily_covers()
@@ -1933,6 +1944,19 @@ def create_web_interface(detection_manager, system_monitor=None):
                         int(det.get("detection_id") or 0)
                     )
 
+            # Stamp species_colour on each observation and its
+            # cover_detection so templates can use the shared Wong
+            # palette token on both the tile and modal filmstrip.
+            _sub_colour_map = _assign_species_colours(
+                [obs.get("species") or "" for obs in enriched_observations]
+            )
+            for obs in enriched_observations:
+                slot = _sub_colour_map.get(obs.get("species") or "", None)
+                obs["species_colour"] = slot
+                obs["cover_detection"]["species_colour"] = slot
+                for det in obs["all_detections"]:
+                    det["species_colour"] = slot
+
             # Species of the Day (page 1 only) — unchanged logic
             species_of_day = []
             if page == 1:
@@ -1977,6 +2001,32 @@ def create_web_interface(detection_manager, system_monitor=None):
                     pagination_range.append("...")
                 pagination_range.append(total_pages)
 
+            # Concurrent-visit grouping over the already-enriched page
+            # slice. Same-species BirdEvents stay separate in the data
+            # layer; the Subgallery only displays them inside a shared
+            # shell when their time intervals overlap within tolerance.
+            visit_windows = gallery_service.group_concurrent_observations(
+                enriched_observations
+            )
+            # Preserve the caller-facing sort order: re-sort visit windows
+            # by the active sort on their first observation so the grouping
+            # inherits whatever order the user picked.
+            if sort_by == "time_asc":
+                visit_windows.sort(key=lambda w: w[0]["start_time"])
+            elif sort_by == "score":
+                visit_windows.sort(
+                    key=lambda w: max(o["best_score"] for o in w),
+                    reverse=True,
+                )
+            elif sort_by == "species":
+                visit_windows.sort(
+                    key=lambda w: COMMON_NAMES.get(
+                        w[0]["species"], w[0]["species"]
+                    ).lower()
+                )
+            else:
+                visit_windows.sort(key=lambda w: w[0]["end_time"], reverse=True)
+
             return render_template(
                 "subgallery.html",
                 current_path=f"/gallery/{date}",
@@ -1988,6 +2038,7 @@ def create_web_interface(detection_manager, system_monitor=None):
                 sort_by=sort_by,
                 current_threshold=current_threshold,
                 observations=enriched_observations,
+                visit_windows=visit_windows,
                 species_of_day=species_of_day,
                 pagination_range=pagination_range,
                 image_width=IMAGE_WIDTH,
@@ -2033,7 +2084,7 @@ def create_web_interface(detection_manager, system_monitor=None):
 
     setup_web_routes(server)
 
-    # --- Phase 4: Homepage (Live Stream) Migrated to Flask (Final Phase) ---
+    # Homepage / live stream
     def index_route():
         """Server-rendered Homepage / Live Stream."""
         # Calculate 24h rolling window threshold
@@ -2297,6 +2348,15 @@ def create_web_interface(detection_manager, system_monitor=None):
                 species_key = det.get("species_key") or det.get("latin_name", "")
                 det["count"] = species_visit_counts.get(species_key, 0)
 
+            # Stamp species_colour slot.
+            _stream_vis_colour_map = _assign_species_colours(
+                [d.get("species_key") or "" for d in visual_summary]
+            )
+            for det in visual_summary:
+                det["species_colour"] = _stream_vis_colour_map.get(
+                    det.get("species_key") or "", None
+                )
+
         except Exception as e:
             logger.error(f"Error fetching species summary table: {e}")
 
@@ -2491,18 +2551,6 @@ def create_web_interface(detection_manager, system_monitor=None):
         methods=["GET"],
     )
 
-    def tbwd_habitat_route():
-        return render_template(
-            "tbwd_habitat.html",
-            current_path="/tbwd-habitat",
-        )
-
-    server.add_url_rule(
-        "/tbwd-habitat",
-        endpoint="tbwd_habitat",
-        view_func=tbwd_habitat_route,
-        methods=["GET"],
-    )
     server.add_url_rule("/", endpoint="index", view_func=index_route, methods=["GET"])
 
     RUNTIME_BOOL_KEYS = {
@@ -2605,7 +2653,7 @@ def create_web_interface(detection_manager, system_monitor=None):
         return str(value)
 
     # ---------------------------------------------------------
-    # FLASK ROUTES FOR SETTINGS (Phase 7)
+    # Flask routes for settings
     # ---------------------------------------------------------
 
     @server.route("/settings", methods=["GET"])

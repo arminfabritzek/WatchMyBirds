@@ -59,7 +59,7 @@ class TestApiV1Status:
             assert response.status_code == 200
             data = response.get_json()
 
-            # Per docs/API.md:
+            # API contract:
             assert "detection_paused" in data
             assert "detection_running" in data
             assert "restart_required" in data
@@ -100,7 +100,7 @@ class TestApiV1Settings:
                 assert response.status_code == 200
                 data = response.get_json()
 
-                # Per docs/API.md:
+                # API contract:
                 assert data["status"] == "success"
 
     def test_settings_post_invokes_runtime_callback_for_locale(self, client):
@@ -136,7 +136,7 @@ class TestApiV1Onvif:
         """GET /api/v1/onvif/discover returns camera list structure."""
         with patch("web.blueprints.api_v1.onvif_service") as mock_service:
             mock_service.discover_cameras.return_value = [
-                {"ip": "192.168.1.100", "port": 80, "name": "Test Camera"}
+                {"ip": "198.51.100.10", "port": 80, "name": "Test Camera"}
             ]
 
             response = client.get("/api/v1/onvif/discover")
@@ -144,12 +144,12 @@ class TestApiV1Onvif:
             assert response.status_code == 200
             data = response.get_json()
 
-            # Per docs/API.md:
+            # API contract:
             assert data["status"] == "success"
             assert "cameras" in data
             assert isinstance(data["cameras"], list)
             assert len(data["cameras"]) == 1
-            assert data["cameras"][0]["ip"] == "192.168.1.100"
+            assert data["cameras"][0]["ip"] == "198.51.100.10"
 
     def test_onvif_discover_empty_returns_empty_list(self, client):
         """GET /api/v1/onvif/discover with no cameras returns empty list."""
@@ -161,7 +161,7 @@ class TestApiV1Onvif:
             assert response.status_code == 200
             data = response.get_json()
 
-            # Per docs/API.md: empty result still returns success
+            # API contract: empty result still returns success
             assert data["status"] == "success"
             assert data["cameras"] == []
 
@@ -188,7 +188,7 @@ class TestApiV1Analytics:
             assert response.status_code == 200
             data = response.get_json()
 
-            # Per docs/API.md:
+            # API contract:
             assert "total_detections" in data
             assert "total_species" in data
             assert "total_days" in data
@@ -410,7 +410,7 @@ class TestApiV1DetectionControl:
         assert response.status_code == 200
         data = response.get_json()
 
-        # Per docs/API.md:
+        # API contract:
         assert data["status"] == "success"
         assert "message" in data
 
@@ -425,7 +425,7 @@ class TestApiV1DetectionControl:
         assert response.status_code == 200
         data = response.get_json()
 
-        # Per docs/API.md:
+        # API contract:
         assert data["status"] == "success"
         assert "message" in data
 
@@ -524,7 +524,7 @@ class TestApiV1SystemVitals:
         for key in required_keys:
             assert key in data, f"Missing required key: {key}"
 
-        # Required vitals keys (per Phase D spec)
+        # Required vitals keys
         vitals = data["vitals"]
         required_vitals_keys = [
             "ts",

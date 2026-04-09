@@ -36,13 +36,12 @@
         <span class="app-bar__spacer"></span>
         {% if session.get('authenticated') %}
         {# SECONDARY: Admin/utility actions (only when logged in) #}
+        {# Legacy note: `/inbox` is an old path and should stay undiscoverable.
+           `/admin/review` is the supported entry point; hiding the old nav
+           link is the smallest safe way to steer people away from it. #}
         <a class="app-bar__link app-bar__link--secondary{% if current_path == '/admin/review' %} active{% endif %}"
             href="/admin/review">
             Review
-        </a>
-        <a class="app-bar__link app-bar__link--secondary{% if current_path == '/inbox' %} active{% endif %}"
-            href="/inbox">
-            Inbox
         </a>
         <a class="app-bar__link app-bar__link--secondary{% if current_path == '/trash' %} active{% endif %}"
             href="/trash">

@@ -1,5 +1,5 @@
 """
-Tests for the stream source resolution algorithm (§5) and migration logic (§8).
+Tests for the stream source resolution algorithm and migration logic.
 
 Covers:
 - mode=auto with relay up/down
@@ -19,7 +19,7 @@ from unittest.mock import patch
 def _base_config(**overrides):
     """Returns a minimal config dict suitable for resolve_effective_sources."""
     cfg = {
-        "CAMERA_URL": "rtsp://admin:pass@192.168.1.100:554/stream",
+        "CAMERA_URL": "rtsp://viewer:example-password@198.51.100.10:554/stream",
         "STREAM_SOURCE_MODE": "auto",
         "GO2RTC_STREAM_NAME": "camera",
         "GO2RTC_API_BASE": "http://127.0.0.1:1984",
@@ -265,7 +265,7 @@ class TestVerifyGo2rtcStreamReady:
 
         data = {
             "camera": {
-                "producers": [{"url": "rtsp://192.168.1.100:554/stream"}],
+                "producers": [{"url": "rtsp://198.51.100.10:554/stream"}],
                 "consumers": [],
             }
         }
@@ -335,7 +335,7 @@ class TestVerifyGo2rtcStreamReady:
 
 
 # ---------------------------------------------------------------------------
-# Migration logic (§8)
+# Migration logic
 # ---------------------------------------------------------------------------
 
 
@@ -372,10 +372,13 @@ class TestMigrateCameraUrl:
 
         cfg = {
             "CAMERA_URL": "",
-            "VIDEO_SOURCE": "rtsp://admin:pass@192.168.1.100:554/stream",
+            "VIDEO_SOURCE": "rtsp://viewer:example-password@198.51.100.10:554/stream",
         }
         _migrate_camera_url(cfg)
-        assert cfg["CAMERA_URL"] == "rtsp://admin:pass@192.168.1.100:554/stream"
+        assert (
+            cfg["CAMERA_URL"]
+            == "rtsp://viewer:example-password@198.51.100.10:554/stream"
+        )
 
     def test_webcam_index_gt0_migrated(self):
         """Webcam index > 0 is migrated as string."""
@@ -397,11 +400,14 @@ class TestMigrateCameraUrl:
         }
         with patch(
             "utils.go2rtc_config.read_camera_stream_source",
-            return_value="rtsp://admin:pass@192.168.1.100:554/stream",
+            return_value="rtsp://viewer:example-password@198.51.100.10:554/stream",
         ):
             _migrate_camera_url(cfg)
 
-        assert cfg["CAMERA_URL"] == "rtsp://admin:pass@192.168.1.100:554/stream"
+        assert (
+            cfg["CAMERA_URL"]
+            == "rtsp://viewer:example-password@198.51.100.10:554/stream"
+        )
 
     def test_relay_url_go2rtc_config_missing(self):
         """Relay URL with no go2rtc config leaves CAMERA_URL empty."""

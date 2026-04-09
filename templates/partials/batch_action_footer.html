@@ -11,6 +11,7 @@ always_visible=false,
 counter_id='batchActionCounter',
 counter_text='0 selected',
 trash_selected_onclick=none,
+trash_selected_id=none,
 trash_selected_label='Move Selected to Trash',
 trash_selected_class='btn btn--danger',
 trash_filtered_onclick=none,
@@ -19,6 +20,7 @@ trash_filtered_class='btn btn--outline-danger',
 trash_filtered_id=none,
 trash_filtered_hidden=false,
 relabel_selected_onclick=none,
+relabel_selected_id=none,
 relabel_selected_label='Relabel Selected',
 relabel_selected_class='btn btn--primary',
 relabel_filtered_onclick=none,
@@ -30,6 +32,7 @@ download_onclick=none,
 download_label=none,
 download_class='btn btn--success',
 cancel_onclick=none,
+cancel_id=none,
 cancel_label=none,
 cancel_class='btn btn--secondary'
 ) %}
@@ -38,7 +41,8 @@ cancel_class='btn btn--secondary'
     <span class="wm-batch-footer__counter" id="{{ counter_id }}">{{ counter_text }}</span>
 
     {% if trash_selected_onclick %}
-    <button type="button" class="{{ trash_selected_class }}" onclick="{{ trash_selected_onclick }}">🗑 {{
+    <button type="button" class="{{ trash_selected_class }}"{% if trash_selected_id %} id="{{ trash_selected_id }}"{% endif %}
+        onclick="{{ trash_selected_onclick }}">🗑 {{
         trash_selected_label }}</button>
     {% endif %}
 
@@ -49,7 +53,8 @@ cancel_class='btn btn--secondary'
     {% endif %}
 
     {% if relabel_selected_onclick %}
-    <button type="button" class="{{ relabel_selected_class }}" onclick="{{ relabel_selected_onclick }}">🏷️ {{
+    <button type="button" class="{{ relabel_selected_class }}"{% if relabel_selected_id %} id="{{ relabel_selected_id }}"{% endif %}
+        onclick="{{ relabel_selected_onclick }}">🏷️ {{
         relabel_selected_label }}</button>
     {% endif %}
 
@@ -64,7 +69,8 @@ cancel_class='btn btn--secondary'
     {% endif %}
 
     {% if cancel_onclick and cancel_label %}
-    <button type="button" class="{{ cancel_class }}" onclick="{{ cancel_onclick }}">{{ cancel_label }}</button>
+    <button type="button" class="{{ cancel_class }}"{% if cancel_id %} id="{{ cancel_id }}"{% endif %}
+        onclick="{{ cancel_onclick }}">{{ cancel_label }}</button>
     {% endif %}
 </div>
 {% endmacro %}

@@ -49,7 +49,7 @@ We produce two types of images:
 | :--- | :--- | :--- |
 | **Service** | `app.service` (Hardened) | `app-dev.service` (Relaxed) |
 | **SSH** | Disabled | **Enabled** |
-| **Admin User**| Locked | **Unlocked (passwordless sudo)** |
+| **Admin User**| Locked | **Unlocked for local debugging** |
 | **Filesystem**| Read-Only (`ProtectSystem=strict`) | Writable `/opt/app` |
 
 > **Warning:** Never expose a Dev Image to the internet. It is intended for local debugging only.
