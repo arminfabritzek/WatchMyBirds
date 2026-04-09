@@ -602,9 +602,10 @@ def test_bbox_overlay_init_and_redraw_stay_on_the_local_viewer_host():
     """
     js = _read("assets/js/gallery_utils.js")
 
-    assert "const host = getViewerHost(img);" in js
-    assert "const btn = host?.querySelector('.bbox-toggle');" in js
-    assert "const host = getViewerHost(btn);" in js
+    assert "function resolveViewerHost(scope, el) {" in js
+    assert "const host = resolveViewerHost(scope, img);" in js
+    assert "const btn = resolveViewerToolButton(host, scope, '.bbox-toggle');" in js
+    assert "const host = resolveViewerHost(scope, btn);" in js
     assert "const container = host?.querySelector('.modal-image-viewer');" in js
     assert "scope.querySelector('.modal-image-viewer')" not in js
 

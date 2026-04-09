@@ -27,6 +27,31 @@ function getViewerHost(el) {
     return el.closest('.wm-toolbox-host');
 }
 
+function resolveViewerHost(scope, el) {
+    const directHost = getViewerHost(el);
+    if (directHost) return directHost;
+    if (!scope || !scope.querySelectorAll) return null;
+
+    const viewerHosts = Array.from(scope.querySelectorAll('.wm-toolbox-host')).filter(function (host) {
+        return host.querySelector('.wm-image-viewer');
+    });
+    if (viewerHosts.length === 1) return viewerHosts[0];
+
+    return viewerHosts.find(function (host) {
+        const viewer = host.querySelector('.wm-image-viewer');
+        return viewer && viewer.offsetParent !== null;
+    }) || viewerHosts[0] || null;
+}
+
+function resolveViewerToolButton(host, scope, selector) {
+    const hostBtn = host && host.querySelector ? host.querySelector(selector) : null;
+    if (hostBtn) return hostBtn;
+    if (scope && scope.classList && scope.classList.contains('modal')) {
+        return scope.querySelector('.modal-action-bar ' + selector);
+    }
+    return null;
+}
+
 /**
  * Read viewer preference keys from scope element's data attributes.
  * Review scopes set data-bbox-pref-key / data-zoom-pref-key explicitly;
@@ -522,7 +547,7 @@ function initBboxOverlay(img) {
     const container = img.closest('.modal-image-viewer');
     if (!container) return;
     const scope = getViewerScope(img);
-    const host = getViewerHost(img);
+    const host = resolveViewerHost(scope, img);
 
     const canvas = container.querySelector('.bbox-overlay');
     if (!canvas) return;
@@ -544,7 +569,7 @@ function initBboxOverlay(img) {
         }
 
         if (localStorage.getItem(prefs.bbox) === 'on') {
-            const btn = host?.querySelector('.bbox-toggle');
+            const btn = resolveViewerToolButton(host, scope, '.bbox-toggle');
             if (btn) {
                 if (!btn.classList.contains('active')) toggleBboxOverlay(btn);
                 else redrawBboxOverlay(btn);
@@ -587,7 +612,7 @@ function initBboxOverlay(img) {
  */
 function toggleBboxOverlay(btn) {
     const scope = getViewerScope(btn);
-    const host = getViewerHost(btn);
+    const host = resolveViewerHost(scope, btn);
     if (!scope) return;
     const prefs = getViewerPrefKeys(scope);
 
@@ -656,7 +681,7 @@ function toggleBboxOverlay(btn) {
  */
 function redrawBboxOverlay(btn) {
     const scope = getViewerScope(btn);
-    const host = getViewerHost(btn);
+    const host = resolveViewerHost(scope, btn);
     if (!scope) return;
 
     const container = host?.querySelector('.modal-image-viewer');
@@ -984,13 +1009,13 @@ function applySmartZoomPreferenceToScope(scope) {
     const prefs = getViewerPrefKeys(scope);
     const storedPref = localStorage.getItem(prefs.zoom);
     const viewerHosts = Array.from(scope.querySelectorAll('.wm-toolbox-host')).filter(function (host) {
-        return host.querySelector('.wm-image-viewer') && host.querySelector('.smart-zoom-toggle');
+        return host.querySelector('.wm-image-viewer');
     });
 
     viewerHosts.forEach(function (host) {
         const viewer = host.querySelector('.wm-image-viewer');
         const img = host.querySelector('.wm-image-viewer__img');
-        const zoomBtn = host.querySelector('.smart-zoom-toggle');
+        const zoomBtn = resolveViewerToolButton(host, scope, '.smart-zoom-toggle');
         if (!viewer || !img || !zoomBtn) return;
 
         const state = getSmartZoomViewerState(viewer);
@@ -1019,9 +1044,9 @@ function initSmartZoom(img) {
     const viewer = img.closest('.wm-image-viewer');
     if (!viewer) return;
     const scope = getViewerScope(viewer);
-    const host = getViewerHost(viewer);
+    const host = resolveViewerHost(scope, viewer);
     const prefs = getViewerPrefKeys(scope);
-    const zoomBtn = host ? host.querySelector('.smart-zoom-toggle') : null;
+    const zoomBtn = resolveViewerToolButton(host, scope, '.smart-zoom-toggle');
     const state = getSmartZoomViewerState(viewer);
 
     // Only zoom if we have valid bbox data
@@ -1122,7 +1147,8 @@ function applySmartZoom(viewer, img, bx, by, bw, bh) {
     // Update button state
     const host = getViewerHost(viewer);
     if (host) {
-        const zoomBtn = host.querySelector('.smart-zoom-toggle');
+        const scope = getViewerScope(viewer);
+        const zoomBtn = resolveViewerToolButton(host, scope, '.smart-zoom-toggle');
         if (zoomBtn) {
             zoomBtn.classList.add('active');
             zoomBtn.textContent = '🖼 Full';
