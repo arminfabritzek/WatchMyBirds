@@ -3,17 +3,10 @@ name: Build DEV Image
 on:
   workflow_dispatch:
 
-  workflow_run:
-    workflows: ["Build Golden Image"]
-    types:
-      - completed
-
 jobs:
   build-dev:
     runs-on: ubuntu-latest
-    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     permissions:
-      actions: read
       contents: write
 
     steps:
@@ -33,31 +26,18 @@ jobs:
             echo "SSH key injected from secret"
           fi
 
-      - name: Download Golden Base Artifact
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          if [ "${{ github.event_name }}" = "workflow_run" ]; then
-            bash app_code/scripts/download_golden_artifact.sh "${{ github.repository }}" "${{ github.event.workflow_run.id }}"
-          else
-            bash app_code/scripts/download_golden_artifact.sh "${{ github.repository }}"
-          fi
+      - name: Install Image Build Dependencies
+        run: sudo apt-get update && sudo apt-get install -y xz-utils parted qemu-user-static
 
-      - name: Decompress Image
-        run: |
-          if [ -f golden.img.xz ]; then
-            unxz golden.img.xz
-          else
-            echo "::error::Golden Image file missing!"
-            exit 1
-          fi
+      - name: Build Golden Base Image On Demand
+        run: bash app_code/scripts/build_golden_image.sh app_code
 
       - name: Create Wheelhouse (Host)
         run: |
           mkdir -p wheelhouse
           grep -v '^onnxruntime==' app_code/requirements.txt > /tmp/wmb-base-requirements.txt
 
-          # The shared golden image now bakes in Python 3.12 once, so the
+          # The on-demand golden build bakes in Python 3.12 once, so the
           # downstream DEV lane can stay offline and reuse a cp312 wheelhouse.
           pip download \
             -r /tmp/wmb-base-requirements.txt \
@@ -77,9 +57,6 @@ jobs:
             --abi cp312 \
             --only-binary=:all: \
             onnxruntime==1.24.4
-
-      - name: Install QEMU
-        run: sudo apt-get update && sudo apt-get install -y qemu-user-static
 
       - name: Mount and Inject App (DEV MODE)
         run: |
@@ -179,7 +156,7 @@ jobs:
           sudo chroot mount_point /bin/bash -c "
             set -ex
             command -v python3.12 >/dev/null 2>&1 || {
-              echo 'python3.12 missing from golden image; rebuild the Trixie golden artifact first' >&2
+              echo 'python3.12 missing from the on-demand golden image build' >&2
               exit 1
             }
             python3.12 -m venv /opt/app/.venv

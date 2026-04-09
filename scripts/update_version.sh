@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# update_version.sh — Write a dev version string into APP_VERSION.
+# update_version.sh — Write the next dev version string into APP_VERSION.
 #
-# The generated format is:  {next_patch}-dev.{short_sha}
+# The generated format is:  {next_release}-dev.{short_sha}
 # Example:                  0.1.1-dev.39a7010
 #
 # Usage:
@@ -10,11 +10,11 @@
 #
 # Version source of truth:
 #   1. latest semver git tag (vX.Y.Z / X.Y.Z), if present
-#   2. otherwise APP_VERSION in the repo root
+#   2. APP_VERSION as a fallback / explicit next-release override
 #
-# Dev builds are always derived as "next patch + sha". Example:
-#   release base 0.1.0  -> dev version 0.1.1-dev.<sha>
-#   release base 1.4.7  -> dev version 1.4.8-dev.<sha>
+# Dev builds are always derived as "next release + sha". Example:
+#   latest release 0.1.0 -> dev version 0.1.1-dev.<sha>
+#   APP_VERSION 1.4.8    -> dev version 1.4.8-dev.<sha>
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

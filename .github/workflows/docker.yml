@@ -1,8 +1,6 @@
 name: Docker
 
 on:
-  schedule:
-    - cron: '0 3 * * *'   # every night at 03:00 UTC (1h after RPi build)
   workflow_dispatch:
 
 jobs:
@@ -19,8 +17,12 @@ jobs:
       - name: Read App Version
         id: version
         run: |
-          # Use APP_VERSION as the stable Docker tag for the current code.
-          VERSION=$(bash scripts/version_info.sh release-base . 2>/dev/null || echo "0.0.0")
+          # Manual fallback: rebuild the latest stable Docker release tag.
+          VERSION=$(bash scripts/version_info.sh current-release . 2>/dev/null || true)
+          if [ -z "$VERSION" ]; then
+            echo "::error::No stable release version found. Run the release workflow first."
+            exit 1
+          fi
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
       - name: Set up QEMU
@@ -60,19 +62,20 @@ jobs:
             GIT_COMMIT=${{ github.sha }}
             VERSION=${{ steps.version.outputs.version }}
 
-      - name: Update GitHub Release with Docker info
+      - name: Update Matching GitHub Release with Docker Info
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           VERSION="${{ steps.version.outputs.version }}"
-
-          # Find the latest non-prerelease release tag
-          TAG=$(gh release list --repo "${{ github.repository }}" --limit 10 \
-            --json tagName,isPrerelease \
-            --jq '[.[] | select(.isPrerelease == false)] | .[0].tagName // empty')
+          TAG="v${VERSION}"
 
           if [ -z "$TAG" ]; then
             echo "No release found to attach Docker info to, skipping."
+            exit 0
+          fi
+
+          if ! gh release view "$TAG" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            echo "Release ${TAG} not found, skipping."
             exit 0
           fi
 

@@ -18,12 +18,17 @@ jobs:
       - name: Check for changes since last release
         id: changes
         run: |
-          VERSION=$(bash scripts/version_info.sh release-base .)
-          TAG="v${VERSION}"
-          # If the tag exists, check if there are meaningful changes
-          # (ignore APP_VERSION-only bumps from the auto-bump step)
-          if git tag -l "$TAG" | grep -q "$TAG"; then
-            CHANGED=$(git diff --name-only "$TAG"..HEAD -- . ':!APP_VERSION')
+          CURRENT_RELEASE=$(bash scripts/version_info.sh current-release . 2>/dev/null || true)
+          TAG=""
+
+          if [ -n "$CURRENT_RELEASE" ]; then
+            TAG="v${CURRENT_RELEASE}"
+          fi
+
+          # If the latest stable tag exists, check if there are meaningful changes
+          # (ignore APP_VERSION-only updates and workflow-only maintenance for golden validation)
+          if [ -n "$TAG" ] && git tag -l "$TAG" | grep -q "$TAG"; then
+            CHANGED=$(git diff --name-only "$TAG"..HEAD -- . ':!APP_VERSION' ':!.github/workflows/build-golden.yml')
             if [ -z "$CHANGED" ]; then
               echo "skip=true" >> $GITHUB_OUTPUT
               echo "No meaningful changes since ${TAG}, skipping build."
@@ -34,7 +39,7 @@ jobs:
             fi
           else
             echo "skip=false" >> $GITHUB_OUTPUT
-            echo "Tag ${TAG} not found, building."
+            echo "No stable release tag found, building."
           fi
 
   build-release:
@@ -42,7 +47,6 @@ jobs:
     if: needs.check.outputs.skip != 'true'
     runs-on: ubuntu-latest
     permissions:
-      actions: read
       contents: write
 
     steps:
@@ -51,25 +55,17 @@ jobs:
         with:
           path: app_code
 
-      - name: Download Golden Base Artifact
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: bash app_code/scripts/download_golden_artifact.sh "${{ github.repository }}"
+      - name: Install Image Build Dependencies
+        run: sudo apt-get update && sudo apt-get install -y xz-utils parted qemu-user-static
 
-      - name: Decompress Image
-        run: |
-          if [ -f golden.img.xz ]; then
-            unxz golden.img.xz
-          else
-            echo "::error::Golden Image file missing!"
-            exit 1
-          fi
+      - name: Build Golden Base Image On Demand
+        run: bash app_code/scripts/build_golden_image.sh app_code
 
       - name: Create Wheelhouse (Host)
         run: |
           mkdir -p wheelhouse
           grep -v '^onnxruntime==' app_code/requirements.txt > /tmp/wmb-base-requirements.txt
-          # The shared golden image now bakes in Python 3.12 once, so the
+          # The on-demand golden build bakes in Python 3.12 once, so the
           # release lane can reuse a fully offline cp312 wheelhouse.
           pip download \
             -r /tmp/wmb-base-requirements.txt \
@@ -89,9 +85,6 @@ jobs:
             --abi cp312 \
             --only-binary=:all: \
             onnxruntime==1.24.4
-
-      - name: Install QEMU
-        run: sudo apt-get update && sudo apt-get install -y qemu-user-static
 
       - name: Mount and Inject App
         run: |
@@ -120,10 +113,8 @@ jobs:
           sudo mkdir -p mount_point/opt/wheelhouse
           sudo cp -r wheelhouse/* mount_point/opt/wheelhouse/
           # Write Version Metadata
-          # Resolve the current release base even if APP_VERSION currently holds
-          # a next-patch dev build marker.
-          BASE_VER=$(bash app_code/scripts/version_info.sh release-base app_code)
-          echo "${BASE_VER}" | sudo tee mount_point/opt/app/APP_VERSION
+          RELEASE_VER=$(bash app_code/scripts/version_info.sh next-release app_code)
+          echo "${RELEASE_VER}" | sudo tee mount_point/opt/app/APP_VERSION
           echo "${{ github.sha }}" | sudo tee mount_point/opt/app/commit.txt
           date -u +%Y-%m-%dT%H:%M:%SZ | sudo tee mount_point/opt/app/build_date.txt
 
@@ -170,7 +161,7 @@ jobs:
           sudo chroot mount_point /bin/bash -c "
             set -ex
             command -v python3.12 >/dev/null 2>&1 || {
-              echo 'python3.12 missing from golden image; rebuild the Trixie golden artifact first' >&2
+              echo 'python3.12 missing from the on-demand golden image build' >&2
               exit 1
             }
 
@@ -256,11 +247,11 @@ jobs:
       - name: Compress Release Image
         run: xz -z -1 -T0 watchmybirds-rpi-${{ steps.builddate.outputs.date }}.img
 
-      - name: Resolve Version
+      - name: Resolve Release Version
         id: version
         run: |
-          BASE_VER=$(bash app_code/scripts/version_info.sh release-base app_code)
-          echo "base=${BASE_VER}" >> $GITHUB_OUTPUT
+          TARGET_VER=$(bash app_code/scripts/version_info.sh next-release app_code)
+          echo "target=${TARGET_VER}" >> $GITHUB_OUTPUT
 
       - name: Create Release and Upload
         env:
@@ -268,7 +259,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          TAG="v${{ steps.version.outputs.base }}"
+          TAG="v${{ steps.version.outputs.target }}"
           IMG_FILE="watchmybirds-rpi-${{ steps.builddate.outputs.date }}.img.xz"
           DATE_SHORT="${{ steps.builddate.outputs.date_short }}"
 
@@ -281,7 +272,7 @@ jobs:
 
           Flash to SD card with [Raspberry Pi Imager](https://www.raspberrypi.com/software/) and boot on Raspberry Pi 4 or 5.
           RELEASE_EOF
-          sed -i "s/PLACEHOLDER_VERSION/${{ steps.version.outputs.base }}/g" release_notes.md
+          sed -i "s/PLACEHOLDER_VERSION/${{ steps.version.outputs.target }}/g" release_notes.md
           sed -i "s/PLACEHOLDER_DATE/${DATE_SHORT}/g" release_notes.md
           sed -i "s/PLACEHOLDER_COMMIT/${{ github.sha }}/g" release_notes.md
 
@@ -307,18 +298,93 @@ jobs:
             --repo "${{ github.repository }}" \
             --clobber
 
-      - name: Bump APP_VERSION for next release
+      - name: Set up Docker QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Docker Metadata
+        id: docker_meta
+        uses: docker/metadata-action@v5
+        with:
+          images: starminworks/watchmybirds
+          tags: |
+            type=raw,value=${{ steps.version.outputs.target }}
+            type=sha
+            type=raw,value=latest
+
+      - name: Build and Push Docker Image
+        uses: docker/build-push-action@v5
+        with:
+          context: app_code
+          push: true
+          platforms: linux/amd64,linux/arm64
+          cache-from: type=registry,ref=starminworks/watchmybirds:buildcache
+          cache-to: type=registry,ref=starminworks/watchmybirds:buildcache,mode=max
+          tags: ${{ steps.docker_meta.outputs.tags }}
+          labels: ${{ steps.docker_meta.outputs.labels }}
+          build-args: |
+            BUILD_DATE=${{ github.run_started_at }}
+            GIT_COMMIT=${{ github.sha }}
+            VERSION=${{ steps.version.outputs.target }}
+
+      - name: Update Release Notes with Docker Info
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          set -euo pipefail
+
+          TAG="v${{ steps.version.outputs.target }}"
+          VERSION="${{ steps.version.outputs.target }}"
+          EXISTING=$(gh release view "$TAG" --repo "${{ github.repository }}" --json body -q .body)
+
+          {
+            echo "---"
+            echo ""
+            echo "### Docker"
+            echo ""
+            echo '```bash'
+            echo "docker pull starminworks/watchmybirds:${VERSION}"
+            echo "docker pull starminworks/watchmybirds:latest"
+            echo '```'
+            echo ""
+            echo "**Platforms:** linux/amd64, linux/arm64"
+          } > docker_section.md
+
+          if echo "$EXISTING" | grep -q "docker pull starminworks/watchmybirds"; then
+            echo "Docker section already present in release notes, skipping."
+            exit 0
+          fi
+
+          { echo "$EXISTING"; cat docker_section.md; } > updated_notes.md
+          gh release edit "$TAG" \
+            --repo "${{ github.repository }}" \
+            --notes-file updated_notes.md
+
+      - name: Set APP_VERSION to Released Version
+        run: |
+          set -euo pipefail
           cd app_code
-          CURRENT="${{ steps.version.outputs.base }}"
-          NEXT=$(echo "$CURRENT" | awk -F. '{printf "%s.%s.%s", $1, $2, $3+1}')
-          echo "$NEXT" > APP_VERSION
+          RELEASED="${{ steps.version.outputs.target }}"
+          echo "$RELEASED" > APP_VERSION
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git checkout -B main
           git add APP_VERSION
-          git commit -m "chore: bump version to ${NEXT} [skip ci]"
-          git push origin main
+
+          if git diff --cached --quiet -- APP_VERSION; then
+            echo "APP_VERSION already set to ${RELEASED}, nothing to commit."
+            exit 0
+          fi
+
+          git commit -m "chore: set release version to ${RELEASED} [skip ci]" --only -- APP_VERSION
+          git push origin HEAD:main
 
       - name: Cleanup old releases (keep last 5)
         env:
@@ -330,7 +396,8 @@ jobs:
           {
             echo "## Raspberry Pi Release Image"
             echo
-            echo "- Release: \`v${{ steps.version.outputs.base }}\`"
+            echo "- Release: \`v${{ steps.version.outputs.target }}\`"
             echo "- Artifact: \`watchmybirds-rpi-${{ steps.builddate.outputs.date }}.img.xz\`"
-            echo "- Published as GitHub Release."
+            echo "- Docker: \`starminworks/watchmybirds:${{ steps.version.outputs.target }}\` and \`latest\`"
+            echo "- Published as GitHub Release and Docker release."
           } >> "$GITHUB_STEP_SUMMARY"
