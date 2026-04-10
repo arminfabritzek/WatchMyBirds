@@ -53,6 +53,7 @@ jobs:
       - name: Checkout App Code
         uses: actions/checkout@v4
         with:
+          fetch-depth: 0
           path: app_code
 
       - name: Install Image Build Dependencies
