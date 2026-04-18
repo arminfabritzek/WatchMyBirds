@@ -49,6 +49,9 @@ _UNKNOWN_SPECIES_TOKENS = frozenset(
         "unclassified",
     }
 )
+# Kept as a superset of utils.species_names._NON_SPECIES_OD_TOKENS so that
+# "Unknown_species" (the literal UNKNOWN_SPECIES_KEY) is also rejected as
+# event species. Sync any changes with utils.species_names.is_non_species_od_token.
 
 
 @dataclass(frozen=True)
@@ -164,9 +167,14 @@ def _resolve_detection_species(det: dict[str, Any]) -> tuple[str | None, str]:
     if cls_species:
         return cls_species, "classifier"
 
+    # Non-bird OD classes (squirrel, cat, etc.) pass through
+    # _normalize_species because they are NOT in _UNKNOWN_SPECIES_TOKENS.
+    # Their species identity IS the OD class name; mark the source as
+    # "detector" (not "classifier") so downstream UI can distinguish
+    # OD-assigned non-bird species from CLS-assigned bird species.
     od_species = _normalize_species(det.get("od_class_name"))
     if od_species:
-        return od_species, "classifier"
+        return od_species, "detector"
 
     return None, "unknown"
 

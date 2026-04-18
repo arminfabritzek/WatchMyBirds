@@ -712,6 +712,105 @@ def test_review_event_approve_allows_user_selected_species_override(client):
     )
 
 
+def test_review_event_approve_preserves_per_frame_manual_species(client):
+    """Per-frame manual relabels must survive an Approve Event stamp.
+
+    Reproduces the Multi-Select bug: the operator relabels a subset of
+    frames (e.g. 3 of 7) to species A via per-cell relabel, then picks
+    species B as the event-level species and clicks Approve Event. The
+    frames already stamped with A must keep A — only the still-automatic
+    frames get B. BBox review is still applied to every frame since it
+    is an event-level decision.
+    """
+    mock_conn = MagicMock()
+
+    def execute_side_effect(query, params=None):
+        if "SELECT d.detection_id, d.image_filename" in query:
+            return _sql_result(fetchall=[
+                {
+                    "detection_id": 17,
+                    "image_filename": "pigeon-frame-1.jpg",
+                    "review_status": "untagged",
+                    "manual_species_override": "",
+                    "species_source": "cls",
+                },
+                {
+                    "detection_id": 18,
+                    "image_filename": "pigeon-frame-2.jpg",
+                    "review_status": "untagged",
+                    "manual_species_override": "",
+                    "species_source": "cls",
+                },
+                {
+                    "detection_id": 19,
+                    "image_filename": "cat-frame-1.jpg",
+                    "review_status": "untagged",
+                    "manual_species_override": "Felis_catus",
+                    "species_source": "manual",
+                },
+                {
+                    "detection_id": 20,
+                    "image_filename": "cat-frame-2.jpg",
+                    "review_status": "untagged",
+                    "manual_species_override": "Felis_catus",
+                    "species_source": "manual",
+                },
+            ])
+        if "COALESCE(d.decision_state" in query:
+            return _sql_result(fetchone=[0])
+        if "SELECT COUNT(*)" in query:
+            return _sql_result(fetchone=[1])
+        return _sql_result()
+
+    mock_conn.execute.side_effect = execute_side_effect
+
+    with (
+        patch("web.blueprints.review.db_service") as mock_db,
+        patch("web.blueprints.review._get_allowed_review_species") as mock_allowed,
+        patch("web.blueprints.review._load_single_review_event") as mock_event,
+        patch("web.blueprints.review.gallery_service.invalidate_cache"),
+    ):
+        mock_allowed.return_value = {"Columba_livia"}
+        mock_event.return_value = {
+            "event_key": "mixed-event-xyz",
+            "detection_ids": [17, 18, 19, 20],
+            "candidate_species": "Columba_livia",
+            "eligibility": "event_eligible",
+            "members": [
+                {"best_detection_id": 17, "context_only": False},
+                {"best_detection_id": 18, "context_only": False},
+                {"best_detection_id": 19, "context_only": False},
+                {"best_detection_id": 20, "context_only": False},
+            ],
+        }
+        mock_db.closing_connection.return_value.__enter__ = MagicMock(
+            return_value=mock_conn
+        )
+        mock_db.closing_connection.return_value.__exit__ = MagicMock(return_value=False)
+
+        response = client.post(
+            "/api/review/event-approve",
+            json={
+                "event_key": "mixed-event-xyz",
+                "detection_ids": [17, 18, 19, 20],
+                "species": "Columba_livia",
+                "bbox_review": "correct",
+            },
+        )
+
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data["status"] == "success"
+    # Only the non-manual frames (17, 18) get stamped with the event species.
+    # The manually-relabeled frames (19, 20) keep their per-frame override.
+    mock_db.apply_species_override_many.assert_called_once_with(
+        mock_conn, [17, 18], "Columba_livia", "manual"
+    )
+    # BBox review is an event-level decision and applies to every frame.
+    bbox_calls = [call.args[1] for call in mock_db.set_manual_bbox_review.call_args_list]
+    assert sorted(bbox_calls) == [17, 18, 19, 20]
+
+
 def test_review_event_trash_moves_images_without_active_detections_to_trash(client):
     mock_conn = MagicMock()
 

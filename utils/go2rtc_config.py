@@ -170,6 +170,7 @@ def reload_go2rtc_stream(
     stream_name: str = "camera",
     camera_url: str = "",
     timeout_sec: float = 2.0,
+    quiet_failures: bool = False,
 ) -> bool:
     """
     Tells the running go2rtc instance to update its stream source at runtime.
@@ -177,6 +178,11 @@ def reload_go2rtc_stream(
     Uses ``PUT /api/streams?name=<stream_name>&src=<camera_url>`` which is the
     format expected by go2rtc's API handler.  The handler reads stream sources
     from the ``src`` query parameter(s), NOT from a JSON request body.
+
+    When *quiet_failures* is True, non-success outcomes are logged at DEBUG
+    instead of WARNING.  Used by the retry wrapper so intermediate attempts
+    do not spam boot logs; the wrapper emits its own aggregated WARNING when
+    all attempts are exhausted.
 
     Returns True on success, False on any failure (logged but never raised).
     """
@@ -187,6 +193,8 @@ def reload_go2rtc_stream(
     if not camera_url:
         logger.debug("reload_go2rtc_stream: skipped – camera_url is empty")
         return False
+
+    fail_log = logger.debug if quiet_failures else logger.warning
 
     # go2rtc PUT handler: query.Get("name") → stream name,
     #                     query["src"]      → source URL list.
@@ -205,7 +213,7 @@ def reload_go2rtc_stream(
                     _mask_credentials(camera_url),
                 )
             else:
-                logger.warning(
+                fail_log(
                     "event=reload_result status=unexpected_code "
                     "http_status=%s stream=%s",
                     resp.status,
@@ -213,7 +221,7 @@ def reload_go2rtc_stream(
                 )
             return ok
     except urllib.error.HTTPError as exc:
-        logger.warning(
+        fail_log(
             "event=reload_result status=http_error http_status=%s stream=%s reason=%s",
             exc.code,
             stream_name,
@@ -221,7 +229,7 @@ def reload_go2rtc_stream(
         )
         return False
     except Exception as exc:
-        logger.warning(
+        fail_log(
             "event=reload_result status=error stream=%s error=%s",
             stream_name,
             exc,
@@ -254,7 +262,7 @@ def reload_go2rtc_stream_with_retry(
         return False
 
     for attempt in range(1, max_attempts + 1):
-        logger.info(
+        logger.debug(
             "event=relay_reload_attempt attempt=%d/%d stream=%s source=%s",
             attempt,
             max_attempts,
@@ -266,6 +274,7 @@ def reload_go2rtc_stream_with_retry(
             stream_name=stream_name,
             camera_url=camera_url,
             timeout_sec=timeout_sec,
+            quiet_failures=True,
         )
         if ok:
             logger.info(
@@ -283,7 +292,7 @@ def reload_go2rtc_stream_with_retry(
                 if attempt - 1 < len(backoff_steps)
                 else backoff_steps[-1]
             )
-            logger.info(
+            logger.debug(
                 "event=relay_reload_backoff attempt=%d/%d next_delay=%.1fs stream=%s",
                 attempt,
                 max_attempts,

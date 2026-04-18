@@ -694,21 +694,42 @@
             // label under each Review frame tracks the picker. Cells with
             // `data-species-is-manual="1"` keep their per-frame manual
             // override — manual wins.
+            //
+            // Colour slot: if the caller passes a fresh slot (from the
+            // clicked species-btn's data-species-colour), propagate it
+            // through to every auto-origin cell. Without this, cells
+            // kept their stale data-species-colour and the bbox
+            // overlay redraw picked up the old slot.
             mirrorEventSpeciesToAutoCells(
                 species,
                 selectedCommon,
-                controls.dataset.selectedSpeciesRefImageUrl || ''
+                controls.dataset.selectedSpeciesRefImageUrl || '',
+                options.speciesColour !== undefined ? options.speciesColour : null
             );
         }
         updateReviewSpeciesReceipt(controls, species, selectedOrigin);
         updateReviewApproveState(controls);
     }
 
-    function syncReviewCellSpeciesArtifacts(cell, speciesKey, commonName, refImageUrl) {
+    function syncReviewCellSpeciesArtifacts(cell, speciesKey, commonName, refImageUrl, speciesColourSlot) {
         if (!cell) return;
         const nextKey = speciesKey || '';
         const nextCommon = commonName || nextKey.replace(/_/g, ' ') || '';
         const nextRefImageUrl = refImageUrl || '';
+        // speciesColourSlot is null when the caller has no fresh value
+        // (e.g. per-frame picker flows that don't expose the slot). In
+        // that case we leave the cell's existing data-species-colour
+        // alone. When it is a valid slot we write it through so the
+        // --cell-species-colour custom property + bbox draw pick it up.
+        const hasColour = Number.isFinite(speciesColourSlot);
+
+        if (hasColour) {
+            cell.dataset.speciesColour = String(speciesColourSlot);
+            cell.style.setProperty(
+                '--cell-species-colour',
+                'var(--species-colour-' + String(speciesColourSlot) + ')'
+            );
+        }
 
         const changeSpeciesAction = cell.querySelector('.wm-toolbox__item[data-action="change-species"]');
         if (changeSpeciesAction) {
@@ -726,6 +747,9 @@
                 const currentBbox = JSON.parse(bboxBtn.dataset.currentBbox || '{}');
                 if (currentBbox && typeof currentBbox === 'object' && Object.keys(currentBbox).length > 0) {
                     currentBbox.name = nextCommon || nextKey;
+                    if (hasColour) {
+                        currentBbox.speciesColour = speciesColourSlot;
+                    }
                     bboxBtn.dataset.currentBbox = JSON.stringify(currentBbox);
                 }
             } catch (error) {
@@ -772,7 +796,7 @@
         }
     }
 
-    function mirrorEventSpeciesToAutoCells(species, commonName, refImageUrl) {
+    function mirrorEventSpeciesToAutoCells(species, commonName, refImageUrl, speciesColour) {
         const panel = getReviewStagePanel();
         if (!panel) return;
         const grid = panel.querySelector('[data-review-event-grid]');
@@ -780,6 +804,16 @@
         const nextCommon = commonName || '';
         const nextKey = species || '';
         const nextRefImageUrl = refImageUrl || '';
+        // Normalise the next colour slot: accept numeric or string,
+        // coerce to a number in range [0..7], fall back to null (leave
+        // the cell's slot untouched) when the value is missing/invalid.
+        let nextColourSlot = null;
+        if (speciesColour !== undefined && speciesColour !== null && speciesColour !== '') {
+            const parsed = Number(speciesColour);
+            if (Number.isFinite(parsed) && parsed >= 0 && parsed <= 7) {
+                nextColourSlot = parsed;
+            }
+        }
         grid.querySelectorAll('.review-event-panel__cell').forEach(function (cell) {
             if (cell.dataset.contextOnly === '1') return;
             if (cell.dataset.speciesIsManual === '1') return;
@@ -792,7 +826,7 @@
                 const labelSpan = cell.querySelector('span.review-event-panel__cell-species');
                 if (labelSpan && nextCommon) labelSpan.textContent = nextCommon;
             }
-            syncReviewCellSpeciesArtifacts(cell, nextKey, nextCommon, nextRefImageUrl);
+            syncReviewCellSpeciesArtifacts(cell, nextKey, nextCommon, nextRefImageUrl, nextColourSlot);
         });
     }
 
@@ -1132,6 +1166,61 @@
         panel.querySelectorAll('[data-review-cell-relabel], [data-review-frame-decision]').forEach(function (btn) {
             btn.disabled = mode;
         });
+
+        // Mode-aware species-block feedback. In multi-select, the species
+        // strip no longer stages a pending event-wide choice — a click
+        // commits a bulk relabel immediately and can split the event.
+        // Flip the section label, hint copy, and species-strip tooltips so
+        // the operator sees the changed semantics before the click.
+        const speciesSection = panel?.querySelector('[data-review-event-species-section]');
+        const speciesLabel = panel?.querySelector('[data-review-event-species-label]');
+        const speciesHint = panel?.querySelector('[data-review-event-species-hint]');
+        if (speciesSection) {
+            const selectionActive = mode && selectedCount > 0;
+            speciesSection.classList.toggle('is-multi-select', mode);
+            speciesSection.classList.toggle('is-multi-select-armed', selectionActive);
+            if (speciesLabel) {
+                if (selectionActive) {
+                    speciesLabel.textContent = 'Relabel ' + selectedCount + ' selected frame'
+                        + (selectedCount === 1 ? '' : 's');
+                } else if (mode) {
+                    speciesLabel.textContent = 'Select frames to relabel';
+                } else {
+                    speciesLabel.textContent = 'Species';
+                }
+            }
+            if (speciesHint) {
+                if (selectionActive) {
+                    speciesHint.textContent = 'Clicking a species below will IMMEDIATELY relabel the '
+                        + selectedCount + ' selected frame'
+                        + (selectedCount === 1 ? '' : 's')
+                        + '. If the new species differs from the event species, the event will be split into separate events (one per species).';
+                } else if (mode) {
+                    speciesHint.textContent = 'Pick frames with the checkboxes first. Then clicking a species will relabel just those frames.';
+                } else {
+                    speciesHint.textContent = 'Event-wide species choice stays local until you approve the event. With selected frames, a quick-pick relabels them immediately.';
+                }
+            }
+        }
+        const speciesStrip = panel?.querySelectorAll('[data-review-panel-action="select_event_species"]');
+        if (speciesStrip) {
+            speciesStrip.forEach(function (btn) {
+                const originalTitle = btn.dataset._tipOriginal || btn.getAttribute('title') || '';
+                if (!btn.dataset._tipOriginal) {
+                    btn.dataset._tipOriginal = originalTitle;
+                }
+                if (mode && selectedCount > 0) {
+                    btn.setAttribute('title',
+                        'Relabel ' + selectedCount + ' selected frame'
+                        + (selectedCount === 1 ? '' : 's')
+                        + ' to this species (immediate; may split the event)');
+                } else if (mode) {
+                    btn.setAttribute('title', 'Pick frames first, then click a species to relabel them');
+                } else if (btn.dataset._tipOriginal) {
+                    btn.setAttribute('title', btn.dataset._tipOriginal);
+                }
+            });
+        }
     }
 
     function clearReviewMultiSelect(panel = getReviewStagePanel()) {
@@ -1266,6 +1355,33 @@
         const eventKey = panel.dataset.eventKey || '';
         if (!species || detectionIds.length === 0 || cells.length === 0) return false;
 
+        // Detect whether this relabel will split the event. The event
+        // builder in core/events.py groups strictly by species — so any
+        // subset relabel to a different species creates a second event.
+        // We read the current event species off the controls aside; if
+        // the target species differs AND we are not relabelling every
+        // actionable frame in the event, the event will split and the
+        // stale event_key in the panel becomes invalid. In that case a
+        // full page reload is the safest way to pick up the new events
+        // in the rail.
+        const controls = panel.querySelector('[data-review-event-controls]');
+        const eventSpecies = controls?.dataset.species || controls?.dataset.originalSpecies || '';
+        const actionableIds = (controls?.dataset.actionableDetectionIds || '')
+            .split(',')
+            .map(function (value) { return Number(value); })
+            .filter(function (value) { return Number.isFinite(value) && value > 0; });
+        const selectedSet = new Set(detectionIds);
+        const actionableSet = new Set(actionableIds);
+        const relabelCoversAllActionable = actionableIds.length > 0
+            && actionableIds.every(function (id) { return selectedSet.has(id); });
+        const speciesDiffers = Boolean(eventSpecies) && eventSpecies !== species;
+        const willSplitEvent = speciesDiffers && !relabelCoversAllActionable;
+        // A partial-coverage relabel to the SAME species is a no-op for
+        // event shape but we still log it; no split toast needed.
+        const partialSelection = actionableIds.length > 0
+            && !actionableIds.every(function (id) { return selectedSet.has(id); })
+            && Array.from(selectedSet).every(function (id) { return actionableSet.has(id); });
+
         cells.forEach(function (cell) {
             setReviewCellRelabelPending(cell, true);
             updateReviewCellSpeciesDisplay(cell, {
@@ -1302,13 +1418,38 @@
             });
             reviewPanelCache.clear();
             clearReviewMultiSelect(panel);
+
+            if (willSplitEvent) {
+                // Event got split server-side: the remaining frames keep the
+                // old species and old event_key, the relabelled frames form
+                // a new event with a new key. Neither the rail data nor the
+                // event panel in DOM know about the new event yet — reload
+                // so the operator can see and approve both events.
+                const keepCount = Math.max(0, actionableIds.length - detectionIds.length);
+                const splitMsg = detectionIds.length + ' frame'
+                    + (detectionIds.length === 1 ? '' : 's')
+                    + ' → ' + (commonName || species)
+                    + '. Event was split into two events ('
+                    + keepCount + '× original species + '
+                    + detectionIds.length + '× ' + (commonName || species)
+                    + '). Reloading so you can approve each event separately…';
+                if (window.wmToast) {
+                    window.wmToast(splitMsg, 'warning', 6000);
+                }
+                window.setTimeout(function () {
+                    window.location.reload();
+                }, 1800);
+                return true;
+            }
+
             if (window.wmToast) {
-                window.wmToast(
-                    detectionIds.length + ' selected frame' + (detectionIds.length === 1 ? '' : 's')
-                    + ' relabelled to ' + (commonName || species) + '.',
-                    'success',
-                    2600
-                );
+                const baseMsg = detectionIds.length + ' selected frame'
+                    + (detectionIds.length === 1 ? '' : 's')
+                    + ' relabelled to ' + (commonName || species) + '.';
+                const suffix = partialSelection && !speciesDiffers
+                    ? ' (same species, event stays intact.)'
+                    : '';
+                window.wmToast(baseMsg + suffix, 'success', 2800);
             }
             return true;
         } catch (err) {
@@ -1745,6 +1886,29 @@
         setFrameDecisionVisual(btn, current === 'trash' ? 'keep' : 'trash');
     }
 
+    function handleStaleEventRaceError(error) {
+        // The event was split or rehashed by an earlier relabel. Both
+        // `_load_single_review_event` → "no longer exists" and the
+        // id-parity branch → "changed and must be reloaded" mean the
+        // panel's event_key is stale. Reload so the rail shows the new
+        // events and the operator can act on each one separately.
+        const msg = error && error.message ? String(error.message) : '';
+        const isStale = msg.indexOf('changed and must be reloaded') !== -1
+            || msg.indexOf('no longer exists') !== -1;
+        if (!isStale) return false;
+        if (window.wmToast) {
+            window.wmToast(
+                'This event was split by an earlier relabel. Reloading so the new events show up…',
+                'warning',
+                4500
+            );
+        }
+        window.setTimeout(function () {
+            window.location.reload();
+        }, 1500);
+        return true;
+    }
+
     async function reviewResolveEvent(eventKey, controls, decisions) {
         const species = controls.dataset.species || '';
         const bboxReview = controls.dataset.bboxReview || '';
@@ -1794,6 +1958,7 @@
             return true;
         } catch (error) {
             console.error('Event resolve error:', error);
+            if (handleStaleEventRaceError(error)) return false;
             alert(error.message || 'Event resolve failed.');
             return false;
         }
@@ -1900,6 +2065,7 @@
             return true;
         } catch (error) {
             console.error('Event approval error:', error);
+            if (handleStaleEventRaceError(error)) return false;
             alert(error.message || 'Event approval failed.');
             return false;
         }
@@ -1913,10 +2079,20 @@
             return false;
         }
 
-        const detectionIds = (controls.dataset.detectionIds || '')
+        // Only reject actionable (non-context) detections. Gallery-anchor
+        // context frames were already approved earlier — they stay in the
+        // Gallery and must not be touched by Move Event to Trash. The
+        // server mirrors this filter, but the client sends the right
+        // shape up front to avoid any stale payload race.
+        const actionableIds = (controls.dataset.actionableDetectionIds || '')
             .split(',')
             .map(function (value) { return Number(value); })
             .filter(function (value) { return Number.isFinite(value) && value > 0; });
+        const allEventIds = (controls.dataset.detectionIds || '')
+            .split(',')
+            .map(function (value) { return Number(value); })
+            .filter(function (value) { return Number.isFinite(value) && value > 0; });
+        const detectionIds = actionableIds.length > 0 ? actionableIds : allEventIds;
 
         if (detectionIds.length === 0) {
             alert('Event detections are not available.');
@@ -1924,7 +2100,7 @@
         }
 
         if (!noBirdConfirmed) {
-            if (!confirm('Reject every detection in this event?\n\nImages with no active detections left will move to Trash. Other touched images will follow their remaining active detections.\n\n(This confirmation appears only once per session.)')) {
+            if (!confirm('Reject every review detection in this event?\n\nGallery-anchor frames (the ones with the "In Gallery" badge) are not touched — they stay in the Gallery.\n\nImages that only had review detections go to Trash. Images that also have detections in other events keep those and stay.\n\n(This confirmation appears only once per session.)')) {
                 return false;
             }
             noBirdConfirmed = true;
@@ -1962,6 +2138,7 @@
             return true;
         } catch (error) {
             console.error('Event trash error:', error);
+            if (handleStaleEventRaceError(error)) return false;
             alert(error.message || 'Event trash failed.');
             return false;
         }
@@ -2404,6 +2581,43 @@
     });
 
     document.addEventListener('click', function (event) {
+        const copyBtn = event.target.closest('[data-review-event-copy]');
+        if (copyBtn) {
+            event.preventDefault();
+            const label = copyBtn.closest('[data-review-event-label]');
+            const text = label?.dataset.eventCopyText || '';
+            if (!text) return;
+            const finishToast = function (ok) {
+                if (!window.wmToast) return;
+                if (ok) {
+                    window.wmToast('Event label copied to clipboard.', 'success', 1800);
+                } else {
+                    window.wmToast('Copy failed — please select the text manually.', 'warning', 2800);
+                }
+            };
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(text).then(
+                    function () { finishToast(true); },
+                    function () { finishToast(false); }
+                );
+            } else {
+                // Fallback: hidden textarea + execCommand, for HTTP or
+                // older browsers where navigator.clipboard is gated.
+                const ta = document.createElement('textarea');
+                ta.value = text;
+                ta.setAttribute('readonly', '');
+                ta.style.position = 'fixed';
+                ta.style.opacity = '0';
+                document.body.appendChild(ta);
+                ta.select();
+                let ok = false;
+                try { ok = document.execCommand('copy'); } catch (_) { ok = false; }
+                document.body.removeChild(ta);
+                finishToast(ok);
+            }
+            return;
+        }
+
         const navBtn = event.target.closest('[data-review-nav]');
         if (navBtn) {
             event.preventDefault();
@@ -2430,6 +2644,7 @@
                 // that state. Gallery/Stream/Trash continue to call
                 // toggleBboxOverlay directly (single-host scopes), so
                 // only the Review surface picks up the multi-host sync.
+                // The shared single-host call is: toggleBboxOverlay(viewerToolBtn);
                 toggleBboxOverlayForReviewScope(viewerToolBtn);
             }
             return;
@@ -2590,7 +2805,17 @@
             if ((controls.dataset.species || '') === species) return;
             applyReviewSpeciesUi(controls, species, {
                 origin: 'pending',
-                commonName: actionBtn.querySelector('.review-stage-panel__species-name')?.textContent?.trim() || ''
+                commonName: actionBtn.querySelector('.review-stage-panel__species-name')?.textContent?.trim() || '',
+                // Propagate the clicked button's colour slot + ref image
+                // URL through so mirrorEventSpeciesToAutoCells updates
+                // every Review-frame cell's data-species-colour and
+                // currentBbox.speciesColour in one go. Without this, the
+                // cell keeps its stale slot, and the bbox overlay draws
+                // with the previous species' colour — which used to land
+                // on slot 7 (pure black) in some events, making the
+                // bounding box and its label unreadable.
+                speciesColour: actionBtn.dataset.speciesColour || '',
+                refImageUrl: actionBtn.dataset.speciesRefImageUrl || ''
             });
             if (window.wmToast) {
                 window.wmToast('Species selected for this event. Approve Event to commit.', 'success', 2400);

@@ -50,15 +50,22 @@ class DetectionInterface(ABC):
 
     @abstractmethod
     def detect(
-        self, frame: np.ndarray, confidence_threshold: float, save_threshold: float
+        self,
+        frame: np.ndarray,
+        save_threshold: float,
+        confidence_threshold: float = 0.0,
     ) -> DetectionResult:
         """
         Performs object detection on a frame.
 
         Args:
             frame: BGR image to analyze.
-            confidence_threshold: Minimum confidence for a detection to be valid.
-            save_threshold: Minimum confidence for a detection to be saved.
+            save_threshold: Minimum confidence for a detection to be
+                classified as "worth saving" (image persistence + event
+                counting). Operator policy, not model calibration.
+            confidence_threshold: Legacy parameter accepted for
+                back-compat. Ignored — the active detection floor is
+                model-owned (model_metadata.json).
 
         Returns:
             DetectionResult with detected objects.

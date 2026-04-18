@@ -568,14 +568,15 @@ def _story_board_bbox_touches_edge(det: dict, margin: float = 0.01) -> bool:
     )
 
 
-def _story_board_candidate_quality(det: dict) -> tuple[int, int, float, str, int]:
+def _story_board_candidate_quality(det: dict) -> tuple[int, int, float, float, str, int]:
     """Quality key for story-board cover candidates."""
     is_favorite = 1 if int(det.get("is_favorite") or 0) else 0
     is_interior = 0 if _story_board_bbox_touches_edge(det) else 1
     score = float(det.get("score") or 0.0)
+    bbox_quality = float(det.get("bbox_quality") or 0.0)
     ts = det.get("image_timestamp", "") or ""
     det_id = int(det.get("detection_id") or 0)
-    return (is_favorite, is_interior, score, ts, det_id)
+    return (is_favorite, is_interior, score, bbox_quality, ts, det_id)
 
 
 def _rank_story_board_candidates(candidates: list[dict]) -> list[dict]:
@@ -694,6 +695,12 @@ def build_species_story_board(
     if rng is None:
         rng = random.Random()
 
+    # Use the central species fallback helper so that "bird" (the OD
+    # category, not a species) cannot leak into the storyboard grouping
+    # when CLS is missing. Non-bird OD class names like "squirrel" still
+    # pass through as valid species keys.
+    from utils.species_names import UNKNOWN_SPECIES_KEY, species_key_from_candidates
+
     filtered: list[dict] = []
     species_detections: dict[str, list[dict]] = {}
     for det in detections:
@@ -703,14 +710,13 @@ def build_species_story_board(
         if since_timestamp and ts < since_timestamp:
             continue
 
-        species = (
-            det.get("species_key")
-            or det.get("manual_species_override")
-            or det.get("cls_class_name")
-            or det.get("od_class_name")
-            or ""
+        species = species_key_from_candidates(
+            manual_override=det.get("manual_species_override"),
+            species_key=det.get("species_key"),
+            cls_class_name=det.get("cls_class_name"),
+            od_class_name=det.get("od_class_name"),
         )
-        if not species or species in excluded_species:
+        if species == UNKNOWN_SPECIES_KEY or species in excluded_species:
             continue
         filtered.append(det)
         species_detections.setdefault(species, []).append(det)

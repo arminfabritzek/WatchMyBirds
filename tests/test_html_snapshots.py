@@ -150,6 +150,18 @@ class TestTemplateStructure:
         content = self.get_template_content("settings.html")
         assert "{% block content %}" in content
 
+    def test_stream_has_report_button(self):
+        """stream.html must expose the manual Telegram report action."""
+        content = self.get_template_content("stream.html")
+        assert 'id="streamSendReportButton"' in content
+        assert "/api/v1/telegram/send-report" in content
+
+    def test_settings_has_report_button(self):
+        """settings.html must expose the manual Telegram report action."""
+        content = self.get_template_content("settings.html")
+        assert 'id="settingsSendReportButton"' in content
+        assert 'id="settingsSendReportStatus"' in content
+
     def test_base_has_navigation(self):
         """base.html must contain navigation structure."""
         content = self.get_template_content("base.html")

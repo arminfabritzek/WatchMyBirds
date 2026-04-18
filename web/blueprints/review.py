@@ -447,14 +447,23 @@ def _build_review_modal_siblings(
     common_names: dict[str, str],
 ) -> list[dict]:
     siblings: list[dict] = []
+    # Route the sibling species resolution through the central fallback
+    # helper so "bird" does not leak through as species truth when CLS
+    # is missing.
+    from utils.species_names import UNKNOWN_SPECIES_KEY, species_key_from_candidates
+
     for sibling in fetch_sibling_detections(conn, filename):
-        species_key = str(
-            sibling["manual_species_override"]
-            or sibling["species_key"]
-            or sibling["cls_class_name"]
-            or sibling["od_class_name"]
-            or ""
-        ).strip()
+        resolved_species_key = species_key_from_candidates(
+            manual_override=sibling["manual_species_override"],
+            species_key=sibling["species_key"],
+            cls_class_name=sibling["cls_class_name"],
+            od_class_name=sibling["od_class_name"],
+        )
+        # Preserve historical contract: empty string when species cannot
+        # be resolved to a real species (UI templates special-case this).
+        species_key = (
+            "" if resolved_species_key == UNKNOWN_SPECIES_KEY else resolved_species_key
+        )
         thumb_virtual = sibling["thumbnail_path_virtual"] or ""
         siblings.append(
             {
@@ -2439,7 +2448,8 @@ def review_event_approve():
             placeholders = ",".join("?" for _ in detection_ids)
             rows = conn.execute(
                 f"""
-                SELECT d.detection_id, d.image_filename, i.review_status
+                SELECT d.detection_id, d.image_filename, i.review_status,
+                       d.manual_species_override, d.species_source
                 FROM detections d
                 JOIN images i ON i.filename = d.image_filename
                 WHERE d.detection_id IN ({placeholders})
@@ -2484,7 +2494,35 @@ def review_event_approve():
                     409,
                 )
 
-            db_service.apply_species_override_many(conn, detection_ids, species, "manual")
+            # Per-frame relabel beats event-level species. If a frame
+            # already carries a manual species override (set via the
+            # per-cell relabel path through /api/moderation/bulk/relabel
+            # — e.g. the operator used Multi-Select to relabel a
+            # subset of frames before approving), do NOT overwrite it
+            # with the event species picked in the right control rail.
+            # Mirrors the `per-frame wins` rule in event-resolve at
+            # web/blueprints/review.py:2930.
+            def _row_field(row, key):
+                try:
+                    return row[key]
+                except (KeyError, IndexError):
+                    return None
+
+            manual_override_ids = {
+                int(row["detection_id"])
+                for row in rows
+                if str(_row_field(row, "manual_species_override") or "").strip()
+                and str(_row_field(row, "species_source") or "").strip() == "manual"
+            }
+            ids_to_stamp = [
+                detection_id
+                for detection_id in detection_ids
+                if detection_id not in manual_override_ids
+            ]
+            if ids_to_stamp:
+                db_service.apply_species_override_many(
+                    conn, ids_to_stamp, species, "manual"
+                )
             for detection_id in detection_ids:
                 db_service.set_manual_bbox_review(conn, detection_id, bbox_review)
 
@@ -2596,12 +2634,58 @@ def review_event_trash():
                         ),
                         409,
                     )
-                if sorted(event.get("detection_ids") or []) != sorted(detection_ids):
+
+                # Move Event to Trash must only reject the event's
+                # actionable (non-context) detections. Gallery-anchor
+                # context frames were already approved earlier and stay
+                # in the Gallery. Accept both payload shapes so that
+                # older tabs that still submit the full event id list
+                # continue to work — we down-cast to actionable ids
+                # server-side. Mirrors the event-approve contract in
+                # web/blueprints/review.py:2394.
+                event_detection_ids = sorted(event.get("detection_ids") or [])
+                actionable_event_detection_ids = sorted(
+                    int(member.get("best_detection_id") or 0)
+                    for member in (event.get("members") or [])
+                    if not member.get("context_only")
+                    and int(member.get("best_detection_id") or 0) > 0
+                )
+                submitted_detection_ids = sorted(detection_ids)
+                if (
+                    actionable_event_detection_ids
+                    and submitted_detection_ids == event_detection_ids
+                    and submitted_detection_ids != actionable_event_detection_ids
+                ):
+                    detection_ids = actionable_event_detection_ids
+                elif actionable_event_detection_ids:
+                    if submitted_detection_ids != actionable_event_detection_ids:
+                        return (
+                            jsonify(
+                                {
+                                    "status": "error",
+                                    "message": "Review event changed and must be reloaded",
+                                }
+                            ),
+                            409,
+                        )
+                    detection_ids = actionable_event_detection_ids
+                elif submitted_detection_ids != event_detection_ids:
                     return (
                         jsonify(
                             {
                                 "status": "error",
                                 "message": "Review event changed and must be reloaded",
+                            }
+                        ),
+                        409,
+                    )
+
+                if not detection_ids:
+                    return (
+                        jsonify(
+                            {
+                                "status": "error",
+                                "message": "Review event has no actionable detections",
                             }
                         ),
                         409,

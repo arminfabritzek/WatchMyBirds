@@ -298,28 +298,17 @@ def hard_delete_detections(
 
         # Cleanup orphaned images (no remaining detections)
         for path in files_to_delete:
-            # Check if this path corresponds to an original
             if path in target_originals:
-                # Inefficient reverse lookup?
-                # Better: Iterate target_originals, check if in files_to_delete
                 pass
 
-        # Better: We know which originals we deemed safe to delete.
-        # `files_to_delete` contains paths.
-
-        # Let's collect filenames for DB cleanup
+        # Collect filenames for DB cleanup from the originals that were
+        # deemed safe to delete.
         for orig_path in target_originals:
             if orig_path in files_to_delete:
-                # Extract filename? We don't have mapping path->filename handy without re-looping or storing.
-                # Let's rebuild mapping in loop 2.
                 pass
 
-        # Re-verify: `images` table usually stays or cleaned up?
-        # Orphan management typically handles `images` without detections.
-        # But if we hard delete, we want to clean up.
-
-        # Let's just delete `images` rows where we deleted the file.
-        # We can map Path -> Filename.
+        # Delete `images` rows that correspond to deleted files so the
+        # table does not accumulate orphaned entries after a hard delete.
         path_to_filename = {pm.get_original_path(n): n for n in unique_orig_names}
 
         images_to_delete = []

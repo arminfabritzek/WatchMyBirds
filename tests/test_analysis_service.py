@@ -302,7 +302,7 @@ def test_process_deep_analysis_job_uses_standard_persistence_path(monkeypatch):
     assert det.bbox == (10, 15, 50, 65)
     assert det.cls_class_name == "Parus_major"
     assert det.cls_confidence == 0.8
-    assert det.score == pytest.approx(0.85)  # 0.5*0.9 + 0.5*0.8
+    assert det.score == pytest.approx(0.8)  # = cls_conf (Phase 1 semantics)
     assert det.agreement_score == 0.8
     assert det.top_k_predictions == [
         ("Parus_major", 0.8),

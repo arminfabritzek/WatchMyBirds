@@ -540,6 +540,58 @@
     .settings-field__help {
         font-size: 0.78rem; color: var(--color-text-muted, #6c757d); margin-top: 0.2rem;
     }
+    .settings-field__help--warn {
+        color: var(--color-warning, #b8860b);
+        font-weight: 500;
+    }
+
+    /* ── Save Threshold auto/manual toggle ───── */
+    .save-threshold-field__mode-toggle {
+        display: inline-flex;
+        gap: 0;
+        margin-bottom: 0.35rem;
+        border: 1px solid var(--color-border, #dee2e6);
+        border-radius: var(--radius-sm, 0.35rem);
+        overflow: hidden;
+    }
+    .save-threshold-mode-btn {
+        appearance: none;
+        border: none;
+        background: transparent;
+        color: var(--color-text, #212529);
+        font-size: 0.8rem;
+        font-weight: 500;
+        padding: 0.3rem 0.9rem;
+        cursor: pointer;
+        transition: background-color 0.12s ease, color 0.12s ease;
+    }
+    .save-threshold-mode-btn + .save-threshold-mode-btn {
+        border-left: 1px solid var(--color-border, #dee2e6);
+    }
+    .save-threshold-mode-btn:hover:not(.is-active) {
+        background: var(--color-surface-2, #f8f9fa);
+    }
+    .save-threshold-mode-btn.is-active {
+        background: var(--color-primary, #0d6efd);
+        color: var(--color-primary-contrast, #fff);
+    }
+    .save-threshold-field__value-row {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+    }
+    .save-threshold-field__value-row .form-control {
+        flex: 0 0 auto;
+        width: 6rem;
+    }
+    .save-threshold-field__value-row .form-control.is-auto-derived {
+        background: var(--color-surface-2, #f3f3f3);
+        color: var(--color-text-muted, #6c757d);
+    }
+    .save-threshold-field__auto-hint {
+        font-size: 0.78rem;
+        color: var(--color-text-muted, #6c757d);
+    }
 
     /* ── Status strip ─────────────────────────── */
     .settings-status {
@@ -552,6 +604,76 @@
     /* ── Danger section ────────────────────────── */
     .settings-panel--danger { border-color: var(--color-danger, #dc3545); }
     .settings-panel--danger .settings-panel__trigger { color: var(--color-danger, #dc3545); }
+
+    /* ── AI panel (detector variant switcher) ──── */
+    .ai-active-card {
+        border: 1px solid var(--color-border, #dee2e6);
+        border-radius: var(--radius-md, 0.5rem);
+        padding: var(--space-md, 0.75rem);
+        margin-bottom: var(--space-md, 0.75rem);
+        background: var(--color-surface-2, #f8f9fa);
+    }
+    .ai-active-card__label {
+        font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.04em;
+        color: var(--color-text-muted, #6c757d); margin-bottom: 0.25rem;
+    }
+    .ai-active-card__id {
+        font-family: var(--font-mono, monospace); font-size: 0.9rem;
+        color: var(--color-text, #212529); word-break: break-all;
+    }
+    .ai-active-card__meta {
+        margin-top: 0.4rem; font-size: 0.8rem; color: var(--color-text-muted, #6c757d);
+    }
+    .ai-variant-row {
+        display: flex; align-items: center; gap: var(--space-md, 0.75rem);
+        padding: var(--space-sm, 0.5rem) var(--space-md, 0.75rem);
+        border: 1px solid var(--color-border, #dee2e6);
+        border-radius: var(--radius-md, 0.5rem);
+        margin-bottom: var(--space-sm, 0.5rem);
+        background: var(--color-surface, #fff);
+    }
+    .ai-variant-row.is-active {
+        border-color: var(--color-primary, #0d6efd);
+        background: var(--color-primary-soft, rgba(13, 110, 253, 0.05));
+    }
+    .ai-variant-row__id {
+        font-family: var(--font-mono, monospace); font-size: 0.85rem;
+        flex: 1 1 auto; word-break: break-all;
+    }
+    .ai-variant-row__badges {
+        display: flex; gap: 0.3rem; flex-wrap: wrap;
+    }
+    .ai-variant-row__action {
+        flex-shrink: 0;
+    }
+    .ai-variant-row--unavailable {
+        opacity: 0.55;
+    }
+    /* Precision chip group: compact inline buttons for fp32 / int8_qdq. */
+    .ai-precision-chips {
+        display: inline-flex; gap: 0.25rem; flex-shrink: 0;
+        padding: 0.125rem; border: 1px solid var(--color-border, #dee2e6);
+        border-radius: var(--radius-md, 0.5rem);
+        background: var(--color-surface, #fff);
+    }
+    .ai-precision-chip {
+        font-family: var(--font-mono, monospace); font-size: 0.72rem;
+        padding: 0.2rem 0.55rem; border: 0; background: transparent;
+        border-radius: calc(var(--radius-md, 0.5rem) - 0.125rem);
+        color: var(--color-text-muted, #6c757d); cursor: pointer;
+        line-height: 1;
+    }
+    .ai-precision-chip:hover:not(:disabled) {
+        background: var(--color-surface-2, #f1f3f5);
+    }
+    .ai-precision-chip.is-active {
+        background: var(--color-primary, #0d6efd);
+        color: var(--color-on-primary, #fff);
+        font-weight: 600;
+    }
+    .ai-precision-chip:disabled {
+        opacity: 0.4; cursor: not-allowed;
+    }
 </style>
 
 <!-- Flash Messages -->
@@ -578,9 +700,83 @@
 <div class="settings-accordion">
 
     <!-- ╔══════════════════════════════════════════════╗
-         ║ 1. Camera                                   ║
+         ║ 1. AI                                        ║
          ╚══════════════════════════════════════════════╝ -->
-    <div class="settings-panel is-open" id="panelCamera">
+    <div class="settings-panel is-open" id="panelAI">
+        <button type="button" class="settings-panel__trigger" onclick="togglePanel('panelAI')"
+                title="Choose which detector model the app runs">
+            AI
+            <span class="settings-panel__trigger-info">Detector Model & Variant Selection</span>
+            <svg class="settings-panel__chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+        </button>
+        <div class="settings-panel__body">
+
+            <!-- Active model card -->
+            <div class="ai-active-card" id="aiActiveCard">
+                <div class="ai-active-card__label">Active detector</div>
+                <div class="ai-active-card__id" id="aiActiveId">Loading…</div>
+                <div class="ai-active-card__meta" id="aiActiveMeta"></div>
+            </div>
+
+            <!-- Variant list -->
+            <div class="mb-2">
+                <strong>Available variants</strong>
+                <div class="settings-field__help">Switching reloads the detector in-place; no restart needed. Only locally-installed variants can be switched to.</div>
+            </div>
+            <div id="aiVariantList">
+                <div class="text-center text-muted p-3">Loading variants…</div>
+            </div>
+
+            <!-- Save Threshold — operator policy tied to the active model -->
+            <div class="settings-field save-threshold-field mt-3">
+                <label class="settings-field__label" for="SAVE_THRESHOLD"
+                    title="Minimum detection confidence required for an image to be saved to disk. The detection floor itself (which scores count as a real bird at all) is set by the active model above.">
+                    Save Threshold
+                </label>
+                <div class="save-threshold-field__mode-toggle" role="group" aria-label="Save threshold mode">
+                    <button type="button" class="save-threshold-mode-btn" data-mode="auto"
+                        title="Auto: derived from the active model's calibrated detection floor (conf + 0.10). Recommended.">
+                        Auto
+                    </button>
+                    <button type="button" class="save-threshold-mode-btn" data-mode="manual"
+                        title="Manual: use the value you set below. Useful when you want a tighter persistence policy than the model suggests.">
+                        Manual
+                    </button>
+                </div>
+                <input type="hidden" name="SAVE_THRESHOLD_MODE" id="SAVE_THRESHOLD_MODE"
+                    value="{{ payload['SAVE_THRESHOLD_MODE'].value if 'SAVE_THRESHOLD_MODE' in payload else 'auto' }}">
+                <div class="save-threshold-field__value-row">
+                    <input type="number" step="0.05" min="0" max="1"
+                        name="SAVE_THRESHOLD" id="SAVE_THRESHOLD"
+                        class="form-control"
+                        value="{{ payload['SAVE_THRESHOLD'].value }}">
+                    <span id="saveThresholdAutoHint" class="save-threshold-field__auto-hint"></span>
+                </div>
+                <div id="saveThresholdWarn" class="settings-field__help settings-field__help--warn" role="alert" style="display:none;"></div>
+                <div class="settings-field__help">
+                    <strong>Auto</strong> follows the active model: <span id="saveThresholdActiveModel">—</span>.
+                    <strong>Manual</strong> uses whatever value you set here.
+                    Higher saves disk space by dropping the least-confident detections; at or below the detection floor keeps every detection the model returned.
+                </div>
+            </div>
+
+            <!-- Action feedback -->
+            <div id="aiPinFeedback" class="settings-field__help mt-2"></div>
+
+            <!-- Last refresh timestamp -->
+            <div class="d-flex justify-content-between align-items-center mt-3">
+                <span class="settings-field__help" id="aiLastRefresh"></span>
+                <button type="button" class="btn btn--secondary btn--sm" onclick="loadAiModels()"
+                        title="Re-read the detector registry from disk">Refresh</button>
+            </div>
+
+        </div>
+    </div>
+
+    <!-- ╔══════════════════════════════════════════════╗
+         ║ 2. Camera                                    ║
+         ╚══════════════════════════════════════════════╝ -->
+    <div class="settings-panel" id="panelCamera">
         <button type="button" class="settings-panel__trigger" onclick="togglePanel('panelCamera')">
             Camera
             <span class="settings-panel__trigger-info">Source, Routing & Saved Cameras</span>
@@ -678,24 +874,6 @@
             <div class="row g-3">
                 <div class="col-md-6">
                     <div class="settings-field">
-                        <label for="CONFIDENCE_THRESHOLD_DETECTION" class="settings-field__label"
-                            title="How confident the AI must be before it counts something as a bird. Lower values catch more birds but also more false positives (leaves, shadows). Higher values are stricter but may miss birds that are far away, partially hidden, or in poor light. Depends on your setup: close feeder + good light = higher works well. Far away or dim = try lower.">Detection Sensitivity</label>
-                        <input type="number" step="0.05" name="CONFIDENCE_THRESHOLD_DETECTION" id="CONFIDENCE_THRESHOLD_DETECTION" class="form-control" value="{{ payload['CONFIDENCE_THRESHOLD_DETECTION'].value }}"
-                            title="How confident the AI must be before it counts something as a bird. Lower values catch more birds but also more false positives (leaves, shadows). Higher values are stricter but may miss birds that are far away, partially hidden, or in poor light. Depends on your setup: close feeder + good light = higher works well. Far away or dim = try lower.">
-                        <div class="settings-field__help">0.1 (Sensitive) to 0.9 (Strict). Default: 0.5</div>
-                    </div>
-                </div>
-                <div class="col-md-6">
-                    <div class="settings-field">
-                        <label for="SAVE_THRESHOLD" class="settings-field__label"
-                            title="Minimum AI confidence needed to actually save a bird photo to disk. Works together with Detection Sensitivity: a bird is detected first, then this threshold decides if it's worth keeping. Set lower than Detection Sensitivity to save more borderline shots. Set equal or higher to only keep clear, confident detections. In poor light or at long distance you may want to lower this so you don't lose real sightings.">Save Threshold</label>
-                        <input type="number" step="0.05" name="SAVE_THRESHOLD" id="SAVE_THRESHOLD" class="form-control" value="{{ payload['SAVE_THRESHOLD'].value }}"
-                            title="Minimum AI confidence needed to actually save a bird photo to disk. Works together with Detection Sensitivity: a bird is detected first, then this threshold decides if it's worth keeping. Set lower than Detection Sensitivity to save more borderline shots. Set equal or higher to only keep clear, confident detections. In poor light or at long distance you may want to lower this so you don't lose real sightings.">
-                        <div class="settings-field__help">Minimum score to save image to disk.</div>
-                    </div>
-                </div>
-                <div class="col-md-6">
-                    <div class="settings-field">
                         <label for="DETECTION_INTERVAL_SECONDS" class="settings-field__label">Detection Interval (s)</label>
                         <input type="number" name="DETECTION_INTERVAL_SECONDS" id="DETECTION_INTERVAL_SECONDS" class="form-control" value="{{ payload['DETECTION_INTERVAL_SECONDS'].value }}">
                         <div class="settings-field__help">Seconds to wait between AI analysis cycles.</div>
@@ -726,11 +904,19 @@
         </button>
         <div class="settings-panel__body">
             <div class="settings-field mb-3">
-                <label for="TELEGRAM_ENABLED" class="settings-field__label">Telegram Enabled</label>
-                <select name="TELEGRAM_ENABLED" id="TELEGRAM_ENABLED" class="form-select w-auto">
-                    <option value="true" {% if payload['TELEGRAM_ENABLED'].value %}selected{% endif %}>Yes</option>
-                    <option value="false" {% if not payload['TELEGRAM_ENABLED'].value %}selected{% endif %}>No</option>
+                <label for="DEVICE_NAME" class="settings-field__label">Device Name</label>
+                <input type="text" name="DEVICE_NAME" id="DEVICE_NAME" class="form-control" maxlength="64" value="{{ payload['DEVICE_NAME'].value }}" placeholder="e.g. Front-Tree-View, Buddy, Backward-Tauben">
+                <div class="settings-field__help">Prefix added to every Telegram message so you can tell devices apart. Leave empty to disable.</div>
+            </div>
+            <div class="settings-field mb-3">
+                <label for="TELEGRAM_MODE" class="settings-field__label">Notification Mode</label>
+                <select name="TELEGRAM_MODE" id="TELEGRAM_MODE" class="form-select w-auto" data-telegram-mode>
+                    <option value="off" {% if payload['TELEGRAM_MODE'].value == 'off' %}selected{% endif %}>Off — no messages</option>
+                    <option value="live" {% if payload['TELEGRAM_MODE'].value == 'live' %}selected{% endif %}>Live — instant on every detection</option>
+                    <option value="daily" {% if payload['TELEGRAM_MODE'].value == 'daily' %}selected{% endif %}>Daily — one evening report</option>
+                    <option value="interval" {% if payload['TELEGRAM_MODE'].value == 'interval' %}selected{% endif %}>Interval — periodic report every N hours</option>
                 </select>
+                <div class="settings-field__help">Pick one. Modes are mutually exclusive. "Send Report Now" below always works regardless of the mode.</div>
             </div>
             <div class="row g-3">
                 <div class="col-md-6">
@@ -745,14 +931,60 @@
                         <input type="text" name="TELEGRAM_CHAT_ID" id="TELEGRAM_CHAT_ID" class="form-control" value="{{ payload['TELEGRAM_CHAT_ID'].value }}">
                     </div>
                 </div>
-                <div class="col-md-6">
+                <div class="col-md-6" data-telegram-mode-field="live">
                     <div class="settings-field">
-                        <label for="TELEGRAM_COOLDOWN" class="settings-field__label">Cooldown (Seconds)</label>
+                        <label for="TELEGRAM_COOLDOWN" class="settings-field__label">Alert Cooldown (Seconds)</label>
                         <input type="number" name="TELEGRAM_COOLDOWN" id="TELEGRAM_COOLDOWN" class="form-control" value="{{ payload['TELEGRAM_COOLDOWN'].value }}">
-                        <div class="settings-field__help">Minimum time between messages.</div>
+                        <div class="settings-field__help">Minimum time between live messages.</div>
+                    </div>
+                </div>
+                <div class="col-md-6" data-telegram-mode-field="daily">
+                    <div class="settings-field">
+                        <label for="TELEGRAM_REPORT_TIME" class="settings-field__label">Daily Report Time</label>
+                        <input type="time" name="TELEGRAM_REPORT_TIME" id="TELEGRAM_REPORT_TIME" class="form-control w-auto" value="{{ payload['TELEGRAM_REPORT_TIME'].value }}">
+                        <div class="settings-field__help">Fires once per day at this local time.</div>
+                    </div>
+                </div>
+                <div class="col-md-6" data-telegram-mode-field="interval">
+                    <div class="settings-field">
+                        <label for="TELEGRAM_REPORT_INTERVAL_HOURS" class="settings-field__label">Report Interval (Hours)</label>
+                        <input type="number" name="TELEGRAM_REPORT_INTERVAL_HOURS" id="TELEGRAM_REPORT_INTERVAL_HOURS" class="form-control w-auto" min="1" max="24" step="1" value="{{ payload['TELEGRAM_REPORT_INTERVAL_HOURS'].value }}">
+                        <div class="settings-field__help">1–24. A fresh report with all species from today is sent this often.</div>
                     </div>
                 </div>
             </div>
+            <div class="settings-inline-action">
+                <button
+                    type="button"
+                    class="btn btn--secondary btn--sm"
+                    id="settingsSendReportButton"
+                    title="Generate and send a report right now (always works)"
+                >
+                    Send Report Now
+                </button>
+                <span
+                    class="settings-inline-action__status"
+                    id="settingsSendReportStatus"
+                    data-state="idle"
+                    aria-live="polite"
+                ></span>
+            </div>
+            <script>
+                (function () {
+                    const modeSel = document.getElementById('TELEGRAM_MODE');
+                    if (!modeSel) return;
+                    const fields = document.querySelectorAll('[data-telegram-mode-field]');
+                    function apply() {
+                        const mode = modeSel.value;
+                        fields.forEach(el => {
+                            const want = el.getAttribute('data-telegram-mode-field');
+                            el.style.display = (want === mode) ? '' : 'none';
+                        });
+                    }
+                    modeSel.addEventListener('change', apply);
+                    apply();
+                })();
+            </script>
         </div>
     </div>
 
@@ -926,28 +1158,6 @@
                 </div>
             </div>
 
-            <!-- System Settings (Read-Only) -->
-            <strong class="d-block mb-2">System Settings (Read-only)</strong>
-            <div class="table-responsive">
-                <table class="table table-striped table-hover table-bordered mb-0" style="font-size:0.85rem;">
-                    <thead class="table-light">
-                        <tr><th>Key</th><th>Value</th><th>Default</th><th>Source</th><th>Restart</th></tr>
-                    </thead>
-                    <tbody>
-                        {% for key in system_keys %}
-                        {% if key in payload %}
-                        <tr>
-                            <td>{{ labels.get(key, key) }}</td>
-                            <td><code>{{ payload[key].value }}</code></td>
-                            <td><span class="text-muted">{{ payload[key].default }}</span></td>
-                            <td><span class="badge bg-secondary">{{ payload[key].source }}</span></td>
-                            <td>{{ "Yes" if payload[key].restart_required else "No" }}</td>
-                        </tr>
-                        {% endif %}
-                        {% endfor %}
-                    </tbody>
-                </table>
-            </div>
         </div>
     </div>
 
@@ -981,6 +1191,32 @@
     </div>
 </div>
 
+<!-- System Settings (Read-Only) — shown last so it does not push the
+     submit button below the fold inside the Tools & System panel. -->
+<div class="mb-5">
+    <strong class="d-block mb-2">System Settings (Read-only)</strong>
+    <div class="table-responsive">
+        <table class="table table-striped table-hover table-bordered mb-0" style="font-size:0.85rem;">
+            <thead class="table-light">
+                <tr><th>Key</th><th>Value</th><th>Default</th><th>Source</th><th>Restart</th></tr>
+            </thead>
+            <tbody>
+                {% for key in system_keys %}
+                {% if key in payload %}
+                <tr>
+                    <td>{{ labels.get(key, key) }}</td>
+                    <td><code>{{ payload[key].value }}</code></td>
+                    <td><span class="text-muted">{{ payload[key].default }}</span></td>
+                    <td><span class="badge bg-secondary">{{ payload[key].source }}</span></td>
+                    <td>{{ "Yes" if payload[key].restart_required else "No" }}</td>
+                </tr>
+                {% endif %}
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
 <!-- ── Accordion + Form + Power scripts ────────── -->
 <script>
     // Accordion toggle (only one open at a time)
@@ -1000,7 +1236,408 @@
         initCameraUrl();
         initLocation();
         loadSystemVersions();
+        loadAiModels();
+        initSaveThresholdToggle();
     });
+
+    // ── Save Threshold Auto/Manual toggle ────────────────────────
+    // The detection-confidence floor is model-owned (from
+    // model_metadata.json). The save-threshold is operator policy.
+    // Auto derives save from the model's conf + 0.10; Manual lets the
+    // user set it directly. Both modes show the active model's
+    // detection floor so the user understands the relationship.
+    function initSaveThresholdToggle() {
+        const modeInput = document.getElementById('SAVE_THRESHOLD_MODE');
+        const valueInput = document.getElementById('SAVE_THRESHOLD');
+        const autoHint = document.getElementById('saveThresholdAutoHint');
+        const warnEl = document.getElementById('saveThresholdWarn');
+        const activeModelEl = document.getElementById('saveThresholdActiveModel');
+        if (!modeInput || !valueInput) return;
+
+        const buttons = document.querySelectorAll('.save-threshold-mode-btn');
+        const AUTO_OFFSET = 0.10;
+        let detectorConfDefault = null;  // populated by AI-panel fetch
+
+        function renderMode() {
+            const mode = (modeInput.value || 'auto').toLowerCase();
+            buttons.forEach(b => {
+                const active = b.dataset.mode === mode;
+                b.classList.toggle('is-active', active);
+                b.setAttribute('aria-pressed', active ? 'true' : 'false');
+            });
+            if (mode === 'auto') {
+                valueInput.readOnly = true;
+                valueInput.classList.add('is-auto-derived');
+                if (detectorConfDefault !== null) {
+                    const derived = Math.min(1.0, Math.max(0.0, detectorConfDefault + AUTO_OFFSET));
+                    valueInput.value = derived.toFixed(2);
+                    autoHint.textContent = '= model ' + detectorConfDefault.toFixed(2) + ' + 0.10';
+                } else {
+                    autoHint.textContent = '(waiting for model info)';
+                }
+            } else {
+                valueInput.readOnly = false;
+                valueInput.classList.remove('is-auto-derived');
+                autoHint.textContent = '';
+            }
+            updateWarn();
+        }
+
+        function updateWarn() {
+            if (!warnEl) return;
+            const mode = (modeInput.value || 'auto').toLowerCase();
+            if (mode !== 'manual' || detectorConfDefault === null) {
+                warnEl.style.display = 'none';
+                return;
+            }
+            const val = parseFloat(valueInput.value);
+            if (!isFinite(val)) {
+                warnEl.style.display = 'none';
+                return;
+            }
+            if (val < detectorConfDefault) {
+                warnEl.textContent = 'Save Threshold (' + val.toFixed(2)
+                    + ') is below the detection floor (' + detectorConfDefault.toFixed(2)
+                    + '). The filter has no effect — the detector already rejects anything below its floor.';
+                warnEl.style.display = '';
+            } else {
+                warnEl.style.display = 'none';
+            }
+        }
+
+        buttons.forEach(b => {
+            b.addEventListener('click', () => {
+                modeInput.value = b.dataset.mode;
+                renderMode();
+            });
+        });
+        valueInput.addEventListener('input', updateWarn);
+
+        // Pull the active model's conf-default from the registry so the
+        // auto-derived save value and the warning use the live number.
+        fetch('/api/v1/models/detector')
+            .then(r => r.ok ? r.json() : null)
+            .then(payload => {
+                if (!payload) return;
+                const rt = payload.runtime || {};
+                const meta = payload.metadata || {};
+                const conf = rt.conf_threshold_default != null
+                    ? rt.conf_threshold_default
+                    : (meta.inference_thresholds ? meta.inference_thresholds.confidence : null);
+                if (conf != null && isFinite(conf)) {
+                    detectorConfDefault = parseFloat(conf);
+                    const modelId = payload.active ? payload.active.id : null;
+                    if (activeModelEl) {
+                        activeModelEl.textContent = modelId
+                            ? (modelId + ' (conf ' + detectorConfDefault.toFixed(2) + ')')
+                            : ('conf ' + detectorConfDefault.toFixed(2));
+                    }
+                }
+                renderMode();
+            })
+            .catch(() => { /* info-chip stays blank; toggle still works */ });
+
+        renderMode();
+    }
+
+    // ── AI panel: detector model registry + variant switcher ─────
+    // All DOM is built with createElement / textContent so untrusted
+    // fields (model_id, error messages) can never inject HTML.
+    function _fmtPct(x) {
+        if (x == null || isNaN(x)) return '—';
+        return (x * 100).toFixed(1) + ' %';
+    }
+
+    function _describeSource(source) {
+        return ({
+            env_pin_task:    'pinned by systemd drop-in',
+            env_pin_generic: 'pinned by generic env var',
+            latest_models:   'current default (latest_models.json)',
+        })[source] || source;
+    }
+
+    function _makeBadge(text, variant, titleAttr) {
+        const span = document.createElement('span');
+        span.className = 'badge text-bg-' + variant;
+        span.textContent = text;
+        if (titleAttr) span.title = titleAttr;
+        return span;
+    }
+
+    function _renderActiveCard(payload) {
+        const active = payload.active || {};
+        const runtime = payload.runtime || {};
+        const meta = payload.metadata || {};
+        document.getElementById('aiActiveId').textContent =
+            active.id || runtime.model_id || '(unknown)';
+
+        // An operator-level pin (systemd drop-in or env var) takes
+        // precedence over latest_models.json in the running process.
+        // UI switches still update the on-disk default so they will
+        // take effect on the next startup without the env pin — but
+        // they do NOT flip the currently-loaded detector. Surface
+        // that distinction so the user knows why the Active card
+        // shows the env-pin id instead of what they just clicked.
+        const envPinActive =
+            active.source === 'env_pin_task' || active.source === 'env_pin_generic';
+        const fb = document.getElementById('aiPinFeedback');
+        if (envPinActive) {
+            fb.textContent =
+                'An operator-level pin is active (systemd drop-in or env var). ' +
+                'Variant switches here update the on-disk default (latest_models.json) ' +
+                'and will take effect on the next startup without that pin — but the ' +
+                'currently-loaded detector stays on the env-pin value until the pin is removed.';
+            fb.className = 'settings-field__help mt-2 text-warning';
+        } else if (fb.className.indexOf('text-warning') !== -1) {
+            // Clear stale warning if the env pin was removed.
+            fb.textContent = '';
+            fb.className = 'settings-field__help mt-2';
+        }
+
+        const metaBits = [];
+        metaBits.push(_describeSource(active.source));
+        if (meta.variant) metaBits.push('variant: ' + meta.variant);
+        if (runtime.output_format) metaBits.push('format: ' + runtime.output_format);
+        if (runtime.num_classes != null) metaBits.push(runtime.num_classes + ' classes');
+        const conf = runtime.conf_threshold_default != null
+            ? runtime.conf_threshold_default
+            : (meta.inference_thresholds ? meta.inference_thresholds.confidence : null);
+        const iou = runtime.iou_threshold_default != null
+            ? runtime.iou_threshold_default
+            : (meta.inference_thresholds ? meta.inference_thresholds.iou_nms : null);
+        if (conf != null) metaBits.push('conf: ' + conf);
+        if (iou != null) metaBits.push('iou: ' + iou);
+        if (meta.metrics && meta.metrics.bird_recall != null) {
+            metaBits.push('recall: ' + _fmtPct(meta.metrics.bird_recall));
+        }
+        document.getElementById('aiActiveMeta').textContent = metaBits.join(' · ');
+    }
+
+    function _renderVariantList(payload) {
+        const list = document.getElementById('aiVariantList');
+        list.replaceChildren();
+        const variants = payload.variants || [];
+        if (!variants.length) {
+            const empty = document.createElement('div');
+            empty.className = 'text-muted small p-2';
+            empty.textContent =
+                'No variants listed in latest_models.json pinned_models block. ' +
+                'The current default is active.';
+            list.appendChild(empty);
+            return;
+        }
+        variants.forEach(v => {
+            const row = document.createElement('div');
+            const classes = ['ai-variant-row'];
+            if (v.is_active) classes.push('is-active');
+            if (!v.is_available_locally) classes.push('ai-variant-row--unavailable');
+            row.className = classes.join(' ');
+
+            const idEl = document.createElement('div');
+            idEl.className = 'ai-variant-row__id';
+            idEl.textContent = v.id;
+            row.appendChild(idEl);
+
+            const badges = document.createElement('div');
+            badges.className = 'ai-variant-row__badges';
+            if (v.is_active) badges.appendChild(_makeBadge('Active', 'success'));
+            if (v.is_hf_latest) badges.appendChild(
+                _makeBadge('HF latest', 'primary', 'Default pointer from latest_models.json')
+            );
+            if (!v.is_available_locally) badges.appendChild(
+                _makeBadge('Not installed', 'warning', 'Weights or labels missing on disk')
+            );
+            row.appendChild(badges);
+
+            // Precision chips (fp32 / int8_qdq) — shown when the variant
+            // is available locally. The int8_qdq chip is disabled when no
+            // QDQ ONNX is on disk for this variant. Clicking a chip POSTs
+            // to /api/v1/models/detector/precision and reloads the panel.
+            if (v.is_available_locally) {
+                const chipGroup = document.createElement('div');
+                chipGroup.className = 'ai-precision-chips';
+                chipGroup.title =
+                    'Precision mode. fp32 is the reference build; ' +
+                    'int8_qdq loads quantized weights when available ' +
+                    '(faster on most ARM64 builds).';
+
+                const makeChip = (value, label) => {
+                    const c = document.createElement('button');
+                    c.type = 'button';
+                    c.className = 'ai-precision-chip';
+                    c.textContent = label;
+                    const isActive = (v.active_precision || 'fp32') === value;
+                    if (isActive) c.classList.add('is-active');
+                    if (value === 'int8_qdq' && !v.int8_qdq_available) {
+                        c.disabled = true;
+                        c.title = 'No int8 QDQ weights on disk for this variant';
+                    } else if (isActive) {
+                        c.title = 'Already active';
+                    } else {
+                        c.title = 'Switch this variant to ' + value;
+                        c.addEventListener('click', () =>
+                            switchPrecision(v.id, value)
+                        );
+                    }
+                    return c;
+                };
+
+                chipGroup.appendChild(makeChip('fp32', 'fp32'));
+                chipGroup.appendChild(makeChip('int8_qdq', 'int8'));
+                row.appendChild(chipGroup);
+            }
+
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'btn btn--sm ai-variant-row__action';
+            if (v.is_active) {
+                btn.textContent = 'Switch';
+                btn.classList.add('btn--secondary');
+                btn.disabled = true;
+                btn.title = 'Already active';
+            } else if (!v.is_available_locally) {
+                btn.textContent = 'Install & switch';
+                btn.classList.add('btn--primary');
+                btn.title = 'Download weights + labels from HuggingFace, then switch';
+                btn.addEventListener('click', () => installAndPinDetector(v.id, btn));
+            } else {
+                btn.textContent = 'Switch';
+                btn.classList.add('btn--primary');
+                btn.title = 'Reload the detector with this variant';
+                btn.addEventListener('click', () => pinDetector(v.id));
+            }
+            row.appendChild(btn);
+
+            list.appendChild(row);
+        });
+    }
+
+    function loadAiModels() {
+        const fb = document.getElementById('aiPinFeedback');
+        fb.textContent = '';
+        fb.className = 'settings-field__help mt-2';
+        fetch('/api/v1/models/detector')
+            .then(res => {
+                if (!res.ok) throw new Error('HTTP ' + res.status);
+                return res.json();
+            })
+            .then(payload => {
+                _renderActiveCard(payload);
+                _renderVariantList(payload);
+                document.getElementById('aiLastRefresh').textContent =
+                    'Last refresh: ' + new Date().toLocaleTimeString();
+            })
+            .catch(err => {
+                document.getElementById('aiActiveId').textContent = 'Error';
+                document.getElementById('aiActiveMeta').textContent = '';
+                const list = document.getElementById('aiVariantList');
+                list.replaceChildren();
+                const alertEl = document.createElement('div');
+                alertEl.className = 'alert alert-danger small';
+                alertEl.textContent = 'Failed to load detector registry: ' + err.message;
+                list.appendChild(alertEl);
+            });
+    }
+
+    function pinDetector(modelId) {
+        const fb = document.getElementById('aiPinFeedback');
+        fb.textContent = 'Switching to ' + modelId + ' …';
+        fb.className = 'settings-field__help mt-2';
+        fetch('/api/v1/models/detector/pin', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ model_id: modelId }),
+        })
+            .then(res => res.json().then(data => ({ ok: res.ok, data })))
+            .then(({ ok, data }) => {
+                if (!ok || data.status === 'error') {
+                    fb.textContent = '✗ ' + (data.message || 'Switch failed');
+                    fb.className = 'settings-field__help mt-2 text-danger';
+                    return;
+                }
+                fb.textContent = '✓ Pinned to ' + (data.model_id || '(unpinned)') +
+                    '. The detector reloads on the next inference cycle (~1–2 s).';
+                fb.className = 'settings-field__help mt-2 text-success';
+                setTimeout(loadAiModels, 2500);
+            })
+            .catch(err => {
+                fb.textContent = '✗ Network error: ' + err.message;
+                fb.className = 'settings-field__help mt-2 text-danger';
+            });
+    }
+
+    // Switch the precision mode (fp32 / int8_qdq) for a given model_id.
+    // The backend rewrites latest_models.json with the new
+    // active_precision flag and clears DetectionService so the next
+    // inference cycle loads the selected ONNX. If all int8 QDQ
+    // candidates fail to load on the host's ORT build, the detector
+    // falls back to fp32 and logs a warning — the user sees the panel
+    // refresh with active_precision still == fp32.
+    function switchPrecision(modelId, precision) {
+        const fb = document.getElementById('aiPinFeedback');
+        fb.textContent = 'Switching ' + modelId + ' to ' + precision + ' …';
+        fb.className = 'settings-field__help mt-2';
+        fetch('/api/v1/models/detector/precision', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ model_id: modelId, precision: precision }),
+        })
+            .then(res => res.json().then(data => ({ ok: res.ok, data })))
+            .then(({ ok, data }) => {
+                if (!ok || data.status === 'error') {
+                    fb.textContent = '✗ ' + (data.message || 'Precision switch failed');
+                    fb.className = 'settings-field__help mt-2 text-danger';
+                    return;
+                }
+                fb.textContent = '✓ ' + modelId + ' → ' + data.precision +
+                    '. Detector reloads on the next inference cycle (~1–2 s). ' +
+                    'If int8 weights fail to load on this ORT build, the ' +
+                    'detector falls back to fp32 automatically.';
+                fb.className = 'settings-field__help mt-2 text-success';
+                setTimeout(loadAiModels, 2500);
+            })
+            .catch(err => {
+                fb.textContent = '✗ Network error: ' + err.message;
+                fb.className = 'settings-field__help mt-2 text-danger';
+            });
+    }
+
+    // Install-then-switch flow for Not-installed variants. The user
+    // sees a single Switch button; the JS chains POST /install followed
+    // by POST /pin. The Install call can take several seconds (ONNX
+    // download from HF), so the button is disabled during the run.
+    function installAndPinDetector(modelId, btn) {
+        const fb = document.getElementById('aiPinFeedback');
+        const originalLabel = btn.textContent;
+        btn.disabled = true;
+        btn.textContent = 'Installing …';
+        fb.textContent = 'Downloading ' + modelId + ' from HuggingFace …';
+        fb.className = 'settings-field__help mt-2';
+
+        fetch('/api/v1/models/detector/install', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ model_id: modelId }),
+        })
+            .then(res => res.json().then(data => ({ ok: res.ok, data })))
+            .then(({ ok, data }) => {
+                if (!ok || data.status === 'error') {
+                    btn.disabled = false;
+                    btn.textContent = originalLabel;
+                    fb.textContent = '✗ Install failed: ' + (data.message || 'unknown error');
+                    fb.className = 'settings-field__help mt-2 text-danger';
+                    return;
+                }
+                fb.textContent = '✓ Installed. Switching to ' + modelId + ' …';
+                pinDetector(modelId);
+            })
+            .catch(err => {
+                btn.disabled = false;
+                btn.textContent = originalLabel;
+                fb.textContent = '✗ Install network error: ' + err.message;
+                fb.className = 'settings-field__help mt-2 text-danger';
+            });
+    }
 
     function loadSystemVersions() {
         fetch('/api/v1/system/versions')
@@ -1088,6 +1725,70 @@
         return false;
     }
 
+    async function startTelegramReportJob(options) {
+        const trigger = options && options.trigger ? options.trigger : null;
+        const statusEl = options && options.statusEl ? options.statusEl : null;
+
+        function setBusy(isBusy) {
+            if (!trigger) return;
+            trigger.disabled = isBusy;
+            if (typeof trigger.dataset.originalText === 'undefined') {
+                trigger.dataset.originalText = trigger.textContent;
+            }
+            trigger.textContent = isBusy ? 'Sending…' : trigger.dataset.originalText;
+        }
+
+        function setStatus(message, state) {
+            if (!statusEl) return;
+            statusEl.textContent = message || '';
+            statusEl.dataset.state = state || 'idle';
+        }
+
+        setBusy(true);
+        setStatus('Generating report…', 'running');
+
+        try {
+            const response = await fetch('/api/v1/telegram/send-report', {
+                method: 'POST',
+                credentials: 'same-origin',
+                headers: { 'X-Requested-With': 'XMLHttpRequest' }
+            });
+            const data = await response.json().catch(function () { return {}; });
+
+            if (!response.ok || data.status === 'error' || !data.job_id) {
+                throw new Error(data.message || 'Could not start report job.');
+            }
+
+            setStatus('Sending report…', 'running');
+
+            const deadline = Date.now() + 20000;
+            while (Date.now() < deadline) {
+                await new Promise(function (resolve) { setTimeout(resolve, 1200); });
+
+                const pollResponse = await fetch(`/api/v1/telegram/send-report/${encodeURIComponent(data.job_id)}/status`, {
+                    credentials: 'same-origin',
+                    cache: 'no-store',
+                    headers: { 'X-Requested-With': 'XMLHttpRequest' }
+                });
+                const pollData = await pollResponse.json().catch(function () { return {}; });
+
+                if (pollData.status === 'success') {
+                    setStatus(pollData.message || 'Report sent.', 'success');
+                    return;
+                }
+                if (pollData.status === 'error') {
+                    throw new Error(pollData.message || 'Report failed.');
+                }
+            }
+
+            throw new Error('Report is taking longer than expected. Please try again shortly.');
+        } catch (error) {
+            setStatus(error && error.message ? error.message : 'Report failed.', 'error');
+        } finally {
+            setBusy(false);
+        }
+    }
+
     function confirmShutdown() {
         if (confirm("Are you sure you want to SHUT DOWN the Raspberry Pi? The system will be unreachable until manually turned on again.")) {
             fetch('/api/system/shutdown', { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin' })
@@ -1117,6 +1818,19 @@
                 .catch(error => { console.error('Restart error:', error); alert("Restart failed: " + error.message); });
         }
     }
+
+    document.addEventListener('DOMContentLoaded', function () {
+        const reportButton = document.getElementById('settingsSendReportButton');
+        const reportStatus = document.getElementById('settingsSendReportStatus');
+        if (!reportButton) return;
+
+        reportButton.addEventListener('click', function () {
+            startTelegramReportJob({
+                trigger: reportButton,
+                statusEl: reportStatus
+            });
+        });
+    });
 </script>
 
 {% endblock %}

@@ -66,13 +66,23 @@ Deployment-specific `GO2RTC_CONFIG_PATH` values:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `CONFIDENCE_THRESHOLD_DETECTION` | `0.55` | Detector confidence threshold |
 | `CLASSIFIER_CONFIDENCE_THRESHOLD` | `0.55` | Classifier confidence for gallery summaries |
 | `DETECTION_INTERVAL_SECONDS` | `2.0` | Pause between detection cycles (seconds) |
-| `SAVE_THRESHOLD` | `0.55` | Minimum confidence to save an image |
+| `SAVE_THRESHOLD` | `0.65` | Minimum confidence to save an image. Only used when `SAVE_THRESHOLD_MODE=manual`. |
+| `SAVE_THRESHOLD_MODE` | `auto` | `auto` (save = model's detection floor + 0.10) or `manual` (honour `SAVE_THRESHOLD` verbatim) |
 
-> ⚠️ **Rule:** Ensure `CONFIDENCE_THRESHOLD_DETECTION <= SAVE_THRESHOLD`  
-> If detection threshold is higher, candidates are filtered before the save decision.
+> ℹ️ **Detection floor is model-owned (0.2.0+).** The legacy
+> `CONFIDENCE_THRESHOLD_DETECTION` config key was removed. The active
+> detection-confidence floor comes from each model release's
+> `model_metadata.json` (Tiny: 0.15, S: 0.30). To tune it, switch to a
+> different calibrated variant in the AI panel.
+
+> ℹ️ **Save threshold modes.** In `auto` mode the save gate is
+> automatically `conf_default + 0.10` — typically a good operating
+> point that scales with the active model. Switch to `manual` if you
+> want a tighter or looser persistence policy; a warning appears in
+> the UI when the manual value sits below the detection floor (in
+> which case the gate has no effect).
 
 ### Location & Daylight
 
@@ -149,14 +159,16 @@ The Ingest behavior is intentionally different to prevent re-ingest loops.
               ▼
 ┌─────────────────────────────┐
 │  Detector                   │
-│  (CONFIDENCE_THRESHOLD_     │
-│   DETECTION filters boxes)  │
+│  (model-owned floor from    │
+│   model_metadata.json:      │
+│   Tiny 0.15 · S 0.30)       │
 └─────────────┬───────────────┘
               ▼
 ┌─────────────────────────────┐
 │  Save Decision              │
 │  (SAVE_THRESHOLD decides    │
-│   if image is persisted)    │
+│   if image is persisted;    │
+│   auto mode = floor + 0.10) │
 └─────────────────────────────┘
 ```
 
@@ -188,7 +200,10 @@ GO2RTC_CONFIG_PATH=/output/go2rtc.yaml
 STREAM_FPS_CAPTURE=5.0
 
 # Detection
-CONFIDENCE_THRESHOLD_DETECTION=0.55
+# Detection floor is model-owned — nothing to set here. To tune it,
+# switch model variants in the AI panel at /settings.
+SAVE_THRESHOLD_MODE=auto   # or "manual"
+SAVE_THRESHOLD=0.65        # only applied when SAVE_THRESHOLD_MODE=manual
 DETECTION_INTERVAL_SECONDS=2.0
 
 # Security

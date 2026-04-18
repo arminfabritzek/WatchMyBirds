@@ -50,11 +50,14 @@ else:
     # Default behavior
     run_level = logging.DEBUG if DEBUG_MODE else logging.INFO
 
-logging.basicConfig(
-    level=run_level,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    handlers=handlers,
+_log_formatter = logging.Formatter(
+    fmt="%(asctime)s %(levelname).1s %(name)s %(message)s",
+    datefmt="%H:%M:%S",
 )
+for _h in handlers:
+    _h.setFormatter(_log_formatter)
+
+logging.basicConfig(level=run_level, handlers=handlers)
 
 
 def get_logger(name: str) -> logging.Logger:

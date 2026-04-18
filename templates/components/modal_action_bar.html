@@ -35,6 +35,14 @@ current_species=none
         <a href="/gallery/{{ gallery_date }}?focus={{ detection_id }}#detection-{{ detection_id }}"
             class="btn btn--secondary btn--sm" title="Go to Day">📅 Day</a>
         {% endif %}
+        {% if show_trash and can_moderate %}
+        <button type="button"
+            class="btn btn--danger btn--sm"
+            data-action="move-trash"
+            data-detection-id="{{ detection_id }}"
+            data-current-species="{{ current_species or '' }}"
+            title="Move to Trash">🗑 Trash</button>
+        {% endif %}
     </div>
 
     {# Right: Navigation + Close #}

@@ -175,7 +175,11 @@
 
     document.addEventListener('click', function (event) {
         var actionEl = event.target.closest('[data-action]');
-        if (actionEl && actionEl.closest('.wm-toolbox')) {
+        var actionSurface = actionEl && (
+            actionEl.closest('.wm-toolbox') ||
+            actionEl.closest('.modal-action-bar')
+        );
+        if (actionEl && actionSurface) {
             event.preventDefault();
             event.stopPropagation();
             handleAction(actionEl);

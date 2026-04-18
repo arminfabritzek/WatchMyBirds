@@ -9,7 +9,17 @@ import sqlite3
 from collections.abc import Iterable
 from datetime import datetime, timedelta
 
-from utils.db.detections import UNKNOWN_SPECIES_KEY, effective_species_sql
+from utils.db.detections import (
+    UNKNOWN_SPECIES_KEY,
+    effective_species_sql_for_columns,
+    table_columns,
+)
+
+
+def _detection_column_sql(
+    detection_columns: set[str], column_name: str, fallback_sql: str = "NULL"
+) -> str:
+    return f"d.{column_name}" if column_name in detection_columns else fallback_sql
 
 
 def fetch_orphan_images(conn: sqlite3.Connection) -> list[sqlite3.Row]:
@@ -76,7 +86,14 @@ def fetch_review_queue_images(
 
     Sorted by source image timestamp DESC (newest first).
     """
-    species_sql = effective_species_sql("d")
+    detection_columns = table_columns(conn, "detections")
+    species_sql = effective_species_sql_for_columns("d", detection_columns)
+    is_favorite_sql = _detection_column_sql(detection_columns, "is_favorite", "0")
+    manual_species_sql = _detection_column_sql(
+        detection_columns, "manual_species_override"
+    )
+    species_source_sql = _detection_column_sql(detection_columns, "species_source")
+    manual_bbox_sql = _detection_column_sql(detection_columns, "manual_bbox_review")
 
     orphan_where = [
         "(i.review_status IS NULL OR i.review_status = 'untagged')",
@@ -189,22 +206,22 @@ def fetch_review_queue_images(
                 LIMIT 1
             ) as cls_confidence,
             {species_sql} as species_key,
-            d.manual_species_override,
-            d.species_source,
-            d.manual_bbox_review,
-            COALESCE(d.is_favorite, 0) as is_favorite,
+            {manual_species_sql} as manual_species_override,
+            {species_source_sql} as species_source,
+            {manual_bbox_sql} as manual_bbox_review,
             (
                 SELECT COUNT(*)
                 FROM detections ds
                 WHERE ds.image_filename = d.image_filename
                   AND COALESCE(ds.status, 'active') = 'active'
                   AND COALESCE(ds.decision_state, '') NOT IN ('confirmed', 'rejected')
-            ) as sibling_detection_count
+            ) as sibling_detection_count,
+            COALESCE({is_favorite_sql}, 0) as is_favorite
         FROM detections d
         JOIN images i ON i.filename = d.image_filename
         WHERE {detection_where_sql}
     ) review_items
-    ORDER BY timestamp DESC, item_kind DESC, CAST(COALESCE(active_detection_id, 0) AS INTEGER) ASC;
+    ORDER BY timestamp DESC, item_kind DESC, COALESCE(max_score, 0) DESC, CAST(COALESCE(active_detection_id, 0) AS INTEGER) ASC;
     """
     cur = conn.execute(query, [*orphan_params, *detection_params])
     return cur.fetchall()
@@ -238,7 +255,14 @@ def fetch_review_queue_item_by_identity(
     For ``item_kind='detection'`` this filters detections by detection_id.
     Returns ``None`` when the item is not in the queue (already resolved, etc.).
     """
-    species_sql = effective_species_sql("d")
+    detection_columns = table_columns(conn, "detections")
+    species_sql = effective_species_sql_for_columns("d", detection_columns)
+    is_favorite_sql = _detection_column_sql(detection_columns, "is_favorite", "0")
+    manual_species_sql = _detection_column_sql(
+        detection_columns, "manual_species_override"
+    )
+    species_source_sql = _detection_column_sql(detection_columns, "species_source")
+    manual_bbox_sql = _detection_column_sql(detection_columns, "manual_bbox_review")
 
     if item_kind == "image":
         query = """
@@ -320,17 +344,17 @@ def fetch_review_queue_item_by_identity(
                 LIMIT 1
             ) as cls_confidence,
             {species_sql} as species_key,
-            d.manual_species_override,
-            d.species_source,
-            d.manual_bbox_review,
-            COALESCE(d.is_favorite, 0) as is_favorite,
+            {manual_species_sql} as manual_species_override,
+            {species_source_sql} as species_source,
+            {manual_bbox_sql} as manual_bbox_review,
             (
                 SELECT COUNT(*)
                 FROM detections ds
                 WHERE ds.image_filename = d.image_filename
                   AND COALESCE(ds.status, 'active') = 'active'
                   AND COALESCE(ds.decision_state, '') NOT IN ('confirmed', 'rejected')
-            ) as sibling_detection_count
+            ) as sibling_detection_count,
+            COALESCE({is_favorite_sql}, 0) as is_favorite
         FROM detections d
         JOIN images i ON i.filename = d.image_filename
         WHERE COALESCE(d.status, 'active') = 'active'
@@ -418,7 +442,14 @@ def fetch_review_cluster_context(
     window_min = _shift_review_timestamp(raw_min, minutes=-int(context_window_minutes))
     window_max = _shift_review_timestamp(raw_max, minutes=int(context_window_minutes))
 
-    species_sql = effective_species_sql("d")
+    detection_columns = table_columns(conn, "detections")
+    species_sql = effective_species_sql_for_columns("d", detection_columns)
+    is_favorite_sql = _detection_column_sql(detection_columns, "is_favorite", "0")
+    manual_species_sql = _detection_column_sql(
+        detection_columns, "manual_species_override"
+    )
+    species_source_sql = _detection_column_sql(detection_columns, "species_source")
+    manual_bbox_sql = _detection_column_sql(detection_columns, "manual_bbox_review")
     # Pull one extra row so we can detect when we hit the cap exactly.
     fetch_limit = int(max_context_rows) + 1
 
@@ -460,11 +491,11 @@ def fetch_review_cluster_context(
             LIMIT 1
         ) as cls_confidence,
         {species_sql} as species_key,
-        d.manual_species_override,
-        d.species_source,
-        d.manual_bbox_review,
+        {manual_species_sql} as manual_species_override,
+        {species_source_sql} as species_source,
+        {manual_bbox_sql} as manual_bbox_review,
         0 as sibling_detection_count,
-        COALESCE(d.is_favorite, 0) as is_favorite
+        COALESCE({is_favorite_sql}, 0) as is_favorite
     FROM detections d
     JOIN images i ON i.filename = d.image_filename
     WHERE COALESCE(d.status, 'active') = 'active'
@@ -496,7 +527,8 @@ def fetch_recent_review_species(
     lookback_days: int = 7,
 ) -> list[sqlite3.Row]:
     """Return recently common active species for review quick-picks."""
-    species_sql = effective_species_sql("d")
+    detection_columns = table_columns(conn, "detections")
+    species_sql = effective_species_sql_for_columns("d", detection_columns)
     cutoff = (datetime.now() - timedelta(days=max(1, lookback_days))).strftime(
         "%Y%m%d_%H%M%S"
     )

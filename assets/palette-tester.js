@@ -74,17 +74,15 @@
     }).join('\n');
     var css = ':root {\n' + rules + '\n}';
 
-    // Fix hardcoded backgrounds that don't use CSS variables
+    // Preserve the design-system app-bar background (#f4ecd9) across themes;
+    // only adapt app-bar text/link colors in night mode so copy stays readable.
     if (themeKey === 'night') {
-      css += '\n.app-bar { background: ' + colors['--color-surface'] + ' !important; }';
       css += '\n.app-bar__link { color: ' + colors['--color-text-muted'] + ' !important; }';
       css += '\n.app-bar__link:hover { color: ' + colors['--color-text'] + ' !important; }';
       css += '\n.app-bar__link--primary { color: ' + colors['--color-text'] + ' !important; }';
       css += '\n.app-bar__link.active { color: ' + colors['--color-primary'] + ' !important; }';
       css += '\n.app-bar__brand { color: ' + colors['--color-text'] + ' !important; }';
       css += '\n.app-bar__toggle { color: ' + colors['--color-text'] + ' !important; }';
-    } else if (themeKey === 'day') {
-      css += '\n.app-bar { background: ' + colors['--color-surface'] + ' !important; }';
     }
 
     overrideEl.textContent = css;

@@ -12,18 +12,18 @@ can_moderate (bool): Whether to show moderation controls (relabel/delete)
 #}
 {% macro render_review_status_text(item, style='') %}
 {% set has_manual_species_review = (item.species_source == 'manual') and item.manual_species_override %}
-{% set has_manual_review_approval = has_manual_species_review and (item.review_status == REVIEW_STATUS_CONFIRMED_BIRD) %}
+{% set has_manual_review_approval = has_manual_species_review and (item.review_status == 'confirmed_bird') %}
 {% if has_manual_review_approval %}
-<span{% if style %} style="{{ style }} color: var(--color-success, #22c55e);"{% else %} style="color: var(--color-success, #22c55e);"{% endif %} title="Confirmed by a human reviewer">🧑👍 Human confirmed</span>
+<span{% if style %} style="{{ style }} color: var(--color-success, #22c55e);"{% else %} style="color: var(--color-success, #22c55e);"{% endif %} title="Confirmed by a human reviewer">🧑👍 manuell bestaetigt</span>
 {% elif item.decision_state %}
     {% if item.decision_state == 'confirmed' %}
-<span{% if style %} style="{{ style }} color: var(--color-success, #22c55e);"{% else %} style="color: var(--color-success, #22c55e);"{% endif %} title="Automatic AI/policy assessment">🤖 AI confirmed</span>
+<span{% if style %} style="{{ style }} color: var(--color-success, #22c55e);"{% else %} style="color: var(--color-success, #22c55e);"{% endif %} title="Automatic AI/policy assessment">🤖 KI bestaetigt</span>
     {% elif item.decision_state == 'uncertain' %}
-<span{% if style %} style="{{ style }} color: var(--color-warning, #eab308);"{% else %} style="color: var(--color-warning, #eab308);"{% endif %} title="Automatic AI/policy assessment">🤖 AI uncertain</span>
+<span{% if style %} style="{{ style }} color: var(--color-warning, #eab308);"{% else %} style="color: var(--color-warning, #eab308);"{% endif %} title="Automatic AI/policy assessment">🤖 KI unsicher</span>
     {% elif item.decision_state == 'unknown' %}
-<span{% if style %} style="{{ style }} color: var(--color-info, #3b82f6);"{% else %} style="color: var(--color-info, #3b82f6);"{% endif %} title="Automatic AI/policy assessment">🤖 AI unknown</span>
+<span{% if style %} style="{{ style }} color: var(--color-info, #3b82f6);"{% else %} style="color: var(--color-info, #3b82f6);"{% endif %} title="Automatic AI/policy assessment">🤖 KI unbekannt</span>
     {% elif item.decision_state == 'rejected' %}
-<span{% if style %} style="{{ style }} color: var(--color-danger, #ef4444);"{% else %} style="color: var(--color-danger, #ef4444);"{% endif %} title="Automatic AI/policy assessment">🤖 AI rejected</span>
+<span{% if style %} style="{{ style }} color: var(--color-danger, #ef4444);"{% else %} style="color: var(--color-danger, #ef4444);"{% endif %} title="Automatic AI/policy assessment">🤖 KI abgelehnt</span>
     {% endif %}
 {% endif %}
 {% endmacro %}
@@ -58,10 +58,23 @@ can_moderate (bool): Whether to show moderation controls (relabel/delete)
                 {{ "%.0f"|format(sib.od_confidence * 100) }}%
                 {% if sib.cls_class_name %} / {{ "%.0f"|format(sib.cls_confidence * 100) }}%{% endif %}
             </div>
-            {% set sib_review_status = render_review_status_text(sib) %}
-            {% if sib_review_status|trim %}
+            {% set sib_has_manual_species_review = (sib.species_source == 'manual') and sib.manual_species_override %}
+            {% set sib_has_manual_review_approval = sib_has_manual_species_review and (sib.review_status == 'confirmed_bird') %}
+            {% if sib_has_manual_review_approval %}
             <div style="font-size: 0.6rem; margin-top: 2px;">
-                {{ sib_review_status }}
+                <span style="color: var(--color-success, #22c55e);" title="Confirmed by a human reviewer">🧑👍 manuell bestaetigt</span>
+            </div>
+            {% elif sib.decision_state and not sib_has_manual_review_approval %}
+            <div style="font-size: 0.6rem; margin-top: 2px;">
+                {% if sib.decision_state == 'confirmed' %}
+                <span style="color: var(--color-success, #22c55e);" title="Automatic AI/policy assessment">🤖 KI bestaetigt</span>
+                {% elif sib.decision_state == 'uncertain' %}
+                <span style="color: var(--color-warning, #eab308);" title="Automatic AI/policy assessment">🤖 KI unsicher</span>
+                {% elif sib.decision_state == 'unknown' %}
+                <span style="color: var(--color-info, #3b82f6);" title="Automatic AI/policy assessment">🤖 KI unbekannt</span>
+                {% elif sib.decision_state == 'rejected' %}
+                <span style="color: var(--color-danger, #ef4444);" title="Automatic AI/policy assessment">🤖 KI abgelehnt</span>
+                {% endif %}
             </div>
             {% endif %}
             {% if can_moderate %}
@@ -108,10 +121,23 @@ can_moderate (bool): Whether to show moderation controls (relabel/delete)
                 {{ "%.0f"|format(det.od_confidence * 100) }}%
                 {% if det.cls_class_name %} / {{ "%.0f"|format(det.cls_confidence * 100) }}%{% endif %}
             </div>
-            {% set det_review_status = render_review_status_text(det) %}
-            {% if det_review_status|trim %}
+            {% set det_has_manual_species_review = (det.species_source == 'manual') and det.manual_species_override %}
+            {% set det_has_manual_review_approval = det_has_manual_species_review and (det.review_status == 'confirmed_bird') %}
+            {% if det_has_manual_review_approval %}
             <div style="font-size: 0.6rem; margin-top: 2px;">
-                {{ det_review_status }}
+                <span style="color: var(--color-success, #22c55e);" title="Confirmed by a human reviewer">🧑👍 manuell bestaetigt</span>
+            </div>
+            {% elif det.decision_state and not det_has_manual_review_approval %}
+            <div style="font-size: 0.6rem; margin-top: 2px;">
+                {% if det.decision_state == 'confirmed' %}
+                <span style="color: var(--color-success, #22c55e);" title="Automatic AI/policy assessment">🤖 KI bestaetigt</span>
+                {% elif det.decision_state == 'uncertain' %}
+                <span style="color: var(--color-warning, #eab308);" title="Automatic AI/policy assessment">🤖 KI unsicher</span>
+                {% elif det.decision_state == 'unknown' %}
+                <span style="color: var(--color-info, #3b82f6);" title="Automatic AI/policy assessment">🤖 KI unbekannt</span>
+                {% elif det.decision_state == 'rejected' %}
+                <span style="color: var(--color-danger, #ef4444);" title="Automatic AI/policy assessment">🤖 KI abgelehnt</span>
+                {% endif %}
             </div>
             {% endif %}
             {% if can_moderate %}

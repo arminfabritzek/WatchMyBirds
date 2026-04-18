@@ -9,6 +9,7 @@ import piexif
 from config import get_config
 from detectors.classifier import ImageClassifier
 from detectors.detector import Detector
+from detectors.od_classes import is_bird_od_class
 from utils.db import (
     check_image_exists_by_hash,
     get_connection,
@@ -389,10 +390,13 @@ def ingest_file(
             bbox_tuple = (x1, y1, x2, y2)
             det_cls_name = None
             det_cls_conf = 0.0
+            od_class_name = det.get("class_name", "bird")
+            is_bird = is_bird_od_class(od_class_name)
 
-            # Crop & Classify
+            # Crop & Classify — bird track only. Non-bird OD classes skip CLS
+            # because the OD class name IS the species.
             crop = create_square_crop(image, bbox_tuple, margin_percent=0.1)
-            if crop is not None and crop.size > 0:
+            if is_bird and crop is not None and crop.size > 0:
                 crop_resized = cv2.resize(
                     crop, (SAVE_RESOLUTION_CROP, SAVE_RESOLUTION_CROP)
                 )
@@ -474,16 +478,16 @@ def ingest_file(
             )
 
         # Calculate Primary Scores & Aggregates
+        # Score semantics:
+        #   - bird with CLS: score = cls_confidence (species trust)
+        #   - bird without CLS (or non-bird): score = od_confidence
+        #     (for non-bird, od_class_name IS the species)
         best_score_val = 0.0
         for enriched_det in enriched_detections:
             od = enriched_det["od_confidence"]
             det_cls = enriched_det["cls_confidence"]
-            # Formula: 0.5 * od + 0.5 * cls
-            # If cls is 0.0 (no class found/threshold), effectively it lowers the score, which is correct.
-            # However, if cls is missing/None, we should treat it as od (fallback).
-            # Here det_cls is 0.0 if not found, so let's check for that.
             if det_cls > 0:
-                score = 0.5 * od + 0.5 * det_cls
+                score = det_cls
                 agreement = min(od, det_cls)
             else:
                 score = od
@@ -564,9 +568,8 @@ def ingest_file(
 
     # CASE B: No Detection
     else:
-        # Save file to maintain Integrity?
-        # Plan decision: We need to store it to mark hash as processed.
-        # We will save it with a generic name so the DB entry points to something valid.
+        # Store the file so its hash is marked as processed. Use a generic
+        # name so the DB entry always points to a valid artefact.
 
         name_no_det = f"{timestamp_str}_nodetection.jpg"
         save_path = str(pm.get_original_path(name_no_det))

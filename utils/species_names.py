@@ -22,6 +22,69 @@ from logging_config import get_logger
 logger = get_logger(__name__)
 UNKNOWN_SPECIES_KEY = "Unknown_species"
 
+# OD class names that must NOT be treated as bird species identity.
+# - "bird"         : the locator's generic bird category; the classifier owns
+#                    species truth for this class.
+# - "unknown"      : legacy / fallback placeholder, never a real species.
+# - "unclassified" : seed-data placeholder used by scripts/seed_test_data.py.
+# Anything NOT in this set is a valid species token (e.g. "squirrel",
+# "marten_mustelid", "hedgehog", "cat" — OD class name IS the species for
+# non-bird garden animals in the YOLOX 5-class locator).
+_NON_SPECIES_OD_TOKENS: frozenset[str] = frozenset(
+    {
+        "",
+        "bird",
+        "unknown",
+        "unclassified",
+    }
+)
+
+
+def is_non_species_od_token(od_class_name: str | None) -> bool:
+    """Return True when ``od_class_name`` is not a valid species identity.
+
+    Used by every Python fallback site that previously allowed the literal
+    string ``"bird"`` to leak through as species truth when CLS was missing.
+    Non-bird OD class names like ``"squirrel"`` return False and are passed
+    through as valid species keys.
+    """
+    if od_class_name is None:
+        return True
+    return str(od_class_name).strip().lower() in _NON_SPECIES_OD_TOKENS
+
+
+def species_key_from_candidates(
+    *,
+    manual_override: str | None = None,
+    cls_class_name: str | None = None,
+    species_key: str | None = None,
+    od_class_name: str | None = None,
+) -> str:
+    """Resolve a single species key from the fallback chain.
+
+    Priority order (highest to lowest):
+    1. Manual override (human-confirmed species)
+    2. ``species_key`` column on the row (already-resolved key)
+    3. ``cls_class_name`` from the classifier
+    4. ``od_class_name`` *iff* it is a real species (non-bird garden animal)
+
+    If none of the above produce a valid species, returns
+    :data:`UNKNOWN_SPECIES_KEY`. This is the Python mirror of
+    :func:`utils.db.detections.effective_species_sql` — any bird-surface
+    consumer that would otherwise accept ``"bird"`` as species truth should
+    use this helper instead.
+    """
+    for candidate in (manual_override, species_key, cls_class_name):
+        value = str(candidate or "").strip()
+        if value:
+            return value
+
+    od_value = str(od_class_name or "").strip()
+    if od_value and not is_non_species_od_token(od_value):
+        return od_value
+
+    return UNKNOWN_SPECIES_KEY
+
 _ASSETS_DIR = (
     Path(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))) / "assets"
 )

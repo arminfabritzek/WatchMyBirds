@@ -68,18 +68,25 @@ def _resolve_detection_preview_url(det: dict) -> str:
 
 
 def _resolve_detection_species_key(det: dict) -> str:
-    return normalize_species_key(
-        det.get("manual_species_override")
-        or det.get("species_key")
-        or det.get("cls_class_name")
-        or det.get("od_class_name")
+    # Route the OD fallback through the central helper so "bird" does
+    # not leak in as species truth when CLS is missing. Non-bird OD
+    # class names like "squirrel" still pass through.
+    from utils.species_names import UNKNOWN_SPECIES_KEY, species_key_from_candidates
+
+    resolved = species_key_from_candidates(
+        manual_override=det.get("manual_species_override"),
+        species_key=det.get("species_key"),
+        cls_class_name=det.get("cls_class_name"),
+        od_class_name=det.get("od_class_name"),
     )
+    # Preserve historical contract: empty-key result when nothing resolved.
+    return "" if resolved == UNKNOWN_SPECIES_KEY else normalize_species_key(resolved)
 
 
 def get_species_thumbnail_map(
     *,
     common_names: dict[str, str] | None = None,
-    cache_key: str = "default",
+    cache_key: str | None = "default",
     detections: list[dict] | None = None,
 ) -> dict[str, str]:
     """
@@ -91,13 +98,15 @@ def get_species_thumbnail_map(
     3. Any detection/optimized image for that species
     """
     common_names = common_names or {}
-    use_cache = detections is None
+    use_cache = detections is None and cache_key is not None
     now = time.monotonic()
 
     if use_cache:
         cached = _species_thumbnail_cache.get(cache_key)
         if cached and (now - cached[0]) < _SPECIES_THUMBNAIL_CACHE_TTL_SECONDS:
             return dict(cached[1])
+
+    if detections is None:
         detections = gallery_service.get_all_detections()
 
     favorite_by_species: dict[str, tuple[float, str]] = {}

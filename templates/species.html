@@ -50,7 +50,8 @@
         is_favorite=det.is_favorite|default(false),
         can_moderate=can_moderate,
         current_species=det.species_key or det.manual_species_override or det.cls_class_name or det.od_class_name,
-        modal_target='#modal-species_summary-' ~ det.detection_id
+        modal_target='#modal-species_summary-' ~ det.detection_id,
+        details_href=('/gallery/' ~ det.gallery_date ~ '?focus=' ~ det.detection_id ~ '#detection-' ~ det.detection_id) if det.gallery_date else none
         ) }}
 
         <a class="wm-tile__body wm-tile__body--link"

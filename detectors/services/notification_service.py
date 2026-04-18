@@ -48,8 +48,18 @@ class NotificationService(NotificationInterface):
 
     @property
     def is_enabled(self) -> bool:
-        """Check if Telegram notifications are enabled."""
-        return self._config.get("TELEGRAM_ENABLED", False)
+        """Check if Telegram live detection notifications are enabled.
+
+        Live alerts only fire when ``TELEGRAM_MODE == "live"``. Legacy configs
+        that set ``TELEGRAM_ENABLED`` alone (no mode key) are honoured so
+        older deployments and tests keep working; the new mode switch, when
+        present, always wins.
+        """
+        mode = str(self._config.get("TELEGRAM_MODE", "") or "").strip().lower()
+        if mode:
+            return mode == "live"
+        # Legacy path: no mode configured -> fall back to the old flag.
+        return bool(self._config.get("TELEGRAM_ENABLED", False))
 
     @property
     def pending_count(self) -> int:
@@ -155,8 +165,13 @@ class NotificationService(NotificationInterface):
                     latin_formatted = latin_name.replace("_", " ")
                     species_lines.append(f"• {info['common']} ({latin_formatted})")
 
-                message = f"🐦 {species_count} {art_text} detected:\n" + "\n".join(
-                    species_lines
+                device_name = str(
+                    get_config().get("DEVICE_NAME", "") or ""
+                ).strip()
+                prefix = f"[{device_name}] " if device_name else ""
+                message = (
+                    f"{prefix}🐦 {species_count} {art_text} detected:\n"
+                    + "\n".join(species_lines)
                 )
 
                 # Use image of highest scoring species

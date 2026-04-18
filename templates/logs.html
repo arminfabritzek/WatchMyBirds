@@ -7,52 +7,11 @@
 {% endblock %}
 
 {% block content %}
-<div class="page__header">
-    <h1 class="page__title">Diagnostics</h1>
-    <div class="page__actions logs-page-actions">
-        <label class="logs-auto-refresh">
-            <input id="diag-auto-refresh" type="checkbox" checked>
-            Auto-refresh (5s)
-        </label>
-        <button id="diag-refresh-btn" class="btn btn--secondary">Refresh</button>
-    </div>
-</div>
-
-<div class="grid logs-summary-grid">
-    <div class="metric-card">
-        <div class="metric-label">Host</div>
-        <div id="diag-host" class="metric-value logs-metric-value">-</div>
-    </div>
-    <div class="metric-card">
-        <div class="metric-label">Runtime</div>
-        <div id="diag-runtime" class="metric-value logs-metric-value">-</div>
-    </div>
-    <div class="metric-card">
-        <div class="metric-label">FD Count</div>
-        <div id="diag-fd" class="metric-value logs-metric-value">-</div>
-    </div>
-    <div class="metric-card">
-        <div class="metric-label">RSS Sum (App + Children)</div>
-        <div id="diag-app-rss" class="metric-value logs-metric-value">-</div>
-    </div>
-    <div class="metric-card">
-        <div class="metric-label">FFmpeg RSS</div>
-        <div id="diag-ffmpeg-rss" class="metric-value logs-metric-value">-</div>
-    </div>
-    <div class="metric-card">
-        <div class="metric-label">Disk Used</div>
-        <div id="diag-disk" class="metric-value logs-metric-value">-</div>
-    </div>
-</div>
-<p class="text-sm text-muted logs-summary-note">
-    RSS Sum is process RSS + child-process RSS and can fluctuate due to worker/FFmpeg churn and shared memory.
-</p>
-
 <div class="card">
     <div class="card__header logs-tabbar">
         <button class="filter-btn logs-tab active" data-tab="app">App Log</button>
-        <button class="filter-btn logs-tab" data-tab="vitals">Vitals CSV</button>
         <button class="filter-btn logs-tab" data-tab="system">System Snapshot</button>
+        <button class="filter-btn logs-tab" data-tab="vitals">Vitals</button>
     </div>
 
     <div class="card__body logs-card-body">
@@ -85,9 +44,38 @@
 
     <div class="card__footer logs-footer">
         <span id="line-count" class="text-sm text-muted">-</span>
+        <div class="logs-footer-controls">
+            <label class="logs-auto-refresh">
+                <input id="diag-auto-refresh" type="checkbox" checked>
+                Auto-refresh (5s)
+            </label>
+            <button id="diag-refresh-btn" class="btn btn--secondary btn--sm">Refresh</button>
+        </div>
         <span id="diag-meta" class="text-sm text-muted">-</span>
     </div>
 </div>
+
+<div class="grid logs-summary-grid">
+    <div class="metric-card">
+        <div class="metric-label">FD Count</div>
+        <div id="diag-fd" class="metric-value logs-metric-value">-</div>
+    </div>
+    <div class="metric-card">
+        <div class="metric-label">App Memory</div>
+        <div id="diag-app-rss" class="metric-value logs-metric-value">-</div>
+    </div>
+    <div class="metric-card">
+        <div class="metric-label">FFmpeg Memory</div>
+        <div id="diag-ffmpeg-rss" class="metric-value logs-metric-value">-</div>
+    </div>
+    <div class="metric-card">
+        <div class="metric-label">Disk Used</div>
+        <div id="diag-disk" class="metric-value logs-metric-value">-</div>
+    </div>
+</div>
+<p class="text-sm text-muted logs-summary-note">
+    App Memory is process RSS + child-process RSS (fluctuates with worker/FFmpeg churn).
+</p>
 {% endblock %}
 
 {% block scripts %}
@@ -174,14 +162,10 @@
 
         function renderSystemSnapshot(data) {
             const blocks = [];
-            blocks.push(formatObjectBlock('Runtime', data.runtime));
             blocks.push(formatObjectBlock('System', data.system));
-            blocks.push(formatObjectBlock('Process', data.process));
 
             if (data.monitor_active) {
                 blocks.push(formatObjectBlock('Monitor Vitals', data.vitals));
-            } else {
-                blocks.push('=== Monitor Vitals ===\nSystemMonitor is not active.');
             }
 
             if (data.files && data.files.fd_leak_dump && data.files.fd_leak_dump.present) {
@@ -193,20 +177,15 @@
             if (data.commands) {
                 blocks.push(formatCommandBlock('systemctl show app', data.commands.systemctl_app));
                 blocks.push(formatCommandBlock('journalctl -u app -n 80', data.commands.journal_app_tail));
-                blocks.push(formatCommandBlock('docker ps', data.commands.docker_ps));
-                blocks.push(formatCommandBlock('docker stats --no-stream --all', data.commands.docker_stats));
             }
 
             systemContent.textContent = blocks.filter(Boolean).join('\n\n');
         }
 
         function updateSummary(data) {
-            const runtime = data.runtime || {};
             const vitals = data.vitals || {};
             const system = data.system || {};
 
-            document.getElementById('diag-host').textContent = runtime.hostname || 'n/a';
-            document.getElementById('diag-runtime').textContent = runtime.environment || 'n/a';
             document.getElementById('diag-fd').textContent = (vitals.fd_count ?? data.process?.fds ?? 'n/a');
             document.getElementById('diag-app-rss').textContent =
                 vitals.app_total_rss_mb != null ? `${vitals.app_total_rss_mb} MB` : `${data.process?.rss_mb ?? 'n/a'} MB`;

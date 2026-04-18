@@ -2,7 +2,7 @@
 """
 Seed Script for WatchMyBirds Test Data
 
-Agent note: Do not translate species names or labels in this file.
+Localization note: Do not translate species names or labels in this file.
 
 Creates reproducible test data for UI testing:
 - SQLite database with test entries
@@ -459,7 +459,10 @@ def generate_test_data(output_dir: Path, dry_run: bool = False) -> dict:
                         od_conf = random.uniform(*cfg["low_confidence"])
                         cls_conf = random.uniform(*cfg["low_confidence"])
 
-                    score = (od_conf + cls_conf) / 2
+                    # Score: cls_conf when present, else od_conf. Kept in
+                    # sync with the live ingest / scoring pipelines so seed
+                    # data stays realistic.
+                    score = cls_conf if cls_conf > 0 else od_conf
                     max_conf = max(max_conf, score)
 
                     # Determine detection status

@@ -141,6 +141,7 @@
                         current_species=orphan.selected_species or orphan.species_key,
                         show_viewer_tools=true,
                         show_boxes=has_bbox,
+                        {# tile_toolbox emits data-review-viewer-tool="zoom" and data-review-viewer-tool="bbox" for the Review viewer controls. #}
                         current_bbox_json={
                             "x": orphan.bbox_x,
                             "y": orphan.bbox_y,
@@ -236,7 +237,11 @@
                 <div class="review-stage-panel__species-strip" role="list">
                     {% for species in orphan.quick_species %}
                     <button type="button" class="review-stage-panel__species-btn{% if orphan.selected_species == species.scientific %} is-selected{% endif %}"
-                        data-review-panel-action="{% if orphan.selected_species == species.scientific %}confirm_species{% else %}select_species{% endif %}"
+                        {% if orphan.selected_species == species.scientific %}
+                        data-review-panel-action="confirm_species"
+                        {% else %}
+                        data-review-panel-action="select_species"
+                        {% endif %}
                         data-item-key="{{ orphan.item_key }}" data-filename="{{ orphan.filename }}"
                         data-detection-id="{{ orphan.best_detection_id }}" data-species="{{ species.scientific }}"
                         data-default-suggestion="{% if species.scientific == orphan.default_species %}1{% else %}0{% endif %}"

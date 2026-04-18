@@ -55,6 +55,10 @@ private_docs/
 .venv/
 systemd/
 tests/
+# scripts/ stays fully out of the container. The runtime code path for
+# regenerating model_metadata.json lives in utils/model_metadata_generator;
+# scripts/generate_model_metadata.py is only a thin CLI wrapper used by
+# the deploy script on the build host.
 scripts/
 
 # Go2RTC config (credentials; not used in container image)

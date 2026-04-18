@@ -82,15 +82,21 @@ class DetectionService(DetectionInterface):
                 self._model_id = os.path.basename(self._detector.model_path)
 
     def detect(
-        self, frame: np.ndarray, confidence_threshold: float, save_threshold: float
+        self,
+        frame: np.ndarray,
+        save_threshold: float,
+        confidence_threshold: float = 0.0,
     ) -> DetectionResult:
         """
         Performs object detection on a frame.
 
         Args:
             frame: BGR image to analyze.
-            confidence_threshold: Minimum confidence for a detection to be valid.
             save_threshold: Minimum confidence for a detection to be saved.
+            confidence_threshold: Accepted for back-compat with older
+                callers; ignored at runtime. The active detection floor
+                is read from the model's model_metadata.json (populated
+                by the pin endpoint on variant switch).
 
         Returns:
             DetectionResult with detected objects.

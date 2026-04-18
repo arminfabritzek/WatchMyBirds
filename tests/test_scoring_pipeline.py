@@ -57,8 +57,8 @@ def test_happy_path_full_topk(
     temporal_service,
     capability_registry,
 ):
-    """With cls_conf > 0 and top-k available, the composite score formula
-    ``0.5 * od + 0.5 * cls`` applies and agreement = min(od, cls)."""
+    """With cls_conf > 0 and top-k available, the score equals cls_conf
+    and agreement = min(od, cls)."""
     result = compute_detection_signals(
         bbox=good_bbox,
         frame_shape=hd_frame_shape,
@@ -72,7 +72,7 @@ def test_happy_path_full_topk(
     )
 
     assert isinstance(result, ScoringResult)
-    assert result.score == pytest.approx(0.85)  # 0.5*0.9 + 0.5*0.8
+    assert result.score == pytest.approx(0.8)  # = cls_conf (species trust)
     assert result.agreement_score == pytest.approx(0.8)  # min(0.9, 0.8)
     assert result.bbox_quality is not None
     assert result.unknown_score is not None
@@ -139,7 +139,7 @@ def test_single_class_topk_fallback(
         species_key="Parus_major",
     )
 
-    assert result.score == pytest.approx(0.875)  # 0.5*0.9 + 0.5*0.85
+    assert result.score == pytest.approx(0.85)  # = cls_conf
     assert result.agreement_score == pytest.approx(0.85)
     # Single-class fallback: unknown_score = 1.0 - cls_conf
     assert result.unknown_score == pytest.approx(1.0 - 0.85)
@@ -153,10 +153,12 @@ def test_single_class_topk_fallback(
 @pytest.mark.parametrize(
     "od_conf, cls_conf, expected_score, expected_agreement",
     [
-        (0.9, 0.8, 0.85, 0.8),
-        (0.5, 0.5, 0.50, 0.5),
-        (1.0, 0.6, 0.80, 0.6),
-        (0.3, 0.9, 0.60, 0.3),
+        # Score = cls_conf when > 0, else od_conf (Phase 1 semantics).
+        # Agreement = min(od, cls) when cls > 0.
+        (0.9, 0.8, 0.8, 0.8),
+        (0.5, 0.5, 0.5, 0.5),
+        (1.0, 0.6, 0.6, 0.6),
+        (0.3, 0.9, 0.9, 0.3),
     ],
 )
 def test_score_formula(
@@ -284,7 +286,7 @@ def test_policy_disabled_returns_no_decision_state(
     assert result.decision_state is None
     assert result.decision_reasons_json == "[]"
     # Signals must still be computed for diagnostics
-    assert result.score == pytest.approx(0.85)
+    assert result.score == pytest.approx(0.8)  # = cls_conf (species trust)
     assert result.agreement_score == pytest.approx(0.8)
     assert result.bbox_quality is not None
     assert result.unknown_score is not None

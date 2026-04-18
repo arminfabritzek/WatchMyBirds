@@ -13,27 +13,25 @@ from dataclasses import dataclass, field
 from typing import Literal
 
 from config import get_config
+from core.species_names_core import UNKNOWN_SPECIES_KEY, species_key_from_candidates
 from logging_config import get_logger
-from utils.species_names import UNKNOWN_SPECIES_KEY
 from web.services import db_service, gallery_service
 
 logger = get_logger(__name__)
 
 
 def _resolved_species_key(row_dict: dict) -> str:
-    od_species = row_dict.get("od_class_name")
-    if od_species and str(od_species).strip().lower() in {
-        "bird",
-        "unknown",
-        "unclassified",
-    }:
-        od_species = None
-    return (
-        row_dict.get("species_key")
-        or row_dict.get("manual_species_override")
-        or row_dict.get("cls_class_name")
-        or od_species
-        or UNKNOWN_SPECIES_KEY
+    """Resolve a species key for filter/sort display.
+
+    Delegates to :func:`utils.species_names.species_key_from_candidates`
+    which is the single source of truth for the bird/non-bird fallback
+    chain.
+    """
+    return species_key_from_candidates(
+        manual_override=row_dict.get("manual_species_override"),
+        species_key=row_dict.get("species_key"),
+        cls_class_name=row_dict.get("cls_class_name"),
+        od_class_name=row_dict.get("od_class_name"),
     )
 
 

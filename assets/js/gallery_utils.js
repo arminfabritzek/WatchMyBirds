@@ -52,13 +52,17 @@ function resolveViewerToolButton(host, scope, selector) {
     return null;
 }
 
+function isReviewViewerScope(scope) {
+    return Boolean(scope && scope.classList && scope.classList.contains('wm-viewer-scope'));
+}
+
 /**
  * Read viewer preference keys from scope element's data attributes.
  * Review scopes set data-bbox-pref-key / data-zoom-pref-key explicitly;
  * gallery modals fall back to the default modal keys.
  */
 function getViewerPrefKeys(scope) {
-    var isReview = Boolean(scope && scope.classList && scope.classList.contains('wm-viewer-scope'));
+    var isReview = isReviewViewerScope(scope);
     return {
         bbox: (scope && scope.dataset && scope.dataset.bboxPrefKey) || (isReview ? 'wmb_review_bbox_pref' : 'wmb_modal_bbox_pref'),
         bboxDefault: isReview ? 'on' : 'off',
@@ -439,7 +443,7 @@ const SPECIES_COLOURS_FALLBACK = [
     '#56B4E9', // 4 sky
     '#D55E00', // 5 vermilion
     '#F0E442', // 6 yellow (non-text only — light theme constraint)
-    '#000000', // 7 black fallback (light theme)
+    '#4B3F2E', // 7 dark umber (replaces earlier #000000 which rendered as unreadable all-black bbox borders/labels when a species landed on slot 7 alphabetically; must stay in sync with --species-colour-7 in design-system.css)
 ];
 
 let _speciesColoursCache = null;
@@ -1187,6 +1191,17 @@ function applySmartZoomToggleState(btn, isZoomed, hasBbox) {
     }
 }
 
+function loadDeferredViewerImages(scope) {
+    if (!scope || !scope.querySelectorAll) return;
+    scope.querySelectorAll('.wm-image-viewer__img[data-deferred-src]').forEach(function (img) {
+        const target = img.getAttribute('data-deferred-src');
+        if (!target) return;
+        if (img.getAttribute('src') !== target) {
+            img.setAttribute('src', target);
+        }
+    });
+}
+
 /**
  * Toggle between zoomed (bbox close-up) and full image view.
  */
@@ -1205,6 +1220,12 @@ function toggleSmartZoom(btn) {
         requestAnimationFrame(function () { redrawBboxOverlay(bboxBtn); });
     });
 }
+
+document.addEventListener('show.bs.modal', function (event) {
+    const modal = event.target;
+    if (!modal.classList.contains('gallery-modal')) return;
+    loadDeferredViewerImages(modal);
+});
 
 // Reset zoom state when navigating between modals
 document.addEventListener('shown.bs.modal', function (event) {
@@ -1228,6 +1249,12 @@ document.addEventListener('shown.bs.modal', function (event) {
 document.addEventListener('load', function (event) {
     const img = event.target;
     if (!img.classList || !img.classList.contains('wm-image-viewer__img')) return;
+    const deferredSrc = img.getAttribute('data-deferred-src');
+    if (deferredSrc && img.getAttribute('src') !== deferredSrc) return;
+    if (deferredSrc) {
+        const viewer = img.closest('.wm-image-viewer');
+        if (viewer) viewer.classList.remove('wm-image-viewer--loading');
+    }
     if (typeof initBboxOverlay === 'function') initBboxOverlay(img);
     if (typeof initSmartZoom === 'function') initSmartZoom(img);
 }, true);

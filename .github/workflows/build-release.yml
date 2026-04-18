@@ -169,9 +169,6 @@ jobs:
             # Create Venv
             python3.12 -m venv /opt/app/.venv
 
-            # Upgrade pip (using wheelhouse if available, or just use system pip to install?
-            # Ideally we have pip wheel in wheelhouse too. If not, use ensurepip version)
-
             # Install Requirements from Wheelhouse
             /opt/app/.venv/bin/pip install --no-index --find-links /opt/wheelhouse -r /opt/app/requirements.txt
 

@@ -102,8 +102,8 @@ Returns current application settings.
 ```json
 {
   "VIDEO_SOURCE": "0",
-  "CONFIDENCE_THRESHOLD": 0.6,
   "SAVE_THRESHOLD": 0.65,
+  "SAVE_THRESHOLD_MODE": "auto",
   "DEBUG_MODE": false,
   "TELEGRAM_ENABLED": false,
   "TELEGRAM_BOT_TOKEN": "",
@@ -121,6 +121,12 @@ Returns current application settings.
 }
 ```
 
+> ⚠️ **Breaking change (0.2.0):** the `CONFIDENCE_THRESHOLD_DETECTION`
+> key has been removed from the response. The detector's confidence
+> floor is now model-owned and exposed via
+> `GET /api/v1/models/detector` (see below) instead of being operator-
+> editable.
+
 ---
 
 #### POST `/api/v1/settings`
@@ -129,7 +135,8 @@ Updates application settings. Only runtime-modifiable keys are accepted.
 **Request Body:**
 ```json
 {
-  "CONFIDENCE_THRESHOLD_DETECTION": 0.7,
+  "SAVE_THRESHOLD_MODE": "manual",
+  "SAVE_THRESHOLD": 0.50,
   "SPECIES_COMMON_NAME_LOCALE": "NO"
 }
 ```
@@ -144,6 +151,86 @@ Updates application settings. Only runtime-modifiable keys are accepted.
 > **Note:** Legacy endpoints `GET/POST /api/settings`, `POST /api/settings/update`,
 > and `POST /api/settings/ingest` have been removed.
 > Use `POST /api/v1/settings` for settings and `POST /api/ingest/start` for ingest.
+
+---
+
+#### GET `/api/v1/models/detector`
+Returns the active detector variant, its runtime calibration, and the
+list of variants available for a live switch.
+
+**Response:**
+```json
+{
+  "model_dir": "/models/object_detection",
+  "active": {
+    "id": "20260417_1636_yolox_tiny_640_mosaic0p5",
+    "source": "latest_models",
+    "env_pin_value": null,
+    "hf_latest_id": "20260417_1636_yolox_tiny_640_mosaic0p5",
+    "runtime_matches_on_disk": true
+  },
+  "runtime": {
+    "model_id": "20260417_1636_yolox_tiny_640_mosaic0p5",
+    "output_format": "yolox_raw",
+    "input_size": [640, 640],
+    "num_classes": 5,
+    "class_names": ["bird", "squirrel", "cat", "marten_mustelid", "hedgehog"],
+    "conf_threshold_default": 0.15,
+    "iou_threshold_default": 0.5
+  },
+  "metadata": { "variant": "tiny", "metrics": {"bird_recall": 0.993} },
+  "variants": [
+    {"id": "20260417_1636_yolox_tiny_640_mosaic0p5", "is_active": true,  "is_available_locally": true,  "is_hf_latest": true},
+    {"id": "20260417_1512_yolox_s_640_mosaic0p5",    "is_active": false, "is_available_locally": false, "is_hf_latest": false}
+  ]
+}
+```
+
+`runtime.conf_threshold_default` is the active detection-confidence
+floor, read from the active variant's `model_metadata.json`. This is
+the value the Settings page shows next to the Save Threshold field
+so the user can see which calibration the save gate is tracking.
+
+#### POST `/api/v1/models/detector/install`
+Downloads a known-but-missing variant (weights + labels + YAML +
+metrics) from HuggingFace. `model_id` must be a key listed in the
+GET response's `variants`. Whitelist-gated — arbitrary strings are
+rejected.
+
+**Request Body:**
+```json
+{ "model_id": "20260417_1512_yolox_s_640_mosaic0p5" }
+```
+
+**Response:**
+```json
+{
+  "status": "success",
+  "model_id": "20260417_1512_yolox_s_640_mosaic0p5",
+  "already_installed": false,
+  "weights_path": "/models/object_detection/20260417_1512_yolox_s_640_mosaic0p5_best.onnx",
+  "labels_path":  "/models/object_detection/20260417_1512_yolox_s_640_mosaic0p5_labels.json",
+  "model_config_path": "/models/object_detection/20260417_1512_yolox_s_640_mosaic0p5_model_config.yaml",
+  "metrics_path":      "/models/object_detection/20260417_1512_yolox_s_640_mosaic0p5_metrics.json"
+}
+```
+
+#### POST `/api/v1/models/detector/pin`
+Switches the active variant by rewriting `latest_models.json` and
+regenerating `model_metadata.json` from the new variant's YAML. The
+DetectionService is cleared for a live reload on the next inference
+cycle (~1–2 s, no service restart).
+
+**Request Body:**
+```json
+{ "model_id": "20260417_1512_yolox_s_640_mosaic0p5" }
+```
+
+If a systemd env-var pin is set, this endpoint still rewrites the
+on-disk pointer (so the next env-pin-free startup picks up the UI
+choice) but reports `env_pin_overrides: true` in the response so the
+UI can warn that the in-memory detector stays on the env-pin value
+until the pin is removed.
 
 ---
 

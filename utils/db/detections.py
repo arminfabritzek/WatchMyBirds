@@ -52,6 +52,28 @@ def _top1_species_sql(det_alias: str = "d") -> str:
     """
 
 
+def _top1_species_sql_for_columns(
+    det_alias: str = "d", classification_columns: set[str] | None = None
+) -> str:
+    classification_columns = classification_columns or set()
+    where_clauses = [f"c.detection_id = {det_alias}.detection_id"]
+    if "rank" in classification_columns:
+        where_clauses.append("c.rank = 1")
+    if "status" in classification_columns:
+        where_clauses.append("COALESCE(c.status, 'active') = 'active'")
+    where_sql = "\n              AND ".join(where_clauses)
+    order_sql = "ORDER BY c.rank ASC" if "rank" in classification_columns else ""
+    return f"""
+        (
+            SELECT c.cls_class_name
+            FROM classifications c
+            WHERE {where_sql}
+            {order_sql}
+            LIMIT 1
+        )
+    """
+
+
 def _top1_confidence_sql(det_alias: str = "d") -> str:
     return f"""
         (
@@ -65,12 +87,58 @@ def _top1_confidence_sql(det_alias: str = "d") -> str:
     """
 
 
+def table_columns(conn: sqlite3.Connection, table_name: str) -> set[str]:
+    """Return column names for a SQLite table."""
+    if not table_name.replace("_", "").isalnum():
+        raise ValueError(f"Unsafe table name: {table_name!r}")
+
+    rows = conn.execute(f"PRAGMA table_info({table_name})").fetchall()
+    columns: set[str] = set()
+    for row in rows:
+        try:
+            columns.add(row["name"])
+        except (IndexError, TypeError):
+            columns.add(row[1])
+    return columns
+
+
 def effective_species_sql(det_alias: str = "d") -> str:
     return f"""
         COALESCE(
             NULLIF({det_alias}.manual_species_override, ''),
             {_top1_species_sql(det_alias)},
             {_normalized_detector_species_sql(det_alias)}
+        )
+    """
+
+
+def effective_species_sql_for_columns(
+    det_alias: str = "d",
+    detection_columns: set[str] | None = None,
+    classification_columns: set[str] | None = None,
+) -> str:
+    """Build species SQL for tests or older DBs that lack newer columns."""
+    detection_columns = detection_columns or set()
+    top1_sql = (
+        _top1_species_sql(det_alias)
+        if classification_columns is None
+        else _top1_species_sql_for_columns(det_alias, classification_columns)
+    )
+    manual_sql = (
+        f"NULLIF({det_alias}.manual_species_override, '')"
+        if "manual_species_override" in detection_columns
+        else "NULL"
+    )
+    detector_sql = (
+        _normalized_detector_species_sql(det_alias)
+        if "od_class_name" in detection_columns
+        else f"'{UNKNOWN_SPECIES_KEY}'"
+    )
+    return f"""
+        COALESCE(
+            {manual_sql},
+            {top1_sql},
+            {detector_sql}
         )
     """
 

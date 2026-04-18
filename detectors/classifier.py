@@ -41,7 +41,10 @@ class ImageClassifier:
             return
 
         logger.info("Initializing classifier (lazy-load triggered)...")
-        # Perform blocking model check/download here in the worker thread
+        # Perform blocking model check/download here in the worker thread.
+        # Classifier releases now ship the same 4-file set as the detector
+        # (_model_config.yaml + _metrics.json alongside weights + classes),
+        # so the companion fetch applies to both lineages uniformly.
         self.model_path, self.class_path = ensure_model_files(
             HF_BASE_URL, self.model_dir, "weights_path", "classes_path"
         )

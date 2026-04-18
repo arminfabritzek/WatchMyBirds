@@ -27,6 +27,7 @@ from detectors.services.classification_service import ClassificationService
 from detectors.services.crop_service import CropService
 from detectors.services.decision_policy_service import DecisionPolicyService
 from detectors.services.detection_service import DetectionService
+from detectors.od_classes import is_bird_od_class
 from detectors.services.scoring_pipeline import ScoringResult, compute_detection_signals
 from detectors.services.temporal_decision_service import TemporalDecisionService
 from logging_config import get_logger
@@ -90,7 +91,7 @@ class DetectionManager:
 
         # Detection timing summary (logged periodically instead of per-frame)
         self._det_times: list[int] = []
-        self._det_summary_interval = 60  # seconds
+        self._det_summary_interval = 15  # seconds
         self._det_summary_last = time.monotonic()
 
         # Statistics
@@ -162,7 +163,7 @@ class DetectionManager:
         # Backoff
         self.initialization_retry_count = 0
 
-        # --- NEW: Services ---
+        # Service layer components
         self.notification_service = NotificationService(common_names=self.common_names)
         self.persistence_service = PersistenceService()
         self.crop_service = CropService()
@@ -208,7 +209,7 @@ class DetectionManager:
         return detections
 
     # =========================================================================
-    # LIFECYCLE - Exact copy from original
+    # LIFECYCLE
     # =========================================================================
 
     def start(self):
@@ -269,7 +270,7 @@ class DetectionManager:
             return self._deep_scan_active
 
     # =========================================================================
-    # COMPONENT INITIALIZATION - Exact copy from original
+    # COMPONENT INITIALIZATION
     # =========================================================================
 
     def _initialize_components(self):
@@ -299,7 +300,7 @@ class DetectionManager:
         return self.video_capture is not None and self.detection_service.is_ready()
 
     # =========================================================================
-    # FRAME LOOP - Exact copy from original
+    # FRAME LOOP
     # =========================================================================
 
     def _frame_update_loop(self):
@@ -335,7 +336,7 @@ class DetectionManager:
                 time.sleep(0.1)
 
     # =========================================================================
-    # DETECTION LOOP - Exact copy from original
+    # DETECTION LOOP
     # =========================================================================
 
     def _detection_loop(self):
@@ -393,10 +394,23 @@ class DetectionManager:
             # Run detection via DetectionService
             start_time = time.time()
 
+            # Detection floor is owned by the model (model_metadata.json
+            # drives self._detector.conf_threshold_default). Save-threshold
+            # is operator policy and may be auto-derived or manually set —
+            # see config.effective_save_threshold() + SAVE_THRESHOLD_MODE.
+            from config import effective_save_threshold
+
+            detector_obj = getattr(self.detection_service, "_detector", None)
+            underlying = getattr(detector_obj, "model", None) if detector_obj else None
+            detector_conf = (
+                getattr(underlying, "conf_threshold_default", None)
+                if underlying is not None
+                else None
+            )
+            save_thr = effective_save_threshold(self.config, detector_conf)
             detection_result = self.detection_service.detect(
                 frame=raw_frame,
-                confidence_threshold=self.config["CONFIDENCE_THRESHOLD_DETECTION"],
-                save_threshold=self.config["SAVE_THRESHOLD"],
+                save_threshold=save_thr,
             )
 
             # Extract results from DetectionResult
@@ -530,6 +544,8 @@ class DetectionManager:
                 x1, y1, x2, y2 = det["x1"], det["y1"], det["x2"], det["y2"]
                 od_conf = det["confidence"]
                 bbox_tuple = (x1, y1, x2, y2)
+                od_class_name = det.get("class_name", "bird")
+                is_bird = is_bird_od_class(od_class_name)
 
                 # Create crop for classification via CropService
                 crop_rgb = self.crop_service.create_classification_crop(
@@ -542,18 +558,31 @@ class DetectionManager:
                 if crop_rgb is None:
                     continue
 
-                # Classify via ClassificationService
+                # Classify via ClassificationService — bird track only.
+                # Non-bird OD classes (squirrel/cat/marten_mustelid/hedgehog)
+                # skip CLS entirely; their species identity comes straight
+                # from od_class_name.
                 cls_name = ""
                 cls_conf = 0.0
-                try:
-                    if crop_rgb is not None:
-                        cls_result = self.classification_service.classify(crop_rgb)
-                        cls_name = cls_result.class_name
-                        cls_conf = cls_result.confidence
-                        if not self.classifier_model_id:
-                            self.classifier_model_id = cls_result.model_id or ""
-                except Exception as e:
-                    logger.error(f"Classification error: {e}")
+                cls_result = None
+                if is_bird:
+                    try:
+                        if crop_rgb is not None:
+                            cls_result = self.classification_service.classify(crop_rgb)
+                            cls_name = cls_result.class_name
+                            cls_conf = cls_result.confidence
+                            if not self.classifier_model_id:
+                                self.classifier_model_id = cls_result.model_id or ""
+                    except Exception as e:
+                        logger.error(f"Classification error: {e}")
+
+                # Species key for temporal smoothing:
+                # - bird track: CLS result, or "unknown" when CLS failed
+                # - non-bird track: the OD class name itself (it IS the species)
+                if is_bird:
+                    species_key = cls_name or "unknown"
+                else:
+                    species_key = od_class_name
 
                 # Centralised scoring pipeline (single source of truth)
                 signals = compute_detection_signals(
@@ -562,12 +591,18 @@ class DetectionManager:
                     od_conf=od_conf,
                     cls_conf=cls_conf,
                     top_k_confidences=(
-                        cls_result.top_k_confidences if cls_conf > 0 else None
+                        cls_result.top_k_confidences
+                        if cls_result is not None and cls_conf > 0
+                        else None
                     ),
                     decision_policy=self.decision_policy_service,
                     temporal_service=self.temporal_decision_service,
                     capability_registry=self.capability_registry,
-                    species_key=cls_name or "unknown",
+                    species_key=species_key,
+                    od_class_name=od_class_name,
+                    non_bird_confirm_threshold=self.config.get(
+                        "SAVE_THRESHOLD", 0.65
+                    ),
                 )
                 score = signals.score
                 agreement = signals.agreement_score
@@ -626,8 +661,27 @@ class DetectionManager:
                         # Decision policy active → require CONFIRMED
                         notify_eligible = smoothed_state == DecisionState.CONFIRMED
                     else:
-                        # Legacy-conservative fallback (no decision policy)
-                        save_thr = self.config.get("SAVE_THRESHOLD", 0.65)
+                        # Legacy-conservative fallback (no decision policy).
+                        # Uses the same resolver as the detect loop so auto
+                        # and manual modes stay consistent across gates.
+                        from config import effective_save_threshold
+
+                        detector_obj = getattr(
+                            self.detection_service, "_detector", None
+                        )
+                        underlying = (
+                            getattr(detector_obj, "model", None)
+                            if detector_obj
+                            else None
+                        )
+                        detector_conf = (
+                            getattr(underlying, "conf_threshold_default", None)
+                            if underlying is not None
+                            else None
+                        )
+                        save_thr = effective_save_threshold(
+                            self.config, detector_conf
+                        )
                         notify_eligible = cls_conf > 0 and score >= save_thr
 
                     if score > best_score and notify_eligible:

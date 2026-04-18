@@ -17,15 +17,9 @@ if [ ! -f "$PENDING_FILE" ]; then
 fi
 
 echo "Reading pending WiFi configuration..."
-# Read SSID and PSK carefully (handling spaces)
-# Format is expected to be simple JSON or Key-Value. 
-# Let's assume the web app writes a simple line-based format or we parse it here.
-# Simpler: The web app writes the ready-to-use wpa_supplicant network block?
-# NO, parsing user input in bash is risky. 
-# Better: Web app writes JSON, we use python to generate the file?
-# OR: Web app writes the standard wpa_supplicant.conf content directly?
-# Since the web app validates inputs, letting it write the full file content is acceptable 
-# IF we trust the web app input validation. The file is owned by the app user.
+# The web app writes the full wpa_supplicant.conf content directly and
+# validates all user input before doing so. The file is owned by the app
+# user, so bash does not need to reparse or reformat the contents.
 
 # Move the file to boot
 echo "Installing WiFi configuration to SD Card..."

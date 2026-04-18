@@ -109,12 +109,29 @@ def _create_runtime():
         )
 
     if debug_mode:
+        _device_name = str(config.get("DEVICE_NAME", "") or "").strip()
+        _prefix = f"[{_device_name}] " if _device_name else ""
         send_telegram_message(
-            text="🐦 Birdwatching has started in DEBUG mode!",
+            text=f"{_prefix}🐦 Birdwatching has started in DEBUG mode!",
             photo_path="assets/debug.jpg",
         )
 
     # go2rtc sync already handled by ensure_go2rtc_stream_synced() above.
+
+    # Startup cleanup: wipe legacy FasterRCNN artefacts so in-place upgrades
+    # from pre-YOLOX deployments do not fail loudly at detector init. The
+    # autofetch then pulls the current YOLOX latest from HuggingFace.
+    # Idempotent on clean deployments (no-op when nothing matches).
+    from utils.model_downloader import prune_legacy_fasterrcnn_models
+
+    _legacy_od_dir = os.path.join(config["MODEL_BASE_PATH"], "object_detection")
+    _removed = prune_legacy_fasterrcnn_models(_legacy_od_dir)
+    if _removed:
+        logger.info(
+            "Legacy FasterRCNN cleanup removed %d file(s); HF autofetch "
+            "will provision the current YOLOX release on next DetectionManager init.",
+            len(_removed),
+        )
 
     detection_manager = DetectionManager()
     threading.Thread(target=detection_manager.start, daemon=True).start()

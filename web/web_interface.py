@@ -75,7 +75,6 @@ def create_web_interface(detection_manager, system_monitor=None):
 
     output_dir = config["OUTPUT_DIR"]
     output_resize_width = config["STREAM_WIDTH_OUTPUT_RESIZE"]
-    config["CONFIDENCE_THRESHOLD_DETECTION"]
     config["CLASSIFIER_CONFIDENCE_THRESHOLD"]
     EDIT_PASSWORD = config["EDIT_PASSWORD"]
     logger.info(
@@ -106,7 +105,7 @@ def create_web_interface(detection_manager, system_monitor=None):
     IMAGE_WIDTH = 150
     PAGE_SIZE = 50
 
-    from utils.species_names import load_common_names
+    from utils.species_names import load_common_names, species_key_from_candidates
 
     _species_locale = config.get("SPECIES_COMMON_NAME_LOCALE", "DE")
     COMMON_NAMES = load_common_names(_species_locale)
@@ -124,19 +123,13 @@ def create_web_interface(detection_manager, system_monitor=None):
         if manual_species:
             return manual_species
 
-        cls_species = det.get("cls_class_name")
-        if cls_species:
-            return cls_species
-
-        od_species = det.get("od_class_name")
-        if od_species and str(od_species).strip().lower() not in {
-            "bird",
-            "unknown",
-            "unclassified",
-        }:
-            return od_species
-
-        return UNKNOWN_SPECIES_KEY
+        # Delegate the bird-vs-non-bird fallback decision to the central
+        # helper so this code is in lockstep with
+        # utils/db/detections.effective_species_sql().
+        return species_key_from_candidates(
+            cls_class_name=det.get("cls_class_name"),
+            od_class_name=det.get("od_class_name"),
+        )
 
     def _get_common_name_local(species_key: str | None) -> str:
         if not species_key:
@@ -473,6 +466,19 @@ def create_web_interface(detection_manager, system_monitor=None):
                         "story_frames": story_frames,
                     }
                 )
+        colour_map = _assign_species_colours(
+            [
+                item.get("species_key") or UNKNOWN_SPECIES_KEY
+                for section in ("featured", "grid")
+                for item in enriched_board.get(section, [])
+            ]
+        )
+        for section in ("featured", "grid"):
+            for item in enriched_board.get(section, []):
+                slot = colour_map.get(item.get("species_key") or UNKNOWN_SPECIES_KEY)
+                item["species_colour"] = slot
+                for frame in item.get("story_frames", []):
+                    frame["species_colour"] = slot
         return enriched_board
 
     def get_captured_detections_by_date():
@@ -2065,7 +2071,9 @@ def create_web_interface(detection_manager, system_monitor=None):
                     return f"File not found: {path}"
                 try:
                     with open(path, encoding="utf-8", errors="ignore") as f:
-                        return "".join(deque(f, maxlen=max_lines))
+                        # Newest line first so the page "sticks" at the top:
+                        # user reads latest without scrolling to the bottom.
+                        return "".join(reversed(deque(f, maxlen=max_lines)))
                 except Exception as e:
                     return f"Error reading {path.name}: {e}"
 
@@ -2114,6 +2122,45 @@ def create_web_interface(detection_manager, system_monitor=None):
                 return dt.strftime("%d.%m.%Y %H:%M")
             except ValueError:
                 return "Unknown"
+
+        def _build_modal_detection(raw: dict, gallery_date: str = "") -> dict:
+            """Build a full detection dict suitable for render_modal."""
+            fp = raw.get("relative_path") or raw.get("optimized_name_virtual", "")
+            tv = raw.get("thumbnail_path_virtual")
+            d_url = (
+                f"/uploads/derivatives/thumbs/{tv}"
+                if tv
+                else f"/uploads/derivatives/optimized/{fp}"
+            )
+            f_url = f"/uploads/derivatives/optimized/{fp}"
+            o_url = f"/uploads/originals/{fp.replace('.webp', '.jpg')}"
+            ts = raw.get("image_timestamp", "")
+            ft, fd, _ = _format_ts_parts(ts)
+            sk = _get_species_key_local(raw)
+            return {
+                "detection_id": raw.get("detection_id"),
+                "species_key": sk,
+                "common_name": _get_common_name_local(sk),
+                "latin_name": sk,
+                "od_class_name": raw.get("od_class_name") or "",
+                "od_confidence": raw.get("od_confidence") or 0.0,
+                "cls_class_name": raw.get("cls_class_name") or "",
+                "cls_confidence": raw.get("cls_confidence") or 0.0,
+                "score": float(raw.get("score") or 0.0),
+                "display_path": d_url,
+                "full_path": f_url,
+                "original_path": o_url,
+                "formatted_time": ft,
+                "formatted_date": fd,
+                "gallery_date": gallery_date or _date_iso_from_timestamp(ts),
+                "sibling_count": raw.get("sibling_count", 1) or 1,
+                "siblings": [],
+                "bbox_x": raw.get("bbox_x", 0.0) or 0.0,
+                "bbox_y": raw.get("bbox_y", 0.0) or 0.0,
+                "bbox_w": raw.get("bbox_w", 0.0) or 0.0,
+                "bbox_h": raw.get("bbox_h", 0.0) or 0.0,
+                "is_favorite": bool(int(raw.get("is_favorite") or 0)),
+            }
 
         def _format_epoch_human(ts: float) -> str:
             if ts <= 0:
@@ -2360,6 +2407,45 @@ def create_web_interface(detection_manager, system_monitor=None):
         except Exception as e:
             logger.error(f"Error fetching species summary table: {e}")
 
+        # 4b. Today's Visitors Board (same pipeline as Best of Species)
+        today_visitors_board = {"featured": [], "grid": []}
+        today_visitors_modal_dets = []
+        try:
+            if today_rows:
+                today_visitors_board = _enrich_species_board(
+                    gallery_service.build_species_story_board(
+                        today_rows,
+                        total_limit=12,
+                        featured_count=3,
+                        excluded_species={UNKNOWN_SPECIES_KEY},
+                    )
+                )
+                # Collect detection IDs from the board (covers + story frames)
+                # and build full modal-ready dicts for those not in visual_summary.
+                board_det_ids = set()
+                for section in ("featured", "grid"):
+                    for item in today_visitors_board.get(section, []):
+                        if item.get("detection_id"):
+                            board_det_ids.add(item["detection_id"])
+                        for frame in item.get("story_frames", []):
+                            if frame.get("detection_id"):
+                                board_det_ids.add(frame["detection_id"])
+
+                vs_ids = {d.get("detection_id") for d in visual_summary}
+                extra_ids = board_det_ids - vs_ids
+                if extra_ids:
+                    today_rows_by_id = {
+                        d.get("detection_id"): d for d in today_rows
+                    }
+                    for det_id in extra_ids:
+                        raw = today_rows_by_id.get(det_id)
+                        if raw:
+                            today_visitors_modal_dets.append(
+                                _build_modal_detection(raw, today_iso)
+                            )
+        except Exception as e:
+            logger.error(f"Error fetching today visitors board: {e}")
+
         # 5. Archive Preview – latest 5 UNIQUE species (deduplicated)
         recent_archive_preview = []
         try:
@@ -2411,11 +2497,12 @@ def create_web_interface(detection_manager, system_monitor=None):
         # 5b. Best Species Story Board
         best_species_board = {"featured": [], "grid": []}
         best_species_preview = []
+        best_species_modal_dets = []
         try:
+            all_detections = get_captured_detections()
             best_species_board = _enrich_species_board(
                 gallery_service.build_species_story_board(
-                    get_captured_detections(),
-
+                    all_detections,
                     total_limit=12,
                     featured_count=3,
                     excluded_species={UNKNOWN_SPECIES_KEY},
@@ -2425,6 +2512,25 @@ def create_web_interface(detection_manager, system_monitor=None):
                 best_species_board.get("featured", [])
                 + best_species_board.get("grid", [])
             )
+
+            # Build full modal-ready dicts for all board detections
+            best_det_ids = set()
+            for section in ("featured", "grid"):
+                for item in best_species_board.get(section, []):
+                    if item.get("detection_id"):
+                        best_det_ids.add(item["detection_id"])
+                    for frame in item.get("story_frames", []):
+                        if frame.get("detection_id"):
+                            best_det_ids.add(frame["detection_id"])
+
+            if best_det_ids:
+                all_by_id = {d.get("detection_id"): d for d in all_detections}
+                for det_id in best_det_ids:
+                    raw = all_by_id.get(det_id)
+                    if raw:
+                        best_species_modal_dets.append(
+                            _build_modal_detection(raw)
+                        )
         except Exception as e:
             logger.error(f"Error fetching best species board: {e}")
 
@@ -2511,6 +2617,8 @@ def create_web_interface(detection_manager, system_monitor=None):
             current_path="/",  # Active nav state
             latest_detections=latest_detections,
             visual_summary=visual_summary,
+            today_visitors_board=today_visitors_board,
+            today_visitors_modal_dets=today_visitors_modal_dets,
             species_summary=species_summary_table,
             dashboard_stats=dashboard_stats,
             empty_latest_message="No detections in the last 24 hours.",
@@ -2521,6 +2629,7 @@ def create_web_interface(detection_manager, system_monitor=None):
             recent_archive_preview=recent_archive_preview,
             best_species_board=best_species_board,
             best_species_preview=best_species_preview,
+            best_species_modal_dets=best_species_modal_dets,
             landing_status=landing_status,
             noise_hourly=noise_hourly,
         )
@@ -2563,7 +2672,6 @@ def create_web_interface(detection_manager, system_monitor=None):
         "MOTION_DETECTION_ENABLED",
     }
     RUNTIME_NUMBER_KEYS = {
-        "CONFIDENCE_THRESHOLD_DETECTION",
         "SAVE_THRESHOLD",
         "DETECTION_INTERVAL_SECONDS",
         "CLASSIFIER_CONFIDENCE_THRESHOLD",
@@ -2574,14 +2682,14 @@ def create_web_interface(detection_manager, system_monitor=None):
     }
 
     SETTING_LABELS = {
-        "CONFIDENCE_THRESHOLD_DETECTION": "OD Confidence Threshold (Minimum detector confidence to identify a bird)",
-        "SAVE_THRESHOLD": "OD Save Threshold (Minimum detector confidence to save image to disk)",
+        "SAVE_THRESHOLD": "OD Save Threshold (Minimum detector confidence to save image to disk; ignored in Auto mode)",
+        "SAVE_THRESHOLD_MODE": "Save Threshold Mode (Auto: derive from active model · Manual: use Save Threshold value)",
         "DETECTION_INTERVAL_SECONDS": "Detection Interval (Seconds between AI analysis cycles - higher = less CPU)",
         "CLASSIFIER_CONFIDENCE_THRESHOLD": "CLS Confidence Threshold (Minimum classifier confidence for species naming)",
         "DAY_AND_NIGHT_CAPTURE": "24/7 Capture (Enable or disable night-time detection)",
         "DAY_AND_NIGHT_CAPTURE_LOCATION": "Sun Event Location (City name for sunrise/sunset checks)",
-        "TELEGRAM_ENABLED": "Telegram Alerts (Enable notification messages with photos)",
-        "TELEGRAM_COOLDOWN": "Telegram Cooldown (Minimum seconds between consecutive alerts)",
+        "TELEGRAM_ENABLED": "Live Alerts (Send Telegram messages when birds are detected)",
+        "TELEGRAM_COOLDOWN": "Alert Cooldown (Minimum seconds between live alerts)",
         "STREAM_FPS": "Stream Display FPS (Visual smoothness in the web browser)",
         "STREAM_FPS_CAPTURE": "Stream Capture FPS (Internal capture rate - affects CPU impact)",
         "EDIT_PASSWORD": "Edit Password (Required to apply changes or delete images)",
@@ -2606,7 +2714,7 @@ def create_web_interface(detection_manager, system_monitor=None):
     # Keys ordered for UI display purposes
     RUNTIME_KEYS_ORDER = [
         "VIDEO_SOURCE",
-        "CONFIDENCE_THRESHOLD_DETECTION",
+        "SAVE_THRESHOLD_MODE",
         "SAVE_THRESHOLD",
         "DETECTION_INTERVAL_SECONDS",
         "CLASSIFIER_CONFIDENCE_THRESHOLD",

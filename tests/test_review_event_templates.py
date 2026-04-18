@@ -93,13 +93,10 @@ def test_review_event_panel_exposes_event_actions_and_grid():
     assert 'data-review-panel-action="trash_event"' in content
     assert 'data-review-panel-action="select_event_species"' in content
     assert 'data-review-panel-action="open_event_species_picker"' in content
-    assert "data-review-open-item" in content
-    assert "event.bbox_trail" in content
     assert "event.members" in content
     assert "Approve Event" in content
     assert "Move Event to Trash" in content
     assert "Choose another species" in content
-    assert "Review in Queue" in content
 
     # New equal-size grid: the cell + grid classes are present and the
     # grid is aria-labelled so rail navigation stays accessible.
@@ -114,11 +111,16 @@ def test_review_event_panel_exposes_event_actions_and_grid():
     assert "review-event-panel__member-media" not in content
     assert "review-stage-panel__image-frame wm-toolbox-host" not in content
 
-    # The mini-map lives in the right control rail as the `--aside`
-    # variant and stays visible.
-    assert "review-event-panel__trail-section--aside" in content
-    # The retired `--compact` variant is gone.
-    assert "review-event-panel__trail-section--compact" not in content
+    # Retired 2026-04-19: the right-rail mini-trail + "Event Ready" badge
+    # were redundant with the grid header and cell bbox overlays.
+    assert "review-event-panel__trail-section" not in content
+    assert "review-event-panel__trail-map" not in content
+    assert "review-event-panel__trail-head" not in content
+    assert "event.bbox_trail" not in content
+
+    # Retired 2026-04-19: the Utilities / "Review in Queue" button.
+    assert "data-review-open-item" not in content
+    assert "Review in Queue" not in content
 
 
 def test_review_workspace_js_handles_event_state_and_actions():
@@ -206,45 +208,48 @@ def test_review_event_panel_mounts_tile_toolbox_on_every_grid_cell():
     assert content.count("can_moderate=true") >= 1
 
 
-def test_review_event_panel_renders_fixed_five_frame_budget():
-    """Every event renders at most five cells.
+def test_review_event_panel_renders_every_member():
+    """Every event renders **all** its members as first-class cells.
 
-    Review frames (``context_only == false``) win the first slots in
-    timestamp order; remaining slots fill with context frames until the
-    budget is exhausted. Each physical frame appears exactly once.
+    Review frames (``context_only == false``) come first in timestamp
+    order so the operator can approve/relabel them; context frames
+    (Gallery anchors, same-species continuation) follow, still in
+    timestamp order, shown read-only for orientation. Each physical
+    frame appears exactly once.
+
+    The previous Fixed-5 frame budget (2026-04-08) was retired on
+    2026-04-19 because it hid relabel-affected frames from the
+    operator when events carried more than five review-frames.
+    Honest default: show everything that will be approved plus
+    everything already in Gallery.
 
     Invariants the template must preserve:
     - A single ``display_members`` list is computed at the top of the
       file from ``event.members`` partitioned on ``member.context_only``.
-    - The budget constant is ``5`` (not configurable from templates).
     - The grid loop iterates ``display_members``, not ``event.members``.
-    - The overflow hint surfaces a non-zero ``_hidden_count`` so the
-      operator knows when the view is clipped.
+    - No frame budget cap; no overflow hint (there is no clipping now).
     - The retired batch-panel surface is fully gone from the template
       (no ``review-batch-panel__*`` classes, no ``Apply Batch``, no
       ``continuity_batch`` reads inside the template).
     """
     content = _read("templates/components/review_event_panel.html")
 
-    # Partition + budget setup.
+    # Partition: review-frames first, context-frames second — no cap.
     assert "_review_members = event.members | rejectattr('context_only') | list" in content
     assert "_context_members = event.members | selectattr('context_only') | list" in content
-    assert "_frame_budget = 5" in content
-    assert "_review_budget = _review_members[:_frame_budget]" in content
-    assert (
-        "_context_budget = _context_members[:_frame_budget - (_review_budget | length)]"
-        in content
-    )
-    assert "display_members = _review_budget + _context_budget" in content
-    assert "_hidden_count = (event.members | length) - (display_members | length)" in content
+    assert "display_members = _review_members + _context_members" in content
 
-    # Grid loop reads the budgeted list, not the raw members list.
+    # The old Fixed-5 budget variables are gone.
+    assert "_frame_budget" not in content
+    assert "_review_budget" not in content
+    assert "_context_budget" not in content
+    assert "_hidden_count" not in content
+    assert "review-event-panel__grid-caption-overflow" not in content
+    assert "ausgeblendet" not in content
+
+    # Grid loop reads the full display list.
     assert "{% for member in display_members %}" in content
     assert "{% for member in event.members %}" not in content
-
-    # Overflow hint surfaces when the event has more frames than fit.
-    assert "_hidden_count > 0" in content
-    assert "review-event-panel__grid-caption-overflow" in content
 
     # The retired batch-panel surface is fully gone from the template.
     assert "review-batch-panel" not in content
@@ -644,9 +649,15 @@ def test_review_event_panel_e_copy_cleanup():
     # The old "Cover image plus" copy is gone because there is no
     # dedicated cover-frame concept in this layout anymore.
     assert "Cover image plus" not in content
-    # The new grid caption container is present.
+    # The grid caption container is present and states honestly what
+    # "Approve Event" will do. The old "Approve once the pattern is
+    # consistent" copy was retired on 2026-04-19 together with the
+    # Fixed-5 budget: the caption now says exactly how many frames
+    # will be approved and how many context frames are already in
+    # the Gallery.
     assert "review-event-panel__grid-caption" in content
-    assert "Approve once the pattern is consistent." in content
+    assert "will be approved" in content
+    assert "review-event-panel__grid-caption-context" in content
 
 
 def test_canvas_draw_forwards_species_colour_from_currentbbox():
@@ -767,38 +778,24 @@ def test_js_species_palette_reads_from_css_custom_properties():
 # ─────────────────────────────────────────────────────────────────────
 
 
-def test_event_grid_cells_render_keep_trash_frame_toggle():
-    """Every actionable event cell carries a per-frame decision toggle.
+def test_event_grid_cells_no_longer_render_per_frame_keep_trash_toggle():
+    """Per-frame Keep/Trash toggle is retired from the event grid.
 
-    `Open in Queue` per-cell drill-downs are gone from the event grid.
-    Each cell renders a local toggle that defaults to ``Keep this frame``
-    and can flip to ``Trash this frame`` without touching the server. The
-    mixed resolve happens when the operator presses `Approve Event`.
+    Retired 2026-04-19: the inline Keep-this-frame / Trash-this-frame
+    button under every cell was tied to the Mixed-Event resolve path
+    and cluttered the grid. Per-frame Trash lives in the Hover-Toolbox
+    (Move to Trash) and in the Multi-Select batch footer (Trash
+    Selected). The backend mixed-resolve endpoint stays in place but
+    is no longer triggered from the event panel UI.
     """
     content = _read("templates/components/review_event_panel.html")
 
-    # The new decision toggle is wired on every actionable cell.
-    assert "data-review-frame-decision" in content
-    assert 'data-frame-state="keep"' in content
-    assert "Keep this frame" in content
-    assert "data-frame-decision-copy" in content
-
-    # The per-cell `Open in Queue` copy is gone. The escape hatch in the
-    # right rail (`Review in Queue`) stays as a single-shot utility, but
-    # the per-cell drill-down copy must not appear inside the cell loop.
-    # There should be exactly one `Open this frame in the per-detection
-    # queue` tooltip or fewer — none on the event cell itself. The batch
-    # `Open in Queue` button remains so we can't assert full absence, but
-    # the event-grid cell action must now be the keep/trash toggle.
-    assert "review-event-panel__cell-action" in content
-    # Sanity: the event-cell action is no longer an Open in Queue button.
-    # Find the cell-action block and assert the new attributes are
-    # colocated with it (string proximity is fine for a template smoke
-    # test).
-    cell_action_idx = content.index('class="review-event-panel__cell-action')
-    cell_action_block = content[cell_action_idx:cell_action_idx + 600]
-    assert "data-review-frame-decision" in cell_action_block
-    assert "Open in Queue" not in cell_action_block
+    # The per-frame toggle and its hooks are gone from the template.
+    assert "data-review-frame-decision" not in content
+    assert 'data-frame-state="keep"' not in content
+    assert "Keep this frame" not in content
+    assert "data-frame-decision-copy" not in content
+    assert "review-event-panel__cell-action" not in content
 
 
 def test_review_workspace_js_wires_frame_decision_and_event_resolve():

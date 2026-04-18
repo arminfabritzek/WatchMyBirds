@@ -609,10 +609,21 @@ def fetch_simulation_data(
 
     Uses visual detections (camera data) as the primary source.
     """
+    # effective_species_sql() resolves:
+    #   - manual override first
+    #   - CLS top1 result second
+    #   - OD class name third, normalized ('bird'/'unknown'/'unclassified'
+    #     collapse to UNKNOWN_SPECIES_KEY; non-bird OD class names like
+    #     'squirrel' pass through as species).
+    # This replaces raw COALESCE(c.cls_class_name, d.od_class_name) which
+    # used to let 'bird' leak through as a species.
+    from utils.db.detections import effective_species_sql
+    from utils.species_names import UNKNOWN_SPECIES_KEY
+
     try:
         # 1. Species list for dropdown (gallery-aligned visibility)
-        species_cur = conn.execute("""
-            SELECT DISTINCT COALESCE(c.cls_class_name, d.od_class_name) AS species
+        species_cur = conn.execute(f"""
+            SELECT DISTINCT {effective_species_sql("d")} AS species
             FROM detections d
             JOIN images i ON d.image_filename = i.filename
             LEFT JOIN classifications c
@@ -620,7 +631,7 @@ def fetch_simulation_data(
             WHERE d.status = 'active'
               AND (i.review_status IS NULL OR i.review_status != 'no_bird')
               AND lower(COALESCE(d.decision_state, '')) NOT IN ('uncertain', 'unknown')
-              AND COALESCE(c.cls_class_name, d.od_class_name) IS NOT NULL
+              AND {effective_species_sql("d")} != '{UNKNOWN_SPECIES_KEY}'
             ORDER BY species ASC
         """)
         species_list = [r["species"] for r in species_cur.fetchall()]
@@ -696,9 +707,9 @@ def fetch_simulation_data(
             )
 
         # 4. Per-species counts for biodiversity indices (gallery-aligned)
-        count_cur = conn.execute("""
+        count_cur = conn.execute(f"""
             SELECT
-                COALESCE(c.cls_class_name, d.od_class_name) AS species,
+                {effective_species_sql("d")} AS species,
                 COUNT(*) AS n
             FROM detections d
             JOIN images i ON d.image_filename = i.filename
@@ -707,7 +718,7 @@ def fetch_simulation_data(
             WHERE d.status = 'active'
               AND (i.review_status IS NULL OR i.review_status != 'no_bird')
               AND lower(COALESCE(d.decision_state, '')) NOT IN ('uncertain', 'unknown')
-              AND COALESCE(c.cls_class_name, d.od_class_name) IS NOT NULL
+              AND {effective_species_sql("d")} != '{UNKNOWN_SPECIES_KEY}'
             GROUP BY species
             ORDER BY n DESC
         """)
@@ -885,22 +896,42 @@ def fetch_bird_visits(
         time_filter = "AND i.timestamp >= ?"
         params = (since_timestamp,)
 
+    from utils.db.detections import effective_species_sql_for_columns, table_columns
+    from utils.species_names import UNKNOWN_SPECIES_KEY
+
+    detection_columns = table_columns(conn, "detections")
+    image_columns = table_columns(conn, "images")
+    classification_columns = table_columns(conn, "classifications")
+    species_sql = effective_species_sql_for_columns(
+        "d", detection_columns, classification_columns
+    )
+
+    where_clauses = []
+    if "status" in detection_columns:
+        where_clauses.append("d.status = 'active'")
+    if "review_status" in image_columns:
+        where_clauses.append(
+            "(i.review_status IS NULL OR i.review_status != 'no_bird')"
+        )
+    if "decision_state" in detection_columns:
+        where_clauses.append(
+            "lower(COALESCE(d.decision_state, '')) NOT IN ('uncertain', 'unknown')"
+        )
+    where_clauses.append(f"{species_sql} != '{UNKNOWN_SPECIES_KEY}'")
+    if time_filter:
+        where_clauses.append("i.timestamp >= ?")
+    where_sql = "\n          AND ".join(where_clauses)
+
     cur = conn.execute(
         f"""
         SELECT
             d.detection_id,
-            COALESCE(c.cls_class_name, d.od_class_name) AS species,
+            {species_sql} AS species,
             i.timestamp AS ts,
             d.bbox_x, d.bbox_y, d.bbox_w, d.bbox_h
         FROM detections d
         JOIN images i ON d.image_filename = i.filename
-        LEFT JOIN classifications c
-            ON d.detection_id = c.detection_id AND c.status = 'active'
-        WHERE d.status = 'active'
-          AND (i.review_status IS NULL OR i.review_status != 'no_bird')
-          AND lower(COALESCE(d.decision_state, '')) NOT IN ('uncertain', 'unknown')
-          AND COALESCE(c.cls_class_name, d.od_class_name) IS NOT NULL
-          {time_filter}
+        WHERE {where_sql}
         ORDER BY i.timestamp ASC, species ASC
     """,
         params,

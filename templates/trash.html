@@ -429,7 +429,7 @@
         async function previewImportedTrash() {
             importPreviewBtn.disabled = true;
             importConfirmBtn.disabled = true;
-            importStatus.textContent = 'Resolving detections from Source = User Import...';
+            importStatus.textContent = 'Resolving detections from Source: User Import...';
 
             try {
                 const resolved = await WmBatchActions.resolveSelection({
@@ -456,7 +456,7 @@
                             (resolved.orphan_count || 0) + ' orphan imported image(s) will be moved to trash.';
                     }
                 } else {
-                    importStatus.textContent = 'No trash candidates found for Source = User Import.';
+                    importStatus.textContent = 'No trash candidates found for Source: User Import.';
                 }
             } catch (err) {
                 console.error('[trash-import-filter] Preview failed:', err);

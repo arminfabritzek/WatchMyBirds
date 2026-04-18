@@ -63,6 +63,29 @@ def test_detection_modal_supports_optional_nav_scope_and_index():
     assert "wikipedia_species_url(det.common_name, title_species)" in content
 
 
+def test_detection_modals_defer_full_image_load_until_modal_open():
+    detection_modal = _read("templates/components/detection_modal.html")
+    viewer = _read("templates/components/modal_image_viewer.html")
+    css = _read("assets/design-system.css")
+    js = _read("assets/js/gallery_utils.js")
+
+    assert "defer_src=true" in detection_modal
+    assert "data-deferred-src" in viewer
+    assert "wm-image-viewer--loading" in viewer
+    assert ".wm-image-viewer--loading" in css
+    assert "loadDeferredViewerImages" in js
+    assert "'show.bs.modal'" in js
+
+
+def test_modal_action_bar_data_actions_are_dispatched():
+    action_bar = _read("templates/components/modal_action_bar.html")
+    js = _read("assets/js/tile_actions.js")
+
+    assert 'class="modal-action-bar"' in action_bar
+    assert 'data-action="move-trash"' in action_bar
+    assert "actionEl.closest('.modal-action-bar')" in js
+
+
 def test_detection_info_hides_decision_badges_after_manual_species_review():
     content = _read("templates/components/modal_detection_info.html")
 

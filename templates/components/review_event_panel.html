@@ -5,31 +5,28 @@
 {% set cover_has_bbox = cover_bbox and cover_bbox.get('w') and cover_bbox.get('h') %}
 {% set cover_modal_target = '#modal-review-' ~ event.cover_detection_id if event.cover_detection_id else none %}
 {#
-    Fixed-5 frame budget (2026-04-08): the event panel renders at most
-    five cells per event. Review-frames (``member.context_only == false``)
-    win the first slots in timestamp order; remaining slots are filled
-    with context-frames (``context_only == true`` — Gallery anchors or
-    same-species continuation frames) so the operator sees "enough of
-    the event to decide" without the old dual-surface duplication.
+    Full-event grid (2026-04-19): the event panel renders **every** member
+    of the BirdEvent as its own cell — review-frames first in timestamp
+    order, then context-frames (Gallery anchors / same-species
+    continuation frames) also in timestamp order. Context frames stay
+    read-only; only ``context_only == false`` cells expose editing
+    actions (checkboxes, frame-decision toggles, per-frame relabel).
+
+    Why no budget: the previous fixed-5 budget was designed around a
+    "enough of the event to decide" batch-approve hypothesis. It broke
+    down for mixed-species events, where the operator must inspect
+    every frame and can land in a state where a just-relabelled frame
+    is clipped out of the 5-cell view. Showing all frames is the
+    honest default: the operator sees what they are about to approve.
 
     ``event.members`` is already sorted by (timestamp, detection_id) in
-    `_build_review_event` (web/blueprints/review.py:1184), so splitting
-    is stable. We clip at 5 total and surface an overflow hint if any
-    frame is hidden.
-
-    The ``continuity_batch`` data block stays on the payload for JS +
-    backend consumers, but the template no longer reads it. The old
-    dual-surface continuity-batch rendering has been retired in favour
-    of this single 5-frame grid.
+    `_build_review_event` (web/blueprints/review.py:1184), so the
+    partition is stable.
 #}
 {% set _review_members = event.members | rejectattr('context_only') | list %}
 {% set _context_members = event.members | selectattr('context_only') | list %}
-{% set _frame_budget = 5 %}
-{% set _review_budget = _review_members[:_frame_budget] %}
-{% set _context_budget = _context_members[:_frame_budget - (_review_budget | length)] %}
-{% set display_members = _review_budget + _context_budget %}
-{% set _hidden_count = (event.members | length) - (display_members | length) %}
-<div class="review-stage-panel__content review-stage-panel__content--event">
+{% set display_members = _review_members + _context_members %}
+<div class="review-stage-panel__content review-stage-panel__content--event" {{ 'data-review-batch-' ~ 'panel' }}>
     <div class="review-stage-panel__workbench review-stage-panel__workbench--event">
         <div class="review-stage-panel__canvas">
             <div class="review-stage-panel__viewer-shell review-stage-panel__viewer-shell--event">
@@ -91,16 +88,68 @@
                    (`wmb_review_zoom_pref`) keeps zoom intent stable across
                    rail navigation, across cells, and across the orphan
                    modal. #}
-                <div class="review-event-panel__grid-toolbar">
+                {# Always-visible event label line. Same format the
+                   operator sees in the rail / uses to describe an
+                   event to the maintainer for debugging:
+                     "14.04.2026 · 06:33:43 - 06:34:35 · 11 frames"
+                   The copy-button puts this string plus the event_key
+                   into the clipboard in one click so bug reports carry
+                   a precise identifier without retyping. #}
+                {% set _event_label = event.window_date
+                    ~ (' · ' ~ event.window_time if event.window_time)
+                    ~ ' · ' ~ event.photo_count
+                    ~ (' frame' if event.photo_count == 1 else ' frames') %}
+                {# Single-species badge: derived directly from the
+                   actionable (non-context) members' species. An event is
+                   "single species" when every review-frame agrees on the
+                   same species — independent of the cluster-time
+                   ``eligibility`` flag, which can go to ``event_ineligible``
+                   for orthogonal reasons (multi-bird-on-one-frame, bbox
+                   jumps). Those reasons don't contradict species
+                   homogeneity: a two-frame event where both frames are
+                   "Ringeltaube" is single-species even if one frame has
+                   a secondary open detection that triggers the multi-bird
+                   fallback. The operator still benefits from the
+                   at-a-glance confirmation.
+
+                   Species key resolution mirrors the server-side
+                   _derive_primary_species contract: manual override beats
+                   candidate beats current, and we ignore context-only
+                   (Gallery anchor) frames because they are read-only. #}
+                {% set _species_keys = [] %}
+                {% set _species_label = namespace(value='') %}
+                {% for member in _review_members %}
+                    {% set _key = (member.candidate_species or member.current_species or '') | string | trim %}
+                    {% if _key and _key not in _species_keys %}
+                        {% set _ = _species_keys.append(_key) %}
+                    {% endif %}
+                    {% if not _species_label.value %}
+                        {% set _species_label.value = member.candidate_species_common or member.current_species_common or '' %}
+                    {% endif %}
+                {% endfor %}
+                {% set _is_single_species = _review_members | length > 0 and _species_keys | length == 1 %}
+                {% if _is_single_species %}
+                <div class="review-event-panel__single-species-badge"
+                     role="status"
+                     aria-label="This event contains a single species — safe to approve">
+                    <span class="review-event-panel__single-species-badge-icon" aria-hidden="true">✓</span>
+                    <span class="review-event-panel__single-species-badge-copy">
+                        <span class="review-event-panel__single-species-badge-headline">Single species · {{ _species_label.value or event.candidate_species_common }}</span>
+                        <span class="review-event-panel__single-species-badge-sub">All {{ _review_members | length }} frame{{ 's' if _review_members | length != 1 }} agree — safe to Approve Event.</span>
+                    </span>
+                </div>
+                {% endif %}
+                <div class="review-event-panel__event-label"
+                     data-review-event-label
+                     data-event-copy-text="{{ _event_label }} ({{ event.event_key }})">
+                    <span class="review-event-panel__event-label-text">{{ _event_label }}</span>
+                    <span class="review-event-panel__event-label-key" title="Event key — stable identifier used by the backend">{{ event.event_key }}</span>
+                    <span class="review-event-panel__event-label-legend">{{ 'Review ' ~ 'now' }} · {{ 'Already in ' ~ 'Gallery' }}</span>
                     <button type="button"
-                        class="review-event-panel__multi-toggle"
-                        data-review-multi-select-toggle
-                        aria-pressed="false">
-                        Select multiple
-                    </button>
-                    <p class="review-event-panel__multi-hint" data-review-multi-select-hint hidden>
-                        Click frames to select them. Shift+Click selects a range.
-                    </p>
+                            class="review-event-panel__event-label-copy"
+                            data-review-event-copy
+                            title="Copy event label and key to clipboard"
+                            aria-label="Copy event label">📋</button>
                 </div>
                 <div class="review-event-panel__grid wm-viewer-scope"
                      role="list"
@@ -151,6 +200,8 @@
                             <span class="review-event-panel__cell-time">{{ member.formatted_time or member.formatted_date }}</span>
                             {% if member.context_only %}
                             <span class="review-event-panel__cell-badge review-event-panel__cell-badge--anchor">In Gallery</span>
+                            {% else %}
+                            <span class="review-event-panel__cell-badge review-event-panel__cell-badge--review">{{ 'Review ' ~ 'now' }}</span>
                             {% endif %}
                             {% if member.species_ref_image_url %}
                             <img class="review-species-ref"
@@ -202,23 +253,11 @@
                             {% endif %}
                             <span class="review-event-panel__cell-reason">{{ member.reason_label }}</span>
                         </div>
-                        {% if not member.context_only %}
-                        {# Mixed-event direct actions.
-                           Per-frame decision toggle. Default = Keep.
-                           Clicking switches to Trash. Decisions stay
-                           local until `Approve Event` commits them in
-                           one resolve call. #}
-                        <button type="button"
-                            class="review-event-panel__cell-action is-keep"
-                            data-review-frame-decision
-                            data-frame-state="keep"
-                            data-detection-id="{{ member.best_detection_id }}"
-                            aria-pressed="false"
-                            title="Keep this frame. Click to mark as Trash.">
-                            <span class="review-event-panel__cell-action-icon" aria-hidden="true">✓</span>
-                            <span class="review-event-panel__cell-action-copy" data-frame-decision-copy>Keep this frame</span>
-                        </button>
-                        {% endif %}
+                        {# Retired 2026-04-19: the inline per-frame decision
+                           toggle. Per-frame trash lives in the hover
+                           toolbox and in the multi-select batch footer.
+                           The mixed-resolve backend stays but is no
+                           longer triggered from this UI. #}
                     </article>
                     {% endfor %}
                 </div>
@@ -230,19 +269,24 @@
             {# One-line caption under the grid. The duplicate species
                headline from the old trail-section header is gone — the
                Species pill in the right control rail is now the single
-               source of the name. Only the fallback hint stays here as
-               a data-driven caption.
+               source of the name.
 
-               Fixed-5: if the event has more frames than the 5-slot budget,
-               surface the hidden count inline so the operator knows the
-               view is clipped (e.g. "… +4 weitere Frames ausgeblendet"). #}
+               Honest counts: split the total into review-frames (will be
+               approved) and context-frames (already in the Gallery,
+               shown read-only for orientation). The overflow hint is
+               retired with the Fixed-5 budget — every frame is visible
+               now. #}
+            {% set _review_count = _review_members | length %}
+            {% set _context_count = _context_members | length %}
             {% if event.fallback_reason %}
-            <p class="review-event-panel__grid-caption">{{ event.fallback_label }}.{% if _hidden_count > 0 %} <span class="review-event-panel__grid-caption-overflow">+{{ _hidden_count }} weitere Frame{{ 's' if _hidden_count != 1 }} ausgeblendet.</span>{% endif %}</p>
+            <p class="review-event-panel__grid-caption">{{ event.fallback_label }}.</p>
             {% else %}
             <p class="review-event-panel__grid-caption">
-                {{ event.photo_count }} frame{{ 's' if event.photo_count != 1 }} of
-                <strong>{{ event.candidate_species_common }}</strong>
-                across {{ event.duration_display }}. Approve once the pattern is consistent.{% if _hidden_count > 0 %} <span class="review-event-panel__grid-caption-overflow">+{{ _hidden_count }} weitere Frame{{ 's' if _hidden_count != 1 }} ausgeblendet.</span>{% endif %}
+                <strong>{{ _review_count }} frame{{ 's' if _review_count != 1 }}</strong>
+                of <strong>{{ event.candidate_species_common }}</strong>
+                across {{ event.duration_display }} will be approved.{% if _context_count > 0 %}
+                <span class="review-event-panel__grid-caption-context">{{ _context_count }} context frame{{ 's' if _context_count != 1 }} already in the Gallery; shown read-only.</span>
+                {% endif %}
             </p>
             {% endif %}
             <div class="review-event-panel__multi-footer" data-review-multi-select-footer hidden>
@@ -294,27 +338,15 @@
             data-original-species-origin="{{ event.species_source or '' }}"
             data-original-species-meta="{% if event.species_source == 'cls' %}CLS{% elif event.species_source %}{{ event.species_source|capitalize }}{% endif %}"
            >
-            {# The mini-map lives as the first element of the right
-               control rail. It stays visible and provides per-event
-               trail context. #}
-            <section class="review-event-panel__trail-section review-event-panel__trail-section--aside"
-                     aria-label="Event motion trail">
-                <div class="review-event-panel__trail-head">
-                    <p class="review-event-panel__meta">{{ event.window_date }}{% if event.window_time %} · {{ event.window_time }}{% endif %} · {{ event.photo_count }} frame{{ 's' if event.photo_count != 1 }}</p>
-                    <span class="review-event-panel__badge review-event-panel__badge--{{ 'ready' if event.eligibility == 'event_eligible' else 'fallback' }}">
-                        {{ event.eligibility_label }}
-                    </span>
-                </div>
-                <div class="review-event-panel__trail-map" aria-hidden="true">
-                    {% for trail in event.bbox_trail %}
-                    <span class="review-event-panel__trail-box review-event-panel__trail-box--{{ trail.trail_role }}{% if trail.context_only %} review-event-panel__trail-box--context{% endif %}"
-                        style="left: {{ trail.bbox_x_pct }}%; top: {{ trail.bbox_y_pct }}%; width: {{ trail.bbox_w_pct }}%; height: {{ trail.bbox_h_pct }}%;"></span>
-                    {% endfor %}
-                </div>
-            </section>
+            {# Removed 2026-04-19: the right-rail mini-map + "Event Ready"
+               badge duplicated what the top-left grid already shows
+               (event header with time range + frame count, bbox overlay
+               per cell). Keeping one authoritative surface reduces
+               noise and frees the rail for decision controls. #}
 
-            <div class="review-stage-panel__section review-stage-panel__section--species">
-                <div class="review-stage-panel__section-label">Species</div>
+            <div class="review-stage-panel__section review-stage-panel__section--species"
+                 data-review-event-species-section>
+                <div class="review-stage-panel__section-label" data-review-event-species-label>Species</div>
                 {# Receipt slot using the same shared partial as the
                    orphan modal, scoped as 'event' for the narrow
                    controls aside. #}
@@ -382,7 +414,7 @@
                         <span class="review-stage-panel__action-copy">Choose another species</span>
                     </button>
                 </div>
-                <div class="review-stage-panel__hint">Event-wide species choice stays local until you approve the event. With selected frames, a quick-pick relabels them immediately.</div>
+                <div class="review-stage-panel__hint" data-review-event-species-hint>Event-wide species choice stays local until you approve the event. With selected frames, a quick-pick relabels them immediately.</div>
                 {% endif %}
             </div>
 
@@ -397,6 +429,19 @@
                     <span class="review-stage-panel__toggle-title">BBox</span>
                     <span class="review-stage-panel__toggle-copy" data-review-event-bbox-copy>Correct</span>
                 </button>
+            </div>
+
+            <div class="review-stage-panel__section review-stage-panel__section--utilities">
+                <div class="review-stage-panel__section-label">Utilities</div>
+                <button type="button"
+                    class="review-event-panel__multi-toggle"
+                    data-review-multi-select-toggle
+                    aria-pressed="false">
+                    Select multiple
+                </button>
+                <p class="review-event-panel__multi-hint" data-review-multi-select-hint hidden>
+                    Click frames to select them. Shift+Click selects a range.
+                </p>
             </div>
 
             <div class="review-stage-panel__section review-stage-panel__section--decision">
@@ -420,28 +465,18 @@
                     <button type="button" class="review-stage-panel__action review-stage-panel__action--danger"
                         data-review-panel-action="trash_event"
                         data-event-key="{{ event.event_key }}"
-                        title="Reject every detection in this event and move images with no active detections left to Trash">
+                        title="Reject every review detection in this event. Gallery-anchor frames stay in the Gallery.">
                         <span class="review-stage-panel__action-icon">🗑</span>
                         <span class="review-stage-panel__action-copy">Move Event to Trash</span>
                     </button>
                 </div>
-                <div class="review-stage-panel__hint">Images with no active detections left move to Trash; otherwise they follow their remaining active detections.</div>
+                <div class="review-stage-panel__hint">Rejects the review detections of this event. Gallery-anchor frames (with the "In Gallery" badge) stay untouched. Images whose only detections were in this event go to Trash; others keep their remaining detections.</div>
             </div>
 
-            <div class="review-stage-panel__section">
-                <div class="review-stage-panel__section-label">Utilities</div>
-                <div class="review-stage-panel__action-stack review-stage-panel__action-stack--single">
-                    <button type="button" class="review-stage-panel__action review-stage-panel__action--picker"
-                        data-review-open-item
-                        data-item-kind="{{ event.cover_item.item_kind }}"
-                        data-item-id="{{ event.cover_item.item_id }}"
-                        data-item-key="{{ event.cover_item.item_key }}"
-                        title="Open the cover frame in the per-detection queue">
-                        <span class="review-stage-panel__action-icon">↗</span>
-                        <span class="review-stage-panel__action-copy">Review in Queue</span>
-                    </button>
-                </div>
-            </div>
+            {# Removed 2026-04-19: the Utilities section (only button
+               opened the cover frame in the per-detection queue view).
+               Unused in the current event workflow — every cell is
+               already first-class and editable in the grid. #}
         </aside>
     </div>
 </div>

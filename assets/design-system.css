@@ -52,7 +52,7 @@
     --species-colour-4: #56B4E9; /* sky */
     --species-colour-5: #D55E00; /* vermilion */
     --species-colour-6: #F0E442; /* yellow — non-text only */
-    --species-colour-7: #000000; /* black — fallback */
+    --species-colour-7: #4B3F2E; /* dark umber — readable on light and dark; replaces the earlier #000000 that rendered as unreadable all-black bbox borders/labels when a species landed on slot 7 alphabetically */
 
     /* Spacing Scale (8pt grid) */
     --space-2xs: 4px;
@@ -176,7 +176,7 @@
         --species-colour-4: #7bc4ee; /* sky — lifted from #56B4E9 */
         --species-colour-5: #e8793a; /* vermilion — lifted from #D55E00 */
         --species-colour-6: #f5ea63; /* yellow — text-safe on dark */
-        --species-colour-7: #ececec; /* near-white — fallback flipped from black */
+        --species-colour-7: #b89a78; /* warm umber — readable on both dark UI chrome and light image backgrounds; replaces the earlier near-white that disappeared against bright bird images. Kept in the warm palette family so it is visually distinct from the cool slots 0/4. Must stay in sync with the SPECIES_COLOURS_FALLBACK[7] value in assets/js/gallery_utils.js. */
 
         /* Shadows — stronger on dark so cards stay visibly lifted. */
         --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
@@ -249,8 +249,8 @@ code {
 /* --- Layout Utility Classes --- */
 
 .page {
-    padding-top: 112px;
-    /* Offset for App Bar */
+    padding-top: var(--space-lg);
+    /* App Bar offset is handled by .status-bar margin-top; only a small gap is needed here. */
     padding-bottom: var(--space-2xl);
     min-height: 100vh;
 }
@@ -2080,6 +2080,13 @@ code {
     background: #000;
 }
 
+.stream-actions {
+    max-width: 1280px;
+    margin: 0.35rem auto 0;
+    display: flex;
+    justify-content: flex-end;
+}
+
 .stream-embed {
     position: relative;
     width: 100%;
@@ -2150,6 +2157,88 @@ code {
     align-items: center;
     opacity: 0.92;
     font-size: 1em;
+}
+
+.stream-report-action {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    border: 1px solid rgba(196, 165, 104, 0.26);
+    border-radius: 999px;
+    background: rgba(33, 27, 20, 0.74);
+    color: rgba(255, 248, 235, 0.92);
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.16);
+    backdrop-filter: blur(12px);
+    transition:
+        transform 0.16s ease,
+        background 0.16s ease,
+        border-color 0.16s ease,
+        color 0.16s ease,
+        opacity 0.16s ease;
+}
+
+.stream-report-action:hover,
+.stream-report-action:focus-visible {
+    transform: translateY(-1px);
+    background: rgba(47, 38, 28, 0.88);
+    border-color: rgba(227, 193, 126, 0.52);
+    color: #fffaf0;
+}
+
+.stream-report-action:focus-visible {
+    outline: 2px solid rgba(227, 193, 126, 0.44);
+    outline-offset: 2px;
+}
+
+.stream-report-action[disabled] {
+    opacity: 0.72;
+    cursor: wait;
+}
+
+.stream-report-action__icon {
+    width: 13px;
+    height: 13px;
+}
+
+.settings-inline-action {
+    display: flex;
+    align-items: center;
+    gap: 0.65rem;
+    flex-wrap: wrap;
+    margin-top: 0.85rem;
+}
+
+.settings-inline-action__status {
+    font-size: 0.82rem;
+    color: var(--color-text-muted);
+}
+
+.settings-inline-action__status[data-state="error"] {
+    color: var(--color-danger);
+}
+
+.settings-inline-action__status[data-state="success"] {
+    color: var(--color-success);
+}
+
+@media (max-width: 767px) {
+    .stream-actions {
+        margin-top: 0.3rem;
+        padding-right: 0.15rem;
+    }
+
+    .stream-report-action {
+        width: 26px;
+        height: 26px;
+    }
+
+    .stream-report-action__icon {
+        width: 12px;
+        height: 12px;
+    }
 }
 
 @keyframes pulse {
@@ -3085,6 +3174,79 @@ code {
     white-space: nowrap;
 }
 
+/* Button contrast overrides for the dark batch-footer scope. The base
+   .btn-- variants were designed for light page backgrounds; on the
+   dark footer they either vanish (btn--danger reads as light-on-dark)
+   or drop below readable contrast when disabled (opacity 0.5 on
+   already-muted tones). Force bright backgrounds + white text inside
+   the footer so every action stays visible even with 0 selection. */
+.wm-batch-footer .btn--danger {
+    background-color: var(--color-danger);
+    border-color: var(--color-danger);
+    color: #fff;
+}
+
+.wm-batch-footer .btn--danger:hover:not(:disabled) {
+    background-color: var(--color-danger);
+    filter: brightness(1.1);
+    color: #fff;
+}
+
+.wm-batch-footer .btn--outline-danger {
+    background-color: transparent;
+    border-color: rgba(239, 83, 80, 0.85);
+    color: rgba(255, 183, 178, 1);
+}
+
+.wm-batch-footer .btn--outline-danger:hover:not(:disabled) {
+    background-color: rgba(239, 83, 80, 0.18);
+    color: #fff;
+}
+
+.wm-batch-footer .btn--primary {
+    background-color: var(--color-primary);
+    border-color: var(--color-primary);
+    color: #fff;
+}
+
+.wm-batch-footer .btn--outline-primary {
+    background-color: transparent;
+    border-color: rgba(167, 139, 250, 0.7);
+    color: rgba(221, 214, 254, 1);
+}
+
+.wm-batch-footer .btn--outline-primary:hover:not(:disabled) {
+    background-color: rgba(167, 139, 250, 0.18);
+    color: #fff;
+}
+
+.wm-batch-footer .btn--secondary {
+    background-color: transparent;
+    border-color: rgba(255, 255, 255, 0.3);
+    color: rgba(255, 255, 255, 0.92);
+}
+
+.wm-batch-footer .btn--secondary:hover:not(:disabled) {
+    background-color: rgba(255, 255, 255, 0.12);
+    border-color: rgba(255, 255, 255, 0.55);
+    color: #fff;
+}
+
+/* Disabled state: keep the button visible (outline + label readable)
+   instead of letting opacity 0.5 wash it out against the dark bg. */
+.wm-batch-footer .btn:disabled {
+    opacity: 1;
+    filter: saturate(0.55) brightness(0.85);
+    cursor: not-allowed;
+    color: rgba(255, 255, 255, 0.62);
+    border-color: rgba(255, 255, 255, 0.18);
+}
+
+.wm-batch-footer .btn--danger:disabled,
+.wm-batch-footer .btn--primary:disabled {
+    background-color: rgba(255, 255, 255, 0.08);
+}
+
 .thumbnail-wrapper img {
     width: 100%;
     height: auto;
@@ -3105,9 +3267,15 @@ code {
     font-size: 12px;
     line-height: 1.6;
     overflow-y: auto;
+    overflow-x: auto;
     max-height: 70vh;
+    min-width: 0;
+    width: 100%;
+    max-width: 100%;
+    box-sizing: border-box;
     white-space: pre-wrap;
     word-wrap: break-word;
+    overflow-wrap: anywhere;
     color: var(--color-text-muted);
 }
 
@@ -3229,6 +3397,11 @@ code {
     gap: var(--space-xs);
     align-items: center;
     flex-wrap: wrap;
+    min-width: 0;
+}
+
+.logs-tab {
+    white-space: nowrap;
 }
 
 .logs-card-body {
@@ -3251,19 +3424,38 @@ code {
     padding: 12px 14px;
     border-bottom: 1px solid var(--color-border);
     background: var(--color-surface);
+    flex-wrap: wrap;
+    min-width: 0;
+}
+
+.logs-pane-header > :first-child {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .logs-level-filters {
     display: flex;
     gap: var(--space-xs);
     flex-wrap: wrap;
+    flex-shrink: 0;
 }
 
 .logs-footer {
     display: flex;
     justify-content: space-between;
+    align-items: center;
     gap: var(--space-sm);
     flex-wrap: wrap;
+}
+
+.logs-footer-controls {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-sm);
+    font-size: var(--font-size-xs);
 }
 
 @media (max-width: 720px) {
@@ -5069,6 +5261,31 @@ body {
     border-radius: var(--radius-md);
 }
 
+.wm-image-viewer--loading {
+    width: min(100%, 720px);
+    min-height: min(65vh, 420px);
+    background:
+        linear-gradient(135deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0)),
+        var(--color-surface-3);
+}
+
+.wm-image-viewer--loading::after {
+    content: "";
+    position: absolute;
+    width: 36px;
+    height: 36px;
+    left: calc(50% - 18px);
+    top: calc(50% - 18px);
+    border: 3px solid rgba(148, 163, 184, 0.35);
+    border-top-color: var(--color-accent);
+    border-radius: 50%;
+    animation: spin 0.9s linear infinite;
+}
+
+.wm-image-viewer--loading .wm-image-viewer__img {
+    opacity: 0;
+}
+
 .wm-image-viewer__img {
     max-height: 65vh;
     max-width: 100%;
@@ -5711,6 +5928,7 @@ body {
 .review-stage-panel__viewer-shell {
     position: relative;
     display: grid;
+    gap: var(--space-xs);
     width: min(100%, 1180px);
     margin: 0 auto;
     min-width: 0;
@@ -5854,6 +6072,12 @@ body {
     max-width: 100%;
     max-height: 100%;
     overflow: hidden;
+}
+
+.review-stage-panel__viewer-trigger {
+    display: block;
+    width: 100%;
+    height: 100%;
 }
 
 .review-stage-panel__viewer .wm-toolbox {
@@ -6173,17 +6397,14 @@ body {
 
 .review-stage-panel__species-strip {
     display: grid;
-    grid-auto-flow: column;
-    grid-auto-columns: minmax(128px, 152px);
-    gap: 10px;
-    overflow-x: auto;
+    grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+    gap: 8px;
     padding-bottom: 4px;
-    scrollbar-width: thin;
 }
 
 .review-stage-panel__species-actions {
     display: grid;
-    grid-template-columns: minmax(0, 1fr);
+    grid-template-columns: minmax(180px, 228px) minmax(0, 1fr);
     gap: 8px;
     margin-top: 10px;
 }
@@ -6212,19 +6433,19 @@ body {
 .review-stage-panel__species-btn[data-default-suggestion="1"]::before {
     content: "✦";
     position: absolute;
-    top: 10px;
-    right: 10px;
+    top: 6px;
+    right: 6px;
     z-index: 2;
     display: grid;
     place-items: center;
-    width: 26px;
-    height: 26px;
+    width: 20px;
+    height: 20px;
     border-radius: 999px;
     background: rgba(255, 247, 220, 0.92);
     color: #8a671d;
-    font-size: 0.82rem;
+    font-size: 0.7rem;
     font-weight: 900;
-    box-shadow: 0 8px 16px rgba(24, 19, 13, 0.18);
+    box-shadow: 0 4px 10px rgba(24, 19, 13, 0.18);
     pointer-events: none;
 }
 
@@ -6237,19 +6458,19 @@ body {
 .review-stage-panel__species-btn.is-selected::after {
     content: "✓";
     position: absolute;
-    top: 10px;
-    left: 10px;
+    top: 6px;
+    left: 6px;
     z-index: 2;
     display: grid;
     place-items: center;
-    width: 26px;
-    height: 26px;
+    width: 20px;
+    height: 20px;
     border-radius: 999px;
     background: rgba(223, 246, 228, 0.94);
     color: #20582e;
-    font-size: 0.9rem;
+    font-size: 0.75rem;
     font-weight: 900;
-    box-shadow: 0 8px 16px rgba(24, 19, 13, 0.18);
+    box-shadow: 0 4px 10px rgba(24, 19, 13, 0.18);
     pointer-events: none;
 }
 
@@ -6290,24 +6511,27 @@ body {
     position: absolute;
     inset: auto 0 0 0;
     display: grid;
-    gap: 3px;
-    padding: 10px 10px 11px;
+    gap: 1px;
+    padding: 6px 7px 7px;
     background: linear-gradient(180deg, rgba(24, 19, 13, 0.02), rgba(24, 19, 13, 0.78) 42%, rgba(24, 19, 13, 0.9));
 }
 
 .review-stage-panel__species-name {
-    font-size: 0.98rem;
+    font-size: 0.78rem;
     font-weight: 800;
     line-height: 1.15;
     color: #fff7ea;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .review-stage-panel__species-meta,
 .review-stage-panel__hint {
     color: rgba(255, 247, 234, 0.84);
-    font-size: 0.76rem;
+    font-size: 0.68rem;
     font-weight: 700;
-    line-height: 1.25;
+    line-height: 1.2;
 }
 
 .review-stage-panel__hint {
@@ -6472,6 +6696,17 @@ body {
     font-weight: 800;
 }
 
+.review-event-panel__grid-caption-context {
+    display: inline-block;
+    margin-left: 0.4em;
+    padding: 2px 10px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.55);
+    color: var(--color-text-muted);
+    font-size: 0.76rem;
+    font-weight: 700;
+}
+
 /* ═══════════════════════════════════════════════════════════════════════════
    REVIEW EVENT PANEL
    Equal-size detection grid. Every frame is a first-class cell.
@@ -6484,8 +6719,8 @@ body {
     grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
     gap: var(--space-md);
     width: min(100%, 1180px);
-    margin: 14px auto 0;
-    padding: 14px 16px 16px;
+    margin: 0 auto;
+    padding: 12px 14px;
     border-radius: var(--radius-xl);
     /* The grid picks up the same --color-primary accent as the active
        rail card and the stage-connecting cue, so the visual bridge
@@ -6508,15 +6743,118 @@ body {
     box-shadow: 0 4px 10px rgba(31, 64, 115, 0.08);
 }
 
-.review-event-panel__grid-toolbar {
+.review-event-panel__event-label {
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-    margin: 8px 0 10px;
+    flex-wrap: wrap;
+    gap: 10px;
+    padding: 6px 12px;
+    margin: 0 auto;
+    max-width: min(100%, 1180px);
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.55);
+    border: 1px solid rgba(95, 71, 37, 0.18);
+    font-size: 0.82rem;
+    font-weight: 700;
+    color: var(--color-text);
+}
+
+.review-event-panel__single-species-badge {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    margin: 0 auto var(--space-sm);
+    padding: 12px 20px;
+    max-width: min(100%, 1180px);
+    border-radius: 14px;
+    background: linear-gradient(135deg,
+        rgba(129, 179, 96, 0.96) 0%,
+        rgba(99, 148, 72, 0.96) 100%);
+    border: 1px solid rgba(74, 97, 63, 0.55);
+    color: #fff;
+    box-shadow:
+        0 2px 6px rgba(74, 97, 63, 0.22),
+        inset 0 1px 0 rgba(255, 255, 255, 0.22);
+}
+
+.review-event-panel__single-species-badge-icon {
+    flex: 0 0 auto;
+    display: grid;
+    place-items: center;
+    width: 34px;
+    height: 34px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.22);
+    border: 1px solid rgba(255, 255, 255, 0.38);
+    color: #fff;
+    font-size: 1.1rem;
+    font-weight: 900;
+    line-height: 1;
+}
+
+.review-event-panel__single-species-badge-copy {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+    line-height: 1.3;
+}
+
+.review-event-panel__single-species-badge-headline {
+    font-size: 1rem;
+    font-weight: 900;
+    letter-spacing: 0.01em;
+    color: #fff;
+}
+
+.review-event-panel__single-species-badge-sub {
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: rgba(255, 255, 255, 0.88);
+}
+
+.review-event-panel__event-label-text {
+    user-select: text;
+    -webkit-user-select: text;
+}
+
+.review-event-panel__event-label-key {
+    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+    font-size: 0.72rem;
+    font-weight: 500;
+    color: var(--color-text-muted);
+    user-select: all;
+    -webkit-user-select: all;
+    padding: 2px 8px;
+    border-radius: 6px;
+    background: rgba(0, 0, 0, 0.04);
+}
+
+.review-event-panel__event-label-copy {
+    margin-left: auto;
+    width: 28px;
+    height: 28px;
+    border-radius: 6px;
+    border: 1px solid rgba(95, 71, 37, 0.24);
+    background: rgba(255, 255, 255, 0.72);
+    color: var(--color-text);
+    cursor: pointer;
+    font-size: 0.88rem;
+    line-height: 1;
+    transition: background 0.12s, border-color 0.12s;
+}
+
+.review-event-panel__event-label-copy:hover {
+    background: rgba(255, 255, 255, 0.92);
+    border-color: rgba(74, 97, 63, 0.42);
+}
+
+.review-event-panel__event-label-copy:active {
+    transform: translateY(1px);
 }
 
 .review-event-panel__multi-toggle {
+    width: 100%;
     min-height: 38px;
     padding: 0 14px;
     border-radius: 999px;
@@ -6539,7 +6877,7 @@ body {
     color: var(--color-text-muted);
     font-size: 0.75rem;
     font-weight: 700;
-    text-align: right;
+    text-align: left;
 }
 
 /* Cover cell carries the same structural size as every other cell.
@@ -6753,6 +7091,29 @@ span.review-event-panel__cell-species {
     cursor: default;
 }
 
+.review-stage-panel__section--species.is-multi-select .review-stage-panel__section-label {
+    color: rgba(198, 128, 40, 0.95);
+}
+
+.review-stage-panel__section--species.is-multi-select-armed {
+    position: relative;
+    outline: 2px solid rgba(198, 128, 40, 0.72);
+    outline-offset: 2px;
+    border-radius: 16px;
+    background: rgba(255, 229, 191, 0.36);
+}
+
+.review-stage-panel__section--species.is-multi-select-armed .review-stage-panel__section-label {
+    color: #7a4b10;
+    font-weight: 800;
+}
+
+.review-stage-panel__section--species.is-multi-select-armed .review-stage-panel__hint {
+    border-color: rgba(198, 128, 40, 0.6);
+    background: rgba(255, 220, 170, 0.58);
+    color: #5a3307;
+}
+
 .review-event-panel__multi-footer {
     margin-top: 10px;
 }
@@ -6783,15 +7144,6 @@ span.review-event-panel__cell-species {
 
 /* Mobile: single-column grid, tighter padding. */
 @media (max-width: 640px) {
-    .review-event-panel__grid-toolbar {
-        align-items: flex-start;
-        flex-direction: column;
-    }
-
-    .review-event-panel__multi-hint {
-        text-align: left;
-    }
-
     .review-event-panel__grid {
         grid-template-columns: 1fr;
         padding: 10px;
@@ -8775,11 +9127,18 @@ img.review-species-ref {
 
 .wm-toast-container {
     position: fixed;
-    bottom: 24px;
+    /* Moved from bottom-right to top-right on 2026-04-19: the dev
+       palette-tester widget sits at bottom-right with z-index 99999
+       and was overlapping toasts, making them unreadable. Top-right
+       is also the convention in Slack/GitHub/Google, keeps the area
+       visible above page content, and doesn't collide with the
+       fixed toolbar at the top of the page because the toolbar uses
+       a lower z-index. */
+    top: 80px;
     right: 24px;
     z-index: 9999;
     display: flex;
-    flex-direction: column-reverse;
+    flex-direction: column;
     gap: 8px;
     pointer-events: none;
     max-width: min(380px, calc(100vw - 32px));

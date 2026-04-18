@@ -241,7 +241,7 @@ def get_species_thumbnails():
     try:
         mapping = get_species_thumbnail_map(
             common_names=common_names,
-            cache_key=f"api:{locale}",
+            cache_key=None,
         )
     except Exception as e:
         logger.error(f"Failed to fetch species thumbnails: {e}")
@@ -312,6 +312,501 @@ def detection_resume():
     except Exception as e:
         logger.error(f"Detection resume error: {e}")
         return jsonify({"status": "error", "message": str(e)}), 500
+
+
+# =============================================================================
+# Models — detector registry + variant switching
+# =============================================================================
+
+
+def _regenerate_metadata_for_variant(model_dir: str, model_id: str) -> str | None:
+    """Rewrite ``<model_dir>/model_metadata.json`` for the given variant.
+
+    Reads ``<model_id>_model_config.yaml`` from *model_dir* (if present)
+    and feeds it through the shared generator so the active detector
+    picks up the right thresholds on reload.
+
+    Returns the absolute metadata path on success, or ``None`` when the
+    variant's YAML is not present (the detector then falls back to its
+    hard-coded defaults, which is still correct but loses the
+    release-specific metrics / conf / iou values).
+    """
+    import os
+
+    yaml_path = os.path.join(model_dir, f"{model_id}_model_config.yaml")
+    if not os.path.exists(yaml_path):
+        logger.warning(
+            "models/detector/pin: no %s_model_config.yaml found in %s; "
+            "model_metadata.json not regenerated. Detector will fall back "
+            "to hard-coded threshold defaults.",
+            model_id,
+            model_dir,
+        )
+        return None
+
+    try:
+        import yaml as _yaml
+        from utils.model_metadata_generator import config_to_metadata
+
+        config = _yaml.safe_load(open(yaml_path).read())
+        if not isinstance(config, dict):
+            raise ValueError(f"{yaml_path}: top-level YAML must be a mapping")
+        metadata = config_to_metadata(
+            config, source_yaml_name=os.path.basename(yaml_path)
+        )
+        output_path = os.path.join(model_dir, "model_metadata.json")
+        tmp_path = f"{output_path}.tmp"
+        with open(tmp_path, "w", encoding="utf-8") as file:
+            import json as _json
+
+            file.write(_json.dumps(metadata, indent=2) + "\n")
+        os.replace(tmp_path, output_path)
+        logger.info(
+            "model_metadata.json regenerated for %s (conf=%s, iou=%s)",
+            model_id,
+            metadata.get("inference_thresholds", {}).get("confidence"),
+            metadata.get("inference_thresholds", {}).get("iou_nms"),
+        )
+        return output_path
+    except Exception as exc:
+        logger.warning(f"Failed to regenerate model_metadata.json: {exc}")
+        return None
+
+
+@api_v1.route("/models/detector", methods=["GET"])
+@login_required
+def models_detector_get():
+    """
+    Return the detector registry payload for the AI settings panel.
+
+    Response shape (see web.services.model_registry_service):
+      {
+        "model_dir": "/opt/app/data/models/object_detection",
+        "active": {"id", "source", "pin_file", "pin_value_effective",
+                   "hf_latest_id", "runtime_matches_on_disk"},
+        "runtime": {"model_id", "model_path", "output_format",
+                    "input_size", "num_classes", "class_names",
+                    "conf_threshold_default", "iou_threshold_default"},
+        "metadata": {...contents of model_metadata.json...},
+        "variants": [{"id", "weights_path", "labels_path",
+                      "is_available_locally", "is_active",
+                      "is_hf_latest", ...}, ...]
+      }
+    """
+    from web.services.model_registry_service import build_detector_registry_payload
+
+    try:
+        dm = api_v1.detection_manager
+        detection_service = getattr(dm, "detection_service", None)
+        detector_obj = getattr(detection_service, "_detector", None)
+        underlying = getattr(detector_obj, "model", None) if detector_obj else None
+        payload = build_detector_registry_payload(underlying)
+        return jsonify(payload)
+    except Exception as exc:
+        logger.error(f"models/detector GET error: {exc}", exc_info=True)
+        return jsonify({"status": "error", "message": str(exc)}), 500
+
+
+@api_v1.route("/models/detector/precision", methods=["POST"])
+@login_required
+def models_detector_precision():
+    """Switch the active detector precision for a given model variant.
+
+    Body: ``{"model_id": "<id>", "precision": "fp32" | "int8_qdq"}``.
+
+    Parallels :func:`models_detector_pin`: writes the choice into
+    ``latest_models.json`` under ``pinned_models[model_id].active_precision``
+    (and top-level ``active_precision`` when ``model_id`` is the current
+    default), then clears DetectionService so the next inference cycle
+    reloads the correct weights file.
+
+    The loader performs a try-load cascade through
+    ``weights_int8_qdq_fallback_paths``; if all QDQ candidates fail on the
+    host's ORT build, the detector falls back to fp32 with a warning log.
+    Requires authentication.
+    """
+    from utils.model_downloader import (
+        PRECISION_VALUES,
+        _resolve_pin_for_cache_dir,
+        set_active_precision,
+    )
+    from web.services.model_registry_service import (
+        _model_dir,
+        build_detector_registry_payload,
+        variant_is_known,
+    )
+
+    try:
+        data = request.get_json(silent=True) or {}
+        model_id = str(data.get("model_id", "")).strip()
+        precision = str(data.get("precision", "")).strip()
+        if not model_id:
+            return (
+                jsonify(
+                    {
+                        "status": "error",
+                        "message": "model_id is required (non-empty).",
+                    }
+                ),
+                400,
+            )
+        if precision not in PRECISION_VALUES:
+            return (
+                jsonify(
+                    {
+                        "status": "error",
+                        "message": (
+                            f"precision must be one of {list(PRECISION_VALUES)}, "
+                            f"got {precision!r}."
+                        ),
+                    }
+                ),
+                400,
+            )
+
+        dm = api_v1.detection_manager
+        detection_service = getattr(dm, "detection_service", None)
+        detector_obj = getattr(detection_service, "_detector", None)
+        underlying = getattr(detector_obj, "model", None) if detector_obj else None
+
+        payload = build_detector_registry_payload(underlying)
+        if not variant_is_known(payload, model_id):
+            return (
+                jsonify(
+                    {
+                        "status": "error",
+                        "message": (
+                            f"Model id {model_id!r} is not a known locally-"
+                            f"available variant. Use GET /api/v1/models/detector "
+                            f"to see what's installed."
+                        ),
+                    }
+                ),
+                400,
+            )
+
+        model_dir = _model_dir()
+        latest_path = set_active_precision(model_dir, model_id, precision)
+
+        env_pin = _resolve_pin_for_cache_dir(model_dir)
+
+        # Trigger live reload so the next detection cycle picks up the
+        # new precision weights (parallels /pin's reload flow).
+        reload_triggered = False
+        if detection_service is not None:
+            try:
+                detection_service._detector = None
+                detection_service._initialized = False
+                detection_service._model_id = ""
+                dm.detector_model_id = ""
+                reload_triggered = True
+                logger.info(
+                    "models/detector/precision: model_id=%r precision=%r "
+                    "-> live reload triggered",
+                    model_id,
+                    precision,
+                )
+            except Exception as reload_exc:
+                logger.warning(
+                    f"Failed to clear DetectionService for precision reload: "
+                    f"{reload_exc}"
+                )
+
+        return jsonify(
+            {
+                "status": "success",
+                "model_id": model_id,
+                "precision": precision,
+                "latest_models_path": latest_path,
+                "env_pin_overrides": bool(env_pin),
+                "reload_triggered": reload_triggered,
+            }
+        )
+    except ValueError as ve:
+        return jsonify({"status": "error", "message": str(ve)}), 400
+    except Exception as exc:
+        logger.error(
+            f"models/detector/precision POST error: {exc}", exc_info=True
+        )
+        return jsonify({"status": "error", "message": str(exc)}), 500
+
+
+@api_v1.route("/models/detector/pin", methods=["POST"])
+@login_required
+def models_detector_pin():
+    """
+    Switch the active detector variant by rewriting latest_models.json.
+
+    Body: {"model_id": "<id>"} — must match one of the locally-available
+    variants returned by GET /api/v1/models/detector (i.e. a key under
+    the ``pinned_models`` block, or the current ``latest`` itself).
+
+    Behaviour parallels POST /api/v1/cameras/<id>/use: the runtime
+    config on disk is updated, then the DetectionService is cleared so
+    the next inference cycle lazy-loads the new variant (~1-2 s, no
+    service restart).
+
+    An operator-set env-var pin (systemd drop-in) still wins over this
+    change — the response returns ``effective_source`` so the UI can
+    tell the user when the change was accepted but superseded.
+
+    Security: requires authentication. Writes happen as the app's user
+    only; no sudo, no systemd drop-in edits.
+    """
+    from utils.model_downloader import (
+        _resolve_pin_for_cache_dir,
+        set_latest_model_id,
+    )
+    from web.services.model_registry_service import (
+        _model_dir,
+        build_detector_registry_payload,
+        variant_is_known,
+    )
+
+    try:
+        data = request.get_json(silent=True) or {}
+        model_id = str(data.get("model_id", "")).strip()
+        if not model_id:
+            return (
+                jsonify(
+                    {
+                        "status": "error",
+                        "message": "model_id is required (non-empty).",
+                    }
+                ),
+                400,
+            )
+
+        dm = api_v1.detection_manager
+        detection_service = getattr(dm, "detection_service", None)
+        detector_obj = getattr(detection_service, "_detector", None)
+        underlying = getattr(detector_obj, "model", None) if detector_obj else None
+
+        payload = build_detector_registry_payload(underlying)
+        if not variant_is_known(payload, model_id):
+            return (
+                jsonify(
+                    {
+                        "status": "error",
+                        "message": (
+                            f"Model id {model_id!r} is not a known locally-available "
+                            f"variant. Use GET /api/v1/models/detector to see "
+                            f"what's installed."
+                        ),
+                    }
+                ),
+                400,
+            )
+
+        model_dir = _model_dir()
+        latest_path = set_latest_model_id(model_dir, model_id)
+
+        # Regenerate model_metadata.json for the new active variant so
+        # the detector picks up the right confidence/iou thresholds on
+        # reload. Without this, a switch to a variant with different
+        # thresholds (e.g. S's conf=0.30 vs Tiny's 0.15) would run the
+        # new ONNX with the previous variant's thresholds.
+        metadata_path = _regenerate_metadata_for_variant(model_dir, model_id)
+
+        # The env-var pin (systemd) still wins; tell the UI so it can
+        # explain why the click looked like it worked but didn't flip
+        # the loaded ONNX.
+        env_pin = _resolve_pin_for_cache_dir(model_dir)
+        effective_id = env_pin or model_id
+        effective_source = "env_var_pin" if env_pin else "latest_models"
+
+        # Trigger a live reload on the next detection cycle.
+        reload_triggered = False
+        if detection_service is not None:
+            try:
+                detection_service._detector = None
+                detection_service._initialized = False
+                detection_service._model_id = ""
+                dm.detector_model_id = ""
+                reload_triggered = True
+                logger.info(
+                    "models/detector/pin: latest=%r effective=%r source=%s -> live reload triggered",
+                    model_id,
+                    effective_id,
+                    effective_source,
+                )
+            except Exception as reload_exc:
+                logger.warning(
+                    f"Failed to clear DetectionService for live reload: {reload_exc}"
+                )
+
+        return jsonify(
+            {
+                "status": "success",
+                "model_id": model_id,
+                "latest_models_path": latest_path,
+                "metadata_path": metadata_path,
+                "effective_id": effective_id,
+                "effective_source": effective_source,
+                "env_pin_overrides": bool(env_pin),
+                "reload_triggered": reload_triggered,
+            }
+        )
+    except Exception as exc:
+        logger.error(f"models/detector/pin POST error: {exc}", exc_info=True)
+        return jsonify({"status": "error", "message": str(exc)}), 500
+
+
+@api_v1.route("/models/detector/install", methods=["POST"])
+@login_required
+def models_detector_install():
+    """
+    Fetch a known variant's weights + labels from HuggingFace into the
+    local model cache. Does not switch the active detector — the UI
+    chains this with POST /pin afterwards when the user clicks the
+    Switch button on a Not-installed row.
+
+    Body: {"model_id": "<id>"} — must be a key in the registry payload
+    (either under ``pinned_models`` or the current ``latest``). Arbitrary
+    request-body strings are rejected; the HF URL is built from the
+    hard-coded HF_BASE_URL plus the registry-provided relative paths,
+    so this endpoint cannot be used as an SSRF primitive.
+
+    Blocking: the HTTP request returns only after the download finishes
+    (typ. a few seconds for the small YOLOX ONNX). Failures are
+    reported in the response body, not retried.
+
+    Security: requires authentication. Writes happen under the app's
+    MODEL_BASE_PATH only.
+    """
+    from detectors.detector import HF_BASE_URL
+    from utils.model_downloader import (
+        _download_file,
+        _fetch_companion_files,
+        _normalize_rel_path,
+    )
+    from web.services.model_registry_service import (
+        _model_dir,
+        build_detector_registry_payload,
+        variant_exists_in_registry,
+    )
+
+    try:
+        data = request.get_json(silent=True) or {}
+        model_id = str(data.get("model_id", "")).strip()
+        if not model_id:
+            return (
+                jsonify(
+                    {
+                        "status": "error",
+                        "message": "model_id is required (non-empty).",
+                    }
+                ),
+                400,
+            )
+
+        dm = api_v1.detection_manager
+        detection_service = getattr(dm, "detection_service", None)
+        detector_obj = getattr(detection_service, "_detector", None)
+        underlying = getattr(detector_obj, "model", None) if detector_obj else None
+
+        payload = build_detector_registry_payload(underlying)
+        variant = variant_exists_in_registry(payload, model_id)
+        if variant is None:
+            return (
+                jsonify(
+                    {
+                        "status": "error",
+                        "message": (
+                            f"Model id {model_id!r} is not listed in the "
+                            f"registry (pinned_models or latest). Install "
+                            f"only works for ids shipped with the release."
+                        ),
+                    }
+                ),
+                400,
+            )
+
+        if variant.get("is_available_locally"):
+            return jsonify(
+                {
+                    "status": "success",
+                    "model_id": model_id,
+                    "already_installed": True,
+                    "weights_path": variant.get("weights_path"),
+                    "labels_path": variant.get("labels_path"),
+                }
+            )
+
+        model_dir = _model_dir()
+        weights_rel = str(variant.get("weights_path", ""))
+        labels_rel = str(variant.get("labels_path", ""))
+        if not weights_rel or not labels_rel:
+            return (
+                jsonify(
+                    {
+                        "status": "error",
+                        "message": (
+                            "Registry entry is missing weights_path or "
+                            "labels_path; cannot install."
+                        ),
+                    }
+                ),
+                400,
+            )
+
+        weights_rel_norm = _normalize_rel_path(HF_BASE_URL, weights_rel)
+        labels_rel_norm = _normalize_rel_path(HF_BASE_URL, labels_rel)
+        weights_abs = os.path.join(model_dir, os.path.basename(weights_rel_norm))
+        labels_abs = os.path.join(model_dir, os.path.basename(labels_rel_norm))
+
+        weights_url = f"{HF_BASE_URL}/{weights_rel_norm}"
+        labels_url = f"{HF_BASE_URL}/{labels_rel_norm}"
+
+        logger.info(
+            "models/detector/install: fetching %s weights=%s labels=%s (+ companions)",
+            model_id,
+            weights_url,
+            labels_url,
+        )
+        if not _download_file(weights_url, weights_abs):
+            return (
+                jsonify(
+                    {
+                        "status": "error",
+                        "message": f"Failed to download weights from {weights_url}",
+                    }
+                ),
+                502,
+            )
+        if not _download_file(labels_url, labels_abs):
+            return (
+                jsonify(
+                    {
+                        "status": "error",
+                        "message": f"Failed to download labels from {labels_url}",
+                    }
+                ),
+                502,
+            )
+
+        # Companion files: _model_config.yaml (required for correct
+        # threshold regeneration) + _metrics.json (honest recall/precision
+        # display in the AI panel). Both best-effort — older releases may
+        # not ship them. See _fetch_companion_files for the rationale.
+        _fetch_companion_files(HF_BASE_URL, model_dir, model_id)
+        yaml_abs = os.path.join(model_dir, f"{model_id}_model_config.yaml")
+        metrics_abs = os.path.join(model_dir, f"{model_id}_metrics.json")
+
+        return jsonify(
+            {
+                "status": "success",
+                "model_id": model_id,
+                "already_installed": False,
+                "weights_path": weights_abs,
+                "labels_path": labels_abs,
+                "model_config_path": yaml_abs if os.path.exists(yaml_abs) else None,
+                "metrics_path": metrics_abs if os.path.exists(metrics_abs) else None,
+            }
+        )
+    except Exception as exc:
+        logger.error(f"models/detector/install POST error: {exc}", exc_info=True)
+        return jsonify({"status": "error", "message": str(exc)}), 500
 
 
 # =============================================================================
@@ -1224,19 +1719,6 @@ def system_diagnostics():
                 ["journalctl", "-u", "app", "-n", "80", "--no-pager"],
                 timeout_sec=2.5,
                 expected_permission_error=True,
-            ),
-            "docker_ps": _run_command_safe(
-                [
-                    "docker",
-                    "ps",
-                    "--format",
-                    "table {{.Names}}\t{{.Status}}\t{{.Image}}",
-                ],
-                timeout_sec=2.5,
-            ),
-            "docker_stats": _run_command_safe(
-                ["docker", "stats", "--no-stream", "--all"],
-                timeout_sec=2.5,
             ),
         }
 

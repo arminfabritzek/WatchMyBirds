@@ -65,8 +65,10 @@ DEFAULTS = {
     "VIDEO_SOURCE": "0",
     "LOCATION_DATA": {"latitude": 52.516, "longitude": 13.377},
     "DETECTOR_MODEL_CHOICE": "yolo",
-    "CONFIDENCE_THRESHOLD_DETECTION": 0.65,
+    # Detection-confidence floor is now model-owned (read from the active
+    # model_metadata.json). CONFIDENCE_THRESHOLD_DETECTION has been retired.
     "SAVE_THRESHOLD": 0.65,
+    "SAVE_THRESHOLD_MODE": "auto",  # "auto" (derived from model) or "manual"
     "DETECTION_INTERVAL_SECONDS": 2.0,
     "MODEL_BASE_PATH": "./data/models",
     "CLASSIFIER_CONFIDENCE_THRESHOLD": 0.55,
@@ -86,6 +88,9 @@ DEFAULTS = {
     "TELEGRAM_BOT_TOKEN": "",
     "TELEGRAM_CHAT_ID": "",
     "TELEGRAM_REPORT_TIME": "21:00",
+    "TELEGRAM_MODE": "off",  # "off", "live", "daily", "interval"
+    "TELEGRAM_REPORT_INTERVAL_HOURS": 1,
+    "DEVICE_NAME": "",
     "EXIF_GPS_ENABLED": True,
     "INBOX_REQUIRE_EXIF_DATETIME": True,
     "INBOX_REQUIRE_EXIF_GPS": True,
@@ -101,8 +106,8 @@ DEFAULTS = {
 }
 
 RUNTIME_KEYS = {
-    "CONFIDENCE_THRESHOLD_DETECTION",
     "SAVE_THRESHOLD",
+    "SAVE_THRESHOLD_MODE",
     "DETECTION_INTERVAL_SECONDS",
     "DAY_AND_NIGHT_CAPTURE",
     "DAY_AND_NIGHT_CAPTURE_LOCATION",
@@ -114,7 +119,10 @@ RUNTIME_KEYS = {
     "UNKNOWN_SCORE_THRESHOLD",
     "TELEGRAM_COOLDOWN",
     "EDIT_PASSWORD",
-    "TELEGRAM_ENABLED",
+    # TELEGRAM_ENABLED is derived from TELEGRAM_MODE (see _coerce_config_types)
+    # and deliberately excluded from RUNTIME_KEYS so form POSTs can't clobber
+    # the derived value. The notifier still reads it, and _coerce_config_types
+    # keeps it in sync whenever settings change.
     "GALLERY_DISPLAY_THRESHOLD",
     "VIDEO_SOURCE",
     "CAMERA_URL",
@@ -124,6 +132,9 @@ RUNTIME_KEYS = {
     "TELEGRAM_BOT_TOKEN",
     "TELEGRAM_CHAT_ID",
     "TELEGRAM_REPORT_TIME",
+    "TELEGRAM_MODE",
+    "TELEGRAM_REPORT_INTERVAL_HOURS",
+    "DEVICE_NAME",
     "LOCATION_DATA",
     "EXIF_GPS_ENABLED",
     "INBOX_REQUIRE_EXIF_DATETIME",
@@ -177,7 +188,6 @@ def _load_config():
         config["SPECIES_COMMON_NAME_LOCALE"] = os.getenv("SPECIES_COMMON_NAME_LOCALE")
 
     for key in (
-        "CONFIDENCE_THRESHOLD_DETECTION",
         "SAVE_THRESHOLD",
         "DETECTION_INTERVAL_SECONDS",
         "CLASSIFIER_CONFIDENCE_THRESHOLD",
@@ -215,6 +225,14 @@ def _load_config():
         config["TELEGRAM_CHAT_ID"] = os.getenv("TELEGRAM_CHAT_ID")
     if os.getenv("TELEGRAM_REPORT_TIME") is not None:
         config["TELEGRAM_REPORT_TIME"] = os.getenv("TELEGRAM_REPORT_TIME")
+    if os.getenv("TELEGRAM_MODE") is not None:
+        config["TELEGRAM_MODE"] = os.getenv("TELEGRAM_MODE")
+    if os.getenv("TELEGRAM_REPORT_INTERVAL_HOURS") is not None:
+        config["TELEGRAM_REPORT_INTERVAL_HOURS"] = os.getenv(
+            "TELEGRAM_REPORT_INTERVAL_HOURS"
+        )
+    if os.getenv("DEVICE_NAME") is not None:
+        config["DEVICE_NAME"] = os.getenv("DEVICE_NAME")
 
     # YAML runtime overrides
     yaml_settings = load_settings_yaml(str(config["OUTPUT_DIR"]))
@@ -233,6 +251,15 @@ def _load_config():
     for key, value in yaml_settings.items():
         if key in RUNTIME_KEYS:
             config[key] = value
+
+    # Legacy migration: users upgrading from pre-TELEGRAM_MODE builds have a
+    # bare `TELEGRAM_ENABLED: true/false` in settings.yaml and no mode key.
+    # Translate that to the closest equivalent so live alerts don't silently
+    # stop after upgrade.
+    if "TELEGRAM_MODE" not in yaml_settings:
+        legacy_enabled = yaml_settings.get("TELEGRAM_ENABLED")
+        if legacy_enabled is not None:
+            config["TELEGRAM_MODE"] = "live" if _coerce_bool(legacy_enabled) else "off"
 
     if os.getenv("MAX_FPS_DETECTION") and not os.getenv("DETECTION_INTERVAL_SECONDS"):
         try:
@@ -556,7 +583,6 @@ def _coerce_config_types(config):
 
     # Numeric values
     for key in (
-        "CONFIDENCE_THRESHOLD_DETECTION",
         "SAVE_THRESHOLD",
         "CLASSIFIER_CONFIDENCE_THRESHOLD",
         "BBOX_QUALITY_THRESHOLD",
@@ -655,6 +681,34 @@ def _coerce_config_types(config):
     if locale_val not in ("DE", "NO"):
         locale_val = "DE"
     config["SPECIES_COMMON_NAME_LOCALE"] = locale_val
+
+    # DEVICE_NAME: trimmed string, capped at 64 chars (shown in every message prefix)
+    device_name = config.get("DEVICE_NAME", "")
+    if device_name is None:
+        device_name = ""
+    elif not isinstance(device_name, str):
+        device_name = str(device_name)
+    config["DEVICE_NAME"] = device_name.strip()[:64]
+
+    # TELEGRAM_MODE: restrict to the four known modes.
+    mode_val = str(config.get("TELEGRAM_MODE", "off") or "off").strip().lower()
+    if mode_val not in ("off", "live", "daily", "interval"):
+        mode_val = "off"
+    config["TELEGRAM_MODE"] = mode_val
+
+    # TELEGRAM_ENABLED is derived from mode. Any non-"off" mode implies the
+    # Telegram channel is active so downstream checks (e.g. the notifier) keep
+    # working. "off" disables everything; individual features below gate on
+    # TELEGRAM_MODE directly so the mode decides *what* gets sent.
+    config["TELEGRAM_ENABLED"] = mode_val != "off"
+
+    # TELEGRAM_REPORT_INTERVAL_HOURS: integer in [1, 24]. Used only when
+    # TELEGRAM_MODE == "interval".
+    try:
+        interval_hours = int(float(config.get("TELEGRAM_REPORT_INTERVAL_HOURS", 1)))
+    except Exception:
+        interval_hours = 1
+    config["TELEGRAM_REPORT_INTERVAL_HOURS"] = max(1, min(24, interval_hours))
 
 
 def _coerce_bool(value):
@@ -778,8 +832,12 @@ def _validate_value(key, value):
         "EXIF_GPS_ENABLED",
     ):
         return True, _coerce_bool(value)
+    if key == "SAVE_THRESHOLD_MODE":
+        val = str(value).strip().lower() if value is not None else ""
+        if val in ("auto", "manual"):
+            return True, val
+        return False, None
     if key in (
-        "CONFIDENCE_THRESHOLD_DETECTION",
         "SAVE_THRESHOLD",
         "CLASSIFIER_CONFIDENCE_THRESHOLD",
         "BBOX_QUALITY_THRESHOLD",
@@ -836,6 +894,30 @@ def _validate_value(key, value):
         if isinstance(value, str):
             return True, value.strip()
         return True, ""  # Empty string fallback (disables feature)
+
+    if key == "DEVICE_NAME":
+        if value is None:
+            return True, ""
+        if isinstance(value, str):
+            return True, value.strip()[:64]
+        return True, str(value).strip()[:64]
+
+    if key == "TELEGRAM_MODE":
+        if not isinstance(value, str):
+            return False, None
+        normalized = value.strip().lower()
+        if normalized in ("off", "live", "daily", "interval"):
+            return True, normalized
+        return False, None
+
+    if key == "TELEGRAM_REPORT_INTERVAL_HOURS":
+        try:
+            hours = int(float(value))
+        except Exception:
+            return False, None
+        if 1 <= hours <= 24:
+            return True, hours
+        return False, None
 
     if key == "TELEGRAM_REPORT_TIME":
         if not isinstance(value, str):
@@ -911,6 +993,48 @@ def _validate_value(key, value):
 def load_config():
     """Alias for legacy code; returns the shared configuration."""
     return get_config()
+
+
+# ---------------------------------------------------------------------------
+# Save-threshold resolution (auto / manual)
+# ---------------------------------------------------------------------------
+
+# Constant offset above the model's detection floor in Auto mode.
+# Locked to 0.10 so the rule does not quietly shift with each release.
+SAVE_THRESHOLD_AUTO_OFFSET = 0.10
+
+
+def effective_save_threshold(cfg: dict, detector_default_conf: float | None) -> float:
+    """Return the save-threshold value the DetectionManager should apply.
+
+    Mode resolution:
+      - cfg["SAVE_THRESHOLD_MODE"] == "manual": honours cfg["SAVE_THRESHOLD"].
+      - cfg["SAVE_THRESHOLD_MODE"] == "auto" (default): derived from the
+        model's own detection floor as (conf_default + 0.10), clipped to
+        [0, 1]. Falls back to cfg["SAVE_THRESHOLD"] when no detector
+        instance is available yet (startup race before the first detector
+        init).
+
+    Unknown mode strings fall through to the "auto" path so a broken
+    setting never blocks the pipeline.
+    """
+    mode = str(cfg.get("SAVE_THRESHOLD_MODE", "auto")).strip().lower()
+    manual_val = float(cfg.get("SAVE_THRESHOLD", 0.65))
+
+    if mode == "manual":
+        return manual_val
+
+    # Auto mode
+    if detector_default_conf is None:
+        # Detector not ready yet -> cannot derive; use last persisted value.
+        return manual_val
+
+    derived = float(detector_default_conf) + SAVE_THRESHOLD_AUTO_OFFSET
+    if derived < 0.0:
+        return 0.0
+    if derived > 1.0:
+        return 1.0
+    return derived
 
 
 if __name__ == "__main__":

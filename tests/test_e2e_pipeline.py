@@ -183,8 +183,8 @@ def e2e_test_env():
         "VIDEO_SOURCE": "0",  # Will be mocked
         "DEBUG_MODE": False,
         "DETECTOR_MODEL_CHOICE": "yolov8n",
-        "CONFIDENCE_THRESHOLD_DETECTION": 0.5,
         "SAVE_THRESHOLD": 0.3,
+        "SAVE_THRESHOLD_MODE": "manual",
         "MAX_FPS_DETECTION": 30,  # Fast for testing
         "MOTION_DETECTION_ENABLED": False,  # Disable for predictability
         "MOTION_SENSITIVITY": 500,

@@ -15,8 +15,9 @@ nav_index (int|None): Optional index within nav_scope
 {% from "components/modal_detection_info.html" import render_detection_info, render_review_status_text %}
 {% from "partials/tile_toolbox.html" import tile_toolbox %}
 
-{% macro render_modal(det, group_id, nav_scope=none, nav_index=none, show_nav=true) %}
+{% macro render_modal(det, group_id, nav_scope=none, nav_index=none) %}
 {% set can_moderate = session.get('authenticated') %}
+{% set show_nav = kwargs.show_nav if kwargs.show_nav is defined else true %}
 <div class="modal fade gallery-modal wm-modal" id="modal-{{ group_id }}-{{ det.detection_id }}" tabindex="-1"
     aria-hidden="true" data-modal-group="{{ group_id }}" data-image-path="{{ det.full_path }}"
     {% if nav_scope %}data-nav-scope="{{ nav_scope }}"{% endif %}
@@ -30,8 +31,17 @@ nav_index (int|None): Optional index within nav_scope
                 <div class="wm-modal__title">
                     {# P1-06: Trusted-species rendering — non-confirmed show tentative label #}
                     {% set has_manual_species_review = (det.species_source == 'manual') and det.manual_species_override %}
+                    {% set has_manual_review_approval = has_manual_species_review and (det.review_status == 'confirmed_bird') %}
                     {% set is_trusted = has_manual_species_review or (det.decision_state == 'confirmed') or (det.decision_state is none) %}
                     {% set title_species = det.species_key or det.manual_species_override or det.cls_class_name or det.od_class_name %}
+                    {% set ai_status_label = '🤖 KI unbekannt' %}
+                    {% if has_manual_review_approval %}
+                    {% set ai_status_label = '🧑👍 manuell bestaetigt' %}
+                    {% elif det.decision_state == 'confirmed' %}
+                    {% set ai_status_label = '🤖 KI bestaetigt' %}
+                    {% elif det.decision_state == 'uncertain' %}
+                    {% set ai_status_label = '🤖 KI unsicher' %}
+                    {% endif %}
                     {% set review_status_text = render_review_status_text(det, "font-size: 0.7rem; opacity: 0.8;") %}
                     {% set wiki_url = wikipedia_species_url(det.common_name, title_species) %}
                     {% if wiki_url %}
@@ -59,7 +69,8 @@ nav_index (int|None): Optional index within nav_scope
                     image_alt=det.common_name,
                     detection_id=det.detection_id,
                     bbox={'x': det.bbox_x, 'y': det.bbox_y, 'w': det.bbox_w, 'h': det.bbox_h},
-                    dismissable=true
+                    dismissable=true,
+                    defer_src=true
                     ) }}
                     {{ tile_toolbox(
                     detection_id=det.detection_id,

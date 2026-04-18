@@ -1,12 +1,17 @@
 """
-In-App Scheduler for the Daily Evening Report.
+In-App Scheduler for Telegram Reports.
 
-Runs as a daemon thread inside the main application process.
-Triggers utils.daily_report.main() once per day at the configured time.
+Runs as a daemon thread inside the main application process and fires
+``utils.daily_report.main()`` based on the configured Telegram mode:
 
-Configuration keys (via settings.yaml / env / defaults):
-    TELEGRAM_REPORT_TIME   – HH:MM string, default "21:00"
-    TELEGRAM_ENABLED       – must be True for the report to send
+    TELEGRAM_MODE == "daily"    -> once per day at TELEGRAM_REPORT_TIME.
+    TELEGRAM_MODE == "interval" -> every TELEGRAM_REPORT_INTERVAL_HOURS hours.
+    TELEGRAM_MODE == "off"/"live" -> scheduler stays idle.
+
+Duplicate-send protection is minute-grained for the daily mode (guards
+against restart storms near the scheduled minute) and interval-grained for
+the hourly mode (last-sent timestamp must be at least ``interval_hours * 3600``
+seconds old).
 """
 
 import logging
@@ -16,17 +21,17 @@ from datetime import date, datetime
 
 logger = logging.getLogger(__name__)
 
-# In-memory guard: tracks the last date a report was sent
-# to prevent duplicate reports on restart or config reload.
+# Daily-mode guard: tracks the last date a report was sent so we don't
+# double-fire after restart near the scheduled minute.
 _last_report_date: date | None = None
+# Interval-mode guard: wall-clock timestamp of the last successful send.
+_last_interval_send_ts: float = 0.0
 _lock = threading.Lock()
 
 
-def _should_send_now(report_hour: int, report_minute: int) -> bool:
-    """
-    Returns True if the current time matches the configured report time
-    AND no report has been sent today yet.
-    """
+def _should_send_daily(report_hour: int, report_minute: int) -> bool:
+    """True when the current minute matches the configured time and no
+    report has been sent today yet."""
     global _last_report_date
     now = datetime.now()
 
@@ -39,11 +44,28 @@ def _should_send_now(report_hour: int, report_minute: int) -> bool:
         return True
 
 
-def _mark_sent():
-    """Mark today as 'report sent'."""
+def _should_send_interval(interval_hours: int) -> bool:
+    """True when enough wall-clock time has passed since the last send."""
+    global _last_interval_send_ts
+    now_ts = time.time()
+    with _lock:
+        if (now_ts - _last_interval_send_ts) >= max(1, interval_hours) * 3600:
+            return True
+        return False
+
+
+def _mark_sent_daily():
+    """Mark today as 'report sent' for the daily-mode guard."""
     global _last_report_date
     with _lock:
         _last_report_date = date.today()
+
+
+def _mark_sent_interval():
+    """Record the timestamp for the interval-mode guard."""
+    global _last_interval_send_ts
+    with _lock:
+        _last_interval_send_ts = time.time()
 
 
 def _parse_report_time(time_str: str) -> tuple[int, int]:
@@ -73,48 +95,64 @@ def start_report_scheduler(check_interval: int = 30, detection_manager=None):
                            hard-coded "running normally".
     """
 
+    def _run_report(reason: str) -> None:
+        """Fire utils.daily_report.main() with the optional health provider."""
+        try:
+            from utils.daily_report import main as run_report
+
+            health_provider = None
+            if detection_manager is not None:
+                health_provider = getattr(
+                    detection_manager,
+                    "get_ingest_health_snapshot",
+                    None,
+                )
+
+            logger.info("Report scheduler firing (%s)...", reason)
+            run_report(ingest_health_provider=health_provider)
+            logger.info("Report sent successfully (%s).", reason)
+        except Exception as e:
+            logger.error("Report failed (%s): %s", reason, e, exc_info=True)
+
     def _loop():
-        logger.info("Daily report scheduler started.")
+        logger.info("Telegram report scheduler started.")
         while True:
             try:
                 from config import get_config
 
                 config = get_config()
+                mode = str(config.get("TELEGRAM_MODE", "off") or "off").strip().lower()
 
-                # Skip entirely if Telegram is disabled
-                if not config.get("TELEGRAM_ENABLED", False):
-                    time.sleep(check_interval)
-                    continue
-
-                time_str = config.get("TELEGRAM_REPORT_TIME", "21:00")
-                report_hour, report_minute = _parse_report_time(time_str)
-
-                if _should_send_now(report_hour, report_minute):
-                    logger.info(
-                        "Report time reached (%02d:%02d). Generating evening report...",
-                        report_hour,
-                        report_minute,
-                    )
-                    try:
-                        from utils.daily_report import main as run_report
-
-                        # Build ingest-health provider (fail-safe handled
-                        # inside run_report itself).
-                        health_provider = None
-                        if detection_manager is not None:
-                            health_provider = getattr(
-                                detection_manager,
-                                "get_ingest_health_snapshot",
-                                None,
+                if mode == "daily":
+                    time_str = str(
+                        config.get("TELEGRAM_REPORT_TIME", "") or ""
+                    ).strip()
+                    if time_str:
+                        report_hour, report_minute = _parse_report_time(time_str)
+                        if _should_send_daily(report_hour, report_minute):
+                            _run_report(
+                                f"daily @ {report_hour:02d}:{report_minute:02d}"
                             )
+                            # Mark as sent regardless of success: the duplicate
+                            # guard prevents restart-storm resends; a real
+                            # failure should not retry every 30s for the rest
+                            # of the minute window.
+                            _mark_sent_daily()
 
-                        run_report(ingest_health_provider=health_provider)
-                        _mark_sent()
-                        logger.info("Evening report sent successfully.")
-                    except Exception as e:
-                        logger.error("Evening report failed: %s", e, exc_info=True)
-                        # Still mark as sent to avoid spamming on persistent errors
-                        _mark_sent()
+                elif mode == "interval":
+                    try:
+                        interval_hours = int(
+                            float(config.get("TELEGRAM_REPORT_INTERVAL_HOURS", 1))
+                        )
+                    except Exception:
+                        interval_hours = 1
+                    interval_hours = max(1, min(24, interval_hours))
+
+                    if _should_send_interval(interval_hours):
+                        _run_report(f"interval every {interval_hours}h")
+                        _mark_sent_interval()
+
+                # mode == "off" or "live" -> scheduler idle.
 
             except Exception as e:
                 logger.error("Report scheduler error: %s", e, exc_info=True)

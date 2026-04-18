@@ -270,10 +270,17 @@ docker-compose.yml
 # Flask secret key (auto-generated per instance)
 .flask_secret_key
 
-# Codex agent metadata
+# Local-only agent metadata
 .agent/
 /_debug_logs
 tools/onvif_ptz_tester/.onvif_tester_settings.json
 
-# Local-only agent handoff directory (may be a symlink to an external workspace)
+# Local-only workspace directory (may be a symlink to an external workspace)
 agent_handoff/
+
+# Local-only inbox for model release ZIPs and other large deliverables.
+# Files here are reproducible and never belong in git history.
+inbox/
+
+# Local-only scratch for debugging / one-off model smoketests.
+privat_debugging_now/
