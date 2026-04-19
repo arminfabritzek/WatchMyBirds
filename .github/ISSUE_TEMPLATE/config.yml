@@ -1,0 +1,10 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/arminfabritzek/WatchMyBirds/security/advisories/new
+    about: |
+      Report security issues privately via GitHub Security Advisories.
+      Please do NOT file public issues for vulnerabilities.
+  - name: Question or discussion
+    url: https://github.com/arminfabritzek/WatchMyBirds/discussions
+    about: Use GitHub Discussions for open-ended questions and ideas.

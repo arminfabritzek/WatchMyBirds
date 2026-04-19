@@ -1,5 +1,8 @@
 # ---------- Python runtime ----------
-FROM python:3.12-slim-bookworm
+# Pinned to multi-arch index digest so amd64 and arm64 builds stay reproducible.
+# Dependabot keeps this up-to-date; always use the index (multi-arch) digest,
+# never a platform-specific one, or arm64 builds will break.
+FROM python:3.12-slim-bookworm@sha256:d97792894a6a4162cae14da44542a83c75e56c77a27b92d58f3f83b7bc961292
 
 # Install system dependencies
 RUN apt-get update && \

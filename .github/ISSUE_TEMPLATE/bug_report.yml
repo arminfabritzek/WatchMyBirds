@@ -1,0 +1,88 @@
+name: Bug report
+description: Report a reproducible bug in WatchMyBirds.
+title: "[Bug] "
+labels: ["bug", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug report. Please fill in the
+        sections below so we can reproduce and fix the issue quickly.
+
+        **Security vulnerabilities** should NOT be reported here — follow the
+        private disclosure process in
+        [SECURITY.md](../blob/main/SECURITY.md) instead.
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: One or two sentences describing what went wrong.
+      placeholder: The stream freezes when switching from camera A to camera B.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      description: Numbered steps that reliably trigger the bug on a clean install.
+      placeholder: |
+        1. Open `/stream`
+        2. Switch the camera dropdown to ...
+        3. Observe ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behaviour
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behaviour
+    validations:
+      required: true
+  - type: dropdown
+    id: deploy_type
+    attributes:
+      label: Deployment type
+      options:
+        - Raspberry Pi appliance (golden image)
+        - Docker (docker-compose)
+        - Local Python (`python main.py`)
+        - Other / unsure
+    validations:
+      required: true
+  - type: input
+    id: app_version
+    attributes:
+      label: App version
+      description: Run `cat APP_VERSION` or check the footer of the web UI.
+      placeholder: "0.2.0"
+    validations:
+      required: true
+  - type: input
+    id: camera_model
+    attributes:
+      label: Camera model and transport
+      description: Brand, model, and stream protocol (RTSP / go2rtc / USB).
+      placeholder: Reolink E1 Pro, RTSP
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: |
+        Paste the last ~50 lines from `output/logs/app.log` or the
+        `docker logs` output.
+        Redact IPs, passwords, and any personal data before pasting.
+      render: shell
+  - type: checkboxes
+    id: confirmations
+    attributes:
+      label: Checklist
+      options:
+        - label: I have searched existing issues for this problem.
+          required: true
+        - label: I have removed secrets and personal data from the report.
+          required: true

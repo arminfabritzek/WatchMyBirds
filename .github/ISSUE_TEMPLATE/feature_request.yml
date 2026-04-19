@@ -1,0 +1,53 @@
+name: Feature request
+description: Suggest a new capability or an improvement to an existing one.
+title: "[Feature] "
+labels: ["enhancement", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before filing a feature request, please check open issues and the
+        roadmap (if available) to avoid duplicates.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem / motivation
+      description: What problem does this feature solve? Who benefits?
+      placeholder: When reviewing large backlogs, scrolling back to the top is tedious.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: How could WatchMyBirds solve this? Rough sketches are fine.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Other approaches you weighed, and why you rejected them.
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Affected surface
+      multiple: true
+      options:
+        - Stream
+        - Gallery / Review
+        - Analytics
+        - Settings
+        - RPi appliance / install flow
+        - Docker / deployment
+        - API
+        - Models / detection
+        - Documentation
+        - Other
+  - type: checkboxes
+    id: confirmations
+    attributes:
+      label: Checklist
+      options:
+        - label: I have searched existing issues for this feature.
+          required: true
