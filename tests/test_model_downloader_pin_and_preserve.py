@@ -305,6 +305,216 @@ def test_preservation_merges_remote_variants_when_remote_latest_missing(tmp_path
     assert on_disk == data
 
 
+def test_preservation_surfaces_remote_latest_even_when_not_in_pinned_models(tmp_path):
+    """HF publisher bumps ``latest`` to a new id but only lists older ids
+    under ``pinned_models``. End users on Docker/RPi must still see the new
+    variant in Settings so they can click "Install & switch" — otherwise the
+    only workaround is ``WMB_FORCE_REMOTE_REFRESH=1``, which typical
+    operators cannot set.
+    """
+    local_id = "20260420_prodcal_yolox_s_640_mosaic0p5"
+    remote_latest = "20260421_yolox_s_locator_640_v4"
+    remote_tiny = "20260420_prodcal_yolox_tiny_640_mosaic0p5"
+
+    _write_local(
+        tmp_path,
+        {
+            "latest": local_id,
+            "weights_path": f"object_detection/{local_id}_best.onnx",
+            "labels_path": f"object_detection/{local_id}_labels.json",
+        },
+    )
+    _touch(tmp_path / f"{local_id}_best.onnx")
+    _touch(tmp_path / f"{local_id}_labels.json")
+
+    # Remote shape mirrors the real HF payload (2026-04-21): ``latest`` points
+    # at a new id that is NOT listed under pinned_models, pinned_models only
+    # contains an older sibling.
+    remote_payload = {
+        "latest": remote_latest,
+        "project_name": "yolox-s-locator-5cls",
+        "weights_path": f"object_detection/{remote_latest}_best.onnx",
+        "labels_path": f"object_detection/{remote_latest}_labels.json",
+        "config_path": f"object_detection/{remote_latest}_model_config.yaml",
+        "weights_int8_path": f"object_detection/{remote_latest}_best_int8.onnx",
+        "pinned_models": {
+            remote_tiny: {
+                "project_name": "yolox-tiny-locator-5cls",
+                "variant": "tiny",
+                "weights_path": f"object_detection/{remote_tiny}_best.onnx",
+                "labels_path": f"object_detection/{remote_tiny}_labels.json",
+            },
+        },
+    }
+
+    with patch(
+        "utils.model_downloader.requests.get",
+        return_value=_mock_remote(remote_payload),
+    ):
+        data = fetch_latest_json(BASE_URL, str(tmp_path))
+
+    # Preservation keeps the local active pointer intact.
+    assert data["latest"] == local_id
+    # But every variant the publisher shipped is now reachable from the UI:
+    # the new ``remote_latest`` AND the older pinned sibling AND the local id.
+    merged = data["pinned_models"]
+    assert remote_latest in merged, (
+        "remote latest must be surfaced as a variant even when the publisher "
+        "did not list it under pinned_models"
+    )
+    assert merged[remote_latest]["weights_path"] == (
+        f"object_detection/{remote_latest}_best.onnx"
+    )
+    assert merged[remote_latest]["labels_path"] == (
+        f"object_detection/{remote_latest}_labels.json"
+    )
+    assert remote_tiny in merged
+    # The explicit publisher entry for the tiny is preserved verbatim
+    # (synth does not clobber pinned_models entries the publisher shipped).
+    assert merged[remote_tiny]["variant"] == "tiny"
+
+    on_disk = json.loads((tmp_path / "latest_models.json").read_text())
+    assert on_disk == data
+
+
+def test_preservation_prunes_stale_local_only_variants_without_weights(tmp_path):
+    """Local-only entries that HF has removed AND have no weights on disk
+    are rubble (UI shows "Not installed" but install would 404). Drop them.
+
+    Safety: keep the active pointer and any entry whose weights are on disk.
+    """
+    active_id = "20260420_prodcal_yolox_s_640_mosaic0p5"
+    remote_latest = "20260421_yolox_s_locator_640_v4"
+    remote_tiny = "20260420_prodcal_yolox_tiny_640_mosaic0p5"
+    stale_broken = "20260421_v3_noswarm_yolox_s_640_BROKEN"
+    stale_noswarm = "20260421_v3_noswarm_yolox_s_640"
+    stale_1512 = "20260417_1512_yolox_s_640_mosaic0p5"
+    locally_installed = "20260417_1636_yolox_tiny_640_mosaic0p5"
+
+    _write_local(
+        tmp_path,
+        {
+            "latest": active_id,
+            "weights_path": f"object_detection/{active_id}_best.onnx",
+            "labels_path": f"object_detection/{active_id}_labels.json",
+            "pinned_models": {
+                active_id: {
+                    "weights_path": f"object_detection/{active_id}_best.onnx",
+                    "labels_path": f"object_detection/{active_id}_labels.json",
+                },
+                stale_broken: {
+                    "weights_path": f"object_detection/{stale_broken}_best.onnx",
+                    "labels_path": f"object_detection/{stale_broken}_labels.json",
+                },
+                stale_noswarm: {
+                    "weights_path": f"object_detection/{stale_noswarm}_best.onnx",
+                    "labels_path": f"object_detection/{stale_noswarm}_labels.json",
+                },
+                stale_1512: {
+                    "weights_path": f"object_detection/{stale_1512}_best.onnx",
+                    "labels_path": f"object_detection/{stale_1512}_labels.json",
+                },
+                locally_installed: {
+                    "weights_path": f"object_detection/{locally_installed}_best.onnx",
+                    "labels_path": f"object_detection/{locally_installed}_labels.json",
+                },
+            },
+        },
+    )
+    # Only the active and the locally-installed variant have files on disk.
+    _touch(tmp_path / f"{active_id}_best.onnx")
+    _touch(tmp_path / f"{active_id}_labels.json")
+    _touch(tmp_path / f"{locally_installed}_best.onnx")
+    _touch(tmp_path / f"{locally_installed}_labels.json")
+
+    # HF on 2026-04-21: publisher removed every stale id; only advertises _v4
+    # as latest and _prodcal_tiny under pinned_models.
+    remote_payload = {
+        "latest": remote_latest,
+        "weights_path": f"object_detection/{remote_latest}_best.onnx",
+        "labels_path": f"object_detection/{remote_latest}_labels.json",
+        "pinned_models": {
+            remote_tiny: {
+                "variant": "tiny",
+                "weights_path": f"object_detection/{remote_tiny}_best.onnx",
+                "labels_path": f"object_detection/{remote_tiny}_labels.json",
+            },
+        },
+    }
+
+    with patch(
+        "utils.model_downloader.requests.get",
+        return_value=_mock_remote(remote_payload),
+    ):
+        data = fetch_latest_json(BASE_URL, str(tmp_path))
+
+    assert data["latest"] == active_id  # preservation still wins
+    merged = data["pinned_models"]
+    # Kept:
+    assert active_id in merged, "active pointer must never be pruned"
+    assert locally_installed in merged, "entries with weights on disk are kept"
+    assert remote_latest in merged, "remote latest is surfaced for install"
+    assert remote_tiny in merged, "remote pinned entries are surfaced"
+    # Pruned:
+    assert stale_broken not in merged, "stale local-only _BROKEN must be dropped"
+    assert stale_noswarm not in merged
+    assert stale_1512 not in merged
+
+    on_disk = json.loads((tmp_path / "latest_models.json").read_text())
+    assert on_disk == data
+
+
+def test_preservation_does_not_prune_locally_installed_variants(tmp_path):
+    """If a variant's weights are on disk (user installed it), we keep the
+    pinned_models entry even when HF removed the variant — the user can
+    still switch to it locally.
+    """
+    active_id = "active"
+    orphaned_but_installed = "orphan_with_files"
+
+    _write_local(
+        tmp_path,
+        {
+            "latest": active_id,
+            "weights_path": f"object_detection/{active_id}_best.onnx",
+            "labels_path": f"object_detection/{active_id}_labels.json",
+            "pinned_models": {
+                active_id: {
+                    "weights_path": f"object_detection/{active_id}_best.onnx",
+                    "labels_path": f"object_detection/{active_id}_labels.json",
+                },
+                orphaned_but_installed: {
+                    "weights_path": f"object_detection/{orphaned_but_installed}_best.onnx",
+                    "labels_path": f"object_detection/{orphaned_but_installed}_labels.json",
+                },
+            },
+        },
+    )
+    _touch(tmp_path / f"{active_id}_best.onnx")
+    _touch(tmp_path / f"{active_id}_labels.json")
+    _touch(tmp_path / f"{orphaned_but_installed}_best.onnx")
+    _touch(tmp_path / f"{orphaned_but_installed}_labels.json")
+
+    # HF forgot about both ids — only advertises something new.
+    remote_payload = {
+        "latest": "brand_new",
+        "weights_path": "object_detection/brand_new_best.onnx",
+        "labels_path": "object_detection/brand_new_labels.json",
+    }
+    with patch(
+        "utils.model_downloader.requests.get",
+        return_value=_mock_remote(remote_payload),
+    ):
+        data = fetch_latest_json(BASE_URL, str(tmp_path))
+
+    merged = data["pinned_models"]
+    assert orphaned_but_installed in merged, (
+        "installed variants must not be pruned even if HF drops them"
+    )
+    assert active_id in merged
+    assert "brand_new" in merged, "new HF latest surfaced"
+
+
 def test_force_refresh_overrides_preservation(tmp_path, monkeypatch):
     """WMB_FORCE_REMOTE_REFRESH=1 bypasses the guard."""
     _write_local(

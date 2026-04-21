@@ -51,6 +51,8 @@ class VariantInfo:
     is_hf_latest: bool
     int8_qdq_available: bool = False
     active_precision: str = "fp32"
+    metadata: dict[str, Any] | None = None
+    tags: list[str] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -64,6 +66,8 @@ class VariantInfo:
             "is_hf_latest": self.is_hf_latest,
             "int8_qdq_available": self.int8_qdq_available,
             "active_precision": self.active_precision,
+            "metadata": self.metadata or {},
+            "tags": self.tags or [],
         }
 
 
@@ -98,6 +102,260 @@ def _read_latest_models(model_dir: str) -> dict[str, Any]:
     except Exception as exc:
         logger.warning(f"Failed to read {path}: {exc}")
         return {}
+
+
+def _variant_from_id(model_id: str) -> str | None:
+    """Best-effort guess of the YOLOX size (``s`` or ``tiny``) from the id.
+
+    Used as a fallback for variants that have no ``_model_config.yaml``
+    on disk yet (not-installed rows). Returns ``None`` when the id does
+    not contain a recognisable token.
+    """
+    lower = model_id.lower()
+    # Match the longest token first so "_tiny_" wins over the bare "_s_"
+    # elsewhere in the id.
+    for token, name in (
+        ("_tiny_", "tiny"),
+        ("_yolox_s_", "s"),
+        ("_yolox_tiny_", "tiny"),
+    ):
+        if token in lower:
+            return name
+    return None
+
+
+def _released_from_id(model_id: str) -> str | None:
+    """Extract the ``YYYY-MM-DD`` prefix from an id like ``20260421_foo``."""
+    if len(model_id) < 8 or not model_id[:8].isdigit():
+        return None
+    return f"{model_id[:4]}-{model_id[4:6]}-{model_id[6:8]}"
+
+
+def _read_variant_companions(
+    model_dir: str, model_id: str
+) -> dict[str, Any]:
+    """Collect lightweight metadata for a single variant from local files.
+
+    Reads ``<id>_metrics.json`` (if present) for recall/F1 and
+    ``<id>_model_config.yaml`` (if present) for variant label, input size
+    and confidence/IoU thresholds. Missing files are silently skipped —
+    not-installed variants typically have none of these, so the UI falls
+    back to id-derived hints (release date, variant-from-id).
+    """
+    out: dict[str, Any] = {}
+
+    # Metrics JSON — optional
+    metrics_path = os.path.join(model_dir, f"{model_id}_metrics.json")
+    if os.path.exists(metrics_path):
+        try:
+            with open(metrics_path, encoding="utf-8") as file:
+                metrics = json.load(file)
+            if isinstance(metrics, dict):
+                chosen = metrics.get("chosen_threshold")
+                if isinstance(chosen, dict):
+                    for key in ("bird_recall", "bird_precision", "f1", "conf"):
+                        value = chosen.get(key)
+                        if isinstance(value, (int, float)):
+                            out[key] = float(value)
+                train = metrics.get("train_info")
+                if isinstance(train, dict):
+                    trained_at = train.get("trained_at")
+                    if isinstance(trained_at, str):
+                        out["trained_at"] = trained_at
+        except Exception as exc:
+            logger.debug(f"variant metadata: failed to read {metrics_path}: {exc}")
+
+    # Model config YAML — optional
+    yaml_path = os.path.join(model_dir, f"{model_id}_model_config.yaml")
+    if os.path.exists(yaml_path):
+        try:
+            import yaml as _yaml
+
+            with open(yaml_path, encoding="utf-8") as file:
+                config = _yaml.safe_load(file)
+            if isinstance(config, dict):
+                detection = config.get("detection")
+                if isinstance(detection, dict):
+                    conf = detection.get("confidence_threshold")
+                    iou = detection.get("nms_iou_threshold")
+                    input_size = detection.get("input_size")
+                    architecture = detection.get("architecture")
+                    if isinstance(conf, (int, float)):
+                        # YAML conf wins over metrics.json conf — it is the
+                        # actual runtime threshold, metrics conf is just the
+                        # chosen sweep point (usually the same).
+                        out["conf"] = float(conf)
+                    if isinstance(iou, (int, float)):
+                        out["iou"] = float(iou)
+                    if (
+                        isinstance(input_size, list)
+                        and len(input_size) == 2
+                        and all(isinstance(n, int) for n in input_size)
+                    ):
+                        out["input_size"] = list(input_size)
+                    if isinstance(architecture, str) and architecture.strip():
+                        # e.g. "yolox_tiny_locator_5cls" -> "tiny"
+                        arch_lower = architecture.lower()
+                        if "_tiny_" in arch_lower:
+                            out["variant"] = "tiny"
+                        elif "_s_" in arch_lower:
+                            out["variant"] = "s"
+                meta = config.get("meta")
+                if isinstance(meta, dict):
+                    num_classes = meta.get("num_classes")
+                    if isinstance(num_classes, int):
+                        out["num_classes"] = num_classes
+                    trained_at = meta.get("trained_at")
+                    if isinstance(trained_at, str) and "trained_at" not in out:
+                        out["trained_at"] = trained_at
+        except ImportError:
+            logger.debug("variant metadata: PyYAML unavailable; skipping YAML read")
+        except Exception as exc:
+            logger.debug(f"variant metadata: failed to read {yaml_path}: {exc}")
+
+    return out
+
+
+def _compute_variant_tags(
+    variants: list[dict[str, Any]],
+) -> dict[str, list[str]]:
+    """Assign descriptive tags to each variant so end users can compare them
+    without decoding the id.
+
+    Tags are earned strictly from the data already in each variant's
+    ``metadata`` block — never editorialized ("best", "recommended" would
+    imply a judgement call that depends on hardware and use case).
+
+    Rules (any combination can apply):
+
+    - ``Newest s`` / ``Newest tiny``:
+                         released on the most recent date *within its
+                         variant family*. This highlights one S and one
+                         tiny at a time, so the user always sees a
+                         "latest" choice per hardware class. Variants
+                         without a detected size fall back to a bare
+                         ``Newest`` tag across the whole list.
+    - ``Small, faster``: ``variant: tiny`` AND an ``s`` sibling exists in
+                         the same list (so the comparison is meaningful).
+    - ``Bigger, slower, better``: ``variant: s`` AND a ``tiny`` sibling exists.
+    - ``Highest recall``: has the highest ``bird_recall`` among variants
+                         whose metadata carries a recall number. Ties get
+                         no badge (ambiguous).
+    """
+    tags_by_id: dict[str, list[str]] = {v["id"]: [] for v in variants}
+
+    # Newest per variant family. Bucket dated entries by their detected
+    # size, then tag the latest in each bucket ("Newest s", "Newest tiny").
+    # Entries without a detected size fall back to a whole-list "Newest".
+    dated_by_size: dict[str | None, list[tuple[str, str]]] = {}
+    for v in variants:
+        released = (v.get("metadata") or {}).get("released")
+        if not (isinstance(released, str) and released):
+            continue
+        size = (v.get("metadata") or {}).get("variant")
+        key = size if isinstance(size, str) and size in ("s", "tiny") else None
+        dated_by_size.setdefault(key, []).append((v["id"], released))
+
+    for size_key, entries in dated_by_size.items():
+        newest_date = max(d for _, d in entries)
+        label = f"Newest {size_key}" if size_key else "Newest"
+        for vid, date in entries:
+            if date == newest_date:
+                tags_by_id[vid].append(label)
+
+    # Speed/accuracy badges only when BOTH sizes are present (otherwise
+    # the label is meaningless — "faster than what?").
+    sizes = {
+        (v.get("metadata") or {}).get("variant")
+        for v in variants
+        if isinstance((v.get("metadata") or {}).get("variant"), str)
+    }
+    has_both = "s" in sizes and "tiny" in sizes
+    if has_both:
+        for v in variants:
+            size = (v.get("metadata") or {}).get("variant")
+            if size == "tiny":
+                tags_by_id[v["id"]].append("Small, faster")
+            elif size == "s":
+                tags_by_id[v["id"]].append("Bigger, slower, better")
+
+    # Highest recall among variants that have one.
+    recalls: list[tuple[str, float]] = []
+    for v in variants:
+        recall = (v.get("metadata") or {}).get("bird_recall")
+        if isinstance(recall, (int, float)):
+            recalls.append((v["id"], float(recall)))
+    if recalls:
+        top = max(r for _, r in recalls)
+        winners = [vid for vid, r in recalls if r == top]
+        # Skip when multiple variants tie — "highest" stops being useful.
+        if len(winners) == 1:
+            tags_by_id[winners[0]].append("Highest recall")
+
+    return tags_by_id
+
+
+def _sort_variants_newest_first(
+    variants: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Sort variants by release date descending, then by id for stability.
+
+    Variants without a release date land at the bottom so user attention
+    goes to dated releases first.
+    """
+    def sort_key(v: dict[str, Any]) -> tuple[int, str, str]:
+        released = (v.get("metadata") or {}).get("released") or ""
+        # Sort descending by date by inverting — simpler than reverse=True
+        # because we still want ascending id as the tiebreaker.
+        has_date = 0 if released else 1  # dated entries first
+        return (has_date, _invert_date_for_desc(released), v["id"])
+    return sorted(variants, key=sort_key)
+
+
+def _invert_date_for_desc(iso_date: str) -> str:
+    """Return a comparable key that sorts ISO dates descending when used
+    with the default ascending sort. Empty dates map to the lowest key.
+    """
+    if not iso_date:
+        return ""
+    # Map YYYY-MM-DD to a string that inverts digit-for-digit so
+    # '2026-04-21' > '2026-04-20' becomes '1313939878...' < '...'
+    # A simpler trick: pad with the max value and subtract per-character.
+    # Even simpler still: sort by negative-date via tuple of ints.
+    return "".join(str(9 - int(c)) if c.isdigit() else c for c in iso_date)
+
+
+def _build_variant_metadata(
+    model_dir: str,
+    model_id: str,
+    registry_entry: dict[str, Any],
+) -> dict[str, Any]:
+    """Assemble the metadata block the UI shows under a variant row.
+
+    Source order (first wins per key):
+      1. Local ``<id>_metrics.json`` + ``<id>_model_config.yaml``
+      2. Fields the registry entry itself carries (e.g. ``variant``)
+      3. Id-derived hints (release date, variant-from-token)
+    """
+    meta = _read_variant_companions(model_dir, model_id)
+
+    # Fill variant from registry entry when YAML did not supply it.
+    if "variant" not in meta:
+        registry_variant = registry_entry.get("variant")
+        if isinstance(registry_variant, str) and registry_variant.strip():
+            meta["variant"] = registry_variant.strip().lower()
+    # Last-ditch id-derived fallback.
+    if "variant" not in meta:
+        derived = _variant_from_id(model_id)
+        if derived:
+            meta["variant"] = derived
+
+    if "released" not in meta:
+        released = _released_from_id(model_id)
+        if released:
+            meta["released"] = released
+
+    return meta
 
 
 def _detect_active_source(model_dir: str) -> str:
@@ -238,8 +496,17 @@ def build_detector_registry_payload(detector: Any | None) -> dict[str, Any]:
             is_hf_latest=(mid == hf_latest_id),
             int8_qdq_available=int8_available,
             active_precision=active_precision,
+            metadata=_build_variant_metadata(model_dir, mid, payload),
         )
         variants.append(info.to_dict())
+
+    # Post-process: data-driven tags + newest-first sort. Tags are assigned
+    # across the full variant set (so "Newest", "Highest recall" etc. are
+    # global judgements, not per-row), then attached back to each entry.
+    tags_by_id = _compute_variant_tags(variants)
+    for v in variants:
+        v["tags"] = tags_by_id.get(v["id"], [])
+    variants = _sort_variants_newest_first(variants)
 
     return {
         "model_dir": model_dir,

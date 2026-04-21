@@ -328,6 +328,70 @@ def _apply_pin(cache_dir: str, data: dict, pin: str) -> dict:
     )
 
 
+def _prune_stale_local_variants(
+    cache_dir: str,
+    merged: dict,
+    remote_pinned: dict | None,
+    remote_latest_id: str | None,
+) -> list[str]:
+    """Drop ``pinned_models`` entries that the publisher removed from HF and
+    that we don't have weights for locally.
+
+    This is the cleanup companion to :func:`_merge_remote_registry_with_local_state`.
+    Without it, experimental/broken variants that were once published to HF
+    stay visible in the Settings AI panel forever — end users have no way to
+    remove them (they can't edit the JSON on Docker/RPi).
+
+    Safety rules:
+      * Never drop the current local ``latest`` — operators rely on it
+        running even after HF removes the entry.
+      * Never drop an entry whose weights are on disk — a user may have
+        installed it locally via the UI and wants to keep it.
+      * Only drop entries that are BOTH absent from the remote registry
+        AND have no weights file on disk. These are unreachable rubble:
+        UI shows them as "Not installed" but "Install & switch" would 404.
+
+    Returns the list of ids that were removed (for logging).
+    """
+    pinned = merged.get(LOCAL_PINNED_MODELS_KEY)
+    if not isinstance(pinned, dict) or not pinned:
+        return []
+
+    protected: set[str] = set()
+    local_active = merged.get("latest")
+    if isinstance(local_active, str) and local_active:
+        protected.add(local_active)
+    if isinstance(remote_latest_id, str) and remote_latest_id:
+        protected.add(remote_latest_id)
+
+    remote_ids: set[str] = set()
+    if isinstance(remote_pinned, dict):
+        remote_ids.update(k for k in remote_pinned.keys() if isinstance(k, str))
+
+    removed: list[str] = []
+    for mid in list(pinned.keys()):
+        if mid in protected or mid in remote_ids:
+            continue
+        entry = pinned[mid]
+        if not isinstance(entry, dict):
+            continue
+        weights_rel = _first_present(
+            entry, ("weights_path", "weights_path_onnx", "onnx_path", "model", "path")
+        )
+        if weights_rel:
+            weights_abs = os.path.join(cache_dir, os.path.basename(weights_rel))
+            if os.path.exists(weights_abs):
+                continue  # weights on disk → user can still load it
+        removed.append(mid)
+        del pinned[mid]
+
+    if removed and not pinned:
+        # Don't leave an empty dict lying around.
+        del merged[LOCAL_PINNED_MODELS_KEY]
+
+    return removed
+
+
 def _merge_remote_registry_with_local_state(
     remote_data: dict,
     local_data: dict,
@@ -363,6 +427,34 @@ def _merge_remote_registry_with_local_state(
                 for mid, payload in remote_pinned.items()
             }
         )
+
+    # Ensure the remote ``latest`` always appears as a variant the UI can
+    # show — even when the publisher did not list it under ``pinned_models``.
+    # Without this, a release that only bumps the top-level pointer (e.g. HF
+    # lists ``latest: _v4`` and pins only older IDs) is invisible to end
+    # users until someone sets ``WMB_FORCE_REMOTE_REFRESH=1``, which typical
+    # Docker-Compose / RPi operators cannot or should not do.
+    remote_latest_id = remote_data.get("latest")
+    if isinstance(remote_latest_id, str) and remote_latest_id.strip():
+        if remote_latest_id not in merged_pinned:
+            synth: dict[str, str] = {}
+            for key in (
+                "weights_path",
+                "weights_path_onnx",
+                "labels_path",
+                "onnx_path",
+                "model",
+                "path",
+                "classes_path",
+                "labels",
+                WEIGHTS_INT8_QDQ_KEY,
+                WEIGHTS_INT8_QDQ_FALLBACKS_KEY,
+            ):
+                value = remote_data.get(key)
+                if value is not None:
+                    synth[key] = value
+            if synth:
+                merged_pinned[remote_latest_id] = synth
 
     if isinstance(local_pinned, dict):
         for mid, local_entry in local_pinned.items():
@@ -729,6 +821,18 @@ def fetch_latest_json(base_url: str, cache_dir: str) -> dict[str, str]:
                 local_data,
                 preserve_local_active=True,
             )
+            pruned = _prune_stale_local_variants(
+                cache_dir,
+                merged_remote,
+                remote_data.get(LOCAL_PINNED_MODELS_KEY),
+                remote_data.get("latest"),
+            )
+            if pruned:
+                logger.info(
+                    "Pruned %d stale local-only variants missing from HF and disk: %s",
+                    len(pruned),
+                    pruned,
+                )
             os.makedirs(cache_dir, exist_ok=True)
             with open(local_path, "w", encoding="utf-8") as file:
                 json.dump(merged_remote, file)
@@ -756,6 +860,18 @@ def fetch_latest_json(base_url: str, cache_dir: str) -> dict[str, str]:
                 local_data,
                 preserve_local_active=True,
             )
+            pruned = _prune_stale_local_variants(
+                cache_dir,
+                merged_remote,
+                remote_data.get(LOCAL_PINNED_MODELS_KEY),
+                remote_data.get("latest"),
+            )
+            if pruned:
+                logger.info(
+                    "Pruned %d stale local-only variants missing from HF and disk: %s",
+                    len(pruned),
+                    pruned,
+                )
             os.makedirs(cache_dir, exist_ok=True)
             with open(local_path, "w", encoding="utf-8") as file:
                 json.dump(merged_remote, file)
@@ -775,11 +891,28 @@ def fetch_latest_json(base_url: str, cache_dir: str) -> dict[str, str]:
     # pipeline artefact — so HF's view of the registry gets augmented
     # with the local runtime state, not replaced by it.
     if not force_refresh and local_data is not None:
+        # Snapshot the original remote registry BEFORE merging in local state,
+        # so the prune step can tell "publisher removed this" apart from
+        # "publisher + local both keep this".
+        original_remote_pinned = remote_data.get(LOCAL_PINNED_MODELS_KEY)
+        original_remote_latest = remote_data.get("latest")
         remote_data = _merge_remote_registry_with_local_state(
             remote_data,
             local_data,
             preserve_local_active=False,
         )
+        pruned = _prune_stale_local_variants(
+            cache_dir,
+            remote_data,
+            original_remote_pinned if isinstance(original_remote_pinned, dict) else None,
+            original_remote_latest if isinstance(original_remote_latest, str) else None,
+        )
+        if pruned:
+            logger.info(
+                "Pruned %d stale local-only variants missing from HF and disk: %s",
+                len(pruned),
+                pruned,
+            )
 
     # Safe to persist remote as new source of truth.
     os.makedirs(cache_dir, exist_ok=True)

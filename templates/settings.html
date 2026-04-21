@@ -636,9 +636,17 @@
         border-color: var(--color-primary, #0d6efd);
         background: var(--color-primary-soft, rgba(13, 110, 253, 0.05));
     }
+    .ai-variant-row__id-wrap {
+        flex: 1 1 auto; min-width: 0;
+        display: flex; flex-direction: column; gap: 0.15rem;
+    }
     .ai-variant-row__id {
         font-family: var(--font-mono, monospace); font-size: 0.85rem;
-        flex: 1 1 auto; word-break: break-all;
+        word-break: break-all;
+    }
+    .ai-variant-row__meta {
+        font-size: 0.78rem; color: var(--color-text-muted, #6c757d);
+        line-height: 1.3;
     }
     .ai-variant-row__badges {
         display: flex; gap: 0.3rem; flex-wrap: wrap;
@@ -721,7 +729,12 @@
             <!-- Variant list -->
             <div class="mb-2">
                 <strong>Available variants</strong>
-                <div class="settings-field__help">Switching reloads the detector in-place; no restart needed. Only locally-installed variants can be switched to.</div>
+                <div class="settings-field__help">
+                    Sorted newest first. Switching reloads the detector in-place; no restart needed.
+                    <br>
+                    <strong>tiny</strong> runs faster (good for Raspberry Pi), <strong>s</strong> is more accurate.
+                    Tags describe each variant — no single one is universally "best".
+                </div>
             </div>
             <div id="aiVariantList">
                 <div class="text-center text-muted p-3">Loading variants…</div>
@@ -1246,6 +1259,12 @@
     // Auto derives save from the model's conf + 0.10; Manual lets the
     // user set it directly. Both modes show the active model's
     // detection floor so the user understands the relationship.
+    // Module-level hook: the AI panel calls this after a successful
+    // switch/install so the Save-Threshold block re-derives from the new
+    // detector's conf-default. Without this, the auto-derived value is
+    // stale until the user hard-refreshes (observed 2026-04-21).
+    let _refreshSaveThresholdFromDetector = null;
+
     function initSaveThresholdToggle() {
         const modeInput = document.getElementById('SAVE_THRESHOLD_MODE');
         const valueInput = document.getElementById('SAVE_THRESHOLD');
@@ -1315,27 +1334,34 @@
 
         // Pull the active model's conf-default from the registry so the
         // auto-derived save value and the warning use the live number.
-        fetch('/api/v1/models/detector')
-            .then(r => r.ok ? r.json() : null)
-            .then(payload => {
-                if (!payload) return;
-                const rt = payload.runtime || {};
-                const meta = payload.metadata || {};
-                const conf = rt.conf_threshold_default != null
-                    ? rt.conf_threshold_default
-                    : (meta.inference_thresholds ? meta.inference_thresholds.confidence : null);
-                if (conf != null && isFinite(conf)) {
-                    detectorConfDefault = parseFloat(conf);
-                    const modelId = payload.active ? payload.active.id : null;
-                    if (activeModelEl) {
-                        activeModelEl.textContent = modelId
-                            ? (modelId + ' (conf ' + detectorConfDefault.toFixed(2) + ')')
-                            : ('conf ' + detectorConfDefault.toFixed(2));
+        // Exposed via the module-level hook so the AI panel can call it
+        // after a successful switch without reloading the page.
+        function refreshFromRegistry() {
+            return fetch('/api/v1/models/detector')
+                .then(r => r.ok ? r.json() : null)
+                .then(payload => {
+                    if (!payload) return;
+                    const rt = payload.runtime || {};
+                    const meta = payload.metadata || {};
+                    const conf = rt.conf_threshold_default != null
+                        ? rt.conf_threshold_default
+                        : (meta.inference_thresholds ? meta.inference_thresholds.confidence : null);
+                    if (conf != null && isFinite(conf)) {
+                        detectorConfDefault = parseFloat(conf);
+                        const modelId = payload.active ? payload.active.id : null;
+                        if (activeModelEl) {
+                            activeModelEl.textContent = modelId
+                                ? (modelId + ' (conf ' + detectorConfDefault.toFixed(2) + ')')
+                                : ('conf ' + detectorConfDefault.toFixed(2));
+                        }
                     }
-                }
-                renderMode();
-            })
-            .catch(() => { /* info-chip stays blank; toggle still works */ });
+                    renderMode();
+                })
+                .catch(() => { /* info-chip stays blank; toggle still works */ });
+        }
+
+        _refreshSaveThresholdFromDetector = refreshFromRegistry;
+        refreshFromRegistry();
 
         renderMode();
     }
@@ -1433,20 +1459,84 @@
             if (!v.is_available_locally) classes.push('ai-variant-row--unavailable');
             row.className = classes.join(' ');
 
+            const idWrap = document.createElement('div');
+            idWrap.className = 'ai-variant-row__id-wrap';
+
             const idEl = document.createElement('div');
             idEl.className = 'ai-variant-row__id';
             idEl.textContent = v.id;
-            row.appendChild(idEl);
+            idWrap.appendChild(idEl);
+
+            // Meta sub-line: "variant: tiny · 640² · recall 99.3% · conf 0.15 · 2026-04-17"
+            // Only shows the parts we actually have — not-installed rows get
+            // variant+release-date from the id, installed rows add the full
+            // thresholds+metrics from local companions.
+            const meta = v.metadata || {};
+            const metaBits = [];
+            if (meta.variant) metaBits.push('variant: ' + meta.variant);
+            if (Array.isArray(meta.input_size) && meta.input_size.length === 2) {
+                metaBits.push(meta.input_size[0] + '²');
+            }
+            if (typeof meta.bird_recall === 'number') {
+                metaBits.push('recall ' + _fmtPct(meta.bird_recall));
+            }
+            if (typeof meta.conf === 'number') {
+                metaBits.push('conf ' + meta.conf);
+            }
+            if (typeof meta.iou === 'number' && meta.iou !== 0.5) {
+                // Show iou only when it deviates from the usual default,
+                // otherwise it's noise.
+                metaBits.push('iou ' + meta.iou);
+            }
+            if (meta.trained_at || meta.released) {
+                metaBits.push(meta.trained_at || meta.released);
+            }
+            if (metaBits.length) {
+                const metaEl = document.createElement('div');
+                metaEl.className = 'ai-variant-row__meta';
+                metaEl.textContent = metaBits.join(' · ');
+                idWrap.appendChild(metaEl);
+            } else if (!v.is_available_locally) {
+                // No metadata at all + not installed -> tell the user why.
+                const metaEl = document.createElement('div');
+                metaEl.className = 'ai-variant-row__meta text-muted';
+                metaEl.textContent = 'Details load after install';
+                idWrap.appendChild(metaEl);
+            }
+
+            row.appendChild(idWrap);
 
             const badges = document.createElement('div');
             badges.className = 'ai-variant-row__badges';
-            if (v.is_active) badges.appendChild(_makeBadge('Active', 'success'));
-            if (v.is_hf_latest) badges.appendChild(
-                _makeBadge('HF latest', 'primary', 'Default pointer from latest_models.json')
-            );
+            if (v.is_active) badges.appendChild(_makeBadge('Active', 'primary'));
+            // "HF latest" is intentionally NOT rendered here. It's admin
+            // info (which id HF advertises as the default for fresh
+            // installs) that overlaps with the green "Newest s/tiny" tags
+            // for end users. The field stays in the API payload for
+            // scripts/tests; UI just doesn't show it anymore.
             if (!v.is_available_locally) badges.appendChild(
                 _makeBadge('Not installed', 'warning', 'Weights or labels missing on disk')
             );
+            // Data-driven descriptive tags (never editorialized as
+            // "recommended"). Tooltips explain what each label means so
+            // users can pick for their hardware / use case.
+            // Bootstrap badge variant per tag: "Newest*" gets its own
+            // colour so the recency hint is visually separable from the
+            // neutral descriptive tags (size, recall).
+            const tagTooltips = {
+                'Newest':                   'Most recent release date among available variants',
+                'Newest s':                 'Most recent release in the YOLOX s family (bigger, slower, better)',
+                'Newest tiny':              'Most recent release in the YOLOX tiny family (small, faster)',
+                'Small, faster':            'YOLOX tiny runs faster than the s variant — better for low-power hardware',
+                'Bigger, slower, better':   'YOLOX s is larger and slower than tiny but more accurate — better when CPU allows',
+                'Highest recall':           'Highest bird_recall across variants with published metrics',
+            };
+            const newestVariant = 'success';  // green
+            const defaultVariant = 'info';    // muted blue
+            (v.tags || []).forEach(tag => {
+                const variant = tag.startsWith('Newest') ? newestVariant : defaultVariant;
+                badges.appendChild(_makeBadge(tag, variant, tagTooltips[tag] || tag));
+            });
             row.appendChild(badges);
 
             // Precision chips (fp32 / int8_qdq) — shown when the variant
@@ -1558,7 +1648,15 @@
                 fb.textContent = '✓ Pinned to ' + (data.model_id || '(unpinned)') +
                     '. The detector reloads on the next inference cycle (~1–2 s).';
                 fb.className = 'settings-field__help mt-2 text-success';
-                setTimeout(loadAiModels, 2500);
+                setTimeout(() => {
+                    loadAiModels();
+                    // Re-derive the Save-Threshold auto value from the new
+                    // detector's conf-default so the user doesn't need a
+                    // hard refresh to see the updated "= model X + 0.10" hint.
+                    if (_refreshSaveThresholdFromDetector) {
+                        _refreshSaveThresholdFromDetector();
+                    }
+                }, 2500);
             })
             .catch(err => {
                 fb.textContent = '✗ Network error: ' + err.message;
@@ -1594,7 +1692,12 @@
                     'If int8 weights fail to load on this ORT build, the ' +
                     'detector falls back to fp32 automatically.';
                 fb.className = 'settings-field__help mt-2 text-success';
-                setTimeout(loadAiModels, 2500);
+                setTimeout(() => {
+                    loadAiModels();
+                    if (_refreshSaveThresholdFromDetector) {
+                        _refreshSaveThresholdFromDetector();
+                    }
+                }, 2500);
             })
             .catch(err => {
                 fb.textContent = '✗ Network error: ' + err.message;
