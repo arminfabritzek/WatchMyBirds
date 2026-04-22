@@ -19,6 +19,36 @@
     <!-- Design System (Source of Truth for all styling) -->
     <link rel="stylesheet" href="/assets/design-system.css?v=20260222">
 
+    {# Theme hydration — must run BEFORE the body paints to avoid a
+       flash of the wrong palette. Resolves the effective theme once
+       and stamps the result on the <html> element as data-theme:
+         - localStorage "light" -> data-theme="light"  (user override)
+         - localStorage "dark"  -> data-theme="dark"   (user override)
+         - localStorage "system" or absent:
+             OS dark  -> data-theme="dark"
+             OS light -> data-theme="light"
+       Because the attribute is always set, downstream CSS only needs
+       one selector (`:root[data-theme="dark"]`) — no parallel
+       `@media (prefers-color-scheme: dark)` rules. The media query
+       still lives in design-system.css as a safety net in case this
+       script fails (e.g. strict CSP) so users without JS still get
+       a sensible theme. #}
+    <script>
+    (function () {
+        var pref = null;
+        try { pref = localStorage.getItem('wmb-theme'); } catch (e) {}
+        var resolved;
+        if (pref === 'light' || pref === 'dark') {
+            resolved = pref;
+        } else {
+            resolved = (window.matchMedia &&
+                        window.matchMedia('(prefers-color-scheme: dark)').matches)
+                ? 'dark' : 'light';
+        }
+        document.documentElement.setAttribute('data-theme', resolved);
+    })();
+    </script>
+
     <meta name="csrf-token" content="{{ csrf_token }}">
     {% block head %}{% endblock %}
 </head>

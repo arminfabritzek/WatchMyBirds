@@ -142,6 +142,13 @@ RUNTIME_KEYS = {
     "MOTION_DETECTION_ENABLED",
     "MOTION_SENSITIVITY",
     "SPECIES_COMMON_NAME_LOCALE",
+    # STREAM_WIDTH_OUTPUT_RESIZE is read once at mount time in
+    # web_interface.py, so changing it here takes effect after the
+    # next restart. It's still in RUNTIME_KEYS because the Settings
+    # form exposes the field — without this entry, Apply would
+    # silently drop the new value even though it was committed to
+    # the form. See validator in _validate_value.
+    "STREAM_WIDTH_OUTPUT_RESIZE",
 }
 
 BOOT_KEYS = set(DEFAULTS.keys()) - RUNTIME_KEYS
@@ -984,6 +991,21 @@ def _validate_value(key, value):
             normalized = value.strip().upper()
             if normalized in ("DE", "NO"):
                 return True, normalized
+        return False, None
+
+    if key == "STREAM_WIDTH_OUTPUT_RESIZE":
+        # Accept int, numeric string, or empty string (= "full resolution",
+        # coerced to the default 640 to keep the downstream consumer
+        # happy — the feature advertised as "Empty = full" is not wired
+        # up anywhere; it falls back to default).
+        if value is None or (isinstance(value, str) and not value.strip()):
+            return True, DEFAULTS.get("STREAM_WIDTH_OUTPUT_RESIZE", 640)
+        try:
+            width = int(float(value))
+        except Exception:
+            return False, None
+        if 160 <= width <= 7680:  # reasonable bounds: QQVGA to 8K
+            return True, width
         return False, None
 
     return False, None

@@ -107,11 +107,15 @@
    explicitly (see the "Review-surface dark-mode overrides" block
    further down this file).
 
-   Scope mechanism: `@media (prefers-color-scheme: dark)` so the dark
-   palette follows the OS preference without any JS toggle
-   infrastructure. If a manual theme toggle lands later, the same rule
-   set can live inside a `:root[data-theme="dark"]` selector by simply
-   duplicating the block.
+   Scope mechanism: the dark palette applies in two cases:
+     1. `@media (prefers-color-scheme: dark)` AND the root does NOT
+        carry `data-theme="light"` — OS preference is the default.
+     2. `:root[data-theme="dark"]` — the user explicitly chose dark in
+        Settings (base.html hydrates this attribute from localStorage
+        before first paint, so there is no flash of the wrong palette).
+   Users who pick "Light" in Settings set `data-theme="light"` on the
+   root, which wins over the media query. "System" mode leaves the
+   attribute absent so the OS preference passes through unchanged.
 
    Wong palette dark variants: same hues as the light palette, but
    slightly lifted toward the "bright" Wong variants so they remain
@@ -124,7 +128,7 @@
    ═══════════════════════════════════════════════════════════════════════════ */
 
 @media (prefers-color-scheme: dark) {
-    :root {
+    :root:not([data-theme="light"]) {
         /* Core surfaces — dark stone, cool graphite tint. */
         --color-bg: #15181a;
         --color-surface: #1e2326;
@@ -184,6 +188,60 @@
         --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.42), 0 4px 6px -2px rgba(0, 0, 0, 0.22);
         --shadow-xl: 0 20px 25px -5px rgba(0, 0, 0, 0.5);
     }
+}
+
+/* Explicit dark override (user chose "Dark" in Settings regardless of
+   OS preference). Token values are intentionally identical to the
+   `@media` block above — CSS has no mixin, so the duplication is the
+   simplest correct path. Keep these two blocks in sync when tokens
+   change. */
+:root[data-theme="dark"] {
+    --color-bg: #15181a;
+    --color-surface: #1e2326;
+    --color-surface-2: #262c2f;
+    --color-surface-3: #2f3539;
+
+    --color-primary: #92a7ab;
+    --color-primary-dark: #c9d3d5;
+    --color-primary-light: #394649;
+
+    --color-accent: #b4bcbd;
+    --color-accent-dark: #cfd5d6;
+    --color-accent-light: #394042;
+
+    --color-secondary: #9aa3a3;
+    --color-secondary-light: #343a3a;
+
+    --color-text: #e8ebec;
+    --color-text-muted: #a0a7a8;
+    --color-text-subtle: #7b8284;
+
+    --color-border: #3a4145;
+    --color-border-light: #2c3235;
+
+    --color-success: #8fb396;
+    --color-warning: #e1b87c;
+    --color-danger: #d89089;
+    --color-info: #8fb0b9;
+
+    --color-impact: #c6ae95;
+    --color-impact-light: #4a3d30;
+    --color-impact-dark: #e8d8c3;
+    --color-impact-ratio: #a0b5c6;
+
+    --species-colour-0: #4aa3d9;
+    --species-colour-1: #f3b340;
+    --species-colour-2: #3fbe93;
+    --species-colour-3: #e09bc2;
+    --species-colour-4: #7bc4ee;
+    --species-colour-5: #e8793a;
+    --species-colour-6: #f5ea63;
+    --species-colour-7: #b89a78;
+
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+    --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.4), 0 2px 4px -1px rgba(0, 0, 0, 0.25);
+    --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.42), 0 4px 6px -2px rgba(0, 0, 0, 0.22);
+    --shadow-xl: 0 20px 25px -5px rgba(0, 0, 0, 0.5);
 }
 
 /* --- Global Base Styles --- */
@@ -7179,176 +7237,181 @@ span.review-event-panel__cell-species {
    redefinition alone cannot reach.
 
    Scope rule: only Review surfaces are touched here.
+
+   Trigger: `:root[data-theme="dark"]` — base.html hydrates this
+   attribute before first paint from either the user's Settings choice
+   or the OS `prefers-color-scheme`. That means a user who picks "Light"
+   on an OS-dark device gets fully light Review surfaces, and vice
+   versa. (Previously this block used `@media (prefers-color-scheme: dark)`
+   directly, which ignored the user's explicit choice.)
    ═══════════════════════════════════════════════════════════════════════════ */
 
-@media (prefers-color-scheme: dark) {
-    /* Rail aside — the warm-green linear gradient flips to a cool slate
-       gradient so the rail stays visually distinct from the main content
-       without fighting the dark surface. */
-    .review-workspace > .review-event-browser {
-        background: linear-gradient(180deg, rgba(46, 54, 58, 0.94), rgba(32, 38, 42, 0.92));
-        border-color: var(--color-border);
-        box-shadow: 0 12px 24px rgba(0, 0, 0, 0.35);
-    }
+/* Rail aside — the warm-green linear gradient flips to a cool slate
+   gradient so the rail stays visually distinct from the main content
+   without fighting the dark surface. */
+:root[data-theme="dark"] .review-workspace > .review-event-browser {
+    background: linear-gradient(180deg, rgba(46, 54, 58, 0.94), rgba(32, 38, 42, 0.92));
+    border-color: var(--color-border);
+    box-shadow: 0 12px 24px rgba(0, 0, 0, 0.35);
+}
 
-    /* Rail cards — non-active and active cards both swap to dark
-       surfaces. The token-based accent rules still drive the active
-       highlight. */
-    .review-event-card {
-        background: var(--color-surface-2);
-        border-color: var(--color-border);
-    }
+/* Rail cards — non-active and active cards both swap to dark
+   surfaces. The token-based accent rules still drive the active
+   highlight. */
+:root[data-theme="dark"] .review-event-card {
+    background: var(--color-surface-2);
+    border-color: var(--color-border);
+}
 
-    .review-event-card__count {
-        background: rgba(146, 167, 171, 0.14);
-    }
+:root[data-theme="dark"] .review-event-card__count {
+    background: rgba(146, 167, 171, 0.14);
+}
 
-    .review-event-card__count-value {
-        color: var(--color-primary-light);
-    }
+:root[data-theme="dark"] .review-event-card__count-value {
+    color: var(--color-primary-light);
+}
 
-    .review-event-card:hover {
-        border-color: var(--color-primary-dark);
-        box-shadow: 0 8px 18px rgba(0, 0, 0, 0.42);
-    }
+:root[data-theme="dark"] .review-event-card:hover {
+    border-color: var(--color-primary-dark);
+    box-shadow: 0 8px 18px rgba(0, 0, 0, 0.42);
+}
 
-    .review-event-card.is-active {
-        background: linear-gradient(
-            180deg,
-            rgba(146, 167, 171, 0.22),
-            rgba(146, 167, 171, 0.12)
-        );
-        box-shadow:
-            0 10px 22px rgba(0, 0, 0, 0.48),
-            0 0 0 1px rgba(146, 167, 171, 0.3);
-    }
+:root[data-theme="dark"] .review-event-card.is-active {
+    background: linear-gradient(
+        180deg,
+        rgba(146, 167, 171, 0.22),
+        rgba(146, 167, 171, 0.12)
+    );
+    box-shadow:
+        0 10px 22px rgba(0, 0, 0, 0.48),
+        0 0 0 1px rgba(146, 167, 171, 0.3);
+}
 
-    .review-event-card.is-active .review-event-card__count {
-        background: rgba(146, 167, 171, 0.22);
-    }
+:root[data-theme="dark"] .review-event-card.is-active .review-event-card__count {
+    background: rgba(146, 167, 171, 0.22);
+}
 
-    .review-event-panel__trail-map {
-        border-color: var(--color-border);
-        background:
-            radial-gradient(circle at top, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0) 60%),
-            linear-gradient(180deg, rgba(38, 44, 47, 0.96), rgba(30, 35, 38, 0.96));
-    }
+:root[data-theme="dark"] .review-event-panel__trail-map {
+    border-color: var(--color-border);
+    background:
+        radial-gradient(circle at top, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0) 60%),
+        linear-gradient(180deg, rgba(38, 44, 47, 0.96), rgba(30, 35, 38, 0.96));
+}
 
-    /* Detection grid — the light-theme gradient becomes a cool-slate
-       gradient so nested cells still read as living inside the grid
-       shell on dark. Border-top keeps the primary accent. */
-    .review-event-panel__grid {
-        background: linear-gradient(180deg, rgba(38, 48, 52, 0.88), rgba(28, 35, 38, 0.92));
-        box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.06);
-    }
+/* Detection grid — the light-theme gradient becomes a cool-slate
+   gradient so nested cells still read as living inside the grid
+   shell on dark. Border-top keeps the primary accent. */
+:root[data-theme="dark"] .review-event-panel__grid {
+    background: linear-gradient(180deg, rgba(38, 48, 52, 0.88), rgba(28, 35, 38, 0.92));
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.06);
+}
 
-    /* Grid cell — swap the hardcoded white background to a dark
-       surface. The species colour border still takes precedence via
-       the existing `var(--cell-species-colour, ...)` fallback. */
-    .review-event-panel__cell {
-        background: var(--color-surface-3);
-        border-color: var(--cell-species-colour, var(--color-border));
-        box-shadow: 0 4px 10px rgba(0, 0, 0, 0.35);
-    }
+/* Grid cell — swap the hardcoded white background to a dark
+   surface. The species colour border still takes precedence via
+   the existing `var(--cell-species-colour, ...)` fallback. */
+:root[data-theme="dark"] .review-event-panel__cell {
+    background: var(--color-surface-3);
+    border-color: var(--cell-species-colour, var(--color-border));
+    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.35);
+}
 
-    .review-event-panel__cell-media {
-        background: rgba(0, 0, 0, 0.35);
-    }
+:root[data-theme="dark"] .review-event-panel__cell-media {
+    background: rgba(0, 0, 0, 0.35);
+}
 
-    .review-event-panel__cell-action {
-        background: var(--color-surface-2);
-        border-color: var(--color-border);
-        color: var(--color-text);
-    }
+:root[data-theme="dark"] .review-event-panel__cell-action {
+    background: var(--color-surface-2);
+    border-color: var(--color-border);
+    color: var(--color-text);
+}
 
-    .review-event-panel__cell-action:hover {
-        background: var(--color-surface-3);
-        border-color: var(--color-primary);
-    }
+:root[data-theme="dark"] .review-event-panel__cell-action:hover {
+    background: var(--color-surface-3);
+    border-color: var(--color-primary);
+}
 
-    /* Species pill in the control aside. */
-    .review-event-panel__species-pill {
-        background: var(--color-surface-2);
-        border-color: var(--color-border);
-    }
+/* Species pill in the control aside. */
+:root[data-theme="dark"] .review-event-panel__species-pill {
+    background: var(--color-surface-2);
+    border-color: var(--color-border);
+}
 
-    /* Hoisted Decision section — see the matching light-mode block
-       near `.review-event-panel__controls`. The cream gradient from
-       the light theme would read as a bright smear on dark; swap it
-       for a warm low-chroma surface that still reads as "lifted."
-       Kept inside the canonical review-surface dark block so
-       test_design_system_defines_review_surface_dark_overrides stays
-       green — all review-surface dark overrides live in one place. */
-    .review-event-panel__controls > .review-stage-panel__section--decision {
-        border-color: rgba(196, 165, 104, 0.28);
-        background: linear-gradient(180deg, rgba(44, 38, 29, 0.92), rgba(32, 28, 22, 0.92));
-        box-shadow: 0 12px 24px -14px rgba(0, 0, 0, 0.6);
-    }
+/* Hoisted Decision section — see the matching light-mode block
+   near `.review-event-panel__controls`. The cream gradient from
+   the light theme would read as a bright smear on dark; swap it
+   for a warm low-chroma surface that still reads as "lifted."
+   Kept inside the canonical review-surface dark block so
+   test_design_system_defines_review_surface_dark_overrides stays
+   green — all review-surface dark overrides live in one place. */
+:root[data-theme="dark"] .review-event-panel__controls > .review-stage-panel__section--decision {
+    border-color: rgba(196, 165, 104, 0.28);
+    background: linear-gradient(180deg, rgba(44, 38, 29, 0.92), rgba(32, 28, 22, 0.92));
+    box-shadow: 0 12px 24px -14px rgba(0, 0, 0, 0.6);
+}
 
-    .review-event-panel__controls > .review-stage-panel__section--decision > .review-stage-panel__section-label {
-        color: rgba(255, 232, 178, 0.76);
-    }
+:root[data-theme="dark"] .review-event-panel__controls > .review-stage-panel__section--decision > .review-stage-panel__section-label {
+    color: rgba(255, 232, 178, 0.76);
+}
 
-    /* Species change-receipt — the accent bar still carries
-       --color-primary automatically; only the tinted background needs
-       an explicit dark override so the receipt reads as a highlight
-       band inside the dark control aside. */
-    .review-species-receipt {
-        background: rgba(146, 167, 171, 0.14);
-    }
+/* Species change-receipt — the accent bar still carries
+   --color-primary automatically; only the tinted background needs
+   an explicit dark override so the receipt reads as a highlight
+   band inside the dark control aside. */
+:root[data-theme="dark"] .review-species-receipt {
+    background: rgba(146, 167, 171, 0.14);
+}
 
-    .review-species-receipt__prev {
-        text-decoration-color: rgba(200, 210, 212, 0.42);
-    }
+:root[data-theme="dark"] .review-species-receipt__prev {
+    text-decoration-color: rgba(200, 210, 212, 0.42);
+}
 
-    /* Rail eligibility badges — the light-theme tints read wrong on
-       dark. Flip to a desaturated dark surface with the matching hue. */
-    .review-event-card__badge--ready,
-    .review-event-panel__badge--ready {
-        background: rgba(75, 125, 92, 0.32);
-        color: #a9d4b2;
-    }
+/* Rail eligibility badges — the light-theme tints read wrong on
+   dark. Flip to a desaturated dark surface with the matching hue. */
+.review-event-card__badge--ready,
+:root[data-theme="dark"] .review-event-panel__badge--ready {
+    background: rgba(75, 125, 92, 0.32);
+    color: #a9d4b2;
+}
 
-    .review-event-card__badge--fallback,
-    .review-event-panel__badge--fallback {
-        background: rgba(138, 98, 46, 0.32);
-        color: #e6c79a;
-    }
+.review-event-card__badge--fallback,
+:root[data-theme="dark"] .review-event-panel__badge--fallback {
+    background: rgba(138, 98, 46, 0.32);
+    color: #e6c79a;
+}
 
-    /* Quick-pick species button — the warm-stone media-fallback
-       gradient reads wrong on dark. Swap to a cool slate fallback so
-       species without a thumbnail still show a legible tile. */
-    .review-stage-panel__species-media {
-        background: linear-gradient(180deg, rgba(60, 68, 72, 0.72), rgba(42, 48, 52, 0.92));
-    }
+/* Quick-pick species button — the warm-stone media-fallback
+   gradient reads wrong on dark. Swap to a cool slate fallback so
+   species without a thumbnail still show a legible tile. */
+:root[data-theme="dark"] .review-stage-panel__species-media {
+    background: linear-gradient(180deg, rgba(60, 68, 72, 0.72), rgba(42, 48, 52, 0.92));
+}
 
-    /* Stats facts grid in the review stage panel — the hardcoded
-       rgba(255,255,255,0.06) background carries enough through but
-       gets a cleaner contrast with a token-based border. */
-    .review-stage-panel__facts-item {
-        background: rgba(255, 255, 255, 0.04);
-    }
+/* Stats facts grid in the review stage panel — the hardcoded
+   rgba(255,255,255,0.06) background carries enough through but
+   gets a cleaner contrast with a token-based border. */
+:root[data-theme="dark"] .review-stage-panel__facts-item {
+    background: rgba(255, 255, 255, 0.04);
+}
 
-    /* Continuity batch panel — the shell uses
-       `var(--color-surface-raised, rgba(47,143,78,0.06))`. That token
-       is not defined anywhere, so in both light and dark scopes the
-       fallback takes effect. Fix the dark fallback explicitly so the
-       shell reads as a dim raised card on dark, not a green tint. */
-    .review-batch-panel {
-        background: rgba(146, 167, 171, 0.08);
-        border-color: rgba(146, 167, 171, 0.5);
-    }
+/* Continuity batch panel — the shell uses
+   `var(--color-surface-raised, rgba(47,143,78,0.06))`. That token
+   is not defined anywhere, so in both light and dark scopes the
+   fallback takes effect. Fix the dark fallback explicitly so the
+   shell reads as a dim raised card on dark, not a green tint. */
+:root[data-theme="dark"] .review-batch-panel {
+    background: rgba(146, 167, 171, 0.08);
+    border-color: rgba(146, 167, 171, 0.5);
+}
 
-    /* Batch decision strip — same story with `--color-surface`. */
-    .review-batch-panel__decision {
-        background: var(--color-surface-2);
-        border-color: var(--color-border);
-    }
+/* Batch decision strip — same story with `--color-surface`. */
+:root[data-theme="dark"] .review-batch-panel__decision {
+    background: var(--color-surface-2);
+    border-color: var(--color-border);
+}
 
-    /* Batch minimap — ensure the sunken backplate reads on dark. */
-    .review-batch-panel__minimap {
-        background: rgba(0, 0, 0, 0.4);
-    }
+/* Batch minimap — ensure the sunken backplate reads on dark. */
+:root[data-theme="dark"] .review-batch-panel__minimap {
+    background: rgba(0, 0, 0, 0.4);
 }
 
 /* --- Continuity batch stage --------------------------------------------- */

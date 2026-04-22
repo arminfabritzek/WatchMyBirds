@@ -230,11 +230,13 @@ def _compute_variant_tags(
 
     - ``Newest s`` / ``Newest tiny``:
                          released on the most recent date *within its
-                         variant family*. This highlights one S and one
-                         tiny at a time, so the user always sees a
-                         "latest" choice per hardware class. Variants
-                         without a detected size fall back to a bare
-                         ``Newest`` tag across the whole list.
+                         variant family*. When multiple variants share
+                         the top date, the tie is broken by
+                         ``bird_recall`` (highest wins). If that still
+                         ties, the tag is skipped — "newest" stops being
+                         a useful hint when three releases all look
+                         equally fresh. Variants without a detected
+                         size fall back to a whole-list ``Newest``.
     - ``Small, faster``: ``variant: tiny`` AND an ``s`` sibling exists in
                          the same list (so the comparison is meaningful).
     - ``Bigger, slower, better``: ``variant: s`` AND a ``tiny`` sibling exists.
@@ -247,21 +249,38 @@ def _compute_variant_tags(
     # Newest per variant family. Bucket dated entries by their detected
     # size, then tag the latest in each bucket ("Newest s", "Newest tiny").
     # Entries without a detected size fall back to a whole-list "Newest".
-    dated_by_size: dict[str | None, list[tuple[str, str]]] = {}
+    # Tie-breaker: within the top date, highest bird_recall wins. If the
+    # recall also ties (or is missing on all contenders), skip the tag —
+    # labelling three entries "Newest s" makes the hint meaningless.
+    dated_by_size: dict[str | None, list[tuple[str, str, float | None]]] = {}
     for v in variants:
         released = (v.get("metadata") or {}).get("released")
         if not (isinstance(released, str) and released):
             continue
         size = (v.get("metadata") or {}).get("variant")
         key = size if isinstance(size, str) and size in ("s", "tiny") else None
-        dated_by_size.setdefault(key, []).append((v["id"], released))
+        recall_raw = (v.get("metadata") or {}).get("bird_recall")
+        recall = float(recall_raw) if isinstance(recall_raw, (int, float)) else None
+        dated_by_size.setdefault(key, []).append((v["id"], released, recall))
 
     for size_key, entries in dated_by_size.items():
-        newest_date = max(d for _, d in entries)
+        newest_date = max(date for _, date, _ in entries)
+        top_dated = [(vid, recall) for vid, d, recall in entries if d == newest_date]
         label = f"Newest {size_key}" if size_key else "Newest"
-        for vid, date in entries:
-            if date == newest_date:
-                tags_by_id[vid].append(label)
+
+        if len(top_dated) == 1:
+            tags_by_id[top_dated[0][0]].append(label)
+            continue
+
+        # Multiple share the top date -> break tie by recall.
+        recalls_present = [(vid, r) for vid, r in top_dated if r is not None]
+        if len(recalls_present) < len(top_dated):
+            # Some contenders have no recall -> comparison is unfair, skip.
+            continue
+        top_recall = max(r for _, r in recalls_present)
+        winners = [vid for vid, r in recalls_present if r == top_recall]
+        if len(winners) == 1:
+            tags_by_id[winners[0]].append(label)
 
     # Speed/accuracy badges only when BOTH sizes are present (otherwise
     # the label is meaningless — "faster than what?").

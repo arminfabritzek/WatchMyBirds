@@ -575,6 +575,43 @@
         background: var(--color-primary, #0d6efd);
         color: var(--color-primary-contrast, #fff);
     }
+    /* Theme toggle reuses the Save-Threshold visual styling. Kept as
+       aliases so the two toggles can evolve independently if needed
+       (different JS scopes, different classnames, same look today). */
+    .theme-mode-toggle {
+        display: inline-flex;
+        gap: 0;
+        margin-bottom: 0.35rem;
+        border: 1px solid var(--color-border, #dee2e6);
+        border-radius: var(--radius-sm, 0.35rem);
+        overflow: hidden;
+    }
+    .theme-mode-btn {
+        appearance: none;
+        border: none;
+        background: transparent;
+        color: var(--color-text, #212529);
+        font-size: 0.8rem;
+        font-weight: 500;
+        padding: 0.3rem 0.9rem;
+        cursor: pointer;
+        transition: background-color 0.12s ease, color 0.12s ease;
+    }
+    .theme-mode-btn + .theme-mode-btn {
+        border-left: 1px solid var(--color-border, #dee2e6);
+    }
+    .theme-mode-btn:hover:not(.is-active) {
+        background: var(--color-surface-2, #f8f9fa);
+    }
+    .theme-mode-btn.is-active {
+        background: var(--color-primary, #0d6efd);
+        color: var(--color-primary-contrast, #fff);
+    }
+    .theme-mode-feedback.is-success {
+        color: var(--color-success, #198754);
+        font-weight: 500;
+        transition: opacity 0.25s ease;
+    }
     .save-threshold-field__value-row {
         display: flex;
         align-items: center;
@@ -1060,6 +1097,38 @@
                         <input type="text" name="EDIT_PASSWORD" id="EDIT_PASSWORD" class="form-control" value="{{ payload['EDIT_PASSWORD'].value }}">
                     </div>
                 </div>
+                {# Theme toggle — pure client-side, persisted in localStorage.
+                   No backend round-trip: base.html hydrates the attribute
+                   from localStorage before first paint. The three buttons
+                   mirror the three resolvable states (System/Light/Dark). #}
+                <div class="col-md-6">
+                    <div class="settings-field">
+                        <label class="settings-field__label">Appearance</label>
+                        {# Reuses the Save-Threshold toggle styling but
+                           with a distinct CSS class so the JS for either
+                           toggle can't cross-bind. The visual styles are
+                           aliased in design-system.css. #}
+                        <div class="theme-mode-toggle" role="group"
+                             aria-label="Appearance theme"
+                             id="themeModeToggle">
+                            <button type="button" class="theme-mode-btn"
+                                    data-theme-mode="system">System</button>
+                            <button type="button" class="theme-mode-btn"
+                                    data-theme-mode="light">Light</button>
+                            <button type="button" class="theme-mode-btn"
+                                    data-theme-mode="dark">Dark</button>
+                        </div>
+                        <div class="settings-field__help">
+                            System follows your OS preference. Light and Dark override it
+                            everywhere (incl. iPhone). Stored locally in this browser.
+                        </div>
+                        <div class="settings-field__help theme-mode-feedback"
+                             id="themeModeFeedback"
+                             role="status"
+                             aria-live="polite"
+                             style="display:none;"></div>
+                    </div>
+                </div>
             </div>
         </div>
     </div>
@@ -1119,7 +1188,7 @@
                                 title="Scales the live video to this pixel width before sending it to your browser. Smaller = faster loading, less bandwidth. Leave empty to send the full camera resolution.">Live View Width</label>
                             <input type="number" name="STREAM_WIDTH_OUTPUT_RESIZE" id="STREAM_WIDTH_OUTPUT_RESIZE" class="form-control form-control-sm" value="{{ payload['STREAM_WIDTH_OUTPUT_RESIZE'].value }}"
                                 title="Scales the live video to this pixel width before sending it to your browser. Smaller = faster loading, less bandwidth. Leave empty to send the full camera resolution.">
-                            <div class="settings-field__help">Default: 640. Empty = full resolution.</div>
+                            <div class="settings-field__help">Default: 640. Empty uses default. Applied on next restart.</div>
                         </div>
                     </div>
                 </div>
@@ -1177,7 +1246,7 @@
 </div><!-- /settings-accordion -->
 
 <!-- Submit Button -->
-<button type="submit" class="btn btn--primary btn--lg btn--block mb-4" id="settingsSubmitBtn">Apply & Restart Services</button>
+<button type="submit" class="btn btn--primary btn--lg btn--block mb-4" id="settingsSubmitBtn">Apply Settings</button>
 
 </form>
 
@@ -1251,7 +1320,94 @@
         loadSystemVersions();
         loadAiModels();
         initSaveThresholdToggle();
+        initThemeToggle();
     });
+
+    // ── Theme (Appearance) toggle ─────────────────────────────────
+    // Three modes: system / light / dark. The hydration script in
+    // base.html runs BEFORE first paint and sets data-theme based on
+    // the stored preference (or OS fallback). This function wires up
+    // the Settings UI so the user can flip between modes without a
+    // page reload. "system" clears the localStorage key and re-reads
+    // the OS preference so the user can go back to "follow the OS".
+    function initThemeToggle() {
+        var group = document.getElementById('themeModeToggle');
+        if (!group) return;
+        var buttons = group.querySelectorAll('[data-theme-mode]');
+        var feedbackEl = document.getElementById('themeModeFeedback');
+        var feedbackTimer = null;
+        var STORAGE_KEY = 'wmb-theme';
+
+        function currentMode() {
+            var stored = null;
+            try { stored = localStorage.getItem(STORAGE_KEY); } catch (e) {}
+            return (stored === 'light' || stored === 'dark') ? stored : 'system';
+        }
+
+        // Inline confirmation: show a short "✓ <label> applied" line
+        // directly under the help text for 2.5 s so the user sees their
+        // click registered, without interrupting with an alert/toast.
+        function showFeedback(mode) {
+            if (!feedbackEl) return;
+            var label = mode.charAt(0).toUpperCase() + mode.slice(1);
+            feedbackEl.textContent = '✓ ' + label + ' theme applied';
+            feedbackEl.style.display = '';
+            feedbackEl.classList.add('is-success');
+            if (feedbackTimer) clearTimeout(feedbackTimer);
+            feedbackTimer = setTimeout(function () {
+                feedbackEl.style.display = 'none';
+                feedbackEl.classList.remove('is-success');
+            }, 2500);
+        }
+
+        function applyTheme(mode, opts) {
+            var resolved;
+            if (mode === 'light' || mode === 'dark') {
+                try { localStorage.setItem(STORAGE_KEY, mode); } catch (e) {}
+                resolved = mode;
+            } else {
+                try { localStorage.removeItem(STORAGE_KEY); } catch (e) {}
+                resolved = (window.matchMedia &&
+                            window.matchMedia('(prefers-color-scheme: dark)').matches)
+                    ? 'dark' : 'light';
+            }
+            document.documentElement.setAttribute('data-theme', resolved);
+            renderButtons(mode);
+            // Only show the confirmation on explicit user clicks, not on
+            // initial hydration or OS-level change listeners — those would
+            // fire a stray "applied" message on page load.
+            if (opts && opts.fromUser) showFeedback(mode);
+        }
+
+        function renderButtons(mode) {
+            buttons.forEach(function (b) {
+                var active = b.dataset.themeMode === mode;
+                b.classList.toggle('is-active', active);
+                b.setAttribute('aria-pressed', active ? 'true' : 'false');
+            });
+        }
+
+        buttons.forEach(function (b) {
+            b.addEventListener('click', function () {
+                applyTheme(b.dataset.themeMode, { fromUser: true });
+            });
+        });
+
+        // Keep system-mode users in sync if they flip their OS theme
+        // while the Settings page is open — re-resolve on the media
+        // query change event. No-op for explicit light/dark users
+        // because they've opted out of the OS feed.
+        if (window.matchMedia) {
+            var mql = window.matchMedia('(prefers-color-scheme: dark)');
+            var onChange = function () {
+                if (currentMode() === 'system') applyTheme('system');
+            };
+            if (mql.addEventListener) mql.addEventListener('change', onChange);
+            else if (mql.addListener) mql.addListener(onChange);
+        }
+
+        renderButtons(currentMode());
+    }
 
     // ── Save Threshold Auto/Manual toggle ────────────────────────
     // The detection-confidence floor is model-owned (from
@@ -1273,7 +1429,17 @@
         const activeModelEl = document.getElementById('saveThresholdActiveModel');
         if (!modeInput || !valueInput) return;
 
-        const buttons = document.querySelectorAll('.save-threshold-mode-btn');
+        // Scope the query to this field's toggle wrapper — the button
+        // class is shared with other toggle groups (e.g. the Appearance
+        // theme picker) that re-use the styling. A global selector here
+        // would bind the Save-Threshold click handler to those buttons
+        // too, writing their data-mode (undefined) into SAVE_THRESHOLD_MODE
+        // and making the Apply request fail validation.
+        const toggleWrap = modeInput.closest('.settings-field')
+            ?.querySelector('.save-threshold-field__mode-toggle');
+        const buttons = toggleWrap
+            ? toggleWrap.querySelectorAll('.save-threshold-mode-btn')
+            : [];
         const AUTO_OFFSET = 0.10;
         let detectorConfDefault = null;  // populated by AI-panel fetch
 
@@ -1821,7 +1987,7 @@
         })
             .then(res => { if (!res.ok) { return res.json().then(err => { throw new Error(err.message || JSON.stringify(err.errors) || 'API Error'); }); } return res.json(); })
             .then(data => {
-                if (data.status === 'success') { alert('✅ Settings saved successfully! Page will reload.'); window.location.reload(); }
+                if (data.status === 'success') { alert('✅ Settings saved. The page will reload. Some values (e.g. stream width) only take effect after a full service restart.'); window.location.reload(); }
                 else { alert('❌ Failed: ' + (data.message || 'Unexpected response')); btn.textContent = originalText; btn.disabled = false; }
             })
             .catch(err => { alert('❌ Error: ' + (err.message || 'Connection failed')); console.error(err); btn.textContent = originalText; btn.disabled = false; });

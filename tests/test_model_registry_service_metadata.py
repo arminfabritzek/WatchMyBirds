@@ -250,16 +250,44 @@ def test_compute_tags_newest_falls_back_to_plain_when_no_variant_info():
     assert tags["old"] == []
 
 
-def test_compute_tags_newest_shared_when_multiple_have_same_latest_date():
+def test_compute_tags_newest_breaks_date_tie_by_bird_recall():
+    """Three variants released on the same date — the one with highest
+    bird_recall wins 'Newest', the others don't get it. Tagging all three
+    'Newest' makes the hint meaningless (observed 2026-04-22 on Docker
+    with _v3_noswarm + _BROKEN + _v4 all at 2026-04-21)."""
     variants = [
-        _mkv("a", released="2026-04-21"),
-        _mkv("b", released="2026-04-21"),
-        _mkv("c", released="2026-04-20"),
+        _mkv("a", released="2026-04-21", bird_recall=0.98),
+        _mkv("b", released="2026-04-21", bird_recall=0.99),  # newest winner
+        _mkv("c", released="2026-04-21", bird_recall=0.97),
+        _mkv("d", released="2026-04-20", bird_recall=0.95),
     ]
     tags = _compute_variant_tags(variants)
-    assert tags["a"] == ["Newest"]
-    assert tags["b"] == ["Newest"]
-    assert tags["c"] == []
+    assert tags["b"] == ["Newest", "Highest recall"]
+    assert "Newest" not in tags["a"]
+    assert "Newest" not in tags["c"]
+    assert "Newest" not in tags["d"]  # older date, never newest
+
+
+def test_compute_tags_newest_skipped_when_date_ties_and_recall_missing():
+    """If the top-dated variants don't all have recall, skip the tag —
+    comparing something-with-recall to something-without would be unfair."""
+    variants = [
+        _mkv("a", released="2026-04-21", bird_recall=0.99),
+        _mkv("b", released="2026-04-21"),  # no recall
+    ]
+    tags = _compute_variant_tags(variants)
+    assert "Newest" not in tags["a"]
+    assert "Newest" not in tags["b"]
+
+
+def test_compute_tags_newest_skipped_when_date_and_recall_tie():
+    variants = [
+        _mkv("a", released="2026-04-21", bird_recall=0.99),
+        _mkv("b", released="2026-04-21", bird_recall=0.99),
+    ]
+    tags = _compute_variant_tags(variants)
+    assert "Newest" not in tags["a"]
+    assert "Newest" not in tags["b"]
 
 
 def test_compute_tags_newest_per_variant_family():
