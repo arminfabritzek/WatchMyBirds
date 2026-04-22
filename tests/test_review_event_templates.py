@@ -717,15 +717,24 @@ def test_design_system_defines_dark_scope_with_wong_palette():
 
 
 def test_design_system_defines_review_surface_dark_overrides():
-    """The review-surface dark override block covers explicit light backgrounds."""
+    """The review-surface dark override block covers explicit light backgrounds.
+
+    Historically the Review dark overrides lived inside a second
+    ``@media (prefers-color-scheme: dark)`` block. The Appearance toggle
+    (2026-04-22) moved them under ``:root[data-theme="dark"]`` selectors
+    so an explicit Light Mode choice on an OS-dark system wins — so this
+    test now anchors on the per-selector prefix instead of the media
+    query wrapper.
+    """
     content = _read("assets/design-system.css")
 
-    # Find the second `@media (prefers-color-scheme: dark) {` scope
-    # — the review-surface override block. The first `{` match is the
-    # :root token scope at the top of the file.
-    first = content.index("@media (prefers-color-scheme: dark) {")
-    second = content.index("@media (prefers-color-scheme: dark) {", first + 1)
-    review_scope = content[second:second + 7000]
+    # Anchor on the unique comment that introduces the review-surface
+    # override block. (The first occurrence of this sentence in the
+    # file's top block-comment is intentionally phrased differently.)
+    anchor = "Scope rule: only Review surfaces are touched here."
+    start = content.index(anchor)
+    # 12k chars is a generous window — the whole block is ~170 lines.
+    review_scope = content[start:start + 12000]
 
     # Review-scope selectors that must be overridden explicitly.
     expected_selectors = [
