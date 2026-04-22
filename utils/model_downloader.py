@@ -86,6 +86,15 @@ PRECISION_VALUES = (PRECISION_FP32, PRECISION_INT8_QDQ)
 WEIGHTS_INT8_QDQ_KEY = "weights_int8_qdq_path"
 WEIGHTS_INT8_QDQ_FALLBACKS_KEY = "weights_int8_qdq_fallback_paths"
 
+# Snapshot of the ids the remote HF registry advertised at the most recent
+# successful merge. Written into latest_models.json under this key so the
+# Settings UI can filter out local-only variants (Docker volumes with old
+# experimental weights, _BROKEN dev artefacts, etc.) without needing to
+# hit HF at render time. Updated on every successful remote fetch; the
+# active variant is always shown regardless, so a user's pinned choice
+# never disappears even when HF no longer advertises it.
+HF_KNOWN_IDS_KEY = "hf_known_ids"
+
 ACTIVE_PAYLOAD_KEYS = (
     "latest",
     "weights_path",
@@ -473,6 +482,25 @@ def _merge_remote_registry_with_local_state(
 
     if merged_pinned:
         merged[LOCAL_PINNED_MODELS_KEY] = merged_pinned
+
+    # Record which ids the publisher currently advertises. The Settings UI
+    # uses this as a whitelist: variants absent from HF (experimental dev
+    # artefacts, legacy volumes, manual tinkering) stay on disk but are
+    # hidden from the picker. Survives across restarts — each merge
+    # overwrites the list with the latest HF view.
+    hf_known: set[str] = set()
+    if isinstance(remote_latest_id, str) and remote_latest_id.strip():
+        hf_known.add(remote_latest_id)
+    if isinstance(remote_pinned, dict):
+        for k in remote_pinned.keys():
+            if isinstance(k, str):
+                hf_known.add(k)
+    if hf_known:
+        merged[HF_KNOWN_IDS_KEY] = sorted(hf_known)
+    elif HF_KNOWN_IDS_KEY in merged:
+        # Empty set means HF returned nothing useful this round — don't
+        # overwrite the previous snapshot with an empty list.
+        pass
 
     return merged
 

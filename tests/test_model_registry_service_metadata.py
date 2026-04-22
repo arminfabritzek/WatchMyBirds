@@ -416,3 +416,107 @@ def test_registry_payload_sorts_newest_first_and_attaches_tags(_isolate_model_di
     assert "Small, faster" in tags_by_id[older_tiny]
     # Highest recall only on the one with metrics
     assert "Highest recall" in tags_by_id[older_tiny]
+
+
+# ---------------------------------------------------------------------------
+# HF-known whitelist filter (hides local-only non-active variants from UI)
+# ---------------------------------------------------------------------------
+
+
+def test_payload_filters_local_only_variants_when_hf_snapshot_present(_isolate_model_dir: Path):
+    """Docker-volume scenario: legacy _BROKEN / dev artefacts vanish from
+    the picker but stay on disk. Only HF-advertised variants plus the
+    active one remain visible.
+    """
+    od = _isolate_model_dir
+    active = "20260420_prodcal_yolox_s_640_mosaic0p5"  # local, not on HF
+    hf_s = "20260421_yolox_s_locator_640_v4"           # HF latest
+    hf_tiny = "20260420_prodcal_yolox_tiny_640_mosaic0p5"  # HF pinned
+    stale_broken = "20260421_v3_noswarm_yolox_s_640_BROKEN"
+    stale_old = "20260417_1512_yolox_s_640_mosaic0p5"
+
+    _write(
+        od / "latest_models.json",
+        {
+            "latest": active,
+            "weights_path": f"object_detection/{active}_best.onnx",
+            "labels_path": f"object_detection/{active}_labels.json",
+            "hf_known_ids": [hf_s, hf_tiny],  # authoritative HF snapshot
+            "pinned_models": {
+                active: {
+                    "weights_path": f"object_detection/{active}_best.onnx",
+                    "labels_path": f"object_detection/{active}_labels.json",
+                },
+                hf_s: {
+                    "weights_path": f"object_detection/{hf_s}_best.onnx",
+                    "labels_path": f"object_detection/{hf_s}_labels.json",
+                },
+                hf_tiny: {
+                    "weights_path": f"object_detection/{hf_tiny}_best.onnx",
+                    "labels_path": f"object_detection/{hf_tiny}_labels.json",
+                },
+                stale_broken: {
+                    "weights_path": f"object_detection/{stale_broken}_best.onnx",
+                    "labels_path": f"object_detection/{stale_broken}_labels.json",
+                },
+                stale_old: {
+                    "weights_path": f"object_detection/{stale_old}_best.onnx",
+                    "labels_path": f"object_detection/{stale_old}_labels.json",
+                },
+            },
+        },
+    )
+    # Make active + stale weights all present on disk (simulating the
+    # real Docker volume where these files linger).
+    for mid in (active, stale_broken, stale_old):
+        (od / f"{mid}_best.onnx").write_bytes(b"x")
+        (od / f"{mid}_labels.json").write_text('["bird"]')
+
+    payload = build_detector_registry_payload(detector=None)
+    ids = {v["id"] for v in payload["variants"]}
+
+    # Visible: HF-advertised + the active one (even though active is not on HF)
+    assert active in ids, "active local-only variant must remain visible"
+    assert hf_s in ids
+    assert hf_tiny in ids
+    # Hidden: stale local-only artefacts
+    assert stale_broken not in ids, "_BROKEN local-only variant must be hidden"
+    assert stale_old not in ids, "stale local-only variant must be hidden"
+
+
+def test_payload_shows_all_variants_when_no_hf_snapshot_available(_isolate_model_dir: Path):
+    """Fresh install / offline first start: the hf_known_ids list is
+    absent, so the filter degrades gracefully to showing every variant.
+    Without this safeguard the UI would be empty until the first
+    successful HF fetch completes.
+    """
+    od = _isolate_model_dir
+    active = "locally_shipped_model"
+    extra = "another_local_model"
+
+    _write(
+        od / "latest_models.json",
+        {
+            "latest": active,
+            "weights_path": f"object_detection/{active}_best.onnx",
+            "labels_path": f"object_detection/{active}_labels.json",
+            # Note: no hf_known_ids key
+            "pinned_models": {
+                active: {
+                    "weights_path": f"object_detection/{active}_best.onnx",
+                    "labels_path": f"object_detection/{active}_labels.json",
+                },
+                extra: {
+                    "weights_path": f"object_detection/{extra}_best.onnx",
+                    "labels_path": f"object_detection/{extra}_labels.json",
+                },
+            },
+        },
+    )
+    (od / f"{active}_best.onnx").write_bytes(b"x")
+    (od / f"{active}_labels.json").write_text('["bird"]')
+
+    payload = build_detector_registry_payload(detector=None)
+    ids = {v["id"] for v in payload["variants"]}
+    assert active in ids
+    assert extra in ids, "without HF snapshot, all known variants stay visible"

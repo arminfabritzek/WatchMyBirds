@@ -25,6 +25,7 @@ from typing import Any
 
 from config import get_config
 from core.model_downloader_core import (
+    HF_KNOWN_IDS_KEY,
     PIN_ENV_VAR,
     PIN_ENV_VAR_PREFIX,
     _resolve_pin_for_cache_dir,
@@ -518,6 +519,28 @@ def build_detector_registry_payload(detector: Any | None) -> dict[str, Any]:
             metadata=_build_variant_metadata(model_dir, mid, payload),
         )
         variants.append(info.to_dict())
+
+    # UI whitelist filter: show only variants that are either currently
+    # active or advertised by HuggingFace at the most recent merge.
+    # Legacy / experimental / _BROKEN artefacts that someone's Docker
+    # volume still holds are hidden from the picker so end users only
+    # ever see choices the publisher actually stands behind. Files on
+    # disk are left alone — this is a view-layer filter, not a cleanup.
+    # When no HF snapshot is available yet (fresh install, offline
+    # first start), the filter gracefully degrades to showing
+    # everything so the UI is never empty.
+    hf_known_raw = latest.get(HF_KNOWN_IDS_KEY) if isinstance(latest, dict) else None
+    hf_known: set[str] = (
+        {v for v in hf_known_raw if isinstance(v, str)}
+        if isinstance(hf_known_raw, list)
+        else set()
+    )
+    if hf_known:
+        runtime_active_id = runtime_id or active_on_disk_id
+        variants = [
+            v for v in variants
+            if v["id"] in hf_known or v["id"] == runtime_active_id
+        ]
 
     # Post-process: data-driven tags + newest-first sort. Tags are assigned
     # across the full variant set (so "Newest", "Highest recall" etc. are
