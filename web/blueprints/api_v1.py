@@ -810,6 +810,257 @@ def models_detector_install():
 
 
 # =============================================================================
+# Classifier model management (parallel to Detector, simpler —
+# no precision chips, no int8 QDQ fallback, classes.txt not labels.json).
+# =============================================================================
+
+
+@api_v1.route("/models/classifier", methods=["GET"])
+@login_required
+def models_classifier_get():
+    """Return the classifier registry payload for the AI settings panel."""
+    from web.services.model_registry_service import build_classifier_registry_payload
+
+    try:
+        dm = api_v1.detection_manager
+        classifier = getattr(dm, "classifier", None)
+        payload = build_classifier_registry_payload(classifier)
+        return jsonify(payload)
+    except Exception as exc:
+        logger.error(f"models/classifier GET error: {exc}", exc_info=True)
+        return jsonify({"status": "error", "message": str(exc)}), 500
+
+
+@api_v1.route("/models/classifier/pin", methods=["POST"])
+@login_required
+def models_classifier_pin():
+    """Switch the active classifier by rewriting classifier/latest_models.json.
+
+    Body: ``{"model_id": "<id>"}`` — must match a locally-available variant
+    from GET /api/v1/models/classifier. Triggers a lazy reload on the
+    next classification cycle; no service restart.
+    """
+    from utils.model_downloader import (
+        _resolve_pin_for_cache_dir,
+        set_latest_model_id,
+    )
+    from web.services.model_registry_service import (
+        _classifier_model_dir,
+        build_classifier_registry_payload,
+    )
+
+    try:
+        data = request.get_json(silent=True) or {}
+        model_id = str(data.get("model_id", "")).strip()
+        if not model_id:
+            return (
+                jsonify({"status": "error",
+                         "message": "model_id is required (non-empty)."}),
+                400,
+            )
+
+        dm = api_v1.detection_manager
+        classifier = getattr(dm, "classifier", None)
+        payload = build_classifier_registry_payload(classifier)
+
+        # Whitelist: must be a known locally-available variant.
+        known = next(
+            (v for v in payload.get("variants", [])
+             if v.get("id") == model_id and v.get("is_available_locally")),
+            None,
+        )
+        if not known:
+            return (
+                jsonify(
+                    {
+                        "status": "error",
+                        "message": (
+                            f"Model id {model_id!r} is not a known locally-available "
+                            f"classifier variant. Use GET /api/v1/models/classifier "
+                            f"to see what's installed."
+                        ),
+                    }
+                ),
+                400,
+            )
+
+        model_dir = _classifier_model_dir()
+        latest_path = set_latest_model_id(model_dir, model_id)
+
+        env_pin = _resolve_pin_for_cache_dir(model_dir)
+        effective_id = env_pin or model_id
+        effective_source = "env_var_pin" if env_pin else "latest_models"
+
+        # Classifier lazy-loads via ImageClassifier._ensure_initialized.
+        # Clearing the instance forces a fresh load on the next classify().
+        reload_triggered = False
+        if classifier is not None:
+            try:
+                classifier._initialized = False
+                classifier.ort_session = None
+                classifier.model_path = None
+                classifier.class_path = None
+                classifier.model_id = ""
+                dm.classifier_model_id = ""
+                reload_triggered = True
+                logger.info(
+                    "models/classifier/pin: latest=%r effective=%r source=%s -> live reload triggered",
+                    model_id,
+                    effective_id,
+                    effective_source,
+                )
+            except Exception as reload_exc:
+                logger.warning(
+                    f"Failed to clear classifier for live reload: {reload_exc}"
+                )
+
+        return jsonify(
+            {
+                "status": "success",
+                "model_id": model_id,
+                "latest_models_path": latest_path,
+                "effective_id": effective_id,
+                "effective_source": effective_source,
+                "env_pin_overrides": bool(env_pin),
+                "reload_triggered": reload_triggered,
+            }
+        )
+    except Exception as exc:
+        logger.error(f"models/classifier/pin POST error: {exc}", exc_info=True)
+        return jsonify({"status": "error", "message": str(exc)}), 500
+
+
+@api_v1.route("/models/classifier/install", methods=["POST"])
+@login_required
+def models_classifier_install():
+    """Fetch a classifier variant's weights + classes from HuggingFace.
+
+    Does NOT switch the active classifier. The UI chains this with POST
+    /pin afterwards on the Not-installed row.
+    """
+    from detectors.classifier import HF_BASE_URL as CLS_HF_BASE_URL
+    from utils.model_downloader import (
+        _download_file,
+        _fetch_companion_files,
+        _normalize_rel_path,
+    )
+    from web.services.model_registry_service import (
+        _classifier_model_dir,
+        build_classifier_registry_payload,
+        classifier_variant_exists_in_registry,
+    )
+
+    try:
+        data = request.get_json(silent=True) or {}
+        model_id = str(data.get("model_id", "")).strip()
+        if not model_id:
+            return (
+                jsonify({"status": "error",
+                         "message": "model_id is required (non-empty)."}),
+                400,
+            )
+
+        dm = api_v1.detection_manager
+        classifier = getattr(dm, "classifier", None)
+
+        payload = build_classifier_registry_payload(classifier)
+        variant = classifier_variant_exists_in_registry(payload, model_id)
+        if variant is None:
+            return (
+                jsonify(
+                    {
+                        "status": "error",
+                        "message": (
+                            f"Model id {model_id!r} is not listed in the "
+                            f"classifier registry. Install only works for "
+                            f"ids shipped with the release."
+                        ),
+                    }
+                ),
+                400,
+            )
+
+        if variant.get("is_available_locally"):
+            return jsonify(
+                {
+                    "status": "success",
+                    "model_id": model_id,
+                    "already_installed": True,
+                    "weights_path": variant.get("weights_path"),
+                    "classes_path": variant.get("classes_path"),
+                }
+            )
+
+        model_dir = _classifier_model_dir()
+        weights_rel = str(variant.get("weights_path", ""))
+        classes_rel = str(variant.get("classes_path", ""))
+        if not weights_rel or not classes_rel:
+            return (
+                jsonify(
+                    {
+                        "status": "error",
+                        "message": (
+                            "Registry entry is missing weights_path or "
+                            "classes_path; cannot install."
+                        ),
+                    }
+                ),
+                400,
+            )
+
+        weights_rel_norm = _normalize_rel_path(CLS_HF_BASE_URL, weights_rel)
+        classes_rel_norm = _normalize_rel_path(CLS_HF_BASE_URL, classes_rel)
+        weights_abs = os.path.join(model_dir, os.path.basename(weights_rel_norm))
+        classes_abs = os.path.join(model_dir, os.path.basename(classes_rel_norm))
+
+        weights_url = f"{CLS_HF_BASE_URL}/{weights_rel_norm}"
+        classes_url = f"{CLS_HF_BASE_URL}/{classes_rel_norm}"
+
+        logger.info(
+            "models/classifier/install: fetching %s weights=%s classes=%s",
+            model_id,
+            weights_url,
+            classes_url,
+        )
+        if not _download_file(weights_url, weights_abs):
+            return (
+                jsonify(
+                    {
+                        "status": "error",
+                        "message": f"Failed to download weights from {weights_url}",
+                    }
+                ),
+                502,
+            )
+        if not _download_file(classes_url, classes_abs):
+            return (
+                jsonify(
+                    {
+                        "status": "error",
+                        "message": f"Failed to download classes from {classes_url}",
+                    }
+                ),
+                502,
+            )
+
+        # Best-effort companion pull (model_config.yaml + metrics.json).
+        _fetch_companion_files(CLS_HF_BASE_URL, model_dir, model_id)
+
+        return jsonify(
+            {
+                "status": "success",
+                "model_id": model_id,
+                "already_installed": False,
+                "weights_path": weights_abs,
+                "classes_path": classes_abs,
+            }
+        )
+    except Exception as exc:
+        logger.error(f"models/classifier/install POST error: {exc}", exc_info=True)
+        return jsonify({"status": "error", "message": str(exc)}), 500
+
+
+# =============================================================================
 # Settings
 # =============================================================================
 

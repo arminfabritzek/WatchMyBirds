@@ -245,7 +245,7 @@ def test_compute_tags_newest_falls_back_to_plain_when_no_variant_info():
         _mkv("new", released="2026-04-21"),
     ]
     tags = _compute_variant_tags(variants)
-    assert tags["new"] == ["Newest"]
+    assert tags["new"] == ["Latest"]
     assert tags["mid"] == []
     assert tags["old"] == []
 
@@ -262,10 +262,10 @@ def test_compute_tags_newest_breaks_date_tie_by_bird_recall():
         _mkv("d", released="2026-04-20", bird_recall=0.95),
     ]
     tags = _compute_variant_tags(variants)
-    assert tags["b"] == ["Newest", "Highest recall"]
-    assert "Newest" not in tags["a"]
-    assert "Newest" not in tags["c"]
-    assert "Newest" not in tags["d"]  # older date, never newest
+    assert tags["b"] == ["Latest", "Highest recall"]
+    assert "Latest" not in tags["a"]
+    assert "Latest" not in tags["c"]
+    assert "Latest" not in tags["d"]  # older date, never newest
 
 
 def test_compute_tags_newest_skipped_when_date_ties_and_recall_missing():
@@ -276,8 +276,8 @@ def test_compute_tags_newest_skipped_when_date_ties_and_recall_missing():
         _mkv("b", released="2026-04-21"),  # no recall
     ]
     tags = _compute_variant_tags(variants)
-    assert "Newest" not in tags["a"]
-    assert "Newest" not in tags["b"]
+    assert "Latest" not in tags["a"]
+    assert "Latest" not in tags["b"]
 
 
 def test_compute_tags_newest_skipped_when_date_and_recall_tie():
@@ -286,8 +286,8 @@ def test_compute_tags_newest_skipped_when_date_and_recall_tie():
         _mkv("b", released="2026-04-21", bird_recall=0.99),
     ]
     tags = _compute_variant_tags(variants)
-    assert "Newest" not in tags["a"]
-    assert "Newest" not in tags["b"]
+    assert "Latest" not in tags["a"]
+    assert "Latest" not in tags["b"]
 
 
 def test_compute_tags_newest_per_variant_family():
@@ -300,15 +300,15 @@ def test_compute_tags_newest_per_variant_family():
         _mkv("tiny_new", variant="tiny", released="2026-04-20"),
     ]
     tags = _compute_variant_tags(variants)
-    assert "Newest s" in tags["s_new"]
-    assert "Newest tiny" in tags["tiny_new"]
-    # Older ones don't get the newest tag
-    assert "Newest s" not in tags["s_old"]
-    assert "Newest tiny" not in tags["tiny_old"]
+    assert "Latest s" in tags["s_new"]
+    assert "Latest tiny" in tags["tiny_new"]
+    # Older ones don't get the latest tag
+    assert "Latest s" not in tags["s_old"]
+    assert "Latest tiny" not in tags["tiny_old"]
     # And there's no cross-family bleed: tiny_new (2026-04-20) is older
-    # than s_new (2026-04-21) but still earns "Newest tiny".
-    assert "Newest" not in tags["s_new"]  # only the per-family label
-    assert "Newest" not in tags["tiny_new"]
+    # than s_new (2026-04-21) but still earns "Latest tiny".
+    assert "Latest" not in tags["s_new"]  # only the per-family label
+    assert "Latest" not in tags["tiny_new"]
 
 
 def test_compute_tags_faster_vs_more_accurate_needs_both_sizes():
@@ -407,10 +407,10 @@ def test_registry_payload_sorts_newest_first_and_attaches_tags(_isolate_model_di
     assert order == [newer_s, newer_tiny, older_tiny]
 
     tags_by_id = {v["id"]: v["tags"] for v in payload["variants"]}
-    # Per-family "Newest" tags: one per variant size
-    assert "Newest s" in tags_by_id[newer_s]
-    assert "Newest tiny" in tags_by_id[newer_tiny]
-    assert "Newest tiny" not in tags_by_id[older_tiny]
+    # Per-family "Latest" tags: one per variant size
+    assert "Latest s" in tags_by_id[newer_s]
+    assert "Latest tiny" in tags_by_id[newer_tiny]
+    assert "Latest tiny" not in tags_by_id[older_tiny]
     assert "Bigger, slower, better" in tags_by_id[newer_s]  # s vs tiny siblings exist
     assert "Small, faster" in tags_by_id[newer_tiny]
     assert "Small, faster" in tags_by_id[older_tiny]
@@ -482,6 +482,117 @@ def test_payload_filters_local_only_variants_when_hf_snapshot_present(_isolate_m
     # Hidden: stale local-only artefacts
     assert stale_broken not in ids, "_BROKEN local-only variant must be hidden"
     assert stale_old not in ids, "stale local-only variant must be hidden"
+
+
+def test_classifier_payload_tags_hf_latest_when_local_active_diverges(tmp_path: Path, monkeypatch):
+    """Classifier sibling of the detector test — same preservation-guard
+    divergence scenario, verified against build_classifier_registry_payload.
+
+    Real-world case (2026-04-22 RPi): HF announces
+    ``20260421_161805`` but its files are not on disk. The guard keeps
+    ``20250817_213043`` locally, yet the UI must tag HF's advertised
+    latest (161805) as ``is_hf_latest`` and the preserved one as
+    ``is_active``.
+    """
+    cls_dir = tmp_path / "classifier"
+    cls_dir.mkdir()
+
+    local_active = "20250817_213043"
+    hf_latest = "20260421_161805"
+
+    payload_json = {
+        "latest": local_active,
+        "weights_path": f"classifier/{local_active}_best.onnx",
+        "classes_path": f"classifier/{local_active}_classes.txt",
+        "hf_latest_advertised": hf_latest,
+        "hf_known_ids": [local_active, hf_latest],
+        "pinned_models": {
+            local_active: {
+                "weights_path": f"classifier/{local_active}_best.onnx",
+                "classes_path": f"classifier/{local_active}_classes.txt",
+            },
+            hf_latest: {
+                "weights_path": f"classifier/{hf_latest}_best.onnx",
+                "classes_path": f"classifier/{hf_latest}_classes.txt",
+            },
+        },
+    }
+    _write(cls_dir / "latest_models.json", payload_json)
+    # Only the preserved active has files on disk.
+    (cls_dir / f"{local_active}_best.onnx").write_bytes(b"x")
+    (cls_dir / f"{local_active}_classes.txt").write_text("bird\n")
+
+    from web.services import model_registry_service as svc
+
+    original = svc.get_config
+
+    def fake_config():
+        real = dict(original())
+        real["MODEL_BASE_PATH"] = str(tmp_path)
+        return real
+
+    monkeypatch.setattr(svc, "get_config", fake_config)
+
+    payload = svc.build_classifier_registry_payload(classifier=None)
+    by_id = {v["id"]: v for v in payload["variants"]}
+
+    # Latest badge follows HF's view…
+    assert by_id[hf_latest]["is_hf_latest"] is True
+    assert by_id[local_active]["is_hf_latest"] is False
+    # …while Active follows what's actually loadable locally.
+    assert by_id[local_active]["is_active"] is True
+    assert by_id[hf_latest]["is_active"] is False
+
+
+def test_payload_tags_hf_latest_even_when_local_active_diverges(_isolate_model_dir: Path):
+    """When the preservation guard keeps a different local id as active,
+    the ``Latest`` badge must still land on HF's advertised latest.
+
+    Real-world case (2026-04-22, classifier): HF announces
+    ``20260421_161805`` but its files are not on disk, so the guard
+    keeps local ``20250817_213043`` as active. The UI previously tagged
+    the local id as Latest because ``is_hf_latest`` read from the
+    top-level ``latest`` field (which is the preserved local pointer).
+    The fix reads ``hf_latest_advertised`` — HF's own view, persisted
+    separately on every successful merge — so the correct row wins.
+    """
+    od = _isolate_model_dir
+    local_active = "20250817_213043"
+    hf_latest = "20260421_161805"
+
+    _write(
+        od / "latest_models.json",
+        {
+            "latest": local_active,  # preservation guard kept this
+            "weights_path": f"object_detection/{local_active}_best.onnx",
+            "labels_path": f"object_detection/{local_active}_labels.json",
+            "hf_latest_advertised": hf_latest,  # HF's own view
+            "hf_known_ids": [local_active, hf_latest],
+            "pinned_models": {
+                local_active: {
+                    "weights_path": f"object_detection/{local_active}_best.onnx",
+                    "labels_path": f"object_detection/{local_active}_labels.json",
+                },
+                hf_latest: {
+                    "weights_path": f"object_detection/{hf_latest}_best.onnx",
+                    "labels_path": f"object_detection/{hf_latest}_labels.json",
+                },
+            },
+        },
+    )
+    (od / f"{local_active}_best.onnx").write_bytes(b"x")
+    (od / f"{local_active}_labels.json").write_text('["bird"]')
+
+    payload = build_detector_registry_payload(detector=None)
+    by_id = {v["id"]: v for v in payload["variants"]}
+
+    # HF's latest wins the is_hf_latest flag and the "Latest" tag —
+    # regardless of which id the guard preserved locally.
+    assert by_id[hf_latest]["is_hf_latest"] is True
+    assert by_id[local_active]["is_hf_latest"] is False
+    # Active flag still tracks what's actually loaded locally.
+    assert by_id[local_active]["is_active"] is True
+    assert by_id[hf_latest]["is_active"] is False
 
 
 def test_payload_shows_all_variants_when_no_hf_snapshot_available(_isolate_model_dir: Path):

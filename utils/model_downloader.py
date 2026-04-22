@@ -95,6 +95,14 @@ WEIGHTS_INT8_QDQ_FALLBACKS_KEY = "weights_int8_qdq_fallback_paths"
 # never disappears even when HF no longer advertises it.
 HF_KNOWN_IDS_KEY = "hf_known_ids"
 
+# Snapshot of the id HF advertises as its ``latest`` pointer. Written
+# alongside HF_KNOWN_IDS_KEY so the UI can tag "the HF-latest row" even
+# when the preservation guard keeps a different local id as active.
+# Without this, the top-level ``latest`` field in latest_models.json
+# reflects the *merged* choice (often the local one), which means the
+# UI would lose track of what HF itself picked as newest.
+HF_LATEST_ADVERTISED_KEY = "hf_latest_advertised"
+
 ACTIVE_PAYLOAD_KEYS = (
     "latest",
     "weights_path",
@@ -501,6 +509,13 @@ def _merge_remote_registry_with_local_state(
         # Empty set means HF returned nothing useful this round — don't
         # overwrite the previous snapshot with an empty list.
         pass
+
+    # Record what HF itself calls "latest" so the UI can tag the correct
+    # row even when the local active pointer diverges. The top-level
+    # ``latest`` in the merged JSON may be the preserved local id; this
+    # key is always HF's view.
+    if isinstance(remote_latest_id, str) and remote_latest_id.strip():
+        merged[HF_LATEST_ADVERTISED_KEY] = remote_latest_id
 
     return merged
 

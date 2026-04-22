@@ -26,6 +26,7 @@ from typing import Any
 from config import get_config
 from core.model_downloader_core import (
     HF_KNOWN_IDS_KEY,
+    HF_LATEST_ADVERTISED_KEY,
     PIN_ENV_VAR,
     PIN_ENV_VAR_PREFIX,
     _resolve_pin_for_cache_dir,
@@ -37,6 +38,7 @@ logger = get_logger(__name__)
 
 
 OBJECT_DETECTION_SUBDIR = "object_detection"
+CLASSIFIER_SUBDIR = "classifier"
 
 
 @dataclass
@@ -78,6 +80,18 @@ def _model_dir() -> str:
     return os.path.join(base, OBJECT_DETECTION_SUBDIR)
 
 
+def _classifier_model_dir() -> str:
+    """Classifier model directory (parallel to _model_dir for the detector).
+
+    Split into its own helper so the Classifier UI/API layer can share
+    the same read-side helpers as the Detector without having to carry
+    a ``subdir`` parameter through every call site.
+    """
+    config = get_config()
+    base = config.get("MODEL_BASE_PATH", "models")
+    return os.path.join(base, CLASSIFIER_SUBDIR)
+
+
 def _read_active_metadata(model_dir: str) -> dict[str, Any]:
     """Read model_metadata.json, which the deploy pipeline generates for the active default."""
     path = os.path.join(model_dir, "model_metadata.json")
@@ -103,6 +117,25 @@ def _read_latest_models(model_dir: str) -> dict[str, Any]:
     except Exception as exc:
         logger.warning(f"Failed to read {path}: {exc}")
         return {}
+
+
+def _resolve_hf_latest_id(latest_data: dict[str, Any]) -> str | None:
+    """Return HF's authoritative latest id, independent of local preservation.
+
+    Prefers ``hf_latest_advertised`` (written on every successful HF merge
+    — unaffected by the preservation guard) and falls back to the
+    top-level ``latest`` for legacy JSONs or when the app has never
+    synced with HF. This matters when local and remote pointers diverge:
+    the UI should tag HF's choice as "Latest", not the preserved local
+    active id.
+    """
+    if not isinstance(latest_data, dict):
+        return None
+    advertised = latest_data.get(HF_LATEST_ADVERTISED_KEY)
+    if isinstance(advertised, str) and advertised.strip():
+        return advertised
+    top_level = latest_data.get("latest")
+    return top_level if isinstance(top_level, str) else None
 
 
 def _variant_from_id(model_id: str) -> str | None:
@@ -229,7 +262,7 @@ def _compute_variant_tags(
 
     Rules (any combination can apply):
 
-    - ``Newest s`` / ``Newest tiny``:
+    - ``Latest s`` / ``Latest tiny``:
                          released on the most recent date *within its
                          variant family*. When multiple variants share
                          the top date, the tie is broken by
@@ -237,7 +270,7 @@ def _compute_variant_tags(
                          ties, the tag is skipped — "newest" stops being
                          a useful hint when three releases all look
                          equally fresh. Variants without a detected
-                         size fall back to a whole-list ``Newest``.
+                         size fall back to a whole-list ``Latest``.
     - ``Small, faster``: ``variant: tiny`` AND an ``s`` sibling exists in
                          the same list (so the comparison is meaningful).
     - ``Bigger, slower, better``: ``variant: s`` AND a ``tiny`` sibling exists.
@@ -247,12 +280,12 @@ def _compute_variant_tags(
     """
     tags_by_id: dict[str, list[str]] = {v["id"]: [] for v in variants}
 
-    # Newest per variant family. Bucket dated entries by their detected
-    # size, then tag the latest in each bucket ("Newest s", "Newest tiny").
-    # Entries without a detected size fall back to a whole-list "Newest".
+    # Latest per variant family. Bucket dated entries by their detected
+    # size, then tag the latest in each bucket ("Latest s", "Latest tiny").
+    # Entries without a detected size fall back to a whole-list "Latest".
     # Tie-breaker: within the top date, highest bird_recall wins. If the
     # recall also ties (or is missing on all contenders), skip the tag —
-    # labelling three entries "Newest s" makes the hint meaningless.
+    # labelling three entries "Latest s" makes the hint meaningless.
     dated_by_size: dict[str | None, list[tuple[str, str, float | None]]] = {}
     for v in variants:
         released = (v.get("metadata") or {}).get("released")
@@ -267,7 +300,7 @@ def _compute_variant_tags(
     for size_key, entries in dated_by_size.items():
         newest_date = max(date for _, date, _ in entries)
         top_dated = [(vid, recall) for vid, d, recall in entries if d == newest_date]
-        label = f"Newest {size_key}" if size_key else "Newest"
+        label = f"Latest {size_key}" if size_key else "Latest"
 
         if len(top_dated) == 1:
             tags_by_id[top_dated[0][0]].append(label)
@@ -414,16 +447,21 @@ def build_detector_registry_payload(detector: Any | None) -> dict[str, Any]:
 
     # Active id on disk = what the app will pick up on next load. That is
     # either the pin (if any) or latest_models["latest"].
-    hf_latest_id: str | None = latest.get("latest") if isinstance(latest, dict) else None
+    hf_latest_id: str | None = _resolve_hf_latest_id(latest)
     active_source = _detect_active_source(model_dir)
 
     pinned_models = latest.get("pinned_models") if isinstance(latest, dict) else None
     if not isinstance(pinned_models, dict):
         pinned_models = {}
 
-    # Effective active id when the app next loads: pin (any source) wins over hf_latest.
+    # Effective active id when the app next loads: pin (any source) wins
+    # over the on-disk top-level ``latest`` pointer. Deliberately reads
+    # the local JSON's own ``latest`` (preservation-guarded), NOT HF's
+    # advertised one — those diverge when the guard keeps the local
+    # active because HF's new files are not on disk yet.
+    local_top_latest = latest.get("latest") if isinstance(latest, dict) else None
     pin_value = _resolve_pin_for_cache_dir(model_dir)
-    active_on_disk_id = pin_value or hf_latest_id
+    active_on_disk_id = pin_value or local_top_latest
 
     # Live runtime id = the model currently in-memory.
     runtime_id = None
@@ -543,7 +581,7 @@ def build_detector_registry_payload(detector: Any | None) -> dict[str, Any]:
         ]
 
     # Post-process: data-driven tags + newest-first sort. Tags are assigned
-    # across the full variant set (so "Newest", "Highest recall" etc. are
+    # across the full variant set (so "Latest", "Highest recall" etc. are
     # global judgements, not per-row), then attached back to each entry.
     tags_by_id = _compute_variant_tags(variants)
     for v in variants:
@@ -582,6 +620,218 @@ def variant_exists_in_registry(payload: dict[str, Any], model_id: str) -> dict[s
     current HF ``latest``) can be fetched — never arbitrary strings from
     the request body.
     """
+    for v in payload.get("variants", []):
+        if v.get("id") == model_id:
+            return v
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Classifier registry (parallel to Detector, simpler — no precision chips,
+# no int8 QDQ fallback, companion files are classes.txt not labels.json).
+# ---------------------------------------------------------------------------
+
+
+def _read_classifier_latest_models(model_dir: str) -> dict[str, Any]:
+    """Dedicated reader so the detector and classifier JSONs stay isolated."""
+    path = os.path.join(model_dir, "latest_models.json")
+    if not os.path.exists(path):
+        return {}
+    try:
+        with open(path, encoding="utf-8") as file:
+            data = json.load(file)
+        return data if isinstance(data, dict) else {}
+    except Exception as exc:
+        logger.warning(f"Failed to read {path}: {exc}")
+        return {}
+
+
+def _build_classifier_variant_metadata(
+    model_dir: str,
+    model_id: str,
+) -> dict[str, Any]:
+    """Classifier-side metadata extractor.
+
+    Classifier releases ship ``<id>_model_config.yaml`` + ``<id>_metrics.json``
+    alongside the ONNX weights (same 4-file convention as the detector
+    since the 2026-04-18 HF layout spec). Species count and top-1
+    accuracy are the two numbers end users care about — the UI shows
+    them as "NNN species · top-1 XX%".
+    """
+    out: dict[str, Any] = {}
+
+    metrics_path = os.path.join(model_dir, f"{model_id}_metrics.json")
+    if os.path.exists(metrics_path):
+        try:
+            with open(metrics_path, encoding="utf-8") as file:
+                metrics = json.load(file)
+            if isinstance(metrics, dict):
+                for key in ("top1_accuracy", "top5_accuracy", "num_classes"):
+                    value = metrics.get(key)
+                    if isinstance(value, (int, float)):
+                        out[key] = (
+                            float(value)
+                            if key != "num_classes"
+                            else int(value)
+                        )
+                train = metrics.get("train_info")
+                if isinstance(train, dict):
+                    trained_at = train.get("trained_at")
+                    if isinstance(trained_at, str):
+                        out["trained_at"] = trained_at
+        except Exception as exc:
+            logger.debug(f"classifier metadata: failed to read {metrics_path}: {exc}")
+
+    yaml_path = os.path.join(model_dir, f"{model_id}_model_config.yaml")
+    if os.path.exists(yaml_path):
+        try:
+            import yaml as _yaml
+
+            with open(yaml_path, encoding="utf-8") as file:
+                config = _yaml.safe_load(file)
+            if isinstance(config, dict):
+                cls_section = config.get("classification") or config.get("model")
+                if isinstance(cls_section, dict):
+                    input_size = cls_section.get("input_size")
+                    if (
+                        isinstance(input_size, list)
+                        and len(input_size) == 2
+                        and all(isinstance(n, int) for n in input_size)
+                    ):
+                        out["input_size"] = list(input_size)
+                meta = config.get("meta")
+                if isinstance(meta, dict):
+                    trained_at = meta.get("trained_at")
+                    if isinstance(trained_at, str) and "trained_at" not in out:
+                        out["trained_at"] = trained_at
+                    num_classes = meta.get("num_classes")
+                    if isinstance(num_classes, int) and "num_classes" not in out:
+                        out["num_classes"] = num_classes
+        except ImportError:
+            pass
+        except Exception as exc:
+            logger.debug(f"classifier metadata: failed to read {yaml_path}: {exc}")
+
+    # Released-date fallback from the id prefix (YYYYMMDD).
+    if "released" not in out:
+        released = _released_from_id(model_id)
+        if released:
+            out["released"] = released
+
+    return out
+
+
+def build_classifier_registry_payload(classifier: Any | None) -> dict[str, Any]:
+    """Assemble the GET /api/v1/models/classifier response body.
+
+    Parallels :func:`build_detector_registry_payload` but drops the
+    precision chip / int8 QDQ fields — the classifier only ships fp32
+    weights. Variant rows still get a metadata block and the same
+    HF-whitelist filter, so the UI picker only shows ids the publisher
+    currently advertises plus the one that is actually loaded.
+    """
+    model_dir = _classifier_model_dir()
+    latest = _read_classifier_latest_models(model_dir)
+
+    hf_latest_id: str | None = _resolve_hf_latest_id(latest)
+    active_source = _detect_active_source(model_dir)
+
+    pinned_models = latest.get("pinned_models") if isinstance(latest, dict) else None
+    if not isinstance(pinned_models, dict):
+        pinned_models = {}
+
+    # Effective active id when the app next loads: pin (any source) wins
+    # over the on-disk top-level ``latest`` pointer. Deliberately reads
+    # the local JSON's own ``latest`` (preservation-guarded), NOT HF's
+    # advertised one — those diverge when the guard keeps the local
+    # active because HF's new files are not on disk yet.
+    local_top_latest = latest.get("latest") if isinstance(latest, dict) else None
+    pin_value = _resolve_pin_for_cache_dir(model_dir)
+    active_on_disk_id = pin_value or local_top_latest
+
+    runtime_id = None
+    runtime: dict[str, Any] = {}
+    if classifier is not None:
+        runtime_id = getattr(classifier, "model_id", None) or None
+        runtime = {
+            "model_id": runtime_id,
+            "model_path": getattr(classifier, "model_path", None),
+            "input_size": [
+                getattr(classifier, "CLASSIFIER_IMAGE_SIZE", None),
+                getattr(classifier, "CLASSIFIER_IMAGE_SIZE", None),
+            ] if getattr(classifier, "CLASSIFIER_IMAGE_SIZE", None) else [],
+            "num_classes": len(getattr(classifier, "classes", None) or []),
+        }
+
+    variant_entries = dict(pinned_models)
+    if hf_latest_id and hf_latest_id not in variant_entries:
+        variant_entries[hf_latest_id] = {
+            "weights_path": latest.get("weights_path", ""),
+            "classes_path": latest.get("classes_path", ""),
+        }
+
+    variants: list[dict[str, Any]] = []
+    base = get_config().get("MODEL_BASE_PATH", "models")
+    for mid, payload in sorted(variant_entries.items()):
+        if not isinstance(payload, dict):
+            continue
+        weights_rel = str(payload.get("weights_path", ""))
+        classes_rel = str(
+            payload.get("classes_path", "") or payload.get("labels_path", "")
+        )
+        weights_abs = os.path.join(base, weights_rel) if weights_rel else ""
+        classes_abs = os.path.join(base, classes_rel) if classes_rel else ""
+
+        entry = {
+            "id": mid,
+            "weights_path": weights_rel,
+            "classes_path": classes_rel,
+            "weights_exists": bool(weights_abs) and os.path.exists(weights_abs),
+            "classes_exists": bool(classes_abs) and os.path.exists(classes_abs),
+            "is_active": (mid == (runtime_id or active_on_disk_id)),
+            "is_hf_latest": (mid == hf_latest_id),
+            "metadata": _build_classifier_variant_metadata(model_dir, mid),
+        }
+        entry["is_available_locally"] = entry["weights_exists"] and entry["classes_exists"]
+        variants.append(entry)
+
+    # Same HF-whitelist filter as the detector payload.
+    hf_known_raw = latest.get(HF_KNOWN_IDS_KEY) if isinstance(latest, dict) else None
+    hf_known: set[str] = (
+        {v for v in hf_known_raw if isinstance(v, str)}
+        if isinstance(hf_known_raw, list)
+        else set()
+    )
+    if hf_known:
+        runtime_active_id = runtime_id or active_on_disk_id
+        variants = [
+            v for v in variants
+            if v["id"] in hf_known or v["id"] == runtime_active_id
+        ]
+
+    # Latest first (same sort as detector).
+    variants = _sort_variants_newest_first(variants)
+
+    return {
+        "model_dir": model_dir,
+        "active": {
+            "id": runtime_id or active_on_disk_id,
+            "source": active_source,
+            "env_pin_value": pin_value or None,
+            "hf_latest_id": hf_latest_id,
+            "runtime_matches_on_disk": (runtime_id == active_on_disk_id)
+            if runtime_id
+            else None,
+        },
+        "runtime": runtime,
+        "variants": variants,
+    }
+
+
+def classifier_variant_exists_in_registry(
+    payload: dict[str, Any], model_id: str
+) -> dict[str, Any] | None:
+    """Whitelist gate for the classifier /install endpoint."""
     for v in payload.get("variants", []):
         if v.get("id") == model_id:
             return v

@@ -767,7 +767,7 @@
             <div class="mb-2">
                 <strong>Available variants</strong>
                 <div class="settings-field__help">
-                    Sorted newest first. Switching reloads the detector in-place; no restart needed.
+                    Sorted latest first. Switching reloads the detector in-place; no restart needed.
                     <br>
                     <strong>tiny</strong> runs faster (good for Raspberry Pi), <strong>s</strong> is more accurate.
                     Tags describe each variant — no single one is universally "best".
@@ -777,7 +777,11 @@
                 <div class="text-center text-muted p-3">Loading variants…</div>
             </div>
 
-            <!-- Save Threshold — operator policy tied to the active model -->
+            <!-- Save Threshold — belongs to the Detector group because the
+                 "detection floor" it references is the detector's conf value.
+                 Placing it here, before the Classifier block, keeps related
+                 controls grouped and avoids the earlier layout where it
+                 visually attached to the Classifier. -->
             <div class="settings-field save-threshold-field mt-3">
                 <label class="settings-field__label" for="SAVE_THRESHOLD"
                     title="Minimum detection confidence required for an image to be saved to disk. The detection floor itself (which scores count as a real bird at all) is set by the active model above.">
@@ -810,14 +814,37 @@
                 </div>
             </div>
 
-            <!-- Action feedback -->
+            <!-- Detector action feedback + refresh -->
             <div id="aiPinFeedback" class="settings-field__help mt-2"></div>
-
-            <!-- Last refresh timestamp -->
             <div class="d-flex justify-content-between align-items-center mt-3">
                 <span class="settings-field__help" id="aiLastRefresh"></span>
                 <button type="button" class="btn btn--secondary btn--sm" onclick="loadAiModels()"
                         title="Re-read the detector registry from disk">Refresh</button>
+            </div>
+
+            <!-- Classifier sub-section (parallel to Detector). No precision
+                 chips, no int8 variants — classifier only ships fp32. -->
+            <hr class="my-4">
+            <div class="ai-active-card" id="clsActiveCard">
+                <div class="ai-active-card__label">Active classifier</div>
+                <div class="ai-active-card__id" id="clsActiveId">Loading…</div>
+                <div class="ai-active-card__meta" id="clsActiveMeta"></div>
+            </div>
+            <div class="mb-2">
+                <strong>Available classifier variants</strong>
+                <div class="settings-field__help">
+                    The classifier names the species of a detected bird. Switching
+                    reloads on the next classification cycle — no restart needed.
+                </div>
+            </div>
+            <div id="clsVariantList">
+                <div class="text-center text-muted p-3">Loading variants…</div>
+            </div>
+            <div id="clsPinFeedback" class="settings-field__help mt-2"></div>
+            <div class="d-flex justify-content-between align-items-center mt-3">
+                <span class="settings-field__help" id="clsLastRefresh"></span>
+                <button type="button" class="btn btn--secondary btn--sm" onclick="loadClassifierModels()"
+                        title="Re-read the classifier registry from disk">Refresh</button>
             </div>
 
         </div>
@@ -1319,6 +1346,7 @@
         initLocation();
         loadSystemVersions();
         loadAiModels();
+        loadClassifierModels();
         initSaveThresholdToggle();
         initThemeToggle();
     });
@@ -1677,7 +1705,7 @@
             if (v.is_active) badges.appendChild(_makeBadge('Active', 'primary'));
             // "HF latest" is intentionally NOT rendered here. It's admin
             // info (which id HF advertises as the default for fresh
-            // installs) that overlaps with the green "Newest s/tiny" tags
+            // installs) that overlaps with the green "Latest s/tiny" tags
             // for end users. The field stays in the API payload for
             // scripts/tests; UI just doesn't show it anymore.
             if (!v.is_available_locally) badges.appendChild(
@@ -1686,21 +1714,21 @@
             // Data-driven descriptive tags (never editorialized as
             // "recommended"). Tooltips explain what each label means so
             // users can pick for their hardware / use case.
-            // Bootstrap badge variant per tag: "Newest*" gets its own
+            // Bootstrap badge variant per tag: "Latest*" gets its own
             // colour so the recency hint is visually separable from the
             // neutral descriptive tags (size, recall).
             const tagTooltips = {
-                'Newest':                   'Most recent release date among available variants',
-                'Newest s':                 'Most recent release in the YOLOX s family (bigger, slower, better)',
-                'Newest tiny':              'Most recent release in the YOLOX tiny family (small, faster)',
+                'Latest':                   'Most recent release date among available variants',
+                'Latest s':                 'Most recent release in the YOLOX s family (bigger, slower, better)',
+                'Latest tiny':              'Most recent release in the YOLOX tiny family (small, faster)',
                 'Small, faster':            'YOLOX tiny runs faster than the s variant — better for low-power hardware',
                 'Bigger, slower, better':   'YOLOX s is larger and slower than tiny but more accurate — better when CPU allows',
                 'Highest recall':           'Highest bird_recall across variants with published metrics',
             };
-            const newestVariant = 'success';  // green
+            const latestVariant = 'success';  // green
             const defaultVariant = 'info';    // muted blue
             (v.tags || []).forEach(tag => {
-                const variant = tag.startsWith('Newest') ? newestVariant : defaultVariant;
+                const variant = tag.startsWith('Latest') ? latestVariant : defaultVariant;
                 badges.appendChild(_makeBadge(tag, variant, tagTooltips[tag] || tag));
             });
             row.appendChild(badges);
@@ -1899,6 +1927,207 @@
                 }
                 fb.textContent = '✓ Installed. Switching to ' + modelId + ' …';
                 pinDetector(modelId);
+            })
+            .catch(err => {
+                btn.disabled = false;
+                btn.textContent = originalLabel;
+                fb.textContent = '✗ Install network error: ' + err.message;
+                fb.className = 'settings-field__help mt-2 text-danger';
+            });
+    }
+
+    // ── Classifier panel: simpler sibling of the detector panel ───
+    // No precision chips (classifier ships fp32 only), no int8 QDQ.
+    // Same UX shape: active card + sorted/filtered variant list with
+    // Install & switch buttons for not-installed rows.
+    function loadClassifierModels() {
+        const fb = document.getElementById('clsPinFeedback');
+        fb.textContent = '';
+        fb.className = 'settings-field__help mt-2';
+        fetch('/api/v1/models/classifier')
+            .then(res => {
+                if (!res.ok) throw new Error('HTTP ' + res.status);
+                return res.json();
+            })
+            .then(payload => {
+                _renderClassifierActiveCard(payload);
+                _renderClassifierVariantList(payload);
+                document.getElementById('clsLastRefresh').textContent =
+                    'Last refresh: ' + new Date().toLocaleTimeString();
+            })
+            .catch(err => {
+                document.getElementById('clsActiveId').textContent = 'Error';
+                document.getElementById('clsActiveMeta').textContent = '';
+                const list = document.getElementById('clsVariantList');
+                list.replaceChildren();
+                const alertEl = document.createElement('div');
+                alertEl.className = 'alert alert-danger small';
+                alertEl.textContent = 'Failed to load classifier registry: ' + err.message;
+                list.appendChild(alertEl);
+            });
+    }
+
+    function _renderClassifierActiveCard(payload) {
+        const active = payload.active || {};
+        const runtime = payload.runtime || {};
+        document.getElementById('clsActiveId').textContent =
+            active.id || '(none loaded yet)';
+
+        const metaBits = [];
+        metaBits.push(_describeSource(active.source));
+        if (runtime.num_classes) metaBits.push(runtime.num_classes + ' species');
+        if (Array.isArray(runtime.input_size) && runtime.input_size[0]) {
+            metaBits.push(runtime.input_size[0] + '²');
+        }
+        document.getElementById('clsActiveMeta').textContent = metaBits.join(' · ');
+    }
+
+    function _renderClassifierVariantList(payload) {
+        const list = document.getElementById('clsVariantList');
+        list.replaceChildren();
+        const variants = payload.variants || [];
+        if (!variants.length) {
+            const empty = document.createElement('div');
+            empty.className = 'text-muted small p-2';
+            empty.textContent = 'No classifier variants available.';
+            list.appendChild(empty);
+            return;
+        }
+        variants.forEach(v => {
+            const row = document.createElement('div');
+            const classes = ['ai-variant-row'];
+            if (v.is_active) classes.push('is-active');
+            if (!v.is_available_locally) classes.push('ai-variant-row--unavailable');
+            row.className = classes.join(' ');
+
+            const idWrap = document.createElement('div');
+            idWrap.className = 'ai-variant-row__id-wrap';
+
+            const idEl = document.createElement('div');
+            idEl.className = 'ai-variant-row__id';
+            idEl.textContent = v.id;
+            idWrap.appendChild(idEl);
+
+            const meta = v.metadata || {};
+            const metaBits = [];
+            if (typeof meta.num_classes === 'number') {
+                metaBits.push(meta.num_classes + ' species');
+            }
+            if (Array.isArray(meta.input_size) && meta.input_size.length === 2) {
+                metaBits.push(meta.input_size[0] + '²');
+            }
+            if (typeof meta.top1_accuracy === 'number') {
+                metaBits.push('top-1 ' + _fmtPct(meta.top1_accuracy));
+            }
+            if (meta.trained_at || meta.released) {
+                metaBits.push(meta.trained_at || meta.released);
+            }
+            if (metaBits.length) {
+                const metaEl = document.createElement('div');
+                metaEl.className = 'ai-variant-row__meta';
+                metaEl.textContent = metaBits.join(' · ');
+                idWrap.appendChild(metaEl);
+            } else if (!v.is_available_locally) {
+                const metaEl = document.createElement('div');
+                metaEl.className = 'ai-variant-row__meta text-muted';
+                metaEl.textContent = 'Details load after install';
+                idWrap.appendChild(metaEl);
+            }
+
+            row.appendChild(idWrap);
+
+            const badges = document.createElement('div');
+            badges.className = 'ai-variant-row__badges';
+            if (v.is_active) badges.appendChild(_makeBadge('Active', 'primary'));
+            // Classifier has only one model family — "Latest" (green) is
+            // the single-row equivalent of the detector's "Latest s/tiny".
+            // Uses is_hf_latest flag from the payload, which reflects HF's
+            // authoritative latest pointer at the last successful merge.
+            if (v.is_hf_latest) badges.appendChild(
+                _makeBadge('Latest', 'success',
+                    'Most recent release on HuggingFace')
+            );
+            if (!v.is_available_locally) badges.appendChild(
+                _makeBadge('Not installed', 'warning', 'Weights or classes missing on disk')
+            );
+            row.appendChild(badges);
+
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'btn btn--sm ai-variant-row__action';
+            if (v.is_active) {
+                btn.textContent = 'Switch';
+                btn.classList.add('btn--secondary');
+                btn.disabled = true;
+                btn.title = 'Already active';
+            } else if (!v.is_available_locally) {
+                btn.textContent = 'Install & switch';
+                btn.classList.add('btn--primary');
+                btn.title = 'Download weights + classes from HuggingFace, then switch';
+                btn.addEventListener('click', () => installAndPinClassifier(v.id, btn));
+            } else {
+                btn.textContent = 'Switch';
+                btn.classList.add('btn--primary');
+                btn.title = 'Reload the classifier with this variant';
+                btn.addEventListener('click', () => pinClassifier(v.id));
+            }
+            row.appendChild(btn);
+
+            list.appendChild(row);
+        });
+    }
+
+    function pinClassifier(modelId) {
+        const fb = document.getElementById('clsPinFeedback');
+        fb.textContent = 'Switching to ' + modelId + ' …';
+        fb.className = 'settings-field__help mt-2';
+        fetch('/api/v1/models/classifier/pin', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ model_id: modelId }),
+        })
+            .then(res => res.json().then(data => ({ ok: res.ok, data })))
+            .then(({ ok, data }) => {
+                if (!ok || data.status === 'error') {
+                    fb.textContent = '✗ ' + (data.message || 'Switch failed');
+                    fb.className = 'settings-field__help mt-2 text-danger';
+                    return;
+                }
+                fb.textContent = '✓ Pinned to ' + (data.model_id || '(unpinned)') +
+                    '. The classifier reloads on the next classification cycle.';
+                fb.className = 'settings-field__help mt-2 text-success';
+                setTimeout(loadClassifierModels, 2500);
+            })
+            .catch(err => {
+                fb.textContent = '✗ Network error: ' + err.message;
+                fb.className = 'settings-field__help mt-2 text-danger';
+            });
+    }
+
+    function installAndPinClassifier(modelId, btn) {
+        const fb = document.getElementById('clsPinFeedback');
+        const originalLabel = btn.textContent;
+        btn.disabled = true;
+        btn.textContent = 'Installing …';
+        fb.textContent = 'Downloading ' + modelId + ' from HuggingFace …';
+        fb.className = 'settings-field__help mt-2';
+
+        fetch('/api/v1/models/classifier/install', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ model_id: modelId }),
+        })
+            .then(res => res.json().then(data => ({ ok: res.ok, data })))
+            .then(({ ok, data }) => {
+                if (!ok || data.status === 'error') {
+                    btn.disabled = false;
+                    btn.textContent = originalLabel;
+                    fb.textContent = '✗ Install failed: ' + (data.message || 'unknown error');
+                    fb.className = 'settings-field__help mt-2 text-danger';
+                    return;
+                }
+                fb.textContent = '✓ Installed. Switching to ' + modelId + ' …';
+                pinClassifier(modelId);
             })
             .catch(err => {
                 btn.disabled = false;

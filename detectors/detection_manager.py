@@ -218,7 +218,55 @@ class DetectionManager:
         self.frame_thread.start()
         self.detection_thread.start()
         self.processing_thread.start()
+        # Refresh HF model registries in the background so the Settings
+        # UI reflects the current HF state (hf_latest_advertised,
+        # hf_known_ids) without waiting for the first bird-detection
+        # event to lazy-load the classifier. Non-blocking: failures are
+        # logged but do not abort startup (guarded by its own thread).
+        self._refresh_hf_registries_async()
         logger.info("DetectionManager V2 started.")
+
+    def _refresh_hf_registries_async(self) -> None:
+        """Fire-and-forget HF-registry refresh for both detector and
+        classifier. Merges remote view into local latest_models.json so
+        the UI ``Latest`` badge follows HF's current advertised latest —
+        without downloading weights. The detector is typically refreshed
+        anyway when its ONNX is loaded at service init; this call makes
+        the classifier side consistent at boot instead of on-first-bird.
+        """
+        import threading
+
+        def _refresh() -> None:
+            try:
+                from detectors.classifier import HF_BASE_URL as CLS_HF_BASE_URL
+                from detectors.detector import HF_BASE_URL as DET_HF_BASE_URL
+                from utils.model_downloader import fetch_latest_json
+
+                cfg_base = self.config.get("MODEL_BASE_PATH", "models")
+                det_dir = os.path.join(cfg_base, "object_detection")
+                cls_dir = os.path.join(cfg_base, "classifier")
+
+                # Detector side — refresh registry snapshot even though
+                # the loader will re-fetch at first use. Cheap, idempotent.
+                try:
+                    fetch_latest_json(DET_HF_BASE_URL, det_dir)
+                except Exception as exc:
+                    logger.debug(f"HF detector registry refresh skipped: {exc}")
+
+                # Classifier side — the actual reason this method exists.
+                try:
+                    fetch_latest_json(CLS_HF_BASE_URL, cls_dir)
+                    logger.info("HF classifier registry refreshed at boot")
+                except Exception as exc:
+                    logger.debug(f"HF classifier registry refresh skipped: {exc}")
+            except Exception as exc:
+                logger.debug(f"HF registry refresh thread failed: {exc}")
+
+        threading.Thread(
+            target=_refresh,
+            name="hf-registry-refresh",
+            daemon=True,
+        ).start()
 
     def stop(self):
         """Stops the DetectionManager."""
