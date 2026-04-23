@@ -2,7 +2,7 @@ name: Build Release Image
 
 on:
   schedule:
-    - cron: '0 2 * * *'   # every night at 02:00 UTC
+    - cron: '17 0 * * *'  # 00:17 UTC — lands near 03:00 local after GitHub scheduling delay (~2h typical)
   workflow_dispatch:
 
 jobs:
