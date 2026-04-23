@@ -75,7 +75,6 @@ def create_web_interface(detection_manager, system_monitor=None):
 
     output_dir = config["OUTPUT_DIR"]
     output_resize_width = config["STREAM_WIDTH_OUTPUT_RESIZE"]
-    config["CLASSIFIER_CONFIDENCE_THRESHOLD"]
     EDIT_PASSWORD = config["EDIT_PASSWORD"]
     logger.info(
         "Loaded EDIT_PASSWORD: %s",
@@ -2674,7 +2673,6 @@ def create_web_interface(detection_manager, system_monitor=None):
     RUNTIME_NUMBER_KEYS = {
         "SAVE_THRESHOLD",
         "DETECTION_INTERVAL_SECONDS",
-        "CLASSIFIER_CONFIDENCE_THRESHOLD",
         "STREAM_FPS",
         "STREAM_FPS_CAPTURE",
         "TELEGRAM_COOLDOWN",
@@ -2685,7 +2683,6 @@ def create_web_interface(detection_manager, system_monitor=None):
         "SAVE_THRESHOLD": "OD Save Threshold (Minimum detector confidence to save image to disk; ignored in Auto mode)",
         "SAVE_THRESHOLD_MODE": "Save Threshold Mode (Auto: derive from active model · Manual: use Save Threshold value)",
         "DETECTION_INTERVAL_SECONDS": "Detection Interval (Seconds between AI analysis cycles - higher = less CPU)",
-        "CLASSIFIER_CONFIDENCE_THRESHOLD": "CLS Confidence Threshold (Minimum classifier confidence for species naming)",
         "DAY_AND_NIGHT_CAPTURE": "24/7 Capture (Enable or disable night-time detection)",
         "DAY_AND_NIGHT_CAPTURE_LOCATION": "Sun Event Location (City name for sunrise/sunset checks)",
         "TELEGRAM_ENABLED": "Live Alerts (Send Telegram messages when birds are detected)",
@@ -2717,7 +2714,6 @@ def create_web_interface(detection_manager, system_monitor=None):
         "SAVE_THRESHOLD_MODE",
         "SAVE_THRESHOLD",
         "DETECTION_INTERVAL_SECONDS",
-        "CLASSIFIER_CONFIDENCE_THRESHOLD",
         "DAY_AND_NIGHT_CAPTURE",
         "DAY_AND_NIGHT_CAPTURE_LOCATION",
         "LOCATION_DATA",

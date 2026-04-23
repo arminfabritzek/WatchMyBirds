@@ -54,14 +54,41 @@ class ClassificationService(ClassificationInterface):
                 self._classifier.predict_from_image(crop)
             )
 
+            # When a decision config was loaded, the classifier stamps
+            # ``last_decision`` on itself with the species/genus/reject
+            # resolution. For legacy classifiers without a config,
+            # last_decision still gets populated (level="species") so
+            # this branch is uniform — no None-guard needed.
+            decision = getattr(self._classifier, "last_decision", None)
+            if decision:
+                shown_label = decision.get("label") or ""
+                # For genus-level results the probability is the summed
+                # sibling mass, which is more meaningful to show
+                # downstream than the top-1 confidence. For species /
+                # reject we keep the top-1 confidence so legacy
+                # callers see unchanged numbers.
+                if decision.get("level") == "genus":
+                    shown_conf = float(decision.get("prob", confidence))
+                else:
+                    shown_conf = float(confidence)
+                decision_level = str(decision.get("level", "species"))
+                raw_species = str(decision.get("raw_species", class_name))
+            else:
+                shown_label = class_name
+                shown_conf = float(confidence)
+                decision_level = "species"
+                raw_species = class_name
+
             return ClassificationResult(
-                class_name=class_name,
-                confidence=confidence,
+                class_name=shown_label,
+                confidence=shown_conf,
                 model_id=self.get_model_id(),
                 top_k_classes=[
                     self._classifier.classes[int(idx)] for idx in top_k_indices
                 ],
                 top_k_confidences=[float(c) for c in top_k_confs],
+                decision_level=decision_level,
+                raw_species_name=raw_species,
             )
         except Exception as e:
             logger.error(f"Classification error: {e}")

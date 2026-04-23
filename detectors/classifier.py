@@ -6,6 +6,11 @@ import onnxruntime as ort
 from PIL import Image
 
 from config import get_config
+from detectors.cls_config import (
+    ClsDecisionConfig,
+    decide_label,
+    load_cls_decision_config,
+)
 from logging_config import get_logger
 from utils.model_downloader import ensure_model_files, load_latest_identifier
 
@@ -30,6 +35,17 @@ class ImageClassifier:
         self.ort_session = None
         self.classes = None
         self.CLASSIFIER_IMAGE_SIZE = 224  # Default, will be updated on init
+
+        # Decision-layer config loaded from the variant's
+        # ``_model_config.yaml`` when present. Stays ``None`` for
+        # legacy models (pre-20260423_062443) that ship no YAML or no
+        # ``detection`` section — those keep running on the top-1 path.
+        self.decision_config: ClsDecisionConfig | None = None
+        # Per-prediction decision result populated by
+        # ``predict_from_image``. Callers that care about the
+        # species/genus/reject level can read this attribute instead of
+        # changing the legacy tuple return shape.
+        self.last_decision: dict | None = None
 
         # Normalization constants (ImageNet defaults)
         self.mean = np.array([0.485, 0.456, 0.406], dtype=np.float32).reshape(3, 1, 1)
@@ -62,6 +78,16 @@ class ImageClassifier:
             raise
 
         self.classes = self._load_classes()
+
+        # Best-effort: load per-variant decision config. When ``None``,
+        # predict_from_image() falls back to the legacy top-1 path so
+        # older pinned classifiers continue to work unchanged.
+        self.decision_config = load_cls_decision_config(self.model_dir, self.model_id)
+        if self.decision_config is None:
+            logger.info(
+                f"Classifier '{self.model_id}' runs on legacy top-1 path "
+                "(no decision config available)"
+            )
 
         # Dynamically detect image size from model input
         try:
@@ -164,5 +190,14 @@ class ImageClassifier:
         top1_index = int(top_k_indices[0])
         top1_confidence = float(top_k_confidences[0])
         top1_class_name = self.classes[top1_index]
+
+        # Decision layer: when a variant config is loaded, apply
+        # species/genus/reject logic; otherwise the helper returns the
+        # same top-1 result a legacy model would have produced. The
+        # tuple return shape stays unchanged so existing callers keep
+        # working; richer info is available via ``self.last_decision``.
+        self.last_decision = decide_label(
+            probabilities[0], self.classes or [], self.decision_config
+        )
 
         return top_k_indices, top_k_confidences, top1_class_name, top1_confidence

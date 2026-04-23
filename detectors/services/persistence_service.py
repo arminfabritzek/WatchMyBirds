@@ -308,6 +308,8 @@ class PersistenceService(PersistenceInterface):
                     "unknown_score": detection.unknown_score,
                     "decision_reasons": detection.decision_reasons,
                     "policy_version": detection.policy_version,
+                    "decision_level": detection.decision_level,
+                    "raw_species_name": detection.raw_species_name,
                     "species_source": (
                         "model_top1" if detection.cls_class_name else "unknown"
                     ),

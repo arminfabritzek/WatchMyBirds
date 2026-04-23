@@ -68,6 +68,13 @@ class DetectionData:
         unknown_score: OOD explicit score.
         decision_reasons: JSON list or serializable string of reason codes.
         policy_version: Version identifier string of the policy engine.
+        decision_level: "species" / "genus" / "reject" from the classifier
+            decision layer. NULL when no decision config is loaded (legacy
+            classifiers) — downstream treats NULL as species-level.
+        raw_species_name: top-1 latin species name from the classifier
+            softmax, regardless of decision level. Retained for audit and
+            for later re-analysis even when cls_class_name was promoted
+            to genus_sp. or cleared for reject.
     """
 
     bbox: tuple[int, int, int, int]  # x1, y1, x2, y2
@@ -83,6 +90,8 @@ class DetectionData:
     decision_reasons: str | None = None
     policy_version: str | None = None
     top_k_predictions: list[tuple[str, float]] = field(default_factory=list)
+    decision_level: str | None = None
+    raw_species_name: str | None = None
 
 
 class PersistenceInterface(ABC):

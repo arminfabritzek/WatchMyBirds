@@ -684,6 +684,12 @@ class DetectionManager:
                     )
                     if cls_conf > 0
                     else [],
+                    decision_level=getattr(cls_result, "decision_level", None)
+                    if cls_result is not None
+                    else None,
+                    raw_species_name=getattr(cls_result, "raw_species_name", None)
+                    if cls_result is not None
+                    else None,
                 )
 
                 try:

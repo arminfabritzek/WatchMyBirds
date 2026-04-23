@@ -19,11 +19,46 @@ from utils.species_names import UNKNOWN_SPECIES_KEY
 
 
 def _gallery_visibility_sql(det_alias: str = "d", image_alias: str = "i") -> str:
-    """Shared visibility policy for gallery-like detection surfaces."""
+    """Shared visibility policy for gallery-like detection surfaces.
+
+    Two-axis filter:
+
+    1. **Temporal gate**: ``decision_state = 'confirmed'`` — only
+       detections the temporal smoother has stamped as confirmed
+       reach the public gallery. Uncertain / unknown / NULL live in
+       the review queue instead.
+
+    2. **Classifier decision-level gate**: exclude
+       ``decision_level = 'reject'`` — when the classifier's
+       top-1 confidence was below its calibrated species threshold
+       AND the genus fallback did not accept either, the row has
+       an empty ``cls_class_name``. Showing those in the gallery
+       produces "Unknown species" cards with no CLS confidence,
+       which is worse than hiding them. They remain in the review
+       queue where the operator can confirm or re-label.
+
+       ``decision_level IS NULL`` is explicitly allowed so:
+       - Historical rows saved before the decision-level column
+         existed stay visible when their decision_state=confirmed.
+       - Classifiers that ship no YAML (legacy / dev variants)
+         still produce gallery rows — their top-1 always wins,
+         which is the pre-2026-04-23 behaviour.
+
+    Rejection rationale: the classifier v2 decision layer (species /
+    genus / reject) is only trustworthy when temporal smoothing has
+    seen the same species across enough frames to stamp ``confirmed``.
+    A single high-confidence frame can still be a false positive
+    (hallucinated species, motion blur); a single low-confidence
+    frame is even worse.
+    """
     return f"""
         {det_alias}.status = 'active'
         AND ({image_alias}.review_status IS NULL OR {image_alias}.review_status != '{REVIEW_STATUS_NO_BIRD}')
-        AND lower(COALESCE({det_alias}.decision_state, '')) NOT IN ('uncertain', 'unknown')
+        AND lower(COALESCE({det_alias}.decision_state, '')) = 'confirmed'
+        AND (
+            {det_alias}.decision_level IS NULL
+            OR lower({det_alias}.decision_level) != 'reject'
+        )
     """
 
 
@@ -173,8 +208,10 @@ def insert_detection(conn: sqlite3.Connection, row: dict[str, Any]) -> int:
             policy_version,
             manual_species_override,
             species_source,
-            species_updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+            species_updated_at,
+            decision_level,
+            raw_species_name
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
         """,
         (
             row.get("image_filename"),
@@ -203,6 +240,8 @@ def insert_detection(conn: sqlite3.Connection, row: dict[str, Any]) -> int:
             row.get("manual_species_override"),
             row.get("species_source"),
             row.get("species_updated_at", row.get("created_at")),
+            row.get("decision_level"),
+            row.get("raw_species_name"),
         ),
     )
     conn.commit()

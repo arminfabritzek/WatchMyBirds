@@ -129,6 +129,7 @@ def seeded_client(local_db_app):
             timestamp=f"{today_prefix}_120000",
             species="Parus_major",
             review_status="confirmed_bird",
+            decision_state="confirmed",
             score=0.98,
         )
 
@@ -151,6 +152,7 @@ def seeded_client(local_db_app):
             timestamp=f"{today_prefix}_120000",
             species="Pica_pica",
             review_status="confirmed_bird",
+            decision_state="confirmed",
             score=0.96,
         )
         _seed_detection(

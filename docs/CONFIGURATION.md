@@ -66,7 +66,6 @@ Deployment-specific `GO2RTC_CONFIG_PATH` values:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `CLASSIFIER_CONFIDENCE_THRESHOLD` | `0.55` | Classifier confidence for gallery summaries |
 | `DETECTION_INTERVAL_SECONDS` | `2.0` | Pause between detection cycles (seconds) |
 | `SAVE_THRESHOLD` | `0.65` | Minimum confidence to save an image. Only used when `SAVE_THRESHOLD_MODE=manual`. |
 | `SAVE_THRESHOLD_MODE` | `auto` | `auto` (save = model's detection floor + 0.10) or `manual` (honour `SAVE_THRESHOLD` verbatim) |

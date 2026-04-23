@@ -3,6 +3,10 @@
     "hedgehog": "Pinnsvin",
     "marten_mustelid": "Mår",
     "squirrel": "Ekorn",
+    "Fringilla_sp.": "Finke (art usikker)",
+    "Phylloscopus_sp.": "Løvsanger (art usikker)",
+    "Sylvia_sp.": "Sanger (art usikker)",
+    "Turdus_sp.": "Trost (art usikker)",
     "Aegithalos_caudatus": "Stjertmeis",
     "Apus_apus": "Tårnseiler",
     "Bombycilla_garrulus": "Sidensvans",
@@ -52,5 +56,5 @@
     "Troglodytes_troglodytes": "Gjerdesmett",
     "Turdus_merula": "Svarttrost",
     "Turdus_philomelos": "Måltrost",
-    "Unknown_species": "Unknown species"
+    "Unknown_species": "Fugl (art usikker)"
 }

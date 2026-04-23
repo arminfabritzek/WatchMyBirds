@@ -34,9 +34,27 @@ class ClassificationResult:
     Result of a classification operation.
 
     Attributes:
-        class_name: Latin name of the classified species (e.g., "Parus_major").
-        confidence: Classification confidence (0.0 to 1.0).
+        class_name: Label to show downstream. For legacy (pre-config)
+            classifiers and for species-level confident predictions
+            this is the Latin species name (e.g. "Parus_major"). For
+            configured classifiers that fall back to genus level it is
+            the genus token (e.g. "Sylvia_sp."). Empty string when the
+            decision layer rejects the prediction.
+        confidence: Classification confidence (0.0 to 1.0). When the
+            decision level is ``genus``, this is the summed probability
+            mass over sibling species, not the top-1 probability.
         model_id: Identifier of the model used.
+        top_k_classes / top_k_confidences: raw top-K slice from the
+            classifier softmax (species-level ordering regardless of
+            decision level).
+        decision_level: One of ``"species"``, ``"genus"``, or
+            ``"reject"``. Defaults to ``"species"`` so results built
+            without a decision layer (legacy path or error path) keep
+            behaving like today's code expects.
+        raw_species_name: The top-1 species label from the softmax,
+            regardless of what decision level was chosen. Useful for
+            logging / debugging even when the shown label is genus or
+            empty.
     """
 
     class_name: str
@@ -44,6 +62,8 @@ class ClassificationResult:
     model_id: str = ""
     top_k_classes: list[str] = field(default_factory=list)
     top_k_confidences: list[float] = field(default_factory=list)
+    decision_level: str = "species"
+    raw_species_name: str = ""
 
 
 def compute_unknown_score(top_k_confidences: list[float]) -> float:

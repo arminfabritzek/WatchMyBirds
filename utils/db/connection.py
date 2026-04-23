@@ -164,6 +164,16 @@ def _init_schema(conn: sqlite3.Connection) -> None:
     _ensure_column_on_table(conn, "detections", "manual_bbox_review", "TEXT")
     _ensure_column_on_table(conn, "detections", "bbox_reviewed_at", "TEXT")
 
+    # CLS-v2 decision layer (added 2026-04-23 with classifier config YAMLs).
+    # decision_level: 'species' | 'genus' | 'reject'. NULL for detections
+    #   saved before the decision layer shipped — those are species-level
+    #   by construction (the old pipeline had no genus fallback).
+    # raw_species_name: top-1 species latin regardless of decision level.
+    #   Lets us reconstruct what the classifier actually thought, even when
+    #   cls_class_name was promoted to genus_sp. or cleared for reject.
+    _ensure_column_on_table(conn, "detections", "decision_level", "TEXT")
+    _ensure_column_on_table(conn, "detections", "raw_species_name", "TEXT")
+
     # Frame resolution at capture time (tracks camera/resolution changes)
     _ensure_column_on_table(conn, "detections", "frame_width", "INTEGER")
     _ensure_column_on_table(conn, "detections", "frame_height", "INTEGER")

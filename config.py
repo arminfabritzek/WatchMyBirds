@@ -71,7 +71,6 @@ DEFAULTS = {
     "SAVE_THRESHOLD_MODE": "auto",  # "auto" (derived from model) or "manual"
     "DETECTION_INTERVAL_SECONDS": 2.0,
     "MODEL_BASE_PATH": "./data/models",
-    "CLASSIFIER_CONFIDENCE_THRESHOLD": 0.55,
     "BBOX_QUALITY_THRESHOLD": 0.40,
     "SPECIES_CONF_THRESHOLD": 0.70,
     "UNKNOWN_SCORE_THRESHOLD": 0.60,
@@ -113,7 +112,6 @@ RUNTIME_KEYS = {
     "DAY_AND_NIGHT_CAPTURE_LOCATION",
     "STREAM_FPS",
     "STREAM_FPS_CAPTURE",
-    "CLASSIFIER_CONFIDENCE_THRESHOLD",
     "BBOX_QUALITY_THRESHOLD",
     "SPECIES_CONF_THRESHOLD",
     "UNKNOWN_SCORE_THRESHOLD",
@@ -197,7 +195,6 @@ def _load_config():
     for key in (
         "SAVE_THRESHOLD",
         "DETECTION_INTERVAL_SECONDS",
-        "CLASSIFIER_CONFIDENCE_THRESHOLD",
         "BBOX_QUALITY_THRESHOLD",
         "SPECIES_CONF_THRESHOLD",
         "UNKNOWN_SCORE_THRESHOLD",
@@ -591,7 +588,6 @@ def _coerce_config_types(config):
     # Numeric values
     for key in (
         "SAVE_THRESHOLD",
-        "CLASSIFIER_CONFIDENCE_THRESHOLD",
         "BBOX_QUALITY_THRESHOLD",
         "SPECIES_CONF_THRESHOLD",
         "UNKNOWN_SCORE_THRESHOLD",
@@ -846,7 +842,6 @@ def _validate_value(key, value):
         return False, None
     if key in (
         "SAVE_THRESHOLD",
-        "CLASSIFIER_CONFIDENCE_THRESHOLD",
         "BBOX_QUALITY_THRESHOLD",
         "SPECIES_CONF_THRESHOLD",
         "UNKNOWN_SCORE_THRESHOLD",

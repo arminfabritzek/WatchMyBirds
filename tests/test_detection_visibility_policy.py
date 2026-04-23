@@ -56,7 +56,8 @@ def _build_conn() -> sqlite3.Connection:
             decision_state TEXT,
             bbox_quality REAL,
             unknown_score REAL,
-            decision_reasons TEXT
+            decision_reasons TEXT,
+            decision_level TEXT
         );
 
         CREATE TABLE classifications (

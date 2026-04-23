@@ -25,7 +25,8 @@ def _build_conn() -> sqlite3.Connection:
             detection_id INTEGER PRIMARY KEY,
             image_filename TEXT NOT NULL,
             status TEXT DEFAULT 'active',
-            decision_state TEXT
+            decision_state TEXT,
+            decision_level TEXT
         );
 
         CREATE TABLE sources (
@@ -49,11 +50,11 @@ def test_fetch_active_detection_ids_in_date_range_is_inclusive_and_stable():
         ],
     )
     conn.executemany(
-        "INSERT INTO detections(detection_id, image_filename, status) VALUES (?, ?, ?)",
+        "INSERT INTO detections(detection_id, image_filename, status, decision_state) VALUES (?, ?, ?, ?)",
         [
-            (11, "b.jpg", "active"),
-            (10, "a.jpg", "active"),
-            (12, "c.jpg", "active"),
+            (11, "b.jpg", "active", "confirmed"),
+            (10, "a.jpg", "active", "confirmed"),
+            (12, "c.jpg", "active", "confirmed"),
         ],
     )
 
@@ -72,11 +73,11 @@ def test_fetch_active_detection_ids_in_date_range_excludes_rejected_and_out_of_r
         ],
     )
     conn.executemany(
-        "INSERT INTO detections(detection_id, image_filename, status) VALUES (?, ?, ?)",
+        "INSERT INTO detections(detection_id, image_filename, status, decision_state) VALUES (?, ?, ?, ?)",
         [
-            (21, "in.jpg", "rejected"),
-            (22, "in.jpg", "active"),
-            (23, "out.jpg", "active"),
+            (21, "in.jpg", "rejected", "confirmed"),
+            (22, "in.jpg", "active", "confirmed"),
+            (23, "out.jpg", "active", "confirmed"),
         ],
     )
 
@@ -96,12 +97,12 @@ def test_fetch_active_detection_selection_in_date_range_returns_distinct_images(
         ],
     )
     conn.executemany(
-        "INSERT INTO detections(detection_id, image_filename, status) VALUES (?, ?, ?)",
+        "INSERT INTO detections(detection_id, image_filename, status, decision_state) VALUES (?, ?, ?, ?)",
         [
-            (10, "a.jpg", "active"),
-            (11, "a.jpg", "active"),
-            (12, "b.jpg", "active"),
-            (13, "c.jpg", "rejected"),
+            (10, "a.jpg", "active", "confirmed"),
+            (11, "a.jpg", "active", "confirmed"),
+            (12, "b.jpg", "active", "confirmed"),
+            (13, "c.jpg", "rejected", "confirmed"),
         ],
     )
 
@@ -132,12 +133,12 @@ def test_fetch_active_detection_selection_by_source_type_filters_imported_images
         ],
     )
     conn.executemany(
-        "INSERT INTO detections(detection_id, image_filename, status) VALUES (?, ?, ?)",
+        "INSERT INTO detections(detection_id, image_filename, status, decision_state) VALUES (?, ?, ?, ?)",
         [
-            (31, "cam.jpg", "active"),
-            (32, "import-a.jpg", "active"),
-            (33, "import-a.jpg", "active"),
-            (34, "import-b.jpg", "rejected"),
+            (31, "cam.jpg", "active", "confirmed"),
+            (32, "import-a.jpg", "active", "confirmed"),
+            (33, "import-a.jpg", "active", "confirmed"),
+            (34, "import-b.jpg", "rejected", "confirmed"),
         ],
     )
 

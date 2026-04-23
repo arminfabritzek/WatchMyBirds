@@ -3,6 +3,10 @@
     "hedgehog": "Igel",
     "marten_mustelid": "Marder",
     "squirrel": "Eichhörnchen",
+    "Fringilla_sp.": "Edelfink (Art unklar)",
+    "Phylloscopus_sp.": "Laubsänger (Art unklar)",
+    "Sylvia_sp.": "Grasmücke (Art unklar)",
+    "Turdus_sp.": "Drossel (Art unklar)",
     "Aegithalos_caudatus": "Schwanzmeise",
     "Apus_apus": "Mauersegler",
     "Bombycilla_garrulus": "Seidenschwanz",
@@ -52,5 +56,5 @@
     "Troglodytes_troglodytes": "Zaunkönig",
     "Turdus_merula": "Amsel",
     "Turdus_philomelos": "Singdrossel",
-    "Unknown_species": "Unknown species"
+    "Unknown_species": "Vogel (Art unklar)"
 }

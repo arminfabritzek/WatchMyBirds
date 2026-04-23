@@ -690,15 +690,40 @@ def _build_classifier_variant_metadata(
             with open(yaml_path, encoding="utf-8") as file:
                 config = _yaml.safe_load(file)
             if isinstance(config, dict):
+                # Canonical layout (2026-04-23 HF spec): thresholds + input
+                # size live under ``detection.*``. Earlier dev-style YAMLs
+                # may nest the same fields under ``classification`` or
+                # ``model``; we fall back to those so variants from any
+                # era still surface metadata.
+                detection_section = config.get("detection")
                 cls_section = config.get("classification") or config.get("model")
-                if isinstance(cls_section, dict):
-                    input_size = cls_section.get("input_size")
+                sections = [
+                    s for s in (detection_section, cls_section) if isinstance(s, dict)
+                ]
+
+                for section in sections:
+                    input_size = section.get("input_size")
                     if (
-                        isinstance(input_size, list)
+                        "input_size" not in out
+                        and isinstance(input_size, list)
                         and len(input_size) == 2
                         and all(isinstance(n, int) for n in input_size)
                     ):
                         out["input_size"] = list(input_size)
+
+                # Calibrated decision thresholds (CLS-v2 decision layer).
+                # species_threshold is the species-accept threshold;
+                # genus_threshold is the summed-sibling-mass accept for
+                # the genus fallback. Both were added 2026-04-23; older
+                # YAMLs that lack them simply do not surface the chip.
+                if isinstance(detection_section, dict):
+                    species_thr = detection_section.get("confidence_threshold")
+                    if isinstance(species_thr, (int, float)):
+                        out["confidence_threshold"] = float(species_thr)
+                    genus_thr = detection_section.get("genus_fallback_threshold")
+                    if isinstance(genus_thr, (int, float)):
+                        out["genus_fallback_threshold"] = float(genus_thr)
+
                 meta = config.get("meta")
                 if isinstance(meta, dict):
                     trained_at = meta.get("trained_at")
@@ -707,6 +732,15 @@ def _build_classifier_variant_metadata(
                     num_classes = meta.get("num_classes")
                     if isinstance(num_classes, int) and "num_classes" not in out:
                         out["num_classes"] = num_classes
+
+                # Final fallback for num_classes: the ``classes`` list at
+                # top level is authoritative for the ONNX output layout,
+                # so length of that list === num_classes when meta.num_classes
+                # is absent.
+                if "num_classes" not in out:
+                    classes_list = config.get("classes")
+                    if isinstance(classes_list, list) and classes_list:
+                        out["num_classes"] = len(classes_list)
         except ImportError:
             pass
         except Exception as exc:
@@ -752,16 +786,64 @@ def build_classifier_registry_payload(classifier: Any | None) -> dict[str, Any]:
     runtime_id = None
     runtime: dict[str, Any] = {}
     if classifier is not None:
+        # The classifier lazy-loads on first predict. Before that, its
+        # runtime attributes are at their class defaults (image_size=224,
+        # empty classes list, decision_config=None) — which would make
+        # the settings page lie about the active model. To keep the
+        # Active card honest pre-predict, we resolve the active id from
+        # the lazy handle and fall back to the on-disk YAML for the
+        # input_size / class count / thresholds.
+        classifier_initialized = bool(getattr(classifier, "_initialized", False))
         runtime_id = getattr(classifier, "model_id", None) or None
+        if not runtime_id:
+            runtime_id = active_on_disk_id
+        fallback_meta: dict[str, Any] = (
+            _build_classifier_variant_metadata(model_dir, runtime_id)
+            if runtime_id
+            else {}
+        )
+
+        image_size = getattr(classifier, "CLASSIFIER_IMAGE_SIZE", None)
+        input_size: list[int] = []
+        if classifier_initialized and image_size:
+            input_size = [int(image_size), int(image_size)]
+        elif (
+            isinstance(fallback_meta.get("input_size"), list)
+            and len(fallback_meta["input_size"]) == 2
+        ):
+            input_size = [int(n) for n in fallback_meta["input_size"]]
+
+        classes_count = len(getattr(classifier, "classes", None) or [])
+        if not classes_count and isinstance(fallback_meta.get("num_classes"), int):
+            classes_count = int(fallback_meta["num_classes"])
+
         runtime = {
             "model_id": runtime_id,
             "model_path": getattr(classifier, "model_path", None),
-            "input_size": [
-                getattr(classifier, "CLASSIFIER_IMAGE_SIZE", None),
-                getattr(classifier, "CLASSIFIER_IMAGE_SIZE", None),
-            ] if getattr(classifier, "CLASSIFIER_IMAGE_SIZE", None) else [],
-            "num_classes": len(getattr(classifier, "classes", None) or []),
+            "input_size": input_size,
+            "num_classes": classes_count,
         }
+
+        # Decision config thresholds. ``decision_config`` is set during
+        # lazy-init, so pre-predict we fall back to the YAML values we
+        # already extracted into ``fallback_meta``. Legacy classifiers
+        # without a YAML simply have no threshold keys — the UI then
+        # skips the chip.
+        decision_config = getattr(classifier, "decision_config", None)
+        species_thr = (
+            getattr(decision_config, "species_threshold", None)
+            if decision_config is not None
+            else fallback_meta.get("confidence_threshold")
+        )
+        genus_thr = (
+            getattr(decision_config, "genus_threshold", None)
+            if decision_config is not None
+            else fallback_meta.get("genus_fallback_threshold")
+        )
+        if isinstance(species_thr, (int, float)):
+            runtime["confidence_threshold"] = float(species_thr)
+        if isinstance(genus_thr, (int, float)):
+            runtime["genus_fallback_threshold"] = float(genus_thr)
 
     variant_entries = dict(pinned_models)
     if hf_latest_id and hf_latest_id not in variant_entries:
