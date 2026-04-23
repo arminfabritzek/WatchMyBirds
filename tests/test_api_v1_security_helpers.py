@@ -15,7 +15,8 @@ import logging
 import pytest
 from flask import Flask
 
-from web.blueprints.api_v1 import _error_response, _safe_log_value
+from web.security import error_response as _error_response
+from web.security import safe_log_value as _safe_log_value
 
 
 class TestSafeLogValue:

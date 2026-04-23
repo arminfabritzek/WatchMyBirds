@@ -32,6 +32,8 @@ from web.power_actions import (
     is_power_management_available,
     schedule_power_action,
 )
+from web.security import error_response as _error_response
+from web.security import safe_log_value as _safe_log_value
 from web.species_thumbnails import get_species_thumbnail_map
 from web.services import (
     backup_restore_service,
@@ -44,37 +46,6 @@ config = get_config()
 
 # Create Blueprint
 api_v1 = Blueprint("api_v1", __name__, url_prefix="/api/v1")
-
-
-def _safe_log_value(value: object, max_len: int = 200) -> str:
-    """Neutralize CR/LF/tab in values before emitting them to logs.
-
-    Closes CodeQL py/log-injection. Without this, a request body with
-    ``"model_id": "x\\n[ERROR] admin logged in"`` would forge a second
-    log line. We replace the control chars with visible escape
-    sequences, strip everything else outside printable ASCII, and cap
-    the length so log lines stay bounded.
-    """
-    text = str(value)
-    text = text.replace("\r", "\\r").replace("\n", "\\n").replace("\t", "\\t")
-    # Drop other C0 controls but keep the explicit escapes we just wrote.
-    text = "".join(c if (c.isprintable() or c == " ") else "?" for c in text)
-    if len(text) > max_len:
-        text = text[:max_len] + "...[truncated]"
-    return text
-
-
-def _error_response(public_message: str, exc: Exception, status: int = 500):
-    """Shared 5xx response builder.
-
-    Closes CodeQL py/stack-trace-exposure. The full traceback goes to
-    the server log (``exc_info=True``); the client receives only the
-    caller-supplied high-level message. Previously we returned
-    ``str(exc)`` which could leak file paths, SQL fragments, or other
-    implementation details that help attackers enumerate internals.
-    """
-    logger.error(f"{public_message}: {exc}", exc_info=True)
-    return jsonify({"status": "error", "message": public_message}), status
 
 
 def _read_file_tail(path: Path, max_lines: int = 200) -> dict:
@@ -366,14 +337,20 @@ def _regenerate_metadata_for_variant(model_dir: str, model_id: str) -> str | Non
     """
     import os
 
-    yaml_path = os.path.join(model_dir, f"{model_id}_model_config.yaml")
-    if not os.path.exists(yaml_path):
+    from utils.model_downloader import _safe_model_dir_join
+
+    # Containment: model_id flows in from the request body. Reject
+    # anything that escapes model_dir (closes CodeQL py/path-injection
+    # #122/#123 at the I/O boundary).
+    yaml_basename = os.path.basename(f"{model_id}_model_config.yaml")
+    yaml_path = _safe_model_dir_join(model_dir, yaml_basename)
+    if yaml_path is None or not os.path.exists(yaml_path):
         logger.warning(
             "models/detector/pin: no %s_model_config.yaml found in %s; "
             "model_metadata.json not regenerated. Detector will fall back "
             "to hard-coded threshold defaults.",
-            model_id,
-            model_dir,
+            _safe_log_value(model_id),
+            _safe_log_value(model_dir),
         )
         return None
 
@@ -387,7 +364,9 @@ def _regenerate_metadata_for_variant(model_dir: str, model_id: str) -> str | Non
         metadata = config_to_metadata(
             config, source_yaml_name=os.path.basename(yaml_path)
         )
-        output_path = os.path.join(model_dir, "model_metadata.json")
+        output_path = _safe_model_dir_join(model_dir, "model_metadata.json")
+        if output_path is None:
+            raise ValueError(f"model_dir {model_dir!r} failed containment check")
         tmp_path = f"{output_path}.tmp"
         with open(tmp_path, "w", encoding="utf-8") as file:
             import json as _json
@@ -780,21 +759,37 @@ def models_detector_install():
                 400,
             )
 
+        from utils.model_downloader import _safe_model_dir_join
+
         weights_rel_norm = _normalize_rel_path(HF_BASE_URL, weights_rel)
         labels_rel_norm = _normalize_rel_path(HF_BASE_URL, labels_rel)
-        weights_abs = os.path.join(model_dir, os.path.basename(weights_rel_norm))
-        labels_abs = os.path.join(model_dir, os.path.basename(labels_rel_norm))
+        weights_abs = _safe_model_dir_join(
+            model_dir, os.path.basename(weights_rel_norm)
+        )
+        labels_abs = _safe_model_dir_join(
+            model_dir, os.path.basename(labels_rel_norm)
+        )
+        if weights_abs is None or labels_abs is None:
+            return (
+                jsonify(
+                    {
+                        "status": "error",
+                        "message": "Registry paths failed containment check.",
+                    }
+                ),
+                400,
+            )
 
         weights_url = f"{HF_BASE_URL}/{weights_rel_norm}"
         labels_url = f"{HF_BASE_URL}/{labels_rel_norm}"
 
         logger.info(
             "models/detector/install: fetching %s weights=%s labels=%s (+ companions)",
-            model_id,
-            weights_url,
-            labels_url,
+            _safe_log_value(model_id),
+            _safe_log_value(weights_url),
+            _safe_log_value(labels_url),
         )
-        if not _download_file(weights_url, weights_abs):
+        if not _download_file(weights_url, weights_abs, base_dir=model_dir):
             return (
                 jsonify(
                     {
@@ -804,7 +799,7 @@ def models_detector_install():
                 ),
                 502,
             )
-        if not _download_file(labels_url, labels_abs):
+        if not _download_file(labels_url, labels_abs, base_dir=model_dir):
             return (
                 jsonify(
                     {
@@ -820,8 +815,14 @@ def models_detector_install():
         # display in the AI panel). Both best-effort — older releases may
         # not ship them. See _fetch_companion_files for the rationale.
         _fetch_companion_files(HF_BASE_URL, model_dir, model_id)
-        yaml_abs = os.path.join(model_dir, f"{model_id}_model_config.yaml")
-        metrics_abs = os.path.join(model_dir, f"{model_id}_metrics.json")
+        from utils.model_downloader import _safe_model_dir_join
+
+        yaml_abs = _safe_model_dir_join(
+            model_dir, os.path.basename(f"{model_id}_model_config.yaml")
+        )
+        metrics_abs = _safe_model_dir_join(
+            model_dir, os.path.basename(f"{model_id}_metrics.json")
+        )
 
         return jsonify(
             {
@@ -830,8 +831,12 @@ def models_detector_install():
                 "already_installed": False,
                 "weights_path": weights_abs,
                 "labels_path": labels_abs,
-                "model_config_path": yaml_abs if os.path.exists(yaml_abs) else None,
-                "metrics_path": metrics_abs if os.path.exists(metrics_abs) else None,
+                "model_config_path": (
+                    yaml_abs if yaml_abs and os.path.exists(yaml_abs) else None
+                ),
+                "metrics_path": (
+                    metrics_abs if metrics_abs and os.path.exists(metrics_abs) else None
+                ),
             }
         )
     except Exception as exc:
@@ -1035,10 +1040,26 @@ def models_classifier_install():
                 400,
             )
 
+        from utils.model_downloader import _safe_model_dir_join
+
         weights_rel_norm = _normalize_rel_path(CLS_HF_BASE_URL, weights_rel)
         classes_rel_norm = _normalize_rel_path(CLS_HF_BASE_URL, classes_rel)
-        weights_abs = os.path.join(model_dir, os.path.basename(weights_rel_norm))
-        classes_abs = os.path.join(model_dir, os.path.basename(classes_rel_norm))
+        weights_abs = _safe_model_dir_join(
+            model_dir, os.path.basename(weights_rel_norm)
+        )
+        classes_abs = _safe_model_dir_join(
+            model_dir, os.path.basename(classes_rel_norm)
+        )
+        if weights_abs is None or classes_abs is None:
+            return (
+                jsonify(
+                    {
+                        "status": "error",
+                        "message": "Registry paths failed containment check.",
+                    }
+                ),
+                400,
+            )
 
         weights_url = f"{CLS_HF_BASE_URL}/{weights_rel_norm}"
         classes_url = f"{CLS_HF_BASE_URL}/{classes_rel_norm}"
@@ -1049,7 +1070,7 @@ def models_classifier_install():
             _safe_log_value(weights_url),
             _safe_log_value(classes_url),
         )
-        if not _download_file(weights_url, weights_abs):
+        if not _download_file(weights_url, weights_abs, base_dir=model_dir):
             return (
                 jsonify(
                     {
@@ -1059,7 +1080,7 @@ def models_classifier_install():
                 ),
                 502,
             )
-        if not _download_file(classes_url, classes_abs):
+        if not _download_file(classes_url, classes_abs, base_dir=model_dir):
             return (
                 jsonify(
                     {
