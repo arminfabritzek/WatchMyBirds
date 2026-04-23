@@ -70,6 +70,10 @@ class ExportSelection:
     batch_id: str
     detection_ids: list[int]
     per_species_counts: dict[str, int] = field(default_factory=dict)
+    # How many of the selected rows per species were user-favorites
+    # (``is_favorite=1``). Surfaced in the manifest so the training
+    # dev sees which batches carry more user-curated samples.
+    favorites_per_species: dict[str, int] = field(default_factory=dict)
 
 
 def _positive_sample_predicate(
@@ -166,11 +170,20 @@ def select_export_batch(
 ) -> ExportSelection:
     """Pick detection_ids for a batch according to the UI selection.
 
-    Sampling policy: random within each eligible species bucket (ML
-    diversity wins over "newest first" — weather / time-of-day bias
-    is worse than sparseness). Caller passes ``species_limits`` to
-    cap individual species; ``max_total`` is an overall ceiling
-    applied AFTER per-species caps.
+    Sampling policy — **favorites-first, then random fill**:
+
+    1. Within each species bucket, ``is_favorite=1`` rows are picked
+       first (shuffled among themselves when more favorites than cap).
+    2. The remaining cap is filled with random non-favorite rows.
+    3. When the overall ``max_total`` clips the combined pool,
+       favorites are biased to survive the clip.
+
+    Why favorites-first: a user who explicitly starred a detection
+    has looked at the image a second time and stands behind the label
+    — that is a strictly stronger quality signal than a one-shot
+    Review-queue approval. Feeding these into the training pool
+    first improves label quality at zero cost in diversity (favorites
+    still shuffle among themselves for balance).
 
     The returned selection is DB-writeable but not yet persisted. The
     caller must call :func:`mark_exported` after the ZIP stream
@@ -179,7 +192,8 @@ def select_export_batch(
     rng = random.Random(rng_seed) if rng_seed is not None else random.Random()
     species_limits = species_limits or {}
     query = f"""
-        SELECT d.detection_id, d.manual_species_override AS species
+        SELECT d.detection_id, d.manual_species_override AS species,
+               COALESCE(d.is_favorite, 0) AS is_favorite
         FROM detections d
         LEFT JOIN training_exports te ON te.detection_id = d.detection_id
         WHERE {_positive_sample_predicate(
@@ -189,7 +203,8 @@ def select_export_batch(
                 ",".join("?" for _ in species_limits)
             })
     """ if species_limits else f"""
-        SELECT d.detection_id, d.manual_species_override AS species
+        SELECT d.detection_id, d.manual_species_override AS species,
+               COALESCE(d.is_favorite, 0) AS is_favorite
         FROM detections d
         LEFT JOIN training_exports te ON te.detection_id = d.detection_id
         WHERE {_positive_sample_predicate(
@@ -200,41 +215,77 @@ def select_export_batch(
     params = list(species_limits.keys()) if species_limits else []
     rows = conn.execute(query, params).fetchall()
 
-    # Bucket by species, then random-sample up to the per-species cap.
-    by_species: dict[str, list[int]] = {}
+    # Bucket by species, splitting favorites from the rest. Within
+    # each sub-bucket we shuffle so repeated exports cover different
+    # material.
+    favorites_by_species: dict[str, list[int]] = {}
+    others_by_species: dict[str, list[int]] = {}
     for row in rows:
         species = str(row["species"] or "").strip()
         if not species:
             continue
-        by_species.setdefault(species, []).append(int(row["detection_id"]))
+        det_id = int(row["detection_id"])
+        if int(row["is_favorite"] or 0) == 1:
+            favorites_by_species.setdefault(species, []).append(det_id)
+        else:
+            others_by_species.setdefault(species, []).append(det_id)
 
     selected: list[int] = []
     per_species_counts: dict[str, int] = {}
-    for species, ids in by_species.items():
+    favorites_per_species: dict[str, int] = {}
+    favorite_set: set[int] = set()
+
+    all_species = set(favorites_by_species) | set(others_by_species)
+    for species in all_species:
         cap = species_limits.get(species, max_per_species)
         if cap <= 0:
             continue
-        rng.shuffle(ids)
-        take = ids[:cap]
-        selected.extend(take)
-        per_species_counts[species] = len(take)
+        favs = favorites_by_species.get(species, [])
+        others = others_by_species.get(species, [])
+        rng.shuffle(favs)
+        rng.shuffle(others)
+        take_favs = favs[:cap]
+        remaining = cap - len(take_favs)
+        take_others = others[:remaining] if remaining > 0 else []
+        bucket_take = [*take_favs, *take_others]
+        selected.extend(bucket_take)
+        per_species_counts[species] = len(bucket_take)
+        favorites_per_species[species] = len(take_favs)
+        favorite_set.update(take_favs)
 
-    # Apply the overall cap if configured. We shuffle the combined
-    # pool first so the cap does not silently bias toward the first
-    # species alphabetically.
+    # Apply the overall cap if configured. Bias favorites to survive:
+    # keep them all, then fill the remaining budget with a random
+    # subset of the non-favorite picks.
     if max_total is not None and len(selected) > max_total:
-        rng.shuffle(selected)
-        selected = selected[:max_total]
-        # Recompute per-species counts after the overall cap.
+        favs_in_selection = [i for i in selected if i in favorite_set]
+        non_favs_in_selection = [i for i in selected if i not in favorite_set]
+        if len(favs_in_selection) >= max_total:
+            # Too many favorites — random-drop even among favorites.
+            rng.shuffle(favs_in_selection)
+            selected = favs_in_selection[:max_total]
+        else:
+            rng.shuffle(non_favs_in_selection)
+            needed = max_total - len(favs_in_selection)
+            selected = [*favs_in_selection, *non_favs_in_selection[:needed]]
+        # Recompute per-species + per-species-favorites after the cap.
         per_species_counts = {}
+        favorites_per_species = {}
         surviving = set(selected)
-        for species, ids in by_species.items():
-            per_species_counts[species] = sum(1 for i in ids if i in surviving)
+        for species in all_species:
+            favs = favorites_by_species.get(species, [])
+            others = others_by_species.get(species, [])
+            f_count = sum(1 for i in favs if i in surviving)
+            o_count = sum(1 for i in others if i in surviving)
+            total_count = f_count + o_count
+            if total_count:
+                per_species_counts[species] = total_count
+                favorites_per_species[species] = f_count
 
     return ExportSelection(
         batch_id=build_batch_id(),
         detection_ids=selected,
         per_species_counts=per_species_counts,
+        favorites_per_species=favorites_per_species,
     )
 
 
@@ -589,6 +640,7 @@ def stream_export_zip(
             "skipped_missing_images": missing_images,
             "skipped_invalid_bbox": skipped_bbox,
             "per_species_counts": selection.per_species_counts,
+            "favorites_per_species": selection.favorites_per_species,
             "station_id": station_id,
             "reviewer_id": reviewer_id,
             "app_version": app_version,

@@ -41,7 +41,8 @@ def _schema() -> sqlite3.Connection:
             manual_species_override TEXT,
             manual_bbox_review TEXT,
             bbox_reviewed_at TEXT,
-            species_updated_at TEXT
+            species_updated_at TEXT,
+            is_favorite INTEGER DEFAULT 0
         );
         CREATE TABLE images (
             filename TEXT PRIMARY KEY,
@@ -69,6 +70,7 @@ def _seed_detection(
     bbox_review: str | None,
     status: str = "active",
     image_filename: str | None = None,
+    is_favorite: int = 0,
 ) -> None:
     filename = image_filename or f"frame_{detection_id}.jpg"
     conn.execute(
@@ -83,11 +85,11 @@ def _seed_detection(
             frame_width, frame_height,
             od_class_name, od_confidence, od_model_id,
             manual_species_override, manual_bbox_review,
-            bbox_reviewed_at
+            bbox_reviewed_at, is_favorite
         ) VALUES (?, ?, ?, 0.1, 0.1, 0.2, 0.3, 1920, 1080,
-                  'bird', 0.9, 'det_v1', ?, ?, '2026-04-23T10:00:00Z')
+                  'bird', 0.9, 'det_v1', ?, ?, '2026-04-23T10:00:00Z', ?)
         """,
-        (detection_id, filename, status, species, bbox_review),
+        (detection_id, filename, status, species, bbox_review, is_favorite),
     )
 
 
@@ -162,6 +164,191 @@ class TestAlreadyExportedExclusion:
         assert pool[0].available_count == 1
         assert pool[0].pending_count == 1
         assert pool[0].already_exported_count == 0
+
+
+class TestFavoritesFirstSampling:
+    """Favorites (``is_favorite=1``) are a strictly stronger quality
+    signal than a one-shot review approval — the user has looked at
+    the image twice and explicitly starred it. The export must pick
+    favorites first within each species bucket; non-favorites fill
+    the remaining cap randomly. An overall ``max_total`` cap biases
+    favorites to survive so the dev gets the best samples first.
+
+    These tests lock in the behaviour so a future refactor cannot
+    silently drop favorites back to equal-weight random sampling.
+    """
+
+    def test_favorites_land_in_selection_before_non_favorites(self):
+        conn = _schema()
+        for i in range(10):
+            _seed_detection(
+                conn,
+                detection_id=i,
+                species="Parus_major",
+                bbox_review="correct",
+                is_favorite=0,
+            )
+        for i in range(100, 103):
+            _seed_detection(
+                conn,
+                detection_id=i,
+                species="Parus_major",
+                bbox_review="correct",
+                is_favorite=1,
+            )
+        selection = select_export_batch(
+            conn,
+            species_limits={"Parus_major": 5},
+            max_total=None,
+            rng_seed=42,
+        )
+        # 3 favorites available + 2 non-favorites filling up to cap=5.
+        assert len(selection.detection_ids) == 5
+        assert selection.favorites_per_species == {"Parus_major": 3}
+        # The three favorites (ids 100, 101, 102) are all in the
+        # selection — they cannot have been dropped for non-favorites.
+        assert 100 in selection.detection_ids
+        assert 101 in selection.detection_ids
+        assert 102 in selection.detection_ids
+
+    def test_cap_smaller_than_favorite_count_still_includes_favorites_only(self):
+        """Cap=2 with 3 favorites available → 2 random favorites, no
+        non-favorites. Non-favorites may not sneak in when favorites
+        alone already fill the cap."""
+        conn = _schema()
+        for i in range(10):
+            _seed_detection(
+                conn, detection_id=i, species="Parus_major", bbox_review="correct",
+                is_favorite=0,
+            )
+        for i in range(100, 103):
+            _seed_detection(
+                conn, detection_id=i, species="Parus_major", bbox_review="correct",
+                is_favorite=1,
+            )
+        selection = select_export_batch(
+            conn,
+            species_limits={"Parus_major": 2},
+            max_total=None,
+            rng_seed=42,
+        )
+        # All 2 picked are favorites (ids 100-102); no non-favorites.
+        assert len(selection.detection_ids) == 2
+        assert all(i in (100, 101, 102) for i in selection.detection_ids)
+        assert selection.favorites_per_species == {"Parus_major": 2}
+
+    def test_no_favorites_falls_back_to_plain_random(self):
+        """When there are no favorites, behaviour matches the old
+        random-sample-within-bucket policy. This guards against a
+        regression where the new code path might accidentally skip
+        buckets with zero favorites."""
+        conn = _schema()
+        for i in range(10):
+            _seed_detection(
+                conn, detection_id=i, species="Parus_major", bbox_review="correct",
+                is_favorite=0,
+            )
+        selection = select_export_batch(
+            conn,
+            species_limits={"Parus_major": 5},
+            max_total=None,
+            rng_seed=42,
+        )
+        assert len(selection.detection_ids) == 5
+        assert selection.favorites_per_species == {"Parus_major": 0}
+
+    def test_max_total_keeps_all_favorites_even_when_clipping(self):
+        """max_total < sum(per-species caps) must NOT drop favorites.
+        Favorites are kept; non-favorites are the ones that get
+        randomly dropped."""
+        conn = _schema()
+        # 10 non-favorite Parus
+        for i in range(10):
+            _seed_detection(
+                conn, detection_id=i, species="Parus_major", bbox_review="correct",
+                is_favorite=0,
+            )
+        # 10 non-favorite Cyanistes
+        for i in range(50, 60):
+            _seed_detection(
+                conn, detection_id=i, species="Cyanistes_caeruleus",
+                bbox_review="correct", is_favorite=0,
+            )
+        # 2 Parus favorites, 2 Cyanistes favorites
+        for i in range(100, 102):
+            _seed_detection(
+                conn, detection_id=i, species="Parus_major",
+                bbox_review="correct", is_favorite=1,
+            )
+        for i in range(200, 202):
+            _seed_detection(
+                conn, detection_id=i, species="Cyanistes_caeruleus",
+                bbox_review="correct", is_favorite=1,
+            )
+        # Per-species cap would pick up to 10+10=20 rows; max_total=6
+        # forces a clip. All 4 favorites MUST survive.
+        selection = select_export_batch(
+            conn,
+            species_limits={"Parus_major": 10, "Cyanistes_caeruleus": 10},
+            max_total=6,
+            rng_seed=42,
+        )
+        assert len(selection.detection_ids) == 6
+        ids = set(selection.detection_ids)
+        for fav in (100, 101, 200, 201):
+            assert fav in ids, f"favorite {fav} was clipped, must survive"
+        # Exactly 2 non-favorites filled the remaining 2 slots.
+        non_fav_count = sum(
+            1 for i in selection.detection_ids if i not in {100, 101, 200, 201}
+        )
+        assert non_fav_count == 2
+
+    def test_max_total_smaller_than_favorite_count_drops_even_favorites(self):
+        """Edge case: more favorites than max_total. Favorites are
+        the pool to pick from, randomly shuffled — even favorites
+        can drop when there is simply not enough room."""
+        conn = _schema()
+        for i in range(100, 110):
+            _seed_detection(
+                conn, detection_id=i, species="Parus_major",
+                bbox_review="correct", is_favorite=1,
+            )
+        selection = select_export_batch(
+            conn,
+            species_limits={"Parus_major": 10},
+            max_total=3,
+            rng_seed=42,
+        )
+        assert len(selection.detection_ids) == 3
+        # All 3 are from the favorite pool (ids 100-109).
+        assert all(100 <= i < 110 for i in selection.detection_ids)
+        assert selection.favorites_per_species == {"Parus_major": 3}
+
+    def test_per_species_counts_include_favorite_rows(self):
+        """favorites_per_species must never exceed per_species_counts —
+        favorites are a subset of total picks."""
+        conn = _schema()
+        for i in range(5):
+            _seed_detection(
+                conn, detection_id=i, species="Parus_major", bbox_review="correct",
+                is_favorite=0,
+            )
+        for i in range(100, 102):
+            _seed_detection(
+                conn, detection_id=i, species="Parus_major", bbox_review="correct",
+                is_favorite=1,
+            )
+        selection = select_export_batch(
+            conn,
+            species_limits={"Parus_major": 5},
+            max_total=None,
+            rng_seed=42,
+        )
+        total = selection.per_species_counts.get("Parus_major", 0)
+        favs = selection.favorites_per_species.get("Parus_major", 0)
+        assert favs <= total
+        assert total == 5
+        assert favs == 2  # both favorites picked, 3 non-favorites filled up
 
 
 class TestSelectionSamplingAndLimits:
