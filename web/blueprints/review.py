@@ -2144,6 +2144,21 @@ def review_quick_species():
             if bbox_review is not None:
                 db_service.set_manual_bbox_review(conn, detection_id, bbox_review)
 
+            # Auto-opt-in for the training pool. The strict predicate
+            # (species override AND bbox=correct) only holds when the
+            # operator also flipped bbox to 'correct' in this same
+            # call — so we gate the opt-in on that. Skipping the pool
+            # here keeps the dev from receiving rows where the bbox
+            # never got human confirmation.
+            if bbox_review == "correct":
+                from web.services.training_export_service import (
+                    auto_opt_in_if_enabled,
+                )
+
+                auto_opt_in_if_enabled(
+                    conn, [detection_id], config, source_tag="quick_species"
+                )
+
         gallery_service.invalidate_cache()
 
         return jsonify(
@@ -2265,6 +2280,20 @@ def review_approve():
                 """,
                 (detection_id, filename),
             )
+            # Auto-opt-in: the 409-gates above require species +
+            # bbox_review in VALID_BBOX_REVIEW_STATES ({'correct',
+            # 'wrong'}), so bbox='wrong' is a legal approval outcome
+            # — but Option-A-strict only accepts 'correct' for the
+            # training pool. Guard accordingly so a wrong-bbox
+            # approval does not leak into the dev's batch.
+            if bbox_review == "correct":
+                from web.services.training_export_service import (
+                    auto_opt_in_if_enabled,
+                )
+
+                auto_opt_in_if_enabled(
+                    conn, [detection_id], config, source_tag="per_det_approve"
+                )
             image_review_status = _refresh_review_image_visibility(
                 conn,
                 filename,
@@ -2536,6 +2565,21 @@ def review_event_approve():
                 detection_ids,
             )
             conn.commit()
+
+            # Auto-opt-in: every approve click can feed the training
+            # export pool. Gated on bbox_review='correct' because
+            # Option-A-strict needs both species-override (set above)
+            # AND bbox=correct. event-approve allows bbox='wrong' as
+            # a valid review outcome (user acknowledged the bbox is
+            # wrong), but those rows must not be shipped to the dev.
+            if bbox_review == "correct":
+                from web.services.training_export_service import (
+                    auto_opt_in_if_enabled,
+                )
+
+                auto_opt_in_if_enabled(
+                    conn, detection_ids, config, source_tag="event_approve"
+                )
 
             touched_filenames = list(
                 dict.fromkeys(row["image_filename"] for row in rows if row["image_filename"])
@@ -3006,6 +3050,22 @@ def review_event_resolve():
                 db_service.reject_detections(conn, trash_ids)
 
             conn.commit()
+
+            # Auto-opt-in: mirror the event-approve hook so the
+            # mixed-resolve flow is consistent with full approval.
+            # Only keep_ids are eligible; trash_ids were rejected and
+            # cascade-delete their training_exports rows. The 'correct'
+            # check guards against resolve-with-bbox=wrong still
+            # stamping the pool — the predicate-at-query-time would
+            # filter them out anyway, but we avoid writing junk rows.
+            if bbox_review == "correct" and keep_ids:
+                from web.services.training_export_service import (
+                    auto_opt_in_if_enabled,
+                )
+
+                auto_opt_in_if_enabled(
+                    conn, keep_ids, config, source_tag="event_resolve"
+                )
 
             touched_filenames = list(
                 dict.fromkeys(

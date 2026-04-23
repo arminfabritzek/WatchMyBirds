@@ -28,6 +28,11 @@ relabel_filtered_label='Relabel All Filtered',
 relabel_filtered_class='btn btn--outline-primary',
 relabel_filtered_id=none,
 relabel_filtered_hidden=false,
+train_selected_onclick=none,
+train_selected_id=none,
+train_selected_label='Confirm & Add to Training',
+train_selected_class='btn btn--outline-primary',
+train_selected_title='Confirms bounding boxes as correct on the selected tiles and queues them for the next training export. Frames with any unreviewed or rejected sibling bbox are skipped.',
 download_onclick=none,
 download_label=none,
 download_class='btn btn--success',
@@ -62,6 +67,12 @@ cancel_class='btn btn--secondary'
     <button type="button" class="{{ relabel_filtered_class }}"{% if relabel_filtered_id %} id="{{ relabel_filtered_id }}"{% endif %}
         onclick="{{ relabel_filtered_onclick }}"{% if relabel_filtered_hidden %} style="display:none;"{% endif %}>🏷️
         {{ relabel_filtered_label }}</button>
+    {% endif %}
+
+    {% if train_selected_onclick %}
+    <button type="button" class="{{ train_selected_class }}"{% if train_selected_id %} id="{{ train_selected_id }}"{% endif %}
+        onclick="{{ train_selected_onclick }}" title="{{ train_selected_title }}">🎯 {{
+        train_selected_label }}</button>
     {% endif %}
 
     {% if download_onclick and download_label %}

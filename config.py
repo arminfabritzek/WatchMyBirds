@@ -93,6 +93,10 @@ DEFAULTS = {
     "EXIF_GPS_ENABLED": True,
     "INBOX_REQUIRE_EXIF_DATETIME": True,
     "INBOX_REQUIRE_EXIF_GPS": True,
+    # When True, every "Approve event" click in the review queue also
+    # marks its detections as pending training-export. Off by default
+    # so the export pool only grows deliberately.
+    "TRAINING_EXPORT_AUTO_OPT_IN": False,
     "MOTION_DETECTION_ENABLED": False,
     "MOTION_SENSITIVITY": 500,
     "CAMERA_URL": "",
@@ -140,6 +144,7 @@ RUNTIME_KEYS = {
     "MOTION_DETECTION_ENABLED",
     "MOTION_SENSITIVITY",
     "SPECIES_COMMON_NAME_LOCALE",
+    "TRAINING_EXPORT_AUTO_OPT_IN",
     # STREAM_WIDTH_OUTPUT_RESIZE is read once at mount time in
     # web_interface.py, so changing it here takes effect after the
     # next restart. It's still in RUNTIME_KEYS because the Settings
@@ -833,6 +838,7 @@ def _validate_value(key, value):
         "MOTION_DETECTION_ENABLED",
         "DEBUG_MODE",
         "EXIF_GPS_ENABLED",
+        "TRAINING_EXPORT_AUTO_OPT_IN",
     ):
         return True, _coerce_bool(value)
     if key == "SAVE_THRESHOLD_MODE":

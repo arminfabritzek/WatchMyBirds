@@ -1,0 +1,318 @@
+{% extends 'base.html' %}
+
+{% block title %}Export for Training - WatchMyBirds{% endblock %}
+
+{% block content %}
+<div class="page__header">
+    <h1 class="page__title">Export for Training</h1>
+    <div class="page__actions">
+        <a href="/admin/review" class="btn btn--secondary">Back to Review</a>
+    </div>
+</div>
+
+<div class="card mb-lg">
+    <div class="card__body">
+        <div style="display: flex; flex-direction: column; gap: var(--space-sm);">
+            <div><strong>What gets exported?</strong></div>
+            <div>
+                Only detections you have actively approved in the review queue
+                (species confirmed <em>and</em> bbox marked correct) are eligible.
+                Random sample within each species for ML diversity.
+            </div>
+            <div>
+                Already-exported detections are excluded from future batches so
+                the training dev does not receive duplicates.
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="card mb-lg">
+    <div class="card__header">
+        <h3 class="card__title">Species pool</h3>
+    </div>
+    <div class="card__body" id="exportSpeciesPanel">
+        <div class="text-center p-xl" id="exportSpeciesLoading">
+            <span class="animate-spin" style="font-size: 2rem; display: inline-block;">⟳</span>
+            <div class="text-muted mt-md">Loading species counts…</div>
+        </div>
+    </div>
+</div>
+
+<div class="card mb-lg">
+    <div class="card__header">
+        <h3 class="card__title">Batch size</h3>
+    </div>
+    <div class="card__body">
+        <div class="settings-field">
+            <label for="maxPerSpecies" class="settings-field__label">
+                Max images per species
+            </label>
+            <input type="number" id="maxPerSpecies" min="1" max="1000"
+                value="50" class="form-control" style="max-width: 160px;">
+            <div class="settings-field__help">
+                Caps each species individually so balanced batches train better.
+            </div>
+        </div>
+        <div class="settings-field">
+            <label for="maxTotal" class="settings-field__label">
+                Max images total (optional)
+            </label>
+            <input type="number" id="maxTotal" min="1" max="10000"
+                value="500" class="form-control" style="max-width: 160px;">
+            <div class="settings-field__help">
+                Overall cap applied after per-species caps. Leave blank for no total limit.
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="card mb-lg">
+    <div class="card__header">
+        <h3 class="card__title">Batch identity (optional)</h3>
+    </div>
+    <div class="card__body">
+        <div class="settings-field">
+            <label for="stationId" class="settings-field__label">
+                Station ID
+            </label>
+            <input type="text" id="stationId" class="form-control" style="max-width: 280px;"
+                placeholder="e.g. station-garden-01" maxlength="64">
+            <div class="settings-field__help">
+                Helps the training dev tell batches from different Pi installations apart when several operators contribute. Saved in your browser, not the server.
+            </div>
+        </div>
+        <div class="settings-field">
+            <label for="reviewerId" class="settings-field__label">
+                Reviewer ID
+            </label>
+            <input type="text" id="reviewerId" class="form-control" style="max-width: 280px;"
+                placeholder="e.g. armin" maxlength="64">
+            <div class="settings-field__help">
+                Pseudonym of the person doing the reviews. Useful for per-reviewer calibration. Saved in your browser, not the server.
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="card mb-lg">
+    <div class="card__body" style="display: flex; gap: var(--space-md); align-items: center;">
+        <button type="button" id="exportRunBtn" class="btn btn--primary" disabled>
+            Build & download ZIP
+        </button>
+        <span id="exportStatus" class="text-muted"></span>
+    </div>
+</div>
+
+<script>
+(function () {
+    const panel = document.getElementById('exportSpeciesPanel');
+    const btn = document.getElementById('exportRunBtn');
+    const statusEl = document.getElementById('exportStatus');
+    const maxPerSpeciesInput = document.getElementById('maxPerSpecies');
+    const maxTotalInput = document.getElementById('maxTotal');
+
+    function fmtCount(n) {
+        return new Intl.NumberFormat().format(n);
+    }
+
+    // Build DOM nodes explicitly — never set innerHTML with DB values.
+    // Species keys are scientific names today, but the review flow
+    // writes them with minimal validation, so defense-in-depth
+    // against any future XSS vector is cheap here.
+    function makeHeaderRow() {
+        const tr = document.createElement('tr');
+        [
+            ['', 'width-checkbox'],
+            ['Species', null],
+            ['Available', 'text-end'],
+            ['Pending (auto)', 'text-end'],
+            ['Already exported', 'text-end'],
+        ].forEach(([label, className]) => {
+            const th = document.createElement('th');
+            th.textContent = label;
+            if (className === 'width-checkbox') th.style.width = '32px';
+            else if (className) th.className = className;
+            tr.appendChild(th);
+        });
+        const thead = document.createElement('thead');
+        thead.appendChild(tr);
+        return thead;
+    }
+
+    function makeSpeciesRow(row) {
+        const tr = document.createElement('tr');
+        const disabled = row.available === 0;
+
+        const tdCheck = document.createElement('td');
+        const cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.className = 'exportSpeciesBox';
+        cb.dataset.species = row.species;
+        cb.disabled = disabled;
+        cb.checked = !disabled;
+        tdCheck.appendChild(cb);
+        tr.appendChild(tdCheck);
+
+        const tdName = document.createElement('td');
+        tdName.textContent = row.species.replace(/_/g, ' ');
+        tr.appendChild(tdName);
+
+        [
+            [row.available, 'text-end', null],
+            [row.pending, 'text-end', null],
+            [row.already_exported, 'text-end', 'text-muted'],
+        ].forEach(([value, align, muted]) => {
+            const td = document.createElement('td');
+            td.className = align + (muted ? ' ' + muted : '');
+            td.textContent = fmtCount(value);
+            tr.appendChild(td);
+        });
+        return tr;
+    }
+
+    function setEmptyState(msg, kind) {
+        panel.replaceChildren();
+        const wrap = document.createElement('div');
+        wrap.className = (kind === 'error') ? 'text-danger' : 'text-muted';
+        wrap.textContent = msg;
+        panel.appendChild(wrap);
+    }
+
+    function renderSpecies(payload) {
+        const species = payload.species || [];
+        if (!species.length) {
+            setEmptyState(
+                'No approved review events yet — approve some events in the ' +
+                'review queue first, then come back here.',
+                'info'
+            );
+            btn.disabled = true;
+            return;
+        }
+        panel.replaceChildren();
+        const table = document.createElement('table');
+        table.className = 'table';
+        table.appendChild(makeHeaderRow());
+        const tbody = document.createElement('tbody');
+        species.forEach(row => tbody.appendChild(makeSpeciesRow(row)));
+        table.appendChild(tbody);
+        panel.appendChild(table);
+        btn.disabled = !species.some(s => s.available > 0);
+    }
+
+    async function loadAvailable() {
+        try {
+            const res = await fetch('/api/training-export/available');
+            if (!res.ok) throw new Error('HTTP ' + res.status);
+            const payload = await res.json();
+            if (payload.defaults) {
+                maxPerSpeciesInput.value = payload.defaults.max_per_species || 50;
+                maxTotalInput.value = payload.defaults.max_total || '';
+            }
+            renderSpecies(payload);
+        } catch (err) {
+            setEmptyState(
+                'Failed to load species pool: ' + (err.message || err),
+                'error'
+            );
+        }
+    }
+
+    // Station / reviewer IDs are persisted in localStorage (per
+    // browser, not per server account) so the user does not retype
+    // them every session. They are not sensitive — just labels so the
+    // training dev can distinguish batches from different Pis / people.
+    const IDENTITY_KEYS = {
+        station: 'wmb.trainingExport.stationId',
+        reviewer: 'wmb.trainingExport.reviewerId',
+    };
+    const stationInput = document.getElementById('stationId');
+    const reviewerInput = document.getElementById('reviewerId');
+
+    function loadIdentityFromStorage() {
+        try {
+            stationInput.value = localStorage.getItem(IDENTITY_KEYS.station) || '';
+            reviewerInput.value = localStorage.getItem(IDENTITY_KEYS.reviewer) || '';
+        } catch (err) {
+            // localStorage may be disabled; fall back to empty strings.
+        }
+    }
+
+    function persistIdentity() {
+        try {
+            localStorage.setItem(IDENTITY_KEYS.station, stationInput.value.trim());
+            localStorage.setItem(IDENTITY_KEYS.reviewer, reviewerInput.value.trim());
+        } catch (err) {
+            // ignore; persistence is best-effort
+        }
+    }
+
+    async function runExport() {
+        const selected = Array.from(
+            document.querySelectorAll('.exportSpeciesBox:checked')
+        ).map(el => el.dataset.species);
+        if (!selected.length) {
+            statusEl.textContent = 'Select at least one species.';
+            statusEl.className = 'text-danger';
+            return;
+        }
+        const perSpecies = parseInt(maxPerSpeciesInput.value, 10) || 50;
+        const rawTotal = maxTotalInput.value.trim();
+        const maxTotal = rawTotal === '' ? null : (parseInt(rawTotal, 10) || null);
+
+        const species_limits = {};
+        selected.forEach(s => { species_limits[s] = perSpecies; });
+
+        btn.disabled = true;
+        statusEl.textContent = 'Building ZIP…';
+        statusEl.className = 'text-muted';
+
+        persistIdentity();
+        const stationId = stationInput.value.trim();
+        const reviewerId = reviewerInput.value.trim();
+
+        try {
+            const res = await fetch('/api/training-export/create', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    species_limits,
+                    max_total: maxTotal,
+                    station_id: stationId,
+                    reviewer_id: reviewerId,
+                }),
+            });
+            if (!res.ok) {
+                const body = await res.json().catch(() => ({}));
+                throw new Error(body.message || ('HTTP ' + res.status));
+            }
+            const blob = await res.blob();
+            let filename = 'training_batch.zip';
+            const cd = res.headers.get('Content-Disposition') || '';
+            const match = cd.match(/filename="?([^";]+)"?/);
+            if (match && match[1]) filename = match[1];
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            URL.revokeObjectURL(url);
+            statusEl.textContent = 'Downloaded ' + filename;
+            statusEl.className = 'text-success';
+            await loadAvailable();
+        } catch (err) {
+            statusEl.textContent = 'Export failed: ' + (err.message || err);
+            statusEl.className = 'text-danger';
+            btn.disabled = false;
+        }
+    }
+
+    btn.addEventListener('click', runExport);
+    loadIdentityFromStorage();
+    loadAvailable();
+})();
+</script>
+{% endblock %}

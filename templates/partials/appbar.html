@@ -43,6 +43,10 @@
             href="/admin/review">
             Review
         </a>
+        <a class="app-bar__link app-bar__link--secondary{% if current_path == '/admin/export' %} active{% endif %}"
+            href="/admin/export" title="Package approved events into a ZIP for the training dev">
+            Export
+        </a>
         <a class="app-bar__link app-bar__link--secondary{% if current_path == '/trash' %} active{% endif %}"
             href="/trash">
             Trash

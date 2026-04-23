@@ -297,6 +297,33 @@ def _init_schema(conn: sqlite3.Connection) -> None:
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_rescan_proposals_job_id ON rescan_proposals(job_id);"
     )
+
+    # Training-Data Export (opt-in crowdsourcing of reviewed labels
+    # to the upstream training dev). Rows get added either by an
+    # explicit Export-modal selection or — when the auto-opt-in
+    # setting is on — automatically each time the operator approves
+    # a review event. The CSV / ZIP build path flips ``export_status``
+    # from 'pending' to 'exported' after a successful download.
+    # UNIQUE(detection_id) enforces at-most-one pool entry per
+    # detection; INSERT OR IGNORE in the approval path relies on it.
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS training_exports (
+            export_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            batch_id TEXT NOT NULL,
+            detection_id INTEGER NOT NULL,
+            export_status TEXT NOT NULL DEFAULT 'pending',
+            exported_at TEXT,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(detection_id),
+            FOREIGN KEY(detection_id) REFERENCES detections(detection_id) ON DELETE CASCADE
+        );
+    """)
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_training_exports_batch_id ON training_exports(batch_id);"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_training_exports_status ON training_exports(export_status);"
+    )
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_rescan_proposals_status ON rescan_proposals(status);"
     )

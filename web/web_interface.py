@@ -647,6 +647,24 @@ def create_web_interface(detection_manager, system_monitor=None):
 
     server.register_blueprint(moderation_bp)
 
+    # Register Training-Export Blueprint (Phase 1: approved-event ZIP)
+    from utils.deploy_info import read_build_metadata
+    from web.blueprints.training_export import (
+        init_training_export_bp,
+        training_export_bp,
+    )
+
+    # APP_VERSION lives in /opt/app/APP_VERSION (Docker) or the repo
+    # root (dev). config doesn't carry it, so read it via the shared
+    # deploy-info helper that every other surface uses.
+    _build_meta = read_build_metadata()
+    init_training_export_bp(
+        output_dir=output_dir,
+        app_config=config,
+        app_version=str(_build_meta.get("app_version") or ""),
+    )
+    server.register_blueprint(training_export_bp)
+
     # Auth helper is now imported from web.blueprints.auth
 
     def setup_web_routes(server):
@@ -2669,6 +2687,7 @@ def create_web_interface(detection_manager, system_monitor=None):
         "INBOX_REQUIRE_EXIF_DATETIME",
         "INBOX_REQUIRE_EXIF_GPS",
         "MOTION_DETECTION_ENABLED",
+        "TRAINING_EXPORT_AUTO_OPT_IN",
     }
     RUNTIME_NUMBER_KEYS = {
         "SAVE_THRESHOLD",
@@ -2706,6 +2725,7 @@ def create_web_interface(detection_manager, system_monitor=None):
         "INBOX_REQUIRE_EXIF_DATETIME": "Inbox Require EXIF Date/Time (Skip imports without DateTimeOriginal/DateTimeDigitized)",
         "INBOX_REQUIRE_EXIF_GPS": "Inbox Require EXIF GPS (Skip imports without GPSLatitude/GPSLongitude)",
         "SPECIES_COMMON_NAME_LOCALE": "Species Common Names (Language for display names: DE=Deutsch, NO=Norsk)",
+        "TRAINING_EXPORT_AUTO_OPT_IN": "Auto-queue approvals for training export (Each approved event immediately joins the training export pool — visible in /admin/export)",
     }
 
     # Keys ordered for UI display purposes
@@ -2721,6 +2741,7 @@ def create_web_interface(detection_manager, system_monitor=None):
         "INBOX_REQUIRE_EXIF_DATETIME",
         "INBOX_REQUIRE_EXIF_GPS",
         "SPECIES_COMMON_NAME_LOCALE",
+        "TRAINING_EXPORT_AUTO_OPT_IN",
         "TELEGRAM_COOLDOWN",
         "TELEGRAM_ENABLED",
         "GALLERY_DISPLAY_THRESHOLD",

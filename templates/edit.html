@@ -156,6 +156,7 @@
     trash_filtered_onclick='batchRejectAllFiltered()',
     relabel_selected_onclick='batchRelabelSelected()',
     relabel_filtered_onclick='batchRelabelAllFiltered()',
+    train_selected_onclick='batchAddToTrainingSelected()',
     download_onclick='downloadSelected()',
     download_label='Download Selected (ZIP)'
     ) }}
@@ -309,6 +310,56 @@
     async function batchRelabelAllFiltered() {
         const selection = WmBatchActions.buildFilterContext('edit', EDIT_FILTER_CONTEXT);
         await WmBatchActions.runBatchRelabel(selection);
+    }
+
+    // --- Batch Add to Training Pool ---
+    //
+    // Pushes the currently-selected detections into the training
+    // export pool. The server filters to Option-A-strict-eligible
+    // rows (species override + bbox=correct), so the operator can
+    // select a full tile grid and the server drops the ones that
+    // don't qualify, reporting the breakdown back to the UI.
+    async function batchAddToTrainingSelected() {
+        const checked = document.querySelectorAll('.wm-tile__checkbox:checked');
+        if (checked.length === 0) {
+            if (window.wmToast) {
+                window.wmToast('Select at least one tile first.', 'warning', 3000);
+            } else {
+                alert('Select at least one tile first.');
+            }
+            return;
+        }
+        const ids = Array.from(checked).map(function (cb) { return parseInt(cb.value, 10); })
+            .filter(function (n) { return n > 0; });
+        try {
+            const res = await fetch('/api/training-export/add', {
+                method: 'POST',
+                credentials: 'same-origin',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ detection_ids: ids }),
+            });
+            if (!res.ok) {
+                const body = await res.json().catch(function () { return {}; });
+                throw new Error(body.message || ('HTTP ' + res.status));
+            }
+            const data = await res.json();
+            const parts = [data.added + ' added to training pool'];
+            if (data.ineligible > 0) {
+                parts.push(data.ineligible + ' skipped (not eligible yet)');
+            }
+            if (data.already_in_pool > 0) {
+                parts.push(data.already_in_pool + ' already in pool');
+            }
+            const msg = parts.join(' · ');
+            if (window.wmToast) {
+                window.wmToast(msg, data.added > 0 ? 'success' : 'info', 4000);
+            } else {
+                alert(msg);
+            }
+        } catch (err) {
+            const msg = 'Add to training failed: ' + (err.message || err);
+            if (window.wmToast) window.wmToast(msg, 'error', 5000); else alert(msg);
+        }
     }
 </script>
 {% endblock %}
