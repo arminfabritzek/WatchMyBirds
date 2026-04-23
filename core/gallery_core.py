@@ -7,7 +7,6 @@ Provides all gallery-related operations separated from the web layer.
 import logging
 import os
 import random
-import re
 import time
 from pathlib import Path
 from typing import Any
@@ -918,11 +917,19 @@ def regenerate_derivative(
         crop_index = None
 
         if type == "thumb":
-            match = re.match(r"(.*)_crop_(\d+)\.webp$", filename)
-            if match:
-                base_no_ext = match.group(1)
-                crop_index = int(match.group(2))
-                original_filename = f"{base_no_ext}.jpg"
+            # Replaced an unbounded-backtracking regex with O(n) string
+            # ops. The old pattern r"(.*)_crop_(\d+)\.webp$" had
+            # polynomial worst-case on inputs like "a_crop_a_crop_..."
+            # without the trailing ".webp" (CodeQL py/polynomial-redos
+            # #30). Splitting from the right and validating the tail
+            # numerically is equivalent for well-formed names and
+            # cheaper for adversarial ones.
+            if filename.endswith(".webp") and "_crop_" in filename:
+                base_with_idx = filename[: -len(".webp")]
+                base_no_ext, _, idx_str = base_with_idx.rpartition("_crop_")
+                if base_no_ext and idx_str.isdigit():
+                    crop_index = int(idx_str)
+                    original_filename = f"{base_no_ext}.jpg"
         elif type == "optimized":
             base_no_ext = os.path.splitext(filename)[0]
             original_filename = f"{base_no_ext}.jpg"

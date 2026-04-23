@@ -1,3 +1,5 @@
+from urllib.parse import urlparse
+
 from utils.wikipedia import build_species_wikipedia_url
 
 
@@ -6,7 +8,11 @@ def test_build_species_wikipedia_url_prefers_scientific_name():
         common_name="Kohlmeise", scientific_name="Parus_major"
     )
     assert url is not None
-    assert "de.wikipedia.org" in url
+    # Hostname check via urlparse — prevents the CodeQL
+    # js/incomplete-url-substring-sanitization false-positive that a
+    # bare "in" membership test would produce (a substring check
+    # would also pass for e.g. "https://evil.com?q=de.wikipedia.org").
+    assert urlparse(url).hostname == "de.wikipedia.org"
     assert "Parus+major" in url
 
 
