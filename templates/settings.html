@@ -1152,6 +1152,18 @@
                         <input type="text" name="EDIT_PASSWORD" id="EDIT_PASSWORD" class="form-control" value="{{ payload['EDIT_PASSWORD'].value }}">
                     </div>
                 </div>
+                <div class="col-md-6">
+                    <div class="settings-field">
+                        <label for="TRAINING_EXPORT_AUTO_OPT_IN" class="settings-field__label">Auto-Queue Approvals for Training</label>
+                        <select name="TRAINING_EXPORT_AUTO_OPT_IN" id="TRAINING_EXPORT_AUTO_OPT_IN" class="form-select">
+                            <option value="true" {% if payload.get('TRAINING_EXPORT_AUTO_OPT_IN', {}).get('value', False) %}selected{% endif %}>Enabled (Feed approved events into the training pool)</option>
+                            <option value="false" {% if not payload.get('TRAINING_EXPORT_AUTO_OPT_IN', {}).get('value', False) %}selected{% endif %}>Disabled</option>
+                        </select>
+                        <div class="settings-field__help">
+                            When on, every Approve-event click in the review queue also queues the detections for the next training export batch. Visible in <a href="/admin/export">/admin/export</a>.
+                        </div>
+                    </div>
+                </div>
                 {# Theme toggle — pure client-side, persisted in localStorage.
                    No backend round-trip: base.html hydrates the attribute
                    from localStorage before first paint. The three buttons
@@ -2012,6 +2024,16 @@
         if (Array.isArray(runtime.input_size) && runtime.input_size[0]) {
             metaBits.push(runtime.input_size[0] + '²');
         }
+        // Calibrated decision thresholds (CLS-v2). ``conf`` is the
+        // species-accept threshold; ``genus`` is the summed-sibling
+        // accept for the genus fallback. Legacy classifiers without a
+        // decision config simply omit the chips.
+        if (typeof runtime.confidence_threshold === 'number') {
+            metaBits.push('conf: ' + runtime.confidence_threshold);
+        }
+        if (typeof runtime.genus_fallback_threshold === 'number') {
+            metaBits.push('genus: ' + runtime.genus_fallback_threshold);
+        }
         document.getElementById('clsActiveMeta').textContent = metaBits.join(' · ');
     }
 
@@ -2051,6 +2073,12 @@
             }
             if (typeof meta.top1_accuracy === 'number') {
                 metaBits.push('top-1 ' + _fmtPct(meta.top1_accuracy));
+            }
+            // Calibrated decision thresholds per variant. ``conf`` is
+            // the species-accept cutoff; higher = stricter labelling.
+            // Variants without a YAML (pre-2026-04-23) simply omit.
+            if (typeof meta.confidence_threshold === 'number') {
+                metaBits.push('conf ' + meta.confidence_threshold);
             }
             if (meta.trained_at || meta.released) {
                 metaBits.push(meta.trained_at || meta.released);
