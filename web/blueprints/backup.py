@@ -23,6 +23,7 @@ from werkzeug.utils import secure_filename
 
 from logging_config import get_logger
 from web.blueprints.auth import login_required
+from web.security import error_response as _error_response
 from web.services import backup_restore_service, path_service
 
 logger = get_logger(__name__)
@@ -34,6 +35,39 @@ _detection_manager = None
 
 # Global restore progress tracking
 _restore_progress = {"active": False, "progress": None}
+
+
+def _safe_restore_archive_path(archive_path: str) -> Path | None:
+    """Returns the archive *only* when it sits inside the restore upload dir.
+
+    ``archive_path`` arrives from the browser after an upload — the
+    server-rendered path gets echoed back for the analyze/apply calls.
+    An authenticated operator could edit the JSON to something like
+    ``/etc/passwd`` or ``../../config/credentials.yml``. Resolve the
+    candidate path and require it to be a descendant of the canonical
+    restore_tmp directory. Anything else (absolute escapes, symlink
+    tricks, non-archive extensions) returns ``None`` so the caller
+    can reject with 400.
+    """
+    if not archive_path:
+        return None
+    pm = path_service.get_path_manager()
+    restore_root = pm.get_restore_tmp_dir().resolve()
+    try:
+        candidate = Path(archive_path).resolve()
+    except (OSError, ValueError):
+        return None
+    try:
+        candidate.relative_to(restore_root)
+    except ValueError:
+        return None
+    # Extension guard: mirrors the upload endpoint's own allowlist so a
+    # broken client can never ask us to open something unexpected even
+    # if the restore_tmp dir happens to contain stray files.
+    name = candidate.name.lower()
+    if not (name.endswith(".tar.gz") or name.endswith(".tgz")):
+        return None
+    return candidate
 
 
 def init_backup_bp(detection_manager):
@@ -56,8 +90,8 @@ def backup_stats():
         stats = backup_restore_service.get_backup_stats()
         return jsonify(stats)
     except Exception as e:
-        logger.error(f"Backup stats error: {e}")
-        return jsonify({"error": str(e)}), 500
+        logger.error(f"Backup stats error: {e}", exc_info=True)
+        return jsonify({"error": "Backup stats failed"}), 500
 
 
 @backup_bp.route("/api/backup/create", methods=["POST"])
@@ -111,8 +145,8 @@ def backup_create():
         return response
 
     except Exception as e:
-        logger.error(f"Backup create error: {e}")
-        return jsonify({"error": str(e)}), 500
+        logger.error(f"Backup create error: {e}", exc_info=True)
+        return jsonify({"error": "Backup create failed"}), 500
 
 
 @backup_bp.route("/restore")
@@ -202,7 +236,7 @@ def restore_upload():
 
     except Exception as e:
         logger.error(f"Restore upload error: {e}", exc_info=True)
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Restore upload failed"}), 500
 
 
 @backup_bp.route("/api/restore/analyze", methods=["POST"])
@@ -218,7 +252,9 @@ def restore_analyze():
         if not archive_path:
             return jsonify({"error": "No archive path provided"}), 400
 
-        path = Path(archive_path)
+        path = _safe_restore_archive_path(archive_path)
+        if path is None:
+            return jsonify({"error": "Invalid archive path"}), 400
         if not path.exists():
             return jsonify({"error": "Archive file not found"}), 404
 
@@ -232,8 +268,7 @@ def restore_analyze():
         )
 
     except Exception as e:
-        logger.error(f"Restore analyze error: {e}", exc_info=True)
-        return jsonify({"error": str(e)}), 500
+        return _error_response("Restore analyze failed", e)
 
 
 @backup_bp.route("/api/restore/apply", methods=["POST"])
@@ -264,7 +299,11 @@ def restore_apply():
                 _detection_manager.paused = False
             return jsonify({"error": "No archive path provided"}), 400
 
-        path = Path(archive_path)
+        path = _safe_restore_archive_path(archive_path)
+        if path is None:
+            if not was_paused:
+                _detection_manager.paused = False
+            return jsonify({"error": "Invalid archive path"}), 400
         if not path.exists():
             if not was_paused:
                 _detection_manager.paused = False
@@ -355,7 +394,7 @@ def restore_apply():
         if "was_paused" in locals() and not was_paused:
             _detection_manager.paused = False
         logger.error(f"Restore apply error: {e}", exc_info=True)
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Restore apply failed"}), 500
 
 
 @backup_bp.route("/api/restore/status", methods=["GET"])
@@ -378,5 +417,5 @@ def restore_cleanup():
         backup_restore_service.cleanup_temp_files()
         return jsonify({"status": "success"})
     except Exception as e:
-        logger.error(f"Restore cleanup error: {e}")
-        return jsonify({"error": str(e)}), 500
+        logger.error(f"Restore cleanup error: {e}", exc_info=True)
+        return jsonify({"error": "Restore cleanup failed"}), 500

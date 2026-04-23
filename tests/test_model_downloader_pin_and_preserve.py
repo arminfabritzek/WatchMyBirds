@@ -39,7 +39,13 @@ BASE_URL = "https://example.test/object_detection"
 @pytest.fixture(autouse=True)
 def _isolate_pin_env(monkeypatch):
     """Clear both the generic and the task-specific pin env vars so tests
-    don't leak configuration between each other or from the CI host."""
+    don't leak configuration between each other or from the CI host.
+
+    Also adds the fake registry host to WMB_ALLOWED_DOWNLOAD_HOSTS so
+    the SSRF allowlist does not block the mocked requests against
+    ``example.test``. Production callers keep the prod default because
+    the env var is only set for the duration of the test.
+    """
     for key in (
         PIN_ENV_VAR,
         f"{PIN_ENV_VAR_PREFIX}_OBJECT_DETECTION",
@@ -47,6 +53,10 @@ def _isolate_pin_env(monkeypatch):
         FORCE_REFRESH_ENV_VAR,
     ):
         monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv(
+        "WMB_ALLOWED_DOWNLOAD_HOSTS",
+        "huggingface.co,cdn-lfs.huggingface.co,example.test,hf.example",
+    )
 
 
 def _write_local(cache_dir: Path, payload: dict) -> None:

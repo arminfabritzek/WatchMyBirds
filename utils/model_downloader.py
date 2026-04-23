@@ -33,6 +33,7 @@ from __future__ import annotations
 import json
 import os
 import time
+from urllib.parse import urlparse
 
 import requests
 
@@ -155,11 +156,109 @@ def _normalize_rel_path(base_url: str, rel: str) -> str:
     return rel
 
 
-def _download_file(url: str, dest: str, retries: int = 3, timeout: int = 60) -> bool:
-    """Downloads a file from a URL."""
+# Defense-in-depth against SSRF: ``weights_rel`` / ``labels_rel``
+# ultimately come from ``latest_models.json`` — a file that HF controls
+# in prod but that an attacker with write access to the data volume
+# could tamper with. An entry like ``//evil.com/x`` would yield a
+# protocol-relative URL that urljoin resolves to ``https://evil.com/x``.
+# The allowlist check blocks that so the request never leaves HF (or
+# the user's override host). Overridable via WMB_ALLOWED_DOWNLOAD_HOSTS
+# (comma-separated) for air-gapped / self-hosted registries and for
+# tests that mock requests against a fake registry host.
+DEFAULT_ALLOWED_DOWNLOAD_HOSTS = "huggingface.co,cdn-lfs.huggingface.co"
+
+
+def _allowed_download_hosts() -> frozenset[str]:
+    """Resolved allowlist. Re-read on each call so tests and ops can
+    override via ``WMB_ALLOWED_DOWNLOAD_HOSTS`` without reloading the
+    module."""
+    raw = os.getenv("WMB_ALLOWED_DOWNLOAD_HOSTS") or DEFAULT_ALLOWED_DOWNLOAD_HOSTS
+    return frozenset(h.strip().lower() for h in raw.split(",") if h.strip())
+
+
+def _is_allowed_download_url(url: str) -> bool:
+    """True iff *url* targets an allow-listed host over http(s).
+
+    Rejects everything that is not ``http``/``https`` (file://, gopher://,
+    data:, etc.) and everything whose host is not in the allowlist.
+    Protocol-relative inputs (``//evil.com/x``) end up with empty
+    ``scheme``, so they fail the scheme check and are blocked.
+    """
+    try:
+        parsed = urlparse(url)
+    except ValueError:
+        return False
+    if parsed.scheme not in ("http", "https"):
+        return False
+    host = (parsed.hostname or "").lower()
+    if not host:
+        return False
+    return host in _allowed_download_hosts()
+
+
+def _safe_model_dir_join(base_dir: str, *parts: str) -> str | None:
+    """Join *parts* onto *base_dir* and confirm the result stays inside it.
+
+    Closes CodeQL py/path-injection (#128-134) at a single choke point:
+    ``latest_models.json`` is a local file that ships with HF releases
+    and is re-downloaded at runtime, but could be tampered with by an
+    attacker with write access to the data volume. A poisoned entry
+    like ``weights_path: "../../etc/passwd"`` would, without this
+    guard, let a subsequent ``open(join(model_dir, weights_path), "wb")``
+    escape the model cache dir.
+
+    Returns the canonical absolute path on success, or ``None`` when
+    the resolved target sits outside *base_dir*.
+    """
+    try:
+        base = os.path.realpath(base_dir)
+        candidate = os.path.realpath(os.path.join(base, *parts))
+    except (OSError, ValueError):
+        return None
+    # ``os.path.commonpath`` raises ValueError when the paths live on
+    # different drives (Windows) — treat that as containment failure.
+    try:
+        common = os.path.commonpath([base, candidate])
+    except ValueError:
+        return None
+    if common != base:
+        return None
+    return candidate
+
+
+def _download_file(
+    url: str,
+    dest: str,
+    retries: int = 3,
+    timeout: int = 60,
+    base_dir: str | None = None,
+) -> bool:
+    """Downloads a file from a URL.
+
+    When *base_dir* is provided, the effective *dest* is re-validated to
+    ensure it sits inside *base_dir* (closes py/path-injection at the
+    I/O boundary). Callers that already produce containment-safe paths
+    can omit *base_dir* — then only the os.path.exists check runs.
+    """
+    # Containment check first: must precede the exists() probe so a
+    # poisoned path can't even be stat()'d by this process.
+    if base_dir is not None:
+        safe_dest = _safe_model_dir_join(base_dir, os.path.relpath(dest, base_dir))
+        if safe_dest is None:
+            logger.error(
+                f"Blocked download: dest {dest!r} escapes base_dir {base_dir!r}"
+            )
+            return False
+        dest = safe_dest
     if os.path.exists(dest):
         logger.debug(f"File already exists and will be skipped: {dest}")
         return True
+    if not _is_allowed_download_url(url):
+        logger.error(
+            f"Blocked download from non-allowlisted host: {url!r} "
+            f"(allowed: {sorted(_allowed_download_hosts())})"
+        )
+        return False
     for attempt in range(1, retries + 1):
         try:
             response = requests.get(url, stream=True, timeout=timeout)
@@ -793,6 +892,12 @@ def fetch_latest_json(base_url: str, cache_dir: str) -> dict[str, str]:
        locally (or ``WMB_FORCE_REMOTE_REFRESH=1`` overrides this).
     3. **Local cache fallback** on network failure.
     """
+    # Canonicalize cache_dir. This + the _safe_model_dir_join checks at
+    # every I/O boundary below close CodeQL py/path-injection (#128-134):
+    # even if a caller passes a relative path containing user input, the
+    # realpath resolve + containment guard below means we only ever
+    # write files that sit inside the canonical cache dir.
+    cache_dir = os.path.realpath(cache_dir)
     local_data = _read_local_latest(cache_dir)
     pin = _resolve_pin_for_cache_dir(cache_dir)
 
@@ -815,9 +920,23 @@ def fetch_latest_json(base_url: str, cache_dir: str) -> dict[str, str]:
         )
         return pinned
 
-    # 2. Try remote.
+    # 2. Try remote. ``local_path`` is rebuilt through the containment
+    # helper so CodeQL sees every write go through a validated path.
     latest_url = f"{base_url}/latest_models.json"
-    local_path = os.path.join(cache_dir, "latest_models.json")
+    _local_path_safe = _safe_model_dir_join(cache_dir, "latest_models.json")
+    if _local_path_safe is None:
+        raise ValueError(f"cache_dir {cache_dir!r} failed containment check")
+    local_path = _local_path_safe
+    if not _is_allowed_download_url(latest_url):
+        logger.warning(
+            f"Skipping remote registry fetch from non-allowlisted host: "
+            f"{latest_url!r} — falling back to local cache"
+        )
+        if local_data is not None:
+            return local_data
+        raise requests.RequestException(
+            f"registry host not in WMB_ALLOWED_DOWNLOAD_HOSTS: {latest_url!r}"
+        )
     try:
         response = requests.get(latest_url, timeout=10)
         response.raise_for_status()
@@ -1012,16 +1131,28 @@ def _fetch_companion_files(base_url: str, model_dir: str, model_id: str) -> None
         f"{model_id}_model_config.yaml",
         f"{model_id}_metrics.json",
     )
-    yaml_path = os.path.join(model_dir, f"{model_id}_model_config.yaml")
+    # model_id comes from latest_models.json / the request body, so
+    # basename() + containment check guard against e.g.
+    # ``model_id="../../etc/passwd"`` poisoning companion paths.
+    safe_yaml = _safe_model_dir_join(
+        model_dir, os.path.basename(f"{model_id}_model_config.yaml")
+    )
+    if safe_yaml is None:
+        logger.warning(f"companion fetch skipped: unsafe model_id {model_id!r}")
+        return
+    yaml_path = safe_yaml
     yaml_existed_before = os.path.exists(yaml_path)
 
     for basename in companions:
-        local_path = os.path.join(model_dir, basename)
+        local_path = _safe_model_dir_join(model_dir, os.path.basename(basename))
+        if local_path is None:
+            logger.warning(f"companion {basename!r} skipped: unsafe path")
+            continue
         if os.path.exists(local_path):
             logger.debug(f"Companion file already present: {local_path}")
             continue
         url = f"{base_url}/{basename}"
-        ok = _download_file(url, local_path)
+        ok = _download_file(url, local_path, base_dir=model_dir)
         if not ok:
             # Older release without this companion — expected, not an error.
             logger.info(
@@ -1130,20 +1261,33 @@ def ensure_model_files(
         raise ValueError("latest_models.json does not contain all required paths.")
     labels_rel_norm = _normalize_rel_path(base_url, labels_rel)
 
-    weights_path = os.path.join(model_dir, os.path.basename(weights_rel_norm))
-    labels_path = os.path.join(model_dir, os.path.basename(labels_rel_norm))
+    # Containment-safe target paths. ``*_rel_norm`` originates from
+    # latest_models.json, so using basename() first and then a
+    # realpath-containment check via _safe_model_dir_join closes
+    # py/path-injection on the weights + labels download targets.
+    weights_path = _safe_model_dir_join(
+        model_dir, os.path.basename(weights_rel_norm)
+    )
+    labels_path = _safe_model_dir_join(
+        model_dir, os.path.basename(labels_rel_norm)
+    )
+    if weights_path is None or labels_path is None:
+        raise ValueError(
+            f"latest_models.json has unsafe weights/labels paths "
+            f"for cache dir {model_dir!r}"
+        )
 
     if not os.path.exists(weights_path):
         url = f"{base_url}/{weights_rel_norm}"
         logger.debug(f"Downloading weights from {url} to {weights_path}")
-        _download_file(url, weights_path)
+        _download_file(url, weights_path, base_dir=model_dir)
     else:
         logger.debug(f"Using existing weights {weights_path}")
 
     if not os.path.exists(labels_path):
         url = f"{base_url}/{labels_rel_norm}"
         logger.debug(f"Downloading labels from {url} to {labels_path}")
-        _download_file(url, labels_path)
+        _download_file(url, labels_path, base_dir=model_dir)
     else:
         logger.debug(f"Using existing labels {labels_path}")
 

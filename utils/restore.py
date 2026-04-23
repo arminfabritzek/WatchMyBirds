@@ -143,6 +143,31 @@ def _is_safe_tar_path(member: tarfile.TarInfo) -> tuple[bool, str]:
     return False, f"Unexpected path blocked: {name}"
 
 
+def _validated_archive_path(archive_path: Path) -> Path | None:
+    """Return *archive_path* only when it resolves inside restore_tmp.
+
+    Closes CodeQL py/path-injection (#135-137) at the core layer:
+    even if the blueprint-level validator in web/blueprints/backup.py
+    is bypassed by a future refactor, analyze_backup_archive and
+    perform_restore still refuse to open paths that escape the
+    upload sandbox.
+    """
+    try:
+        candidate = Path(archive_path).resolve(strict=False)
+    except (OSError, ValueError):
+        return None
+    try:
+        pm = get_path_manager()
+        root = pm.get_restore_tmp_dir().resolve()
+    except Exception:
+        return None
+    try:
+        candidate.relative_to(root)
+    except ValueError:
+        return None
+    return candidate
+
+
 def analyze_backup_archive(archive_path: Path) -> dict:
     """
     Analyzes a tar.gz archive without extracting.
@@ -183,6 +208,16 @@ def analyze_backup_archive(archive_path: Path) -> dict:
         "total_size_bytes": 0,
         "file_count": 0,
     }
+
+    # Core-level containment: refuse any path that does not live
+    # inside the canonical restore_tmp dir. Mirrors the blueprint
+    # check so defence-in-depth holds even when this function is
+    # called from a new caller that forgot to validate.
+    safe_path = _validated_archive_path(archive_path)
+    if safe_path is None:
+        result["blockers"].append("Archive path outside restore sandbox")
+        return result
+    archive_path = safe_path
 
     if not archive_path.exists():
         result["blockers"].append("Archive file does not exist")
@@ -533,6 +568,21 @@ def restore_from_archive(
         # Stage 0: Pre-flight checks
         yield emit("preflight", 0, 5, "Checking archive...")
 
+        # Containment: refuse archives that sit outside restore_tmp
+        # (defence-in-depth mirror of the blueprint validator).
+        safe_archive = _validated_archive_path(archive_path)
+        if safe_archive is None:
+            yield emit(
+                "preflight",
+                0,
+                5,
+                "Blocked",
+                completed=True,
+                error="Archive path outside restore sandbox",
+            )
+            return
+        archive_path = safe_archive
+
         analysis = analyze_backup_archive(archive_path)
         if analysis["blockers"]:
             yield emit(
@@ -583,7 +633,11 @@ def restore_from_archive(
                     if not is_safe:
                         continue
 
-                    tar.extract(member, staging_dir)
+                    # filter="data" (PEP 706) rejects absolute paths,
+                    # parent-traversal, device files, and symlinks that
+                    # escape *staging_dir* — closes CodeQL py/tarslip
+                    # (#192) even if _is_safe_tar_path is ever loosened.
+                    tar.extract(member, staging_dir, filter="data")
                     extracted_count += 1
 
                     if extracted_count % 50 == 0:
