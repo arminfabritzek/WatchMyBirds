@@ -195,13 +195,35 @@
                 type = type || 'info';
                 durationMs = durationMs || 3500;
 
+                // XSS hardening (CodeQL js/xss-through-dom):
+                // "message" is user/API-sourced text and previously
+                // flowed into innerHTML. Build the toast via DOM APIs
+                // so every caller-supplied string lands in textContent
+                // instead of parsed markup.
                 var toast = document.createElement('div');
                 toast.className = 'wm-toast wm-toast--' + type;
-                toast.innerHTML =
-                    '<span class="wm-toast__icon">' + (ICONS[type] || 'ℹ') + '</span>' +
-                    '<span class="wm-toast__text">' + message + '</span>' +
-                    '<button class="wm-toast__close" aria-label="Close">✕</button>' +
-                    '<div class="wm-toast__progress" style="animation-duration:' + durationMs + 'ms;"></div>';
+
+                var iconSpan = document.createElement('span');
+                iconSpan.className = 'wm-toast__icon';
+                iconSpan.textContent = ICONS[type] || 'ℹ';
+
+                var textSpan = document.createElement('span');
+                textSpan.className = 'wm-toast__text';
+                textSpan.textContent = String(message == null ? '' : message);
+
+                var closeButton = document.createElement('button');
+                closeButton.className = 'wm-toast__close';
+                closeButton.setAttribute('aria-label', 'Close');
+                closeButton.textContent = '✕';
+
+                var progressBar = document.createElement('div');
+                progressBar.className = 'wm-toast__progress';
+                progressBar.style.animationDuration = durationMs + 'ms';
+
+                toast.appendChild(iconSpan);
+                toast.appendChild(textSpan);
+                toast.appendChild(closeButton);
+                toast.appendChild(progressBar);
 
                 var closeBtn = toast.querySelector('.wm-toast__close');
                 var timer;

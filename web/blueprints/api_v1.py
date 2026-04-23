@@ -44,6 +44,39 @@ config = get_config()
 
 # Create Blueprint
 api_v1 = Blueprint("api_v1", __name__, url_prefix="/api/v1")
+
+
+def _safe_log_value(value: object, max_len: int = 200) -> str:
+    """Neutralize CR/LF/tab in values before emitting them to logs.
+
+    Closes CodeQL py/log-injection. Without this, a request body with
+    ``"model_id": "x\\n[ERROR] admin logged in"`` would forge a second
+    log line. We replace the control chars with visible escape
+    sequences, strip everything else outside printable ASCII, and cap
+    the length so log lines stay bounded.
+    """
+    text = str(value)
+    text = text.replace("\r", "\\r").replace("\n", "\\n").replace("\t", "\\t")
+    # Drop other C0 controls but keep the explicit escapes we just wrote.
+    text = "".join(c if (c.isprintable() or c == " ") else "?" for c in text)
+    if len(text) > max_len:
+        text = text[:max_len] + "...[truncated]"
+    return text
+
+
+def _error_response(public_message: str, exc: Exception, status: int = 500):
+    """Shared 5xx response builder.
+
+    Closes CodeQL py/stack-trace-exposure. The full traceback goes to
+    the server log (``exc_info=True``); the client receives only the
+    caller-supplied high-level message. Previously we returned
+    ``str(exc)`` which could leak file paths, SQL fragments, or other
+    implementation details that help attackers enumerate internals.
+    """
+    logger.error(f"{public_message}: {exc}", exc_info=True)
+    return jsonify({"status": "error", "message": public_message}), status
+
+
 def _read_file_tail(path: Path, max_lines: int = 200) -> dict:
     """Read the last lines of a text file safely for diagnostics endpoints."""
     result = {
@@ -403,8 +436,7 @@ def models_detector_get():
         payload = build_detector_registry_payload(underlying)
         return jsonify(payload)
     except Exception as exc:
-        logger.error(f"models/detector GET error: {exc}", exc_info=True)
-        return jsonify({"status": "error", "message": str(exc)}), 500
+        return _error_response("models/detector GET failed", exc)
 
 
 @api_v1.route("/models/detector/precision", methods=["POST"])
@@ -523,12 +555,11 @@ def models_detector_precision():
             }
         )
     except ValueError as ve:
+        # ValueError here carries a deliberate, user-facing message
+        # raised by our own validation code — safe to surface.
         return jsonify({"status": "error", "message": str(ve)}), 400
     except Exception as exc:
-        logger.error(
-            f"models/detector/precision POST error: {exc}", exc_info=True
-        )
-        return jsonify({"status": "error", "message": str(exc)}), 500
+        return _error_response("models/detector/precision POST failed", exc)
 
 
 @api_v1.route("/models/detector/pin", methods=["POST"])
@@ -648,8 +679,7 @@ def models_detector_pin():
             }
         )
     except Exception as exc:
-        logger.error(f"models/detector/pin POST error: {exc}", exc_info=True)
-        return jsonify({"status": "error", "message": str(exc)}), 500
+        return _error_response("models/detector/pin POST failed", exc)
 
 
 @api_v1.route("/models/detector/install", methods=["POST"])
@@ -805,8 +835,7 @@ def models_detector_install():
             }
         )
     except Exception as exc:
-        logger.error(f"models/detector/install POST error: {exc}", exc_info=True)
-        return jsonify({"status": "error", "message": str(exc)}), 500
+        return _error_response("models/detector/install POST failed", exc)
 
 
 # =============================================================================
@@ -827,8 +856,7 @@ def models_classifier_get():
         payload = build_classifier_registry_payload(classifier)
         return jsonify(payload)
     except Exception as exc:
-        logger.error(f"models/classifier GET error: {exc}", exc_info=True)
-        return jsonify({"status": "error", "message": str(exc)}), 500
+        return _error_response("models/classifier GET failed", exc)
 
 
 @api_v1.route("/models/classifier/pin", methods=["POST"])
@@ -905,9 +933,9 @@ def models_classifier_pin():
                 reload_triggered = True
                 logger.info(
                     "models/classifier/pin: latest=%r effective=%r source=%s -> live reload triggered",
-                    model_id,
-                    effective_id,
-                    effective_source,
+                    _safe_log_value(model_id),
+                    _safe_log_value(effective_id),
+                    _safe_log_value(effective_source),
                 )
             except Exception as reload_exc:
                 logger.warning(
@@ -926,8 +954,7 @@ def models_classifier_pin():
             }
         )
     except Exception as exc:
-        logger.error(f"models/classifier/pin POST error: {exc}", exc_info=True)
-        return jsonify({"status": "error", "message": str(exc)}), 500
+        return _error_response("models/classifier/pin POST failed", exc)
 
 
 @api_v1.route("/models/classifier/install", methods=["POST"])
@@ -1018,9 +1045,9 @@ def models_classifier_install():
 
         logger.info(
             "models/classifier/install: fetching %s weights=%s classes=%s",
-            model_id,
-            weights_url,
-            classes_url,
+            _safe_log_value(model_id),
+            _safe_log_value(weights_url),
+            _safe_log_value(classes_url),
         )
         if not _download_file(weights_url, weights_abs):
             return (
@@ -1056,8 +1083,7 @@ def models_classifier_install():
             }
         )
     except Exception as exc:
-        logger.error(f"models/classifier/install POST error: {exc}", exc_info=True)
-        return jsonify({"status": "error", "message": str(exc)}), 500
+        return _error_response("models/classifier/install POST failed", exc)
 
 
 # =============================================================================

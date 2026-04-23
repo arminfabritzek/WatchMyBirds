@@ -944,7 +944,7 @@
     function lookupSpeciesCommonName(controls, speciesKey) {
         if (!controls || !speciesKey) return '';
         const btn = controls.querySelector(
-            `.review-stage-panel__species-btn[data-species="${speciesKey.replace(/"/g, '\\"')}"]`
+            `.review-stage-panel__species-btn[data-species="${speciesKey.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"]`
         );
         if (btn) {
             const nameEl = btn.querySelector('.review-stage-panel__species-name');
@@ -956,7 +956,7 @@
     function lookupSpeciesRefImageUrl(controls, speciesKey) {
         if (!controls || !speciesKey) return '';
         const btn = controls.querySelector(
-            `.review-stage-panel__species-btn[data-species="${speciesKey.replace(/"/g, '\\"')}"]`
+            `.review-stage-panel__species-btn[data-species="${speciesKey.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"]`
         );
         if (!btn) return '';
         return btn.dataset.speciesRefImageUrl

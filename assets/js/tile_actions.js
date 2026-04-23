@@ -92,7 +92,18 @@
                     }
                 }
                 if (detailsHref) {
-                    window.location.href = detailsHref;
+                    // XSS hardening (CodeQL js/xss-through-dom):
+                    // allow only relative or http(s) URLs for
+                    // navigation, never javascript:/data:/vbscript:
+                    // which would execute on href assignment.
+                    var hrefLower = String(detailsHref).trim().toLowerCase();
+                    if (
+                        !hrefLower.startsWith('javascript:') &&
+                        !hrefLower.startsWith('data:') &&
+                        !hrefLower.startsWith('vbscript:')
+                    ) {
+                        window.location.href = detailsHref;
+                    }
                 }
                 break;
 

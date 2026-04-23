@@ -440,22 +440,70 @@
                 loading.classList.add('d-none');
                 if (data.status === 'success' && data.cameras.length > 0) {
                     data.cameras.forEach(cam => {
+                        // XSS / injection hardening (CodeQL
+                        // js/incomplete-sanitization #5/#6): previously
+                        // we built the row via innerHTML + an inline
+                        // onclick that passed unescaped cam.name,
+                        // cam.manufacturer, cam.ip into a JS string
+                        // literal. A manufacturer named
+                        // ``Foo');alert(1);//`` would have broken out
+                        // of the onclick quoting. Switch to DOM APIs
+                        // + addEventListener so every value ends up as
+                        // textContent or a typed attribute — no string
+                        // concatenation with user-controlled data.
                         const item = document.createElement('div');
                         item.className = 'list-group-item d-flex justify-content-between align-items-center';
-                        const safeName = (cam.name || 'ONVIF Camera').replace(/'/g, "\\'").replace(/"/g, '&quot;');
-                        const safeManufacturer = (cam.manufacturer || '').replace(/'/g, "\\'").replace(/"/g, '&quot;');
-                        item.innerHTML = `
-                            <div>
-                                <div class="fw-bold">${cam.name || 'ONVIF Camera'}</div>
-                                <div class="text-muted small">${cam.ip}:${cam.port}</div>
-                                ${cam.manufacturer ? `<div class="text-muted small">${cam.manufacturer}</div>` : ''}
-                            </div>
-                            <button type="button" class="btn btn-sm btn--primary" onclick="addDiscoveredCamera('${cam.ip}', ${cam.port}, '${safeName}', '${safeManufacturer}')">Add</button>`;
+
+                        const info = document.createElement('div');
+                        const nameEl = document.createElement('div');
+                        nameEl.className = 'fw-bold';
+                        nameEl.textContent = cam.name || 'ONVIF Camera';
+                        info.appendChild(nameEl);
+
+                        const addrEl = document.createElement('div');
+                        addrEl.className = 'text-muted small';
+                        addrEl.textContent = `${cam.ip}:${cam.port}`;
+                        info.appendChild(addrEl);
+
+                        if (cam.manufacturer) {
+                            const mfrEl = document.createElement('div');
+                            mfrEl.className = 'text-muted small';
+                            mfrEl.textContent = cam.manufacturer;
+                            info.appendChild(mfrEl);
+                        }
+
+                        const addBtn = document.createElement('button');
+                        addBtn.type = 'button';
+                        addBtn.className = 'btn btn-sm btn--primary';
+                        addBtn.textContent = 'Add';
+                        addBtn.addEventListener('click', () => {
+                            addDiscoveredCamera(
+                                cam.ip,
+                                cam.port,
+                                cam.name || 'ONVIF Camera',
+                                cam.manufacturer || ''
+                            );
+                        });
+
+                        item.appendChild(info);
+                        item.appendChild(addBtn);
                         listGroup.appendChild(item);
                     });
-                } else { listGroup.innerHTML = '<div class="text-center text-muted p-3">No ONVIF cameras found on the network.</div>'; }
+                } else {
+                    const emptyMsg = document.createElement('div');
+                    emptyMsg.className = 'text-center text-muted p-3';
+                    emptyMsg.textContent = 'No ONVIF cameras found on the network.';
+                    listGroup.replaceChildren(emptyMsg);
+                }
             })
-            .catch(err => { loading.classList.add('d-none'); listGroup.innerHTML = '<div class="text-center text-danger p-3">Discovery failed. Check network connection.</div>'; console.error('Discovery error:', err); });
+            .catch(err => {
+                loading.classList.add('d-none');
+                const errMsg = document.createElement('div');
+                errMsg.className = 'text-center text-danger p-3';
+                errMsg.textContent = 'Discovery failed. Check network connection.';
+                listGroup.replaceChildren(errMsg);
+                console.error('Discovery error:', err);
+            });
     }
 
     function addDiscoveredCamera(ip, port, name, manufacturer) {

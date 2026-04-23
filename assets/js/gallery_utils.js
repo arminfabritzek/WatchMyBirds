@@ -1196,6 +1196,19 @@ function loadDeferredViewerImages(scope) {
     scope.querySelectorAll('.wm-image-viewer__img[data-deferred-src]').forEach(function (img) {
         const target = img.getAttribute('data-deferred-src');
         if (!target) return;
+        // XSS hardening (CodeQL js/xss-through-dom): block javascript:
+        // and data: URLs — a server-rendered src attribute is trusted
+        // for HTTP(S)/relative paths only. This keeps a malicious
+        // data-deferred-src value set via DevTools or a templating
+        // bug from triggering code execution on image load.
+        const lowered = String(target).trim().toLowerCase();
+        if (
+            lowered.startsWith('javascript:') ||
+            lowered.startsWith('data:') ||
+            lowered.startsWith('vbscript:')
+        ) {
+            return;
+        }
         if (img.getAttribute('src') !== target) {
             img.setAttribute('src', target);
         }
