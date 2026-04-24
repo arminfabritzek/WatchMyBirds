@@ -92,16 +92,19 @@
                     }
                 }
                 if (detailsHref) {
-                    // XSS hardening (CodeQL js/xss-through-dom):
-                    // allow only relative or http(s) URLs for
-                    // navigation, never javascript:/data:/vbscript:
-                    // which would execute on href assignment.
-                    var hrefLower = String(detailsHref).trim().toLowerCase();
-                    if (
-                        !hrefLower.startsWith('javascript:') &&
-                        !hrefLower.startsWith('data:') &&
-                        !hrefLower.startsWith('vbscript:')
-                    ) {
+                    // XSS hardening (CodeQL js/xss-through-dom #309):
+                    // parse through URL() relative to the current page
+                    // and accept only http(s) protocols. javascript:,
+                    // data:, vbscript: parse with their own scheme and
+                    // are rejected. The URL platform parser is the
+                    // sanitiser CodeQL recognises here.
+                    let parsedScheme = '';
+                    try {
+                        parsedScheme = new URL(detailsHref, window.location.href).protocol;
+                    } catch (e) {
+                        break;
+                    }
+                    if (parsedScheme === 'http:' || parsedScheme === 'https:') {
                         window.location.href = detailsHref;
                     }
                 }
