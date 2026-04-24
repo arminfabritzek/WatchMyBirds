@@ -8,6 +8,7 @@ import cv2
 
 from config import get_config
 from core.analysis_queue import analysis_queue
+from web.security import safe_log_value as _slv
 from web.services import db_service, gallery_service
 
 logger = logging.getLogger(__name__)
@@ -104,7 +105,7 @@ def submit_analysis_job(filename: str, force: bool = False) -> bool:
     """
     is_eligible, reason = check_deep_analysis_eligibility(filename, force=force)
     if not is_eligible:
-        logger.debug(f"Skipping deep analysis for {filename}: {reason}")
+        logger.debug(f"Skipping deep analysis for {_slv(filename)}: {reason}")
         return False
 
     # Optionally reset deep_scan_last_result on force re-scan
@@ -116,12 +117,14 @@ def submit_analysis_job(filename: str, force: bool = False) -> bool:
                     (filename,),
                 )
         except Exception as e:
-            logger.warning(f"Could not reset deep_scan_last_result for {filename}: {e}")
+            logger.warning(
+                f"Could not reset deep_scan_last_result for {_slv(filename)}: {e}"
+            )
 
     try:
         ok = analysis_queue.enqueue({"filename": filename})
         if not ok:
-            logger.debug(f"Dedup: {filename} already pending in queue")
+            logger.debug(f"Dedup: {_slv(filename)} already pending in queue")
         return ok
     except Exception as e:
         logger.error(f"Failed to submit analysis job: {e}")
