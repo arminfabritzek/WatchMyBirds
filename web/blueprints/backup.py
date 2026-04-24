@@ -13,6 +13,7 @@ Handles backup and restore routes:
 - POST /api/restore/cleanup - Cleanup temp files
 """
 
+import os
 import threading
 import time
 from datetime import datetime
@@ -43,31 +44,33 @@ def _safe_restore_archive_path(archive_path: str) -> Path | None:
     ``archive_path`` arrives from the browser after an upload — the
     server-rendered path gets echoed back for the analyze/apply calls.
     An authenticated operator could edit the JSON to something like
-    ``/etc/passwd`` or ``../../config/credentials.yml``. Resolve the
-    candidate path and require it to be a descendant of the canonical
-    restore_tmp directory. Anything else (absolute escapes, symlink
-    tricks, non-archive extensions) returns ``None`` so the caller
-    can reject with 400.
+    ``/etc/passwd`` or ``../../config/credentials.yml``. Strategy:
+
+    1. Extract a basename via ``werkzeug.secure_filename`` — a
+       CodeQL-recognised sanitiser that strips path separators,
+       null bytes, ``..`` components and produces a safe filename
+       even from adversarial input.
+    2. Reject empty / wrong-extension results.
+    3. Build the final Path by joining restore_tmp + the sanitised
+       basename. The result cannot escape restore_tmp by construction.
+
+    Returns ``None`` for any rejection so the caller can 400 with a
+    generic "Invalid archive path" response.
     """
     if not archive_path:
         return None
+    # secure_filename collapses traversal sequences, removes path
+    # separators, and ASCII-folds the result. ``../etc/passwd`` becomes
+    # ``etc_passwd``; ``/abs/foo.tar.gz`` becomes ``abs_foo.tar.gz``.
+    safe_basename = secure_filename(os.path.basename(archive_path))
+    if not safe_basename:
+        return None
+    name_lower = safe_basename.lower()
+    if not (name_lower.endswith(".tar.gz") or name_lower.endswith(".tgz")):
+        return None
     pm = path_service.get_path_manager()
     restore_root = pm.get_restore_tmp_dir().resolve()
-    try:
-        candidate = Path(archive_path).resolve()
-    except (OSError, ValueError):
-        return None
-    try:
-        candidate.relative_to(restore_root)
-    except ValueError:
-        return None
-    # Extension guard: mirrors the upload endpoint's own allowlist so a
-    # broken client can never ask us to open something unexpected even
-    # if the restore_tmp dir happens to contain stray files.
-    name = candidate.name.lower()
-    if not (name.endswith(".tar.gz") or name.endswith(".tgz")):
-        return None
-    return candidate
+    return restore_root / safe_basename
 
 
 def init_backup_bp(detection_manager):

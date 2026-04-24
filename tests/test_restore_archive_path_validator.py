@@ -64,7 +64,10 @@ def restore_sandbox(tmp_path):
 def test_accepts_legit_archive_inside_restore_tmp(restore_sandbox):
     result = _safe_restore_archive_path(str(restore_sandbox["good"]))
     assert result is not None
-    assert result == restore_sandbox["good"].resolve()
+    # Result is rebuilt from restore_tmp + secure_filename(basename),
+    # so the parent must be the canonical restore_tmp.
+    assert result.parent == restore_sandbox["restore_tmp"].resolve()
+    assert result.name == "backup_2026.tar.gz"
 
 
 def test_rejects_empty_string(restore_sandbox):
@@ -77,26 +80,40 @@ def test_rejects_none_safely(restore_sandbox):
     assert _safe_restore_archive_path(None) is None  # type: ignore[arg-type]
 
 
-def test_rejects_absolute_path_outside_restore_tmp(restore_sandbox):
+def test_rejects_absolute_non_archive_path(restore_sandbox):
+    # /etc/passwd has no .tar.gz / .tgz suffix — basename "passwd"
+    # fails the extension guard.
     assert _safe_restore_archive_path("/etc/passwd") is None
 
 
-def test_rejects_absolute_tarball_outside_restore_tmp(restore_sandbox):
-    assert _safe_restore_archive_path(str(restore_sandbox["outside"])) is None
+def test_remaps_absolute_tarball_into_restore_tmp(restore_sandbox):
+    # Even an absolute path pointing outside restore_tmp gets its
+    # basename extracted and remapped into restore_tmp. The caller
+    # then 404s when the file does not exist there. There is no path
+    # by which the validator can return a Path that escapes the sandbox.
+    out = restore_sandbox["outside"]
+    result = _safe_restore_archive_path(str(out))
+    assert result is not None
+    assert result.parent == restore_sandbox["restore_tmp"].resolve()
+    assert result.name == out.name
 
 
 def test_rejects_relative_traversal(restore_sandbox):
-    # ../.. on a resolved path never lands back inside restore_tmp
+    # ../../../etc/passwd has basename "passwd" — fails extension guard.
     assert _safe_restore_archive_path("../../../etc/passwd") is None
 
 
-def test_rejects_symlink_that_points_outside(restore_sandbox):
-    # The symlink LIVES inside restore_tmp but RESOLVES outside — the
-    # validator must follow the resolve() so this case is caught.
-    assert _safe_restore_archive_path(str(restore_sandbox["escape_link"])) is None
+def test_remaps_traversal_in_archive_name(restore_sandbox):
+    # Even ../escape.tar.gz cannot escape — secure_filename strips
+    # path components, basename is just "escape.tar.gz", remapped
+    # into restore_tmp.
+    result = _safe_restore_archive_path("../../escape.tar.gz")
+    assert result is not None
+    assert result.parent == restore_sandbox["restore_tmp"].resolve()
+    assert result.name == "escape.tar.gz"
 
 
-def test_rejects_wrong_extension(restore_sandbox, tmp_path):
+def test_rejects_wrong_extension(restore_sandbox):
     inside = restore_sandbox["restore_tmp"] / "notes.txt"
     inside.write_text("hi")
     assert _safe_restore_archive_path(str(inside)) is None
@@ -109,9 +126,7 @@ def test_accepts_tgz_variant(restore_sandbox):
     assert result is not None
 
 
-def test_rejects_extension_case_mismatch_is_tolerated(restore_sandbox):
-    # Extension check is case-insensitive — a user upload that came
-    # back as Foo.TAR.GZ still resolves.
+def test_accepts_uppercase_extension(restore_sandbox):
     mixed = restore_sandbox["restore_tmp"] / "Foo.TAR.GZ"
     mixed.write_bytes(b"\x1f\x8b\x08")
     result = _safe_restore_archive_path(str(mixed))

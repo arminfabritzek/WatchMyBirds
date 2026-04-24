@@ -144,28 +144,32 @@ def _is_safe_tar_path(member: tarfile.TarInfo) -> tuple[bool, str]:
 
 
 def _validated_archive_path(archive_path: Path) -> Path | None:
-    """Return *archive_path* only when it resolves inside restore_tmp.
+    """Return a Path inside restore_tmp built from a sanitised basename.
 
-    Closes CodeQL py/path-injection (#135-137) at the core layer:
-    even if the blueprint-level validator in web/blueprints/backup.py
-    is bypassed by a future refactor, analyze_backup_archive and
-    perform_restore still refuse to open paths that escape the
-    upload sandbox.
+    Closes CodeQL py/path-injection (#135-137 + #315) at the core
+    layer with the same werkzeug.secure_filename strategy used by the
+    blueprint validator: extract a safe basename, refuse anything
+    that is not a tar.gz/tgz, and join it onto the canonical
+    restore_tmp directory. The result cannot escape restore_tmp by
+    construction — there is no way to make Path(restore_tmp,
+    safe_basename) point outside restore_tmp because safe_basename
+    contains no path separators.
     """
-    try:
-        candidate = Path(archive_path).resolve(strict=False)
-    except (OSError, ValueError):
+    from werkzeug.utils import secure_filename
+
+    raw_name = os.path.basename(str(archive_path))
+    safe_basename = secure_filename(raw_name)
+    if not safe_basename:
+        return None
+    name_lower = safe_basename.lower()
+    if not (name_lower.endswith(".tar.gz") or name_lower.endswith(".tgz")):
         return None
     try:
         pm = get_path_manager()
         root = pm.get_restore_tmp_dir().resolve()
     except Exception:
         return None
-    try:
-        candidate.relative_to(root)
-    except ValueError:
-        return None
-    return candidate
+    return root / safe_basename
 
 
 def analyze_backup_archive(archive_path: Path) -> dict:
