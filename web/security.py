@@ -60,7 +60,17 @@ def error_response(
     Body shape: ``{"status": "error", "message": <public_message>}``
     — matches the convention used by ``/api/v1/*`` routes.
     """
-    logger.error(f"{public_message}: {exc}", exc_info=True)
+    # Log only the exception class + the public message; never
+    # interpolate str(exc) into the format string. An exception
+    # message can carry user-controlled data (e.g. a stack trace
+    # containing form values, an SQL error echoing back input, or
+    # a custom raise carrying credentials). exc_info=True still
+    # includes the full structured traceback in the log handler,
+    # but the formatted message line itself stays clean. Closes
+    # CodeQL py/clear-text-logging-sensitive-data (#313).
+    logger.error(
+        "%s [%s]", public_message, type(exc).__name__, exc_info=True
+    )
     return jsonify({"status": "error", "message": public_message}), status
 
 
@@ -74,5 +84,7 @@ def error_response_simple(
     the existing client code keeps working while still scrubbing the
     exception text from the response.
     """
-    logger.error(f"{public_message}: {exc}", exc_info=True)
+    logger.error(
+        "%s [%s]", public_message, type(exc).__name__, exc_info=True
+    )
     return jsonify({"error": public_message}), status

@@ -78,14 +78,29 @@ class TestErrorResponse:
         assert "/opt/app" not in body["message"]
 
     def test_logs_full_exception_on_server_side(self, flask_app, caplog):
-        secret_exc = RuntimeError("sqlite3 error: no such table")
+        # Raise inside the with-block so exc_info=True picks the
+        # active traceback up — that mirrors how every real call site
+        # invokes the helper (from inside an ``except`` clause).
         with flask_app.test_request_context(), caplog.at_level(logging.ERROR):
-            _error_response("models/detector GET failed", secret_exc)
+            try:
+                raise RuntimeError("sqlite3 error: no such table")
+            except RuntimeError as caught:
+                _error_response("models/detector GET failed", caught)
 
-        # The server operator still needs the full context in the log.
-        joined = " ".join(r.getMessage() for r in caplog.records)
-        assert "models/detector GET failed" in joined
-        assert "sqlite3 error" in joined
+        # The formatted message line carries the public message and the
+        # exception class only — never the str(exc) text. The full
+        # traceback (including str(exc)) still goes to the structured
+        # exc_info on the LogRecord, so log handlers configured to
+        # render tracebacks keep the operator-facing detail.
+        records = [r for r in caplog.records if r.levelno >= logging.ERROR]
+        assert any("models/detector GET failed" in r.getMessage() for r in records)
+        assert any("RuntimeError" in r.getMessage() for r in records)
+        # The raw exception text is in exc_info, not the formatted message.
+        assert all("sqlite3 error" not in r.getMessage() for r in records)
+        assert any(
+            r.exc_info and isinstance(r.exc_info[1], RuntimeError)
+            for r in records
+        )
 
     def test_custom_status_code(self, flask_app):
         with flask_app.test_request_context():
