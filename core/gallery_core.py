@@ -24,6 +24,7 @@ from utils.db import (
     fetch_sibling_detections as db_fetch_sibling_detections,
 )
 from utils.image_ops import generate_preview_thumbnail as _generate_preview_thumbnail
+from utils.log_safety import safe_log_value as _slv
 from utils.path_manager import get_path_manager
 from utils.wikipedia import (
     build_species_wikipedia_url as _build_species_wikipedia_url,
@@ -941,7 +942,7 @@ def regenerate_derivative(
 
         if not original_path.exists():
             logger.error(
-                f"Cannot regenerate {filename}: Original missing at {original_path}"
+                f"Cannot regenerate {_slv(filename)}: Original missing at {_slv(original_path)}"
             )
             return False
 
@@ -982,7 +983,7 @@ def regenerate_derivative(
                 row = cursor.fetchone()
                 if not row:
                     logger.error(
-                        f"Cannot regenerate thumb: No detection found for {original_filename} index {crop_index}"
+                        f"Cannot regenerate thumb: No detection found for {_slv(original_filename)} index {crop_index}"
                     )
                     return False
 
@@ -1028,7 +1029,7 @@ def regenerate_derivative(
             return True
 
     except Exception as e:
-        logger.error(f"Regeneration failed for {filename_rel}: {e}")
+        logger.error(f"Regeneration failed for {_slv(filename_rel)}: {e}")
         return False
 
     return False
