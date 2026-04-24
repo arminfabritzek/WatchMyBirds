@@ -3,13 +3,17 @@
 Newer classifier releases (from 20260423_062443 onward) ship a
 ``<model_id>_model_config.yaml`` alongside weights + classes.
 
-YAML layout we consume (as shipped 2026-04-23):
+YAML layout we consume (as shipped 2026-04-24):
 
     detection:
       confidence_threshold: 0.88             # species accept
       genus_fallback_threshold: 0.55         # sibling-sum accept
       # (other detection.* fields — architecture, input_size, ...
       # — are not consumed here)
+    calibration:
+      temperature:
+        value: 0.99
+        enabled: true
     genus_map:                               # TOP-LEVEL (not nested)
       Parus_major: Parus
       ...
@@ -57,6 +61,7 @@ class ClsDecisionConfig:
     genus_threshold: float
     genus_map: dict[str, str]
     genus_pairs: frozenset[str]
+    temperature: float = 1.0
 
 
 def load_cls_decision_config(
@@ -145,17 +150,66 @@ def load_cls_decision_config(
         genus_pairs_raw = []
     genus_pairs = frozenset(str(g) for g in genus_pairs_raw)
 
+    temperature = _load_temperature(raw, yaml_path)
+
     logger.info(
         f"cls config loaded from {os.path.basename(yaml_path)}: "
         f"species_thr={species_threshold}, genus_thr={genus_threshold}, "
-        f"{len(genus_map)} species mapped, {len(genus_pairs)} genus-pairs"
+        f"temperature={temperature}, {len(genus_map)} species mapped, "
+        f"{len(genus_pairs)} genus-pairs"
     )
     return ClsDecisionConfig(
         species_threshold=species_threshold,
         genus_threshold=genus_threshold,
         genus_map=genus_map,
         genus_pairs=genus_pairs,
+        temperature=temperature,
     )
+
+
+def _load_temperature(raw: dict, yaml_path: str) -> float:
+    """Return calibrated softmax temperature, defaulting to 1.0.
+
+    The runtime contract is intentionally forgiving:
+    - missing ``calibration`` block -> ``1.0``
+    - disabled temperature block -> ``1.0``
+    - invalid/non-positive value -> ``1.0`` with a warning
+    """
+    calibration = raw.get("calibration")
+    if not isinstance(calibration, dict):
+        return 1.0
+
+    temperature = calibration.get("temperature")
+    if isinstance(temperature, (int, float)):
+        return float(temperature) if float(temperature) > 0 else 1.0
+
+    if not isinstance(temperature, dict):
+        return 1.0
+
+    enabled = temperature.get("enabled", False)
+    if isinstance(enabled, str):
+        enabled = enabled.strip().lower() in {"1", "true", "yes", "on"}
+    else:
+        enabled = bool(enabled)
+    if not enabled:
+        return 1.0
+
+    value = temperature.get("value")
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        logger.warning(
+            f"cls config has invalid calibration.temperature.value in {yaml_path}; "
+            "falling back to T=1.0"
+        )
+        return 1.0
+    if parsed <= 0:
+        logger.warning(
+            f"cls config has non-positive calibration.temperature.value in {yaml_path}; "
+            "falling back to T=1.0"
+        )
+        return 1.0
+    return parsed
 
 
 def _locate_yaml(model_dir: str, model_id: str) -> str | None:

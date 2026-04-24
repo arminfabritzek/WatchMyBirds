@@ -1,8 +1,9 @@
 name: Build Release Image
 
 on:
-  schedule:
-    - cron: '17 0 * * *'  # 00:17 UTC — lands near 03:00 local after GitHub scheduling delay (~2h typical)
+  # Nightly schedule disabled — re-enable by uncommenting the two lines below.
+  # schedule:
+  #   - cron: '17 0 * * *'  # 00:17 UTC — lands near 03:00 local after GitHub scheduling delay (~2h typical)
   workflow_dispatch:
 
 jobs:

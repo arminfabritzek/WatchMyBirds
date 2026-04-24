@@ -1677,6 +1677,17 @@
         return span;
     }
 
+    function _prettyArchitecture(architecture) {
+        const value = String(architecture || '').trim();
+        if (!value) return '';
+        const lower = value.toLowerCase();
+        if (lower.startsWith('efficientnet_')) {
+            const suffix = value.split('_').pop() || value;
+            return 'EfficientNet-' + suffix.toUpperCase();
+        }
+        return value;
+    }
+
     function _renderActiveCard(payload) {
         const active = payload.active || {};
         const runtime = payload.runtime || {};
@@ -1795,7 +1806,9 @@
 
             const badges = document.createElement('div');
             badges.className = 'ai-variant-row__badges';
-            if (v.is_active) badges.appendChild(_makeBadge('Active', 'primary'));
+            // Keep the active state visually distinct from "Latest":
+            // active = currently loaded, latest = newest published.
+            if (v.is_active) badges.appendChild(_makeBadge('Active', 'danger'));
             // "HF latest" is intentionally NOT rendered here. It's admin
             // info (which id HF advertises as the default for fresh
             // installs) that overlaps with the green "Latest s/tiny" tags
@@ -2063,11 +2076,16 @@
     function _renderClassifierActiveCard(payload) {
         const active = payload.active || {};
         const runtime = payload.runtime || {};
+        const activeVariant = (payload.variants || []).find(v => v.is_active) || {};
+        const activeMeta = activeVariant.metadata || {};
         document.getElementById('clsActiveId').textContent =
             active.id || '(none loaded yet)';
 
         const metaBits = [];
         metaBits.push(_describeSource(active.source));
+        if (activeMeta.architecture) {
+            metaBits.push(_prettyArchitecture(activeMeta.architecture));
+        }
         if (runtime.num_classes) metaBits.push(runtime.num_classes + ' species');
         if (Array.isArray(runtime.input_size) && runtime.input_size[0]) {
             metaBits.push(runtime.input_size[0] + '²');
@@ -2113,6 +2131,9 @@
 
             const meta = v.metadata || {};
             const metaBits = [];
+            if (meta.architecture) {
+                metaBits.push(_prettyArchitecture(meta.architecture));
+            }
             if (typeof meta.num_classes === 'number') {
                 metaBits.push(meta.num_classes + ' species');
             }
@@ -2147,7 +2168,9 @@
 
             const badges = document.createElement('div');
             badges.className = 'ai-variant-row__badges';
-            if (v.is_active) badges.appendChild(_makeBadge('Active', 'primary'));
+            // Keep the active state visually distinct from "Latest":
+            // active = currently loaded, latest = newest published.
+            if (v.is_active) badges.appendChild(_makeBadge('Active', 'danger'));
             // Classifier has only one model family — "Latest" (green) is
             // the single-row equivalent of the detector's "Latest s/tiny".
             // Uses is_hf_latest flag from the payload, which reflects HF's

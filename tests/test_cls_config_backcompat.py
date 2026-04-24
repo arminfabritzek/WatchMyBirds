@@ -148,6 +148,12 @@ def test_canonical_yaml_layout_loads():
                         "input_size": 288,
                         "architecture": "EfficientNet-B2",
                     },
+                    "calibration": {
+                        "temperature": {
+                            "value": 0.9936250150191812,
+                            "enabled": True,
+                        }
+                    },
                     "genus_map": {
                         "Parus_major": "Parus",
                         "Parus_caeruleus": "Parus",
@@ -165,6 +171,7 @@ def test_canonical_yaml_layout_loads():
         assert cfg is not None
         assert cfg.species_threshold == 0.88
         assert cfg.genus_threshold == 0.55
+        assert cfg.temperature == 0.9936250150191812
         assert cfg.genus_map["Parus_major"] == "Parus"
         assert cfg.genus_map["Sylvia_borin"] == "Sylvia"
         assert "Parus" in cfg.genus_pairs
@@ -194,6 +201,33 @@ def test_legacy_nested_yaml_layout_also_loads():
         cfg = load_cls_decision_config(d, "variant")
         assert cfg is not None
         assert "Parus" in cfg.genus_pairs
+        assert cfg.temperature == 1.0
+
+
+def test_disabled_temperature_falls_back_to_identity():
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "variant_model_config.yaml")
+        with open(path, "w") as f:
+            yaml.dump(
+                {
+                    "detection": {
+                        "confidence_threshold": 0.88,
+                        "genus_fallback_threshold": 0.55,
+                        "genus_map": {"Parus_major": "Parus"},
+                        "genus_pairs": ["Parus"],
+                    },
+                    "calibration": {
+                        "temperature": {
+                            "value": 0.5,
+                            "enabled": False,
+                        }
+                    },
+                },
+                f,
+            )
+        cfg = load_cls_decision_config(d, "variant")
+        assert cfg is not None
+        assert cfg.temperature == 1.0
 
 
 def test_columba_single_species_rejects_not_fallbacks():

@@ -33,6 +33,24 @@ def _write_variant(model_dir: str, model_id: str, yaml_doc: dict, metrics: dict 
 class TestCanonicalYamlLayout:
     """The layout shipped from 20260423_062443 onward (Dev handoff)."""
 
+    def test_extracts_architecture_from_detection_section(self):
+        with tempfile.TemporaryDirectory() as d:
+            _write_variant(
+                d,
+                "20260424_130619",
+                {
+                    "detection": {
+                        "architecture": "efficientnet_b2",
+                        "input_size": [256, 256],
+                        "confidence_threshold": 0.76,
+                        "genus_fallback_threshold": 0.55,
+                    },
+                    "meta": {"num_classes": 33},
+                },
+            )
+            meta = _build_classifier_variant_metadata(d, "20260424_130619")
+            assert meta["architecture"] == "efficientnet_b2"
+
     def test_extracts_input_size_from_detection_section(self):
         with tempfile.TemporaryDirectory() as d:
             _write_variant(

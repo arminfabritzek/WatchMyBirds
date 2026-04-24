@@ -710,6 +710,13 @@ def _build_classifier_variant_metadata(
                         and all(isinstance(n, int) for n in input_size)
                     ):
                         out["input_size"] = list(input_size)
+                    architecture = section.get("architecture")
+                    if (
+                        "architecture" not in out
+                        and isinstance(architecture, str)
+                        and architecture.strip()
+                    ):
+                        out["architecture"] = architecture.strip()
 
                 # Calibrated decision thresholds (CLS-v2 decision layer).
                 # species_threshold is the species-accept threshold;

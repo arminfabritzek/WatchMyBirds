@@ -51,6 +51,15 @@ class ImageClassifier:
         self.mean = np.array([0.485, 0.456, 0.406], dtype=np.float32).reshape(3, 1, 1)
         self.std = np.array([0.229, 0.224, 0.225], dtype=np.float32).reshape(3, 1, 1)
 
+    @staticmethod
+    def _stable_softmax(logits: np.ndarray, temperature: float = 1.0) -> np.ndarray:
+        """Stable softmax over the class axis with optional temperature scaling."""
+        safe_temperature = float(temperature) if temperature and temperature > 0 else 1.0
+        scaled_logits = logits / safe_temperature
+        shifted = scaled_logits - np.max(scaled_logits, axis=1, keepdims=True)
+        exp_scores = np.exp(shifted)
+        return exp_scores / np.sum(exp_scores, axis=1, keepdims=True)
+
     def _ensure_initialized(self) -> None:
         """Lazy initialization: loads ONNX model on first use."""
         if self._initialized:
@@ -179,9 +188,14 @@ class ImageClassifier:
         ort_inputs = {self.ort_session.get_inputs()[0].name: input_tensor}
         logits = self.ort_session.run(None, ort_inputs)[0]
 
-        # Softmax
-        exp_scores = np.exp(logits - np.max(logits))
-        probabilities = exp_scores / np.sum(exp_scores)
+        # HF classifier bundles ship raw logits. Apply stable softmax
+        # here, using the variant's calibrated temperature when present.
+        temperature = (
+            self.decision_config.temperature
+            if self.decision_config is not None
+            else 1.0
+        )
+        probabilities = self._stable_softmax(logits, temperature=temperature)
 
         # Extract Top-K
         top_k_indices = np.argsort(probabilities[0])[::-1][:top_k]
