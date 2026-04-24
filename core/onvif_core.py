@@ -9,6 +9,7 @@ from typing import Any
 
 from camera.network_scanner import NetworkScanner
 from utils.camera_storage import get_camera_storage
+from utils.log_safety import safe_log_value as _slv
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +54,9 @@ def get_stream_uri(
         uri = scanner.get_stream_uri(camera_ip, port, username, password, profile_index)
         return uri
     except Exception as e:
-        logger.error(f"Failed to get stream URI for {camera_ip}:{port}: {e}")
+        logger.error(
+            f"Failed to get stream URI for {_slv(camera_ip)}:{_slv(port)}: {e}"
+        )
         return None
 
 

@@ -5,6 +5,7 @@ import time
 from collections.abc import Callable
 
 from config import get_config
+from utils.log_safety import safe_log_value as _slv
 
 logger = logging.getLogger(__name__)
 
@@ -69,7 +70,9 @@ class AnalysisQueue:
         if filename:
             with self._pending_lock:
                 if filename in self._pending_filenames:
-                    logger.debug(f"Dedup: {filename} already pending, skipping enqueue")
+                    logger.debug(
+                        f"Dedup: {_slv(filename)} already pending, skipping enqueue"
+                    )
                     return False
                 self._pending_filenames.add(filename)
 

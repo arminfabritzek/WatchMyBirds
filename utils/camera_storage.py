@@ -10,6 +10,8 @@ from pathlib import Path
 
 import yaml
 
+from utils.log_safety import safe_log_value as _slv
+
 logger = logging.getLogger(__name__)
 
 # Default storage location (in output/ with other runtime data, excluded from sync)
@@ -138,7 +140,7 @@ class CameraStorage:
         self._save_cameras(cameras)
 
         camera_id = len(cameras) - 1
-        logger.info(f"Added camera: {ip}:{port} (ID: {camera_id})")
+        logger.info(f"Added camera: {_slv(ip)}:{_slv(port)} (ID: {camera_id})")
 
         return {
             "id": camera_id,

@@ -9,6 +9,8 @@ from urllib.parse import urlparse
 
 import ifaddr
 from onvif import ONVIFCamera
+
+from utils.log_safety import safe_log_value as _slv
 from wsdiscovery.discovery import ThreadedWSDiscovery
 
 logger = logging.getLogger(__name__)
@@ -364,11 +366,13 @@ class NetworkScanner:
 
             except Exception as e:
                 last_error = e
-                logger.debug("GetStream failed for %s:%s: %s", ip, try_port, e)
+                logger.debug(
+                    "GetStream failed for %s:%s: %s", _slv(ip), _slv(try_port), e
+                )
 
         logger.error(
             "GetStream failed for %s on ONVIF ports %s: %s",
-            ip,
+            _slv(ip),
             tried_ports,
             last_error,
         )
