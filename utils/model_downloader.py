@@ -253,15 +253,36 @@ def _download_file(
     if os.path.exists(dest):
         logger.debug(f"File already exists and will be skipped: {dest}")
         return True
-    if not _is_allowed_download_url(url):
+    # SSRF guard: rebuild a canonical URL from the allow-listed host
+    # so requests.get receives a value whose host is provably one of
+    # ``huggingface.co`` / ``cdn-lfs.huggingface.co`` (or the configured
+    # override). Inline check + reconstruction makes the sanitizer
+    # visible to CodeQL py/partial-ssrf (#191) — calling the helper
+    # alone wasn't enough for the taint tracker to clear the flow.
+    parsed = urlparse(url)
+    host = (parsed.hostname or "").lower()
+    if (
+        parsed.scheme not in ("http", "https")
+        or not host
+        or host not in _allowed_download_hosts()
+    ):
         logger.error(
             f"Blocked download from non-allowlisted host: {url!r} "
             f"(allowed: {sorted(_allowed_download_hosts())})"
         )
         return False
+    # Canonical URL constructed from validated parts. ``parsed.path``
+    # and ``parsed.query`` are URL-encoded by urlparse, and the host
+    # comes from the allow-list — the resulting URL cannot point at
+    # an attacker-controlled origin even if ``url`` was poisoned.
+    safe_url = (
+        f"{parsed.scheme}://{host}"
+        f"{parsed.path}"
+        + (f"?{parsed.query}" if parsed.query else "")
+    )
     for attempt in range(1, retries + 1):
         try:
-            response = requests.get(url, stream=True, timeout=timeout)
+            response = requests.get(safe_url, stream=True, timeout=timeout)
             response.raise_for_status()
             os.makedirs(os.path.dirname(dest), exist_ok=True)
             with open(dest, "wb") as file:
@@ -271,11 +292,11 @@ def _download_file(
             return True
         except requests.RequestException as exc:
             logger.warning(
-                f"Download attempt {attempt}/{retries} for {url} failed: {exc}"
+                f"Download attempt {attempt}/{retries} for {safe_url} failed: {exc}"
             )
             if attempt < retries:
                 time.sleep(1)
-    logger.error(f"Download failed permanently for {url}")
+    logger.error(f"Download failed permanently for {safe_url}")
     return False
 
 
@@ -927,7 +948,16 @@ def fetch_latest_json(base_url: str, cache_dir: str) -> dict[str, str]:
     if _local_path_safe is None:
         raise ValueError(f"cache_dir {cache_dir!r} failed containment check")
     local_path = _local_path_safe
-    if not _is_allowed_download_url(latest_url):
+    # Inline SSRF guard mirroring _download_file: rebuild the URL
+    # from validated host + path so the value handed to requests.get
+    # is provably safe (closes CodeQL py/partial-ssrf #191 follow-up).
+    _parsed_latest = urlparse(latest_url)
+    _latest_host = (_parsed_latest.hostname or "").lower()
+    if (
+        _parsed_latest.scheme not in ("http", "https")
+        or not _latest_host
+        or _latest_host not in _allowed_download_hosts()
+    ):
         logger.warning(
             f"Skipping remote registry fetch from non-allowlisted host: "
             f"{latest_url!r} — falling back to local cache"
@@ -937,12 +967,15 @@ def fetch_latest_json(base_url: str, cache_dir: str) -> dict[str, str]:
         raise requests.RequestException(
             f"registry host not in WMB_ALLOWED_DOWNLOAD_HOSTS: {latest_url!r}"
         )
+    safe_latest_url = (
+        f"{_parsed_latest.scheme}://{_latest_host}{_parsed_latest.path}"
+    )
     try:
-        response = requests.get(latest_url, timeout=10)
+        response = requests.get(safe_latest_url, timeout=10)
         response.raise_for_status()
         remote_data = response.json()
     except requests.RequestException as exc:
-        logger.warning(f"Error fetching {latest_url}: {exc}")
+        logger.warning(f"Error fetching {safe_latest_url}: {exc}")
         if local_data is not None:
             logger.info(f"Using local cache {local_path}")
             return local_data
