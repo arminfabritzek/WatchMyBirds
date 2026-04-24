@@ -92,12 +92,7 @@
                     }
                 }
                 if (detailsHref) {
-                    // XSS hardening (CodeQL js/xss-through-dom #309):
-                    // parse through URL() relative to the current page
-                    // and accept only http(s) protocols. javascript:,
-                    // data:, vbscript: parse with their own scheme and
-                    // are rejected. The URL platform parser is the
-                    // sanitiser CodeQL recognises here.
+                    // Reject javascript:/data:/vbscript: hrefs.
                     let parsedScheme = '';
                     try {
                         parsedScheme = new URL(detailsHref, window.location.href).protocol;

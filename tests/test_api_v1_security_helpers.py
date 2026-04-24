@@ -1,9 +1,7 @@
-"""Unit tests for the api_v1 security helpers.
+"""Unit tests for safe_log_value + error_response.
 
-Guards against CodeQL py/log-injection (#305-307) and
-py/stack-trace-exposure (#302-304). The two helpers
-(_safe_log_value + _error_response) are the choke points every route
-handler in api_v1.py now funnels through. Regressions here would
+These two helpers are the choke points for log-injection and
+stack-trace-exposure across every Flask route — regressions here
 reintroduce the vulnerabilities.
 """
 

@@ -918,13 +918,8 @@ def regenerate_derivative(
         crop_index = None
 
         if type == "thumb":
-            # Replaced an unbounded-backtracking regex with O(n) string
-            # ops. The old pattern r"(.*)_crop_(\d+)\.webp$" had
-            # polynomial worst-case on inputs like "a_crop_a_crop_..."
-            # without the trailing ".webp" (CodeQL py/polynomial-redos
-            # #30). Splitting from the right and validating the tail
-            # numerically is equivalent for well-formed names and
-            # cheaper for adversarial ones.
+            # Equivalent to r"(.*)_crop_(\d+)\.webp$" but without the
+            # polynomial backtracking on adversarial input.
             if filename.endswith(".webp") and "_crop_" in filename:
                 base_with_idx = filename[: -len(".webp")]
                 base_no_ext, _, idx_str = base_with_idx.rpartition("_crop_")

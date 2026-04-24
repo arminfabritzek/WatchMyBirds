@@ -1,17 +1,8 @@
 """Unit tests for the restore-archive path validator.
 
-Guards against CodeQL py/path-injection (#137): the /api/restore/analyze
-and /api/restore/apply endpoints accept an ``archive_path`` field from
-the authenticated operator. Before this fix the server opened whatever
-path the client sent — ``/etc/passwd``, ``../config/secrets.yml``, or
-a symlink pointing out of the restore tmp dir.
-
-The validator must only return paths that:
-1. Resolve to a descendant of the restore-tmp directory.
-2. End in ``.tar.gz`` / ``.tgz``.
-3. Are syntactically valid paths (no embedded nulls, etc.).
-
-Anything else returns ``None`` so the caller can 400 the request.
+Asserts that paths from the analyze/apply request body are remapped
+to ``restore_tmp/secure_filename(basename)`` and reject anything that
+isn't a .tar.gz / .tgz.
 """
 
 from __future__ import annotations

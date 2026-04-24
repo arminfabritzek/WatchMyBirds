@@ -157,34 +157,19 @@ def _normalize_rel_path(base_url: str, rel: str) -> str:
     return rel
 
 
-# Defense-in-depth against SSRF: ``weights_rel`` / ``labels_rel``
-# ultimately come from ``latest_models.json`` — a file that HF controls
-# in prod but that an attacker with write access to the data volume
-# could tamper with. An entry like ``//evil.com/x`` would yield a
-# protocol-relative URL that urljoin resolves to ``https://evil.com/x``.
-# The allowlist check blocks that so the request never leaves HF (or
-# the user's override host). Overridable via WMB_ALLOWED_DOWNLOAD_HOSTS
-# (comma-separated) for air-gapped / self-hosted registries and for
-# tests that mock requests against a fake registry host.
+# SSRF guard: weights_rel / labels_rel come from latest_models.json,
+# which an attacker with data-volume write access could tamper with.
+# Overridable via WMB_ALLOWED_DOWNLOAD_HOSTS for self-hosted registries.
 DEFAULT_ALLOWED_DOWNLOAD_HOSTS = "huggingface.co,cdn-lfs.huggingface.co"
 
 
 def _allowed_download_hosts() -> frozenset[str]:
-    """Resolved allowlist. Re-read on each call so tests and ops can
-    override via ``WMB_ALLOWED_DOWNLOAD_HOSTS`` without reloading the
-    module."""
+    """Re-read each call so tests can monkeypatch the env var."""
     raw = os.getenv("WMB_ALLOWED_DOWNLOAD_HOSTS") or DEFAULT_ALLOWED_DOWNLOAD_HOSTS
     return frozenset(h.strip().lower() for h in raw.split(",") if h.strip())
 
 
 def _is_allowed_download_url(url: str) -> bool:
-    """True iff *url* targets an allow-listed host over http(s).
-
-    Rejects everything that is not ``http``/``https`` (file://, gopher://,
-    data:, etc.) and everything whose host is not in the allowlist.
-    Protocol-relative inputs (``//evil.com/x``) end up with empty
-    ``scheme``, so they fail the scheme check and are blocked.
-    """
     try:
         parsed = urlparse(url)
     except ValueError:
@@ -198,29 +183,16 @@ def _is_allowed_download_url(url: str) -> bool:
 
 
 def _safe_model_dir_join(base_dir: str, *parts: str) -> str | None:
-    """Join *parts* onto *base_dir* and confirm the result stays inside it.
-
-    Closes CodeQL py/path-injection (#128-134) at a single choke point:
-    ``latest_models.json`` is a local file that ships with HF releases
-    and is re-downloaded at runtime, but could be tampered with by an
-    attacker with write access to the data volume. A poisoned entry
-    like ``weights_path: "../../etc/passwd"`` would, without this
-    guard, let a subsequent ``open(join(model_dir, weights_path), "wb")``
-    escape the model cache dir.
-
-    Returns the canonical absolute path on success, or ``None`` when
-    the resolved target sits outside *base_dir*.
-    """
+    """Return canonical path inside *base_dir*, or None if it escapes."""
     try:
         base = os.path.realpath(base_dir)
         candidate = os.path.realpath(os.path.join(base, *parts))
     except (OSError, ValueError):
         return None
-    # ``os.path.commonpath`` raises ValueError when the paths live on
-    # different drives (Windows) — treat that as containment failure.
     try:
         common = os.path.commonpath([base, candidate])
     except ValueError:
+        # Different drives on Windows — treat as escape.
         return None
     if common != base:
         return None
@@ -234,15 +206,7 @@ def _download_file(
     timeout: int = 60,
     base_dir: str | None = None,
 ) -> bool:
-    """Downloads a file from a URL.
-
-    When *base_dir* is provided, the effective *dest* is re-validated to
-    ensure it sits inside *base_dir* (closes py/path-injection at the
-    I/O boundary). Callers that already produce containment-safe paths
-    can omit *base_dir* — then only the os.path.exists check runs.
-    """
-    # Containment check first: must precede the exists() probe so a
-    # poisoned path can't even be stat()'d by this process.
+    """Download *url* to *dest*. With *base_dir*, refuses dest paths outside it."""
     if base_dir is not None:
         safe_dest = _safe_model_dir_join(base_dir, os.path.relpath(dest, base_dir))
         if safe_dest is None:
@@ -254,12 +218,9 @@ def _download_file(
     if os.path.exists(dest):
         logger.debug(f"File already exists and will be skipped: {_slv(dest)}")
         return True
-    # SSRF guard: rebuild a canonical URL from the allow-listed host
-    # so requests.get receives a value whose host is provably one of
-    # ``huggingface.co`` / ``cdn-lfs.huggingface.co`` (or the configured
-    # override). Inline check + reconstruction makes the sanitizer
-    # visible to CodeQL py/partial-ssrf (#191) — calling the helper
-    # alone wasn't enough for the taint tracker to clear the flow.
+    # Inline allowlist + URL reconstruction: CodeQL's SSRF tracker only
+    # accepts the scheme/host check when it sees the parsed URL being
+    # rebuilt before the requests.get() call.
     parsed = urlparse(url)
     host = (parsed.hostname or "").lower()
     if (
@@ -272,10 +233,6 @@ def _download_file(
             f"(allowed: {sorted(_allowed_download_hosts())})"
         )
         return False
-    # Canonical URL constructed from validated parts. ``parsed.path``
-    # and ``parsed.query`` are URL-encoded by urlparse, and the host
-    # comes from the allow-list — the resulting URL cannot point at
-    # an attacker-controlled origin even if ``url`` was poisoned.
     safe_url = (
         f"{parsed.scheme}://{host}"
         f"{parsed.path}"
@@ -918,11 +875,6 @@ def fetch_latest_json(base_url: str, cache_dir: str) -> dict[str, str]:
        locally (or ``WMB_FORCE_REMOTE_REFRESH=1`` overrides this).
     3. **Local cache fallback** on network failure.
     """
-    # Canonicalize cache_dir. This + the _safe_model_dir_join checks at
-    # every I/O boundary below close CodeQL py/path-injection (#128-134):
-    # even if a caller passes a relative path containing user input, the
-    # realpath resolve + containment guard below means we only ever
-    # write files that sit inside the canonical cache dir.
     cache_dir = os.path.realpath(cache_dir)
     local_data = _read_local_latest(cache_dir)
     pin = _resolve_pin_for_cache_dir(cache_dir)
@@ -946,16 +898,13 @@ def fetch_latest_json(base_url: str, cache_dir: str) -> dict[str, str]:
         )
         return pinned
 
-    # 2. Try remote. ``local_path`` is rebuilt through the containment
-    # helper so CodeQL sees every write go through a validated path.
+    # 2. Try remote.
     latest_url = f"{base_url}/latest_models.json"
     _local_path_safe = _safe_model_dir_join(cache_dir, "latest_models.json")
     if _local_path_safe is None:
         raise ValueError(f"cache_dir {cache_dir!r} failed containment check")
     local_path = _local_path_safe
-    # Inline SSRF guard mirroring _download_file: rebuild the URL
-    # from validated host + path so the value handed to requests.get
-    # is provably safe (closes CodeQL py/partial-ssrf #191 follow-up).
+    # Inline allowlist + URL reconstruction (see _download_file).
     _parsed_latest = urlparse(latest_url)
     _latest_host = (_parsed_latest.hostname or "").lower()
     if (
@@ -1169,9 +1118,6 @@ def _fetch_companion_files(base_url: str, model_dir: str, model_id: str) -> None
         f"{model_id}_model_config.yaml",
         f"{model_id}_metrics.json",
     )
-    # model_id comes from latest_models.json / the request body, so
-    # basename() + containment check guard against e.g.
-    # ``model_id="../../etc/passwd"`` poisoning companion paths.
     safe_yaml = _safe_model_dir_join(
         model_dir, os.path.basename(f"{model_id}_model_config.yaml")
     )
@@ -1301,10 +1247,6 @@ def ensure_model_files(
         raise ValueError("latest_models.json does not contain all required paths.")
     labels_rel_norm = _normalize_rel_path(base_url, labels_rel)
 
-    # Containment-safe target paths. ``*_rel_norm`` originates from
-    # latest_models.json, so using basename() first and then a
-    # realpath-containment check via _safe_model_dir_join closes
-    # py/path-injection on the weights + labels download targets.
     weights_path = _safe_model_dir_join(
         model_dir, os.path.basename(weights_rel_norm)
     )

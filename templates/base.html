@@ -195,11 +195,8 @@
                 type = type || 'info';
                 durationMs = durationMs || 3500;
 
-                // XSS hardening (CodeQL js/xss-through-dom):
-                // "message" is user/API-sourced text and previously
-                // flowed into innerHTML. Build the toast via DOM APIs
-                // so every caller-supplied string lands in textContent
-                // instead of parsed markup.
+                // Build via DOM APIs so user-supplied "message" lands
+                // in textContent, not parsed as markup.
                 var toast = document.createElement('div');
                 toast.className = 'wm-toast wm-toast--' + type;
 

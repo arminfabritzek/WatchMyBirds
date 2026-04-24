@@ -39,37 +39,16 @@ _restore_progress = {"active": False, "progress": None}
 
 
 def _safe_restore_archive_path(archive_path: str) -> Path | None:
-    """Returns the archive *only* when it sits inside the restore upload dir.
-
-    ``archive_path`` arrives from the browser after an upload — the
-    server-rendered path gets echoed back for the analyze/apply calls.
-    An authenticated operator could edit the JSON to something like
-    ``/etc/passwd`` or ``../../config/credentials.yml``. Strategy:
-
-    1. Extract a basename via ``werkzeug.secure_filename`` — a
-       CodeQL-recognised sanitiser that strips path separators,
-       null bytes, ``..`` components and produces a safe filename
-       even from adversarial input.
-    2. Reject empty / wrong-extension results.
-    3. Build the final Path by joining restore_tmp + the sanitised
-       basename. The result cannot escape restore_tmp by construction.
-
-    Returns ``None`` for any rejection so the caller can 400 with a
-    generic "Invalid archive path" response.
-    """
+    """Return restore_tmp / secure_filename(basename), or None on rejection."""
     if not archive_path:
         return None
-    # secure_filename collapses traversal sequences, removes path
-    # separators, and ASCII-folds the result. ``../etc/passwd`` becomes
-    # ``etc_passwd``; ``/abs/foo.tar.gz`` becomes ``abs_foo.tar.gz``.
     safe_basename = secure_filename(os.path.basename(archive_path))
     if not safe_basename:
         return None
     name_lower = safe_basename.lower()
     if not (name_lower.endswith(".tar.gz") or name_lower.endswith(".tgz")):
         return None
-    pm = path_service.get_path_manager()
-    restore_root = pm.get_restore_tmp_dir().resolve()
+    restore_root = path_service.get_path_manager().get_restore_tmp_dir().resolve()
     return restore_root / safe_basename
 
 

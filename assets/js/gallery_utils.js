@@ -1196,12 +1196,8 @@ function loadDeferredViewerImages(scope) {
     scope.querySelectorAll('.wm-image-viewer__img[data-deferred-src]').forEach(function (img) {
         const target = img.getAttribute('data-deferred-src');
         if (!target) return;
-        // XSS hardening (CodeQL js/xss-through-dom #9): block any
-        // non-http(s) scheme by parsing through URL() relative to the
-        // current document. A bare relative path resolves with the
-        // page's protocol; ``javascript:`` / ``data:`` / ``vbscript:``
-        // resolve with their own scheme and are rejected. Using the
-        // platform URL parser is what CodeQL recognises as a sanitiser.
+        // Reject javascript:/data:/vbscript: — only allow http(s) or
+        // bare relative paths (which inherit the page's scheme).
         let parsedScheme = '';
         try {
             parsedScheme = new URL(target, window.location.href).protocol;

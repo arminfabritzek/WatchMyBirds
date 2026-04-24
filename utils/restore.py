@@ -144,29 +144,17 @@ def _is_safe_tar_path(member: tarfile.TarInfo) -> tuple[bool, str]:
 
 
 def _validated_archive_path(archive_path: Path) -> Path | None:
-    """Return a Path inside restore_tmp built from a sanitised basename.
-
-    Closes CodeQL py/path-injection (#135-137 + #315) at the core
-    layer with the same werkzeug.secure_filename strategy used by the
-    blueprint validator: extract a safe basename, refuse anything
-    that is not a tar.gz/tgz, and join it onto the canonical
-    restore_tmp directory. The result cannot escape restore_tmp by
-    construction — there is no way to make Path(restore_tmp,
-    safe_basename) point outside restore_tmp because safe_basename
-    contains no path separators.
-    """
+    """Return restore_tmp / secure_filename(basename), or None on rejection."""
     from werkzeug.utils import secure_filename
 
-    raw_name = os.path.basename(str(archive_path))
-    safe_basename = secure_filename(raw_name)
+    safe_basename = secure_filename(os.path.basename(str(archive_path)))
     if not safe_basename:
         return None
     name_lower = safe_basename.lower()
     if not (name_lower.endswith(".tar.gz") or name_lower.endswith(".tgz")):
         return None
     try:
-        pm = get_path_manager()
-        root = pm.get_restore_tmp_dir().resolve()
+        root = get_path_manager().get_restore_tmp_dir().resolve()
     except Exception:
         return None
     return root / safe_basename
@@ -213,10 +201,8 @@ def analyze_backup_archive(archive_path: Path) -> dict:
         "file_count": 0,
     }
 
-    # Core-level containment: refuse any path that does not live
-    # inside the canonical restore_tmp dir. Mirrors the blueprint
-    # check so defence-in-depth holds even when this function is
-    # called from a new caller that forgot to validate.
+    # Defense-in-depth: refuse paths outside restore_tmp even when
+    # called from a future caller that forgot to validate.
     safe_path = _validated_archive_path(archive_path)
     if safe_path is None:
         result["blockers"].append("Archive path outside restore sandbox")
@@ -572,8 +558,6 @@ def restore_from_archive(
         # Stage 0: Pre-flight checks
         yield emit("preflight", 0, 5, "Checking archive...")
 
-        # Containment: refuse archives that sit outside restore_tmp
-        # (defence-in-depth mirror of the blueprint validator).
         safe_archive = _validated_archive_path(archive_path)
         if safe_archive is None:
             yield emit(
@@ -637,10 +621,8 @@ def restore_from_archive(
                     if not is_safe:
                         continue
 
-                    # filter="data" (PEP 706) rejects absolute paths,
-                    # parent-traversal, device files, and symlinks that
-                    # escape *staging_dir* — closes CodeQL py/tarslip
-                    # (#192) even if _is_safe_tar_path is ever loosened.
+                    # filter="data" (PEP 706): also rejects device files
+                    # and link targets that escape staging_dir.
                     tar.extract(member, staging_dir, filter="data")
                     extracted_count += 1
 

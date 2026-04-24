@@ -22,30 +22,11 @@ DISALLOWED_PASSWORDS = {"watchmybirds", "SECRET_PASSWORD", "default_pass", ""}
 
 
 def _write_pending_config(ssid: str, password: str, admin_password: str) -> None:
-    """Write first-boot provisioning files.
+    """Write first-boot WiFi config + admin password to /opt/app/data.
 
-    Security rationale for the cleartext writes flagged by CodeQL
-    (py/clear-text-storage-sensitive-data):
-
-    * ``PENDING_FILE`` — wpa_supplicant.conf format requires the PSK
-      in cleartext. There is no supported alternative; the protocol
-      itself does not accept hashed or encrypted PSKs in this layout.
-      The file is written with permissions ``0600`` owned by root and
-      consumed by ``first-boot/setup_wifi.sh`` which moves it to the
-      read-only ``/boot`` partition, then removes it.
-
-    * ``PENDING_PASSWORD_FILE`` — collected in the first-boot AP-only
-      provisioning mode and migrated to ``settings.yaml`` as
-      ``EDIT_PASSWORD`` by ``first-boot/setup_wifi.sh``. The file is
-      removed after migration. The current auth layer compares
-      plaintext; migrating it to a bcrypt/argon2 hash is deliberately
-      out of scope here because it would touch every callsite in
-      ``web/services/auth_service.py`` + the Settings-UI password
-      reset flow. Tracked as a separate follow-up.
-
-    In both cases the write is mode ``0600`` and the file lives under
-    ``/opt/app/data`` which is owned by the application user and is
-    only writable by processes in the trusted boot chain.
+    Both files land at mode 0600 owned by root. wpa_supplicant requires
+    the PSK in cleartext; the admin password migrates into settings.yaml
+    on first boot (TODO: bcrypt/argon2 in auth_service).
     """
     safe_ssid = ssid.replace('"', '\\"')
     safe_pass = password.replace('"', '\\"')
@@ -62,11 +43,8 @@ def _write_pending_config(ssid: str, password: str, admin_password: str) -> None
         "}\n"
     )
 
-    # Write WiFi config with restrictive perms BEFORE the file gets any
-    # content. Using os.open(..., O_CREAT|O_WRONLY, 0o600) instead of the
-    # open()+chmod() sequence eliminates the race where a process could
-    # read the file between open() and chmod() (CodeQL py/clear-text-
-    # storage-sensitive-data mitigation).
+    # os.open with explicit 0o600 avoids the open()+chmod() race where
+    # the file briefly exists at the umask-default permissions.
     fd = os.open(PENDING_FILE, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as handle:

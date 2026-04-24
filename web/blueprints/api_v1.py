@@ -339,9 +339,6 @@ def _regenerate_metadata_for_variant(model_dir: str, model_id: str) -> str | Non
 
     from utils.model_downloader import _safe_model_dir_join
 
-    # Containment: model_id flows in from the request body. Reject
-    # anything that escapes model_dir (closes CodeQL py/path-injection
-    # #122/#123 at the I/O boundary).
     yaml_basename = os.path.basename(f"{model_id}_model_config.yaml")
     yaml_path = _safe_model_dir_join(model_dir, yaml_basename)
     if yaml_path is None or not os.path.exists(yaml_path):

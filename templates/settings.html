@@ -440,17 +440,8 @@
                 loading.classList.add('d-none');
                 if (data.status === 'success' && data.cameras.length > 0) {
                     data.cameras.forEach(cam => {
-                        // XSS / injection hardening (CodeQL
-                        // js/incomplete-sanitization #5/#6): previously
-                        // we built the row via innerHTML + an inline
-                        // onclick that passed unescaped cam.name,
-                        // cam.manufacturer, cam.ip into a JS string
-                        // literal. A manufacturer named
-                        // ``Foo');alert(1);//`` would have broken out
-                        // of the onclick quoting. Switch to DOM APIs
-                        // + addEventListener so every value ends up as
-                        // textContent or a typed attribute — no string
-                        // concatenation with user-controlled data.
+                        // DOM APIs + addEventListener so cam.name etc.
+                        // never get concatenated into markup or onclick.
                         const item = document.createElement('div');
                         item.className = 'list-group-item d-flex justify-content-between align-items-center';
 
