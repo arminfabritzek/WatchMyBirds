@@ -11,6 +11,7 @@ from functools import wraps
 
 from flask import Blueprint, redirect, render_template, request, session, url_for
 
+from web.security import safe_log_value as _safe_log_value
 from web.services import auth_service, settings_service
 
 logger = logging.getLogger(__name__)
@@ -72,7 +73,7 @@ def login():
 
         if _is_rate_limited(ip):
             error = "Too many login attempts. Please try again later."
-            logger.warning("Login RATE-LIMITED ip=%s", ip)
+            logger.warning("Login RATE-LIMITED ip=%s", _safe_log_value(ip))
             return render_template("login.html", error=error, next_url=next_url)
 
         password = request.form.get("password", "")
@@ -83,7 +84,7 @@ def login():
             session.permanent = True
             # Clear failed attempts on success
             _login_attempts.pop(ip, None)
-            logger.info("Login success ip=%s", ip)
+            logger.info("Login success ip=%s", _safe_log_value(ip))
             return redirect(next_url)
         else:
             _record_attempt(ip)
@@ -91,7 +92,11 @@ def login():
             error = "Invalid password. Please try again."
             if remaining <= 2:
                 error += f" ({remaining} attempts remaining)"
-            logger.warning("Login FAILED ip=%s attempts=%d", ip, len(_login_attempts[ip]))
+            logger.warning(
+                "Login FAILED ip=%s attempts=%d",
+                _safe_log_value(ip),
+                len(_login_attempts[ip]),
+            )
 
     return render_template("login.html", error=error, next_url=next_url)
 
@@ -127,7 +132,10 @@ def setup_password():
                 session["authenticated"] = True
                 session.permanent = True
                 _login_attempts.pop(request.remote_addr, None)
-                logger.info("Initial password configured ip=%s", request.remote_addr)
+                logger.info(
+                    "Initial password configured ip=%s",
+                    _safe_log_value(request.remote_addr),
+                )
                 return redirect(next_url)
 
             if errors:
