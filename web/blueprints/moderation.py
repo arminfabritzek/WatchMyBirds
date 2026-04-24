@@ -21,6 +21,7 @@ from config import get_config
 from logging_config import get_logger
 from utils.species_names import build_species_picker_entries
 from web.blueprints.auth import login_required
+from web.security import safe_log_value as _slv
 from web.services import db_service, gallery_service
 from web.services.filter_service import FilterContext, resolve_filtered_ids
 
@@ -206,7 +207,7 @@ def bulk_relabel() -> tuple:
     gallery_service.invalidate_cache()
 
     logger.info(
-        f"Bulk relabel: {relabeled} succeeded, 0 failed → {new_species}"
+        f"Bulk relabel: {relabeled} succeeded, 0 failed → {_slv(new_species)}"
     )
     return jsonify(
         {
@@ -478,7 +479,7 @@ def apply_rescan_proposal(proposal_id: int) -> tuple:
     gallery_service.invalidate_cache()
 
     logger.info(
-        f"Rescan proposal {proposal_id} applied: detection {target_id} → {new_species}"
+        f"Rescan proposal {_slv(proposal_id)} applied: detection {_slv(target_id)} → {_slv(new_species)}"
     )
     return jsonify(
         {
