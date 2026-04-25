@@ -211,7 +211,10 @@ class TestApiV1Weather:
             "timestamp": "2026-04-04T19:16:00+00:00",
         }
 
-        with patch("web.services.weather_service.get_current_weather", return_value=weather_payload):
+        with patch(
+            "web.services.weather_service.get_current_weather",
+            return_value=weather_payload,
+        ):
             response = client.get("/api/v1/weather/now")
 
         assert response.status_code == 200
@@ -220,6 +223,105 @@ class TestApiV1Weather:
         assert data["status"] == "success"
         assert data["weather"]["temp_c"] == 10.2
         assert data["weather"]["relative_humidity_pct"] == 90
+
+
+class TestApiV1HealthPublic:
+    """The status bar shows on every page (incl. logged-out). The four scalars
+    it renders need to be reachable without auth, but nothing else from the
+    full health snapshot may leak. These tests pin that contract."""
+
+    _FULL_HEALTH = {
+        "status": "ok",
+        "timestamp": "2026-04-25T10:00:00",
+        "database": {
+            "connected": True,
+            "latency_ms": 1.23,
+            "last_detection": "2026-04-25T09:55:00",
+        },
+        "disk": {
+            "total_gb": 128.0,
+            "free_gb": 26.32,
+            "percent": 79.4,
+            "path": "/srv/watchmybirds/output",
+        },
+        "system": {
+            "cpu_temp_c": 64.0,
+            "cpu_percent": 58.1,
+            "ram_percent": 16.0,
+            "throttled": {"raw": "0x0"},
+            "is_rpi": True,
+            "core_voltage": 0.85,
+        },
+    }
+
+    def _unauth_client(self, app):
+        # Distinct from the module-level `client` fixture: no session set,
+        # so login_required redirects fire as they would for a visitor.
+        return app.test_client()
+
+    def test_public_health_reachable_without_login(self, app):
+        """A logged-out visitor must get a 200 with usable scalars so the
+        status bar populates instead of staying on `--`."""
+        with patch(
+            "web.services.health_service.get_system_health",
+            return_value=self._FULL_HEALTH,
+        ):
+            response = self._unauth_client(app).get("/api/v1/health/public")
+
+        assert response.status_code == 200
+        data = response.get_json()
+        assert data["system"]["cpu_percent"] == 58.1
+        assert data["system"]["ram_percent"] == 16.0
+        assert data["system"]["cpu_temp_c"] == 64.0
+        assert data["disk"]["free_gb"] == 26.32
+
+    def test_public_health_omits_sensitive_fields(self, app):
+        """The carve-out exists *because* the rich health snapshot leaks
+        DB latency, throttling flags, and the absolute output path. If a
+        future refactor accidentally re-includes any of them here, this
+        test fails and we notice."""
+        with patch(
+            "web.services.health_service.get_system_health",
+            return_value=self._FULL_HEALTH,
+        ):
+            response = self._unauth_client(app).get("/api/v1/health/public")
+
+        data = response.get_json()
+        # Top-level keys: only system + disk, nothing else.
+        assert set(data.keys()) == {"system", "disk"}
+        # No DB block, no overall status, no timestamp.
+        assert "database" not in data
+        assert "status" not in data
+        assert "timestamp" not in data
+        # Disk projection drops absolute path + total_gb.
+        assert "path" not in data["disk"]
+        assert "total_gb" not in data["disk"]
+        # System projection drops throttling + RPi-only fields.
+        assert "throttled" not in data["system"]
+        assert "is_rpi" not in data["system"]
+        assert "core_voltage" not in data["system"]
+
+    def test_public_health_fails_soft_on_collector_error(self, app):
+        """Health collection failures must not break the status bar.
+        Returning a 5xx would trip the JS `.catch()` and leave `--`s on
+        screen — the original bug. Empty objects + 200 is correct."""
+        with patch(
+            "web.services.health_service.get_system_health",
+            side_effect=RuntimeError("psutil exploded"),
+        ):
+            response = self._unauth_client(app).get("/api/v1/health/public")
+
+        assert response.status_code == 200
+        data = response.get_json()
+        assert data == {"system": {}, "disk": {}}
+
+    def test_full_health_still_requires_login(self, app):
+        """Sanity check: the carve-out must not have weakened the
+        original endpoint."""
+        response = self._unauth_client(app).get("/api/v1/health")
+        # login_required redirects unauthenticated callers to /login.
+        assert response.status_code in (301, 302)
+        assert "/login" in response.headers.get("Location", "")
 
 
 class TestApiV1SpeciesThumbnails:
@@ -244,8 +346,14 @@ class TestApiV1SpeciesThumbnails:
         ]
 
         with patch("utils.species_names.load_common_names") as mock_names:
-            with patch("web.species_thumbnails.gallery_service.get_all_detections") as mock_get:
-                with patch("web.species_thumbnails.Path.exists", autospec=True, return_value=False):
+            with patch(
+                "web.species_thumbnails.gallery_service.get_all_detections"
+            ) as mock_get:
+                with patch(
+                    "web.species_thumbnails.Path.exists",
+                    autospec=True,
+                    return_value=False,
+                ):
                     mock_names.return_value = {"Parus_major": "Kohlmeise"}
                     mock_get.return_value = detections
 
@@ -279,8 +387,14 @@ class TestApiV1SpeciesThumbnails:
             return str(path_obj).endswith("/assets/review_species/Turdus_merula.webp")
 
         with patch("utils.species_names.load_common_names") as mock_names:
-            with patch("web.species_thumbnails.gallery_service.get_all_detections") as mock_get:
-                with patch("web.species_thumbnails.Path.exists", autospec=True, side_effect=_fake_exists):
+            with patch(
+                "web.species_thumbnails.gallery_service.get_all_detections"
+            ) as mock_get:
+                with patch(
+                    "web.species_thumbnails.Path.exists",
+                    autospec=True,
+                    side_effect=_fake_exists,
+                ):
                     mock_names.return_value = {"Turdus_merula": "Amsel"}
                     mock_get.return_value = detections
 
@@ -293,7 +407,9 @@ class TestApiV1SpeciesThumbnails:
             data["thumbnails"]["Turdus_merula"]
             == "/assets/review_species/Turdus_merula.webp"
         )
-        assert data["thumbnails"]["Amsel"] == "/assets/review_species/Turdus_merula.webp"
+        assert (
+            data["thumbnails"]["Amsel"] == "/assets/review_species/Turdus_merula.webp"
+        )
 
     def test_species_thumbnails_fall_back_to_optimized_detection_when_thumb_missing(
         self, client
@@ -309,8 +425,14 @@ class TestApiV1SpeciesThumbnails:
         ]
 
         with patch("utils.species_names.load_common_names") as mock_names:
-            with patch("web.species_thumbnails.gallery_service.get_all_detections") as mock_get:
-                with patch("web.species_thumbnails.Path.exists", autospec=True, return_value=False):
+            with patch(
+                "web.species_thumbnails.gallery_service.get_all_detections"
+            ) as mock_get:
+                with patch(
+                    "web.species_thumbnails.Path.exists",
+                    autospec=True,
+                    return_value=False,
+                ):
                     mock_names.return_value = {"Sitta_europaea": "Kleiber"}
                     mock_get.return_value = detections
 

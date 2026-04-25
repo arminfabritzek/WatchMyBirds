@@ -34,12 +34,12 @@ from web.power_actions import (
 )
 from web.security import error_response as _error_response
 from web.security import safe_log_value as _safe_log_value
-from web.species_thumbnails import get_species_thumbnail_map
 from web.services import (
     backup_restore_service,
     db_service,
     onvif_service,
 )
+from web.species_thumbnails import get_species_thumbnail_map
 
 logger = get_logger(__name__)
 config = get_config()
@@ -353,6 +353,7 @@ def _regenerate_metadata_for_variant(model_dir: str, model_id: str) -> str | Non
 
     try:
         import yaml as _yaml
+
         from utils.model_metadata_generator import config_to_metadata
 
         config = _yaml.safe_load(open(yaml_path).read())
@@ -763,9 +764,7 @@ def models_detector_install():
         weights_abs = _safe_model_dir_join(
             model_dir, os.path.basename(weights_rel_norm)
         )
-        labels_abs = _safe_model_dir_join(
-            model_dir, os.path.basename(labels_rel_norm)
-        )
+        labels_abs = _safe_model_dir_join(model_dir, os.path.basename(labels_rel_norm))
         if weights_abs is None or labels_abs is None:
             return (
                 jsonify(
@@ -884,8 +883,9 @@ def models_classifier_pin():
         model_id = str(data.get("model_id", "")).strip()
         if not model_id:
             return (
-                jsonify({"status": "error",
-                         "message": "model_id is required (non-empty)."}),
+                jsonify(
+                    {"status": "error", "message": "model_id is required (non-empty)."}
+                ),
                 400,
             )
 
@@ -895,8 +895,11 @@ def models_classifier_pin():
 
         # Whitelist: must be a known locally-available variant.
         known = next(
-            (v for v in payload.get("variants", [])
-             if v.get("id") == model_id and v.get("is_available_locally")),
+            (
+                v
+                for v in payload.get("variants", [])
+                if v.get("id") == model_id and v.get("is_available_locally")
+            ),
             None,
         )
         if not known:
@@ -984,8 +987,9 @@ def models_classifier_install():
         model_id = str(data.get("model_id", "")).strip()
         if not model_id:
             return (
-                jsonify({"status": "error",
-                         "message": "model_id is required (non-empty)."}),
+                jsonify(
+                    {"status": "error", "message": "model_id is required (non-empty)."}
+                ),
                 400,
             )
 
@@ -1778,6 +1782,40 @@ def system_health():
     except Exception as e:
         logger.error(f"Health check error: {e}")
         return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@api_v1.route("/health/public", methods=["GET"])
+def system_health_public():
+    """
+    Public subset of system health for the always-visible status bar.
+
+    Exposes only the four scalars the UI already shows (CPU%, RAM%,
+    CPU temp, free disk GB). Database latency, throttling flags, the
+    absolute output path, and last-detection timestamps stay behind
+    /api/v1/health (login-required) to limit information disclosure.
+    """
+    from web.services import health_service
+
+    try:
+        health = health_service.get_system_health()
+        sys_block = health.get("system") or {}
+        disk_block = health.get("disk") or {}
+        return jsonify(
+            {
+                "system": {
+                    "cpu_percent": sys_block.get("cpu_percent"),
+                    "ram_percent": sys_block.get("ram_percent"),
+                    "cpu_temp_c": sys_block.get("cpu_temp_c"),
+                },
+                "disk": {
+                    "free_gb": disk_block.get("free_gb"),
+                    "percent": disk_block.get("percent"),
+                },
+            }
+        )
+    except Exception as e:
+        logger.error(f"Public health check error: {e}")
+        return jsonify({"system": {}, "disk": {}}), 200
 
 
 @api_v1.route("/system/stats", methods=["GET"])

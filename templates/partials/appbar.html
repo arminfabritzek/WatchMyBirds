@@ -130,12 +130,17 @@
 
 <script>
     (function () {
+        // Logged-in users hit the full /health (DB + throttling + disk path).
+        // Logged-out users hit /health/public, which projects only the four
+        // scalars the bar renders. Endpoint chosen server-side at render
+        // time so the bar populates without an extra round-trip.
+        const HEALTH_URL = {% if session.get('authenticated') %}'/api/v1/health'{% else %}'/api/v1/health/public'{% endif %};
+
         function updateStatus() {
-            fetch('/api/v1/health')
-                .then(r => r.json())
+            fetch(HEALTH_URL, { credentials: 'same-origin', redirect: 'manual' })
+                .then(r => (r.ok ? r.json() : null))
                 .then(data => {
-                    // Check top-level status or existence of 'system'
-                    if (data.system) {
+                    if (data && data.system) {
                         const cpu = Math.round(data.system.cpu_percent || 0);
                         const cpuEl = document.getElementById('statusCpuVal');
                         cpuEl.textContent = cpu + '%';
