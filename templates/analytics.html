@@ -34,6 +34,117 @@
         </div>
     </div>
 
+    {% set event_summary = event_intelligence.summary if event_intelligence else {} %}
+    {% if event_summary.event_count | default(0) %}
+    {# Event Intelligence & Retention #}
+    <div class="section-divider section-divider--events">
+        <span class="section-divider__text">Event Intelligence</span>
+    </div>
+
+    <div class="summary-grid summary-grid--4col">
+        <div class="summary-card summary-card--event">
+            <div class="summary-card__value">{{ event_summary.event_count | default(0) }}</div>
+            <div class="summary-card__label">BirdEvents</div>
+        </div>
+        <div class="summary-card summary-card--secondary">
+            <div class="summary-card__value">{{ event_summary.detection_count | default(0) }}</div>
+            <div class="summary-card__label">Photos in Events</div>
+        </div>
+        <div class="summary-card summary-card--accent">
+            <div class="summary-card__value">{{ event_summary.representative_image_count | default(0) }}</div>
+            <div class="summary-card__label">Representative Budget</div>
+        </div>
+        <div class="summary-card summary-card--warning">
+            <div class="summary-card__value">{{ event_summary.retention_savings_pct | default(0) }}%</div>
+            <div class="summary-card__label">Retention Headroom</div>
+        </div>
+    </div>
+
+    <div class="chart-card">
+        <div class="chart-card__toolbar">
+            <h3 class="chart-card__title">
+                Event Pressure
+                <span class="chart-card__badge">{{ event_summary.avg_photos_per_event | default(0) }} photos / event</span>
+            </h3>
+            {% if event_intelligence.profile_distribution %}
+            <div class="event-profile-list" aria-label="Event profile distribution">
+                {% for profile in event_intelligence.profile_distribution %}
+                <span class="event-profile-pill">
+                    {{ profile.profile | replace('_', ' ') }}
+                    <strong>{{ profile.event_count }}</strong>
+                </span>
+                {% endfor %}
+            </div>
+            {% endif %}
+        </div>
+        <p class="chart-card__meta">
+            Representative estimate: {{ event_summary.representative_image_count | default(0) }}
+            kept from {{ event_summary.detection_count | default(0) }} photos
+            {% if event_summary.reducible_image_count | default(0) %}
+            · {{ event_summary.reducible_image_count }} photos become optional evidence
+            {% endif %}
+        </p>
+
+        <div class="event-intelligence-grid">
+            <div class="event-intelligence-block">
+                <h4 class="event-intelligence-block__title">Largest Events</h4>
+                {% if event_intelligence.largest_events %}
+                <div class="event-intelligence-table">
+                    <div class="event-intelligence-table__row event-intelligence-table__row--header">
+                        <span>Species</span>
+                        <span>Photos</span>
+                        <span>Keep</span>
+                        <span>Headroom</span>
+                    </div>
+                    {% for event in event_intelligence.largest_events %}
+                    <div class="event-intelligence-table__row">
+                        <span class="event-intelligence-table__species" title="{{ event.species }}">
+                            {{ event.species | replace('_', ' ') }}
+                        </span>
+                        <span>{{ event.photo_count }}</span>
+                        <span>{{ event.representative_image_count }}</span>
+                        <span>{{ event.retention_savings_pct }}%</span>
+                    </div>
+                    {% endfor %}
+                </div>
+                {% else %}
+                <div class="empty-state">
+                    <p class="empty-state__message">No event pressure yet.</p>
+                </div>
+                {% endif %}
+            </div>
+
+            <div class="event-intelligence-block">
+                <h4 class="event-intelligence-block__title">Species Pressure</h4>
+                {% if event_intelligence.species_pressure %}
+                <div class="event-intelligence-table">
+                    <div class="event-intelligence-table__row event-intelligence-table__row--header">
+                        <span>Species</span>
+                        <span>Events</span>
+                        <span>Photos</span>
+                        <span>Optional</span>
+                    </div>
+                    {% for species in event_intelligence.species_pressure %}
+                    <div class="event-intelligence-table__row">
+                        <span class="event-intelligence-table__species" title="{{ species.species }}">
+                            {{ species.species | replace('_', ' ') }}
+                        </span>
+                        <span>{{ species.event_count }}</span>
+                        <span>{{ species.detection_count }}</span>
+                        <span>{{ species.reducible_image_count }}</span>
+                    </div>
+                    {% endfor %}
+                </div>
+                {% else %}
+                <div class="empty-state">
+                    <p class="empty-state__message">No species pressure yet.</p>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
     {# Activity by Time of Day #}
     <div class="chart-card">
         <h3 class="chart-card__title">

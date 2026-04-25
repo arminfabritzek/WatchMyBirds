@@ -6,6 +6,7 @@ and reporting functionality.
 """
 
 import sqlite3
+from collections import Counter
 from typing import Any
 
 
@@ -40,7 +41,8 @@ def fetch_all_detection_times(
 
     Filters: active, not no_bird, score >= min_score, must have classification.
     """
-    cur = conn.execute("""
+    cur = conn.execute(
+        """
         SELECT substr(i.timestamp, 10, 6) as time_str
         FROM detections d
         JOIN images i ON d.image_filename = i.filename
@@ -53,7 +55,9 @@ def fetch_all_detection_times(
               WHERE c.detection_id = d.detection_id
                 AND c.status = 'active'
           )
-        """, (min_score,))
+        """,
+        (min_score,),
+    )
     return cur.fetchall()
 
 
@@ -74,7 +78,8 @@ def fetch_species_timestamps(
     """
     from utils.db.detections import effective_species_sql
 
-    cur = conn.execute(f"""
+    cur = conn.execute(
+        f"""
         SELECT
             {effective_species_sql("d")} AS species,
             i.timestamp as image_timestamp
@@ -89,8 +94,317 @@ def fetch_species_timestamps(
               WHERE c.detection_id = d.detection_id
                 AND c.status = 'active'
           )
-        """, (min_score,))
+        """,
+        (min_score,),
+    )
     return cur.fetchall()
+
+
+def _optional_column_sql(
+    columns: set[str], alias: str, column_name: str, default_sql: str = "NULL"
+) -> str:
+    """Return an aliased column reference when available, otherwise SQL fallback."""
+
+    return f"{alias}.{column_name}" if column_name in columns else default_sql
+
+
+def _top1_class_sql_for_columns(classification_columns: set[str]) -> str:
+    where_clauses = ["c.detection_id = d.detection_id"]
+    if "rank" in classification_columns:
+        where_clauses.append("c.rank = 1")
+    if "status" in classification_columns:
+        where_clauses.append("COALESCE(c.status, 'active') = 'active'")
+    order_sql = "ORDER BY c.rank ASC" if "rank" in classification_columns else ""
+    where_sql = "\n              AND ".join(where_clauses)
+    return f"""
+        (
+            SELECT c.cls_class_name
+            FROM classifications c
+            WHERE {where_sql}
+            {order_sql}
+            LIMIT 1
+        )
+    """
+
+
+def _top1_confidence_sql_for_columns(classification_columns: set[str]) -> str:
+    if "cls_confidence" not in classification_columns:
+        return "NULL"
+    where_clauses = ["c.detection_id = d.detection_id"]
+    if "rank" in classification_columns:
+        where_clauses.append("c.rank = 1")
+    if "status" in classification_columns:
+        where_clauses.append("COALESCE(c.status, 'active') = 'active'")
+    order_sql = "ORDER BY c.rank ASC" if "rank" in classification_columns else ""
+    where_sql = "\n              AND ".join(where_clauses)
+    return f"""
+        (
+            SELECT c.cls_confidence
+            FROM classifications c
+            WHERE {where_sql}
+            {order_sql}
+            LIMIT 1
+        )
+    """
+
+
+def _empty_event_intelligence_summary() -> dict[str, Any]:
+    return {
+        "summary": {
+            "event_count": 0,
+            "detection_count": 0,
+            "representative_image_count": 0,
+            "reducible_image_count": 0,
+            "retention_savings_pct": 0.0,
+            "avg_photos_per_event": 0.0,
+            "compression_ratio": 0.0,
+            "largest_event_photo_count": 0,
+        },
+        "largest_events": [],
+        "species_pressure": [],
+        "profile_distribution": [],
+        "retention_formula": "min(Kmax, 3 + ceil(log2(photo_count)) + bonuses)",
+    }
+
+
+def _fetch_event_intelligence_rows(
+    conn: sqlite3.Connection,
+    min_score: float = 0.0,
+) -> list[dict[str, Any]]:
+    from utils.db.detections import effective_species_sql_for_columns, table_columns
+
+    detection_columns = table_columns(conn, "detections")
+    image_columns = table_columns(conn, "images")
+    classification_columns = table_columns(conn, "classifications")
+    species_sql = effective_species_sql_for_columns(
+        "d", detection_columns, classification_columns
+    )
+    cls_sql = _top1_class_sql_for_columns(classification_columns)
+    cls_confidence_sql = _top1_confidence_sql_for_columns(classification_columns)
+    manual_species_sql = _optional_column_sql(
+        detection_columns, "d", "manual_species_override"
+    )
+    species_source_sql = _optional_column_sql(detection_columns, "d", "species_source")
+    od_class_sql = _optional_column_sql(detection_columns, "d", "od_class_name")
+    score_sql = _optional_column_sql(detection_columns, "d", "score")
+    decision_state_sql = _optional_column_sql(detection_columns, "d", "decision_state")
+    source_id_sql = _optional_column_sql(image_columns, "i", "source_id")
+
+    sibling_status_clause = ""
+    if "status" in detection_columns:
+        sibling_status_clause = "AND COALESCE(ds.status, 'active') = 'active'"
+
+    where_clauses = ["i.timestamp IS NOT NULL", "TRIM(i.timestamp) != ''"]
+    params: list[Any] = []
+    if "status" in detection_columns:
+        where_clauses.append("COALESCE(d.status, 'active') = 'active'")
+    if "review_status" in image_columns:
+        where_clauses.append(
+            "(i.review_status IS NULL OR i.review_status != 'no_bird')"
+        )
+    if "decision_state" in detection_columns:
+        where_clauses.append(
+            "lower(COALESCE(d.decision_state, '')) NOT IN ('uncertain', 'unknown')"
+        )
+    if "score" in detection_columns:
+        where_clauses.append("(d.score IS NULL OR d.score >= ?)")
+        params.append(min_score)
+
+    where_sql = "\n          AND ".join(where_clauses)
+
+    rows = conn.execute(
+        f"""
+        SELECT
+            d.detection_id,
+            d.image_filename,
+            i.filename,
+            i.timestamp,
+            i.timestamp AS image_timestamp,
+            {source_id_sql} AS source_id,
+            d.bbox_x,
+            d.bbox_y,
+            d.bbox_w,
+            d.bbox_h,
+            {score_sql} AS score,
+            {decision_state_sql} AS decision_state,
+            {od_class_sql} AS od_class_name,
+            {cls_sql} AS cls_class_name,
+            {cls_confidence_sql} AS cls_confidence,
+            {species_sql} AS species_key,
+            {manual_species_sql} AS manual_species_override,
+            {species_source_sql} AS species_source,
+            (
+                SELECT COUNT(*)
+                FROM detections ds
+                WHERE ds.image_filename = d.image_filename
+                {sibling_status_clause}
+            ) AS sibling_detection_count
+        FROM detections d
+        JOIN images i ON d.image_filename = i.filename
+        WHERE {where_sql}
+        ORDER BY i.timestamp ASC, d.detection_id ASC
+        """,
+        tuple(params),
+    ).fetchall()
+
+    return [dict(row) for row in rows]
+
+
+def fetch_event_intelligence_summary(
+    conn: sqlite3.Connection,
+    min_score: float = 0.0,
+    *,
+    event_limit: int = 8,
+    species_limit: int = 8,
+) -> dict[str, Any]:
+    """Return event and retention pressure metrics for the Analytics dashboard.
+
+    This is read-only. The retention numbers are estimates based on
+    ``BirdEvent.representative_image_count``; no file or database mutation
+    happens here.
+    """
+
+    from core.events import build_bird_events
+
+    rows = _fetch_event_intelligence_rows(conn, min_score=min_score)
+    if not rows:
+        return _empty_event_intelligence_summary()
+
+    events = build_bird_events(rows)
+    if not events:
+        return _empty_event_intelligence_summary()
+
+    detection_count = sum(event.photo_count for event in events)
+    representative_count = sum(event.representative_image_count for event in events)
+    reducible_count = max(detection_count - representative_count, 0)
+    event_count = len(events)
+    savings_pct = (
+        round((reducible_count / detection_count) * 100.0, 1)
+        if detection_count
+        else 0.0
+    )
+    avg_photos = round(detection_count / event_count, 1) if event_count else 0.0
+    compression_ratio = (
+        round(detection_count / representative_count, 1)
+        if representative_count
+        else 0.0
+    )
+
+    profile_counter: Counter[str] = Counter(event.grouping_profile for event in events)
+    profile_detections: Counter[str] = Counter()
+    for event in events:
+        profile_detections[event.grouping_profile] += event.photo_count
+
+    profile_distribution = [
+        {
+            "profile": profile,
+            "event_count": count,
+            "detection_count": profile_detections[profile],
+        }
+        for profile, count in profile_counter.most_common()
+    ]
+
+    species_stats: dict[str, dict[str, Any]] = {}
+    for event in events:
+        species = event.species or "Unknown_species"
+        bucket = species_stats.setdefault(
+            species,
+            {
+                "species": species,
+                "event_count": 0,
+                "detection_count": 0,
+                "representative_image_count": 0,
+                "reducible_image_count": 0,
+                "largest_event_photo_count": 0,
+                "profile": event.grouping_profile,
+            },
+        )
+        bucket["event_count"] += 1
+        bucket["detection_count"] += event.photo_count
+        bucket["representative_image_count"] += event.representative_image_count
+        bucket["reducible_image_count"] += max(
+            event.photo_count - event.representative_image_count, 0
+        )
+        bucket["largest_event_photo_count"] = max(
+            bucket["largest_event_photo_count"], event.photo_count
+        )
+
+    species_pressure = []
+    for bucket in species_stats.values():
+        bucket["avg_photos_per_event"] = round(
+            bucket["detection_count"] / bucket["event_count"], 1
+        )
+        bucket["retention_savings_pct"] = (
+            round(
+                (bucket["reducible_image_count"] / bucket["detection_count"]) * 100.0,
+                1,
+            )
+            if bucket["detection_count"]
+            else 0.0
+        )
+        species_pressure.append(bucket)
+
+    species_pressure.sort(
+        key=lambda item: (
+            item["reducible_image_count"],
+            item["detection_count"],
+            item["largest_event_photo_count"],
+            item["species"],
+        ),
+        reverse=True,
+    )
+
+    largest_events = []
+    for event in sorted(
+        events,
+        key=lambda item: (
+            item.photo_count,
+            item.duration_sec,
+            item.representative_image_count,
+        ),
+        reverse=True,
+    )[: max(0, int(event_limit))]:
+        reducible_images = max(event.photo_count - event.representative_image_count, 0)
+        largest_events.append(
+            {
+                "species": event.species or "Unknown species",
+                "photo_count": event.photo_count,
+                "representative_image_count": event.representative_image_count,
+                "reducible_image_count": reducible_images,
+                "retention_savings_pct": (
+                    round((reducible_images / event.photo_count) * 100.0, 1)
+                    if event.photo_count
+                    else 0.0
+                ),
+                "duration_min": round(event.duration_sec / 60.0, 1),
+                "start_time": event.start_time,
+                "end_time": event.end_time,
+                "grouping_profile": event.grouping_profile,
+                "event_gap_minutes": event.event_gap_minutes,
+                "max_duration_minutes": event.max_duration_minutes,
+                "eligibility": event.eligibility,
+                "fallback_reason": event.fallback_reason,
+            }
+        )
+
+    largest_event_photo_count = max((event.photo_count for event in events), default=0)
+
+    return {
+        "summary": {
+            "event_count": event_count,
+            "detection_count": detection_count,
+            "representative_image_count": representative_count,
+            "reducible_image_count": reducible_count,
+            "retention_savings_pct": savings_pct,
+            "avg_photos_per_event": avg_photos,
+            "compression_ratio": compression_ratio,
+            "largest_event_photo_count": largest_event_photo_count,
+        },
+        "largest_events": largest_events,
+        "species_pressure": species_pressure[: max(0, int(species_limit))],
+        "profile_distribution": profile_distribution,
+        "retention_formula": "min(Kmax, 3 + ceil(log2(photo_count)) + bonuses)",
+    }
 
 
 def fetch_analytics_summary(
@@ -118,25 +432,32 @@ def fetch_analytics_summary(
     """
 
     # Total detections
-    total_cursor = conn.execute(f"""
+    total_cursor = conn.execute(
+        f"""
         SELECT COUNT(*)
         FROM detections d
         JOIN images i ON d.image_filename = i.filename
         WHERE {_base_where}
-        """, (min_score,))
+        """,
+        (min_score,),
+    )
     total_detections = total_cursor.fetchone()[0] or 0
 
     # Total unique species
-    species_cursor = conn.execute(f"""
+    species_cursor = conn.execute(
+        f"""
         SELECT COUNT(DISTINCT {effective_species_sql("d")}) AS total
         FROM detections d
         JOIN images i ON d.image_filename = i.filename
         WHERE {_base_where}
-        """, (min_score,))
+        """,
+        (min_score,),
+    )
     total_species = species_cursor.fetchone()[0] or 0
 
     # Date range
-    range_cursor = conn.execute(f"""
+    range_cursor = conn.execute(
+        f"""
         SELECT
             MIN(substr(i.timestamp, 1, 4) || '-' ||
                 substr(i.timestamp, 5, 2) || '-' ||
@@ -147,7 +468,9 @@ def fetch_analytics_summary(
         FROM detections d
         JOIN images i ON d.image_filename = i.filename
         WHERE {_base_where}
-        """, (min_score,))
+        """,
+        (min_score,),
+    )
     range_row = range_cursor.fetchone()
 
     return {

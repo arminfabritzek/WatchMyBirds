@@ -5,6 +5,7 @@ Handles analytics routes:
 - GET /api/analytics/summary - Summary statistics
 - GET /api/analytics/time-of-day - Time distribution KDE
 - GET /api/analytics/species-activity - Per-species activity
+- GET /api/analytics/event-intelligence - Event/retention pressure summary
 - GET /analytics - Server-rendered analytics dashboard
 """
 
@@ -19,6 +20,7 @@ from logging_config import get_logger
 from utils.db.analytics import (
     fetch_all_time_daily_counts,
     fetch_bird_visits,
+    fetch_event_intelligence_summary,
     fetch_simulation_data,
     fetch_weather_analytics,
     fetch_weather_detection_correlation,
@@ -251,6 +253,30 @@ def analytics_visits_api():
         return jsonify({"error": str(e)}), 500
 
 
+@analytics_bp.route("/api/analytics/event-intelligence", methods=["GET"])
+def analytics_event_intelligence_api():
+    """Return BirdEvent and representative-retention summary data."""
+    cfg = get_config()
+    min_score = cfg["GALLERY_DISPLAY_THRESHOLD"]
+    event_limit = min(max(request.args.get("event_limit", 8, type=int), 1), 50)
+    species_limit = min(max(request.args.get("species_limit", 8, type=int), 1), 50)
+    try:
+        conn = db_service.get_connection()
+        try:
+            data = fetch_event_intelligence_summary(
+                conn,
+                min_score=min_score,
+                event_limit=event_limit,
+                species_limit=species_limit,
+            )
+        finally:
+            conn.close()
+        return jsonify(data)
+    except Exception as e:
+        logger.error(f"Event intelligence API error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
 @analytics_bp.route("/api/analytics/simulation", methods=["GET"])
 def analytics_simulation_api():
     """Return simulation data for species removal what-if analysis."""
@@ -298,6 +324,37 @@ def analytics_page():
             conn.close()
     except Exception as e:
         logger.error(f"Error fetching all-time visits for analytics: {e}")
+
+    # 1c. Event intelligence and representative-retention estimate
+    event_intelligence = {
+        "summary": {
+            "event_count": 0,
+            "detection_count": 0,
+            "representative_image_count": 0,
+            "reducible_image_count": 0,
+            "retention_savings_pct": 0.0,
+            "avg_photos_per_event": 0.0,
+            "compression_ratio": 0.0,
+            "largest_event_photo_count": 0,
+        },
+        "largest_events": [],
+        "species_pressure": [],
+        "profile_distribution": [],
+        "retention_formula": "min(Kmax, 3 + ceil(log2(photo_count)) + bonuses)",
+    }
+    try:
+        conn = db_service.get_connection()
+        try:
+            event_intelligence = fetch_event_intelligence_summary(
+                conn,
+                min_score=min_score,
+                event_limit=6,
+                species_limit=6,
+            )
+        finally:
+            conn.close()
+    except Exception as e:
+        logger.error(f"Error fetching event intelligence summary: {e}")
 
     # 2. Time of Day Histogram (24 hourly bins)
     time_of_day = {
@@ -654,6 +711,7 @@ def analytics_page():
         activity_granularity=activity_granularity,
         activity_controls=activity_controls,
         species_activity=species_activity,
+        event_intelligence=event_intelligence,
         weather=weather,
         weather_correlation=weather_correlation,
         simulation=simulation,

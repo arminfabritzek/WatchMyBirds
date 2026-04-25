@@ -3,7 +3,7 @@
 These tests describe the contract that ``build_bird_events`` must satisfy.
 The Event layer sits above the existing 60 s frame-cluster layer and
 matches the biological independence rule used by camera-trap research:
-same species, gap <= 30 minutes by default.
+same species, profile-aware gap, and a 30 minute fallback.
 
 The tests intentionally do not cover Review-blueprint or template
 behaviour. That surface is covered separately by review-specific tests.
@@ -11,8 +11,10 @@ behaviour. That surface is covered separately by review-specific tests.
 
 from __future__ import annotations
 
+from core.event_intelligence import EventGroupingProfile, representative_image_budget
 from core.events import (
     EVENT_GAP_MINUTES_DEFAULT,
+    EVENT_MAX_DURATION_MINUTES_DEFAULT,
     BirdEvent,
     build_bird_events,
 )
@@ -80,11 +82,11 @@ def test_burst_collapses_into_single_event():
 
 
 def test_thirty_minute_gap_keeps_events_together():
-    """A 25-minute gap is still inside the same event."""
+    """A 25-minute gap is still inside the fallback event window."""
     events = build_bird_events(
         [
-            _det(1, "20260407_080000"),
-            _det(2, "20260407_082500"),
+            _det(1, "20260407_080000", cls_species="Erithacus_rubecula"),
+            _det(2, "20260407_082500", cls_species="Erithacus_rubecula"),
         ]
     )
 
@@ -93,16 +95,82 @@ def test_thirty_minute_gap_keeps_events_together():
 
 
 def test_gap_above_thirty_minutes_starts_new_event():
-    """A 35-minute gap splits into two events."""
+    """A 35-minute gap splits unprofiled species into two events."""
     events = build_bird_events(
         [
-            _det(1, "20260407_080000"),
-            _det(2, "20260407_083500"),
+            _det(1, "20260407_080000", cls_species="Erithacus_rubecula"),
+            _det(2, "20260407_083500", cls_species="Erithacus_rubecula"),
         ]
     )
 
     assert len(events) == 2
     assert {event.photo_count for event in events} == {1}
+
+
+def test_short_visit_species_use_tighter_gap_than_default():
+    """Local feeder regulars such as blue tits should split earlier than 30 min."""
+    events = build_bird_events(
+        [
+            _det(1, "20260407_080000", cls_species="Cyanistes_caeruleus"),
+            _det(2, "20260407_081300", cls_species="Cyanistes_caeruleus"),
+        ]
+    )
+
+    assert len(events) == 2
+    assert {event.grouping_profile for event in events} == {"short_station_visit"}
+    assert {event.event_gap_minutes for event in events} == {12.0}
+
+
+def test_short_visit_species_keep_nearby_frames_together():
+    events = build_bird_events(
+        [
+            _det(1, "20260407_080000", cls_species="Cyanistes_caeruleus"),
+            _det(2, "20260407_080900", cls_species="Cyanistes_caeruleus"),
+        ]
+    )
+
+    assert len(events) == 1
+    assert events[0].photo_count == 2
+    assert events[0].grouping_profile == "short_station_visit"
+
+
+def test_max_event_duration_splits_continuous_bursts():
+    """Even constant same-species detections must not become one giant event."""
+    detections = [
+        _det(
+            idx + 1,
+            f"20260407_{8 + idx // 6:02d}{(idx % 6) * 10:02d}00",
+            cls_species="Passer_domesticus",
+        )
+        for idx in range(19)
+    ]
+
+    events = build_bird_events(detections)
+
+    assert len(events) > 1
+    assert all(event.grouping_profile == "flock_burst" for event in events)
+    assert all(event.max_duration_minutes == 20.0 for event in events)
+    assert max(event.duration_sec for event in events) <= 20 * 60
+
+
+def test_profile_overrides_can_tune_one_station_species():
+    profile = EventGroupingProfile(
+        name="user_blue_tit",
+        gap_minutes=5.0,
+        max_duration_minutes=15.0,
+        max_representative_images=6,
+    )
+
+    events = build_bird_events(
+        [
+            _det(1, "20260407_080000", cls_species="Cyanistes_caeruleus"),
+            _det(2, "20260407_080600", cls_species="Cyanistes_caeruleus"),
+        ],
+        profile_overrides={"Cyanistes_caeruleus": profile},
+    )
+
+    assert len(events) == 2
+    assert {event.grouping_profile for event in events} == {"user_blue_tit"}
 
 
 def test_custom_gap_minutes_overrides_default():
@@ -123,6 +191,19 @@ def test_custom_gap_minutes_overrides_default():
 
     assert len(events_default) == 1
     assert len(events_strict) == 2
+
+
+def test_event_carries_representative_image_budget():
+    events = build_bird_events(
+        [
+            _det(idx + 1, f"20260407_0800{idx:02d}", cls_species="Erithacus_rubecula")
+            for idx in range(8)
+        ]
+    )
+
+    assert len(events) == 1
+    assert events[0].max_duration_minutes == EVENT_MAX_DURATION_MINUTES_DEFAULT
+    assert events[0].representative_image_count == representative_image_budget(8)
 
 
 def test_two_species_at_overlapping_times_split_into_two_events():
@@ -191,23 +272,23 @@ def test_unknown_redirect_updates_close_pass_pivot():
     """
     events = build_bird_events(
         [
-            _det(1, "20260407_080000", cls_species="Cyanistes_caeruleus"),
+            _det(1, "20260407_080000", cls_species="Erithacus_rubecula"),
             _det(2, "20260407_082000", cls_species=None),
-            _det(3, "20260407_082500", cls_species="Cyanistes_caeruleus"),
-            _det(4, "20260407_083000", cls_species="Parus_major"),
+            _det(3, "20260407_082500", cls_species="Erithacus_rubecula"),
+            _det(4, "20260407_083000", cls_species="Sitta_europaea"),
         ]
     )
 
     assert len(events) == 2
     species_to_count = {event.species: event.photo_count for event in events}
     assert species_to_count == {
-        "Cyanistes_caeruleus": 3,
-        "Parus_major": 1,
+        "Erithacus_rubecula": 3,
+        "Sitta_europaea": 1,
     }
-    blaumeise = next(e for e in events if e.species == "Cyanistes_caeruleus")
-    assert blaumeise.eligibility == "event_ineligible"
-    assert blaumeise.fallback_reason == "partial_unknown_species"
-    assert blaumeise.detection_ids == [1, 2, 3]
+    robin = next(e for e in events if e.species == "Erithacus_rubecula")
+    assert robin.eligibility == "event_ineligible"
+    assert robin.fallback_reason == "partial_unknown_species"
+    assert robin.detection_ids == [1, 2, 3]
 
 
 def test_multi_bird_ambiguity_marks_event_ineligible():
@@ -312,9 +393,7 @@ def test_event_key_is_stable_for_same_input():
     first = build_bird_events(detections)
     second = build_bird_events(detections)
 
-    assert [event.event_key for event in first] == [
-        event.event_key for event in second
-    ]
+    assert [event.event_key for event in first] == [event.event_key for event in second]
 
 
 def _context_det(detection_id: int, timestamp: str, **kwargs) -> dict:

@@ -69,3 +69,50 @@ def test_species_activity_api_sorts_by_peak_hour(monkeypatch, client):
         "Phoenicurus_ochruros",
     ]
     mock_conn.close.assert_called_once()
+
+
+def test_event_intelligence_api_returns_summary(monkeypatch, client):
+    mock_conn = MagicMock()
+    payload = {
+        "summary": {
+            "event_count": 2,
+            "detection_count": 12,
+            "representative_image_count": 7,
+            "reducible_image_count": 5,
+            "retention_savings_pct": 41.7,
+            "avg_photos_per_event": 6.0,
+            "compression_ratio": 1.7,
+            "largest_event_photo_count": 10,
+        },
+        "largest_events": [],
+        "species_pressure": [],
+        "profile_distribution": [],
+        "retention_formula": "min(Kmax, 3 + ceil(log2(photo_count)) + bonuses)",
+    }
+
+    monkeypatch.setattr(
+        analytics_module, "get_config", lambda: {"GALLERY_DISPLAY_THRESHOLD": 0.85}
+    )
+    monkeypatch.setattr(
+        analytics_module.db_service, "get_connection", lambda: mock_conn
+    )
+
+    def fake_fetch(conn, min_score: float, *, event_limit: int, species_limit: int):
+        assert conn is mock_conn
+        assert min_score == 0.85
+        assert event_limit == 3
+        assert species_limit == 4
+        return payload
+
+    monkeypatch.setattr(
+        analytics_module, "fetch_event_intelligence_summary", fake_fetch
+    )
+
+    response = client.get(
+        "/api/analytics/event-intelligence?event_limit=3&species_limit=4"
+    )
+
+    assert response.status_code == 200
+    assert response.get_json()["summary"]["event_count"] == 2
+    assert response.get_json()["summary"]["retention_savings_pct"] == 41.7
+    mock_conn.close.assert_called_once()

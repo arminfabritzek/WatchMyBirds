@@ -3,16 +3,18 @@
 This module is the single biological aggregation unit used across the
 Review surface, the Gallery sub-gallery, and the planned ``/insights``
 dashboard. An *event* is a run of detections of the same species whose
-timestamps are separated by less than ``gap_minutes`` minutes
-(default: 30).
+timestamps fit the active event profile (30 minutes for unknown/unprofiled
+species, shorter windows for station-regular or burst-prone species).
 
-Why 30 minutes, same species
-----------------------------
+Why profiles, with a 30 minute fallback
+---------------------------------------
 Camera-trap research commonly uses independence windows on the order of
 30 minutes to avoid inflating metrics with burst-mode serial
 photographs. Treating many near-identical frames as independent
 observations would bias downstream event, activity, and occupancy-style
-metrics.
+metrics. Fixed feeder cameras also produce very species-specific local
+patterns, so known short-visit species and dense feeder bursts use tighter
+profiles while the 30 minute rule remains the conservative fallback.
 
 Migration history
 -----------------
@@ -27,13 +29,23 @@ analytics callers.
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
+from core.event_intelligence import (
+    DEFAULT_EVENT_PROFILE,
+    EventGroupingProfile,
+    representative_image_budget,
+    resolve_event_profile,
+)
 from core.gallery_core import _bbox_dist, _ts_to_epoch
 
 EVENT_GAP_MINUTES_DEFAULT = 30
 """Default independence window in minutes. Documented in the module docstring."""
+
+EVENT_MAX_DURATION_MINUTES_DEFAULT = DEFAULT_EVENT_PROFILE.max_duration_minutes
+"""Default safety cap for a single Event when no species profile is available."""
 
 # Maximum normalised start-to-end bbox displacement inside a single
 # event. Anything above this is flagged ``bbox_jump``; the event is
@@ -116,6 +128,13 @@ class BirdEvent:
         frames already in the Gallery" banner. Does **not** change
         ``eligibility`` — context anchoring is a continuation hint, not
         a disqualifying reason.
+    grouping_profile / event_gap_minutes / max_duration_minutes
+        The behaviour profile that shaped the event boundary. Unknown or
+        unprofiled species keep the 30 minute fallback; known short-visit
+        or flocking species may use tighter local rules.
+    representative_image_count
+        Suggested number of full-size event images worth keeping once a
+        retention layer exists. Metadata and thumbnails can still remain.
     """
 
     event_key: str
@@ -133,6 +152,11 @@ class BirdEvent:
     bbox_trail: list[dict[str, Any]] = field(default_factory=list)
     context_only_count: int = 0
     context_anchored: bool = False
+    source_id: str | None = None
+    grouping_profile: str = DEFAULT_EVENT_PROFILE.name
+    event_gap_minutes: float = EVENT_GAP_MINUTES_DEFAULT
+    max_duration_minutes: float = EVENT_MAX_DURATION_MINUTES_DEFAULT
+    representative_image_count: int = 0
 
     @property
     def is_eligible(self) -> bool:
@@ -253,7 +277,9 @@ def _resolve_event_species(
     if unknown_count > 0:
         # Keep the known species label for display, but mark the event
         # ineligible so approval stays blocked.
-        single_species = next(iter(resolved_species)) if len(resolved_species) == 1 else None
+        single_species = (
+            next(iter(resolved_species)) if len(resolved_species) == 1 else None
+        )
         source = "manual" if manual_count else "classifier"
         return single_species, source, "partial_unknown_species"
     if len(resolved_species) != 1:
@@ -287,16 +313,29 @@ def _detect_bbox_jump(members: list[dict[str, Any]]) -> bool:
 
 
 def _detect_multi_bird(members: list[dict[str, Any]]) -> bool:
-    return any(int(member.get("sibling_detection_count") or 0) > 1 for member in members)
+    return any(
+        int(member.get("sibling_detection_count") or 0) > 1 for member in members
+    )
 
 
-def _build_event_key(species: str | None, start_time: str, cover_detection_id: int) -> str:
+def _build_event_key(
+    species: str | None, start_time: str, cover_detection_id: int
+) -> str:
     species_token = species or "unknown"
     digest = hashlib.blake2b(
         f"{species_token}|{start_time}|{cover_detection_id}".encode(),
         digest_size=6,
     ).hexdigest()
     return f"bird-event-{digest}"
+
+
+def _normalize_source_id(value: Any) -> str | None:
+    source = str(value or "").strip()
+    return source or None
+
+
+def _group_key_for_item(item: dict[str, Any]) -> tuple[str | None, str | None]:
+    return (_normalize_source_id(item.get("source_id")), item.get("species_resolved"))
 
 
 def _collect_items(detections: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -334,6 +373,7 @@ def _collect_items(detections: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "bbox_h": float(det.get("bbox_h") or 0.0),
                 "species_resolved": species,
                 "species_source": source,
+                "source_id": _normalize_source_id(det.get("source_id")),
                 "sibling_detection_count": int(det.get("sibling_detection_count") or 0),
                 "context_only": bool(det.get("context_only") or False),
             }
@@ -345,6 +385,8 @@ def build_bird_events(
     detections: list[dict[str, Any]],
     *,
     gap_minutes: float = EVENT_GAP_MINUTES_DEFAULT,
+    max_duration_minutes: float | None = None,
+    profile_overrides: Mapping[str, EventGroupingProfile] | None = None,
 ) -> list[BirdEvent]:
     """Group detections into biological events.
 
@@ -358,7 +400,13 @@ def build_bird_events(
       which case the resulting event is flagged ``unknown_species`` and
       always ineligible.
     - ``gap_minutes`` controls the independence window. The default
-      is 30 minutes.
+      is species-aware: unprofiled species use the 30 minute fallback,
+      while known short-visit or flocking species use tighter windows.
+      Passing a non-default ``gap_minutes`` overrides every profile.
+    - ``max_duration_minutes`` caps a single event even when detections
+      keep arriving continuously. This prevents one six-hour burst from
+      becoming one unreviewable event. Passing ``None`` uses the species
+      profile's cap.
     - Within a species + window group, spatial proximity is still used
       to flag bbox jumps via ``fallback_reason == "bbox_jump"``, but the
       detections are not re-split. This keeps the event intact while
@@ -374,53 +422,81 @@ def build_bird_events(
     if not items:
         return []
 
-    max_gap_sec = max(float(gap_minutes) * 60.0, 0.0)
+    use_profile_gap = float(gap_minutes) == float(EVENT_GAP_MINUTES_DEFAULT)
+
+    def _profile_for_species(species_key: str | None) -> EventGroupingProfile:
+        return resolve_event_profile(species_key, overrides=profile_overrides)
+
+    def _effective_gap_minutes(profile: EventGroupingProfile) -> float:
+        return profile.gap_minutes if use_profile_gap else float(gap_minutes)
+
+    def _effective_max_minutes(profile: EventGroupingProfile) -> float:
+        if max_duration_minutes is not None:
+            return float(max_duration_minutes)
+        return profile.max_duration_minutes
 
     items.sort(key=lambda item: (item["epoch"], item["detection_id"]))
 
-    # Groups are keyed by (species_resolved or None) so the same-species
-    # rule is enforced at split time instead of after the fact. Unknown
-    # detections (key ``None``) only form their own group when there is
-    # no open known-species group within the window to attach to; this
-    # preserves the ``partial_unknown_species`` fallback semantics from
-    # the parked bulk-review plan.
-    open_groups: dict[str | None, list[dict[str, Any]]] = {}
+    # Groups are keyed by (source_id, species_resolved or None) so the
+    # same-species rule is enforced at split time and different fixed
+    # camera sources can never accidentally merge when callers provide
+    # ``source_id``. Unknown detections only form their own group when
+    # there is no open known-species group from the same source within
+    # that known group's event profile.
+    group_key_t = tuple[str | None, str | None]
+    open_groups: dict[group_key_t, list[dict[str, Any]]] = {}
     # Track the last-attached epoch per group separately from the
     # member list. This is what the close-pass tests against, so the
     # close-pass stays correct regardless of whether the most recent
     # attach was an unknown-species redirect or a normal append.
-    open_last_epoch: dict[str | None, float] = {}
+    open_last_epoch: dict[group_key_t, float] = {}
+    open_start_epoch: dict[group_key_t, float] = {}
+    open_profiles: dict[group_key_t, EventGroupingProfile] = {}
     closed_groups: list[list[dict[str, Any]]] = []
 
-    def _finalize(species_key: str | None) -> None:
-        group = open_groups.pop(species_key, None)
-        open_last_epoch.pop(species_key, None)
+    def _finalize(open_key: group_key_t) -> None:
+        group = open_groups.pop(open_key, None)
+        open_last_epoch.pop(open_key, None)
+        open_start_epoch.pop(open_key, None)
+        open_profiles.pop(open_key, None)
         if group:
             closed_groups.append(group)
+
+    def _can_attach(open_key: group_key_t, epoch: float) -> bool:
+        profile = open_profiles[open_key]
+        max_gap_sec = max(_effective_gap_minutes(profile) * 60.0, 0.0)
+        max_duration_sec = max(_effective_max_minutes(profile) * 60.0, 0.0)
+        if epoch - open_last_epoch[open_key] > max_gap_sec:
+            return False
+        return epoch - open_start_epoch[open_key] <= max_duration_sec
 
     for item in items:
         species_key = item["species_resolved"]
         epoch = item["epoch"]
+        source_id = item.get("source_id")
 
         # Close any open group whose last attached member is beyond
-        # the window relative to *this* item.
+        # the window relative to *this* item, or whose total event span
+        # would exceed its profile's max duration if this item joined.
         for open_key in list(open_groups.keys()):
-            if epoch - open_last_epoch[open_key] > max_gap_sec:
+            if not _can_attach(open_key, epoch):
                 _finalize(open_key)
 
-        attach_key: str | None = species_key
+        attach_key: group_key_t = _group_key_for_item(item)
         if species_key is None:
             # Unknown detection: prefer adopting an open known-species
-            # group whose last attached member is still within the
-            # window. Pick the group with the most recent activity to
-            # mirror how a human reviewer would interpret the burst.
-            best_known_key: str | None = None
+            # group from the same source whose last attached member is
+            # still inside that known group's profile. Pick the group
+            # with the most recent activity to mirror how a human
+            # reviewer would interpret the burst.
+            best_known_key: group_key_t | None = None
             best_known_epoch: float = -1.0
             for open_key in open_groups:
-                if open_key is None:
+                open_source_id, open_species = open_key
+                if open_source_id != source_id or open_species is None:
                     continue
                 last_epoch = open_last_epoch[open_key]
-                if epoch - last_epoch <= max_gap_sec and last_epoch > best_known_epoch:
+                if _can_attach(open_key, epoch) and last_epoch > best_known_epoch:
                     best_known_epoch = last_epoch
                     best_known_key = open_key
             if best_known_key is not None:
@@ -429,6 +505,8 @@ def build_bird_events(
         group = open_groups.get(attach_key)
         if group is None:
             open_groups[attach_key] = [item]
+            open_start_epoch[attach_key] = epoch
+            open_profiles[attach_key] = _profile_for_species(attach_key[1])
         else:
             group.append(item)
         open_last_epoch[attach_key] = epoch
@@ -448,7 +526,9 @@ def build_bird_events(
         if fallback_reason is None and _detect_bbox_jump(members):
             fallback_reason = "bbox_jump"
 
-        eligibility = "event_eligible" if fallback_reason is None else "event_ineligible"
+        eligibility = (
+            "event_eligible" if fallback_reason is None else "event_ineligible"
+        )
 
         start_time = members[0]["timestamp"]
         end_time = members[-1]["timestamp"]
@@ -469,14 +549,23 @@ def build_bird_events(
 
         detection_ids = [member["detection_id"] for member in members]
         touched_filenames = list(
-            dict.fromkeys(member["filename"] for member in members if member["filename"])
+            dict.fromkeys(
+                member["filename"] for member in members if member["filename"]
+            )
         )
 
-        context_only_count = sum(
-            1 for member in members if member.get("context_only")
-        )
+        context_only_count = sum(1 for member in members if member.get("context_only"))
         actionable_count = len(members) - context_only_count
         context_anchored = context_only_count > 0 and actionable_count > 0
+        source_id = _normalize_source_id(members[0].get("source_id"))
+        profile = _profile_for_species(species)
+        event_gap_minutes = _effective_gap_minutes(profile)
+        event_max_minutes = _effective_max_minutes(profile)
+        representative_count = representative_image_budget(
+            len(members),
+            profile=profile,
+            uncertainty_bonus=4 if fallback_reason is not None else 0,
+        )
 
         events.append(
             BirdEvent(
@@ -495,6 +584,11 @@ def build_bird_events(
                 bbox_trail=trail,
                 context_only_count=context_only_count,
                 context_anchored=context_anchored,
+                source_id=source_id,
+                grouping_profile=profile.name,
+                event_gap_minutes=event_gap_minutes,
+                max_duration_minutes=event_max_minutes,
+                representative_image_count=representative_count,
             )
         )
 
