@@ -48,6 +48,61 @@
         }
     }
 
+    function setTrainingExportState(btn, isQueued) {
+        if (!btn || !btn.classList) return;
+        btn.classList.toggle('wm-toolbox__training--active', isQueued);
+        btn.classList.toggle('wm-toolbox__btn--toggled', isQueued);
+        btn.setAttribute('aria-pressed', isQueued ? 'true' : 'false');
+        btn.setAttribute('title', isQueued ? 'Already in training export pool' : 'Confirm and add to training export');
+    }
+
+    async function addDetectionToTrainingExport(detectionId, btn) {
+        const currentSpecies = btn ? (btn.getAttribute('data-current-species') || '').trim() : '';
+        try {
+            const response = await fetch('/api/training-export/add', {
+                method: 'POST',
+                credentials: 'same-origin',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    detection_ids: [Number(detectionId)],
+                    confirm_current_species: Boolean(currentSpecies),
+                    current_species: currentSpecies
+                })
+            });
+            if (typeof isAuthRedirect === 'function' && isAuthRedirect(response)) {
+                if (typeof redirectToLogin === 'function') redirectToLogin();
+                return;
+            }
+
+            const data = await response.json().catch(function () { return {}; });
+            if (!response.ok) {
+                throw new Error(data.message || ('HTTP ' + response.status));
+            }
+
+            const queued = Number(data.added || 0) > 0 || Number(data.already_in_pool || 0) > 0 || Number(data.eligible || 0) > 0;
+            if (queued) {
+                document.querySelectorAll(`.wm-toolbox__training[data-detection-id="${detectionId}"]`).forEach(function (toolboxBtn) {
+                    setTrainingExportState(toolboxBtn, true);
+                });
+            }
+
+            if (window.wmToast) {
+                if (Number(data.added || 0) > 0) {
+                    window.wmToast('Added to training export pool', 'success', 2600);
+                } else if (Number(data.already_in_pool || 0) > 0) {
+                    window.wmToast('Already in training export pool', 'info', 2600);
+                } else {
+                    window.wmToast('Not eligible yet: confirm species and all boxes first', 'info', 4200);
+                }
+            }
+        } catch (error) {
+            console.error('Training export add error:', error);
+            if (window.wmToast) {
+                window.wmToast('Training export failed: ' + (error.message || String(error)), 'error', 5000);
+            }
+        }
+    }
+
     /* =========================================
        Action Dispatcher
        ========================================= */
@@ -108,6 +163,12 @@
             case 'favorite':
                 if (typeof toggleFavorite === 'function' && detectionId) {
                     toggleFavorite(null, detectionId, actionEl);
+                }
+                break;
+
+            case 'training-export':
+                if (detectionId) {
+                    addDetectionToTrainingExport(detectionId, actionEl);
                 }
                 break;
 

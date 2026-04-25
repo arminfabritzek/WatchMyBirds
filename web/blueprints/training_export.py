@@ -31,6 +31,7 @@ from flask import (
 
 from logging_config import get_logger
 from utils.db import connection as db_conn
+from utils.species_names import build_species_picker_entries
 from web.blueprints.auth import login_required
 from web.services.training_export_service import (
     DEFAULT_MAX_PER_SPECIES,
@@ -264,11 +265,43 @@ def add_to_pool() -> Response:
     if not ids:
         return jsonify({"status": "error", "message": "no valid detection_ids"}), 400
 
+    confirm_current_species = bool(data.get("confirm_current_species"))
+    current_species = str(data.get("current_species") or "").strip()
+
     # auto_confirm_bbox=True treats the caller's click as the
     # bbox-review act. The frame-integrity guard inside
     # filter_eligible_for_pool still prevents mixed-review frames
     # from leaking into the pool.
     with db_conn.closing_connection() as conn:
+        if confirm_current_species and current_species and len(ids) == 1:
+            app_config = _shared.get("config")
+            locale = (
+                app_config.get("SPECIES_COMMON_NAME_LOCALE", "DE")
+                if isinstance(app_config, dict)
+                else "DE"
+            )
+            allowed_species = {
+                entry["scientific"]
+                for entry in build_species_picker_entries(conn, locale=locale)
+            }
+            if current_species not in allowed_species:
+                return jsonify({"status": "error", "message": "unknown species"}), 400
+            conn.execute(
+                """
+                UPDATE detections
+                SET manual_species_override = ?,
+                    species_source = 'manual',
+                    species_updated_at = ?
+                WHERE detection_id = ?
+                  AND COALESCE(status, 'active') = 'active'
+                  AND (
+                    manual_species_override IS NULL
+                    OR TRIM(manual_species_override) = ''
+                  )
+                """,
+                (current_species, datetime.now(UTC).isoformat(), ids[0]),
+            )
+            conn.commit()
         breakdown = filter_eligible_for_pool(
             conn, ids, auto_confirm_bbox=True
         )

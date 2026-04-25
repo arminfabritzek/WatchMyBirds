@@ -14,6 +14,7 @@ def test_tile_toolbox_supports_details_href():
 
     assert "details_href=none" in content
     assert "allow_favorite=true" in content
+    assert "allow_training_export=true" in content
     assert "allow_details=true" in content
     assert "allow_change_species=true" in content
     assert "allow_move_to_trash=true" in content
@@ -21,6 +22,8 @@ def test_tile_toolbox_supports_details_href():
     assert "modal_target or details_href" in content
     assert "allow_details and (modal_target or details_href)" in content
     assert "data-details-href" in content
+    assert 'data-action="training-export"' in content
+    assert "Confirm and add to training export" in content
 
 
 def test_subgallery_cover_and_filmstrip_use_toolbox():
@@ -84,6 +87,15 @@ def test_modal_action_bar_data_actions_are_dispatched():
     assert 'class="modal-action-bar"' in action_bar
     assert 'data-action="move-trash"' in action_bar
     assert "actionEl.closest('.modal-action-bar')" in js
+
+
+def test_tile_actions_dispatch_training_export_flag():
+    js = _read("assets/js/tile_actions.js")
+
+    assert "addDetectionToTrainingExport" in js
+    assert "'/api/training-export/add'" in js
+    assert "case 'training-export':" in js
+    assert "setTrainingExportState" in js
 
 
 def test_detection_info_hides_decision_badges_after_manual_species_review():

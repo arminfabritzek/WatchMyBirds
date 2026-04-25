@@ -9,6 +9,7 @@ detection_id (int|None): If set, enables detection-level actions (relabel, rejec
 filename (str|None): Image filename, for review-queue actions.
 surface (str): One of 'gallery', 'species', 'review', 'trash'.
 is_favorite (bool): Current favorite state.
+is_training_queued (bool): Current training-export pool state.
 can_moderate (bool): Whether destructive actions are available.
 review_reason (str|None): 'orphan' | 'low_confidence' | None — gates Deep Scan.
 modal_target (str|None): CSS selector for the detail modal (e.g. '#modal-species-42').
@@ -21,6 +22,7 @@ detection_id=none,
 filename=none,
 surface='gallery',
 is_favorite=false,
+is_training_queued=false,
 can_moderate=false,
 review_reason=none,
 modal_target=none,
@@ -31,6 +33,7 @@ show_viewer_tools=false,
 show_boxes=false,
 current_bbox_json='{}',
 allow_favorite=true,
+allow_training_export=true,
 allow_details=true,
 allow_change_species=true,
 allow_move_to_trash=true,
@@ -38,6 +41,7 @@ allow_review_no_bird=true
 ) %}
 {% set can_open_details = allow_details and (modal_target or details_href) %}
 {% set show_favorite = detection_id and allow_favorite %}
+{% set show_training_export = detection_id and allow_training_export and surface != 'trash' %}
 {% set show_change_species = detection_id and allow_change_species %}
 {% set show_move_to_trash = detection_id and surface != 'trash' and allow_move_to_trash %}
 {% set show_restore = surface == 'trash' %}
@@ -65,6 +69,20 @@ allow_review_no_bird=true
         aria-pressed="{{ 'true' if is_favorite else 'false' }}"
         title="{{ 'Login required for Favorite' if not can_moderate else ('Unfavorite' if is_favorite else 'Favorite') }}">
         {{ '⭐' if is_favorite else '☆' }}
+    </button>
+    {% endif %}
+
+    {# ── Training export flag: confirms bbox and queues this detection if eligible ── #}
+    {% if show_training_export %}
+    <button type="button"
+        class="wm-toolbox__btn wm-toolbox__training{% if is_training_queued %} wm-toolbox__training--active wm-toolbox__btn--toggled{% endif %}{% if not can_moderate %} wm-toolbox__btn--locked{% endif %}"
+        data-action="training-export" data-detection-id="{{ detection_id }}"
+        data-current-species="{{ current_species or '' }}"
+        {% if not can_moderate %}data-login-required="true" aria-disabled="true"{% endif %}
+        aria-label="Add to training export"
+        aria-pressed="{{ 'true' if is_training_queued else 'false' }}"
+        title="{{ 'Login required for training export' if not can_moderate else ('Already in training export pool' if is_training_queued else 'Confirm and add to training export') }}">
+        ⚑
     </button>
     {% endif %}
 

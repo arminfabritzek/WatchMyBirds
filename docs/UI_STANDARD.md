@@ -32,7 +32,7 @@ or changed in **one place** and instantly apply everywhere.
    `tile_toolbox` macro (§5) inside a `wm-toolbox-host` container. The toolbox
    is the only place per-image actions live (Favorite, View Details,
    Change Species, Move to Trash, Restore, Deep Scan, Mark No Bird, future
-   star ratings, …). Surfaces may *omit* an action when the route does not
+   star ratings, Training Export, …). Surfaces may *omit* an action when the route does not
    support it; they may **not** rename it, reorder it, or add a parallel
    surface-local button for the same action.
 3. **One action vocabulary.** The canonical verbs in §"Detection Action Frame
@@ -165,8 +165,9 @@ The shared detection action frame is the canonical control surface for
 detection-bearing tiles, filmstrips, and modal/detail surfaces.
 
 - Canonical action vocabulary:
-  `View Details`, `Favorite`, `Change Species`, `Move to Trash`, `Restore`,
-  `Correct`, `Wrong`, `Approve`, `Deep Scan`, `Mark No Bird`
+  `View Details`, `Favorite`, `Training Export`, `Change Species`,
+  `Move to Trash`, `Restore`, `Correct`, `Wrong`, `Approve`, `Deep Scan`,
+  `Mark No Bird`
 - Surfaces may omit actions only when the subject identity or route does not
   support them. They must not rename the same underlying action on another
   surface.

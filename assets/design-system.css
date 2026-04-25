@@ -6171,6 +6171,11 @@ body {
     background: linear-gradient(180deg, rgba(173, 114, 36, 0.98), rgba(110, 71, 20, 0.98));
 }
 
+.review-stage-panel__viewer .wm-toolbox__training--active {
+    color: #fdfbf7;
+    background: linear-gradient(180deg, rgba(74, 97, 63, 0.96), rgba(60, 80, 50, 0.98));
+}
+
 .review-stage-panel__viewer .wm-toolbox__dropdown {
     z-index: 30;
 }
@@ -8647,6 +8652,12 @@ img.review-species-ref {
     color: #f8f3e8;
     background: linear-gradient(180deg, rgba(156, 120, 53, 0.96), rgba(119, 89, 35, 0.98));
     border-color: rgba(119, 89, 35, 0.38);
+}
+
+.wm-toolbox__training--active {
+    color: #fdfbf7;
+    background: linear-gradient(180deg, rgba(74, 97, 63, 0.96), rgba(60, 80, 50, 0.98));
+    border-color: rgba(60, 80, 50, 0.42);
 }
 
 .wm-toolbox__btn--locked,
