@@ -1238,6 +1238,36 @@ document.addEventListener('show.bs.modal', function (event) {
     loadDeferredViewerImages(modal);
 });
 
+/* =========================================
+   Lazy-load deferred images on viewport entry
+   =========================================
+   Used by review event grids that may contain hundreds of cells
+   (e.g. flock-burst Passer events). Browser only fetches thumbs
+   that scroll into view (± 200px buffer).
+*/
+const wmDeferredImageObserver = (typeof IntersectionObserver === 'function')
+    ? new IntersectionObserver(function (entries, observer) {
+        entries.forEach(function (entry) {
+            if (!entry.isIntersecting) return;
+            loadDeferredViewerImages(entry.target);
+            observer.unobserve(entry.target);
+        });
+    }, { rootMargin: '200px 0px' })
+    : null;
+
+function observeDeferredViewers(scope) {
+    if (!wmDeferredImageObserver || !scope || !scope.querySelectorAll) {
+        // No IntersectionObserver — degrade to immediate load.
+        if (scope) loadDeferredViewerImages(scope);
+        return;
+    }
+    scope.querySelectorAll('.wm-image-viewer__img[data-deferred-src]').forEach(function (img) {
+        const viewer = img.closest('.wm-image-viewer');
+        if (viewer) wmDeferredImageObserver.observe(viewer);
+    });
+}
+window.observeDeferredViewers = observeDeferredViewers;
+
 // Reset zoom state when navigating between modals
 document.addEventListener('shown.bs.modal', function (event) {
     const modal = event.target;

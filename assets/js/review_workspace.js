@@ -445,6 +445,9 @@
             applyDecisionStatsToReviewMetrics(panel);
             hydrateReviewEventControls(eventKey);
             syncViewerScopePreferences(panel);
+            if (typeof window.observeDeferredViewers === 'function') {
+                window.observeDeferredViewers(panel);
+            }
             return true;
         } catch (error) {
             console.error('Review event panel load error:', error);
