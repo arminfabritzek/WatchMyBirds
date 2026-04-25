@@ -648,9 +648,12 @@ def _build_review_item(
 
     thumb_url = f"/api/review-thumb/{filename}"
     full_url = ""
+    optimized_url = ""
     if len(timestamp) >= 8:
         date_folder_str = f"{timestamp[:4]}-{timestamp[4:6]}-{timestamp[6:8]}"
         full_url = f"/uploads/originals/{date_folder_str}/{filename}"
+        optimized_filename = filename.rsplit(".", 1)[0] + ".webp"
+        optimized_url = f"/uploads/derivatives/optimized/{date_folder_str}/{optimized_filename}"
 
     item = {
         "item_kind": item_kind,
@@ -662,6 +665,7 @@ def _build_review_item(
         "formatted_date": format_review_timestamp(timestamp),
         "thumb_url": thumb_url,
         "full_url": full_url,
+        "optimized_url": optimized_url,
         "source_image_thumb_url": thumb_url,
         "source_image_full_url": full_url,
         "review_reason": review_reason,

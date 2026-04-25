@@ -191,7 +191,7 @@
                         {% endif %}
                         <div class="review-event-panel__cell-media">
                             {{ render_image_viewer(
-                            image_url=member.thumb_url,
+                            image_url=member.optimized_url or member.full_url or member.thumb_url,
                             image_alt=member.candidate_species_common or member.current_species_common or member.filename,
                             detection_id=member.best_detection_id,
                             bbox=member_bbox,
