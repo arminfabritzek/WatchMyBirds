@@ -16,6 +16,18 @@ import numpy as np
 from flask import Blueprint, jsonify, render_template, request
 
 from config import get_config
+from core.biodiversity import (
+    _parse_event_start,
+    chao1_richness,
+    hill_numbers,
+    pielou_evenness,
+    relative_activity_index,
+    sample_coverage,
+    shannon_entropy,
+    simpson_index,
+    species_event_counts,
+    species_niche_pca,
+)
 from logging_config import get_logger
 from utils.db.analytics import (
     fetch_all_time_daily_counts,
@@ -25,6 +37,7 @@ from utils.db.analytics import (
     fetch_weather_analytics,
     fetch_weather_detection_correlation,
 )
+from utils.db.events import calculate_effort, get_events_cached
 from web.services import db_service
 
 logger = get_logger(__name__)
@@ -290,6 +303,223 @@ def analytics_simulation_api():
         return jsonify(data)
     except Exception as e:
         logger.error(f"Simulation API error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+# --- Biology section helpers and endpoints -----------------------------------
+#
+# Four read-only views layered on top of the shared event pipeline
+# (utils/db/events.py). Pure metric functions live in core/biodiversity.py.
+# These power the "Biological Insights" cards at the bottom of /analytics.
+
+
+def _build_diversity(events) -> dict:
+    counts = species_event_counts(events)
+    hills = hill_numbers(counts)
+    chao_est, chao_se = chao1_richness(counts)
+
+    if hills[0.0] >= 2 and hills[1.0] / hills[0.0] < 0.5:
+        dominance_label = "Dominated by a few species"
+    elif hills[0.0] >= 2 and hills[1.0] / hills[0.0] >= 0.85:
+        dominance_label = "Evenly distributed"
+    else:
+        dominance_label = "Mixed dominance"
+
+    return {
+        "richness": int(hills[0.0]),
+        "hill_q1": round(hills[1.0], 2),
+        "hill_q2": round(hills[2.0], 2),
+        "shannon": round(shannon_entropy(counts), 3),
+        "simpson": round(simpson_index(counts), 3),
+        "pielou_evenness": round(pielou_evenness(counts), 3),
+        "sample_coverage": round(sample_coverage(counts), 3),
+        "chao1_richness": round(chao_est, 1),
+        "chao1_se": round(chao_se, 2),
+        "dominance_label": dominance_label,
+    }
+
+
+def _build_pca(events, *, min_events_per_species: int = 3) -> dict:
+    """Wrap species_niche_pca() into a frontend-friendly dict.
+
+    Min-events filter keeps single-detection rarities out of the PCA chart;
+    they would dominate the variance with near-singleton activity profiles.
+    Rare species still appear in the species-summary table below.
+    """
+    pca = species_niche_pca(events, min_events_per_species=min_events_per_species)
+    return {
+        "ok": pca["ok"],
+        "variance_pct": pca["variance_pct"],
+        "min_events_filter": min_events_per_species,
+        "points": [
+            {
+                "species": s,
+                "x": coord[0],
+                "y": coord[1],
+                "events": ev_count,
+                "peak_hour": peak,
+            }
+            for s, coord, ev_count, peak in zip(
+                pca["species"],
+                pca["coords"],
+                pca["event_counts"],
+                pca["peak_hours"],
+                strict=True,
+            )
+        ],
+    }
+
+
+def _build_species_table(events, effort) -> list[dict]:
+    """One row per observed species, sorted by event count descending."""
+    counts = species_event_counts(events)
+    if not counts:
+        return []
+    total_events = sum(counts.values())
+    rai_map: dict[str, float] = {}
+    if effort.active_days > 0:
+        rai_map = relative_activity_index(events, effort.active_days)
+
+    photo_by_species: dict[str, int] = {}
+    hours_by_species: dict[str, list[int]] = {}
+    for ev in events:
+        sp = ev.species
+        if not sp:
+            continue
+        photo_by_species[sp] = photo_by_species.get(sp, 0) + ev.photo_count
+        dt = _parse_event_start(ev.start_time)
+        if dt is not None:
+            hours_by_species.setdefault(sp, []).append(dt.hour)
+
+    rows = []
+    for species, event_count in counts.items():
+        hours = hours_by_species.get(species, [])
+        peak_hour = max(set(hours), key=hours.count) if hours else None
+        rows.append(
+            {
+                "species": species,
+                "events": event_count,
+                "photos": photo_by_species.get(species, 0),
+                "rai_per_100_days": round(rai_map.get(species, 0.0), 1),
+                "peak_hour": peak_hour,
+                "share_pct": round(100.0 * event_count / total_events, 1)
+                if total_events
+                else 0.0,
+            }
+        )
+    rows.sort(key=lambda r: (-r["events"], r["species"]))
+    return rows
+
+
+def _build_quality_metrics(conn) -> dict:
+    """Review-status, decision-state, override-rate snapshot."""
+    out: dict = {"review_status": {}, "decision_state": {}, "override_rate": 0.0}
+
+    review_rows = conn.execute(
+        "SELECT COALESCE(review_status, 'untagged') AS status, COUNT(*) AS n "
+        "FROM images GROUP BY COALESCE(review_status, 'untagged')"
+    ).fetchall()
+    out["review_status"] = {row["status"]: row["n"] for row in review_rows}
+
+    decision_rows = conn.execute(
+        "SELECT COALESCE(decision_state, 'unset') AS state, COUNT(*) AS n "
+        "FROM detections GROUP BY COALESCE(decision_state, 'unset')"
+    ).fetchall()
+    out["decision_state"] = {row["state"]: row["n"] for row in decision_rows}
+
+    override_row = conn.execute(
+        "SELECT "
+        "  SUM(CASE WHEN manual_species_override IS NOT NULL "
+        "           AND TRIM(manual_species_override) != '' THEN 1 ELSE 0 END) AS overridden, "
+        "  COUNT(*) AS total "
+        "FROM detections WHERE COALESCE(status, 'active') = 'active'"
+    ).fetchone()
+    if override_row and override_row["total"]:
+        out["override_rate"] = round(
+            (override_row["overridden"] or 0) / override_row["total"], 3
+        )
+    return out
+
+
+def _empty_diversity() -> dict:
+    return {
+        "richness": 0,
+        "hill_q1": 0.0,
+        "hill_q2": 0.0,
+        "shannon": 0.0,
+        "simpson": 0.0,
+        "pielou_evenness": 0.0,
+        "sample_coverage": 0.0,
+        "chao1_richness": 0.0,
+        "chao1_se": 0.0,
+        "dominance_label": "No data yet",
+    }
+
+
+@analytics_bp.route("/api/analytics/diversity", methods=["GET"])
+def analytics_diversity_api():
+    """Hill numbers, Shannon, Simpson, Pielou, Chao1, Sample Coverage."""
+    cfg = get_config()
+    min_score = cfg["GALLERY_DISPLAY_THRESHOLD"]
+    try:
+        conn = db_service.get_connection()
+        try:
+            events = get_events_cached(conn, min_score=min_score)
+        finally:
+            conn.close()
+        return jsonify(_build_diversity(events) if events else _empty_diversity())
+    except Exception as e:
+        logger.error(f"Diversity API error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@analytics_bp.route("/api/analytics/species-pca", methods=["GET"])
+def analytics_species_pca_api():
+    """Per-species niche PCA over 24h activity profiles."""
+    cfg = get_config()
+    min_score = cfg["GALLERY_DISPLAY_THRESHOLD"]
+    try:
+        conn = db_service.get_connection()
+        try:
+            events = get_events_cached(conn, min_score=min_score)
+        finally:
+            conn.close()
+        return jsonify(_build_pca(events))
+    except Exception as e:
+        logger.error(f"Species PCA API error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@analytics_bp.route("/api/analytics/species-table", methods=["GET"])
+def analytics_species_table_api():
+    """Per-species summary rows: events, photos, RAI, peak hour, share."""
+    cfg = get_config()
+    min_score = cfg["GALLERY_DISPLAY_THRESHOLD"]
+    try:
+        conn = db_service.get_connection()
+        try:
+            events = get_events_cached(conn, min_score=min_score)
+            effort = calculate_effort(conn)
+        finally:
+            conn.close()
+        return jsonify({"rows": _build_species_table(events, effort)})
+    except Exception as e:
+        logger.error(f"Species table API error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@analytics_bp.route("/api/analytics/quality-metrics", methods=["GET"])
+def analytics_quality_metrics_api():
+    """Review-status, decision-state, manual-override snapshot."""
+    try:
+        conn = db_service.get_connection()
+        try:
+            data = _build_quality_metrics(conn)
+        finally:
+            conn.close()
+        return jsonify(data)
+    except Exception as e:
+        logger.error(f"Quality metrics API error: {e}")
         return jsonify({"error": str(e)}), 500
 
 
@@ -703,6 +933,33 @@ def analytics_page():
     except Exception as e:
         logger.error(f"Error fetching simulation data: {e}")
 
+    # 7. Biological Insights — diversity profile, species PCA, species table,
+    #    quality snapshot. All read-only, computed via the shared event layer
+    #    so totals match Event Intelligence above.
+    diversity = _empty_diversity()
+    pca: dict = {
+        "ok": False,
+        "points": [],
+        "variance_pct": [0.0, 0.0],
+        "min_events_filter": 3,
+    }
+    species_rows: list[dict] = []
+    quality_metrics = {"review_status": {}, "decision_state": {}, "override_rate": 0.0}
+    try:
+        conn = db_service.get_connection()
+        try:
+            bio_events = get_events_cached(conn, min_score=min_score)
+            effort = calculate_effort(conn)
+            if bio_events:
+                diversity = _build_diversity(bio_events)
+                pca = _build_pca(bio_events)
+                species_rows = _build_species_table(bio_events, effort)
+            quality_metrics = _build_quality_metrics(conn)
+        finally:
+            conn.close()
+    except Exception as e:
+        logger.error(f"Error fetching biological insights: {e}")
+
     return render_template(
         "analytics.html",
         summary=summary,
@@ -715,5 +972,9 @@ def analytics_page():
         weather=weather,
         weather_correlation=weather_correlation,
         simulation=simulation,
+        diversity=diversity,
+        species_pca=pca,
+        species_rows=species_rows,
+        quality_metrics=quality_metrics,
         current_path="/analytics",
     )

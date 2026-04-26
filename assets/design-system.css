@@ -9750,3 +9750,204 @@ code {
     color: var(--color-accent-dark);
     background: var(--color-surface-2);
 }
+
+
+/* ============================================================
+   ANALYTICS — BIOLOGICAL INSIGHTS
+   PCA hero chart + side-by-side diversity/quality tables +
+   per-species summary table. Lives at the bottom of /analytics.
+   Reuses tokens defined above; no new colours.
+   ============================================================ */
+
+/* --- Hero PCA chart -------------------------------------------------- */
+.analytics-pca-card { padding-bottom: var(--space-md); }
+
+.analytics-pca {
+    margin-top: var(--space-md);
+    background: var(--color-surface-2);
+    border-radius: var(--radius-md, 8px);
+    padding: var(--space-md);
+}
+
+.analytics-pca__svg {
+    width: 100%;
+    height: auto;
+    aspect-ratio: 5 / 3;
+    display: block;
+    overflow: visible;
+}
+
+.analytics-pca__axis {
+    stroke: var(--color-border);
+    stroke-width: 1;
+    stroke-dasharray: 4 4;
+    opacity: 0.55;
+}
+
+.analytics-pca__quadrant {
+    fill: var(--color-text-muted);
+    font-size: 11px;
+    font-family: var(--font-family-mono, ui-monospace, monospace);
+    opacity: 0.55;
+}
+
+.analytics-pca__point {
+    transition: filter 150ms ease-out, transform 150ms ease-out;
+    transform-origin: center;
+    transform-box: fill-box;
+    cursor: default;
+}
+
+.analytics-pca__point:hover {
+    filter: brightness(1.1) drop-shadow(0 2px 6px rgba(0, 0, 0, 0.18));
+}
+
+.analytics-pca__point:hover circle { stroke-width: 2.5; }
+
+.analytics-pca__label {
+    fill: var(--color-text);
+    font-size: 12px;
+    font-weight: 500;
+    pointer-events: none;
+    paint-order: stroke;
+    stroke: var(--color-surface-2);
+    stroke-width: 3;
+    stroke-linejoin: round;
+}
+
+.analytics-pca__legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 24px;
+    margin-top: 14px;
+    padding-top: 12px;
+    border-top: 1px solid var(--color-border);
+    font-size: var(--font-size-xs);
+    color: var(--color-text-muted);
+}
+
+.analytics-pca__legend-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.analytics-pca__legend-text { color: var(--color-text-muted); }
+
+.analytics-pca__legend-swatch {
+    border-radius: 50%;
+    background: var(--color-primary);
+    opacity: 0.6;
+    display: inline-block;
+}
+
+.analytics-pca__legend-swatch--small  { width: 8px;  height: 8px;  }
+.analytics-pca__legend-swatch--medium { width: 14px; height: 14px; }
+.analytics-pca__legend-swatch--large  { width: 22px; height: 22px; }
+
+.analytics-pca__legend-gradient {
+    display: inline-block;
+    width: 96px;
+    height: 12px;
+    border-radius: 6px;
+    background: linear-gradient(
+        to right,
+        hsl(200, 55%, 55%),
+        hsl(45, 70%, 60%),
+        hsl(20, 65%, 55%),
+        hsl(330, 55%, 55%)
+    );
+}
+
+.analytics-pca__legend-note {
+    margin-left: auto;
+    font-style: italic;
+    opacity: 0.75;
+}
+
+/* --- Two-card row for diversity + quality tables --------------------- */
+.analytics-bio-tables-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: var(--space-md);
+    margin-top: var(--space-md);
+}
+
+@media (max-width: 880px) {
+    .analytics-bio-tables-row { grid-template-columns: 1fr; }
+}
+
+/* Single-column variant: when only one card occupies the row, the diversity
+   table fills the full width instead of leaving an empty column. */
+.analytics-bio-tables-row--single {
+    grid-template-columns: 1fr;
+}
+
+/* --- Tables ---------------------------------------------------------- */
+.analytics-bio-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: var(--font-size-xs);
+    margin-top: 8px;
+}
+
+.analytics-bio-table th,
+.analytics-bio-table td {
+    text-align: left;
+    padding: 8px 10px;
+    border-bottom: 1px solid var(--color-border);
+    color: var(--color-text);
+    font-weight: 400;
+}
+
+.analytics-bio-table thead th {
+    color: var(--color-text-muted);
+    font-size: 0.78rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    font-weight: 600;
+    background: transparent;
+    border-bottom: 1px solid var(--color-border);
+    padding-top: 12px;
+}
+
+.analytics-bio-table tbody:first-of-type tr:first-child th,
+.analytics-bio-table tbody:first-of-type tr:first-child td {
+    border-top: none;
+}
+
+.analytics-bio-table tbody tr:last-child th,
+.analytics-bio-table tbody tr:last-child td {
+    border-bottom: none;
+}
+
+.analytics-bio-table tbody th {
+    color: var(--color-text);
+    font-weight: 500;
+}
+
+.analytics-bio-table__num {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    color: var(--color-text-muted);
+}
+
+.analytics-bio-table__species {
+    max-width: 220px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.analytics-bio-table--zebra tbody tr:nth-child(even) {
+    background: var(--color-surface-2);
+}
+
+.analytics-bio-table--zebra tbody tr:hover {
+    background: var(--color-primary-light);
+    transition: background 120ms ease-out;
+}
+
+.analytics-bio-table__row--hover {
+    background: var(--color-primary-light);
+}

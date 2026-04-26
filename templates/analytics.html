@@ -641,6 +641,257 @@
     </div>
     {% endif %}
 
+    {# ═══════════════════════════════════════════════════════════════════
+    BIOLOGICAL INSIGHTS — diversity profile + species niche PCA
+    + per-species summary table + data-quality snapshot
+    ═══════════════════════════════════════════════════════════════════ #}
+
+    <div class="section-divider section-divider--events">
+        <span class="section-divider__icon">🌿</span>
+        <span class="section-divider__text">Biological Insights</span>
+    </div>
+
+    {# Hero — Species niche PCA #}
+    {# Experimental — gated pending biology rework.
+       The PCA over 24h diel profiles does not carry biological meaning yet,
+       so the card is wrapped in an opt-in guard. Endpoint
+       /api/analytics/species-pca, blueprint helpers, CSS, JS, and tests stay
+       wired in so the card can be enabled by flipping this guard once the
+       biological framing is finalised.
+    #}
+    {% if False %}
+    <div class="chart-card analytics-pca-card">
+        <div class="chart-card__toolbar">
+            <h3 class="chart-card__title">
+                Species niche map
+                {% if species_pca.ok %}
+                <span class="chart-card__badge">
+                    PC1 {{ species_pca.variance_pct[0] }}% · PC2 {{ species_pca.variance_pct[1] }}%
+                </span>
+                {% endif %}
+            </h3>
+        </div>
+        <p class="chart-card__meta">
+            Each point is a species, placed by its 24-hour activity profile.
+            Species with similar daily routines cluster together · Marker size = events ·
+            Colour = peak hour (morning → evening).
+        </p>
+
+        {% if species_pca.ok %}
+        {% set xs = species_pca.points | map(attribute='x') | list %}
+        {% set ys = species_pca.points | map(attribute='y') | list %}
+        {% set x_min = xs | min %}{% set x_max = xs | max %}
+        {% set y_min = ys | min %}{% set y_max = ys | max %}
+        {% set x_range = (x_max - x_min) if (x_max - x_min) > 0 else 1 %}
+        {% set y_range = (y_max - y_min) if (y_max - y_min) > 0 else 1 %}
+        {% set max_events = species_pca.points | map(attribute='events') | max %}
+
+        <div class="analytics-pca">
+            <svg viewBox="0 0 800 480" preserveAspectRatio="xMidYMid meet" class="analytics-pca__svg">
+                <line class="analytics-pca__axis" x1="0" y1="240" x2="800" y2="240" />
+                <line class="analytics-pca__axis" x1="400" y1="0" x2="400" y2="480" />
+
+                <text class="analytics-pca__quadrant" x="780" y="20" text-anchor="end">PC1 +</text>
+                <text class="analytics-pca__quadrant" x="20" y="20">PC1 −</text>
+                <text class="analytics-pca__quadrant" x="408" y="14">PC2 +</text>
+                <text class="analytics-pca__quadrant" x="408" y="476">PC2 −</text>
+
+                {% for p in species_pca.points %}
+                {% set nx = ((p.x - x_min) / x_range) * 720 + 40 %}
+                {% set ny = 460 - ((p.y - y_min) / y_range) * 440 %}
+                {% set radius = 8 + (p.events / max_events) * 22 %}
+                {% set hue = (200 + (p.peak_hour / 24) * 200) % 360 %}
+                <g class="analytics-pca__point"
+                   data-species="{{ p.species }}"
+                   data-events="{{ p.events }}"
+                   data-peak="{{ '%02d' % (p.peak_hour | int) }}:00">
+                    <circle cx="{{ nx | round(2) }}" cy="{{ ny | round(2) }}"
+                            r="{{ radius | round(2) }}"
+                            fill="hsl({{ hue | int }}, 55%, 55%)"
+                            fill-opacity="0.7"
+                            stroke="hsl({{ hue | int }}, 60%, 35%)"
+                            stroke-width="1.5" />
+                    <text class="analytics-pca__label"
+                          x="{{ (nx + radius + 6) | round(2) }}"
+                          y="{{ (ny + 4) | round(2) }}">
+                        {{ p.species | replace('_', ' ') }}
+                    </text>
+                </g>
+                {% endfor %}
+            </svg>
+
+            <div class="analytics-pca__legend">
+                <div class="analytics-pca__legend-item">
+                    <span class="analytics-pca__legend-swatch analytics-pca__legend-swatch--small"></span>
+                    <span class="analytics-pca__legend-swatch analytics-pca__legend-swatch--medium"></span>
+                    <span class="analytics-pca__legend-swatch analytics-pca__legend-swatch--large"></span>
+                    <span class="analytics-pca__legend-text">few events → many events</span>
+                </div>
+                <div class="analytics-pca__legend-item">
+                    <span class="analytics-pca__legend-gradient"></span>
+                    <span class="analytics-pca__legend-text">peak: dawn → noon → dusk</span>
+                </div>
+                {% if species_pca.min_events_filter > 1 %}
+                <div class="analytics-pca__legend-item analytics-pca__legend-note">
+                    Showing species with ≥{{ species_pca.min_events_filter }} events
+                </div>
+                {% endif %}
+            </div>
+        </div>
+        {% else %}
+        <div class="empty-state">
+            <p class="empty-state__message">
+                Niche map appears once at least two species have ≥3 events each.
+            </p>
+        </div>
+        {% endif %}
+    </div>
+    {% endif %}{# end experimental: Species niche map #}
+
+    {# Diversity profile (Data quality card gated — see guard below) #}
+    <div class="analytics-bio-tables-row analytics-bio-tables-row--single">
+        <div class="chart-card">
+            <div class="chart-card__toolbar">
+                <h3 class="chart-card__title">Diversity profile</h3>
+                {% if diversity.richness %}
+                <span class="chart-card__badge">{{ diversity.dominance_label }}</span>
+                {% endif %}
+            </div>
+            <table class="analytics-bio-table">
+                <tbody>
+                    <tr>
+                        <th>Observed richness <span title="Hill q=0">(q=0)</span></th>
+                        <td>{{ diversity.richness }}</td>
+                    </tr>
+                    <tr>
+                        <th>exp(Shannon) <span title="Hill q=1">(q=1)</span></th>
+                        <td>{{ diversity.hill_q1 }}</td>
+                    </tr>
+                    <tr>
+                        <th>1 / Simpson <span title="Hill q=2">(q=2)</span></th>
+                        <td>{{ diversity.hill_q2 }}</td>
+                    </tr>
+                    <tr>
+                        <th>Shannon H'</th>
+                        <td>{{ diversity.shannon }}</td>
+                    </tr>
+                    <tr>
+                        <th>Pielou evenness J'</th>
+                        <td>{{ diversity.pielou_evenness }}</td>
+                    </tr>
+                    <tr>
+                        <th>Sample coverage <span title="Good–Turing">(GT)</span></th>
+                        <td>{{ (diversity.sample_coverage * 100) | round(1) }}%</td>
+                    </tr>
+                    <tr>
+                        <th>Chao1 richness ± SE</th>
+                        <td>{{ diversity.chao1_richness }} ± {{ diversity.chao1_se }}</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        {# Experimental — gated alongside the PCA. The 2-col row layout was
+           designed paired with the niche map, so this card stays opt-in
+           until the biology rework lands. Endpoint
+           /api/analytics/quality-metrics, blueprint helper, and tests stay
+           wired in. Enable by flipping this guard and dropping
+           `analytics-bio-tables-row--single` above.
+        #}
+        {% if False %}
+        <div class="chart-card">
+            <div class="chart-card__toolbar">
+                <h3 class="chart-card__title">Data quality</h3>
+                <span class="chart-card__badge">
+                    Override {{ (quality_metrics.override_rate * 100) | round(1) }}%
+                </span>
+            </div>
+            <table class="analytics-bio-table">
+                <thead>
+                    <tr>
+                        <th>Image review</th>
+                        <th class="analytics-bio-table__num">Count</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% if quality_metrics.review_status %}
+                    {% for status, count in quality_metrics.review_status.items() %}
+                    <tr>
+                        <th>{{ status | replace('_', ' ') | capitalize }}</th>
+                        <td class="analytics-bio-table__num">{{ count }}</td>
+                    </tr>
+                    {% endfor %}
+                    {% else %}
+                    <tr><td colspan="2" class="empty-state__message">No images yet.</td></tr>
+                    {% endif %}
+                </tbody>
+                <thead>
+                    <tr>
+                        <th>Decision state</th>
+                        <th class="analytics-bio-table__num">Count</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% if quality_metrics.decision_state %}
+                    {% for state, count in quality_metrics.decision_state.items() %}
+                    <tr>
+                        <th>{{ state | replace('_', ' ') | capitalize }}</th>
+                        <td class="analytics-bio-table__num">{{ count }}</td>
+                    </tr>
+                    {% endfor %}
+                    {% else %}
+                    <tr><td colspan="2" class="empty-state__message">No detections yet.</td></tr>
+                    {% endif %}
+                </tbody>
+            </table>
+        </div>
+        {% endif %}{# end experimental: Data quality #}
+    </div>
+
+    {# Species summary table — replaces RAI bars + diel curve + accumulation #}
+    <div class="chart-card">
+        <div class="chart-card__toolbar">
+            <h3 class="chart-card__title">Species summary</h3>
+            <span class="chart-card__badge"
+                  title="RAI is an activity rate, not abundance (Sollmann et al.)">
+                RAI = activity, not abundance
+            </span>
+        </div>
+        {% if species_rows %}
+        <table class="analytics-bio-table analytics-bio-table--zebra">
+            <thead>
+                <tr>
+                    <th>Species</th>
+                    <th class="analytics-bio-table__num">Events</th>
+                    <th class="analytics-bio-table__num">Photos</th>
+                    <th class="analytics-bio-table__num">RAI / 100d</th>
+                    <th class="analytics-bio-table__num">Peak</th>
+                    <th class="analytics-bio-table__num">Share</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in species_rows %}
+                <tr>
+                    <th class="analytics-bio-table__species" title="{{ row.species }}">
+                        {{ row.species | replace('_', ' ') }}
+                    </th>
+                    <td class="analytics-bio-table__num">{{ row.events }}</td>
+                    <td class="analytics-bio-table__num">{{ row.photos }}</td>
+                    <td class="analytics-bio-table__num">{{ row.rai_per_100_days }}</td>
+                    <td class="analytics-bio-table__num">
+                        {% if row.peak_hour is not none %}{{ '%02d' % row.peak_hour }}:00{% else %}—{% endif %}
+                    </td>
+                    <td class="analytics-bio-table__num">{{ row.share_pct }}%</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <div class="empty-state">
+            <p class="empty-state__message">No species observed yet.</p>
+        </div>
+        {% endif %}
+    </div>
 
 </div>
 
@@ -811,4 +1062,93 @@ SIMULATION JAVASCRIPT
     })();
 </script>
 {% endif %}
+
+{# Biology — PCA hover tooltip + species-table row highlight.
+   Small enough to inline; keeps the analytics page self-contained. #}
+<script>
+(function () {
+    'use strict';
+
+    function ensureTooltip() {
+        var tip = document.getElementById('analyticsPcaTooltip');
+        if (tip) return tip;
+        tip = document.createElement('div');
+        tip.id = 'analyticsPcaTooltip';
+        tip.style.cssText = [
+            'position:absolute',
+            'pointer-events:none',
+            'background:var(--color-surface, #fff)',
+            'color:var(--color-text, #222)',
+            'border:1px solid var(--color-border, #ccc)',
+            'border-radius:4px',
+            'padding:6px 10px',
+            'font-size:0.78rem',
+            'font-family:ui-monospace, monospace',
+            'box-shadow:0 4px 12px rgba(0,0,0,0.12)',
+            'opacity:0',
+            'transition:opacity 120ms ease-out',
+            'z-index:50'
+        ].join(';');
+        var titleEl = document.createElement('strong');
+        titleEl.id = 'analyticsPcaTooltipTitle';
+        var br = document.createElement('br');
+        var metaEl = document.createElement('span');
+        metaEl.id = 'analyticsPcaTooltipMeta';
+        tip.appendChild(titleEl);
+        tip.appendChild(br);
+        tip.appendChild(metaEl);
+        document.body.appendChild(tip);
+        return tip;
+    }
+
+    function findRowForSpecies(species) {
+        var rows = document.querySelectorAll('.analytics-bio-table--zebra tbody tr');
+        for (var i = 0; i < rows.length; i++) {
+            var th = rows[i].querySelector('th');
+            if (th && th.getAttribute('title') === species) return rows[i];
+        }
+        return null;
+    }
+
+    function attach() {
+        var points = document.querySelectorAll('.analytics-pca__point');
+        if (!points.length) return;
+        var tip = ensureTooltip();
+        var titleEl = document.getElementById('analyticsPcaTooltipTitle');
+        var metaEl = document.getElementById('analyticsPcaTooltipMeta');
+
+        points.forEach(function (g) {
+            var species = g.getAttribute('data-species') || '';
+            var events = g.getAttribute('data-events') || '';
+            var peak = g.getAttribute('data-peak') || '';
+            var label = species.replace(/_/g, ' ');
+            var row = findRowForSpecies(species);
+
+            g.addEventListener('mouseenter', function () {
+                titleEl.textContent = label;
+                metaEl.textContent = events + ' events · peak ' + peak;
+                tip.style.opacity = '1';
+                if (row) row.style.background = 'var(--color-primary-light)';
+            });
+
+            g.addEventListener('mousemove', function (ev) {
+                tip.style.left = (ev.clientX + window.scrollX + 14) + 'px';
+                tip.style.top = (ev.clientY + window.scrollY + 14) + 'px';
+            });
+
+            g.addEventListener('mouseleave', function () {
+                tip.style.opacity = '0';
+                if (row) row.style.background = '';
+            });
+        });
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', attach);
+    } else {
+        attach();
+    }
+})();
+</script>
+
 {% endblock %}
