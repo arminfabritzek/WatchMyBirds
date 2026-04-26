@@ -1,0 +1,7 @@
+torch>=2.1
+diffusers>=0.30
+transformers>=4.40
+accelerate>=0.30
+safetensors>=0.4
+sentencepiece
+Pillow
