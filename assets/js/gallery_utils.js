@@ -1191,24 +1191,26 @@ function applySmartZoomToggleState(btn, isZoomed, hasBbox) {
     }
 }
 
+function safeSameOriginImagePath(rawUrl) {
+    try {
+        const parsed = new URL(rawUrl, window.location.origin);
+        if (parsed.origin !== window.location.origin) return '';
+        if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return '';
+        return parsed.pathname + parsed.search + parsed.hash;
+    } catch (e) {
+        return '';
+    }
+}
+
 function loadDeferredViewerImages(scope) {
     if (!scope || !scope.querySelectorAll) return;
     scope.querySelectorAll('.wm-image-viewer__img[data-deferred-src]').forEach(function (img) {
         const target = img.getAttribute('data-deferred-src');
         if (!target) return;
-        // Reject javascript:/data:/vbscript: — only allow http(s) or
-        // bare relative paths (which inherit the page's scheme).
-        let parsedScheme = '';
-        try {
-            parsedScheme = new URL(target, window.location.href).protocol;
-        } catch (e) {
-            return;
-        }
-        if (parsedScheme !== 'http:' && parsedScheme !== 'https:') {
-            return;
-        }
-        if (img.getAttribute('src') !== target) {
-            img.setAttribute('src', target);
+        const safeTarget = safeSameOriginImagePath(target);
+        if (!safeTarget) return;
+        if (img.getAttribute('src') !== safeTarget) {
+            img.src = safeTarget;
         }
     });
 }
@@ -1291,7 +1293,8 @@ document.addEventListener('load', function (event) {
     const img = event.target;
     if (!img.classList || !img.classList.contains('wm-image-viewer__img')) return;
     const deferredSrc = img.getAttribute('data-deferred-src');
-    if (deferredSrc && img.getAttribute('src') !== deferredSrc) return;
+    const safeDeferredSrc = deferredSrc ? safeSameOriginImagePath(deferredSrc) : '';
+    if (deferredSrc && img.getAttribute('src') !== safeDeferredSrc) return;
     if (deferredSrc) {
         const viewer = img.closest('.wm-image-viewer');
         if (viewer) viewer.classList.remove('wm-image-viewer--loading');

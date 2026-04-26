@@ -80,6 +80,24 @@ def test_detection_modals_defer_full_image_load_until_modal_open():
     assert "'show.bs.modal'" in js
 
 
+def test_deferred_viewer_images_use_same_origin_sanitizer():
+    js = _read("assets/js/gallery_utils.js")
+
+    assert "function safeSameOriginImagePath" in js
+    assert "parsed.origin !== window.location.origin" in js
+    assert "img.src = safeTarget" in js
+    assert "img.setAttribute('src', target)" not in js
+
+
+def test_tile_details_navigation_uses_same_origin_sanitizer():
+    js = _read("assets/js/tile_actions.js")
+
+    assert "function safeSameOriginPath" in js
+    assert "parsed.origin !== window.location.origin" in js
+    assert "window.location.assign(safeDetailsPath)" in js
+    assert "window.location.href = detailsHref" not in js
+
+
 def test_modal_action_bar_data_actions_are_dispatched():
     action_bar = _read("templates/components/modal_action_bar.html")
     js = _read("assets/js/tile_actions.js")

@@ -33,7 +33,7 @@ from __future__ import annotations
 import json
 import os
 import time
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlunparse
 
 import requests
 
@@ -169,6 +169,17 @@ def _allowed_download_hosts() -> frozenset[str]:
     return frozenset(h.strip().lower() for h in raw.split(",") if h.strip())
 
 
+def _download_authority_allowed(host: str, port: int | None, scheme: str) -> bool:
+    allowed = _allowed_download_hosts()
+    default_port = (
+        (scheme == "https" and port == 443)
+        or (scheme == "http" and port == 80)
+    )
+    if port is None or default_port:
+        return host in allowed
+    return f"{host}:{port}" in allowed
+
+
 def _is_allowed_download_url(url: str) -> bool:
     try:
         parsed = urlparse(url)
@@ -179,7 +190,38 @@ def _is_allowed_download_url(url: str) -> bool:
     host = (parsed.hostname or "").lower()
     if not host:
         return False
-    return host in _allowed_download_hosts()
+    try:
+        port = parsed.port
+    except ValueError:
+        return False
+    return _download_authority_allowed(host, port, parsed.scheme)
+
+
+def _safe_download_url(url: str) -> str | None:
+    """Return a canonical allowlisted download URL, or None.
+
+    Registry paths are data-controlled. Keep the network authority constrained
+    to the configured model hosts, reject URL userinfo, and rebuild the final
+    request target from parsed pieces so the requests sink never receives the
+    original registry string.
+    """
+    try:
+        parsed = urlparse(url)
+        port = parsed.port
+    except ValueError:
+        return None
+    host = (parsed.hostname or "").lower()
+    if parsed.scheme not in ("http", "https"):
+        return None
+    if not host or not _download_authority_allowed(host, port, parsed.scheme):
+        return None
+    if parsed.username or parsed.password:
+        return None
+    netloc = host
+    if port is not None:
+        netloc = f"{host}:{port}"
+    path = parsed.path or "/"
+    return urlunparse((parsed.scheme, netloc, path, "", parsed.query, ""))
 
 
 def _safe_model_dir_join(base_dir: str, *parts: str) -> str | None:
@@ -218,26 +260,13 @@ def _download_file(
     if os.path.exists(dest):
         logger.debug(f"File already exists and will be skipped: {_slv(dest)}")
         return True
-    # Inline allowlist + URL reconstruction: CodeQL's SSRF tracker only
-    # accepts the scheme/host check when it sees the parsed URL being
-    # rebuilt before the requests.get() call.
-    parsed = urlparse(url)
-    host = (parsed.hostname or "").lower()
-    if (
-        parsed.scheme not in ("http", "https")
-        or not host
-        or host not in _allowed_download_hosts()
-    ):
+    safe_url = _safe_download_url(url)
+    if safe_url is None:
         logger.error(
             f"Blocked download from non-allowlisted host: {_slv(url)!r} "
             f"(allowed: {sorted(_allowed_download_hosts())})"
         )
         return False
-    safe_url = (
-        f"{parsed.scheme}://{host}"
-        f"{parsed.path}"
-        + (f"?{parsed.query}" if parsed.query else "")
-    )
     for attempt in range(1, retries + 1):
         try:
             response = requests.get(safe_url, stream=True, timeout=timeout)
@@ -904,14 +933,8 @@ def fetch_latest_json(base_url: str, cache_dir: str) -> dict[str, str]:
     if _local_path_safe is None:
         raise ValueError(f"cache_dir {cache_dir!r} failed containment check")
     local_path = _local_path_safe
-    # Inline allowlist + URL reconstruction (see _download_file).
-    _parsed_latest = urlparse(latest_url)
-    _latest_host = (_parsed_latest.hostname or "").lower()
-    if (
-        _parsed_latest.scheme not in ("http", "https")
-        or not _latest_host
-        or _latest_host not in _allowed_download_hosts()
-    ):
+    safe_latest_url = _safe_download_url(latest_url)
+    if safe_latest_url is None:
         logger.warning(
             f"Skipping remote registry fetch from non-allowlisted host: "
             f"{latest_url!r} — falling back to local cache"
@@ -921,9 +944,6 @@ def fetch_latest_json(base_url: str, cache_dir: str) -> dict[str, str]:
         raise requests.RequestException(
             f"registry host not in WMB_ALLOWED_DOWNLOAD_HOSTS: {latest_url!r}"
         )
-    safe_latest_url = (
-        f"{_parsed_latest.scheme}://{_latest_host}{_parsed_latest.path}"
-    )
     try:
         response = requests.get(safe_latest_url, timeout=10)
         response.raise_for_status()

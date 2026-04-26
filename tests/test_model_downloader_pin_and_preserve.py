@@ -28,6 +28,7 @@ from utils.model_downloader import (
     FORCE_REFRESH_ENV_VAR,
     PIN_ENV_VAR,
     PIN_ENV_VAR_PREFIX,
+    _safe_download_url,
     fetch_latest_json,
     load_latest_identifier,
     set_latest_model_id,
@@ -66,6 +67,36 @@ def _write_local(cache_dir: Path, payload: dict) -> None:
 def _touch(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(b"x")
+
+
+def test_safe_download_url_rebuilds_allowlisted_model_url():
+    assert (
+        _safe_download_url("https://example.test/object_detection/model.onnx?download=1")
+        == "https://example.test/object_detection/model.onnx?download=1"
+    )
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "file:///etc/passwd",
+        "https://evil.test/model.onnx",
+        "https://example.test.evil.test/model.onnx",
+        "https://user@example.test/model.onnx",
+        "https://example.test:4443/model.onnx",
+    ],
+)
+def test_safe_download_url_rejects_non_registry_authorities(url):
+    assert _safe_download_url(url) is None
+
+
+def test_safe_download_url_allows_explicit_self_hosted_port(monkeypatch):
+    monkeypatch.setenv("WMB_ALLOWED_DOWNLOAD_HOSTS", "hf.example:4443")
+
+    assert (
+        _safe_download_url("https://hf.example:4443/models/latest_models.json")
+        == "https://hf.example:4443/models/latest_models.json"
+    )
 
 
 # ---------------------------------------------------------------------------

@@ -56,6 +56,17 @@
         btn.setAttribute('title', isQueued ? 'Already in training export pool' : 'Confirm and add to training export');
     }
 
+    function safeSameOriginPath(rawUrl) {
+        try {
+            const parsed = new URL(rawUrl, window.location.origin);
+            if (parsed.origin !== window.location.origin) return '';
+            if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return '';
+            return parsed.pathname + parsed.search + parsed.hash;
+        } catch (e) {
+            return '';
+        }
+    }
+
     async function addDetectionToTrainingExport(detectionId, btn) {
         const currentSpecies = btn ? (btn.getAttribute('data-current-species') || '').trim() : '';
         try {
@@ -147,16 +158,8 @@
                     }
                 }
                 if (detailsHref) {
-                    // Reject javascript:/data:/vbscript: hrefs.
-                    let parsedScheme = '';
-                    try {
-                        parsedScheme = new URL(detailsHref, window.location.href).protocol;
-                    } catch (e) {
-                        break;
-                    }
-                    if (parsedScheme === 'http:' || parsedScheme === 'https:') {
-                        window.location.href = detailsHref;
-                    }
+                    const safeDetailsPath = safeSameOriginPath(detailsHref);
+                    if (safeDetailsPath) window.location.assign(safeDetailsPath);
                 }
                 break;
 
