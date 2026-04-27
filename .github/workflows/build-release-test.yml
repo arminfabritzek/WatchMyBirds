@@ -1,0 +1,246 @@
+name: Build Release Image (Test, no publish)
+
+# Production-mode RPi image build identical to build-release.yml,
+# but without creating a GitHub Release, pushing Docker images, or
+# committing APP_VERSION. The compressed .img.xz lands as a GitHub
+# Actions artifact (default 90-day retention) so it can be downloaded
+# and flashed for verification.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-release-test:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout App Code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        with:
+          fetch-depth: 0
+          path: app_code
+
+      - name: Install Image Build Dependencies
+        run: sudo apt-get update && sudo apt-get install -y xz-utils parted qemu-user-static
+
+      - name: Build Golden Base Image On Demand
+        run: bash app_code/scripts/build_golden_image.sh app_code
+
+      - name: Create Wheelhouse (Host)
+        run: |
+          mkdir -p wheelhouse
+          # The on-demand golden build bakes in Python 3.12 once, so the
+          # release lane can reuse a fully offline cp312 wheelhouse.
+          #
+          # We declare three platform tags and three ABI tags so pip accepts
+          # any combination present in our pinned set:
+          #   - manylinux2014 / 2_27 / 2_28 covers the spread from older
+          #     pure-python deps to numpy 2.4.x and onnxruntime 1.24.x which
+          #     ship only newer-manylinux ARM64 wheels.
+          #   - cp312 / abi3 / none covers cpython-specific (numpy, lxml),
+          #     stable-ABI (opencv, psutil, protobuf), and pure-python wheels.
+          # The Trixie golden-image base ships glibc 2.40, so 2_28 is safe.
+          pip download \
+            -r app_code/requirements.txt \
+            --dest ./wheelhouse \
+            --platform manylinux2014_aarch64 \
+            --platform manylinux_2_27_aarch64 \
+            --platform manylinux_2_28_aarch64 \
+            --python-version 3.12 \
+            --implementation cp \
+            --abi cp312 \
+            --abi abi3 \
+            --abi none \
+            --only-binary=:all: \
+            --extra-index-url https://www.piwheels.org/simple
+
+      - name: Mount and Inject App
+        run: |
+          set -euo pipefail
+
+          mkdir -p mount_point
+          LOOP_DEV=$(sudo losetup --find --show --partscan golden.img)
+
+          sudo mount ${LOOP_DEV}p2 mount_point
+          sudo mount ${LOOP_DEV}p1 mount_point/boot/firmware
+
+          # ---------------------------------------------------------
+          # PREPARE CHROOT & INJECTION
+          # ---------------------------------------------------------
+
+          # Copy QEMU
+          sudo cp /usr/bin/qemu-aarch64-static mount_point/usr/bin/
+
+          # Inject App Code
+          sudo mkdir -p mount_point/opt/app
+          # Sync code (excluding git)
+          sudo rsync -av --delete --exclude='.git' --exclude='.github' app_code/ mount_point/opt/app/
+          sudo chroot mount_point install -d -o watchmybirds -g watchmybirds -m 0750 /opt/app/data
+
+          # Inject Wheelhouse
+          sudo mkdir -p mount_point/opt/wheelhouse
+          sudo cp -r wheelhouse/* mount_point/opt/wheelhouse/
+          # Write Version Metadata
+          RELEASE_VER=$(bash app_code/scripts/version_info.sh next-release app_code)
+          echo "${RELEASE_VER}" | sudo tee mount_point/opt/app/APP_VERSION
+          echo "${{ github.sha }}" | sudo tee mount_point/opt/app/commit.txt
+          date -u +%Y-%m-%dT%H:%M:%SZ | sudo tee mount_point/opt/app/build_date.txt
+
+          # Fix Permissions (Resolve user inside chroot)
+          sudo chroot mount_point chown -R watchmybirds:watchmybirds /opt/app
+
+          sudo cp mount_point/opt/app/systemd/app.service mount_point/etc/systemd/system/
+          sudo ln -sf /etc/systemd/system/app.service mount_point/etc/systemd/system/multi-user.target.wants/app.service
+
+          # Update First-Boot Script & Service (ensure latest version from repo is used)
+          sudo cp mount_point/opt/app/rpi/first-boot/first-boot.sh mount_point/usr/local/bin/wmb-first-boot.sh
+          sudo chmod 755 mount_point/usr/local/bin/wmb-first-boot.sh
+          sudo cp mount_point/opt/app/rpi/systemd/wmb-first-boot.service mount_point/etc/systemd/system/
+          sudo ln -sf /etc/systemd/system/wmb-first-boot.service mount_point/etc/systemd/system/multi-user.target.wants/wmb-first-boot.service
+
+          # Install WiFi Setup System (Path Unit + Script)
+          sudo cp mount_point/opt/app/rpi/first-boot/setup_wifi.sh mount_point/usr/local/bin/wmb-setup-wifi.sh
+          sudo chmod 755 mount_point/usr/local/bin/wmb-setup-wifi.sh
+
+          sudo cp mount_point/opt/app/rpi/systemd/wmb-wifi-setup.service mount_point/etc/systemd/system/
+          sudo cp mount_point/opt/app/rpi/systemd/wmb-wifi-setup.path mount_point/etc/systemd/system/
+          sudo cp mount_point/opt/app/rpi/systemd/wmb-setup-server.service mount_point/etc/systemd/system/
+
+          # Install Setup Server assets (AP-only UI)
+          sudo cp mount_point/opt/app/rpi/setup-server/setup_server.py mount_point/usr/local/bin/wmb-setup-server.py
+          sudo chmod 755 mount_point/usr/local/bin/wmb-setup-server.py
+          sudo mkdir -p mount_point/usr/local/share/watchmybirds/setup/templates
+          sudo cp mount_point/opt/app/rpi/setup-server/templates/setup.html mount_point/usr/local/share/watchmybirds/setup/templates/setup.html
+
+          # Enable Path Unit
+          sudo ln -sf /etc/systemd/system/wmb-wifi-setup.path mount_point/etc/systemd/system/multi-user.target.wants/wmb-wifi-setup.path
+
+          # ---------------------------------------------------------
+          # INSTALL DEPENDENCIES (Offline Chroot)
+          # ---------------------------------------------------------
+
+          # Bind mounts for virtual environment creation
+          sudo mount --bind /dev mount_point/dev
+          sudo mount --bind /dev/pts mount_point/dev/pts
+          sudo mount --bind /proc mount_point/proc
+          sudo mount --bind /sys mount_point/sys
+          sudo mount --bind /etc/resolv.conf mount_point/etc/resolv.conf
+
+          sudo chroot mount_point /bin/bash -c "
+            set -ex
+            command -v python3.12 >/dev/null 2>&1 || {
+              echo 'python3.12 missing from the on-demand golden image build' >&2
+              exit 1
+            }
+
+            # Create Venv
+            python3.12 -m venv /opt/app/.venv
+
+            # Install Requirements from Wheelhouse
+            /opt/app/.venv/bin/pip install --no-index --find-links /opt/wheelhouse -r /opt/app/requirements.txt
+
+            # Cleanup Wheelhouse (Crucial for image size)
+            rm -rf /opt/wheelhouse
+          "
+
+          # ---------------------------------------------------------
+          # VERIFY INJECTED CODE
+          # ---------------------------------------------------------
+          echo "=== VERIFY: Checking injected app code ==="
+          echo "--- stream.html: Best of Species ---"
+          sudo grep "Best of Species" mount_point/opt/app/templates/stream.html || echo "❌ MISSING: Best of Species"
+          echo "--- appbar.html: weather count ---"
+          sudo grep -c "weather" mount_point/opt/app/templates/partials/appbar.html || echo "❌ MISSING: weather in appbar"
+          echo "--- web_interface.py: best_species_preview count ---"
+          sudo grep -c "best_species_preview" mount_point/opt/app/web/web_interface.py || echo "❌ MISSING: best_species_preview"
+          echo "--- weather_service.py exists? ---"
+          ls -la mount_point/opt/app/web/services/weather_service.py || echo "❌ MISSING: weather_service.py"
+          echo "--- commit.txt content ---"
+          cat mount_point/opt/app/commit.txt
+          echo "=== VERIFY COMPLETE ==="
+
+          # ---------------------------------------------------------
+          # CLEANUP
+          # ---------------------------------------------------------
+          cleanup_mount() {
+            local target="$1"
+            local attempt
+
+            if ! mountpoint -q "$target"; then
+              return 0
+            fi
+
+            for attempt in 1 2 3; do
+              if sudo umount "$target"; then
+                return 0
+              fi
+              echo "umount failed for $target (attempt ${attempt}/3); killing remaining processes..."
+              sudo fuser -km "$target" 2>/dev/null || true
+              sleep 2
+            done
+
+            echo "umount still failed for $target; falling back to lazy unmount"
+            sudo umount -l "$target"
+          }
+
+          sync
+
+          # Kill any leftover chroot processes before cleanup
+          sudo fuser -km mount_point 2>/dev/null || true
+          sleep 1
+
+          cleanup_mount mount_point/sys
+          cleanup_mount mount_point/proc
+          cleanup_mount mount_point/etc/resolv.conf
+          cleanup_mount mount_point/dev/pts
+          cleanup_mount mount_point/dev
+          sudo rm mount_point/usr/bin/qemu-aarch64-static
+
+          sudo umount mount_point/boot/firmware
+          sudo umount mount_point
+          sudo losetup -d $LOOP_DEV
+
+      - name: Set Build Date
+        id: builddate
+        run: |
+          echo "date=$(date +%Y-%m-%d-%H%M)" >> $GITHUB_OUTPUT
+          echo "date_short=$(date +%Y-%m-%d)" >> $GITHUB_OUTPUT
+
+      - name: Resolve Target Version (informational)
+        id: version
+        run: |
+          TARGET_VER=$(bash app_code/scripts/version_info.sh next-release app_code)
+          echo "target=${TARGET_VER}" >> $GITHUB_OUTPUT
+
+      - name: Rename Image
+        run: mv golden.img watchmybirds-rpi-test-${{ steps.builddate.outputs.date }}.img
+
+      - name: Compress Test Image
+        run: xz -z -1 -T0 watchmybirds-rpi-test-${{ steps.builddate.outputs.date }}.img
+
+      - name: Upload Image as Artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: watchmybirds-rpi-test-${{ steps.builddate.outputs.date }}
+          path: watchmybirds-rpi-test-${{ steps.builddate.outputs.date }}.img.xz
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Write Build Summary
+        run: |
+          IMG_FILE="watchmybirds-rpi-test-${{ steps.builddate.outputs.date }}.img.xz"
+          IMG_SIZE=$(du -h "$IMG_FILE" | cut -f1)
+          {
+            echo "## Raspberry Pi Test Image (no publish)"
+            echo
+            echo "- Would-be release version: \`v${{ steps.version.outputs.target }}\` (not published)"
+            echo "- Artifact: \`${IMG_FILE}\` (${IMG_SIZE})"
+            echo "- Commit: \`${{ github.sha }}\`"
+            echo "- Build date: \`${{ steps.builddate.outputs.date_short }}\`"
+            echo "- Retention: 14 days"
+            echo
+            echo "Download from the **Artifacts** section above and flash with"
+            echo "[Raspberry Pi Imager](https://www.raspberrypi.com/software/)."
+          } >> "$GITHUB_STEP_SUMMARY"
