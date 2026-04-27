@@ -14,6 +14,7 @@ import os
 import queue
 import threading
 import time
+from collections import deque
 from datetime import datetime
 
 from camera.video_capture import VideoCapture
@@ -89,8 +90,12 @@ class DetectionManager:
         self.previous_frame_hash = None
         self.consecutive_identical_frames = 0
 
-        # Detection timing summary (logged periodically instead of per-frame)
+        # Detection / classification timing summary (logged periodically
+        # instead of per-frame). Both lists are appended from different
+        # threads (detect-loop / processing-loop); list.append() is
+        # atomic under CPython's GIL so no lock is needed.
         self._det_times: list[int] = []
+        self._cls_times: list[int] = []
         self._det_summary_interval = 15  # seconds
         self._det_summary_last = time.monotonic()
 
@@ -107,6 +112,20 @@ class DetectionManager:
             "unknown": 0,
             "rejected": 0,
         }
+
+        # Burst-cap state (Filter B): timestamps of admitted detections
+        # within the rolling window. Uses monotonic clock so wall-clock
+        # adjustments don't move the window.
+        #
+        # The cap and window values themselves are read live from
+        # self.config in _burst_admit() so Web-UI changes take effect on
+        # the next detection — same live-reload semantics as
+        # SAVE_THRESHOLD. The deque has no maxlen because the cap can
+        # change at runtime; _burst_admit() trims the left end on every
+        # call so memory stays bounded by the active cap.
+        self._burst_timestamps: deque[float] = deque()
+        self._burst_skipped_total = 0
+        self._burst_skipped_last_log = time.monotonic()
 
         # Pending species buffer (for notifications)
         self.pending_species = {}
@@ -512,15 +531,37 @@ class DetectionManager:
             self._det_times.append(det_ms)
             now_mono = time.monotonic()
             if now_mono - self._det_summary_last >= self._det_summary_interval:
-                n = len(self._det_times)
-                avg = sum(self._det_times) // n
-                lo = min(self._det_times)
-                hi = max(self._det_times)
-                logger.info(
-                    "[DET] %ds summary: %d frames | avg %dms | min %dms | max %dms",
-                    int(now_mono - self._det_summary_last), n, avg, lo, hi,
-                )
+                window_s = int(now_mono - self._det_summary_last)
+                n_det = len(self._det_times)
+                det_avg = sum(self._det_times) // n_det
+                det_lo = min(self._det_times)
+                det_hi = max(self._det_times)
+                # Snapshot CLS samples (different thread writes them).
+                # Slice-copy so we don't race with a concurrent append;
+                # CLS may have zero samples in this window if no frames
+                # had detections (Processing loop only fires on detects).
+                cls_snapshot = self._cls_times[:]
+                if cls_snapshot:
+                    n_cls = len(cls_snapshot)
+                    cls_avg = sum(cls_snapshot) // n_cls
+                    cls_lo = min(cls_snapshot)
+                    cls_hi = max(cls_snapshot)
+                    logger.info(
+                        "[DET+CLS] %ds summary: %d frames | "
+                        "DET avg %dms (min %dms / max %dms) | "
+                        "CLS %d samples avg %dms (min %dms / max %dms)",
+                        window_s, n_det,
+                        det_avg, det_lo, det_hi,
+                        n_cls, cls_avg, cls_lo, cls_hi,
+                    )
+                else:
+                    logger.info(
+                        "[DET] %ds summary: %d frames | "
+                        "avg %dms | min %dms | max %dms | CLS no samples",
+                        window_s, n_det, det_avg, det_lo, det_hi,
+                    )
                 self._det_times.clear()
+                self._cls_times.clear()
                 self._det_summary_last = now_mono
 
             time.sleep(sleep_time)
@@ -537,6 +578,64 @@ class DetectionManager:
             except queue.Empty:
                 pass
             self.processing_queue.put_nowait(job)
+
+    def _burst_admit(self) -> bool:
+        """Sliding-window burst-cap gate (Filter B).
+
+        Returns True and records the admission timestamp when the rolling
+        window has capacity. Returns False (and increments a skip counter)
+        when the cap is hit — the caller should skip persistence for that
+        detection.
+
+        Reads MAX_DETECTIONS_PER_BURST and BURST_WINDOW_SECONDS live from
+        self.config so Web-UI changes apply on the next detection cycle.
+        Disabled when MAX_DETECTIONS_PER_BURST <= 0.
+        """
+        try:
+            max_admits = int(self.config.get("MAX_DETECTIONS_PER_BURST", 100))
+        except (TypeError, ValueError):
+            max_admits = 100
+        try:
+            window_seconds = float(self.config.get("BURST_WINDOW_SECONDS", 60.0))
+        except (TypeError, ValueError):
+            window_seconds = 60.0
+        if window_seconds <= 0:
+            window_seconds = 60.0
+
+        if max_admits <= 0:
+            return True
+
+        now = time.monotonic()
+        cutoff = now - window_seconds
+        # Trim left until the oldest entry is inside the window. deque
+        # keeps timestamps in monotonic order so a single while-loop
+        # suffices.
+        while self._burst_timestamps and self._burst_timestamps[0] < cutoff:
+            self._burst_timestamps.popleft()
+        # Also trim if the cap was lowered at runtime — keep only the
+        # newest max_admits entries so a freshly-tightened cap takes
+        # effect immediately rather than after the window expires.
+        while len(self._burst_timestamps) > max_admits:
+            self._burst_timestamps.popleft()
+
+        if len(self._burst_timestamps) >= max_admits:
+            self._burst_skipped_total += 1
+            # Throttled log so a sustained flock doesn't spam.
+            if now - self._burst_skipped_last_log >= 30.0:
+                logger.warning(
+                    "[BURST-CAP] skipped %d detections in last %ds "
+                    "(cap=%d / window=%.0fs)",
+                    self._burst_skipped_total,
+                    int(now - self._burst_skipped_last_log),
+                    max_admits,
+                    window_seconds,
+                )
+                self._burst_skipped_total = 0
+                self._burst_skipped_last_log = now
+            return False
+
+        self._burst_timestamps.append(now)
+        return True
 
     # =========================================================================
     # PROCESSING LOOP - Uses Services
@@ -588,12 +687,43 @@ class DetectionManager:
 
             from detectors.interfaces.persistence import DetectionData
 
+            # Resolve the active save threshold once per frame so Filter (A)
+            # uses exactly the same value as the detect-loop gate at
+            # detector.py:635 (any-above-threshold). Without this, a frame
+            # admitted by ONE strong detection would also persist all the
+            # weaker companion detections — the root cause of issue #32.
+            from config import effective_save_threshold
+
+            detector_obj = getattr(self.detection_service, "_detector", None)
+            underlying = (
+                getattr(detector_obj, "model", None) if detector_obj else None
+            )
+            detector_conf = (
+                getattr(underlying, "conf_threshold_default", None)
+                if underlying is not None
+                else None
+            )
+            save_thr = effective_save_threshold(self.config, detector_conf)
+
             for idx, det in enumerate(detection_info_list, start=1):
                 x1, y1, x2, y2 = det["x1"], det["y1"], det["x2"], det["y2"]
                 od_conf = det["confidence"]
                 bbox_tuple = (x1, y1, x2, y2)
                 od_class_name = det.get("class_name", "bird")
                 is_bird = is_bird_od_class(od_class_name)
+
+                # Filter (A): per-detection save-threshold gate.
+                # The frame-level gate (detector.py:635) only checks whether
+                # ANY detection clears the threshold. Re-apply per detection
+                # here so weaker companions in a flock are not persisted.
+                if od_conf < save_thr:
+                    continue
+
+                # Filter (B): sliding-window burst cap. When too many
+                # detections fire in a short window (e.g. sparrow flock),
+                # stop persisting until the burst subsides.
+                if not self._burst_admit():
+                    continue
 
                 # Create crop for classification via CropService
                 crop_rgb = self.crop_service.create_classification_crop(
@@ -716,26 +846,9 @@ class DetectionManager:
                         notify_eligible = smoothed_state == DecisionState.CONFIRMED
                     else:
                         # Legacy-conservative fallback (no decision policy).
-                        # Uses the same resolver as the detect loop so auto
-                        # and manual modes stay consistent across gates.
-                        from config import effective_save_threshold
-
-                        detector_obj = getattr(
-                            self.detection_service, "_detector", None
-                        )
-                        underlying = (
-                            getattr(detector_obj, "model", None)
-                            if detector_obj
-                            else None
-                        )
-                        detector_conf = (
-                            getattr(underlying, "conf_threshold_default", None)
-                            if underlying is not None
-                            else None
-                        )
-                        save_thr = effective_save_threshold(
-                            self.config, detector_conf
-                        )
+                        # Reuses save_thr already resolved at the top of the
+                        # detection loop so auto and manual modes stay
+                        # consistent across gates.
                         notify_eligible = cls_conf > 0 and score >= save_thr
 
                     if score > best_score and notify_eligible:
@@ -762,12 +875,24 @@ class DetectionManager:
                 if self.notification_service.should_send():
                     self.notification_service.send_summary()
 
-            # Log timing
+            # Log timing.
+            # The detect-loop and processing-loop run on separate threads.
+            # det_cycle = DETECTION_INTERVAL_SECONDS target = DET + det_idle
+            # (the idle is what the *detect* loop sleeps after queuing this
+            # job). CLS happens here in the processing loop and does NOT
+            # add to det_cycle — it runs in parallel with the next detect.
             cls_duration_ms = int((time.time() - cls_start) * 1000)
+            det_idle_ms = job["sleep_time_ms"]
+            det_cycle_ms = detection_time_ms + det_idle_ms
+            # Feed the CLS sample into the shared summary buffer; the
+            # detect-loop reads it on its 15s-tick so the summary line
+            # carries both DET and CLS aggregates.
+            self._cls_times.append(cls_duration_ms)
             logger.info(
-                f"[DET+CLS] Total={detection_time_ms + cls_duration_ms}ms "
+                f"[DET+CLS] pipeline={detection_time_ms + cls_duration_ms}ms "
                 f"(DET={detection_time_ms}ms, CLS={cls_duration_ms}ms) | "
-                f"Objects={len(detection_info_list)} | sleep {job['sleep_time_ms']}ms"
+                f"Objects={len(detection_info_list)} | "
+                f"det_cycle={det_cycle_ms}ms (idle {det_idle_ms}ms)"
             )
 
         logger.info("Processing loop stopped.")

@@ -876,8 +876,75 @@
                 <div id="saveThresholdWarn" class="settings-field__help settings-field__help--warn" role="alert" style="display:none;"></div>
                 <div class="settings-field__help">
                     <strong>Auto</strong> follows the active model: <span id="saveThresholdActiveModel">—</span>.
-                    <strong>Manual</strong> uses whatever value you set here.
-                    Higher saves disk space by dropping the least-confident detections; at or below the detection floor keeps every detection the model returned.
+                    Concretely it computes <code>model_floor + 0.10</code>, so
+                    a YOLOX-Tiny with a floor of <code>0.15</code> yields an
+                    effective threshold of <code>0.25</code> — relatively
+                    permissive. The Manual fallback default is <code>0.65</code>.
+                    <strong>Manual</strong> uses whatever value you set here
+                    (typical tightening: <code>0.80</code>–<code>0.90</code>).
+                    The threshold is applied <em>per detection</em>: in a frame
+                    with multiple birds, only those scoring at or above the
+                    threshold are persisted — weaker companions are dropped.
+                    Higher values save disk space and review time at the cost
+                    of dropping borderline detections. Changes take effect on
+                    the next detection cycle (no restart needed).
+                </div>
+            </div>
+
+            <!-- ── Burst cap (Filter B) ──────────────────────────────
+                 Sliding-window cap on persisted detections, designed to
+                 protect the review queue when a flock of common species
+                 (e.g. sparrows) overwhelms the per-detection threshold.
+                 Lives next to Save Threshold because both gates work
+                 together: (A) drops weak detections, (B) drops the tail
+                 of bursts. -->
+            <div class="settings-field mt-4">
+                <label class="settings-field__label" for="MAX_DETECTIONS_PER_BURST"
+                    title="Maximum detections persisted within the rolling burst window. Once the cap is hit, additional detections are skipped until the window clears. Set to 0 to disable.">
+                    Burst Cap (max detections per window)
+                </label>
+                <div class="d-flex align-items-center gap-2">
+                    <input type="number" step="1" min="0"
+                        name="MAX_DETECTIONS_PER_BURST" id="MAX_DETECTIONS_PER_BURST"
+                        class="form-control" style="max-width: 8rem;"
+                        value="{{ payload['MAX_DETECTIONS_PER_BURST'].value if 'MAX_DETECTIONS_PER_BURST' in payload else 100 }}">
+                    <span class="settings-field__help mb-0">detections</span>
+                </div>
+                <div class="settings-field__help">
+                    Sliding-window cap that protects the review queue from
+                    flocks of common species. Default <code>100</code> per
+                    <code>60</code>s (set to <code>0</code> to disable).
+                    The Save Threshold above runs first, so weak detections
+                    never consume burst slots. Skipped bursts are noted in
+                    the log every 30s.
+                    <br>
+                    <strong>Tuning rule of thumb:</strong> if the review
+                    queue still overflows, halve this cap first
+                    (<code>50</code>), then extend the window below
+                    (<code>120</code>s) to throttle the rate further. Only
+                    after that, raise the Save Threshold.
+                </div>
+            </div>
+
+            <div class="settings-field mt-3">
+                <label class="settings-field__label" for="BURST_WINDOW_SECONDS"
+                    title="Length of the rolling window over which the burst cap is enforced.">
+                    Burst Window
+                </label>
+                <div class="d-flex align-items-center gap-2">
+                    <input type="number" step="1" min="1"
+                        name="BURST_WINDOW_SECONDS" id="BURST_WINDOW_SECONDS"
+                        class="form-control" style="max-width: 8rem;"
+                        value="{{ payload['BURST_WINDOW_SECONDS'].value if 'BURST_WINDOW_SECONDS' in payload else 60 }}">
+                    <span class="settings-field__help mb-0">seconds</span>
+                </div>
+                <div class="settings-field__help">
+                    Window length for the Burst Cap. Default <code>60</code>
+                    seconds — i.e. with the default cap of <code>100</code>,
+                    at most 100 detections will be saved per minute,
+                    regardless of how many the detector returns. Lengthen
+                    this (e.g. <code>120</code>s) to throttle the saved
+                    rate further without lowering the cap.
                 </div>
             </div>
 

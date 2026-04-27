@@ -69,6 +69,12 @@ DEFAULTS = {
     # model_metadata.json). CONFIDENCE_THRESHOLD_DETECTION has been retired.
     "SAVE_THRESHOLD": 0.65,
     "SAVE_THRESHOLD_MODE": "auto",  # "auto" (derived from model) or "manual"
+    # Burst-cap (Filter B): max detections persisted within
+    # BURST_WINDOW_SECONDS. Protects the review queue from being flooded by
+    # flocks of common species (issue #32). Set MAX_DETECTIONS_PER_BURST to
+    # 0 to disable.
+    "MAX_DETECTIONS_PER_BURST": 100,
+    "BURST_WINDOW_SECONDS": 60.0,
     "DETECTION_INTERVAL_SECONDS": 2.0,
     "MODEL_BASE_PATH": "./data/models",
     "BBOX_QUALITY_THRESHOLD": 0.40,
@@ -145,6 +151,11 @@ RUNTIME_KEYS = {
     "MOTION_SENSITIVITY",
     "SPECIES_COMMON_NAME_LOCALE",
     "TRAINING_EXPORT_AUTO_OPT_IN",
+    # Burst-cap (Filter B) keys. Both are read live every detection cycle
+    # from self.config in DetectionManager._burst_admit(), so UI changes
+    # take effect on the next detection — no restart needed.
+    "MAX_DETECTIONS_PER_BURST",
+    "BURST_WINDOW_SECONDS",
     # STREAM_WIDTH_OUTPUT_RESIZE is read once at mount time in
     # web_interface.py, so changing it here takes effect after the
     # next restart. It's still in RUNTIME_KEYS because the Settings
@@ -612,12 +623,30 @@ def _coerce_config_types(config):
         except Exception:
             config[key] = DEFAULTS.get(key, 500)
 
+    # MAX_DETECTIONS_PER_BURST: 0 disables the cap, otherwise positive int.
+    try:
+        val = int(float(config.get("MAX_DETECTIONS_PER_BURST", 100)))
+        config["MAX_DETECTIONS_PER_BURST"] = max(0, val)
+    except Exception:
+        config["MAX_DETECTIONS_PER_BURST"] = DEFAULTS.get(
+            "MAX_DETECTIONS_PER_BURST", 100
+        )
+
     for key in ("DETECTION_INTERVAL_SECONDS", "TELEGRAM_COOLDOWN"):
         try:
             val = float(config.get(key, DEFAULTS.get(key, 1.0)))
             config[key] = val
         except Exception:
             config[key] = DEFAULTS.get(key, 1.0)
+
+    # BURST_WINDOW_SECONDS: positive float, fall back to default on zero/neg.
+    try:
+        val = float(config.get("BURST_WINDOW_SECONDS", 60.0))
+        config["BURST_WINDOW_SECONDS"] = (
+            val if val > 0 else DEFAULTS.get("BURST_WINDOW_SECONDS", 60.0)
+        )
+    except Exception:
+        config["BURST_WINDOW_SECONDS"] = DEFAULTS.get("BURST_WINDOW_SECONDS", 60.0)
 
     # TELEGRAM_REPORT_TIME: strict HH:MM 24h format.
     report_time = config.get(
@@ -874,6 +903,22 @@ def _validate_value(key, value):
         except Exception:
             return False, None
         if val >= 0.01:  # Minimum interval of 10ms
+            return True, val
+        return False, None
+    if key == "MAX_DETECTIONS_PER_BURST":
+        try:
+            val = int(float(value))
+        except Exception:
+            return False, None
+        if val >= 0:  # 0 disables the cap
+            return True, val
+        return False, None
+    if key == "BURST_WINDOW_SECONDS":
+        try:
+            val = float(value)
+        except Exception:
+            return False, None
+        if val > 0:
             return True, val
         return False, None
     if key == "EDIT_PASSWORD":

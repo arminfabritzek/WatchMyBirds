@@ -2696,6 +2696,8 @@ def create_web_interface(detection_manager, system_monitor=None):
         "STREAM_FPS_CAPTURE",
         "TELEGRAM_COOLDOWN",
         "GALLERY_DISPLAY_THRESHOLD",
+        "MAX_DETECTIONS_PER_BURST",
+        "BURST_WINDOW_SECONDS",
     }
 
     SETTING_LABELS = {
@@ -2726,6 +2728,8 @@ def create_web_interface(detection_manager, system_monitor=None):
         "INBOX_REQUIRE_EXIF_GPS": "Inbox Require EXIF GPS (Skip imports without GPSLatitude/GPSLongitude)",
         "SPECIES_COMMON_NAME_LOCALE": "Species Common Names (Language for display names: DE=Deutsch, NO=Norsk)",
         "TRAINING_EXPORT_AUTO_OPT_IN": "Auto-queue approvals for training export (Each approved event immediately joins the training export pool — visible in /admin/export)",
+        "MAX_DETECTIONS_PER_BURST": "Burst Cap (Max detections persisted per rolling window — protects review queue from flocks; 0 disables)",
+        "BURST_WINDOW_SECONDS": "Burst Window (Seconds for the rolling burst-cap window)",
     }
 
     # Keys ordered for UI display purposes
@@ -2733,6 +2737,8 @@ def create_web_interface(detection_manager, system_monitor=None):
         "VIDEO_SOURCE",
         "SAVE_THRESHOLD_MODE",
         "SAVE_THRESHOLD",
+        "MAX_DETECTIONS_PER_BURST",
+        "BURST_WINDOW_SECONDS",
         "DETECTION_INTERVAL_SECONDS",
         "DAY_AND_NIGHT_CAPTURE",
         "DAY_AND_NIGHT_CAPTURE_LOCATION",
@@ -2762,6 +2768,8 @@ def create_web_interface(detection_manager, system_monitor=None):
         "DEBUG_MODE",
         "TELEGRAM_BOT_TOKEN",
         "TELEGRAM_CHAT_ID",
+        "MAX_DETECTIONS_PER_BURST",
+        "BURST_WINDOW_SECONDS",
     }
 
     SYSTEM_KEYS_ORDER = [
