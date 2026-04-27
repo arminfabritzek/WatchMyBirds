@@ -35,28 +35,31 @@ jobs:
       - name: Create Wheelhouse (Host)
         run: |
           mkdir -p wheelhouse
-          grep -v '^onnxruntime==' app_code/requirements.txt > /tmp/wmb-base-requirements.txt
 
           # The on-demand golden build bakes in Python 3.12 once, so the
           # downstream DEV lane can stay offline and reuse a cp312 wheelhouse.
+          #
+          # We declare three platform tags and three ABI tags so pip accepts
+          # any combination present in our pinned set:
+          #   - manylinux2014 / 2_27 / 2_28 covers the spread from older
+          #     pure-python deps to numpy 2.4.x and onnxruntime 1.24.x which
+          #     ship only newer-manylinux ARM64 wheels.
+          #   - cp312 / abi3 / none covers cpython-specific (numpy, lxml),
+          #     stable-ABI (opencv, psutil, protobuf), and pure-python wheels.
+          # The Trixie golden-image base ships glibc 2.40, so 2_28 is safe.
           pip download \
-            -r /tmp/wmb-base-requirements.txt \
+            -r app_code/requirements.txt \
             --dest ./wheelhouse \
             --platform manylinux2014_aarch64 \
-            --python-version 3.12 \
-            --only-binary=:all: \
-            --extra-index-url https://www.piwheels.org/simple
-
-          # onnxruntime 1.24.x publishes ARM64 wheels with a newer manylinux tag,
-          # so fetch it separately and place it into the same offline wheelhouse.
-          pip download \
-            --dest ./wheelhouse \
             --platform manylinux_2_27_aarch64 \
+            --platform manylinux_2_28_aarch64 \
             --python-version 3.12 \
             --implementation cp \
             --abi cp312 \
+            --abi abi3 \
+            --abi none \
             --only-binary=:all: \
-            onnxruntime==1.24.4
+            --extra-index-url https://www.piwheels.org/simple
 
       - name: Mount and Inject App (DEV MODE)
         run: |
