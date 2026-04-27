@@ -1,5 +1,5 @@
 torch>=2.1
-diffusers>=0.30
+diffusers>=0.37.1
 transformers>=4.40
 accelerate>=0.30
 safetensors>=0.4
