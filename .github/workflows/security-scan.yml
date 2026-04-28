@@ -10,6 +10,9 @@ on:
   schedule:
     - cron: "0 8 * * 1" # Weekly on Mondays
 
+permissions:
+  contents: read
+
 jobs:
   pip-audit:
     runs-on: ubuntu-latest

@@ -76,10 +76,12 @@ def _drain_one_job(mgr, job):
     """Run _processing_loop just long enough to drain `job` and exit."""
     mgr.processing_queue.put(job)
 
-    def mock_is_set(_state={"called": False}):
-        if _state["called"]:
+    state = {"called": False}
+
+    def mock_is_set():
+        if state["called"]:
             return True
-        _state["called"] = True
+        state["called"] = True
         return False
 
     mgr.stop_event.is_set = mock_is_set

@@ -377,7 +377,7 @@
                 {# Precipitation bars (background) #}
                 {% for pt in weather.timeline_24h %}
                 {% if pt.precip_mm > 0 %}
-                <rect x="{{ (loop.index0 / (weather.timeline_24h | length - 1)) * 800 - 4 }}"
+                <rect x="{{ (loop.index0 / ((weather.timeline_24h | length) - 1)) * 800 - 4 }}"
                     y="{{ 120 - pt.precip_height }}" width="8" height="{{ pt.precip_height }}"
                     fill="var(--color-weather-rain)" opacity="0.35" rx="2" />
                 {% endif %}

@@ -576,6 +576,7 @@ class DetectionManager:
             try:
                 self.processing_queue.get_nowait()
             except queue.Empty:
+                # Another consumer drained the queue after the Full check.
                 pass
             self.processing_queue.put_nowait(job)
 

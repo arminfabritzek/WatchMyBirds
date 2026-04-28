@@ -249,7 +249,7 @@ def _bbox_dist(
     cy_a = (ay or 0) + (ah or 0) / 2.0
     cx_b = (bx or 0) + (bw or 0) / 2.0
     cy_b = (by or 0) + (bh or 0) / 2.0
-    return math.sqrt((cx_a - cx_b) ** 2 + (cy_a - cy_b) ** 2)
+    return math.hypot(cx_a - cx_b, cy_a - cy_b)
 
 
 def _bbox_iou_local(

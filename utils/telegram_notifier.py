@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+from contextlib import ExitStack
 
 import requests
 
@@ -167,52 +168,46 @@ def send_telegram_media_group(media_items, parse_mode="HTML"):
         media_descriptor = []
         files = {}
 
-        for idx, item in enumerate(media_items):
-            attach_key = f"photo_{idx}"
-            media_entry = {
-                "type": "photo",
-                "media": f"attach://{attach_key}",
+        with ExitStack() as stack:
+            for idx, item in enumerate(media_items):
+                attach_key = f"photo_{idx}"
+                media_entry = {
+                    "type": "photo",
+                    "media": f"attach://{attach_key}",
+                }
+                caption = item.get("caption", "")
+                if caption:
+                    media_entry["caption"] = caption
+                    if parse_mode:
+                        media_entry["parse_mode"] = parse_mode
+                media_descriptor.append(media_entry)
+
+                try:
+                    files[attach_key] = stack.enter_context(open(item["photo_path"], "rb"))
+                except Exception as e:
+                    logger.error(f"Cannot open photo {item['photo_path']}: {e}")
+                    all_responses.append(None)
+                    files = None
+                    break
+
+            if files is None:
+                continue
+
+            data = {
+                "chat_id": chat_id,
+                "media": json.dumps(media_descriptor),
             }
-            caption = item.get("caption", "")
-            if caption:
-                media_entry["caption"] = caption
-                if parse_mode:
-                    media_entry["parse_mode"] = parse_mode
-            media_descriptor.append(media_entry)
 
             try:
-                files[attach_key] = open(item["photo_path"], "rb")
+                response = requests.post(url, data=data, files=files, timeout=60)
+                response_json = response.json()
+                if not response.ok:
+                    logger.error(
+                        f"Telegram sendMediaGroup error for {chat_id}: {response_json}"
+                    )
+                all_responses.append(response_json)
             except Exception as e:
-                logger.error(f"Cannot open photo {item['photo_path']}: {e}")
-                # Clean up already opened files
-                for f in files.values():
-                    f.close()
+                logger.error(f"Error sending media group to {chat_id}: {e}")
                 all_responses.append(None)
-                files = None
-                break
-
-        if files is None:
-            continue
-
-        data = {
-            "chat_id": chat_id,
-            "media": json.dumps(media_descriptor),
-        }
-
-        try:
-            response = requests.post(url, data=data, files=files, timeout=60)
-            response_json = response.json()
-            if not response.ok:
-                logger.error(
-                    f"Telegram sendMediaGroup error for {chat_id}: {response_json}"
-                )
-            all_responses.append(response_json)
-        except Exception as e:
-            logger.error(f"Error sending media group to {chat_id}: {e}")
-            all_responses.append(None)
-        finally:
-            # Close all file handles
-            for f in files.values():
-                f.close()
 
     return all_responses

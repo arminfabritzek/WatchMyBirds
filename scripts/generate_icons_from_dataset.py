@@ -42,6 +42,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib.util
 import json
 import logging
 import math
@@ -64,23 +65,9 @@ except ImportError:
     np = None  # type: ignore[assignment]
     _HAS_NUMPY = False
 
-try:
-    from sklearn.cluster import KMeans as _SKLearnKMeans  # noqa: F401
-    _HAS_SKLEARN = True
-except ImportError:
-    _HAS_SKLEARN = False
-
-try:
-    from skimage.color import rgb2lab as _skimage_rgb2lab  # noqa: F401
-    _HAS_SKIMAGE = True
-except ImportError:
-    _HAS_SKIMAGE = False
-
-try:
-    import yaml as _yaml
-    _HAS_YAML = True
-except ImportError:
-    _HAS_YAML = False
+_HAS_SKLEARN = importlib.util.find_spec("sklearn.cluster") is not None
+_HAS_SKIMAGE = importlib.util.find_spec("skimage.color") is not None
+_HAS_YAML = importlib.util.find_spec("yaml") is not None
 
 from PIL import Image, UnidentifiedImageError
 
@@ -454,7 +441,7 @@ def _lightness(rgb: tuple[int, int, int]) -> float:
 
 def _chroma(rgb: tuple[int, int, int]) -> float:
     _, a, b = _lab_of(rgb)
-    return math.sqrt(a * a + b * b)
+    return math.hypot(a, b)
 
 
 def _hue_deg(rgb: tuple[int, int, int]) -> float:
@@ -533,9 +520,9 @@ def colors_to_slots(
 
     # --- head: darkest among the top-4 colours ---
     top4 = rgbs[:min(4, len(rgbs))]
-    head_rgb = min(top4, key=lambda r: _lightness(r))
+    head_rgb = min(top4, key=_lightness)
     if head_rgb == body_rgb and len(rgbs) > 1:
-        head_rgb = min(rgbs, key=lambda r: _lightness(r))
+        head_rgb = min(rgbs, key=_lightness)
     head = _rgb_to_cairo(head_rgb)
 
     colors: dict[str, tuple[float, ...]] = {}

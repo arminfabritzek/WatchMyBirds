@@ -405,7 +405,7 @@
             rangeConfirmBtn.disabled = true;
 
             try {
-                const result = await WmBatchActions.executeBatchAction('/api/moderation/bulk/reject', {
+                await WmBatchActions.executeBatchAction('/api/moderation/bulk/reject', {
                     detection_ids: previewedDateRangeSelection.detection_ids,
                     image_filenames: previewedDateRangeSelection.image_filenames || []
                 });
@@ -487,7 +487,7 @@
             importConfirmBtn.disabled = true;
 
             try {
-                const result = await WmBatchActions.executeBatchAction('/api/moderation/bulk/reject', {
+                await WmBatchActions.executeBatchAction('/api/moderation/bulk/reject', {
                     detection_ids: previewedImportSelection.detection_ids,
                     image_filenames: previewedImportSelection.image_filenames || []
                 });

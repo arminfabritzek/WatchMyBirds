@@ -1198,7 +1198,8 @@ def _regenerate_model_metadata_from_yaml(
         logger.debug(f"metadata regen skipped: {exc}")
         return
     try:
-        config = _yaml.safe_load(open(yaml_path, encoding="utf-8").read())
+        with open(yaml_path, encoding="utf-8") as file:
+            config = _yaml.safe_load(file)
         if not isinstance(config, dict):
             logger.warning(
                 f"metadata regen skipped: {_slv(yaml_path)} top-level YAML is not a mapping"

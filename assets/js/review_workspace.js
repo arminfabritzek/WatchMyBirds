@@ -366,7 +366,7 @@
             applyReviewMetricsState(panel);
             applyDecisionStatsToReviewMetrics(panel);
             hydrateReviewControls(itemKey);
-            hydrateReviewSpeciesThumbs(panel);
+            hydrateReviewSpeciesThumbs();
             syncViewerScopePreferences(panel);
             return true;
         } catch (error) {

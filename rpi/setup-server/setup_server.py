@@ -66,6 +66,7 @@ def _write_pending_config(ssid: str, password: str, admin_password: str) -> None
         try:
             os.close(fd)
         except OSError:
+            # fdopen may already have closed the descriptor while unwinding.
             pass
         raise
 

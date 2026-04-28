@@ -48,12 +48,12 @@
         }
     }
 
-    function setTrainingExportState(btn, isQueued) {
+    function setTrainingExportState(btn) {
         if (!btn || !btn.classList) return;
-        btn.classList.toggle('wm-toolbox__training--active', isQueued);
-        btn.classList.toggle('wm-toolbox__btn--toggled', isQueued);
-        btn.setAttribute('aria-pressed', isQueued ? 'true' : 'false');
-        btn.setAttribute('title', isQueued ? 'Already in training export pool' : 'Confirm and add to training export');
+        btn.classList.add('wm-toolbox__training--active');
+        btn.classList.add('wm-toolbox__btn--toggled');
+        btn.setAttribute('aria-pressed', 'true');
+        btn.setAttribute('title', 'Already in training export pool');
     }
 
     function safeSameOriginPath(rawUrl) {
@@ -93,7 +93,7 @@
             const queued = Number(data.added || 0) > 0 || Number(data.already_in_pool || 0) > 0 || Number(data.eligible || 0) > 0;
             if (queued) {
                 document.querySelectorAll(`.wm-toolbox__training[data-detection-id="${detectionId}"]`).forEach(function (toolboxBtn) {
-                    setTrainingExportState(toolboxBtn, true);
+                    setTrainingExportState(toolboxBtn);
                 });
             }
 

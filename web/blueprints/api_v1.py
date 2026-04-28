@@ -356,7 +356,8 @@ def _regenerate_metadata_for_variant(model_dir: str, model_id: str) -> str | Non
 
         from utils.model_metadata_generator import config_to_metadata
 
-        config = _yaml.safe_load(open(yaml_path).read())
+        with open(yaml_path, encoding="utf-8") as file:
+            config = _yaml.safe_load(file)
         if not isinstance(config, dict):
             raise ValueError(f"{yaml_path}: top-level YAML must be a mapping")
         metadata = config_to_metadata(

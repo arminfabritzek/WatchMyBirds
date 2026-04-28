@@ -131,9 +131,7 @@ async function toggleFavorite(event, detectionId, btn) {
         event.stopPropagation();
     }
 
-    let step = "start";
     try {
-        step = "fetch";
         const resp = await fetch('/api/detections/favorite', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -145,11 +143,9 @@ async function toggleFavorite(event, detectionId, btn) {
         }
         if (resp.ok) {
 
-            step = "json";
             const data = await resp.json();
             const isFav = Boolean(data.is_favorite);
 
-            step = "btn-toggle";
             // Update the button in the modal or the hovered badge
             if (btn && btn.classList) {
                 setToolboxFavoriteState(btn, isFav);
@@ -157,7 +153,6 @@ async function toggleFavorite(event, detectionId, btn) {
                 setModalFavoriteState(btn, isFav);
             }
 
-            step = "dom-queries";
             try {
                 // Keep every rendered instance of the same detection in sync.
                 document.querySelectorAll(`.wm-toolbox__fav[data-detection-id="${detectionId}"]`).forEach(function (toolboxBtn) {
@@ -175,13 +170,11 @@ async function toggleFavorite(event, detectionId, btn) {
                 console.warn('DOM update error ignored:', domErr);
             }
 
-            step = "toast";
             // Toast feedback
             if (window.wmToast) {
                 window.wmToast(isFav ? '⭐ Favorite added' : '☆ Favorite removed', isFav ? 'success' : 'info', 2000);
             }
         } else {
-            step = "error-text";
             const errText = await resp.text().catch(function () { return ''; });
             console.error('Favorite API error:', resp.status, errText);
             if (window.wmToast) {
@@ -1121,8 +1114,8 @@ function applySmartZoom(viewer, img, bx, by, bw, bh) {
     // Edge-shift clamping (same as CropService)
     if (sqX1 < 0) { sqX2 -= sqX1; sqX1 = 0; }
     if (sqY1 < 0) { sqY2 -= sqY1; sqY1 = 0; }
-    if (sqX2 > 1) { sqX1 -= (sqX2 - 1); sqX2 = 1; }
-    if (sqY2 > 1) { sqY1 -= (sqY2 - 1); sqY2 = 1; }
+    if (sqX2 > 1) { sqX1 -= (sqX2 - 1); }
+    if (sqY2 > 1) { sqY1 -= (sqY2 - 1); }
     sqX1 = Math.max(0, sqX1);
     sqY1 = Math.max(0, sqY1);
 
