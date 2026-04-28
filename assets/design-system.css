@@ -349,19 +349,19 @@ code {
     top: 0;
     left: 0;
     right: 0;
-    height: 96px;
+    height: 112px;
     background: #f4ecd9;
     border-bottom: 1px solid var(--color-border);
     display: flex;
     align-items: center;
-    padding: 0 var(--space-lg);
+    padding: 0 var(--space-xl);
     z-index: var(--z-appbar);
 }
 
 .app-bar__brand {
     display: flex;
     align-items: center;
-    gap: var(--space-sm);
+    gap: var(--space-md);
     font-weight: 700;
     font-size: var(--font-size-lg);
     color: var(--color-text);
@@ -369,7 +369,7 @@ code {
 }
 
 .app-bar__brand img {
-    height: 72px;
+    height: 88px;
     width: auto;
     display: block;
 }
@@ -564,7 +564,7 @@ code {
     border-bottom: 1px solid var(--color-border-light);
     font-size: var(--font-size-xs);
     color: var(--color-text-muted);
-    margin-top: 96px;
+    margin-top: 112px;
 }
 
 .status-bar__item {
@@ -886,7 +886,7 @@ code {
         display: flex;
         flex-direction: column;
         position: absolute;
-        top: 96px;
+        top: 112px;
         left: 0;
         right: 0;
         background: var(--color-surface);
@@ -1668,7 +1668,7 @@ code {
 
 .trash-workbench__ops {
     position: sticky;
-    top: calc(var(--space-lg) + 96px);
+    top: calc(var(--space-lg) + 112px);
     display: flex;
     flex-direction: column;
     gap: var(--space-md);
@@ -5594,7 +5594,7 @@ body {
 
 .review-queue {
     position: sticky;
-    top: calc(var(--space-lg) + 96px);
+    top: calc(var(--space-lg) + 112px);
     align-self: start;
     display: flex;
     flex-direction: column;
@@ -5610,7 +5610,7 @@ body {
 
 .review-event-browser {
     position: sticky;
-    top: calc(var(--space-lg) + 96px);
+    top: calc(var(--space-lg) + 112px);
     align-self: start;
     display: flex;
     flex-direction: column;
