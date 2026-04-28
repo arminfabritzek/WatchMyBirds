@@ -36,7 +36,7 @@
 ---
 
 <p align="center">
-  <img src="assets/preview_species_summary.jpg" alt="Species Summary" width="80%">
+  <img src="assets/images/best_of_species.jpg" alt="Best of Species" width="80%">
 </p>
 
 ---
@@ -63,7 +63,7 @@
 ---
 
 <p align="center">
-  <img src="assets/images/watchmybirds_best_of.gif" alt="Best of Species" width="80%">
+  <img src="assets/images/preview_stream.jpg" alt="Live Stream" width="100%">
 </p>
 
 ---
@@ -88,10 +88,17 @@ docker-compose up -d
 ```
 
 > **Streaming default:** The Docker stack starts **WatchMyBirds + go2rtc** together using host networking for WebRTC compatibility.
-> Set only `CAMERA_URL`; the app resolves relay/direct mode automatically.
-> Replace `EDIT_PASSWORD` with your own value before first start, and leave `TELEGRAM_ENABLED=False` unless you also set real Telegram credentials.
-> `go2rtc.yaml` is synchronized in the mounted output folder (`/output/go2rtc.yaml` in app, `/config/go2rtc.yaml` in go2rtc).
-> Bridge networking is also supported — the app will automatically fall back to ffmpeg-based streaming if WebRTC is unavailable. See `docker-compose.example.yml` for details.
+
+**Before first start:**
+
+- Set `CAMERA_URL` — the app resolves relay/direct mode automatically.
+- Replace `EDIT_PASSWORD` with your own value.
+- Leave `TELEGRAM_ENABLED=False` unless you also set real Telegram credentials.
+
+**Good to know:**
+
+- `go2rtc.yaml` is synchronized in the mounted output folder (`/output/go2rtc.yaml` in app, `/config/go2rtc.yaml` in go2rtc).
+- Bridge networking is also supported — the app falls back to ffmpeg-based streaming if WebRTC is unavailable. See [`docker-compose.example.yml`](docker-compose.example.yml) for details.
 
 ### Local Development
 
@@ -109,9 +116,13 @@ App available at: **http://localhost:8050**
 
 ## Screenshots
 
-| Analytics Dashboard |
-|---------------------|
-| ![Analytics](assets/preview_analytics.jpg) |
+| Species Summary | Analytics Dashboard |
+|-----------------|---------------------|
+| ![Species Summary](assets/images/preview_species_summary.jpg) | ![Analytics](assets/images/preview_analytics.jpg) |
+
+| Best of Species |
+|-----------------|
+| ![Best of Species](assets/images/watchmybirds_best_of.gif) |
 
 ---
 
@@ -203,54 +214,34 @@ The system is designed to run locally on affordable hardware to make wildlife ob
 
 ## Third-Party Tools & Data Sources
 
-<div align="center">
-  <table>
-    <tr>
-      <td align="center" width="25%">
-        <a href="https://www.wikipedia.org/">
-          <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/8/80/Wikipedia-logo-v2.svg/200px-Wikipedia-logo-v2.svg.png" width="60" alt="Wikipedia" style="border-radius: 16px;">
-        </a>
-      </td>
-      <td align="center" width="25%">
-        <a href="https://open-meteo.com/">
-          <img src="https://avatars.githubusercontent.com/u/86407831?s=200&v=4" width="80" alt="Open-Meteo" style="border-radius: 16px;">
-        </a>
-      </td>
-      <td align="center" width="25%">
-        <a href="https://www.inaturalist.org/">
-          <img src="https://static.inaturalist.org/wiki_page_attachments/3154-original.png" width="96" alt="iNaturalist" style="border-radius: 16px;">
-        </a>
-      </td>
-      <td align="center" width="25%">
-        <a href="https://labelstud.io/">
-          <img src="https://user-images.githubusercontent.com/12534576/192582529-cf628f58-abc5-479b-a0d4-8a3542a4b35e.png" width="120" alt="Label Studio" style="border-radius: 16px;">
-        </a>
-      </td>
-    </tr>
-  </table>
-</div>
+<p align="center">
+  <a href="https://www.wikipedia.org/">
+    <img src="https://images.weserv.nl/?url=upload.wikimedia.org/wikipedia/commons/thumb/8/80/Wikipedia-logo-v2.svg/200px-Wikipedia-logo-v2.svg.png&w=120&h=120&fit=cover&mask=circle" width="100" alt="Wikipedia">
+  </a>
+  &nbsp;&nbsp;&nbsp;
+  <a href="https://open-meteo.com/">
+    <img src="https://images.weserv.nl/?url=avatars.githubusercontent.com/u/86407831?s=200%26v=4&w=120&h=120&fit=cover&mask=circle" width="100" alt="Open-Meteo">
+  </a>
+  &nbsp;&nbsp;&nbsp;
+  <a href="https://www.inaturalist.org/">
+    <img src="https://images.weserv.nl/?url=static.inaturalist.org/wiki_page_attachments/3154-original.png&w=120&h=120&fit=cover&mask=circle" width="100" alt="iNaturalist">
+  </a>
+  &nbsp;&nbsp;&nbsp;
+  <a href="https://labelstud.io/">
+    <img src="https://images.weserv.nl/?url=user-images.githubusercontent.com/12534576/192582529-cf628f58-abc5-479b-a0d4-8a3542a4b35e.png&w=120&h=120&fit=cover&mask=circle" width="100" alt="Label Studio">
+  </a>
+</p>
 
-### Data Sources
+**Data Sources**
 
-#### <a href="https://www.wikipedia.org/" target="_blank">Wikipedia</a>
-Wikipedia — Species descriptions and images are retrieved from Wikipedia.
-Text and media are available under the <a href="https://creativecommons.org/licenses/by-sa/4.0/" target="_blank">Creative Commons Attribution-ShareAlike 4.0 International (CC BY-SA 4.0)</a> license.
+- **[Wikipedia](https://www.wikipedia.org/)** — Species descriptions and images. Text and media available under [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/).
+- **[Open-Meteo](https://open-meteo.com/)** — Weather data via the Open-Meteo API, available under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
+- **[iNaturalist](https://www.inaturalist.org/)** — Localized common-name enrichment for the extended bird species catalog. See [`docs/EXTENDED_SPECIES_CATALOG_POLICY.md`](docs/EXTENDED_SPECIES_CATALOG_POLICY.md) for taxonomy policy.
 
-#### <a href="https://open-meteo.com/" target="_blank">Open-Meteo</a>
-Weather data is provided by the Open-Meteo API.
-Data is available under the <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank">Creative Commons Attribution 4.0 International (CC BY 4.0)</a> license.
+**Software & Tools**
 
-#### <a href="https://www.inaturalist.org/" target="_blank">iNaturalist</a>
-The extended bird species catalog uses iNaturalist for localized common-name enrichment.
-Taxonomy policy and refresh details are documented in `docs/EXTENDED_SPECIES_CATALOG_POLICY.md`.
-
-### Software & Tools
-
-#### <a href="https://labelstud.io" target="_blank">Label Studio</a>
-Label Studio — Annotation tool by HumanSignal, Inc. This project uses Label Studio through the Label Studio Academic Program, which provides eligible academic users with free access to Label Studio Enterprise Cloud for non-commercial teaching and research.
-
-#### <a href="https://github.com/AlexxIT/go2rtc" target="_blank">go2rtc</a>
-go2rtc — WebRTC/RTSP relay used for low-latency camera streaming. Licensed under the MIT License.
+- **[Label Studio](https://labelstud.io)** — Annotation tool by HumanSignal, Inc. Used through the Label Studio Academic Program (free access to Enterprise Cloud for non-commercial teaching and research).
+- **[go2rtc](https://github.com/AlexxIT/go2rtc)** — WebRTC/RTSP relay for low-latency camera streaming. Licensed under MIT.
 
 ---
 
