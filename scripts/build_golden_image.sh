@@ -122,6 +122,9 @@ sudo cp "$repo_root/rpi/systemd/wmb-boot-diag.sh" "$mount_point/tmp/systemd/"
 # Produced by: systemd-escape -p /mnt/wmb-backup
 sudo cp "$repo_root/rpi/systemd/mnt-wmb\\x2dbackup.mount" "$mount_point/tmp/systemd/"
 sudo cp "$repo_root/rpi/systemd/mnt-wmb\\x2dbackup.automount" "$mount_point/tmp/systemd/"
+# Scheduled backup service + timer (Phase 3 of usb-data-backup plan).
+sudo cp "$repo_root/rpi/systemd/wmb-backup.service" "$mount_point/tmp/systemd/"
+sudo cp "$repo_root/rpi/systemd/wmb-backup.timer" "$mount_point/tmp/systemd/"
 sudo cp "$repo_root/rpi/ap/hostapd.conf.template" "$mount_point/tmp/ap/"
 sudo cp "$repo_root/rpi/ap/dnsmasq.conf.template" "$mount_point/tmp/ap/"
 sudo cp "$repo_root/rpi/install-python312.sh" "$mount_point/tmp/"

@@ -216,13 +216,19 @@ chmod 644 '/etc/systemd/system/mnt-wmb\x2dbackup.automount'
 ln -sf '/etc/systemd/system/mnt-wmb\x2dbackup.automount' \
     '/etc/systemd/system/multi-user.target.wants/mnt-wmb\x2dbackup.automount'
 
-# Install backup.sh (Phase 2 of usb-data-backup plan).
-# We install via cp into /opt/app/rpi/ at first-boot via the synced repo --
-# but for the golden image we keep /tmp/rpi/backup.sh on the side so
-# wmb-first-boot can stage it. The script itself runs from /opt/app/rpi/
-# (the rsync target of sync_preview / release deploy), so the golden
-# image only needs to ensure /opt/app exists -- the script lands there
-# on first sync. No copy needed here.
+# backup.sh itself (Phase 2) lives in /opt/app/rpi/backup.sh -- it is
+# part of the app code and arrives via rsync from the release/sync layer.
+# The service uses ConditionPathExists= so a fresh image without app
+# code yet skips the unit cleanly instead of erroring.
+
+# Install scheduled backup service + timer (Phase 3 of usb-data-backup plan).
+cp /tmp/systemd/wmb-backup.service /etc/systemd/system/wmb-backup.service
+cp /tmp/systemd/wmb-backup.timer   /etc/systemd/system/wmb-backup.timer
+chmod 644 /etc/systemd/system/wmb-backup.service
+chmod 644 /etc/systemd/system/wmb-backup.timer
+# Enable the TIMER, not the service. The timer fires the service.
+ln -sf /etc/systemd/system/wmb-backup.timer \
+    /etc/systemd/system/timers.target.wants/wmb-backup.timer
 
 # Install setup server (AP only; enabled by first-boot when needed)
 cp /tmp/systemd/wmb-setup-server.service /etc/systemd/system/wmb-setup-server.service

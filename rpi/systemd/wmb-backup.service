@@ -1,0 +1,35 @@
+[Unit]
+Description=WatchMyBirds USB backup (scheduled snapshot)
+# Don't fail loudly if the script isn't synced yet (fresh image, first
+# boot before any deploy). systemd skips the unit cleanly instead of
+# logging a load error.
+ConditionPathExists=/opt/app/rpi/backup.sh
+# We don't depend on app.service: the SQLite .backup pragma is online-safe.
+After=network.target
+# If the stick isn't mounted, the script exits with code 10 and the
+# timer simply re-runs tomorrow. No need to bind to the .mount unit.
+
+[Service]
+Type=oneshot
+User=watchmybirds
+Group=watchmybirds
+# Backup is I/O bound and runs at 03:00; keep it polite.
+Nice=10
+IOSchedulingClass=idle
+ExecStart=/opt/app/rpi/backup.sh --kind scheduled
+# Don't restart on failure -- the timer fires the next day. Repeated
+# failures land in the journal and surface via the API endpoint.
+TimeoutStartSec=30min
+
+# Light hardening (the script needs read access to /opt/app and write
+# access to /mnt/wmb-backup; nothing more).
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/mnt/wmb-backup
+ProtectHome=yes
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true

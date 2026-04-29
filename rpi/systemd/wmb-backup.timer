@@ -1,0 +1,17 @@
+[Unit]
+Description=Daily USB backup snapshot at 03:00
+
+[Timer]
+# Run once a day at 03:00 local time.
+OnCalendar=*-*-* 03:00:00
+# If the Pi was off when 03:00 hit, run as soon as it boots (catch-up).
+# But run the catch-up only ONCE -- AccuracySec keeps the systemd
+# scheduler from packing missed runs back-to-back.
+Persistent=true
+AccuracySec=15min
+# Add up to 30 min of randomization so a fleet of Pis doesn't all hit
+# GitHub mirrors / network at the same instant on coordinated reboots.
+RandomizedDelaySec=30min
+
+[Install]
+WantedBy=timers.target
