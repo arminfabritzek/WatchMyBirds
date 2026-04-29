@@ -1,5 +1,29 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **USB stick backup (write-only v1).** Daily automatic snapshots of the
+  SQLite database, captured imagery, and installed app code to an optional
+  USB stick (label `WMB-BACKUP`, ext4). Protects against SD-card death,
+  the single most common hardware failure on a long-running Raspberry Pi.
+  - Online SQLite snapshot via the `.backup` pragma — no app stop needed.
+  - rsync `--link-dest` deduplication: each daily snapshot uses ~5% of
+    live data, not 100%, by hardlinking unchanged files between snapshots.
+  - `COMPLETED` marker for crash-consistent recovery; orphaned in-progress
+    snapshots are pruned on the next run.
+  - Kind-aware retention: scheduled keeps 7 daily / 4 weekly / 6 monthly;
+    manual keeps the latest 3. Corrupt snapshots are never auto-deleted.
+  - Settings → Tools & System gains a "USB Backup" card with stick state,
+    free-space bar, recent snapshots list, and a "Backup now" button.
+  - Five new endpoints under `/api/v1/system/backup/*` (status, list,
+    trigger, delete, verify).
+  - Restore is **not** part of this release — recovery in v1 is a manual
+    procedure on a separate Linux machine, documented in
+    `docs/USB_BACKUP.md`. UI restore + OTA pre-update snapshot hook ship
+    in v2 (roadmap plan `2026-04-29_INFRA_usb-restore-and-ota-hooks`).
+
 ## 0.2.0 - 2026-04-20
 
 Headline release focused on a new detector stack, a guided review workflow,

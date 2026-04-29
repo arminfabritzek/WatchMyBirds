@@ -1333,6 +1333,215 @@
                 </div>
             </div>
 
+            <!-- USB Backup (write-only v1; restore lands in v2) -->
+            <div class="mb-4" id="usbBackupCard" hidden>
+                <strong class="d-block mb-2">USB Backup</strong>
+                <p class="settings-field__help mb-2">
+                    Daily automatic snapshots to a USB stick (label
+                    <code>WMB-BACKUP</code>, ext4). Protects against SD-card death.
+                </p>
+
+                <!-- Stick state row -->
+                <div class="d-flex align-items-center gap-2 mb-2 flex-wrap">
+                    <span class="badge" id="usbBackupStickState">…</span>
+                    <span class="settings-field__help" id="usbBackupStickDetail"></span>
+                </div>
+
+                <!-- Free-space bar -->
+                <div class="mb-2" id="usbBackupSpaceWrap" hidden>
+                    <div class="progress" style="height:8px;">
+                        <div class="progress-bar" id="usbBackupSpaceBar"
+                             role="progressbar" style="width:0%;"></div>
+                    </div>
+                    <div class="settings-field__help mt-1" id="usbBackupSpaceLabel"></div>
+                </div>
+
+                <!-- Recent snapshots -->
+                <div class="mb-2" id="usbBackupListWrap" hidden>
+                    <div class="settings-field__help mb-1">Recent snapshots</div>
+                    <ul class="list-unstyled mb-0" id="usbBackupList"></ul>
+                </div>
+
+                <!-- Actions -->
+                <div class="d-flex gap-2 flex-wrap">
+                    <button type="button" class="btn btn--primary btn--sm"
+                            id="usbBackupTriggerBtn" disabled>
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+                             stroke="currentColor" stroke-width="2"
+                             style="margin-right:4px;vertical-align:-1px;">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                            <polyline points="7 10 12 15 17 10"/>
+                            <line x1="12" y1="15" x2="12" y2="3"/>
+                        </svg>
+                        Backup now
+                    </button>
+                    <span class="settings-field__help" id="usbBackupTriggerStatus"></span>
+                </div>
+                <p class="settings-field__help mt-2 mb-0">
+                    Restore from a snapshot is currently a manual procedure
+                    on a separate Linux machine — UI restore is on the roadmap.
+                </p>
+            </div>
+
+            <script>
+            (function() {
+                // USB Backup card -- progressive enhancement: hidden when
+                // /api/v1/system/backup/status returns an error (non-RPi
+                // deployments). Snapshot fields originate from manifest.json
+                // on the stick and are treated as untrusted: textContent /
+                // setAttribute / createElement only -- no innerHTML, ever.
+                var card = document.getElementById('usbBackupCard');
+                var stateBadge = document.getElementById('usbBackupStickState');
+                var detailEl = document.getElementById('usbBackupStickDetail');
+                var spaceWrap = document.getElementById('usbBackupSpaceWrap');
+                var spaceBar = document.getElementById('usbBackupSpaceBar');
+                var spaceLabel = document.getElementById('usbBackupSpaceLabel');
+                var listWrap = document.getElementById('usbBackupListWrap');
+                var listEl = document.getElementById('usbBackupList');
+                var triggerBtn = document.getElementById('usbBackupTriggerBtn');
+                var triggerStatus = document.getElementById('usbBackupTriggerStatus');
+
+                if (!card || !stateBadge) return;
+
+                var STATE_BADGES = {
+                    connected:    { cls: 'badge--success', label: 'Connected' },
+                    missing:      { cls: 'badge--secondary', label: 'No stick' },
+                    wrong_fs:     { cls: 'badge--warning', label: 'Wrong filesystem' },
+                    not_writable: { cls: 'badge--warning', label: 'Not writable' },
+                    error:        { cls: 'badge--danger', label: 'Error' }
+                };
+
+                function fmtBytes(n) {
+                    if (n == null) return '–';
+                    var units = ['B', 'KB', 'MB', 'GB', 'TB'];
+                    var i = 0;
+                    while (n >= 1024 && i < units.length - 1) { n /= 1024; i++; }
+                    return n.toFixed(i === 0 ? 0 : 1) + ' ' + units[i];
+                }
+
+                function fmtTime(iso) {
+                    if (!iso) return '';
+                    try { return new Date(iso).toLocaleString(); }
+                    catch (e) { return iso; }
+                }
+
+                function clearChildren(el) {
+                    while (el.firstChild) { el.removeChild(el.firstChild); }
+                }
+
+                function renderSnapshotItem(s) {
+                    var li = document.createElement('li');
+                    li.className = 'mb-1';
+
+                    var badgeSpan = document.createElement('span');
+                    var badgeCls = s.corrupt ? 'badge--danger'
+                                  : (s.completed ? 'badge--success' : 'badge--secondary');
+                    badgeSpan.className = 'badge ' + badgeCls;
+                    badgeSpan.style.marginRight = '6px';
+                    badgeSpan.textContent = s.corrupt ? 'CORRUPT'
+                                          : (s.completed ? (s.kind || 'unknown') : 'incomplete');
+                    li.appendChild(badgeSpan);
+
+                    var nameCode = document.createElement('code');
+                    nameCode.textContent = String(s.name || '');
+                    li.appendChild(nameCode);
+
+                    li.appendChild(document.createTextNode(' '));
+
+                    var meta = document.createElement('span');
+                    meta.className = 'settings-field__help';
+                    meta.textContent = fmtBytes(s.total_bytes) + ' · ' + fmtTime(s.completed_at);
+                    li.appendChild(meta);
+
+                    if (s.is_latest) {
+                        li.appendChild(document.createTextNode(' · '));
+                        var latestStrong = document.createElement('strong');
+                        latestStrong.textContent = 'latest';
+                        li.appendChild(latestStrong);
+                    }
+                    return li;
+                }
+
+                function render(payload) {
+                    var stick = payload.stick || {};
+                    var info = STATE_BADGES[stick.state] || STATE_BADGES.error;
+                    stateBadge.className = 'badge ' + info.cls;
+                    stateBadge.textContent = info.label;
+                    detailEl.textContent = stick.detail || '';
+
+                    if (stick.total_bytes) {
+                        spaceWrap.hidden = false;
+                        var pctUsed = Math.max(0, Math.min(100, 100 - (stick.free_pct || 0)));
+                        spaceBar.style.width = pctUsed.toFixed(1) + '%';
+                        spaceBar.className = 'progress-bar' +
+                            (payload.warn_almost_full ? ' bg-warning' : '');
+                        spaceLabel.textContent = fmtBytes(stick.free_bytes) +
+                            ' free of ' + fmtBytes(stick.total_bytes) +
+                            ' (' + (stick.free_pct || 0).toFixed(0) + '% free)';
+                    } else {
+                        spaceWrap.hidden = true;
+                    }
+
+                    var snaps = payload.snapshots_recent || [];
+                    if (snaps.length) {
+                        listWrap.hidden = false;
+                        clearChildren(listEl);
+                        snaps.forEach(function(s) {
+                            listEl.appendChild(renderSnapshotItem(s));
+                        });
+                    } else {
+                        listWrap.hidden = true;
+                    }
+
+                    triggerBtn.disabled = stick.state !== 'connected';
+                }
+
+                function refresh() {
+                    fetch('/api/v1/system/backup/status', { credentials: 'same-origin' })
+                        .then(function(r) { return r.ok ? r.json() : null; })
+                        .then(function(data) {
+                            if (!data || data.status !== 'success') {
+                                card.hidden = true;
+                                return;
+                            }
+                            card.hidden = false;
+                            render(data);
+                        })
+                        .catch(function() { card.hidden = true; });
+                }
+
+                triggerBtn.addEventListener('click', function() {
+                    triggerBtn.disabled = true;
+                    triggerStatus.textContent = 'Starting backup…';
+                    fetch('/api/v1/system/backup/trigger', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        credentials: 'same-origin',
+                        body: JSON.stringify({ kind: 'manual' })
+                    })
+                        .then(function(r) { return r.json(); })
+                        .then(function(data) {
+                            if (data.status === 'success') {
+                                triggerStatus.textContent =
+                                    'Backup running in the background. Refresh to see it appear.';
+                            } else {
+                                triggerStatus.textContent =
+                                    'Failed: ' + (data.message || 'unknown error');
+                            }
+                        })
+                        .catch(function(err) {
+                            triggerStatus.textContent = 'Network error: ' + err;
+                        })
+                        .finally(function() {
+                            setTimeout(refresh, 2000);
+                        });
+                });
+
+                refresh();
+                setInterval(refresh, 15000);
+            })();
+            </script>
+
             <!-- Stream Tuning (advanced) -->
             <div class="mb-4">
                 <strong class="d-block mb-2">Stream Tuning</strong>

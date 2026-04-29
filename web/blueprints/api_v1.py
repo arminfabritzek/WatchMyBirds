@@ -2422,6 +2422,136 @@ def system_updates_install():
 
 
 # =============================================================================
+# USB Backup (write-only v1) — see docs/USB_BACKUP.md and the focus plan
+# 2026-04-27_INFRA_usb-data-backup. Restore endpoints land in v2
+# (2026-04-29_INFRA_usb-restore-and-ota-hooks); not in this version.
+# =============================================================================
+
+
+@api_v1.route("/system/backup/status", methods=["GET"])
+@login_required
+def system_backup_status():
+    """
+    Aggregate stick state + recent snapshots for the Settings card.
+
+    Cheap (stat-only); safe to poll every 10 s.
+    """
+    try:
+        from web.services import usb_backup_service
+
+        return jsonify({"status": "success", **usb_backup_service.get_status()})
+    except Exception as e:
+        logger.error("Error reading USB backup status: %s", e)
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@api_v1.route("/system/backup/list", methods=["GET"])
+@login_required
+def system_backup_list():
+    """
+    Return all snapshots (newest first), each with manifest metadata.
+
+    Query params:
+      limit (int, default 50): cap on the number of snapshots returned.
+    """
+    try:
+        from web.services import usb_backup_service
+
+        try:
+            limit = int(request.args.get("limit", 50))
+        except (TypeError, ValueError):
+            limit = 50
+        limit = max(1, min(limit, 500))
+        snapshots = usb_backup_service.list_snapshots(limit=limit)
+        return jsonify({"status": "success", "snapshots": snapshots})
+    except Exception as e:
+        logger.error("Error listing USB backup snapshots: %s", e)
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@api_v1.route("/system/backup/trigger", methods=["POST"])
+@login_required
+def system_backup_trigger():
+    """
+    Spawn rpi/backup.sh --kind manual as a detached subprocess.
+
+    JSON body (optional):
+      kind (str): only 'manual' is accepted in v1. 'pre-ota' lands in v2.
+    """
+    try:
+        from web.services import usb_backup_service
+
+        payload = request.get_json(silent=True) or {}
+        kind = payload.get("kind", "manual")
+        if kind != "manual":
+            return (
+                jsonify(
+                    {
+                        "status": "error",
+                        "message": (
+                            f"kind={kind!r} not supported in v1. Only 'manual' "
+                            "is allowed; pre-ota and pre-restore land in v2."
+                        ),
+                    }
+                ),
+                400,
+            )
+
+        started, message, info = usb_backup_service.trigger_manual_backup()
+        if not started:
+            return (
+                jsonify({"status": "error", "message": message, "info": info}),
+                409,
+            )
+        return jsonify({"status": "success", "message": message, "info": info})
+    except Exception as e:
+        logger.error("Error triggering manual USB backup: %s", e)
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@api_v1.route("/system/backup/<path:snapshot_name>", methods=["DELETE"])
+@login_required
+def system_backup_delete(snapshot_name):
+    """
+    Permanently delete a snapshot directory.
+
+    Path-traversal-protected: refuses anything that escapes
+    /mnt/wmb-backup/snapshots/.
+    """
+    try:
+        from web.services import usb_backup_service
+
+        ok, message = usb_backup_service.delete_snapshot(snapshot_name)
+        if not ok:
+            return jsonify({"status": "error", "message": message}), 404
+        return jsonify({"status": "success", "message": message})
+    except Exception as e:
+        logger.error("Error deleting USB backup snapshot %r: %s", snapshot_name, e)
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@api_v1.route("/system/backup/<path:snapshot_name>/verify", methods=["POST"])
+@login_required
+def system_backup_verify(snapshot_name):
+    """
+    Re-run sha256 + sqlite integrity_check on a snapshot.
+
+    Read-only: never mutates the snapshot. CORRUPT-marker stays as
+    set by backup.sh; the operator decides what to do with the result.
+    """
+    try:
+        from web.services import usb_backup_service
+
+        result = usb_backup_service.verify_snapshot(snapshot_name)
+        if result.get("ok") is False and result.get("error") == "Snapshot not found.":
+            return jsonify({"status": "error", **result}), 404
+        return jsonify({"status": "success", **result})
+    except Exception as e:
+        logger.error("Error verifying USB backup snapshot %r: %s", snapshot_name, e)
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+# =============================================================================
 # Blueprint Initialization
 # =============================================================================
 

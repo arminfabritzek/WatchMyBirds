@@ -20,6 +20,7 @@ from web.services import (
     onvif_service,
     path_service,
     settings_service,
+    usb_backup_service,
 )
 
 __all__ = [
@@ -34,4 +35,5 @@ __all__ = [
     "onvif_service",
     "path_service",
     "settings_service",
+    "usb_backup_service",
 ]
