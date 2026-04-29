@@ -29,7 +29,7 @@ apt-get update
 
 APT_OPTIONS="-y -o Dpkg::Options::=--force-confnew -o Dpkg::Options::=--force-confdef"
 apt-get $APT_OPTIONS upgrade || (sleep 10 && apt-get $APT_OPTIONS upgrade)
-apt-get $APT_OPTIONS install ufw hostapd dnsmasq unattended-upgrades dhcpcd5 libglib2.0-0 ffmpeg v4l-utils openssh-server polkitd curl ca-certificates
+apt-get $APT_OPTIONS install ufw hostapd dnsmasq unattended-upgrades dhcpcd5 libglib2.0-0 ffmpeg v4l-utils openssh-server polkitd curl ca-certificates rsync sqlite3
 
 echo "allowinterfaces wlan0" >> /etc/dhcpcd.conf
 
@@ -199,6 +199,23 @@ chmod 644 /etc/systemd/system/wmb-wifi-watchdog.service
 chmod 644 /etc/systemd/system/wmb-wifi-watchdog.timer
 # Enable the timer
 ln -sf /etc/systemd/system/wmb-wifi-watchdog.timer /etc/systemd/system/multi-user.target.wants/wmb-wifi-watchdog.timer
+
+# Install USB backup mount + automount + scheduled timer (mirrors harden.sh)
+mkdir -p /mnt/wmb-backup
+chown watchmybirds:watchmybirds /mnt/wmb-backup
+chmod 755 /mnt/wmb-backup
+cp '/tmp/systemd/mnt-wmb\x2dbackup.mount' '/etc/systemd/system/mnt-wmb\x2dbackup.mount'
+cp '/tmp/systemd/mnt-wmb\x2dbackup.automount' '/etc/systemd/system/mnt-wmb\x2dbackup.automount'
+chmod 644 '/etc/systemd/system/mnt-wmb\x2dbackup.mount'
+chmod 644 '/etc/systemd/system/mnt-wmb\x2dbackup.automount'
+ln -sf '/etc/systemd/system/mnt-wmb\x2dbackup.automount' \
+    '/etc/systemd/system/multi-user.target.wants/mnt-wmb\x2dbackup.automount'
+cp /tmp/systemd/wmb-backup.service /etc/systemd/system/wmb-backup.service
+cp /tmp/systemd/wmb-backup.timer   /etc/systemd/system/wmb-backup.timer
+chmod 644 /etc/systemd/system/wmb-backup.service
+chmod 644 /etc/systemd/system/wmb-backup.timer
+ln -sf /etc/systemd/system/wmb-backup.timer \
+    /etc/systemd/system/timers.target.wants/wmb-backup.timer
 
 # Install setup server
 cp /tmp/systemd/wmb-setup-server.service /etc/systemd/system/wmb-setup-server.service
