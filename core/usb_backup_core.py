@@ -28,6 +28,7 @@ from typing import Any
 # top of rpi/backup.sh — keep them in sync. We don't share a config file
 # because backup.sh runs without Python in scope.
 MOUNT_POINT = Path("/mnt/wmb-backup")
+BACKUP_DEVICE = Path("/dev/disk/by-label/WMB-BACKUP")
 SNAPSHOTS_DIR = MOUNT_POINT / "snapshots"
 LATEST_LINK = MOUNT_POINT / "latest"
 BACKUP_LOG = MOUNT_POINT / "BACKUP_LOG.txt"
@@ -78,10 +79,39 @@ def _findmnt_fstype(mount_point: Path) -> str | None:
         return None
 
 
+def _blkid_fstype(device: Path) -> str | None:
+    """Resolve the filesystem type of the labelled backup device."""
+    if not shutil.which("blkid"):
+        return None
+    try:
+        result = subprocess.run(
+            ["blkid", "-o", "value", "-s", "TYPE", str(device)],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        return (result.stdout.strip() or None) if result.returncode == 0 else None
+    except (subprocess.SubprocessError, OSError):
+        return None
+
+
 def _is_mounted(mount_point: Path) -> bool:
-    """Touch the path to wake up the systemd automount, then check os.path.ismount."""
-    # Touching the path triggers the .automount unit; if the stick is
-    # there but not yet mounted, this gives systemd a chance to attach.
+    """Wake the automount only when the labelled device exists."""
+    try:
+        if os.path.ismount(mount_point):
+            return True
+    except OSError:
+        return False
+
+    try:
+        if not BACKUP_DEVICE.exists():
+            return False
+    except OSError:
+        return False
+
+    # Touching the path triggers the .automount unit; because we already
+    # know the labelled device exists, this avoids repeated 10s mount
+    # timeouts on systems without a backup stick.
     try:
         mount_point.exists()
     except OSError:
@@ -98,6 +128,21 @@ def get_stick_status() -> StickStatus:
     Cheap: callable from the public status bar at high frequency.
     """
     if not _is_mounted(MOUNT_POINT):
+        label_fstype = _blkid_fstype(BACKUP_DEVICE)
+        if label_fstype is not None and label_fstype != "ext4":
+            return StickStatus(
+                state="wrong_fs",
+                fstype=label_fstype,
+                total_bytes=None,
+                free_bytes=None,
+                used_bytes=None,
+                free_pct=None,
+                detail=(
+                    f"Stick is formatted as '{label_fstype}' but ext4 is required "
+                    "for snapshot dedup (rsync --link-dest hardlinks). "
+                    "Reformat per docs/USB_BACKUP.md."
+                ),
+            )
         return StickStatus(
             state="missing",
             fstype=None,

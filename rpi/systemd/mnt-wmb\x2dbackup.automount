@@ -3,7 +3,6 @@ Description=Automount WatchMyBirds USB backup volume
 # Lazy mount: triggered on first access to /mnt/wmb-backup.
 # Stick can be inserted/removed at any time without systemd errors.
 DefaultDependencies=no
-ConditionPathExists=/dev/disk/by-label/WMB-BACKUP
 
 [Automount]
 Where=/mnt/wmb-backup

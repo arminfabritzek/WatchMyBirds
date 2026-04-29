@@ -73,7 +73,8 @@ Until the UI-driven restore lands, copy data back manually:
 5. Each snapshot directory contains:
    - `data/images.db` — SQLite database (already verified with
      `pragma integrity_check`; see `manifest.json`)
-   - `data/frames/` — captured frames
+   - `data/output/` — captured frames and per-output app state, excluding
+     the live SQLite files
    - `app/` — the installed app code, useful only if you also want to
      pin to that exact build
    - `manifest.json` — what was captured, sizes, integrity hashes
@@ -87,8 +88,8 @@ To restore onto a fresh Pi installation:
 
 ```bash
 sudo systemctl stop app.service
-sudo cp /mnt/<snapshot>/data/images.db /opt/app/data/images.db
-sudo rsync -a /mnt/<snapshot>/data/frames/ /opt/app/data/frames/
+sudo rsync -a /mnt/<snapshot>/data/output/ /opt/app/data/output/
+sudo cp /mnt/<snapshot>/data/images.db /opt/app/data/output/images.db
 sudo chown -R watchmybirds:watchmybirds /opt/app/data
 sudo systemctl start app.service
 ```

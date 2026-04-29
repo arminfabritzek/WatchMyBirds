@@ -12,7 +12,11 @@ Type=ext4
 # Allowlist: only ext4 is acceptable. Anything else fails the mount,
 # UI surfaces the wrong-fs state. Hardlinks (rsync --link-dest)
 # require ext4 -- FAT32/exFAT would silently break dedupe.
-Options=rw,nosuid,nodev,noexec,noatime
+#
+# X-mount.* is handled by util-linux mount(8): it fixes the mounted
+# stick root to the unprivileged app user after mount, which makes a
+# fresh ext4 stick usable without a separate manual chown step.
+Options=rw,nosuid,nodev,noexec,noatime,X-mount.owner=watchmybirds,X-mount.group=watchmybirds,X-mount.mode=0755
 TimeoutSec=10
 
 [Install]

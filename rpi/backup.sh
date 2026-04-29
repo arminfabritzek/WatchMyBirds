@@ -28,6 +28,7 @@
 #   15 -- app rsync failed
 #   16 -- DB integrity check failed (snapshot kept, marked CORRUPT)
 #   17 -- SHA verification failed (snapshot kept, marked CORRUPT)
+#   18 -- another backup is already running
 # ----------------------------------------------------------------------
 
 set -u
@@ -39,6 +40,7 @@ set -o pipefail
 # Configuration
 # ----------------------------------------------------------------------
 readonly MOUNT_POINT="/mnt/wmb-backup"
+readonly BACKUP_DEVICE="/dev/disk/by-label/WMB-BACKUP"
 readonly SNAPSHOTS_DIR="${MOUNT_POINT}/snapshots"
 readonly LATEST_LINK="${MOUNT_POINT}/latest"
 readonly LOG_FILE="${MOUNT_POINT}/BACKUP_LOG.txt"
@@ -127,6 +129,12 @@ if ! mountpoint -q "${MOUNT_POINT}"; then
     # also fails we know the stick is genuinely absent.
     ls "${MOUNT_POINT}" >/dev/null 2>&1 || true
     if ! mountpoint -q "${MOUNT_POINT}"; then
+        if [[ -e "${BACKUP_DEVICE}" ]]; then
+            LABEL_FSTYPE="$(blkid -o value -s TYPE "${BACKUP_DEVICE}" 2>/dev/null || true)"
+            if [[ -n "${LABEL_FSTYPE}" && "${LABEL_FSTYPE}" != "ext4" ]]; then
+                die 11 "USB backup volume has filesystem '${LABEL_FSTYPE}', expected ext4. Reformat per docs/USB_BACKUP.md."
+            fi
+        fi
         die 10 "USB backup volume not mounted at ${MOUNT_POINT} -- stick missing or wrong label."
     fi
 fi
@@ -136,8 +144,9 @@ if [[ "${FSTYPE}" != "ext4" ]]; then
     die 11 "USB backup volume has filesystem '${FSTYPE:-unknown}', expected ext4. Reformat per docs/USB_BACKUP.md."
 fi
 
-# Idempotent ownership fix -- ext4 stores ownership on-disk, not via mount
-# options. First-time use of a fresh stick may still be root-owned.
+# The mount unit should hand the mounted root to watchmybirds via
+# X-mount.owner/group/mode. Keep this as a defensive runtime check for
+# manual mounts or older util-linux versions that ignore those options.
 if [[ "$(stat -c '%U' "${MOUNT_POINT}")" != "watchmybirds" ]]; then
     log "Fixing ownership of ${MOUNT_POINT} (was $(stat -c '%U:%G' "${MOUNT_POINT}"))"
     # We can't chown as watchmybirds -- needs to happen once via harden.sh
@@ -148,6 +157,14 @@ if [[ "$(stat -c '%U' "${MOUNT_POINT}")" != "watchmybirds" ]]; then
 fi
 
 mkdir -p "${SNAPSHOTS_DIR}" || die 11 "Cannot create ${SNAPSHOTS_DIR}"
+
+# Serialize scheduled and manual runs. The lock lives on the mounted stick,
+# so it is shared across the systemd service and the web-triggered process
+# even when either service uses PrivateTmp.
+exec 9>"${MOUNT_POINT}/.wmb-backup.lock" || die 11 "Cannot create backup lock file"
+if ! flock -n 9; then
+    die 18 "Another USB backup is already running."
+fi
 
 # ----------------------------------------------------------------------
 # Step 2: Orphan cleanup
@@ -310,6 +327,21 @@ if [[ -f "${APP_VERSION_FILE}" ]]; then
     APP_VERSION="$(tr -d '[:space:]' < "${APP_VERSION_FILE}")"
 fi
 
+json_escape() {
+    local s="${1:-}"
+    s="${s//\\/\\\\}"
+    s="${s//\"/\\\"}"
+    s="${s//$'\n'/\\n}"
+    s="${s//$'\r'/\\r}"
+    s="${s//$'\t'/\\t}"
+    printf '%s' "${s}"
+}
+
+HOSTNAME_JSON="$(json_escape "$(hostname)")"
+USER_JSON="$(json_escape "$(id -un)")"
+APP_VERSION_JSON="$(json_escape "${APP_VERSION}")"
+PREV_SNAPSHOT_JSON="$(json_escape "${PREV_SNAPSHOT##*/snapshots/}")"
+
 OUTPUT_BYTES="$(du -sb "${SNAPSHOT_DIR}/data/output" 2>/dev/null | awk '{print $1}')"
 APP_BYTES="$(du -sb "${SNAPSHOT_DIR}/app" 2>/dev/null | awk '{print $1}')"
 TOTAL_BYTES="$(du -sb "${SNAPSHOT_DIR}" 2>/dev/null | awk '{print $1}')"
@@ -322,10 +354,10 @@ cat > "${SNAPSHOT_DIR}/manifest.json" <<EOF
   "kind": "${KIND}",
   "started_at": "${TS_START}",
   "completed_at": "${TS_END}",
-  "app_version": "${APP_VERSION}",
-  "host": "$(hostname)",
-  "user": "$(id -un)",
-  "previous_snapshot": "${PREV_SNAPSHOT##*/snapshots/}",
+  "app_version": "${APP_VERSION_JSON}",
+  "host": "${HOSTNAME_JSON}",
+  "user": "${USER_JSON}",
+  "previous_snapshot": "${PREV_SNAPSHOT_JSON}",
   "sizes": {
     "db_bytes": ${DB_BYTES},
     "output_bytes": ${OUTPUT_BYTES:-0},

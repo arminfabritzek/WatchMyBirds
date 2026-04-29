@@ -45,6 +45,7 @@ def fake_stick(tmp_path, monkeypatch):
     snaps.mkdir()
 
     monkeypatch.setattr(usb_backup_core, "MOUNT_POINT", mount)
+    monkeypatch.setattr(usb_backup_core, "BACKUP_DEVICE", mount / "dev" / "WMB-BACKUP")
     monkeypatch.setattr(usb_backup_core, "SNAPSHOTS_DIR", snaps)
     monkeypatch.setattr(usb_backup_core, "LATEST_LINK", mount / "latest")
     monkeypatch.setattr(usb_backup_core, "BACKUP_LOG", mount / "BACKUP_LOG.txt")
@@ -54,6 +55,8 @@ def fake_stick(tmp_path, monkeypatch):
     monkeypatch.setattr(usb_backup_core, "_is_mounted", lambda p: True)
     # findmnt would also fail for a regular dir; pretend we're on ext4.
     monkeypatch.setattr(usb_backup_core, "_findmnt_fstype", lambda p: "ext4")
+    # No labelled device probe unless a test opts into it.
+    monkeypatch.setattr(usb_backup_core, "_blkid_fstype", lambda p: None)
 
     return mount
 
@@ -132,6 +135,16 @@ class TestStickStatus:
         assert status.fstype == "vfat"
         # The detail must mention ext4 -- this is how the UI helps the
         # user understand they need to reformat.
+        assert "ext4" in (status.detail or "")
+
+    def test_wrong_fs_reported_when_labelled_device_is_not_mounted(
+        self, fake_stick, monkeypatch
+    ):
+        monkeypatch.setattr(usb_backup_core, "_is_mounted", lambda p: False)
+        monkeypatch.setattr(usb_backup_core, "_blkid_fstype", lambda p: "exfat")
+        status = usb_backup_core.get_stick_status()
+        assert status.state == "wrong_fs"
+        assert status.fstype == "exfat"
         assert "ext4" in (status.detail or "")
 
 

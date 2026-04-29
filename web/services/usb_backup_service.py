@@ -25,9 +25,8 @@ logger = get_logger(__name__)
 # pathway) -- keep these in sync.
 BACKUP_SCRIPT = Path("/opt/app/rpi/backup.sh")
 
-# Lock to prevent concurrent manual triggers. The script itself is
-# idempotent, but two snapshots starting in the same second would
-# collide on directory names anyway.
+# Lock to prevent duplicate spawns inside this web process. The script
+# holds the cross-process backup lock while the snapshot itself runs.
 _TRIGGER_LOCK = threading.Lock()
 # Tracks the most recently spawned manual backup for status reporting.
 _LAST_MANUAL_TRIGGER: dict[str, Any] | None = None
