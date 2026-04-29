@@ -38,7 +38,7 @@ APT_OPTIONS="-y -o Dpkg::Options::=--force-confnew -o Dpkg::Options::=--force-co
 # Retry logic
 apt-get $APT_OPTIONS upgrade || (sleep 10 && apt-get $APT_OPTIONS upgrade)
 
-apt-get $APT_OPTIONS install ufw hostapd dnsmasq unattended-upgrades dhcpcd5 libglib2.0-0 ffmpeg v4l-utils polkitd curl ca-certificates
+apt-get $APT_OPTIONS install ufw hostapd dnsmasq unattended-upgrades dhcpcd5 libglib2.0-0 ffmpeg v4l-utils polkitd curl ca-certificates rsync sqlite3
 
 # Bootstrap Python 3.12 into the shared golden image once so downstream RPi
 # build lanes can create cp312 virtualenvs without reinstalling it each time.
@@ -215,6 +215,14 @@ chmod 644 '/etc/systemd/system/mnt-wmb\x2dbackup.automount'
 # Enable the AUTOMOUNT, not the mount (automount triggers mount on access)
 ln -sf '/etc/systemd/system/mnt-wmb\x2dbackup.automount' \
     '/etc/systemd/system/multi-user.target.wants/mnt-wmb\x2dbackup.automount'
+
+# Install backup.sh (Phase 2 of usb-data-backup plan).
+# We install via cp into /opt/app/rpi/ at first-boot via the synced repo --
+# but for the golden image we keep /tmp/rpi/backup.sh on the side so
+# wmb-first-boot can stage it. The script itself runs from /opt/app/rpi/
+# (the rsync target of sync_preview / release deploy), so the golden
+# image only needs to ensure /opt/app exists -- the script lands there
+# on first sync. No copy needed here.
 
 # Install setup server (AP only; enabled by first-boot when needed)
 cp /tmp/systemd/wmb-setup-server.service /etc/systemd/system/wmb-setup-server.service
