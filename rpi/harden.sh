@@ -200,6 +200,22 @@ chmod 644 /etc/systemd/system/wmb-wifi-watchdog.timer
 # Enable the timer, NOT the service (timer triggers service)
 ln -sf /etc/systemd/system/wmb-wifi-watchdog.timer /etc/systemd/system/multi-user.target.wants/wmb-wifi-watchdog.timer
 
+# Install USB backup mount infrastructure (Phase 1 of usb-data-backup plan)
+# - mount unit binds /dev/disk/by-label/WMB-BACKUP to /mnt/wmb-backup (ext4 only)
+# - automount unit makes the mount lazy: stick can be inserted/removed at runtime
+# - Mount-Options nosuid,nodev,noexec block code-exec from the stick.
+# - The .timer/.service for scheduled backups are installed below (Phase 3).
+mkdir -p /mnt/wmb-backup
+chown watchmybirds:watchmybirds /mnt/wmb-backup
+chmod 755 /mnt/wmb-backup
+cp '/tmp/systemd/mnt-wmb\x2dbackup.mount' '/etc/systemd/system/mnt-wmb\x2dbackup.mount'
+cp '/tmp/systemd/mnt-wmb\x2dbackup.automount' '/etc/systemd/system/mnt-wmb\x2dbackup.automount'
+chmod 644 '/etc/systemd/system/mnt-wmb\x2dbackup.mount'
+chmod 644 '/etc/systemd/system/mnt-wmb\x2dbackup.automount'
+# Enable the AUTOMOUNT, not the mount (automount triggers mount on access)
+ln -sf '/etc/systemd/system/mnt-wmb\x2dbackup.automount' \
+    '/etc/systemd/system/multi-user.target.wants/mnt-wmb\x2dbackup.automount'
+
 # Install setup server (AP only; enabled by first-boot when needed)
 cp /tmp/systemd/wmb-setup-server.service /etc/systemd/system/wmb-setup-server.service
 chmod 644 /etc/systemd/system/wmb-setup-server.service

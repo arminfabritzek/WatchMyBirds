@@ -1,0 +1,19 @@
+[Unit]
+Description=WatchMyBirds USB backup volume
+# Stick is fully optional. Boot must not block on it.
+DefaultDependencies=no
+Conflicts=umount.target
+Before=umount.target
+
+[Mount]
+What=/dev/disk/by-label/WMB-BACKUP
+Where=/mnt/wmb-backup
+Type=ext4
+# Allowlist: only ext4 is acceptable. Anything else fails the mount,
+# UI surfaces the wrong-fs state. Hardlinks (rsync --link-dest)
+# require ext4 -- FAT32/exFAT would silently break dedupe.
+Options=rw,nosuid,nodev,noexec,noatime
+TimeoutSec=10
+
+[Install]
+WantedBy=multi-user.target
