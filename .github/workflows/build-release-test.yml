@@ -3,8 +3,8 @@ name: Build Release Image (Test, no publish)
 # Production-mode RPi image build identical to build-release.yml,
 # but without creating a GitHub Release, pushing Docker images, or
 # committing APP_VERSION. The compressed .img.xz lands as a GitHub
-# Actions artifact (default 90-day retention) so it can be downloaded
-# and flashed for verification.
+# Actions artifact with 3-day retention to stay well clear of the
+# repo storage quota — flash quickly after build.
 
 on:
   workflow_dispatch:
@@ -226,7 +226,7 @@ jobs:
           name: watchmybirds-rpi-test-${{ steps.builddate.outputs.date }}
           path: watchmybirds-rpi-test-${{ steps.builddate.outputs.date }}.img.xz
           if-no-files-found: error
-          retention-days: 14
+          retention-days: 3
 
       - name: Write Build Summary
         run: |
@@ -239,7 +239,7 @@ jobs:
             echo "- Artifact: \`${IMG_FILE}\` (${IMG_SIZE})"
             echo "- Commit: \`${{ github.sha }}\`"
             echo "- Build date: \`${{ steps.builddate.outputs.date_short }}\`"
-            echo "- Retention: 14 days"
+            echo "- Retention: 3 days"
             echo
             echo "Download from the **Artifacts** section above and flash with"
             echo "[Raspberry Pi Imager](https://www.raspberrypi.com/software/)."

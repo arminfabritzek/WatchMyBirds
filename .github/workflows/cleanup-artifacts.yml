@@ -1,0 +1,76 @@
+name: Cleanup Artifacts
+
+# Safety net against the GitHub Actions storage quota.
+# Deletes any artifact older than MAX_AGE_DAYS, regardless of which
+# workflow uploaded it or what retention-days that workflow declared.
+# Belt-and-suspenders against:
+#   - the silent *.dockerbuild artifacts uploaded by docker/build-push-action
+#     (suppressed at source via DOCKER_BUILD_RECORD_UPLOAD=false, but the
+#      sweeper catches anything that slips through)
+#   - future workflows that forget to set retention-days (default is 90d)
+#   - one-off large artifacts (e.g. 1.7 GB RPi test images) lingering
+#
+# Runs daily and on demand.
+
+on:
+  schedule:
+    - cron: "0 4 * * *"  # 04:00 UTC daily — quiet window
+  workflow_dispatch:
+    inputs:
+      max_age_days:
+        description: "Max age in days (older artifacts get deleted)"
+        required: false
+        default: "3"
+        type: string
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    env:
+      MAX_AGE_DAYS: ${{ github.event.inputs.max_age_days || '3' }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      REPO: ${{ github.repository }}
+    steps:
+      - name: Delete old artifacts
+        run: |
+          set -euo pipefail
+
+          CUTOFF=$(date -u -d "${MAX_AGE_DAYS} days ago" +%s)
+          echo "Deleting artifacts created before $(date -u -d "@${CUTOFF}" +%Y-%m-%dT%H:%M:%SZ)"
+
+          DELETED=0
+          KEPT=0
+          FREED_BYTES=0
+
+          # The artifacts API is paginated; --paginate handles it.
+          # We capture id, created_at, size, name in a tab-separated stream.
+          while IFS=$'\t' read -r id created size name; do
+            [ -z "${id}" ] && continue
+            CREATED_TS=$(date -u -d "${created}" +%s)
+            if [ "${CREATED_TS}" -lt "${CUTOFF}" ]; then
+              echo "  delete  ${id}  ${created}  $((size / 1024)) KB  ${name}"
+              if gh api -X DELETE "/repos/${REPO}/actions/artifacts/${id}" --silent; then
+                DELETED=$((DELETED + 1))
+                FREED_BYTES=$((FREED_BYTES + size))
+              else
+                echo "    warn: delete failed for ${id}"
+              fi
+            else
+              KEPT=$((KEPT + 1))
+            fi
+          done < <(gh api --paginate "/repos/${REPO}/actions/artifacts" \
+                     -q '.artifacts[] | "\(.id)\t\(.created_at)\t\(.size_in_bytes)\t\(.name)"')
+
+          FREED_MB=$((FREED_BYTES / 1024 / 1024))
+          {
+            echo "## Artifact Cleanup"
+            echo
+            echo "- Cutoff: artifacts older than ${MAX_AGE_DAYS} days"
+            echo "- Deleted: ${DELETED}"
+            echo "- Kept: ${KEPT}"
+            echo "- Freed: ${FREED_MB} MB"
+          } >> "${GITHUB_STEP_SUMMARY}"

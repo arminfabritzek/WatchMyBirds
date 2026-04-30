@@ -9,6 +9,9 @@ jobs:
     permissions:
       contents: write
       packages: write
+    env:
+      DOCKER_BUILD_SUMMARY: false
+      DOCKER_BUILD_RECORD_UPLOAD: false
 
     steps:
       - name: Checkout repository
