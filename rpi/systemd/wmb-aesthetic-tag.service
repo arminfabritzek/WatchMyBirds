@@ -1,0 +1,40 @@
+[Unit]
+Description=WatchMyBirds aesthetic auto-tagger (nightly batch)
+# Don't fail loudly if the script isn't synced yet (fresh image, first
+# boot before any deploy). systemd skips the unit cleanly instead of
+# logging a load error.
+ConditionPathExists=/opt/app/scripts/aesthetic_tag_nightly.py
+ConditionPathExists=/opt/app/.venv-aesthetic/bin/python
+# We don't depend on app.service: SQLite reads/writes here are online-safe.
+After=network.target
+
+[Service]
+Type=oneshot
+User=watchmybirds
+Group=watchmybirds
+# CPU-bound on Pi 5 (CLIP inference). Keep it polite; runs at 02:00.
+Nice=15
+IOSchedulingClass=idle
+# Limit memory so a runaway run can't OOM the detector pipeline.
+# CLIP ViT-B/32 typically needs ~700 MB; 1.2 GB cap leaves headroom.
+MemoryMax=1200M
+# Single-threaded torch is fine and gentler on the Pi than parallel.
+Environment=OMP_NUM_THREADS=2
+Environment=MKL_NUM_THREADS=2
+Environment=PYTORCH_NUM_THREADS=2
+ExecStart=/opt/app/.venv-aesthetic/bin/python /opt/app/scripts/aesthetic_tag_nightly.py
+# 1 hour cap. Realistic runs on Pi 5 with ~1000 crops/night: ~30 min.
+TimeoutStartSec=60min
+
+# Hardening (script needs read access to /opt/app and write to the DB
+# + log dir; nothing else).
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/opt/app/data
+ProtectHome=yes
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true

@@ -1,0 +1,16 @@
+[Unit]
+Description=Run WatchMyBirds aesthetic auto-tagger nightly at 02:00
+
+[Timer]
+# 02:00 local time. Earlier than wmb-backup (03:00) so the score+tag
+# is in place before the daily backup snapshot picks it up.
+OnCalendar=*-*-* 02:00:00
+# If the Pi was off when 02:00 hit, run as soon as it boots (catch-up).
+Persistent=true
+AccuracySec=15min
+# Add up to 30 min of randomization so a fleet of Pis doesn't all hit
+# the same timing on coordinated reboots.
+RandomizedDelaySec=30min
+
+[Install]
+WantedBy=timers.target

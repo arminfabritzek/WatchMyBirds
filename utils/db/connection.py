@@ -185,6 +185,17 @@ def _init_schema(conn: sqlite3.Connection) -> None:
     # Favorite flag (simple ❤️ toggle for cover image selection)
     _ensure_column_on_table(conn, "detections", "is_favorite", "INTEGER DEFAULT 0")
 
+    # Aesthetic auto-tagging (nightly batch job, see scripts/aesthetic_tag_nightly.py).
+    # aesthetic_score: float in [0, 1], CLIP zero-shot "facing camera" probability.
+    # aesthetic_score_at: ISO-8601 timestamp of last computation; lets the job skip
+    #   detections it has already scored on previous nights.
+    # Tagging via is_favorite=1 + rating_source='auto' is applied for selected species
+    #   only (small songbirds), pigeons/large birds stay untagged because the score
+    #   does not generalize there. See validation results in
+    #   agent_handoff/lab/experiments/aesthetic_tagger/aesthetic_eval/labels_export.json.
+    _ensure_column_on_table(conn, "detections", "aesthetic_score", "REAL")
+    _ensure_column_on_table(conn, "detections", "aesthetic_score_at", "TEXT")
+
     conn.execute("""
         CREATE TABLE IF NOT EXISTS sources (
             source_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -327,6 +338,22 @@ def _init_schema(conn: sqlite3.Connection) -> None:
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_rescan_proposals_status ON rescan_proposals(status);"
     )
+
+    # Seen-species log for the "new species only" Telegram mode. One row per
+    # species the operator has ever been notified about (by species_key, the
+    # same Latin / OD-class identifier the rest of the stack uses). The mode
+    # gates instant alerts on absence from this table; on first sighting we
+    # INSERT, then send, then only future sightings of that species ever
+    # alert again. Operators can wipe via the Settings "Reset known-species
+    # list" button so re-tests after a model swap work.
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS seen_species (
+            species_key TEXT PRIMARY KEY,
+            first_seen_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            first_image_filename TEXT,
+            first_score REAL
+        );
+    """)
 
     conn.commit()
 
