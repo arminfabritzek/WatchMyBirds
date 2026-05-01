@@ -12,9 +12,10 @@ Type=oneshot
 #   1. Polkit rule limiting which user can systemctl-start it.
 #   2. The script's own hard guards (USB-only, size limits, etc.).
 User=root
-# Inputs come from environment variables set by the API caller via
-# `systemctl set-environment` -- we deliberately do NOT use
-# EnvironmentFile because the values change per invocation.
+# Inputs come from a trigger file written by the API caller (the
+# unprivileged app user). `systemctl set-environment` would have
+# required either running as root or a broad polkit grant, both of
+# which are worse than reading a small JSON file with our own guards.
 ExecStart=/opt/app/rpi/format_backup_stick.sh
 # 5 min cap: even a slow stick + heavy mkfs + sync should finish well
 # under this. Set generously to avoid spurious timeouts.

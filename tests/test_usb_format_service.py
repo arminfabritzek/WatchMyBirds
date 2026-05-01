@@ -114,18 +114,23 @@ class TestTriggerValidation:
 
 class TestPolkitErrorMessage:
     def test_polkit_failure_surfaces_clean_message(
-        self, stub_supported, stub_devices, monkeypatch
+        self, stub_supported, stub_devices, monkeypatch, tmp_path
     ):
+        # We've moved off `systemctl set-environment` (which required
+        # root or a global polkit grant) to a JSON trigger file. The
+        # only remaining systemctl call is the unit-start; that's what
+        # may surface a polkit refusal.
+        trigger = tmp_path / "trigger.json"
+        monkeypatch.setattr(
+            "web.services.usb_format_service.Path",
+            lambda *a, **kw: trigger if "trigger" in str(a[0]) else __import__(
+                "pathlib"
+            ).Path(*a, **kw),
+        )
+
         import subprocess as sp
 
-        calls = []
-
         def fake_run(cmd, **kwargs):
-            calls.append(cmd)
-            # First two calls: set-environment (succeed)
-            if cmd[:2] == ["systemctl", "set-environment"]:
-                return sp.CompletedProcess(cmd, 0, "", "")
-            # Third call: start (fail with polkit error)
             if "start" in cmd:
                 raise sp.CalledProcessError(
                     1, cmd,

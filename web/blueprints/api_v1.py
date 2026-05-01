@@ -2503,6 +2503,9 @@ def system_backup_format_devices():
             "status": "success",
             "supported": usb_format_service.is_format_supported(),
             "devices": devices,
+            # Calibration samples for the UI's remaining-time estimate.
+            # Empty list on first run; gets populated by completed formats.
+            "history": usb_format_service.get_format_history(limit=5),
         })
     except Exception as e:
         logger.error("Error listing format candidates: %s", e)

@@ -1454,11 +1454,24 @@
                     on a separate Linux machine — UI restore is on the roadmap.
                 </p>
 
-                <!-- Format / re-format sub-section. Hidden until enumeration
-                     confirms there are USB sticks the operator could format. -->
-                <div class="mt-3 pt-3" id="usbFormatSection" hidden style="border-top:1px solid var(--wm-divider, #ddd);">
-                    <strong class="d-block mb-2">Format USB stick</strong>
-                    <p class="settings-field__help mb-2">
+                <!-- Format / re-format sub-section. Collapsed by default --
+                     only relevant when the operator brings a fresh stick.
+                     Hidden entirely until enumeration finds USB candidates. -->
+                <details class="mt-3 pt-3" id="usbFormatSection" hidden
+                         style="border-top:1px solid var(--wm-divider, #ddd);">
+                    <summary class="settings-field__help"
+                             style="cursor:pointer;list-style:none;
+                                    display:flex;align-items:center;gap:6px;
+                                    padding:4px 0;">
+                        <svg viewBox="0 0 24 24" width="14" height="14"
+                             fill="none" stroke="currentColor" stroke-width="2"
+                             style="transition:transform .15s ease;flex-shrink:0;"
+                             id="usbFormatChevron">
+                            <polyline points="9 6 15 12 9 18"/>
+                        </svg>
+                        <span>Format a new USB stick…</span>
+                    </summary>
+                    <p class="settings-field__help mb-2 mt-2">
                         One-click prep for a fresh stick: wipes the device and
                         re-formats it as ext4 with label <code>WMB-BACKUP</code>.
                         <strong>This destroys all data on the chosen stick.</strong>
@@ -1470,9 +1483,20 @@
                             Format selected stick…
                         </button>
                     </div>
+                    <span class="settings-field__help" id="usbFormatEstimate"></span>
                     <span class="settings-field__help" id="usbFormatProgress"></span>
-                </div>
+                </details>
             </div>
+            <style>
+                /* Rotate the chevron when the format section is open. */
+                #usbFormatSection[open] #usbFormatChevron {
+                    transform: rotate(90deg);
+                }
+                /* Hide the default disclosure triangle in WebKit. */
+                #usbFormatSection > summary::-webkit-details-marker {
+                    display: none;
+                }
+            </style>
 
             <!-- Format confirmation modal. Type "FORMAT" to enable the button. -->
             <div id="usbFormatModal" class="wm-modal" hidden role="dialog" aria-modal="true"
@@ -1494,7 +1518,7 @@
                     </label>
                     <input type="text" id="usbFormatConfirmInput" class="form-control mb-3"
                            autocomplete="off" autocapitalize="characters" />
-                    <div class="d-flex gap-2 justify-content-end">
+                    <div class="d-flex gap-2 justify-content-end" id="usbFormatModalButtons">
                         <button type="button" class="btn btn--secondary btn--sm" id="usbFormatCancelBtn">
                             Cancel
                         </button>
@@ -1502,8 +1526,59 @@
                             Format now
                         </button>
                     </div>
+                    <!-- Progress block, shown only while format is running.
+                         Modal stays open and locked so the operator cannot
+                         close it / start a second format / yank the stick. -->
+                    <div id="usbFormatModalProgress" hidden>
+                        <div class="mb-2 d-flex align-items-center gap-2"
+                             style="font-weight:600;">
+                            <!-- CSS spinner: replaces the static emoji so the
+                                 operator gets a live "still working" signal
+                                 even when mkfs sits silent for 30s. Switches
+                                 to ✓ / ✕ on terminal states via JS. -->
+                            <span id="usbFormatProgressIcon"
+                                  class="wmb-fmt-spinner" aria-hidden="true"></span>
+                            <span id="usbFormatProgressState">Starting…</span>
+                        </div>
+                        <div class="progress mb-2" style="height:8px;">
+                            <div class="progress-bar progress-bar-striped progress-bar-animated"
+                                 id="usbFormatProgressBar"
+                                 role="progressbar" style="width:5%;"></div>
+                        </div>
+                        <p class="settings-field__help mb-1" id="usbFormatProgressMessage"></p>
+                        <p class="settings-field__help mb-2" id="usbFormatRemaining"></p>
+                        <p class="mb-0" style="color:var(--wm-warning,#c80);font-size:.85em;">
+                            <strong>Do not unplug the stick</strong> until this
+                            window says the format finished.
+                        </p>
+                    </div>
                 </div>
             </div>
+            <style>
+                /* Format-modal spinner. Pure CSS so it keeps spinning even
+                   when polling is silent for tens of seconds during mkfs. */
+                .wmb-fmt-spinner {
+                    display: inline-block;
+                    width: 18px;
+                    height: 18px;
+                    border: 2px solid rgba(0, 0, 0, 0.15);
+                    border-top-color: var(--wm-primary, #0d6efd);
+                    border-radius: 50%;
+                    animation: wmb-fmt-spin 0.8s linear infinite;
+                    flex-shrink: 0;
+                }
+                @keyframes wmb-fmt-spin {
+                    to { transform: rotate(360deg); }
+                }
+                .wmb-fmt-spinner--done {
+                    animation: none;
+                    border: none;
+                    width: auto;
+                    height: auto;
+                    font-size: 1.1em;
+                    line-height: 1;
+                }
+            </style>
 
             <script>
             (function() {
@@ -1586,6 +1661,26 @@
 
                 function render(payload) {
                     var stick = payload.stick || {};
+
+                    // While a format is running, the underlying stick state
+                    // is in flux (mid-mkfs the device legitimately disappears
+                    // from /mnt/wmb-backup for a few seconds). Replace the
+                    // backup card readout with a clear "Formatting in
+                    // progress" hint and skip the noisy live state, but keep
+                    // the rest of the card intact so the operator can see
+                    // it's the same card the modal belongs to.
+                    if (window.__wmbFormatActive) {
+                        stateBadge.className = 'badge badge--warning';
+                        stateBadge.textContent = 'Formatting…';
+                        detailEl.textContent =
+                            'A format is in progress. Watch the modal for live progress; ' +
+                            'do not unplug the stick.';
+                        spaceWrap.hidden = true;
+                        listWrap.hidden = true;
+                        triggerBtn.disabled = true;
+                        return;
+                    }
+
                     var info = STATE_BADGES[stick.state] || STATE_BADGES.error;
                     stateBadge.className = 'badge ' + info.cls;
                     stateBadge.textContent = info.label;
@@ -1659,8 +1754,17 @@
                         });
                 });
 
+                // Pause the 15s refresh while a format is running -- the
+                // stick legitimately disappears for a few seconds during
+                // mkfs, and a 'No stick / Wrong filesystem' flicker behind
+                // the modal would be confusing. The format-modal panel
+                // owns the truth during that window.
+                function refreshIfIdle() {
+                    if (window.__wmbFormatActive) return;
+                    refresh();
+                }
                 refresh();
-                setInterval(refresh, 15000);
+                setInterval(refreshIfIdle, 15000);
             })();
             </script>
 
@@ -1679,8 +1783,229 @@
                 var confirmInput = document.getElementById('usbFormatConfirmInput');
                 var confirmBtn = document.getElementById('usbFormatConfirmBtn');
                 var cancelBtn = document.getElementById('usbFormatCancelBtn');
+                var modalButtons = document.getElementById('usbFormatModalButtons');
+                var modalProgress = document.getElementById('usbFormatModalProgress');
+                var progressBar = document.getElementById('usbFormatProgressBar');
+                var progressState = document.getElementById('usbFormatProgressState');
+                var progressIcon = document.getElementById('usbFormatProgressIcon');
+                var progressMessage = document.getElementById('usbFormatProgressMessage');
+                var estimateEl = document.getElementById('usbFormatEstimate');
+                var remainingEl = document.getElementById('usbFormatRemaining');
+
+                // Coordination flag: when a format is running we pause the
+                // backup-card polling so its 'missing/wrong_fs' transitions
+                // (mid-format the stick legitimately disappears for a few
+                // seconds) don't flicker the UI behind the modal.
+                window.__wmbFormatActive = false;
 
                 if (!section) return;
+
+                // -----------------------------------------------------------
+                // ETA estimator -- self-calibrating
+                // -----------------------------------------------------------
+                // Default heuristic (used until we have real samples on this
+                // Pi): 10 s overhead + 2.5 s/GB. Calibrated against a 32 GB
+                // stick at 91 s end-to-end (5 s wipefs+parted, ~19 s mkfs
+                // inode/superblock setup, ~67 s journal+blob, ~5 s mount).
+                //
+                // Once the bash script has appended success samples to
+                // /opt/app/data/usb_format_history.jsonl, we fit a simple
+                // linear model `seconds = overhead + slope * GB` to the
+                // most recent runs and use that instead. With 1 sample we
+                // hold the default overhead and only refit slope; with 2+
+                // samples we solve the slope/intercept jointly. Samples
+                // are weighted so the most recent run counts most -- if
+                // the operator switches to slower sticks, we adapt fast.
+                var formatHistory = [];  // updated by refreshDevices
+
+                function defaultEstimate(gb) {
+                    return 10 + gb * 2.5;
+                }
+
+                function calibratedEstimate(gb) {
+                    var n = formatHistory.length;
+                    if (n === 0) return defaultEstimate(gb);
+                    if (n === 1) {
+                        // One data point: keep the heuristic's 10 s
+                        // overhead, fit only the slope.
+                        var s = formatHistory[0];
+                        var sampleGb = s.size_bytes / 1073741824;
+                        if (sampleGb < 0.5) return defaultEstimate(gb);
+                        var slope = Math.max(0.5, (s.seconds - 10) / sampleGb);
+                        return 10 + slope * gb;
+                    }
+                    // 2+ samples: weighted least-squares regression where
+                    // the newest sample carries weight n, the oldest 1.
+                    var sw = 0, swx = 0, swy = 0, swxx = 0, swxy = 0;
+                    for (var i = 0; i < n; i++) {
+                        var w = i + 1;            // older=low, newer=high
+                        var x = formatHistory[i].size_bytes / 1073741824;
+                        var y = formatHistory[i].seconds;
+                        sw += w; swx += w * x; swy += w * y;
+                        swxx += w * x * x; swxy += w * x * y;
+                    }
+                    var denom = sw * swxx - swx * swx;
+                    if (Math.abs(denom) < 1e-6) {
+                        // Degenerate (all same size) -- average secs/GB.
+                        var avg = swy / sw;
+                        var avgX = swx / sw;
+                        return avgX > 0 ? (avg / avgX) * gb : defaultEstimate(gb);
+                    }
+                    var slopeR = (sw * swxy - swx * swy) / denom;
+                    var interceptR = (swy - slopeR * swx) / sw;
+                    // Sanity-clamp regression: prefer heuristic if the fit
+                    // produces nonsense (negative slope, absurd overhead).
+                    if (slopeR < 0.3 || slopeR > 30 || interceptR < -30) {
+                        return defaultEstimate(gb);
+                    }
+                    return Math.max(5, interceptR) + slopeR * gb;
+                }
+
+                function estimateSeconds(sizeBytes) {
+                    if (!sizeBytes || sizeBytes < 1) return 90;
+                    var gb = sizeBytes / 1073741824;
+                    var secs = Math.round(calibratedEstimate(gb));
+                    return Math.max(30, Math.min(secs, 600));
+                }
+                function fmtDuration(secs) {
+                    secs = Math.max(0, Math.round(secs));
+                    if (secs < 60) return secs + ' s';
+                    var m = Math.floor(secs / 60);
+                    var s = secs % 60;
+                    if (s === 0) return m + ' min';
+                    return m + ' min ' + s + ' s';
+                }
+
+                // Cache so we know how big the picked stick is when the
+                // modal opens (before kicking off the run timer).
+                var lastDevices = [];
+                function pickedDevice() {
+                    var dev = select.value;
+                    if (!dev) return null;
+                    for (var i = 0; i < lastDevices.length; i++) {
+                        if (String(lastDevices[i].device || '') === dev) {
+                            return lastDevices[i];
+                        }
+                    }
+                    return null;
+                }
+
+                function refreshEstimateLine() {
+                    if (!estimateEl) return;
+                    var d = pickedDevice();
+                    if (!d) { estimateEl.textContent = ''; return; }
+                    estimateEl.textContent =
+                        'Estimated format time: ~' +
+                        fmtDuration(estimateSeconds(d.size_bytes));
+                }
+
+                // Live countdown during the format. Driven entirely client-
+                // side so it keeps ticking even when the bash script is
+                // silent for the 60-90 s mkfs.ext4 journal phase.
+                var runStartTs = 0;
+                var runTotalSecs = 0;
+                var remainingTimer = null;
+                function startCountdown(totalSecs) {
+                    runStartTs = Date.now();
+                    runTotalSecs = totalSecs;
+                    if (remainingTimer) clearInterval(remainingTimer);
+                    tickCountdown();
+                    remainingTimer = setInterval(tickCountdown, 1000);
+                }
+                function tickCountdown() {
+                    if (!remainingEl) return;
+                    var elapsed = (Date.now() - runStartTs) / 1000;
+                    var remaining = runTotalSecs - elapsed;
+                    if (remaining > 5) {
+                        remainingEl.textContent =
+                            'About ' + fmtDuration(remaining) + ' remaining…';
+                    } else if (remaining > 0) {
+                        remainingEl.textContent = 'Almost done…';
+                    } else {
+                        // Ran past the estimate -- mkfs sometimes does on
+                        // bigger sticks. Keep the operator reassured.
+                        remainingEl.textContent =
+                            'Taking a bit longer than expected, please wait…';
+                    }
+                }
+                function stopCountdown() {
+                    if (remainingTimer) clearInterval(remainingTimer);
+                    remainingTimer = null;
+                    if (remainingEl) remainingEl.textContent = '';
+                }
+
+                // Map of state -> { label, percent, icon }. Order roughly
+                // matches script flow so the bar progresses monotonically.
+                var FORMAT_STATES = {
+                    idle:         { label: 'Idle',                pct: 0,   icon: '⏳' },
+                    starting:     { label: 'Validating request',  pct: 10,  icon: '⏳' },
+                    validating:   { label: 'Checking device',     pct: 20,  icon: '🔎' },
+                    unmounting:   { label: 'Unmounting',          pct: 28,  icon: '⏏️' },
+                    wiping:       { label: 'Wiping partitions',   pct: 35,  icon: '🧹' },
+                    partitioning: { label: 'Creating partition',  pct: 50,  icon: '✂️' },
+                    formatting:   { label: 'Formatting as ext4',  pct: 75,  icon: '⚙️' },
+                    mounting:     { label: 'Mounting',            pct: 95,  icon: '🔗' },
+                    success:      { label: 'Format complete',     pct: 100, icon: '✅' },
+                    error:        { label: 'Format failed',       pct: 100, icon: '❌' }
+                };
+
+                function setModalRunning(stateKey, message) {
+                    var info = FORMAT_STATES[stateKey] || FORMAT_STATES.starting;
+                    // Disable both action buttons -- still visible, but the
+                    // operator can't cancel mid-mkfs or fire a second format.
+                    // We deliberately keep the buttons in the DOM flow rather
+                    // than hiding them: trying to hide a `.d-flex` row from
+                    // JS fights Bootstrap's `!important` and the prior
+                    // setProperty workaround proved fragile in practice.
+                    confirmBtn.disabled = true;
+                    confirmBtn.textContent = info.label + '…';
+                    cancelBtn.disabled = true;
+                    // The progress block carries a bare `hidden` attribute
+                    // initially. Removing the attribute (rather than fighting
+                    // it via !important) is the cleanest way to reveal it.
+                    modalProgress.removeAttribute('hidden');
+                    // Icon: live-spinning circle for in-progress states,
+                    // ✓/✕ for terminal states. The spinner is a CSS-animated
+                    // border circle, so it keeps moving even when polling
+                    // sits silent for the 30s mkfs.ext4 inode-table init.
+                    if (stateKey === 'success') {
+                        progressIcon.classList.add('wmb-fmt-spinner--done');
+                        progressIcon.textContent = '✅';
+                    } else if (stateKey === 'error') {
+                        progressIcon.classList.add('wmb-fmt-spinner--done');
+                        progressIcon.textContent = '❌';
+                    } else {
+                        progressIcon.classList.remove('wmb-fmt-spinner--done');
+                        progressIcon.textContent = '';
+                    }
+                    progressState.textContent = info.label;
+                    progressBar.style.width = info.pct + '%';
+                    progressMessage.textContent = message || '';
+                    if (stateKey === 'error') {
+                        progressBar.classList.remove('progress-bar-animated');
+                        progressBar.classList.add('bg-danger');
+                    } else if (stateKey === 'success') {
+                        progressBar.classList.remove('progress-bar-animated');
+                        progressBar.classList.add('bg-success');
+                    } else {
+                        progressBar.classList.add('progress-bar-animated');
+                        progressBar.classList.remove('bg-danger', 'bg-success');
+                    }
+                }
+
+                function setModalIdle() {
+                    modalProgress.setAttribute('hidden', '');
+                    progressBar.style.width = '5%';
+                    progressBar.classList.add('progress-bar-animated');
+                    progressBar.classList.remove('bg-danger', 'bg-success');
+                    // Restore the live spinner for the next run -- otherwise
+                    // a fresh open after success/error would still show ✓/✕.
+                    progressIcon.classList.remove('wmb-fmt-spinner--done');
+                    progressIcon.textContent = '';
+                    confirmBtn.disabled = true;
+                    confirmBtn.textContent = 'Format now';
+                    cancelBtn.disabled = false;
+                }
 
                 function fmtBytes(n) {
                     if (n == null) return '?';
@@ -1720,6 +2045,36 @@
                                 return;
                             }
                             section.hidden = false;
+                            // Always keep the cache fresh -- ETA needs
+                            // size_bytes for the picked device on every
+                            // dropdown change, including signature-cached
+                            // refreshes that don't rebuild the options.
+                            lastDevices = devices;
+                            // Pick up calibration samples on every refresh
+                            // so a freshly-completed format updates the
+                            // estimator without the operator reloading.
+                            formatHistory = Array.isArray(data.history)
+                                ? data.history : [];
+
+                            // Skip rebuild entirely when the attached devices
+                            // haven't changed. Without this, the 15s poll
+                            // clears the dropdown mid-click and the operator's
+                            // choice is silently reset to placeholder, so the
+                            // Format-now handler exits early on empty device.
+                            var sig = devices
+                                .map(function(d) { return String(d.device || ''); })
+                                .sort()
+                                .join(',');
+                            if (select.dataset.deviceSig === sig) {
+                                refreshEstimateLine();
+                                return;
+                            }
+                            select.dataset.deviceSig = sig;
+
+                            // Preserve the operator's selection across rebuilds
+                            // when the chosen device is still attached.
+                            var prev = select.value;
+
                             clear(select);
                             // Placeholder option keeps the user from clicking
                             // Format with whatever happens to be index 0.
@@ -1733,9 +2088,20 @@
                                 opt.textContent = buildOptionLabel(d);
                                 select.appendChild(opt);
                             });
+
+                            if (prev && devices.some(function(d) {
+                                return String(d.device || '') === prev;
+                            })) {
+                                select.value = prev;
+                            }
+                            refreshEstimateLine();
                         })
                         .catch(function() { section.hidden = true; });
                 }
+
+                // Update the estimate line whenever the operator changes the
+                // picked device. Cheap; no fetch.
+                select.addEventListener('change', refreshEstimateLine);
 
                 function openModal() {
                     var device = select.value;
@@ -1745,29 +2111,43 @@
                     }
                     // Guard: don't let the user format a stick that is mounted
                     // and currently used as our backup volume without a hard
-                    // re-confirm. The script also refuses, but we surface it
+                    // re-confirm. The script also surfaces it, but we catch it
                     // earlier here.
                     var picked = select.options[select.selectedIndex];
                     modalDevice.textContent = picked ? picked.textContent : device;
                     confirmInput.value = '';
                     confirmBtn.disabled = true;
+                    // Toggle inline display + hidden together: the modal root
+                    // carries inline `display:flex` for centering, which beats
+                    // a bare `hidden` attribute on UAs that don't ship the
+                    // !important `[hidden]` UA rule. Drive both, defensively.
                     modal.hidden = false;
+                    modal.style.setProperty('display', 'flex', 'important');
                     setTimeout(function() { confirmInput.focus(); }, 50);
                 }
 
                 function closeModal() {
                     modal.hidden = true;
+                    modal.style.setProperty('display', 'none', 'important');
                 }
 
                 confirmInput.addEventListener('input', function() {
                     confirmBtn.disabled = (confirmInput.value !== 'FORMAT');
                 });
 
-                cancelBtn.addEventListener('click', closeModal);
+                cancelBtn.addEventListener('click', function() {
+                    // Refuse to cancel while a format is actually running --
+                    // the operator's "stop now" intent on a running mkfs
+                    // would be far worse than "wait it out".
+                    if (window.__wmbFormatActive) return;
+                    closeModal();
+                });
 
-                // Click outside panel = cancel.
+                // Click outside panel = cancel, but only when idle.
                 modal.addEventListener('click', function(e) {
-                    if (e.target === modal) closeModal();
+                    if (e.target !== modal) return;
+                    if (window.__wmbFormatActive) return;
+                    closeModal();
                 });
 
                 openBtn.addEventListener('click', openModal);
@@ -1775,8 +2155,20 @@
                 confirmBtn.addEventListener('click', function() {
                     var device = select.value;
                     if (!device || confirmInput.value !== 'FORMAT') return;
-                    confirmBtn.disabled = true;
-                    confirmBtn.textContent = 'Starting…';
+
+                    // Lock the modal: hide buttons, show progress block,
+                    // pause backup-card polling. Modal stays open until
+                    // success or error -- protects the operator from
+                    // unplugging the stick or starting another format.
+                    window.__wmbFormatActive = true;
+                    setModalRunning('starting', 'Sending request…');
+                    // Kick off the client-side countdown immediately so the
+                    // operator sees movement even before the first poll
+                    // result comes back. Estimate is based on the picked
+                    // device's size; falls back to 90 s if unknown.
+                    var d = pickedDevice();
+                    startCountdown(estimateSeconds(d ? d.size_bytes : 0));
+
                     fetch('/api/v1/system/backup/format', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
@@ -1788,24 +2180,43 @@
                     })
                         .then(function(r) { return r.json(); })
                         .then(function(data) {
-                            closeModal();
-                            confirmBtn.textContent = 'Format now';
                             if (data.status === 'success') {
                                 progress.textContent = 'Format running…';
                                 pollStatus();
                             } else {
+                                // Backend refused outright -- unlock modal
+                                // so the operator can retry / cancel.
+                                window.__wmbFormatActive = false;
+                                stopCountdown();
+                                setModalIdle();
+                                confirmInput.value = '';
                                 progress.textContent = 'Failed: ' +
                                     (data.message || 'unknown error');
+                                setModalRunning('error', data.message || 'unknown error');
+                                // Auto-reset modal to idle after 3s so the
+                                // user can correct + retry without closing.
+                                setTimeout(function() {
+                                    setModalIdle();
+                                    closeModal();
+                                }, 3500);
                             }
                         })
                         .catch(function(err) {
-                            closeModal();
-                            confirmBtn.textContent = 'Format now';
-                            progress.textContent = 'Network error: ' + err;
+                            window.__wmbFormatActive = false;
+                            stopCountdown();
+                            setModalRunning('error', 'Network error: ' + err);
+                            setTimeout(function() {
+                                setModalIdle();
+                                closeModal();
+                            }, 3500);
                         });
                 });
 
                 var pollTimer = null;
+                var ACTIVE_FORMAT_STATES = {
+                    starting: 1, validating: 1, unmounting: 1, wiping: 1,
+                    partitioning: 1, formatting: 1, mounting: 1
+                };
                 function pollStatus() {
                     if (pollTimer) clearTimeout(pollTimer);
                     fetch('/api/v1/system/backup/format/status',
@@ -1815,15 +2226,89 @@
                             if (!data || data.status !== 'success') return;
                             var state = data.state || 'idle';
                             var msg = data.message || '';
+
+                            // Stale terminal status from a previous run: just
+                            // wipe it server-side and don't drive the modal.
+                            // Otherwise a page-load after a successful format
+                            // schedules a 2s setModalIdle()+closeModal() that
+                            // can race a fresh open of the modal and visibly
+                            // reset the typed-confirm UI under the operator.
+                            if ((state === 'success' || state === 'error')
+                                    && modal.hidden) {
+                                fetch('/api/v1/system/backup/format/status', {
+                                    method: 'DELETE',
+                                    credentials: 'same-origin'
+                                }).catch(function() {});
+                                return;
+                            }
+
+                            // Open modal automatically if a format is in
+                            // progress when the page loads (e.g. operator
+                            // refreshed during a long mkfs run). Also expand
+                            // the collapsed format-section so the operator
+                            // sees what's running, not just the modal.
+                            if (ACTIVE_FORMAT_STATES[state]) {
+                                window.__wmbFormatActive = true;
+                                if (section && !section.open) {
+                                    section.open = true;
+                                }
+                                if (modal.hidden) {
+                                    modal.hidden = false;
+                                    modal.style.setProperty('display', 'flex', 'important');
+                                }
+                                // Start the countdown if it isn't already
+                                // running. We don't know how long ago the
+                                // format actually started after a refresh,
+                                // so use the picked device's full estimate
+                                // -- worst-case we say "almost done" a bit
+                                // late, never the other way around.
+                                if (!remainingTimer) {
+                                    var d = pickedDevice();
+                                    startCountdown(estimateSeconds(d ? d.size_bytes : 0));
+                                }
+                                setModalRunning(state, msg);
+                            }
+
                             progress.textContent = state +
                                 (msg ? ': ' + msg : '');
+
                             if (state === 'success') {
+                                window.__wmbFormatActive = false;
+                                stopCountdown();
+                                setModalRunning('success',
+                                    'Stick is ready as WMB-BACKUP.');
                                 progress.textContent =
                                     'Format complete. Stick is now ready as WMB-BACKUP.';
                                 refreshDevices();
+                                // Close modal after 2s so the user sees the
+                                // completion state before it goes away.
+                                setTimeout(function() {
+                                    setModalIdle();
+                                    closeModal();
+                                    confirmInput.value = '';
+                                    // Acknowledge: clear the status file so
+                                    // a subsequent page-load won't re-open
+                                    // the modal in 'success' state.
+                                    fetch('/api/v1/system/backup/format/status', {
+                                        method: 'DELETE',
+                                        credentials: 'same-origin'
+                                    }).catch(function() {});
+                                }, 2000);
                                 return;
                             }
                             if (state === 'error') {
+                                window.__wmbFormatActive = false;
+                                stopCountdown();
+                                setModalRunning('error', msg);
+                                setTimeout(function() {
+                                    setModalIdle();
+                                    closeModal();
+                                    confirmInput.value = '';
+                                    fetch('/api/v1/system/backup/format/status', {
+                                        method: 'DELETE',
+                                        credentials: 'same-origin'
+                                    }).catch(function() {});
+                                }, 4000);
                                 return;
                             }
                             // Still running: poll again.

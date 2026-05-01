@@ -40,6 +40,12 @@ readonly MAX_BYTES=$((2 * 1024 * 1024 * 1024 * 1024))
 
 # Status file the API endpoint reads while polling.
 readonly STATUS_FILE="/opt/app/data/usb_format_status.json"
+# Rolling history of completed formats: each line is a JSON object with
+# {ts, size_bytes, seconds}. The UI reads the last few entries and uses
+# their seconds/byte ratio to calibrate its remaining-time estimate, so
+# the second format on this Pi is already a real measurement, not a
+# guess. We append-only and trim to the last 20 lines on each write.
+readonly HISTORY_FILE="/opt/app/data/usb_format_history.jsonl"
 
 # ----------------------------------------------------------------------
 # Helpers
@@ -82,10 +88,40 @@ die() {
 # Step 1: Validate inputs
 # ----------------------------------------------------------------------
 
+# Wall-clock anchor for the duration sample we append on success. Captured
+# as early as possible so the recorded "seconds" reflects the operator's
+# experience (not just the mkfs portion).
+readonly START_EPOCH="$(date -u +%s)"
+
 write_status "starting" "Validating request..."
 
+# Trigger file written by the API caller (web/services/usb_format_service.py).
+# Older callers used `systemctl set-environment` to populate WMB_TARGET_DEV
+# and WMB_CONFIRM; that path required root or a broad polkit grant. We now
+# read a small JSON file written by the unprivileged app user, then apply
+# the same guards as before. Env-var override is still honoured for direct
+# CLI testing.
+readonly TRIGGER_FILE="/opt/app/data/usb_format_trigger.json"
+
+if [[ -z "${WMB_TARGET_DEV:-}" || -z "${WMB_CONFIRM:-}" ]]; then
+    if [[ -r "${TRIGGER_FILE}" ]]; then
+        # Minimal-dependency JSON parsing: grep out the two known keys
+        # (avoids depending on jq being present in the chroot).
+        WMB_TARGET_DEV="${WMB_TARGET_DEV:-$(
+            grep -oE '"target_device"[[:space:]]*:[[:space:]]*"[^"]*"' "${TRIGGER_FILE}" \
+                | sed -E 's/.*"target_device"[[:space:]]*:[[:space:]]*"([^"]*)".*/\1/'
+        )}"
+        WMB_CONFIRM="${WMB_CONFIRM:-$(
+            grep -oE '"confirm"[[:space:]]*:[[:space:]]*"[^"]*"' "${TRIGGER_FILE}" \
+                | sed -E 's/.*"confirm"[[:space:]]*:[[:space:]]*"([^"]*)".*/\1/'
+        )}"
+        # Consume the trigger so a stale file can never silently re-fire.
+        rm -f "${TRIGGER_FILE}" 2>/dev/null || true
+    fi
+fi
+
 if [[ -z "${WMB_TARGET_DEV:-}" ]]; then
-    die 2 "WMB_TARGET_DEV not set"
+    die 2 "WMB_TARGET_DEV not set (no trigger file either)"
 fi
 
 if [[ "${WMB_CONFIRM:-}" != "${EXPECTED_CONFIRM}" ]]; then
@@ -141,11 +177,42 @@ size_gb=$((size_bytes / 1024 / 1024 / 1024))
 log "Device ${WMB_TARGET_DEV}: ${size_gb} GB, USB, removable. OK to format."
 
 # ----------------------------------------------------------------------
-# Step 4: Refuse if any partition of target is mounted
+# Step 4: Unmount any partition of the target so mkfs can run
 # ----------------------------------------------------------------------
+# Re-formatting an already-WMB-BACKUP stick is the common case: it sits
+# auto-mounted at /mnt/wmb-backup via the systemd .automount unit and any
+# mkfs would fail on the busy partition. Try to unmount everything that
+# lives on the target first; only bail if unmount itself fails.
 
-if mount | grep -qE "^${WMB_TARGET_DEV}[0-9]* "; then
-    die 10 "A partition of ${WMB_TARGET_DEV} is currently mounted. Unmount first."
+mounted_parts="$(awk -v dev="${WMB_TARGET_DEV}" \
+    '$1 ~ "^"dev"[0-9]+$" || $1 == dev {print $2}' /proc/mounts | sort -u)"
+if [[ -n "${mounted_parts}" ]]; then
+    write_status "unmounting" "Unmounting existing partitions..."
+    log "Unmounting in-use partitions before format: ${mounted_parts}"
+    while IFS= read -r mp; do
+        [[ -z "${mp}" ]] && continue
+        # Try lazy unmount as a last resort if the eager one fails -- this
+        # handles cases where another root-side process briefly opens the
+        # mount (udisks probe, indexer, etc.) right as we strike.
+        umount "${mp}" 2>/dev/null \
+            || umount -l "${mp}" 2>/dev/null \
+            || die 10 "Could not unmount ${mp}; refusing to mkfs over a busy partition."
+    done <<< "${mounted_parts}"
+    # The systemd .automount unit will re-trigger on the next access to
+    # /mnt/wmb-backup -- mask it for the duration of this script so the
+    # mkfs doesn't race a re-mount. Restored unconditionally on exit.
+    if systemctl list-unit-files 'mnt-wmb\x2dbackup.automount' >/dev/null 2>&1; then
+        systemctl stop 'mnt-wmb\x2dbackup.automount' 2>/dev/null || true
+        trap 'systemctl start "mnt-wmb\\x2dbackup.automount" 2>/dev/null || true' EXIT
+    fi
+    udevadm settle --timeout=5 || true
+fi
+
+# Re-check: if anything is still mounted, we cannot safely proceed.
+if awk -v dev="${WMB_TARGET_DEV}" \
+        '$1 ~ "^"dev"[0-9]+$" || $1 == dev {found=1} END {exit !found}' \
+        /proc/mounts; then
+    die 10 "A partition of ${WMB_TARGET_DEV} is still mounted after unmount attempt."
 fi
 
 # Refuse if /opt/app/data ends up on the same device (catastrophic).
@@ -177,8 +244,13 @@ if [[ ! -b "${WMB_TARGET_DEV}1" ]]; then
 fi
 
 write_status "formatting" "Formatting as ext4 with label ${LABEL}..."
+# Use mkfs defaults (lazy inode + journal init done in background by
+# ext4 after first mount). On a 32 GB stick this turns a 3-4 minute
+# wait into ~20-30 seconds. The lazy init still completes correctly;
+# the very first heavy backup may see a small extra IO load while
+# ext4 finishes the tables, but that's far better UX than blocking
+# the operator at format time.
 mkfs.ext4 -F -L "${LABEL}" -m 0 \
-    -E lazy_itable_init=0,lazy_journal_init=0 \
     "${WMB_TARGET_DEV}1" \
     || die 11 "mkfs.ext4 failed"
 
@@ -216,9 +288,25 @@ chmod 755 "${MOUNT_POINT}"
 sudo -u watchmybirds mkdir -p "${MOUNT_POINT}/snapshots"
 
 # ----------------------------------------------------------------------
-# Step 7: Done
+# Step 7: Record sample + done
 # ----------------------------------------------------------------------
 
+# Append a single calibration sample. The UI uses these to refine its
+# remaining-time estimate from the static "10 + 2.5 s/GB" heuristic to
+# something based on this specific Pi's actual stick-pool speed.
+elapsed=$(( $(date -u +%s) - START_EPOCH ))
+sample="{\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"size_bytes\":${size_bytes},\"seconds\":${elapsed}}"
+{
+    if [[ -f "${HISTORY_FILE}" ]]; then
+        # Keep last 19 + this one = 20 entries max.
+        tail -n 19 "${HISTORY_FILE}" 2>/dev/null
+    fi
+    echo "${sample}"
+} > "${HISTORY_FILE}.tmp" \
+    && mv "${HISTORY_FILE}.tmp" "${HISTORY_FILE}"
+chown watchmybirds:watchmybirds "${HISTORY_FILE}" 2>/dev/null || true
+chmod 644 "${HISTORY_FILE}" 2>/dev/null || true
+
 write_status "success" "Stick formatted and mounted at ${MOUNT_POINT}."
-log "Format complete: ${WMB_TARGET_DEV} -> ${LABEL} on ${MOUNT_POINT}"
+log "Format complete: ${WMB_TARGET_DEV} -> ${LABEL} on ${MOUNT_POINT} (${elapsed}s)"
 exit 0

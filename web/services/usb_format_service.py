@@ -35,6 +35,7 @@ logger = get_logger(__name__)
 
 # Mirrors rpi/format_backup_stick.sh's STATUS_FILE constant.
 STATUS_FILE = Path("/opt/app/data/usb_format_status.json")
+HISTORY_FILE = Path("/opt/app/data/usb_format_history.jsonl")
 SERVICE_UNIT = "wmb-format-backup.service"
 
 # Match /dev/sd[a-z] only (no partitions, no other patterns). Anything
@@ -82,12 +83,15 @@ def list_usb_block_devices() -> list[dict[str, Any]]:
     """
     out: list[dict[str, Any]] = []
 
-    # lsblk -d (whole-disk only, no partitions), JSON for safe parsing.
+    # Tree mode: also pull each disk's children so partition-level LABEL
+    # and FSTYPE (where NTFS / FAT / ext4 actually live on a partitioned
+    # stick) are visible. With `-d` we'd only see the whole-disk row,
+    # whose LABEL/FSTYPE are empty for any normally-partitioned stick.
     try:
         result = subprocess.run(
             [
-                "lsblk", "-d", "-J", "-b",
-                "-o", "NAME,SIZE,LABEL,FSTYPE,MODEL,VENDOR,RM",
+                "lsblk", "-J", "-b",
+                "-o", "NAME,SIZE,LABEL,FSTYPE,MODEL,VENDOR,RM,TYPE",
             ],
             capture_output=True,
             text=True,
@@ -111,6 +115,8 @@ def list_usb_block_devices() -> list[dict[str, Any]]:
         if not name.startswith("sd") or len(name) != 3:
             # Filters /dev/sda, /dev/sdb, etc. but not /dev/sda1.
             continue
+        if entry.get("type") and entry.get("type") != "disk":
+            continue
 
         device = f"/dev/{name}"
 
@@ -129,14 +135,28 @@ def list_usb_block_devices() -> list[dict[str, Any]]:
         if not isinstance(size_bytes, int) or size_bytes <= 0:
             continue
 
+        # Whole-disk LABEL/FSTYPE only populate for unpartitioned
+        # ("superfloppy") sticks. For normal NTFS/FAT/ext4 sticks the
+        # filesystem lives on /dev/sd?1 -- fall back to the first
+        # partition child so the picker can show "currently: NTFS".
+        label = entry.get("label")
+        fstype = entry.get("fstype")
+        if not (label or fstype):
+            for child in entry.get("children") or []:
+                if child.get("type") == "part":
+                    label = label or child.get("label")
+                    fstype = fstype or child.get("fstype")
+                    if label or fstype:
+                        break
+
         out.append({
             "device": device,
             "size_bytes": size_bytes,
             "model": entry.get("model") or _udev_property(device, "ID_MODEL"),
             "vendor": entry.get("vendor") or _udev_property(device, "ID_VENDOR"),
-            "current_label": entry.get("label"),
-            "current_fstype": entry.get("fstype"),
-            "is_already_wmb_backup": entry.get("label") == "WMB-BACKUP",
+            "current_label": label,
+            "current_fstype": fstype,
+            "is_already_wmb_backup": label == "WMB-BACKUP",
         })
 
     return out
@@ -187,25 +207,46 @@ def trigger_format(target_device: str, confirm_token: str) -> tuple[bool, str]:
             f"Target {target_device} is not a recognised USB stick on this Pi."
         )
 
+    # Cross-process guard: if a previous run is still active (status
+    # file shows a non-terminal state), refuse rather than queue. Our
+    # in-process _TRIGGER_LOCK below catches concurrent clicks within
+    # the same Flask worker; this catches the case where Flask was
+    # restarted mid-format or the operator opened a second browser.
+    current = get_format_status()
+    active_states = {
+        "starting", "validating", "unmounting", "wiping",
+        "partitioning", "formatting", "mounting",
+    }
+    if current.get("state") in active_states:
+        return False, (
+            f"A format is already running (state: {current.get('state')}). "
+            "Please wait for it to finish before starting another."
+        )
+
     if not _TRIGGER_LOCK.acquire(blocking=False):
         return False, "A format operation is already starting."
 
     try:
-        # Pass target + confirmation via systemctl set-environment so
-        # the unit picks them up. Cleared after the run.
-        env_args = [
-            ("WMB_TARGET_DEV", target_device),
-            ("WMB_CONFIRM", "FORMAT"),
-        ]
-        for key, value in env_args:
-            try:
-                subprocess.run(
-                    ["systemctl", "set-environment", f"{key}={value}"],
-                    check=True, capture_output=True, text=True, timeout=5,
-                )
-            except (subprocess.SubprocessError, OSError) as exc:
-                logger.error("systemctl set-environment failed: %s", exc)
-                return False, f"Could not set environment for service: {exc}"
+        # Hand the target + confirmation to the root service via a
+        # trigger file written from this process. Earlier versions
+        # used `systemctl set-environment`, but that requires root
+        # (or a global polkit grant) and would either fail outright
+        # or open a far broader authorisation hole than necessary.
+        # The trigger file lives in /opt/app/data, owned by the app
+        # user, mode 0644 -- root reads it once and then refuses to
+        # proceed if the values don't match the script's own guards.
+        trigger_path = Path("/opt/app/data/usb_format_trigger.json")
+        try:
+            trigger_path.parent.mkdir(parents=True, exist_ok=True)
+            trigger_path.write_text(
+                json.dumps({
+                    "target_device": target_device,
+                    "confirm": "FORMAT",
+                })
+            )
+        except OSError as exc:
+            logger.error("Could not write format trigger file: %s", exc)
+            return False, f"Could not stage format trigger: {exc}"
 
         # --no-block: returns immediately; status comes from the file.
         try:
@@ -232,6 +273,54 @@ def trigger_format(target_device: str, confirm_token: str) -> tuple[bool, str]:
         return True, f"Format started on {target_device}."
     finally:
         _TRIGGER_LOCK.release()
+
+
+# ----------------------------------------------------------------------
+# Calibration history
+# ----------------------------------------------------------------------
+
+
+def get_format_history(limit: int = 10) -> list[dict[str, Any]]:
+    """Read the rolling format-duration history.
+
+    Each line is a JSON object: {ts, size_bytes, seconds}. The bash
+    script appends one line on every successful format and trims to the
+    last 20. The UI uses these to calibrate its remaining-time estimate
+    instead of relying on the static 2.5 s/GB heuristic forever.
+
+    Returns the last `limit` entries (newest last). Tolerates a missing
+    or malformed file -- absence just means "no calibration yet, fall
+    back to the heuristic".
+    """
+    if not HISTORY_FILE.is_file():
+        return []
+    try:
+        with HISTORY_FILE.open(encoding="utf-8") as f:
+            lines = f.readlines()
+    except OSError:
+        return []
+    out: list[dict[str, Any]] = []
+    for line in lines[-limit:]:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            entry = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        size = entry.get("size_bytes")
+        secs = entry.get("seconds")
+        # Sanity floor: a sub-5 s "format" is almost certainly a
+        # validation failure that wrote success in error -- skip it
+        # so it doesn't poison the regression.
+        if isinstance(size, int) and isinstance(secs, (int, float)) \
+                and size > 0 and secs >= 5:
+            out.append({
+                "ts": entry.get("ts"),
+                "size_bytes": size,
+                "seconds": float(secs),
+            })
+    return out
 
 
 # ----------------------------------------------------------------------
