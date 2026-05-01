@@ -2440,6 +2440,67 @@
     </div>
 </div>
 
+<!-- App Update (RPi only) -->
+<div id="updateSection" style="display:none">
+    <h4 class="mt-4 mb-3">App Update</h4>
+    <div class="card mb-4">
+        <div class="card-body">
+            <div class="d-flex flex-wrap align-items-center gap-3 mb-3">
+                <div>
+                    <small class="text-muted d-block">Latest Release</small>
+                    <span class="fw-bold" id="upd-latest">—</span>
+                </div>
+                <div class="ms-auto d-flex gap-2 flex-wrap">
+                    <button class="btn btn-outline-secondary btn-sm" onclick="checkForUpdates()" id="upd-check-btn">
+                        Check for Updates
+                    </button>
+                    <button class="btn btn-primary btn-sm" id="upd-install-btn"
+                            onclick="openUpdateModal()" style="display:none">
+                        Update Available
+                    </button>
+                    <button class="btn btn-outline-primary btn-sm" onclick="openUpdateModal()">
+                        Choose Version…
+                    </button>
+                </div>
+            </div>
+            <!-- Status bar -->
+            <div id="upd-status-bar" style="display:none" class="alert mb-0 py-2 px-3" role="alert">
+                <span id="upd-status-text"></span>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Update Modal -->
+<div class="modal fade" id="updateModal" tabindex="-1" aria-labelledby="updateModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="updateModalLabel">Install Version</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <p class="text-muted small mb-3">
+                    Select a release to install. The app will restart automatically after the update.
+                </p>
+                <div class="mb-3">
+                    <label class="form-label fw-semibold">Target</label>
+                    <select class="form-select" id="upd-target-select">
+                        <option value="main">main (latest development build)</option>
+                    </select>
+                </div>
+                <div id="upd-modal-status" class="alert py-2 px-3 small" style="display:none" role="alert"></div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary" id="upd-confirm-btn" onclick="startInstall()">
+                    Install Now
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
 <!-- System Settings (Read-Only) — shown last so it does not push the
      submit button below the fold inside the Tools & System panel. -->
 <div class="mb-5">
@@ -3508,6 +3569,178 @@
             });
         });
     });
+
+    // ---------------------------------------------------------------
+    // Update Logic (OTA)
+    // ---------------------------------------------------------------
+    let _updStatusPoller = null;
+
+    function initUpdates() {
+        // Show section only on RPi or dev (check via versions endpoint)
+        fetch('/api/v1/system/updates/check')
+            .then(r => r.json())
+            .then(data => {
+                if (!data.update_supported) return;
+                document.getElementById('updateSection').style.display = '';
+                if (data.latest_release) {
+                    document.getElementById('upd-latest').innerText =
+                        data.latest_release.tag_name || '—';
+                }
+                if (data.update_available) {
+                    const btn = document.getElementById('upd-install-btn');
+                    btn.style.display = '';
+                    btn.innerText = `Update to ${data.latest_release.tag_name}`;
+                }
+                // Also check if an update is already running
+                pollUpdateStatus();
+            })
+            .catch(() => { /* GitHub unreachable — hide section */ });
+    }
+
+    function checkForUpdates() {
+        const btn = document.getElementById('upd-check-btn');
+        btn.disabled = true;
+        btn.innerText = 'Checking…';
+        fetch('/api/v1/system/updates/check')
+            .then(r => r.json())
+            .then(data => {
+                btn.disabled = false;
+                btn.innerText = 'Check for Updates';
+                if (!data.update_supported) return;
+                const latestEl = document.getElementById('upd-latest');
+                const installBtn = document.getElementById('upd-install-btn');
+                if (data.latest_release) {
+                    latestEl.innerText = data.latest_release.tag_name || '—';
+                }
+                if (data.update_available) {
+                    installBtn.style.display = '';
+                    installBtn.innerText = `Update to ${data.latest_release.tag_name}`;
+                    setUpdateStatus('info',
+                        `New version available: ${data.latest_release.tag_name}`);
+                } else {
+                    installBtn.style.display = 'none';
+                    setUpdateStatus('success', 'You are on the latest version.');
+                }
+                // Reload the version dropdown
+                loadReleaseOptions();
+            })
+            .catch(() => {
+                btn.disabled = false;
+                btn.innerText = 'Check for Updates';
+                setUpdateStatus('danger', 'Could not reach GitHub. Check internet connection.');
+            });
+    }
+
+    function loadReleaseOptions() {
+        fetch('/api/v1/system/updates/releases?limit=15')
+            .then(r => r.json())
+            .then(data => {
+                const sel = document.getElementById('upd-target-select');
+                // Keep the "main" option, remove old release options
+                while (sel.options.length > 1) sel.remove(1);
+                (data.releases || []).forEach(rel => {
+                    const opt = document.createElement('option');
+                    opt.value = rel.tag_name;
+                    const pre = rel.prerelease ? ' (pre-release)' : '';
+                    opt.text = `${rel.tag_name}${pre}`;
+                    sel.appendChild(opt);
+                });
+            })
+            .catch(() => {});
+    }
+
+    function openUpdateModal() {
+        loadReleaseOptions();
+        document.getElementById('upd-modal-status').style.display = 'none';
+        document.getElementById('upd-confirm-btn').disabled = false;
+        const modal = new bootstrap.Modal(document.getElementById('updateModal'));
+        modal.show();
+    }
+
+    function startInstall() {
+        const target = document.getElementById('upd-target-select').value;
+        if (!target) return;
+
+        document.getElementById('upd-confirm-btn').disabled = true;
+        setModalStatus('info', `Starting installation of ${target}…`);
+
+        fetch('/api/v1/system/updates/install', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ target })
+        })
+        .then(r => r.json())
+        .then(data => {
+            if (data.status === 'success') {
+                setModalStatus('success', data.message);
+                bootstrap.Modal.getInstance(
+                    document.getElementById('updateModal')).hide();
+                setUpdateStatus('info', `Installing ${target}… The page will reload when done.`);
+                startStatusPolling();
+            } else {
+                setModalStatus('danger', data.message || 'Installation failed.');
+                document.getElementById('upd-confirm-btn').disabled = false;
+            }
+        })
+        .catch(() => {
+            setModalStatus('danger', 'Request failed. Check network.');
+            document.getElementById('upd-confirm-btn').disabled = false;
+        });
+    }
+
+    function startStatusPolling() {
+        if (_updStatusPoller) clearInterval(_updStatusPoller);
+        _updStatusPoller = setInterval(pollUpdateStatus, 3000);
+    }
+
+    function pollUpdateStatus() {
+        fetch('/api/v1/system/updates/status')
+            .then(r => r.json())
+            .then(data => {
+                const state = data.state || 'idle';
+                const msg = data.message || '';
+                const stateMap = {
+                    idle: null,
+                    pending: 'info',
+                    downloading: 'info',
+                    installing: 'warning',
+                    restarting: 'warning',
+                    success: 'success',
+                    error: 'danger'
+                };
+                const alertType = stateMap[state];
+                if (alertType) {
+                    setUpdateStatus(alertType, msg || state);
+                }
+                if (state === 'success') {
+                    if (_updStatusPoller) { clearInterval(_updStatusPoller); _updStatusPoller = null; }
+                    setTimeout(() => location.reload(), 3000);
+                } else if (state === 'error') {
+                    if (_updStatusPoller) { clearInterval(_updStatusPoller); _updStatusPoller = null; }
+                } else if (state !== 'idle') {
+                    // Keep polling
+                    if (!_updStatusPoller) startStatusPolling();
+                }
+            })
+            .catch(() => {});
+    }
+
+    function setUpdateStatus(type, text) {
+        const bar = document.getElementById('upd-status-bar');
+        const textEl = document.getElementById('upd-status-text');
+        bar.className = `alert mb-0 py-2 px-3 alert-${type}`;
+        textEl.innerText = text;
+        bar.style.display = '';
+    }
+
+    function setModalStatus(type, text) {
+        const el = document.getElementById('upd-modal-status');
+        el.className = `alert py-2 px-3 small alert-${type}`;
+        el.innerText = text;
+        el.style.display = '';
+    }
+
+    document.addEventListener('DOMContentLoaded', initUpdates);
 </script>
 
 {% endblock %}

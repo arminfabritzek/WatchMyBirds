@@ -242,6 +242,15 @@ cp /tmp/polkit/10-watchmybirds-format-backup.rules \
     /etc/polkit-1/rules.d/10-watchmybirds-format-backup.rules
 chmod 644 /etc/polkit-1/rules.d/10-watchmybirds-format-backup.rules
 
+# Install OTA updater (root, polkit-gated to watchmybirds for start).
+# The unit itself does NOT auto-start; it's triggered on demand by the
+# Settings UI via /api/v1/system/updates/install.
+cp /tmp/systemd/wmb-update.service /etc/systemd/system/wmb-update.service
+chmod 644 /etc/systemd/system/wmb-update.service
+cp /tmp/polkit/10-watchmybirds-update.rules \
+    /etc/polkit-1/rules.d/10-watchmybirds-update.rules
+chmod 644 /etc/polkit-1/rules.d/10-watchmybirds-update.rules
+
 # Install setup server (AP only; enabled by first-boot when needed)
 cp /tmp/systemd/wmb-setup-server.service /etc/systemd/system/wmb-setup-server.service
 chmod 644 /etc/systemd/system/wmb-setup-server.service

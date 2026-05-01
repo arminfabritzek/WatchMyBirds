@@ -3180,6 +3180,15 @@ def create_web_interface(detection_manager, system_monitor=None):
         "/api/v1/system/versions", "/api/v1/system/diagnostics",
         "/api/v1/public/go2rtc/health", "/api/v1/cameras",
         "/logs",
+        # High-frequency status polls: zero forensic value, dominate the log.
+        "/api/inbox/status",
+        "/api/v1/system/backup/status",
+        "/api/v1/system/backup/format/status",
+        "/api/v1/system/backup/format/devices",
+        "/api/v1/system/updates/status",
+        "/api/v1/system/updates/check",
+        "/api/v1/models/detector",
+        "/api/v1/models/classifier",
     )
 
     @server.after_request

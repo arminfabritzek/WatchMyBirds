@@ -130,6 +130,9 @@ sudo cp "$repo_root/rpi/systemd/wmb-backup.timer" "$mount_point/tmp/systemd/"
 # One-shot USB stick formatter (root, polkit-gated to watchmybirds).
 sudo cp "$repo_root/rpi/systemd/wmb-format-backup.service" "$mount_point/tmp/systemd/"
 sudo cp "$repo_root/rpi/polkit/10-watchmybirds-format-backup.rules" "$mount_point/tmp/polkit/"
+# OTA updater (oneshot, root, polkit-gated to watchmybirds for start).
+sudo cp "$repo_root/rpi/systemd/wmb-update.service" "$mount_point/tmp/systemd/"
+sudo cp "$repo_root/rpi/polkit/10-watchmybirds-update.rules" "$mount_point/tmp/polkit/"
 sudo cp "$repo_root/rpi/ap/hostapd.conf.template" "$mount_point/tmp/ap/"
 sudo cp "$repo_root/rpi/ap/dnsmasq.conf.template" "$mount_point/tmp/ap/"
 sudo cp "$repo_root/rpi/install-python312.sh" "$mount_point/tmp/"

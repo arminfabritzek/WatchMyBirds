@@ -1,0 +1,15 @@
+// Allow the watchmybirds user to start the wmb-update.service ONLY.
+// Same scoping pattern as 10-watchmybirds-format-backup.rules: the
+// rule grants org.freedesktop.systemd1.manage-units but only when
+// the action.lookup("unit") matches our update unit.
+//
+// Stop is not permitted (oneshot units stop themselves) and other
+// systemd actions still require root.
+
+polkit.addRule(function(action, subject) {
+    if (action.id == "org.freedesktop.systemd1.manage-units" &&
+        subject.user == "watchmybirds" &&
+        action.lookup("unit") == "wmb-update.service") {
+        return polkit.Result.YES;
+    }
+});

@@ -1,0 +1,26 @@
+[Unit]
+Description=WatchMyBirds OTA Updater
+# Only runs when explicitly started (oneshot — not persistent)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# Runs as root so it can stop/start app.service and write to /opt/app
+User=root
+ExecStart=/bin/bash /opt/app/rpi/update.sh
+
+# Keep journal output for debugging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=wmb-update
+
+# Allow enough time for downloads + pip install on slow connections
+TimeoutStartSec=600
+
+# Do not restart automatically — the app triggers it on demand
+Restart=no
+
+[Install]
+# Not installed in any target — started on demand via `systemctl start`
+WantedBy=
