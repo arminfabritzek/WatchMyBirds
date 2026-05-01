@@ -147,6 +147,43 @@ class TestStickStatus:
         assert status.fstype == "exfat"
         assert "ext4" in (status.detail or "")
 
+    def test_autofs_stub_is_treated_as_missing_not_wrong_fs(
+        self, fake_stick, monkeypatch
+    ):
+        # When systemd's .automount unit is active but no stick is
+        # plugged in, findmnt reports 'autofs' for the trigger
+        # placeholder. Pre-fix this got through as wrong_fs/autofs;
+        # the fix filters autofs at the source so the missing branch
+        # takes over.
+        monkeypatch.setattr(usb_backup_core, "_is_mounted", lambda p: False)
+        # _findmnt_fstype now returns None for autofs (verified
+        # separately below), so plumb that through here.
+        monkeypatch.setattr(usb_backup_core, "_findmnt_fstype", lambda p: None)
+        # No labelled device probed (no stick plugged in).
+        monkeypatch.setattr(usb_backup_core, "_blkid_fstype", lambda p: None)
+        status = usb_backup_core.get_stick_status()
+        assert status.state == "missing"
+        assert status.fstype is None
+
+    def test_findmnt_filters_autofs_to_none(self, monkeypatch):
+        # Direct test of _findmnt_fstype: it must NOT propagate the
+        # autofs trigger placeholder to callers.
+        import subprocess as sp_mod
+
+        class FakeResult:
+            returncode = 0
+            stdout = "autofs\n"
+
+        monkeypatch.setattr(
+            usb_backup_core.shutil, "which", lambda _x: "/usr/bin/findmnt"
+        )
+        monkeypatch.setattr(
+            sp_mod, "run", lambda *a, **kw: FakeResult()
+        )
+        # findmnt is imported via subprocess module reference in core.
+        monkeypatch.setattr(usb_backup_core.subprocess, "run", lambda *a, **kw: FakeResult())
+        assert usb_backup_core._findmnt_fstype(Path("/mnt/anything")) is None
+
 
 # ----------------------------------------------------------------------
 # list_snapshots / get_snapshot

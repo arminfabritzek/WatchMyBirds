@@ -64,7 +64,15 @@ class StickStatus:
 
 
 def _findmnt_fstype(mount_point: Path) -> str | None:
-    """Resolve the filesystem type of a mount via findmnt."""
+    """Resolve the filesystem type of a mount via findmnt.
+
+    Returns None if `mount_point` is unmounted, OR if it's only an
+    autofs trigger placeholder (systemd's .automount unit registers an
+    autofs stub even when no stick is present; that stub reports as
+    'autofs' to findmnt but is not a real filesystem). Treating autofs
+    as "no FS yet" lets get_stick_status() fall through to the
+    missing/wrong-fs branch via blkid on the labelled device.
+    """
     if not shutil.which("findmnt"):
         return None
     try:
@@ -74,7 +82,13 @@ def _findmnt_fstype(mount_point: Path) -> str | None:
             text=True,
             timeout=5,
         )
-        return (result.stdout.strip() or None) if result.returncode == 0 else None
+        if result.returncode != 0:
+            return None
+        fstype = result.stdout.strip() or None
+        # autofs is a trigger placeholder, not a real on-disk FS.
+        if fstype == "autofs":
+            return None
+        return fstype
     except (subprocess.SubprocessError, OSError):
         return None
 
@@ -96,30 +110,35 @@ def _blkid_fstype(device: Path) -> str | None:
 
 
 def _is_mounted(mount_point: Path) -> bool:
-    """Wake the automount only when the labelled device exists."""
+    """True iff a real filesystem (not just an autofs stub) is mounted.
+
+    systemd's .automount unit registers an autofs trigger at
+    `mount_point` regardless of whether a stick is plugged in.
+    `os.path.ismount` returns True for that stub, so on its own it
+    cannot distinguish "autofs trigger waiting" from "real ext4
+    mounted". We cross-check with findmnt, which returns 'autofs' for
+    the stub and an actual FS name once a stick is mounted —
+    `_findmnt_fstype` filters autofs to None, so a non-None result is
+    the real-mount signal.
+    """
     try:
-        if os.path.ismount(mount_point):
-            return True
+        if not os.path.ismount(mount_point):
+            # No mount and no automount trigger active.
+            if not BACKUP_DEVICE.exists():
+                return False
+            # Labelled device exists -- touch the path to wake the
+            # .automount unit, then re-check below.
+            try:
+                mount_point.exists()
+            except OSError:
+                pass
     except OSError:
         return False
 
-    try:
-        if not BACKUP_DEVICE.exists():
-            return False
-    except OSError:
-        return False
-
-    # Touching the path triggers the .automount unit; because we already
-    # know the labelled device exists, this avoids repeated 10s mount
-    # timeouts on systems without a backup stick.
-    try:
-        mount_point.exists()
-    except OSError:
-        pass
-    try:
-        return os.path.ismount(mount_point)
-    except OSError:
-        return False
+    # At this point os.path.ismount may return True for an autofs stub.
+    # _findmnt_fstype returns None for autofs, the real FS name when a
+    # stick is actually mounted.
+    return _findmnt_fstype(mount_point) is not None
 
 
 def get_stick_status() -> StickStatus:
