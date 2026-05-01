@@ -168,8 +168,6 @@ class TestStickStatus:
     def test_findmnt_filters_autofs_to_none(self, monkeypatch):
         # Direct test of _findmnt_fstype: it must NOT propagate the
         # autofs trigger placeholder to callers.
-        import subprocess as sp_mod
-
         class FakeResult:
             returncode = 0
             stdout = "autofs\n"
@@ -178,11 +176,76 @@ class TestStickStatus:
             usb_backup_core.shutil, "which", lambda _x: "/usr/bin/findmnt"
         )
         monkeypatch.setattr(
-            sp_mod, "run", lambda *a, **kw: FakeResult()
+            usb_backup_core.subprocess, "run", lambda *a, **kw: FakeResult()
         )
-        # findmnt is imported via subprocess module reference in core.
-        monkeypatch.setattr(usb_backup_core.subprocess, "run", lambda *a, **kw: FakeResult())
         assert usb_backup_core._findmnt_fstype(Path("/mnt/anything")) is None
+
+    def test_findmnt_handles_stacked_mounts(self, monkeypatch):
+        # When a stick is plugged in and the automount has fired,
+        # findmnt prints two lines for the same target -- 'autofs'
+        # (trigger stub) and the real FS (e.g. 'ext4'). Stripping
+        # the whole string would yield 'autofs\next4' which matches
+        # neither branch. The fix walks lines individually.
+        class FakeResult:
+            returncode = 0
+            stdout = "autofs\next4\n"
+
+        monkeypatch.setattr(
+            usb_backup_core.shutil, "which", lambda _x: "/usr/bin/findmnt"
+        )
+        monkeypatch.setattr(
+            usb_backup_core.subprocess, "run", lambda *a, **kw: FakeResult()
+        )
+        assert usb_backup_core._findmnt_fstype(Path("/mnt/anything")) == "ext4"
+
+    def test_findmnt_handles_stacked_with_real_fs_first(self, monkeypatch):
+        # Defensive: order shouldn't matter -- if findmnt happens to
+        # print the real FS first (some kernel versions), still works.
+        class FakeResult:
+            returncode = 0
+            stdout = "ext4\nautofs\n"
+
+        monkeypatch.setattr(
+            usb_backup_core.shutil, "which", lambda _x: "/usr/bin/findmnt"
+        )
+        monkeypatch.setattr(
+            usb_backup_core.subprocess, "run", lambda *a, **kw: FakeResult()
+        )
+        assert usb_backup_core._findmnt_fstype(Path("/mnt/anything")) == "ext4"
+
+    def test_is_mounted_wakes_idle_automount(self, tmp_path, monkeypatch):
+        # Repro of the bug seen on a live RPi: the .automount unit is
+        # active but its TimeoutIdleSec=60 has expired. findmnt sees
+        # only 'autofs', which _findmnt_fstype filters to None. The
+        # labelled device exists, so touching the mount path must
+        # re-trigger the mount, then a second findmnt call sees ext4.
+        backup_dev = tmp_path / "by-label-WMB-BACKUP"
+        backup_dev.touch()
+        monkeypatch.setattr(usb_backup_core, "BACKUP_DEVICE", backup_dev)
+
+        # findmnt: first call returns None (autofs only); second call
+        # (after the touch wakes automount) returns 'ext4'.
+        calls = {"n": 0}
+
+        def fake_findmnt(_p):
+            calls["n"] += 1
+            return None if calls["n"] == 1 else "ext4"
+
+        monkeypatch.setattr(usb_backup_core, "_findmnt_fstype", fake_findmnt)
+
+        assert usb_backup_core._is_mounted(tmp_path / "wmb-backup") is True
+        assert calls["n"] == 2  # confirms re-check happened
+
+    def test_is_mounted_returns_false_when_device_missing(
+        self, tmp_path, monkeypatch
+    ):
+        # Stick truly absent: no real FS mounted AND no labelled device.
+        # The autofs stub on its own must NOT make us claim mounted=True.
+        absent_dev = tmp_path / "by-label-WMB-BACKUP-not-here"
+        monkeypatch.setattr(usb_backup_core, "BACKUP_DEVICE", absent_dev)
+        monkeypatch.setattr(usb_backup_core, "_findmnt_fstype", lambda _p: None)
+
+        assert usb_backup_core._is_mounted(tmp_path / "wmb-backup") is False
 
 
 # ----------------------------------------------------------------------

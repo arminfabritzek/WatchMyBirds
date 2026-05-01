@@ -139,7 +139,19 @@ if ! mountpoint -q "${MOUNT_POINT}"; then
     fi
 fi
 
-FSTYPE="$(findmnt -n -o FSTYPE "${MOUNT_POINT}" 2>/dev/null || true)"
+# Stacked mounts: when systemd's .automount has fired AND the real
+# filesystem is also mounted, findmnt prints multiple lines (autofs +
+# the real FS). Walk lines individually, skip 'autofs', accept the
+# first real FS. Mirrors core/usb_backup_core.py::_findmnt_fstype.
+FSTYPE=""
+while IFS= read -r line; do
+    line="${line## }"
+    line="${line%% }"
+    [[ -z "${line}" || "${line}" == "autofs" ]] && continue
+    FSTYPE="${line}"
+    break
+done < <(findmnt -n -o FSTYPE "${MOUNT_POINT}" 2>/dev/null || true)
+
 if [[ "${FSTYPE}" != "ext4" ]]; then
     die 11 "USB backup volume has filesystem '${FSTYPE:-unknown}', expected ext4. Reformat per docs/USB_BACKUP.md."
 fi
@@ -305,6 +317,9 @@ fi
 
 # Exclude data/ (already captured via output snapshot) and .venv (rebuilt
 # on every release; copying it bloats the stick by ~500 MB per snapshot).
+# Also exclude every flavour of dev/CI tool cache: these get created
+# during image build (or by sync_preview pulling a working tree) with
+# permissions that the watchmybirds user cannot read, which kills rsync.
 if ! rsync -a --delete \
         --exclude='data/' \
         --exclude='.venv/' \
@@ -312,6 +327,12 @@ if ! rsync -a --delete \
         --exclude='*.pyc' \
         --exclude='.git/' \
         --exclude='node_modules/' \
+        --exclude='.ruff_cache/' \
+        --exclude='.pytest_cache/' \
+        --exclude='.mypy_cache/' \
+        --exclude='.tox/' \
+        --exclude='.coverage' \
+        --exclude='htmlcov/' \
         "${APP_LINKDEST[@]}" \
         "${APP_DIR}/" \
         "${SNAPSHOT_DIR}/app/"; then

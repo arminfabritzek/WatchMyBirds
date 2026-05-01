@@ -72,6 +72,13 @@ def _findmnt_fstype(mount_point: Path) -> str | None:
     'autofs' to findmnt but is not a real filesystem). Treating autofs
     as "no FS yet" lets get_stick_status() fall through to the
     missing/wrong-fs branch via blkid on the labelled device.
+
+    Stacked-mount handling: when a stick is plugged in AND the
+    automount has fired, findmnt prints multiple lines for
+    `mount_point` -- typically 'autofs' (the trigger stub) and the
+    real filesystem (e.g. 'ext4') stacked on the same path. We strip
+    autofs from the candidates and return the first remaining real
+    FS, or None if only autofs was reported.
     """
     if not shutil.which("findmnt"):
         return None
@@ -84,11 +91,14 @@ def _findmnt_fstype(mount_point: Path) -> str | None:
         )
         if result.returncode != 0:
             return None
-        fstype = result.stdout.strip() or None
-        # autofs is a trigger placeholder, not a real on-disk FS.
-        if fstype == "autofs":
-            return None
-        return fstype
+        # Walk lines individually -- handles stacked mounts where
+        # autofs and the real FS both appear for the same target.
+        for line in result.stdout.splitlines():
+            fstype = line.strip()
+            if not fstype or fstype == "autofs":
+                continue
+            return fstype
+        return None
     except (subprocess.SubprocessError, OSError):
         return None
 
@@ -109,6 +119,55 @@ def _blkid_fstype(device: Path) -> str | None:
         return None
 
 
+def _probe_other_usb_stick() -> tuple[str, str] | None:
+    """Look for ANY USB block device that isn't our labelled WMB-BACKUP.
+
+    Returns (device_path, fstype) of the first /dev/sd[a-z] partition we
+    find that isn't our expected ext4/WMB-BACKUP volume. None if no
+    other stick is plugged in. We use this to surface helpful UX
+    ("stick detected but not formatted for backup") instead of "missing"
+    when the operator inserts a fresh / wrongly-formatted stick.
+
+    Lightweight: only runs when the labelled device probe has already
+    failed; uses lsblk + plain glob, no udev introspection.
+    """
+    if not shutil.which("lsblk"):
+        return None
+    try:
+        result = subprocess.run(
+            [
+                "lsblk", "-l", "-n", "-o", "NAME,FSTYPE,TYPE",
+                "--paths",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except (subprocess.SubprocessError, OSError):
+        return None
+    if result.returncode != 0:
+        return None
+
+    for line in result.stdout.splitlines():
+        parts = line.split()
+        if len(parts) < 3:
+            continue
+        name, fstype, devtype = parts[0], parts[1], parts[2]
+        if devtype != "part":
+            continue
+        # Whole-disk path /dev/sd[a-z] only (no internal mmcblk/nvme).
+        if not name.startswith("/dev/sd"):
+            continue
+        # Skip if this is the labelled backup device we already checked.
+        try:
+            if Path(name).resolve() == BACKUP_DEVICE.resolve():
+                continue
+        except OSError:
+            pass
+        return (name, fstype or "unknown")
+    return None
+
+
 def _is_mounted(mount_point: Path) -> bool:
     """True iff a real filesystem (not just an autofs stub) is mounted.
 
@@ -120,24 +179,41 @@ def _is_mounted(mount_point: Path) -> bool:
     the stub and an actual FS name once a stick is mounted —
     `_findmnt_fstype` filters autofs to None, so a non-None result is
     the real-mount signal.
+
+    Edge case: when systemd's automount has fired AND its idle timeout
+    elapsed (TimeoutIdleSec=60), the real ext4 mount goes away but the
+    autofs stub stays. The stick is still plugged in -- accessing the
+    path will re-trigger the mount. We detect this by: real-FS not
+    visible to findmnt, but the labelled block device exists. In that
+    case we touch the path (waking the automount) and re-check.
     """
+    # Fast path: real filesystem already mounted (possibly stacked
+    # with autofs); we're done.
+    if _findmnt_fstype(mount_point) is not None:
+        return True
+
+    # Real mount missing. If the labelled device isn't present either,
+    # the stick really is not connected.
     try:
-        if not os.path.ismount(mount_point):
-            # No mount and no automount trigger active.
-            if not BACKUP_DEVICE.exists():
-                return False
-            # Labelled device exists -- touch the path to wake the
-            # .automount unit, then re-check below.
-            try:
-                mount_point.exists()
-            except OSError:
-                pass
+        if not BACKUP_DEVICE.exists():
+            return False
     except OSError:
         return False
 
-    # At this point os.path.ismount may return True for an autofs stub.
-    # _findmnt_fstype returns None for autofs, the real FS name when a
-    # stick is actually mounted.
+    # Stick is physically present (label-symlink resolves) but the
+    # real mount is asleep. Touching the path triggers the automount;
+    # systemd then mounts ext4 stacked on top of the autofs stub.
+    #
+    # Implementation note: a plain stat() / Path.exists() does NOT
+    # reliably wake a `direct` autofs trigger -- the kernel can answer
+    # the stat from cached directory metadata without invoking the
+    # mount helper. listdir() forces a getdents() syscall, which is
+    # what direct-autofs uses as its activation signal.
+    try:
+        os.listdir(str(mount_point))
+    except OSError:
+        pass
+
     return _findmnt_fstype(mount_point) is not None
 
 
@@ -162,6 +238,30 @@ def get_stick_status() -> StickStatus:
                     "Reformat per docs/USB_BACKUP.md."
                 ),
             )
+
+        # No labelled backup device, but maybe an unrelated USB stick is
+        # plugged in (fresh from the factory, FAT32 / NTFS / exFAT, no
+        # WMB-BACKUP label yet). Surface that instead of a misleading
+        # 'missing' so the operator can either reformat manually or use
+        # the in-app Format feature.
+        other = _probe_other_usb_stick()
+        if other is not None:
+            other_dev, other_fs = other
+            return StickStatus(
+                state="wrong_fs",
+                fstype=other_fs,
+                total_bytes=None,
+                free_bytes=None,
+                used_bytes=None,
+                free_pct=None,
+                detail=(
+                    f"USB stick detected at {other_dev} ({other_fs}), but it's "
+                    "not formatted for WMB-BACKUP. Format it as ext4 with "
+                    "label WMB-BACKUP — see docs/USB_BACKUP.md, or use "
+                    "the Format USB stick option below."
+                ),
+            )
+
         return StickStatus(
             state="missing",
             fstype=None,
