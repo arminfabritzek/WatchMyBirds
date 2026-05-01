@@ -93,11 +93,13 @@ jobs:
           sudo mkdir -p mount_point/tmp/systemd
           sudo mkdir -p mount_point/tmp/first-boot
           sudo mkdir -p mount_point/tmp/ap
+          sudo mkdir -p mount_point/tmp/polkit
           sudo mkdir -p mount_point/tmp/setup-server/templates
           
           sudo cp app_code/rpi/systemd/* mount_point/tmp/systemd/
           sudo cp app_code/rpi/first-boot/* mount_point/tmp/first-boot/
           sudo cp app_code/rpi/ap/* mount_point/tmp/ap/
+          sudo cp app_code/rpi/polkit/* mount_point/tmp/polkit/
           sudo cp app_code/rpi/setup-server/*.py mount_point/tmp/setup-server/
           sudo cp app_code/rpi/setup-server/templates/* mount_point/tmp/setup-server/templates/
           
@@ -118,7 +120,7 @@ jobs:
           sudo rm mount_point/tmp/harden-dev.sh
           
           # Cleanup temp files
-          sudo rm -rf mount_point/tmp/systemd mount_point/tmp/first-boot mount_point/tmp/ap mount_point/tmp/setup-server mount_point/tmp/dev_authorized_keys
+          sudo rm -rf mount_point/tmp/systemd mount_point/tmp/first-boot mount_point/tmp/ap mount_point/tmp/polkit mount_point/tmp/setup-server mount_point/tmp/dev_authorized_keys
 
           # Fix Permissions (DEV: Give /opt/app to admin for seamless rsync,
           # but keep /opt/app/data — and EVERYTHING under it — owned by the
