@@ -1336,6 +1336,42 @@ def telegram_report_status(job_id: str):
     )
 
 
+@api_v1.route("/telegram/seen-species", methods=["GET"])
+@login_required
+def telegram_seen_species_list():
+    """Return the list of species the new_species_only mode has already
+    alerted on (and is therefore now suppressing). Used by the Settings
+    panel to show the operator what's currently silenced and offer a
+    reset.
+    """
+    try:
+        from utils.db.seen_species import list_seen_species
+
+        rows = list_seen_species()
+        return jsonify({"status": "success", "species": rows, "count": len(rows)})
+    except Exception as exc:
+        logger.error("seen_species list failed: %s", exc, exc_info=True)
+        return jsonify({"status": "error", "message": str(exc)}), 500
+
+
+@api_v1.route("/telegram/seen-species", methods=["DELETE"])
+@login_required
+def telegram_seen_species_reset():
+    """Wipe the seen-species log so new_species_only mode re-fires alerts
+    for every species again. Useful after a model swap or when the
+    operator wants to retest the rarity-alert flow.
+    """
+    try:
+        from utils.db.seen_species import reset_seen_species
+
+        deleted = reset_seen_species()
+        logger.info("seen_species log reset; %d row(s) removed.", deleted)
+        return jsonify({"status": "success", "deleted": deleted})
+    except Exception as exc:
+        logger.error("seen_species reset failed: %s", exc, exc_info=True)
+        return jsonify({"status": "error", "message": str(exc)}), 500
+
+
 # =============================================================================
 # ONVIF Camera Discovery
 # =============================================================================

@@ -93,8 +93,15 @@ DEFAULTS = {
     "TELEGRAM_BOT_TOKEN": "",
     "TELEGRAM_CHAT_ID": "",
     "TELEGRAM_REPORT_TIME": "21:00",
-    "TELEGRAM_MODE": "off",  # "off", "live", "daily", "interval"
+    "TELEGRAM_MODE": "off",  # "off", "live", "daily", "interval", "new_species_only"
     "TELEGRAM_REPORT_INTERVAL_HOURS": 1,
+    # Drop species from daily / interval reports when fewer than this many
+    # CONFIRMED observations exist in the report window. The gallery already
+    # hides single-frame uncertain detections; this stops the same low-evidence
+    # species from leaking into Telegram via a single accidentally-confirmed
+    # frame. 1 = keep all confirmed species; raise to 2 or 3 for stricter
+    # rarity filtering.
+    "TELEGRAM_MIN_CONFIRMED_OBSERVATIONS": 1,
     "DEVICE_NAME": "",
     "EXIF_GPS_ENABLED": True,
     "INBOX_REQUIRE_EXIF_DATETIME": True,
@@ -142,6 +149,7 @@ RUNTIME_KEYS = {
     "TELEGRAM_REPORT_TIME",
     "TELEGRAM_MODE",
     "TELEGRAM_REPORT_INTERVAL_HOURS",
+    "TELEGRAM_MIN_CONFIRMED_OBSERVATIONS",
     "DEVICE_NAME",
     "LOCATION_DATA",
     "EXIF_GPS_ENABLED",
@@ -250,6 +258,10 @@ def _load_config():
     if os.getenv("TELEGRAM_REPORT_INTERVAL_HOURS") is not None:
         config["TELEGRAM_REPORT_INTERVAL_HOURS"] = os.getenv(
             "TELEGRAM_REPORT_INTERVAL_HOURS"
+        )
+    if os.getenv("TELEGRAM_MIN_CONFIRMED_OBSERVATIONS") is not None:
+        config["TELEGRAM_MIN_CONFIRMED_OBSERVATIONS"] = os.getenv(
+            "TELEGRAM_MIN_CONFIRMED_OBSERVATIONS"
         )
     if os.getenv("DEVICE_NAME") is not None:
         config["DEVICE_NAME"] = os.getenv("DEVICE_NAME")
@@ -727,9 +739,9 @@ def _coerce_config_types(config):
         device_name = str(device_name)
     config["DEVICE_NAME"] = device_name.strip()[:64]
 
-    # TELEGRAM_MODE: restrict to the four known modes.
+    # TELEGRAM_MODE: restrict to the five known modes.
     mode_val = str(config.get("TELEGRAM_MODE", "off") or "off").strip().lower()
-    if mode_val not in ("off", "live", "daily", "interval"):
+    if mode_val not in ("off", "live", "daily", "interval", "new_species_only"):
         mode_val = "off"
     config["TELEGRAM_MODE"] = mode_val
 
@@ -746,6 +758,14 @@ def _coerce_config_types(config):
     except Exception:
         interval_hours = 1
     config["TELEGRAM_REPORT_INTERVAL_HOURS"] = max(1, min(24, interval_hours))
+
+    # TELEGRAM_MIN_CONFIRMED_OBSERVATIONS: small positive integer. Caps at 100
+    # so a fat-fingered "1000" can't silently silence every alert.
+    try:
+        min_obs = int(float(config.get("TELEGRAM_MIN_CONFIRMED_OBSERVATIONS", 1)))
+    except Exception:
+        min_obs = 1
+    config["TELEGRAM_MIN_CONFIRMED_OBSERVATIONS"] = max(1, min(100, min_obs))
 
 
 def _coerce_bool(value):
@@ -959,7 +979,7 @@ def _validate_value(key, value):
         if not isinstance(value, str):
             return False, None
         normalized = value.strip().lower()
-        if normalized in ("off", "live", "daily", "interval"):
+        if normalized in ("off", "live", "daily", "interval", "new_species_only"):
             return True, normalized
         return False, None
 
@@ -970,6 +990,15 @@ def _validate_value(key, value):
             return False, None
         if 1 <= hours <= 24:
             return True, hours
+        return False, None
+
+    if key == "TELEGRAM_MIN_CONFIRMED_OBSERVATIONS":
+        try:
+            count = int(float(value))
+        except Exception:
+            return False, None
+        if 1 <= count <= 100:
+            return True, count
         return False, None
 
     if key == "TELEGRAM_REPORT_TIME":

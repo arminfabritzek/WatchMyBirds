@@ -98,6 +98,8 @@ def _make_minimal_schema(conn: sqlite3.Connection) -> None:
             manual_species_override TEXT,
             score REAL,
             bbox_quality REAL,
+            decision_state TEXT,
+            decision_level TEXT,
             bbox_x REAL, bbox_y REAL, bbox_w REAL, bbox_h REAL
         )
         """
@@ -156,8 +158,8 @@ def test_daily_report_excludes_unknown_species(tmp_path, monkeypatch):
         cur = conn.execute(
             """INSERT INTO detections
                (image_filename, od_class_name, score, bbox_quality, od_confidence,
-                bbox_x, bbox_y, bbox_w, bbox_h)
-               VALUES (?, ?, ?, ?, ?, 0.1, 0.1, 0.2, 0.2)""",
+                decision_state, bbox_x, bbox_y, bbox_w, bbox_h)
+               VALUES (?, ?, ?, ?, ?, 'confirmed', 0.1, 0.1, 0.2, 0.2)""",
             (filename, od, score, quality, od_conf),
         )
         det_id = cur.lastrowid

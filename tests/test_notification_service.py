@@ -117,6 +117,114 @@ class TestQueueDetection:
 
             assert service.pending_count == 0
 
+    def test_queue_drops_catalog_orphan_species(self, notification_service):
+        """Live alerts must not surface classifier genus-fallbacks like
+        Phoenicurus_sp. or arbitrary stale class names. The catalog gate
+        rejects them before they enter the pending queue."""
+        # Real species -> queued
+        notification_service.queue_detection(
+            SpeciesInfo("Parus_major", "Kohlmeise", 0.9, "/ok.jpg")
+        )
+        # Genus fallback (not in common_names_DE.json) -> dropped
+        notification_service.queue_detection(
+            SpeciesInfo("Phoenicurus_sp.", "Phoenicurus sp.", 0.8, "/orphan.jpg")
+        )
+        # Stale class name -> dropped
+        notification_service.queue_detection(
+            SpeciesInfo("not_a_real_species", "?", 0.7, "/junk.jpg")
+        )
+
+        assert notification_service.pending_count == 1
+
+
+class TestNewSpeciesOnlyMode:
+    """new_species_only mode: alert only on first-ever sighting per species."""
+
+    @pytest.fixture
+    def new_species_service(self, common_names):
+        with patch(
+            "detectors.services.notification_service.get_config"
+        ) as mock_config:
+            mock_config.return_value = {
+                "TELEGRAM_MODE": "new_species_only",
+                "TELEGRAM_COOLDOWN": 60,
+            }
+            yield NotificationService(common_names=common_names)
+
+    def test_is_enabled_for_new_species_only_mode(self, new_species_service):
+        """new_species_only mode counts as 'enabled' for instant alerts."""
+        assert new_species_service.is_enabled is True
+
+    def test_first_sighting_queues(self, new_species_service):
+        """Brand-new species (not in seen_species table) gets queued."""
+        with patch(
+            "utils.db.seen_species.is_new_species", return_value=True
+        ):
+            new_species_service.queue_detection(
+                SpeciesInfo("Cyanistes_caeruleus", "Blaumeise", 0.9, "/img.jpg")
+            )
+        assert new_species_service.pending_count == 1
+
+    def test_already_seen_does_not_queue(self, new_species_service):
+        """Species already in seen_species table is silently dropped."""
+        with patch(
+            "utils.db.seen_species.is_new_species", return_value=False
+        ):
+            new_species_service.queue_detection(
+                SpeciesInfo("Parus_major", "Kohlmeise", 0.9, "/img.jpg")
+            )
+        assert new_species_service.pending_count == 0
+
+    @patch("detectors.services.notification_service.send_telegram_message")
+    def test_send_summary_uses_new_species_headline(
+        self, mock_send, new_species_service
+    ):
+        """new_species_only mode emits 'Neue Art entdeckt!' instead of
+        the routine 'Species detected:' headline."""
+        mock_send.return_value = [{"ok": True}]
+
+        with patch(
+            "utils.db.seen_species.is_new_species", return_value=True
+        ):
+            new_species_service.queue_detection(
+                SpeciesInfo("Cyanistes_caeruleus", "Blaumeise", 0.9, "/img.jpg")
+            )
+        new_species_service._last_notification_time = 0
+
+        with patch("utils.db.seen_species.mark_species_seen") as mock_mark:
+            new_species_service.send_summary()
+
+        # Telegram message uses the new headline
+        message = mock_send.call_args.kwargs["text"]
+        assert "Neue Art entdeckt!" in message
+        assert "Blaumeise" in message
+        # And mark_species_seen was called with the alerted species
+        mock_mark.assert_called_once()
+        assert mock_mark.call_args.args[0] == "Cyanistes_caeruleus"
+
+    @patch("detectors.services.notification_service.send_telegram_message")
+    def test_failed_send_does_not_mark_species_seen(
+        self, mock_send, new_species_service
+    ):
+        """If the Telegram send fails, mark_species_seen must NOT be
+        called — otherwise the species would be silently silenced for
+        future detections without ever having alerted the operator."""
+        mock_send.side_effect = RuntimeError("Telegram down")
+
+        with patch(
+            "utils.db.seen_species.is_new_species", return_value=True
+        ):
+            new_species_service.queue_detection(
+                SpeciesInfo("Cyanistes_caeruleus", "Blaumeise", 0.9, "/img.jpg")
+            )
+        new_species_service._last_notification_time = 0
+
+        with patch("utils.db.seen_species.mark_species_seen") as mock_mark:
+            result = new_species_service.send_summary()
+
+        assert result is False
+        mock_mark.assert_not_called()
+
 
 class TestShouldSend:
     """Test should_send logic."""
@@ -220,9 +328,11 @@ class TestSendSummary:
         """Uses image from highest scoring species."""
         mock_send.return_value = [{"ok": True}]
 
-        notification_service.queue_detection(SpeciesInfo("Low", "Low", 0.5, "/low.jpg"))
         notification_service.queue_detection(
-            SpeciesInfo("High", "High", 0.9, "/high.jpg")
+            SpeciesInfo("Parus_major", "Kohlmeise", 0.5, "/low.jpg")
+        )
+        notification_service.queue_detection(
+            SpeciesInfo("Cyanistes_caeruleus", "Blaumeise", 0.9, "/high.jpg")
         )
         notification_service._last_notification_time = 0
 
@@ -237,8 +347,12 @@ class TestClearAndReset:
 
     def test_clear_queue(self, notification_service):
         """Clear removes all pending detections."""
-        notification_service.queue_detection(SpeciesInfo("A", "A", 0.8, "/a.jpg"))
-        notification_service.queue_detection(SpeciesInfo("B", "B", 0.9, "/b.jpg"))
+        notification_service.queue_detection(
+            SpeciesInfo("Parus_major", "Kohlmeise", 0.8, "/a.jpg")
+        )
+        notification_service.queue_detection(
+            SpeciesInfo("Cyanistes_caeruleus", "Blaumeise", 0.9, "/b.jpg")
+        )
 
         notification_service.clear_queue()
 
@@ -293,15 +407,22 @@ class TestThreadSafety:
                 )
                 notification_service.queue_detection(info)
 
-        threads = [
-            threading.Thread(target=worker, args=("Thread1", 50)),
-            threading.Thread(target=worker, args=("Thread2", 50)),
-        ]
+        # Bypass the catalog whitelist so synthetic species names (Thread1_0,
+        # Thread1_1, ...) reach the lock-protected queue. The test exercises
+        # _pending_lock concurrency, not species validation.
+        with patch(
+            "detectors.services.notification_service.is_known_species",
+            return_value=True,
+        ):
+            threads = [
+                threading.Thread(target=worker, args=("Thread1", 50)),
+                threading.Thread(target=worker, args=("Thread2", 50)),
+            ]
 
-        for t in threads:
-            t.start()
-        for t in threads:
-            t.join()
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join()
 
         # Should have 100 unique species
         assert notification_service.pending_count == 100

@@ -213,10 +213,17 @@ def _fetch_species_best_photos(conn, date_iso: str) -> list[dict]:
     daily report consistently with summarize_observations() across the
     rest of the analytics stack.
 
+    The query restricts to ``decision_state = 'confirmed'`` so the
+    Telegram report cannot surface low-evidence species the gallery
+    already hides (the gallery applies the same filter via
+    ``_gallery_visibility_sql``). Catalog-orphan species
+    (e.g. classifier genus-fallbacks like ``Phoenicurus_sp.``) are
+    dropped in the Python pass below using ``is_known_species``.
+
     Returns a list of dicts sorted by count DESC, score DESC.
     """
     from utils.db.detections import effective_species_sql
-    from utils.species_names import UNKNOWN_SPECIES_KEY
+    from utils.species_names import UNKNOWN_SPECIES_KEY, is_known_species
 
     date_prefix = date_iso.replace("-", "")
 
@@ -239,6 +246,11 @@ def _fetch_species_best_photos(conn, date_iso: str) -> list[dict]:
             FROM detections d
             WHERE d.image_filename LIKE ? || '%'
               AND d.status = 'active'
+              AND lower(COALESCE(d.decision_state, '')) = 'confirmed'
+              AND (
+                  d.decision_level IS NULL
+                  OR lower(d.decision_level) != 'reject'
+              )
         )
         SELECT
             species,
@@ -270,6 +282,12 @@ def _fetch_species_best_photos(conn, date_iso: str) -> list[dict]:
 
     config = get_config()
     pm = get_path_manager(config.get("OUTPUT_DIR"))
+    locale = str(config.get("SPECIES_COMMON_NAME_LOCALE", "DE") or "DE").upper()
+    try:
+        min_observations = int(config.get("TELEGRAM_MIN_CONFIRMED_OBSERVATIONS", 1))
+    except (TypeError, ValueError):
+        min_observations = 1
+    min_observations = max(1, min_observations)
 
     results = []
     for row in rows:
@@ -283,6 +301,17 @@ def _fetch_species_best_photos(conn, date_iso: str) -> list[dict]:
         score = float(_row_value(row, "best_score", 7, 0.0) or 0.0)
 
         if not image_filename:
+            continue
+
+        if not is_known_species(species, locale=locale):
+            logger.debug("Dropping catalog-orphan species from report: %r", species)
+            continue
+
+        if count < min_observations:
+            logger.debug(
+                "Dropping low-evidence species %r (count=%d, threshold=%d)",
+                species, count, min_observations,
+            )
             continue
 
         photo_path = str(pm.get_original_path(image_filename))
@@ -322,31 +351,28 @@ def _tile_with_footer(
     subtitle: str,
     bg_color: tuple[int, int, int] = (20, 24, 31),
 ) -> np.ndarray:
+    from utils.image_text import draw_text
+
     footer_h = 64
     media_h = max(40, height - footer_h)
     tile = np.full((height, width, 3), bg_color, dtype=np.uint8)
     fitted = _resize_cover(image, width, media_h)
     tile[:media_h, :width] = fitted
     cv2.rectangle(tile, (0, media_h), (width, height), (14, 17, 23), thickness=-1)
-    cv2.putText(
+    draw_text(
         tile,
         _truncate_label(title, 24),
-        (18, media_h + 24),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        0.62,
-        (245, 247, 250),
-        1,
-        cv2.LINE_AA,
+        (18, media_h + 10),
+        size=20,
+        color=(245, 247, 250),
+        bold=True,
     )
-    cv2.putText(
+    draw_text(
         tile,
         _truncate_label(subtitle, 32),
-        (18, media_h + 48),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        0.5,
-        (171, 179, 189),
-        1,
-        cv2.LINE_AA,
+        (18, media_h + 38),
+        size=15,
+        color=(171, 179, 189),
     )
     return tile
 
@@ -722,7 +748,20 @@ def _build_wide_context_variant(
 def build_report_collage(
     species_visuals: list[dict], report_date: str, output_dir: Path
 ) -> dict | None:
-    """Production collage: E-style 3-column grid with A-style medium crops."""
+    """Production collage: E-style 3-column grid with A-style medium crops.
+
+    Header layout:
+      - Left: device name in bold (or "WatchMyBirds" when no device set)
+      - Below it: report date in a smaller, muted weight
+      - Right (top-aligned): species count summary
+
+    All header text is rendered with Pillow so umlauts and the German
+    date format's narrow-no-break-space render correctly. Same goes for
+    the per-tile species name + count footers (handled inside
+    ``_tile_with_footer``).
+    """
+    from utils.image_text import draw_text, measure_text
+
     picks = species_visuals[:6]
     if not picks:
         return None
@@ -737,37 +776,32 @@ def build_report_collage(
     canvas_h = header_h + rows * tile_h + (rows + 1) * gap
     canvas = np.full((canvas_h, canvas_w, 3), (11, 14, 19), dtype=np.uint8)
 
-    cv2.putText(
+    device = _device_name()
+    title = device if device else "WatchMyBirds"
+    draw_text(
         canvas,
-        "WatchMyBirds",
-        (24, 40),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        0.88,
-        (244, 246, 248),
-        2,
-        cv2.LINE_AA,
+        title,
+        (24, 22),
+        size=26,
+        color=(244, 246, 248),
+        bold=True,
     )
-    cv2.putText(
+    draw_text(
         canvas,
         _format_report_date(report_date),
-        (24, 72),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        0.58,
-        (170, 177, 186),
-        1,
-        cv2.LINE_AA,
+        (24, 58),
+        size=17,
+        color=(170, 177, 186),
     )
+
     species_summary = f"{len(picks)} {_count_label(len(picks), 'Art', 'Arten')}"
-    text_size = cv2.getTextSize(species_summary, cv2.FONT_HERSHEY_SIMPLEX, 0.58, 1)[0]
-    cv2.putText(
+    summary_w, _ = measure_text(species_summary, size=17)
+    draw_text(
         canvas,
         species_summary,
-        (canvas_w - text_size[0] - 24, 72),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        0.58,
-        (170, 177, 186),
-        1,
-        cv2.LINE_AA,
+        (canvas_w - summary_w - 24, 58),
+        size=17,
+        color=(170, 177, 186),
     )
 
     for idx, visual in enumerate(picks):
@@ -775,12 +809,14 @@ def build_report_collage(
         col = idx % cols
         x = gap + col * (tile_w + gap)
         y = header_h + gap + row * (tile_h + gap)
+        count = int(visual["count"])
+        sighting_label = _count_label(count, "Sichtung", "Sichtungen")
         tile = _tile_with_footer(
             _resize_cover(visual["crop_images"]["medium"], tile_w, tile_h - 64),
             tile_w,
             tile_h,
             visual["common_name"],
-            f'{visual["count"]}x',
+            f"{count} {sighting_label}",
         )
         canvas[y : y + tile_h, x : x + tile_w] = tile
 
@@ -791,76 +827,166 @@ def build_report_collage(
     }
 
 
+def _draw_corner_chip(
+    canvas: np.ndarray,
+    text: str,
+    *,
+    margin: int = 10,
+    pad_x: int = 8,
+    pad_y: int = 4,
+    text_size: int = 13,
+    bg_alpha: float = 0.55,
+) -> None:
+    """Bake a small dark pill in the top-right of *canvas* with *text*.
+
+    Used for the discreet device + date overlay on each mobile tile. The
+    pill is alpha-blended onto the underlying photo so the image stays
+    visible but the text remains readable on any background.
+    """
+    from utils.image_text import draw_text, measure_text
+
+    if not text:
+        return
+
+    text_w, text_h = measure_text(text, size=text_size)
+    pill_w = text_w + pad_x * 2
+    pill_h = text_h + pad_y * 2 + 2  # extra 2px for descender breathing room
+    img_h, img_w = canvas.shape[:2]
+    x2 = img_w - margin
+    x1 = max(0, x2 - pill_w)
+    y1 = margin
+    y2 = min(img_h, y1 + pill_h)
+
+    overlay = canvas.copy()
+    cv2.rectangle(overlay, (x1, y1), (x2, y2), (8, 10, 14), thickness=-1)
+    cv2.addWeighted(overlay, bg_alpha, canvas, 1 - bg_alpha, 0, dst=canvas)
+
+    # Pillow draws crisp Unicode (umlauts, the narrow-no-break-space inside
+    # the formatted German date) — cv2.putText would render those as `??`.
+    draw_text(
+        canvas,
+        text,
+        (x1 + pad_x, y1 + pad_y),
+        size=text_size,
+        color=(232, 236, 242),
+    )
+
+
 def build_report_mobile_tiles(
     species_visuals: list[dict], report_date: str, output_dir: Path
 ) -> list[dict]:
-    """Split the evening report into one mobile-friendly tile per species.
+    """Render one 1080x1080 'achievement card' per species for the album,
+    plus a final 'collector card' summarising the day.
 
-    Each tile is a single-column card (330x286 tile plus a 64px header with the
-    report date and device name) saved as its own JPEG. The album is sent as a
-    Telegram media group so each image stays readable without horizontal
-    scrolling.
+    Each per-species card is post-ready: full-bleed photo with a neon
+    rim glow, a score badge in the top-right ("3x HEUTE"), and a banner
+    along the bottom with the species common name plus device + date.
+    The neon colour comes from the same per-species slot system the
+    Review and Gallery surfaces use (``core.species_colours``) so
+    identity stays visually consistent across the app — the operator's
+    "Blaumeise blue" is the same blue everywhere.
+
+    The closing collector card lists every species seen today as small
+    photo vignettes with their slot colours and counts. It rides at the
+    end of the Telegram media group so the album reads as a
+    deck-of-cards-plus-checklist.
     """
+    from utils.achievement_card import (
+        build_species_colour_map,
+        neon_for_species,
+        render_achievement_card,
+        render_collector_card,
+    )
+
     picks = species_visuals[:6]
     if not picks:
         return []
 
-    tile_w = 330
-    tile_h = 286
-    header_h = 64
-    pad = 12
-    card_w = tile_w + pad * 2
-    card_h = header_h + tile_h + pad * 2
-    bg_color = (11, 14, 19)
-    header_fg = (244, 246, 248)
-    header_sub = (170, 177, 186)
     device = _device_name()
     date_label = _format_report_date(report_date)
+    colour_map = build_species_colour_map(
+        [v.get("scientific") or v.get("common_name", "") for v in picks]
+    )
 
     tiles: list[dict] = []
+    # Hold (scientific, common_name, count, photo) for the collector
+    # card so we don't reload the JPEG from disk.
+    collector_entries: list[dict] = []
+
     for idx, visual in enumerate(picks):
-        canvas = np.full((card_h, card_w, 3), bg_color, dtype=np.uint8)
+        count = int(visual["count"])
+        sighting_label = _count_label(count, "Sichtung", "Sichtungen")
+        scientific = str(visual.get("scientific") or visual.get("common_name", ""))
+        rim_color, glow_color = neon_for_species(scientific, colour_map)
 
-        title = device if device else "WatchMyBirds"
-        cv2.putText(
-            canvas,
-            title,
-            (pad, 28),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.72,
-            header_fg,
-            2,
-            cv2.LINE_AA,
-        )
-        sub = f"{date_label}  ·  {idx + 1}/{len(picks)}"
-        cv2.putText(
-            canvas,
-            sub,
-            (pad, 54),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.5,
-            header_sub,
-            1,
-            cv2.LINE_AA,
-        )
+        # The medium crop already has the bird centred — give the card
+        # the best framing for the bird subject. Fall back to the full
+        # image when no bbox-derived crop is available.
+        crops = visual.get("crop_images") or {}
+        photo_source = crops.get("medium")
+        if photo_source is None:
+            photo_source = visual.get("full_image")
+        if photo_source is None:
+            continue
 
-        tile = _tile_with_footer(
-            _resize_cover(visual["crop_images"]["medium"], tile_w, tile_h - 64),
-            tile_w,
-            tile_h,
-            visual["common_name"],
-            f'{visual["count"]}x',
+        card = render_achievement_card(
+            photo_source,
+            common_name=visual["common_name"],
+            count=count,
+            rim_color=rim_color,
+            glow_color=glow_color,
+            device_label=device,
+            date_label=date_label,
         )
-        y = header_h + pad
-        canvas[y : y + tile_h, pad : pad + tile_w] = tile
 
         filename = f"report_mobile_{idx + 1:02d}.jpg"
-        path = _save_variant_image(canvas, output_dir, filename)
+        path = _save_variant_image(card, output_dir, filename)
         caption = (
             f"{_device_html_prefix()}<b>{_html_escape(visual['common_name'])}</b> "
-            f"· {visual['count']}x"
+            f"· {count} {sighting_label}"
         )
         tiles.append({"photo_path": path, "caption": caption})
+
+        collector_entries.append(
+            {
+                "scientific": scientific,
+                "common_name": visual["common_name"],
+                "count": count,
+                "photo": photo_source,
+            }
+        )
+
+    # Final collector card — reuses the same colour map + photos so each
+    # vignette matches its standalone card earlier in the album.
+    if collector_entries:
+        # Set code for the footer: ISO date + roster size, e.g.
+        # "30.04.2026  ·  6 / 6  COLLECTED". The renderer auto-fills
+        # the "/N COLLECTED" suffix when only the date prefix is given.
+        try:
+            iso_short = datetime.date.fromisoformat(report_date).strftime(
+                "%d.%m.%Y"
+            )
+        except ValueError:
+            iso_short = report_date
+        set_code = f"{iso_short}   ·   {len(collector_entries)} / {len(collector_entries)}   COLLECTED"
+
+        collector_card = render_collector_card(
+            collector_entries,
+            colour_map=colour_map,
+            device_label=device,
+            date_label=date_label,
+            set_code=set_code,
+        )
+        collector_path = _save_variant_image(
+            collector_card, output_dir, "report_mobile_99_collector.jpg"
+        )
+        collector_caption = (
+            f"{_device_html_prefix()}<b>Sammelkarte</b> · "
+            f"{len(collector_entries)} {_count_label(len(collector_entries), 'Art', 'Arten')} heute"
+        )
+        tiles.append(
+            {"photo_path": collector_path, "caption": collector_caption}
+        )
 
     return tiles
 

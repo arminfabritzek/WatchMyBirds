@@ -1120,14 +1120,21 @@
                 <div class="settings-field__help">Prefix added to every Telegram message so you can tell devices apart. Leave empty to disable.</div>
             </div>
             <div class="settings-field mb-3">
-                <label for="TELEGRAM_MODE" class="settings-field__label">Notification Mode</label>
+                <label for="TELEGRAM_MODE" class="settings-field__label">When to send Telegram messages</label>
                 <select name="TELEGRAM_MODE" id="TELEGRAM_MODE" class="form-select w-auto" data-telegram-mode>
-                    <option value="off" {% if payload['TELEGRAM_MODE'].value == 'off' %}selected{% endif %}>Off — no messages</option>
-                    <option value="live" {% if payload['TELEGRAM_MODE'].value == 'live' %}selected{% endif %}>Live — instant on every detection</option>
-                    <option value="daily" {% if payload['TELEGRAM_MODE'].value == 'daily' %}selected{% endif %}>Daily — one evening report</option>
-                    <option value="interval" {% if payload['TELEGRAM_MODE'].value == 'interval' %}selected{% endif %}>Interval — periodic report every N hours</option>
+                    <option value="off" {% if payload['TELEGRAM_MODE'].value == 'off' %}selected{% endif %}>Off — keep quiet</option>
+                    <option value="live" {% if payload['TELEGRAM_MODE'].value == 'live' %}selected{% endif %}>Instant — ping for every confirmed sighting</option>
+                    <option value="interval" {% if payload['TELEGRAM_MODE'].value == 'interval' %}selected{% endif %}>Hourly digest — periodic summary every N hours</option>
+                    <option value="daily" {% if payload['TELEGRAM_MODE'].value == 'daily' %}selected{% endif %}>Daily report — once per day at a fixed time</option>
+                    <option value="new_species_only" {% if payload['TELEGRAM_MODE'].value == 'new_species_only' %}selected{% endif %}>Only new species — first ever sighting only</option>
                 </select>
-                <div class="settings-field__help">Pick one. Modes are mutually exclusive. "Send Report Now" below always works regardless of the mode.</div>
+                <div class="settings-field__help">
+                    Pick one. Modes are mutually exclusive. <em>Only new species</em>
+                    keeps a per-species log; the operator sees an alert the very
+                    first time a species is detected and never again. Use the
+                    reset button below if you want to re-test alerts.
+                    <em>Send Report Now</em> works regardless of the mode.
+                </div>
             </div>
             <div class="row g-3">
                 <div class="col-md-6">
@@ -1163,6 +1170,18 @@
                         <div class="settings-field__help">1–24. A fresh report with all species from today is sent this often.</div>
                     </div>
                 </div>
+                <div class="col-md-6" data-telegram-mode-field="daily,interval">
+                    <div class="settings-field">
+                        <label for="TELEGRAM_MIN_CONFIRMED_OBSERVATIONS" class="settings-field__label">Drop species below N confirmed sightings</label>
+                        <input type="number" name="TELEGRAM_MIN_CONFIRMED_OBSERVATIONS" id="TELEGRAM_MIN_CONFIRMED_OBSERVATIONS" class="form-control w-auto" min="1" max="100" step="1" value="{{ payload['TELEGRAM_MIN_CONFIRMED_OBSERVATIONS'].value }}">
+                        <div class="settings-field__help">
+                            Default <strong>1</strong> keeps every confirmed species. Raise to
+                            <strong>2</strong> or <strong>3</strong> to filter out rare species
+                            with only a single confirmed frame in the report window — useful when
+                            the classifier occasionally hallucinates a one-off sighting.
+                        </div>
+                    </div>
+                </div>
             </div>
             <div class="settings-inline-action">
                 <button
@@ -1180,6 +1199,22 @@
                     aria-live="polite"
                 ></span>
             </div>
+            <div class="settings-inline-action mt-2" data-telegram-mode-field="new_species_only">
+                <button
+                    type="button"
+                    class="btn btn--secondary btn--sm"
+                    id="settingsResetSeenSpeciesButton"
+                    title="Wipe the known-species log so all species become 'new' again"
+                >
+                    Reset known-species list
+                </button>
+                <span
+                    class="settings-inline-action__status"
+                    id="settingsResetSeenSpeciesStatus"
+                    data-state="idle"
+                    aria-live="polite"
+                ></span>
+            </div>
             <script>
                 (function () {
                     const modeSel = document.getElementById('TELEGRAM_MODE');
@@ -1188,12 +1223,49 @@
                     function apply() {
                         const mode = modeSel.value;
                         fields.forEach(el => {
-                            const want = el.getAttribute('data-telegram-mode-field');
-                            el.style.display = (want === mode) ? '' : 'none';
+                            // Accept comma-separated lists like "daily,interval".
+                            const want = (el.getAttribute('data-telegram-mode-field') || '')
+                                .split(',')
+                                .map(s => s.trim())
+                                .filter(Boolean);
+                            el.style.display = want.includes(mode) ? '' : 'none';
                         });
                     }
                     modeSel.addEventListener('change', apply);
                     apply();
+                })();
+
+                (function () {
+                    const btn = document.getElementById('settingsResetSeenSpeciesButton');
+                    const status = document.getElementById('settingsResetSeenSpeciesStatus');
+                    if (!btn || !status) return;
+                    btn.addEventListener('click', async function () {
+                        if (!confirm('Reset the known-species list? Future detections will be treated as new again.')) {
+                            return;
+                        }
+                        btn.disabled = true;
+                        status.dataset.state = 'busy';
+                        status.textContent = 'Resetting…';
+                        try {
+                            const resp = await fetch('/api/v1/telegram/seen-species', {
+                                method: 'DELETE',
+                                headers: {'Accept': 'application/json'},
+                            });
+                            const data = await resp.json().catch(() => ({}));
+                            if (resp.ok && data.status === 'success') {
+                                status.dataset.state = 'success';
+                                status.textContent = `Reset done — ${data.deleted ?? 0} species cleared.`;
+                            } else {
+                                status.dataset.state = 'error';
+                                status.textContent = data.message || `HTTP ${resp.status}`;
+                            }
+                        } catch (err) {
+                            status.dataset.state = 'error';
+                            status.textContent = String(err);
+                        } finally {
+                            btn.disabled = false;
+                        }
+                    });
                 })();
             </script>
         </div>

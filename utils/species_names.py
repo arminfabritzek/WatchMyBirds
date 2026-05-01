@@ -100,6 +100,43 @@ def resolve_common_name(
     return common_names.get(scientific_name, scientific_name.replace("_", " "))
 
 
+# Non-bird OD class names that are valid species identities in their own
+# right (the OD label IS the species, no classifier involved). Mirrors the
+# locator's non-bird class set in ``detectors.od_classes`` — kept here as a
+# duplicate constant so the species-name layer doesn't import the detector
+# stack just to know which non-bird animals are legitimate.
+_NON_BIRD_OD_SPECIES: frozenset[str] = frozenset(
+    {"squirrel", "cat", "marten_mustelid", "hedgehog"}
+)
+
+
+def is_known_species(
+    species_key: str | None, locale: str = "DE"
+) -> bool:
+    """Return True when *species_key* is a recognised species identity.
+
+    A species is "recognised" when it appears in any of:
+
+    1. The locale common-names map (model-trained bird species).
+    2. The extended-species catalog (operator-confirmable additions).
+    3. The hardcoded non-bird OD class set (squirrel, cat, ...).
+
+    This is the authoritative whitelist for surfaces that must NOT show
+    classifier genus-fallbacks (``Phoenicurus_sp.``) or stale class names
+    from older detector generations. Returns False for empty / None /
+    UNKNOWN_SPECIES_KEY so callers can treat both as "drop this row."
+    """
+    key = str(species_key or "").strip()
+    if not key or key == UNKNOWN_SPECIES_KEY:
+        return False
+    if key in _NON_BIRD_OD_SPECIES:
+        return True
+    if key in load_common_names(locale):
+        return True
+    extended_keys = {entry["scientific"] for entry in load_extended_species(locale)}
+    return key in extended_keys
+
+
 @lru_cache(maxsize=4)
 def load_common_names(locale: str = "DE") -> dict[str, str]:
     """Return a ``{scientific_key: display_name}`` dict for *locale*.

@@ -11,6 +11,7 @@ import time
 from config import get_config
 from detectors.interfaces.notification import NotificationInterface, SpeciesInfo
 from logging_config import get_logger
+from utils.species_names import is_known_species
 from utils.telegram_notifier import send_telegram_message
 
 logger = get_logger(__name__)
@@ -48,18 +49,25 @@ class NotificationService(NotificationInterface):
 
     @property
     def is_enabled(self) -> bool:
-        """Check if Telegram live detection notifications are enabled.
+        """Check if Telegram instant-alert notifications are enabled.
 
-        Live alerts only fire when ``TELEGRAM_MODE == "live"``. Legacy configs
-        that set ``TELEGRAM_ENABLED`` alone (no mode key) are honoured so
-        older deployments and tests keep working; the new mode switch, when
+        Instant alerts fire when ``TELEGRAM_MODE`` is ``"live"`` (every
+        detection above the cooldown) or ``"new_species_only"`` (only the
+        very first time a species is ever seen). Legacy configs that set
+        ``TELEGRAM_ENABLED`` alone (no mode key) are honoured so older
+        deployments and tests keep working; the new mode switch, when
         present, always wins.
         """
-        mode = str(self._config.get("TELEGRAM_MODE", "") or "").strip().lower()
+        mode = self._mode
         if mode:
-            return mode == "live"
+            return mode in ("live", "new_species_only")
         # Legacy path: no mode configured -> fall back to the old flag.
         return bool(self._config.get("TELEGRAM_ENABLED", False))
+
+    @property
+    def _mode(self) -> str:
+        """Return the normalised TELEGRAM_MODE value (or empty string)."""
+        return str(self._config.get("TELEGRAM_MODE", "") or "").strip().lower()
 
     @property
     def pending_count(self) -> int:
@@ -79,11 +87,46 @@ class NotificationService(NotificationInterface):
         Only updates the entry if the new score is higher than existing.
         This ensures we send the best image for each species.
 
+        Catalog-orphan species (e.g. classifier genus-fallbacks like
+        ``Phoenicurus_sp.``) are dropped here so live alerts never send a
+        Latin name the operator has no chance of recognising. This mirrors
+        the gate applied to the daily / interval report path in
+        ``utils.daily_report._fetch_species_best_photos``.
+
+        In ``new_species_only`` mode the species is also checked against
+        the persistent ``seen_species`` table; species already logged
+        there are dropped silently so the operator only ever sees a
+        first-of-its-kind alert.
+
         Args:
             species_info: Information about the detected species.
         """
         if not self.is_enabled:
             return
+
+        locale = str(
+            self._config.get("SPECIES_COMMON_NAME_LOCALE", "DE") or "DE"
+        ).upper()
+        if not is_known_species(species_info.latin_name, locale=locale):
+            logger.debug(
+                "Dropping catalog-orphan species from live alert: %r",
+                species_info.latin_name,
+            )
+            return
+
+        # New-species-only mode: skip if we've ever logged this species before.
+        # The actual mark-as-seen INSERT happens after a successful send (in
+        # send_summary) so a transport failure leaves the next attempt in
+        # "still new" state.
+        if self._mode == "new_species_only":
+            from utils.db.seen_species import is_new_species
+
+            if not is_new_species(species_info.latin_name):
+                logger.debug(
+                    "Suppressing already-seen species in new_species_only mode: %r",
+                    species_info.latin_name,
+                )
+                return
 
         with self._pending_lock:
             existing = self._pending_species.get(species_info.latin_name)
@@ -169,10 +212,21 @@ class NotificationService(NotificationInterface):
                     get_config().get("DEVICE_NAME", "") or ""
                 ).strip()
                 prefix = f"[{device_name}] " if device_name else ""
-                message = (
-                    f"{prefix}🐦 {species_count} {art_text} detected:\n"
-                    + "\n".join(species_lines)
-                )
+
+                # New-species-only mode gets its own headline so the operator
+                # can tell a rarity ping apart from a routine live alert.
+                if self._mode == "new_species_only":
+                    headline = (
+                        f"{prefix}✨ Neue Art entdeckt!"
+                        if species_count == 1
+                        else f"{prefix}✨ {species_count} neue Arten entdeckt!"
+                    )
+                    message = headline + "\n" + "\n".join(species_lines)
+                else:
+                    message = (
+                        f"{prefix}🐦 {species_count} {art_text} detected:\n"
+                        + "\n".join(species_lines)
+                    )
 
                 # Use image of highest scoring species
                 image_path = sorted_species[0][1]["image_path"]
@@ -185,6 +239,19 @@ class NotificationService(NotificationInterface):
             try:
                 send_telegram_message(text=message, photo_path=image_path)
                 self._last_notification_time = current_time
+
+                # In new_species_only mode, only mark species as seen AFTER a
+                # successful send so a transport failure leaves the next
+                # detection cycle in "still new" state and re-attempts.
+                if self._mode == "new_species_only":
+                    from utils.db.seen_species import mark_species_seen
+
+                    for latin_name, info in species_to_send.items():
+                        mark_species_seen(
+                            latin_name,
+                            image_filename=info.get("image_path"),
+                            score=info.get("score"),
+                        )
 
                 logger.info(
                     f"Telegram notification sent: {len(species_to_send)} species, "
