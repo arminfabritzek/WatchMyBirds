@@ -330,9 +330,12 @@ def ingest_file(
     timestamp_str = creation_dt.strftime("%Y%m%d_%H%M%S")
 
     # 5. Run Detection
+    # The detector's confidence floor is model-owned (read from the
+    # active model_metadata.json); the legacy CONFIDENCE_THRESHOLD_DETECTION
+    # config key was retired. We omit confidence_threshold here so the
+    # signature default applies and is then ignored by the detector.
     object_detected, _, detection_info_list = detector.detect_objects(
         image,
-        confidence_threshold=config["CONFIDENCE_THRESHOLD_DETECTION"],
         save_threshold=config["SAVE_THRESHOLD"],
     )
 
