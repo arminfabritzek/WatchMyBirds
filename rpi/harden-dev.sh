@@ -217,6 +217,13 @@ chmod 644 /etc/systemd/system/wmb-backup.timer
 ln -sf /etc/systemd/system/wmb-backup.timer \
     /etc/systemd/system/timers.target.wants/wmb-backup.timer
 
+# One-shot USB stick formatter (mirrors harden.sh).
+cp /tmp/systemd/wmb-format-backup.service /etc/systemd/system/wmb-format-backup.service
+chmod 644 /etc/systemd/system/wmb-format-backup.service
+cp /tmp/polkit/10-watchmybirds-format-backup.rules \
+    /etc/polkit-1/rules.d/10-watchmybirds-format-backup.rules
+chmod 644 /etc/polkit-1/rules.d/10-watchmybirds-format-backup.rules
+
 # Install setup server
 cp /tmp/systemd/wmb-setup-server.service /etc/systemd/system/wmb-setup-server.service
 chmod 644 /etc/systemd/system/wmb-setup-server.service

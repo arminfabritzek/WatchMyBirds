@@ -49,6 +49,7 @@ cleanup() {
     sudo rm -f "$mount_point/tmp/install-python312.sh" 2>/dev/null || true
     sudo rm -rf "$mount_point/tmp/first-boot" 2>/dev/null || true
     sudo rm -rf "$mount_point/tmp/systemd" 2>/dev/null || true
+    sudo rm -rf "$mount_point/tmp/polkit" 2>/dev/null || true
     sudo rm -rf "$mount_point/tmp/ap" 2>/dev/null || true
     sudo rm -rf "$mount_point/tmp/setup-server" 2>/dev/null || true
 
@@ -103,6 +104,7 @@ sudo cp "$repo_root/rpi/harden.sh" "$mount_point/tmp/"
 sudo mkdir -p \
   "$mount_point/tmp/first-boot" \
   "$mount_point/tmp/systemd" \
+  "$mount_point/tmp/polkit" \
   "$mount_point/tmp/ap" \
   "$mount_point/tmp/setup-server/templates"
 sudo cp "$repo_root/rpi/first-boot/first-boot.sh" "$mount_point/tmp/first-boot/"
@@ -125,6 +127,9 @@ sudo cp "$repo_root/rpi/systemd/mnt-wmb\\x2dbackup.automount" "$mount_point/tmp/
 # Scheduled backup service + timer (Phase 3 of usb-data-backup plan).
 sudo cp "$repo_root/rpi/systemd/wmb-backup.service" "$mount_point/tmp/systemd/"
 sudo cp "$repo_root/rpi/systemd/wmb-backup.timer" "$mount_point/tmp/systemd/"
+# One-shot USB stick formatter (root, polkit-gated to watchmybirds).
+sudo cp "$repo_root/rpi/systemd/wmb-format-backup.service" "$mount_point/tmp/systemd/"
+sudo cp "$repo_root/rpi/polkit/10-watchmybirds-format-backup.rules" "$mount_point/tmp/polkit/"
 sudo cp "$repo_root/rpi/ap/hostapd.conf.template" "$mount_point/tmp/ap/"
 sudo cp "$repo_root/rpi/ap/dnsmasq.conf.template" "$mount_point/tmp/ap/"
 sudo cp "$repo_root/rpi/install-python312.sh" "$mount_point/tmp/"

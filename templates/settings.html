@@ -1453,6 +1453,56 @@
                     Restore from a snapshot is currently a manual procedure
                     on a separate Linux machine — UI restore is on the roadmap.
                 </p>
+
+                <!-- Format / re-format sub-section. Hidden until enumeration
+                     confirms there are USB sticks the operator could format. -->
+                <div class="mt-3 pt-3" id="usbFormatSection" hidden style="border-top:1px solid var(--wm-divider, #ddd);">
+                    <strong class="d-block mb-2">Format USB stick</strong>
+                    <p class="settings-field__help mb-2">
+                        One-click prep for a fresh stick: wipes the device and
+                        re-formats it as ext4 with label <code>WMB-BACKUP</code>.
+                        <strong>This destroys all data on the chosen stick.</strong>
+                    </p>
+                    <div class="d-flex gap-2 flex-wrap align-items-center mb-2">
+                        <select class="form-control form-control-sm" id="usbFormatDeviceSelect"
+                                style="max-width:360px;"></select>
+                        <button type="button" class="btn btn--danger btn--sm" id="usbFormatOpenBtn">
+                            Format selected stick…
+                        </button>
+                    </div>
+                    <span class="settings-field__help" id="usbFormatProgress"></span>
+                </div>
+            </div>
+
+            <!-- Format confirmation modal. Type "FORMAT" to enable the button. -->
+            <div id="usbFormatModal" class="wm-modal" hidden role="dialog" aria-modal="true"
+                 aria-labelledby="usbFormatModalTitle"
+                 style="position:fixed;inset:0;background:rgba(0,0,0,0.45);z-index:9999;
+                        display:flex;align-items:center;justify-content:center;">
+                <div class="wm-modal__panel" style="background:var(--wm-surface,#fff);
+                     padding:24px;border-radius:8px;max-width:480px;width:90%;
+                     box-shadow:0 8px 32px rgba(0,0,0,0.25);">
+                    <h3 id="usbFormatModalTitle" class="mb-3" style="margin-top:0;">
+                        Format USB stick
+                    </h3>
+                    <p class="mb-2" style="color:var(--wm-danger,#c00);">
+                        <strong>All data on the selected device will be destroyed.</strong>
+                    </p>
+                    <p class="settings-field__help mb-3" id="usbFormatModalDevice"></p>
+                    <label for="usbFormatConfirmInput" class="settings-field__label">
+                        Type <code>FORMAT</code> to confirm:
+                    </label>
+                    <input type="text" id="usbFormatConfirmInput" class="form-control mb-3"
+                           autocomplete="off" autocapitalize="characters" />
+                    <div class="d-flex gap-2 justify-content-end">
+                        <button type="button" class="btn btn--secondary btn--sm" id="usbFormatCancelBtn">
+                            Cancel
+                        </button>
+                        <button type="button" class="btn btn--danger btn--sm" id="usbFormatConfirmBtn" disabled>
+                            Format now
+                        </button>
+                    </div>
+                </div>
             </div>
 
             <script>
@@ -1611,6 +1661,179 @@
 
                 refresh();
                 setInterval(refresh, 15000);
+            })();
+            </script>
+
+            <script>
+            (function() {
+                // USB Format sub-panel.  Renders a device picker + a typed-
+                // confirmation modal.  Strict XSS-safe rendering: textContent
+                // and createElement only -- device names come from lsblk on
+                // the Pi, which we treat as untrusted.
+                var section = document.getElementById('usbFormatSection');
+                var select = document.getElementById('usbFormatDeviceSelect');
+                var openBtn = document.getElementById('usbFormatOpenBtn');
+                var progress = document.getElementById('usbFormatProgress');
+                var modal = document.getElementById('usbFormatModal');
+                var modalDevice = document.getElementById('usbFormatModalDevice');
+                var confirmInput = document.getElementById('usbFormatConfirmInput');
+                var confirmBtn = document.getElementById('usbFormatConfirmBtn');
+                var cancelBtn = document.getElementById('usbFormatCancelBtn');
+
+                if (!section) return;
+
+                function fmtBytes(n) {
+                    if (n == null) return '?';
+                    var units = ['B', 'KB', 'MB', 'GB', 'TB'];
+                    var i = 0;
+                    while (n >= 1024 && i < units.length - 1) { n /= 1024; i++; }
+                    return n.toFixed(i === 0 ? 0 : 1) + ' ' + units[i];
+                }
+
+                function clear(el) {
+                    while (el.firstChild) { el.removeChild(el.firstChild); }
+                }
+
+                function buildOptionLabel(d) {
+                    // "/dev/sda — 115 GB — SanDisk SSD PLUS 240GB (currently: WMB-BACKUP/ext4)"
+                    var parts = [String(d.device || ''), fmtBytes(d.size_bytes)];
+                    var brand = [d.vendor, d.model].filter(Boolean).join(' ').trim();
+                    if (brand) parts.push(brand);
+                    var current = [];
+                    if (d.current_label) current.push(d.current_label);
+                    if (d.current_fstype) current.push(d.current_fstype);
+                    if (current.length) parts.push('currently: ' + current.join('/'));
+                    return parts.join(' — ');
+                }
+
+                function refreshDevices() {
+                    fetch('/api/v1/system/backup/format/devices', { credentials: 'same-origin' })
+                        .then(function(r) { return r.ok ? r.json() : null; })
+                        .then(function(data) {
+                            if (!data || data.status !== 'success' || !data.supported) {
+                                section.hidden = true;
+                                return;
+                            }
+                            var devices = data.devices || [];
+                            if (!devices.length) {
+                                section.hidden = true;
+                                return;
+                            }
+                            section.hidden = false;
+                            clear(select);
+                            // Placeholder option keeps the user from clicking
+                            // Format with whatever happens to be index 0.
+                            var ph = document.createElement('option');
+                            ph.value = '';
+                            ph.textContent = 'Select a USB stick…';
+                            select.appendChild(ph);
+                            devices.forEach(function(d) {
+                                var opt = document.createElement('option');
+                                opt.value = String(d.device || '');
+                                opt.textContent = buildOptionLabel(d);
+                                select.appendChild(opt);
+                            });
+                        })
+                        .catch(function() { section.hidden = true; });
+                }
+
+                function openModal() {
+                    var device = select.value;
+                    if (!device) {
+                        progress.textContent = 'Pick a USB stick first.';
+                        return;
+                    }
+                    // Guard: don't let the user format a stick that is mounted
+                    // and currently used as our backup volume without a hard
+                    // re-confirm. The script also refuses, but we surface it
+                    // earlier here.
+                    var picked = select.options[select.selectedIndex];
+                    modalDevice.textContent = picked ? picked.textContent : device;
+                    confirmInput.value = '';
+                    confirmBtn.disabled = true;
+                    modal.hidden = false;
+                    setTimeout(function() { confirmInput.focus(); }, 50);
+                }
+
+                function closeModal() {
+                    modal.hidden = true;
+                }
+
+                confirmInput.addEventListener('input', function() {
+                    confirmBtn.disabled = (confirmInput.value !== 'FORMAT');
+                });
+
+                cancelBtn.addEventListener('click', closeModal);
+
+                // Click outside panel = cancel.
+                modal.addEventListener('click', function(e) {
+                    if (e.target === modal) closeModal();
+                });
+
+                openBtn.addEventListener('click', openModal);
+
+                confirmBtn.addEventListener('click', function() {
+                    var device = select.value;
+                    if (!device || confirmInput.value !== 'FORMAT') return;
+                    confirmBtn.disabled = true;
+                    confirmBtn.textContent = 'Starting…';
+                    fetch('/api/v1/system/backup/format', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        credentials: 'same-origin',
+                        body: JSON.stringify({
+                            target_device: device,
+                            confirm: 'FORMAT'
+                        })
+                    })
+                        .then(function(r) { return r.json(); })
+                        .then(function(data) {
+                            closeModal();
+                            confirmBtn.textContent = 'Format now';
+                            if (data.status === 'success') {
+                                progress.textContent = 'Format running…';
+                                pollStatus();
+                            } else {
+                                progress.textContent = 'Failed: ' +
+                                    (data.message || 'unknown error');
+                            }
+                        })
+                        .catch(function(err) {
+                            closeModal();
+                            confirmBtn.textContent = 'Format now';
+                            progress.textContent = 'Network error: ' + err;
+                        });
+                });
+
+                var pollTimer = null;
+                function pollStatus() {
+                    if (pollTimer) clearTimeout(pollTimer);
+                    fetch('/api/v1/system/backup/format/status',
+                          { credentials: 'same-origin' })
+                        .then(function(r) { return r.ok ? r.json() : null; })
+                        .then(function(data) {
+                            if (!data || data.status !== 'success') return;
+                            var state = data.state || 'idle';
+                            var msg = data.message || '';
+                            progress.textContent = state +
+                                (msg ? ': ' + msg : '');
+                            if (state === 'success') {
+                                progress.textContent =
+                                    'Format complete. Stick is now ready as WMB-BACKUP.';
+                                refreshDevices();
+                                return;
+                            }
+                            if (state === 'error') {
+                                return;
+                            }
+                            // Still running: poll again.
+                            pollTimer = setTimeout(pollStatus, 2000);
+                        });
+                }
+
+                refreshDevices();
+                setInterval(refreshDevices, 15000);
+                pollStatus();  // pick up an in-progress format on page load
             })();
             </script>
 

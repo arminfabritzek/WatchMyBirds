@@ -2479,6 +2479,93 @@ def system_backup_verify(snapshot_name):
 
 
 # =============================================================================
+# USB Stick Formatter (one-click format from Settings UI)
+# =============================================================================
+# DESTRUCTIVE feature. Operator picks a target USB device, types
+# "FORMAT" to confirm, the Pi wipes + formats it as ext4/WMB-BACKUP.
+# Backed by rpi/format_backup_stick.sh + wmb-format-backup.service
+# (root, polkit-gated to watchmybirds for THIS unit only).
+
+
+@api_v1.route("/system/backup/format/devices", methods=["GET"])
+@login_required
+def system_backup_format_devices():
+    """List USB block devices the operator could format.
+
+    Read-only: enumerates whole-disk USB sticks via lsblk + udev.
+    Internal SATA/NVMe and partitions are filtered out.
+    """
+    try:
+        from web.services import usb_format_service
+
+        devices = usb_format_service.list_usb_block_devices()
+        return jsonify({
+            "status": "success",
+            "supported": usb_format_service.is_format_supported(),
+            "devices": devices,
+        })
+    except Exception as e:
+        logger.error("Error listing format candidates: %s", e)
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@api_v1.route("/system/backup/format", methods=["POST"])
+@login_required
+def system_backup_format():
+    """Trigger format on a target device.
+
+    JSON body:
+      target_device (str): e.g. "/dev/sda"  (validated against discovery list)
+      confirm (str): must equal "FORMAT" -- typed by operator in modal
+    """
+    try:
+        from web.services import usb_format_service
+
+        payload = request.get_json(silent=True) or {}
+        target = (payload.get("target_device") or "").strip()
+        confirm = (payload.get("confirm") or "").strip()
+
+        started, message = usb_format_service.trigger_format(target, confirm)
+        if not started:
+            return jsonify({"status": "error", "message": message}), 400
+        return jsonify({"status": "success", "message": message})
+    except Exception as e:
+        logger.error("Error triggering format: %s", e)
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@api_v1.route("/system/backup/format/status", methods=["GET"])
+@login_required
+def system_backup_format_status():
+    """Poll the format progress.
+
+    States: idle | starting | validating | wiping | partitioning |
+            formatting | mounting | success | error
+    """
+    try:
+        from web.services import usb_format_service
+
+        return jsonify({"status": "success", **usb_format_service.get_format_status()})
+    except Exception as e:
+        logger.error("Error reading format status: %s", e)
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@api_v1.route("/system/backup/format/status", methods=["DELETE"])
+@login_required
+def system_backup_format_status_clear():
+    """Acknowledge the last format result; clears the status file."""
+    try:
+        from web.services import usb_format_service
+
+        cleared = usb_format_service.clear_format_status()
+        return jsonify({"status": "success" if cleared else "error"})
+    except Exception as e:
+        logger.error("Error clearing format status: %s", e)
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+# =============================================================================
 # Blueprint Initialization
 # =============================================================================
 

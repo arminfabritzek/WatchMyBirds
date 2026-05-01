@@ -21,6 +21,7 @@ from web.services import (
     path_service,
     settings_service,
     usb_backup_service,
+    usb_format_service,
 )
 
 __all__ = [
@@ -36,4 +37,5 @@ __all__ = [
     "path_service",
     "settings_service",
     "usb_backup_service",
+    "usb_format_service",
 ]

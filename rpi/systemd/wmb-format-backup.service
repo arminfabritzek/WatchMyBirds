@@ -1,0 +1,36 @@
+[Unit]
+Description=WatchMyBirds USB backup stick formatter (one-shot, root)
+# Skip cleanly if the script isn't synced yet (fresh image, first boot).
+ConditionPathExists=/opt/app/rpi/format_backup_stick.sh
+# Don't depend on app.service; we may run before/without app.
+
+[Service]
+Type=oneshot
+# MUST run as root: mkfs.ext4, parted, wipefs, mount all need root.
+# This is the ONLY service in the watchmybirds stack that needs root
+# for its main task -- access is gated by:
+#   1. Polkit rule limiting which user can systemctl-start it.
+#   2. The script's own hard guards (USB-only, size limits, etc.).
+User=root
+# Inputs come from environment variables set by the API caller via
+# `systemctl set-environment` -- we deliberately do NOT use
+# EnvironmentFile because the values change per invocation.
+ExecStart=/opt/app/rpi/format_backup_stick.sh
+# 5 min cap: even a slow stick + heavy mkfs + sync should finish well
+# under this. Set generously to avoid spurious timeouts.
+TimeoutStartSec=5min
+
+# We can't use NoNewPrivileges with mkfs (needs CAP_SYS_ADMIN-equiv).
+# The light hardening below removes capabilities we definitely don't
+# need without breaking the format pipeline.
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectClock=true
+ProtectHostname=true
+ProtectControlGroups=true
+RestrictRealtime=true
+RestrictNamespaces=true
+LockPersonality=true
+RestrictSUIDSGID=true
+# We need full /dev access (block devices), so no PrivateDevices.
+# We need / writable so mkfs/parted can write to /dev/sd*.

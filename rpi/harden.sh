@@ -230,6 +230,18 @@ chmod 644 /etc/systemd/system/wmb-backup.timer
 ln -sf /etc/systemd/system/wmb-backup.timer \
     /etc/systemd/system/timers.target.wants/wmb-backup.timer
 
+# Install one-shot USB stick formatter (root, polkit-gated to watchmybirds).
+# The unit itself does NOT auto-start; it's triggered on demand by the
+# Settings UI via /api/v1/system/backup/format. Without the polkit rule
+# the service exists but cannot be reached from the app user.
+cp /tmp/systemd/wmb-format-backup.service /etc/systemd/system/wmb-format-backup.service
+chmod 644 /etc/systemd/system/wmb-format-backup.service
+# Polkit rule: watchmybirds may start ONLY this one unit. Other unit
+# management still requires root.
+cp /tmp/polkit/10-watchmybirds-format-backup.rules \
+    /etc/polkit-1/rules.d/10-watchmybirds-format-backup.rules
+chmod 644 /etc/polkit-1/rules.d/10-watchmybirds-format-backup.rules
+
 # Install setup server (AP only; enabled by first-boot when needed)
 cp /tmp/systemd/wmb-setup-server.service /etc/systemd/system/wmb-setup-server.service
 chmod 644 /etc/systemd/system/wmb-setup-server.service

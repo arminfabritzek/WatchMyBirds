@@ -1,0 +1,15 @@
+// Allow the watchmybirds user to start/stop the wmb-format-backup
+// service ONLY. Any other systemd unit management still requires
+// root, even for this user.
+//
+// This is the narrowest grant we can write: the action is the
+// generic "manage-units", but we filter on subject.user AND on the
+// unit name carried in the action.lookup("unit") argument.
+
+polkit.addRule(function(action, subject) {
+    if (action.id == "org.freedesktop.systemd1.manage-units" &&
+        subject.user == "watchmybirds" &&
+        action.lookup("unit") == "wmb-format-backup.service") {
+        return polkit.Result.YES;
+    }
+});
