@@ -64,10 +64,13 @@ COPY go2rtc.yaml.example ./
 # Create runtime directories (no model/output copy at build time)
 RUN mkdir -p /models /output /ingest
 
-# Persist build metadata as runtime-readable files
-RUN echo "${VERSION}" > /app/APP_VERSION && \
-    echo "${GIT_COMMIT}" > /app/BUILD_COMMIT && \
-    echo "${BUILD_DATE}" > /app/BUILD_DATE
+# Persist build metadata as runtime-readable files. Use ${VAR:-unknown}
+# fallbacks so that an empty build-arg never produces an empty file --
+# read_build_metadata() reports "Unknown" only for missing/empty files,
+# so an explicit "unknown" token at least signals "build forgot the arg".
+RUN echo "${VERSION:-unknown}" > /app/APP_VERSION && \
+    echo "${GIT_COMMIT:-unknown}" > /app/BUILD_COMMIT && \
+    echo "${BUILD_DATE:-unknown}" > /app/BUILD_DATE
 
 # Add the entrypoint script
 COPY entrypoint.sh /entrypoint.sh

@@ -124,7 +124,13 @@
                     var el=document.getElementById('footer-version');
                     if(el && d.app_version && d.app_version!=='Unknown'){
                         var label='v'+d.app_version;
-                        if(d.git_commit && d.git_commit!=='Unknown') label+='-'+d.git_commit;
+                        // dev-version strings already embed the short sha as
+                        // "-dev.<sha>"; only append git_commit when not already
+                        // present, otherwise we'd render "v0.3.0-dev.abc1234-abc1234".
+                        if(d.git_commit && d.git_commit!=='Unknown'
+                                && d.app_version.indexOf(d.git_commit)===-1){
+                            label+='-'+d.git_commit;
+                        }
                         el.textContent=label;
                     }
                     var gh=document.getElementById('footer-github');
