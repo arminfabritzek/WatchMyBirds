@@ -2140,6 +2140,43 @@ def create_web_interface(detection_manager, system_monitor=None):
             except ValueError:
                 return "Unknown"
 
+        def _load_modal_siblings(raw: dict) -> list[dict]:
+            """Build the siblings list for a detail modal.
+
+            UI_STANDARD § 0c requires every active companion detection to
+            render as a bbox overlay in detail modals. Stream surfaces
+            previously emitted ``siblings: []`` to avoid the lookup; the
+            modal still works with one box, but multi-bird frames hid
+            their companions even after the user clicked through.
+            """
+            sibling_count = raw.get("sibling_count", 1) or 1
+            if sibling_count <= 1:
+                return []
+            original_name = raw.get("original_name", "")
+            if not original_name:
+                return []
+            sib_rows = gallery_service.get_sibling_detections(original_name)
+            out: list[dict] = []
+            for sib in sib_rows:
+                sib_sk = _get_species_key_local(sib)
+                sib_thumb = sib.get("thumbnail_path_virtual")
+                out.append(
+                    _build_detection_view_dict(
+                        sib,
+                        species_key=sib_sk,
+                        common_name=_get_common_name_local(sib_sk),
+                        include_decision_state=True,
+                        extra={
+                            "thumb_url": (
+                                f"/uploads/derivatives/thumbs/{sib_thumb}"
+                                if sib_thumb
+                                else ""
+                            ),
+                        },
+                    )
+                )
+            return out
+
         def _build_modal_detection(raw: dict, gallery_date: str = "") -> dict:
             """Build a full detection dict suitable for render_modal."""
             fp = raw.get("relative_path") or raw.get("optimized_name_virtual", "")
@@ -2171,7 +2208,7 @@ def create_web_interface(detection_manager, system_monitor=None):
                 "formatted_date": fd,
                 "gallery_date": gallery_date or _date_iso_from_timestamp(ts),
                 "sibling_count": raw.get("sibling_count", 1) or 1,
-                "siblings": [],
+                "siblings": _load_modal_siblings(raw),
                 "bbox_x": raw.get("bbox_x", 0.0) or 0.0,
                 "bbox_y": raw.get("bbox_y", 0.0) or 0.0,
                 "bbox_w": raw.get("bbox_w", 0.0) or 0.0,
@@ -2317,7 +2354,7 @@ def create_web_interface(detection_manager, system_monitor=None):
                         "formatted_date": formatted_date,
                         "gallery_date": today_iso,  # For "Go to Day" button in modal
                         "sibling_count": det.get("sibling_count", 1) or 1,
-                        "siblings": [],  # Stream page doesn't need to load all siblings for now, just prevent crash
+                        "siblings": _load_modal_siblings(det),
                         "bbox_x": det.get("bbox_x", 0.0) or 0.0,
                         "bbox_y": det.get("bbox_y", 0.0) or 0.0,
                         "bbox_w": det.get("bbox_w", 0.0) or 0.0,
@@ -2390,7 +2427,7 @@ def create_web_interface(detection_manager, system_monitor=None):
                         "formatted_date": formatted_date,
                         "gallery_date": today_iso,  # For "Go to Day" button in modal
                         "sibling_count": det.get("sibling_count", 1) or 1,
-                        "siblings": [],
+                        "siblings": _load_modal_siblings(det),
                         "bbox_x": det.get("bbox_x", 0.0) or 0.0,
                         "bbox_y": det.get("bbox_y", 0.0) or 0.0,
                         "bbox_w": det.get("bbox_w", 0.0) or 0.0,

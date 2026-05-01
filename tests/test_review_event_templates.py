@@ -438,7 +438,25 @@ def test_gallery_context_frames_can_draw_bbox_without_toolbox_toggle():
 
     assert "host?.dataset.contextOnly === '1'" in content
     assert "const x = parseFloat(container.dataset.bboxX);" in content
-    assert "drawBoundingBoxes(canvas, img, [{" in content
+    # The context-only branch must still call drawBoundingBoxes — but
+    # the call now accepts either the legacy single-box list or a
+    # multi-sibling list (UI_STANDARD §0c). Match the call by
+    # function name + canvas+img args, not the literal `[{` opener.
+    assert "drawBoundingBoxes(canvas, img, boxes, detectionId" in content
+
+
+def test_gallery_detail_modal_auto_renders_companion_bboxes():
+    """UI_STANDARD §0c: detail-modal auto-render must paint every
+    active sibling bbox when more than one is present, regardless of
+    the saved bbox-overlay user pref."""
+    content = _read("assets/js/gallery_utils.js")
+
+    # Force-on multi-bird path triggered by container.dataset.siblings
+    assert "container.dataset.siblings" in content
+    assert "multiBird" in content
+    # The auto-render context branch must read siblings JSON and map
+    # them to a box list with `isCurrent` set on the entry-point id.
+    assert "sib.detection_id === detectionId" in content
 
 
 def test_review_event_styles_live_in_design_system():

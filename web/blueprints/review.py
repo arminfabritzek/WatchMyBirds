@@ -508,6 +508,7 @@ def _build_review_modal_detection(
     current_species_common: str | None,
     common_names: dict[str, str],
     conn,
+    siblings: list[dict] | None = None,
 ) -> dict | None:
     detection_id = row["active_detection_id"] or row["best_detection_id"]
     if not detection_id:
@@ -534,11 +535,12 @@ def _build_review_modal_detection(
             else filename
         )
     )
-    siblings = _build_review_modal_siblings(
-        conn,
-        filename=filename,
-        common_names=common_names,
-    )
+    if siblings is None:
+        siblings = _build_review_modal_siblings(
+            conn,
+            filename=filename,
+            common_names=common_names,
+        )
 
     return {
         "detection_id": detection_id,
@@ -655,6 +657,14 @@ def _build_review_item(
         optimized_filename = filename.rsplit(".", 1)[0] + ".webp"
         optimized_url = f"/uploads/derivatives/optimized/{date_folder_str}/{optimized_filename}"
 
+    inline_siblings: list[dict] = []
+    if include_detail and best_detection_id:
+        inline_siblings = _build_review_modal_siblings(
+            conn,
+            filename=filename,
+            common_names=common_names,
+        )
+
     item = {
         "item_kind": item_kind,
         "item_id": item_id,
@@ -726,6 +736,7 @@ def _build_review_item(
         "cls_confidence": row["cls_confidence"],
         "cls_confidence_pct": _score_pct(row["cls_confidence"]),
         "sibling_detection_count": int(row["sibling_detection_count"] or 0),
+        "siblings": inline_siblings,
         "item_key": f"{item_kind}:{item_id}",
     }
     item["modal_detection"] = (
@@ -740,6 +751,7 @@ def _build_review_item(
             current_species_common=item["current_species_common"],
             common_names=common_names,
             conn=conn,
+            siblings=inline_siblings,
         )
         if include_detail
         else None

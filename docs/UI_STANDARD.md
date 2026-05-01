@@ -63,6 +63,55 @@ Trash, modals, and everything else at once. Any drift defeats that goal.
 **Audit:** check this file against the codebase after touching
 image-bearing surfaces.
 
+## 0c. Detail Modal Companion Visibility (binding)
+
+When the user opens an **image-detail modal** — clicked through from
+Stream, Gallery, Subgallery, Species, Species Overview, Review queue,
+Review event panel, or Trash — every active detection on the source
+frame MUST render as a bbox overlay. The detection that opened the
+modal is visually distinguished as `isCurrent`; companion detections
+share the same overlay style.
+
+**Why this rule:** tile / queue / story-board surfaces intentionally
+collapse to one representative detection per image — that is by design
+for surface clarity. The detail modal is the place where the user
+expects the **full** information for that one image. Hiding companions
+in the detail view is a regression: the user has no other affordance
+to discover that the frame had additional birds.
+
+**Required pieces (call-site checklist):**
+
+1. The backend dict that drives the modal MUST include a `siblings`
+   list of every active detection on the same source image, with
+   `bbox_x` / `bbox_y` / `bbox_w` / `bbox_h` (frame-fraction
+   coordinates) and `detection_id` per entry. The image's own
+   detection appears in the list too.
+2. The Jinja call to `render_image_viewer` MUST pass that list as
+   `siblings=...`. The macro emits `data-siblings` JSON for the JS
+   layer to read.
+3. The JS auto-render path (`initBboxOverlay`) MUST force-on the
+   overlay when `data-siblings.length > 1` regardless of the saved
+   user preference. Single-detection frames continue to honour the
+   saved pref.
+4. The bbox toggle button continues to drive `data-siblings` from the
+   action-bar `siblings | tojson` blob — already implemented in
+   `gallery_utils.js:toggleBboxOverlay`.
+
+**Out of scope of this rule:**
+
+- Tile previews / thumbnails / story-board cards — these stay as
+  one-cover-per-image (UI_STANDARD §0 contract preserved).
+- Notifications and the Review queue's `MAX(score)` grouping —
+  intentional summary surfaces.
+- The orphan-image solo-modal (`wm-modal__image--solo`) — by
+  definition has no detections to overlay (§ 1.1).
+- Inline review-event-panel tile cells — those are queue/list cells,
+  not detail modals.
+
+**Closing the loop with §0:** §0 establishes that "shared concerns
+... bbox overlay behavior ... applied everywhere"; this section is
+the explicit form of that promise for the multi-detection case.
+
 ## 0a. Hover Tooltip Convention (binding)
 
 Every interactive control on an image-bearing surface — toolbox buttons,

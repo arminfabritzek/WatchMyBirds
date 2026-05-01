@@ -565,7 +565,20 @@ function initBboxOverlay(img) {
             localStorage.setItem(prefs.bbox, prefs.bboxDefault);
         }
 
-        if (localStorage.getItem(prefs.bbox) === 'on') {
+        // UI_STANDARD § 0c: detail modal must show every active companion
+        // detection on the frame. When `data-siblings` is present and
+        // contains > 1 box, force-on the overlay regardless of the saved
+        // pref so the user does not need to discover the toggle.
+        let multiBird = false;
+        try {
+            const sibsRaw = container.dataset.siblings;
+            if (sibsRaw) {
+                const sibs = JSON.parse(sibsRaw);
+                if (Array.isArray(sibs) && sibs.length > 1) multiBird = true;
+            }
+        } catch (e) { /* ignore */ }
+
+        if (multiBird || localStorage.getItem(prefs.bbox) === 'on') {
             const btn = resolveViewerToolButton(host, scope, '.bbox-toggle');
             if (btn) {
                 if (!btn.classList.contains('active')) toggleBboxOverlay(btn);
@@ -575,22 +588,44 @@ function initBboxOverlay(img) {
                 const y = parseFloat(container.dataset.bboxY);
                 const w = parseFloat(container.dataset.bboxW);
                 const h = parseFloat(container.dataset.bboxH);
-                if (!isNaN(x) && !isNaN(y) && !isNaN(w) && !isNaN(h) && w > 0 && h > 0) {
-                    const speciesColour = host.dataset.speciesColour !== undefined
-                        ? Number(host.dataset.speciesColour)
-                        : undefined;
-                    const detectionId = Number(img.dataset.detectionId || 0);
-                    canvas.style.display = 'block';
-                    drawBoundingBoxes(canvas, img, [{
-                        x: x,
-                        y: y,
-                        w: w,
-                        h: h,
+                const detectionId = Number(img.dataset.detectionId || 0);
+                const speciesColour = host.dataset.speciesColour !== undefined
+                    ? Number(host.dataset.speciesColour)
+                    : undefined;
+
+                let boxes = null;
+                try {
+                    const sibsRaw = container.dataset.siblings;
+                    if (sibsRaw) {
+                        const sibs = JSON.parse(sibsRaw);
+                        if (Array.isArray(sibs) && sibs.length > 0) {
+                            boxes = sibs.map(function (sib) {
+                                return {
+                                    x: sib.bbox_x, y: sib.bbox_y,
+                                    w: sib.bbox_w, h: sib.bbox_h,
+                                    name: sib.common_name || 'Detection',
+                                    id: sib.detection_id,
+                                    speciesColour: speciesColour,
+                                    isCurrent: sib.detection_id === detectionId
+                                };
+                            });
+                        }
+                    }
+                } catch (e) { /* fall through to single-box path */ }
+
+                if (!boxes && !isNaN(x) && !isNaN(y) && !isNaN(w) && !isNaN(h) && w > 0 && h > 0) {
+                    boxes = [{
+                        x: x, y: y, w: w, h: h,
                         name: img.alt || 'Detection',
                         id: detectionId,
                         speciesColour: speciesColour,
                         isCurrent: true
-                    }], detectionId || null);
+                    }];
+                }
+
+                if (boxes && boxes.length) {
+                    canvas.style.display = 'block';
+                    drawBoundingBoxes(canvas, img, boxes, detectionId || null);
                 }
             }
         }

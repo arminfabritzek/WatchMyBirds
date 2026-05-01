@@ -118,6 +118,7 @@
                             image_alt=orphan.current_species_common or orphan.source_image_filename,
                             detection_id=orphan.best_detection_id or 0,
                             bbox={'x': orphan.bbox_x, 'y': orphan.bbox_y, 'w': orphan.bbox_w, 'h': orphan.bbox_h} if has_bbox else none,
+                            siblings=orphan.siblings if has_bbox else none,
                             dismissable=false
                             ) }}
                             {% if orphan.species_ref_image_url %}

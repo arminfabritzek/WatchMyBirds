@@ -22,6 +22,8 @@ defer_src (bool): If true, keep the real image URL in data-deferred-src
     data-bbox-y="{{ bbox.y }}"
     data-bbox-w="{{ bbox.w }}"
     data-bbox-h="{{ bbox.h }}"
+    {% endif %}{% if siblings %}
+    data-siblings='{{ siblings | tojson }}'
     {% endif %}>
     <img class="wm-image-viewer__img bbox-base-image"
         src="{{ placeholder_src if defer_src else image_url }}"
