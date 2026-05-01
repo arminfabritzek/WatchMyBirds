@@ -120,8 +120,13 @@ jobs:
           # Cleanup temp files
           sudo rm -rf mount_point/tmp/systemd mount_point/tmp/first-boot mount_point/tmp/ap mount_point/tmp/setup-server mount_point/tmp/dev_authorized_keys
 
-          # Fix Permissions (DEV: Give /opt/app to admin for seamless rsync)
-          sudo chroot mount_point chown -R admin:admin /opt/app
+          # Fix Permissions (DEV: Give /opt/app to admin for seamless rsync,
+          # but keep /opt/app/data — and EVERYTHING under it — owned by the
+          # app user. The app runs as watchmybirds and must read/write its
+          # own state dir; without the prune below, app.service crashes at
+          # startup with PermissionError on settings.yaml because output/
+          # ends up admin-owned.)
+          sudo chroot mount_point find /opt/app -path /opt/app/data -prune -o -exec chown admin:admin {} +
           sudo chroot mount_point install -d -o watchmybirds -g watchmybirds -m 0750 /opt/app/data
 
           # Install DEV service (relaxed security)
