@@ -330,6 +330,10 @@ def fetch_detections_for_gallery(
             d.rating,
             d.rating_source,
             d.is_favorite,
+            -- KI gallery-eligibility flag (model decision; UI shows a blue badge).
+            -- Distinct from is_favorite (HUMAN gold-label) — see workflow plan
+            -- 2026-05-02_FEATURE_aesthetic-tagger-three-column-split.
+            d.is_gallery_eligible,
             -- Aesthetic auto-tagger score (NULL on legacy / non-taggable species).
             -- Consumed by core/gallery_core._story_board_candidate_quality and any
             -- caller that wants to rank by "facing the camera" probability.
@@ -366,16 +370,26 @@ def fetch_random_favorites(
     limit: int = 6,
 ) -> list[sqlite3.Row]:
     """
-    Returns a random selection of favorite detections, diversified by species.
+    Returns a random selection of cover-worthy detections, diversified by species.
     Used for a quick 'best of' preview gallery on the homepage.
+
+    Two sources, queried equally:
+      - is_favorite=1            → HUMAN gold-label
+      - is_gallery_eligible=1    → KI auto-pick (aesthetic tagger)
+
+    Both are good cover candidates. The UI distinguishes them via a KI badge
+    rendered when is_favorite=0 AND is_gallery_eligible=1. Within the random
+    selection, both pool together so a station with few HUMAN favorites still
+    has a populated homepage.
     """
     query = f"""
-    WITH RankedFavorites AS (
+    WITH CoverCandidates AS (
         SELECT
             d.detection_id,
             i.timestamp as image_timestamp,
             d.bbox_x, d.bbox_y, d.bbox_w, d.bbox_h,
-            d.od_class_name, d.od_confidence, d.score, d.is_favorite,
+            d.od_class_name, d.od_confidence, d.score,
+            d.is_favorite, d.is_gallery_eligible,
             (substr(i.timestamp, 1, 4) || '-' || substr(i.timestamp, 5, 2) || '-' || substr(i.timestamp, 7, 2) || '/' ||
              COALESCE(d.thumbnail_path, REPLACE(i.filename, '.jpg', '_crop_1.webp'))) AS thumbnail_path_virtual,
             (substr(i.timestamp, 1, 4) || '-' || substr(i.timestamp, 5, 2) || '-' || substr(i.timestamp, 7, 2) || '/' ||
@@ -387,9 +401,10 @@ def fetch_random_favorites(
             ) as rn
         FROM detections d
         JOIN images i ON d.image_filename = i.filename
-        WHERE {_gallery_visibility_sql("d", "i")} AND d.is_favorite = 1
+        WHERE {_gallery_visibility_sql("d", "i")}
+          AND (d.is_favorite = 1 OR d.is_gallery_eligible = 1)
     )
-    SELECT * FROM RankedFavorites
+    SELECT * FROM CoverCandidates
     WHERE rn = 1
     ORDER BY RANDOM()
     LIMIT ?
@@ -1032,6 +1047,7 @@ def fetch_detections_last_24h(
             {_top1_confidence_sql("d")} as cls_confidence,
             {effective_species_sql("d")} as species_key,
             d.is_favorite,
+            d.is_gallery_eligible,
             (
                 SELECT COUNT(*)
                 FROM detections d2

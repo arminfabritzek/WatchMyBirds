@@ -89,6 +89,9 @@ def fetch_review_queue_images(
     detection_columns = table_columns(conn, "detections")
     species_sql = effective_species_sql_for_columns("d", detection_columns)
     is_favorite_sql = _detection_column_sql(detection_columns, "is_favorite", "0")
+    is_gallery_eligible_sql = _detection_column_sql(
+        detection_columns, "is_gallery_eligible", "0"
+    )
     manual_species_sql = _detection_column_sql(
         detection_columns, "manual_species_override"
     )
@@ -159,7 +162,8 @@ def fetch_review_queue_images(
             NULL as species_source,
             NULL as manual_bbox_review,
             0 as sibling_detection_count,
-            0 as is_favorite
+            0 as is_favorite,
+            0 as is_gallery_eligible
         FROM images i
         WHERE {orphan_where_sql}
 
@@ -216,7 +220,8 @@ def fetch_review_queue_images(
                   AND COALESCE(ds.status, 'active') = 'active'
                   AND COALESCE(ds.decision_state, '') NOT IN ('confirmed', 'rejected')
             ) as sibling_detection_count,
-            COALESCE({is_favorite_sql}, 0) as is_favorite
+            COALESCE({is_favorite_sql}, 0) as is_favorite,
+            COALESCE({is_gallery_eligible_sql}, 0) as is_gallery_eligible
         FROM detections d
         JOIN images i ON i.filename = d.image_filename
         WHERE {detection_where_sql}
@@ -258,6 +263,9 @@ def fetch_review_queue_item_by_identity(
     detection_columns = table_columns(conn, "detections")
     species_sql = effective_species_sql_for_columns("d", detection_columns)
     is_favorite_sql = _detection_column_sql(detection_columns, "is_favorite", "0")
+    is_gallery_eligible_sql = _detection_column_sql(
+        detection_columns, "is_gallery_eligible", "0"
+    )
     manual_species_sql = _detection_column_sql(
         detection_columns, "manual_species_override"
     )
@@ -293,7 +301,8 @@ def fetch_review_queue_item_by_identity(
             NULL as species_source,
             NULL as manual_bbox_review,
             0 as sibling_detection_count,
-            0 as is_favorite
+            0 as is_favorite,
+            0 as is_gallery_eligible
         FROM images i
         WHERE (i.review_status IS NULL OR i.review_status = 'untagged')
           AND NOT EXISTS (SELECT 1 FROM detections d WHERE d.image_filename = i.filename)
@@ -354,7 +363,8 @@ def fetch_review_queue_item_by_identity(
                   AND COALESCE(ds.status, 'active') = 'active'
                   AND COALESCE(ds.decision_state, '') NOT IN ('confirmed', 'rejected')
             ) as sibling_detection_count,
-            COALESCE({is_favorite_sql}, 0) as is_favorite
+            COALESCE({is_favorite_sql}, 0) as is_favorite,
+            COALESCE({is_gallery_eligible_sql}, 0) as is_gallery_eligible
         FROM detections d
         JOIN images i ON i.filename = d.image_filename
         WHERE COALESCE(d.status, 'active') = 'active'
@@ -445,6 +455,9 @@ def fetch_review_cluster_context(
     detection_columns = table_columns(conn, "detections")
     species_sql = effective_species_sql_for_columns("d", detection_columns)
     is_favorite_sql = _detection_column_sql(detection_columns, "is_favorite", "0")
+    is_gallery_eligible_sql = _detection_column_sql(
+        detection_columns, "is_gallery_eligible", "0"
+    )
     manual_species_sql = _detection_column_sql(
         detection_columns, "manual_species_override"
     )
@@ -495,7 +508,8 @@ def fetch_review_cluster_context(
         {species_source_sql} as species_source,
         {manual_bbox_sql} as manual_bbox_review,
         0 as sibling_detection_count,
-        COALESCE({is_favorite_sql}, 0) as is_favorite
+        COALESCE({is_favorite_sql}, 0) as is_favorite,
+        COALESCE({is_gallery_eligible_sql}, 0) as is_gallery_eligible
     FROM detections d
     JOIN images i ON i.filename = d.image_filename
     WHERE COALESCE(d.status, 'active') = 'active'

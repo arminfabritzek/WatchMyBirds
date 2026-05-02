@@ -189,12 +189,20 @@ def _init_schema(conn: sqlite3.Connection) -> None:
     # aesthetic_score: float in [0, 1], CLIP zero-shot "facing camera" probability.
     # aesthetic_score_at: ISO-8601 timestamp of last computation; lets the job skip
     #   detections it has already scored on previous nights.
-    # Tagging via is_favorite=1 + rating_source='auto' is applied for selected species
-    #   only (small songbirds), pigeons/large birds stay untagged because the score
-    #   does not generalize there. See validation results in
-    #   agent_handoff/lab/experiments/aesthetic_tagger/aesthetic_eval/labels_export.json.
     _ensure_column_on_table(conn, "detections", "aesthetic_score", "REAL")
     _ensure_column_on_table(conn, "detections", "aesthetic_score_at", "TEXT")
+
+    # is_gallery_eligible: boolean flag set by the aesthetic tagger to mark a detection
+    #   as a model-picked gallery candidate. Kept strictly separate from is_favorite so
+    #   that:
+    #     - manual HUMAN favorites (is_favorite=1) remain a clean training gold-label
+    #     - the tagger never overwrites HUMAN choices
+    #     - gallery surfaces can render a "KI pick" badge on is_gallery_eligible=1 AND
+    #       is_favorite=0 detections
+    #   Backfill of legacy rating_source='auto' rows happens in _backfill_gallery_eligible
+    #   (see below). See workflow/plans/2026-05-02_FEATURE_aesthetic-tagger-three-column-split.md.
+    _ensure_column_on_table(conn, "detections", "is_gallery_eligible", "INTEGER DEFAULT 0")
+    _backfill_gallery_eligible(conn)
 
     conn.execute("""
         CREATE TABLE IF NOT EXISTS sources (
@@ -393,6 +401,66 @@ def get_or_create_user_import_source(conn: sqlite3.Connection) -> int:
 
 def _ensure_column(conn: sqlite3.Connection, column: str, coltype: str) -> None:
     _ensure_column_on_table(conn, "images", column, coltype)
+
+
+_BACKFILL_MARKER_KEY = "gallery_eligible_split_v1"
+
+
+def _backfill_gallery_eligible(conn: sqlite3.Connection) -> None:
+    """One-shot backfill: convert legacy auto-tagged favorites to is_gallery_eligible.
+
+    Runs ONCE per database, gated by a marker row in `_migration_state`.
+
+    Before the three-column split, the aesthetic tagger marked picks as
+    is_favorite=1 with rating_source='auto'. After the split, those rows
+    must move to is_gallery_eligible=1 / is_favorite=0 so that:
+
+      - is_favorite is reserved for HUMAN clicks (gold-label for training)
+      - is_gallery_eligible is the model-decision column
+
+    DANGER WITHOUT THE MARKER: the heart-toggle endpoint historically did
+    not stamp rating_source='manual' on HUMAN clicks, so the default
+    rating_source='auto' would match the migration WHERE clause. Running
+    the backfill on every app start would silently delete every HUMAN
+    favorite created since the last restart. The marker prevents that.
+
+    Detection of "no rating_source column" (very old DBs predating
+    rating_source) short-circuits to a no-op — there is nothing to migrate.
+    """
+    cur = conn.execute("PRAGMA table_info(detections);")
+    cols = {row[1] for row in cur.fetchall()}
+    if "rating_source" not in cols or "is_gallery_eligible" not in cols:
+        return
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS _migration_state (
+            key TEXT PRIMARY KEY,
+            applied_at TEXT NOT NULL
+        );
+        """
+    )
+    already = conn.execute(
+        "SELECT 1 FROM _migration_state WHERE key = ?",
+        (_BACKFILL_MARKER_KEY,),
+    ).fetchone()
+    if already:
+        return
+
+    conn.execute(
+        """
+        UPDATE detections
+           SET is_gallery_eligible = 1,
+               is_favorite = 0
+         WHERE is_favorite = 1
+           AND rating_source = 'auto'
+        """
+    )
+    conn.execute(
+        "INSERT INTO _migration_state(key, applied_at) VALUES (?, datetime('now'))",
+        (_BACKFILL_MARKER_KEY,),
+    )
+    conn.commit()
 
 
 def _ensure_column_on_table(

@@ -572,7 +572,10 @@ def _story_board_candidate_quality(det: dict) -> tuple[int, int, float, float, f
     """Quality key for story-board cover candidates.
 
     Tuple ordering (highest priority first):
-        is_favorite     manual stars + nightly auto-tags both qualify
+        priority        max(is_favorite, is_gallery_eligible) — HUMAN-favorited
+                        and model-picked rows sort equally above the rest. The
+                        UI tells them apart via the KI-badge; ranking treats
+                        them as peers.
         is_interior     bbox not touching the frame edge
         aesthetic_score CLIP "facing camera" probability from
                         scripts/aesthetic_tag_nightly.py; 0.0 when missing
@@ -584,6 +587,8 @@ def _story_board_candidate_quality(det: dict) -> tuple[int, int, float, float, f
         det_id          stable id so the sort is deterministic
     """
     is_favorite = 1 if int(det.get("is_favorite") or 0) else 0
+    is_gallery_eligible = 1 if int(det.get("is_gallery_eligible") or 0) else 0
+    priority = 1 if (is_favorite or is_gallery_eligible) else 0
     is_interior = 0 if _story_board_bbox_touches_edge(det) else 1
     # NULL aesthetic_score → -1.0 mirrors the SQL `COALESCE(.., -1)` fallback
     # in fetch_daily_covers / _fetch_species_best_photos. Legacy and
@@ -594,7 +599,7 @@ def _story_board_candidate_quality(det: dict) -> tuple[int, int, float, float, f
     bbox_quality = float(det.get("bbox_quality") or 0.0)
     ts = det.get("image_timestamp", "") or ""
     det_id = int(det.get("detection_id") or 0)
-    return (is_favorite, is_interior, aesthetic_score, score, bbox_quality, ts, det_id)
+    return (priority, is_interior, aesthetic_score, score, bbox_quality, ts, det_id)
 
 
 def _rank_story_board_candidates(candidates: list[dict]) -> list[dict]:
@@ -638,9 +643,17 @@ def _build_story_board_candidate_pool(
                 break
 
     favorites = [d for d in ranked if int(d.get("is_favorite") or 0)]
+    # KI picks: gallery_eligible but NOT also a HUMAN favorite — already in
+    # `favorites` if both. Going in second so HUMAN choice still wins ties.
+    ki_picks = [
+        d for d in ranked
+        if int(d.get("is_gallery_eligible") or 0) and not int(d.get("is_favorite") or 0)
+    ]
     covers = [d for d in ranked if int(d.get("detection_id") or 0) in cover_detection_ids]
 
     _append_unique(favorites)
+    if len(pool) < limit:
+        _append_unique(ki_picks)
     if len(pool) < limit:
         _append_unique(covers)
     if len(pool) < limit:
@@ -662,6 +675,10 @@ def _choose_story_board_frames(
         rng = random.Random()
 
     ranked = _rank_story_board_candidates(candidates)
+    # Primary cover preference: HUMAN-favorites first; only fall back to KI
+    # picks if there are no HUMAN ones. The "sieh mal mein Lieblingsbild"
+    # surface should not get hijacked by a model pick when a human pick
+    # exists.
     favorites = [d for d in ranked if int(d.get("is_favorite") or 0)]
     fallback_pool = ranked[: min(3, len(ranked))]
     if len(favorites) >= 2:

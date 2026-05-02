@@ -291,15 +291,22 @@ def create_web_interface(detection_manager, system_monitor=None):
     def _cover_quality_tuple(det: dict) -> tuple[int, float]:
         """
         Quality key for species cover and summary selection.
-        Priority: favorite first, then score.
+        Priority: HUMAN favorite or KI gallery-pick (peers), then score.
         """
-        is_fav = 1 if int(det.get("is_favorite") or 0) else 0
+        priority = 1 if (
+            int(det.get("is_favorite") or 0)
+            or int(det.get("is_gallery_eligible") or 0)
+        ) else 0
         score = float(det.get("score") or 0.0)
-        return (is_fav, score)
+        return (priority, score)
 
     def _is_favorite(det: dict) -> bool:
-        """True when a detection is marked as ❤️ favorite."""
+        """True when a detection is marked as ❤️ favorite (HUMAN gold-label)."""
         return bool(int(det.get("is_favorite") or 0))
+
+    def _is_gallery_eligible(det: dict) -> bool:
+        """True when the aesthetic tagger marked the detection as a gallery pick."""
+        return bool(int(det.get("is_gallery_eligible") or 0))
 
     def _build_detection_view_dict(
         det: dict,
@@ -339,6 +346,7 @@ def create_web_interface(detection_manager, system_monitor=None):
             "rating": det.get("rating"),
             "rating_source": det.get("rating_source", "auto"),
             "is_favorite": _is_favorite(det),
+            "is_gallery_eligible": _is_gallery_eligible(det),
         }
         if include_decision_state:
             payload["decision_state"] = det.get("decision_state")
@@ -367,23 +375,30 @@ def create_web_interface(detection_manager, system_monitor=None):
         """
         Pick one cover candidate.
         Priority:
-        1) If ❤️ favorites exist → random.choice() among them
-        2) Prefer non-edge images
-        3) Otherwise pick single best by score
+        1) If HUMAN favorites exist → random.choice() among them ("sieh mal mein
+           Lieblingsbild" — model picks must not hijack a human signal)
+        2) Else if KI gallery-eligible picks exist → random.choice() among them
+        3) Prefer non-edge images
+        4) Otherwise pick single best by score
         """
         if not candidates:
             return None
 
-        # 1. Favorites win over everything else
+        # 1. HUMAN favorites win over everything else
         fav_pool = [d for d in candidates if _is_favorite(d)]
         if fav_pool:
             return random.choice(fav_pool)
 
-        # 2. Prefer non-edge images for the fallback
+        # 2. KI picks fill in when no human signal
+        ki_pool = [d for d in candidates if _is_gallery_eligible(d)]
+        if ki_pool:
+            return random.choice(ki_pool)
+
+        # 3. Prefer non-edge images for the fallback
         interior = [d for d in candidates if not _bbox_touches_edge(d)]
         pool = interior if interior else candidates
 
-        # 3. Fallback: best by score
+        # 4. Fallback: best by score
         ranked = sorted(
             pool,
             key=lambda d: float(d.get("score") or 0.0),
@@ -410,6 +425,7 @@ def create_web_interface(detection_manager, system_monitor=None):
                 "display_path": "",
                 "gallery_date": "",
                 "is_favorite": False,
+                "is_gallery_eligible": False,
                 "score": 0.0,
             }
 
@@ -426,6 +442,7 @@ def create_web_interface(detection_manager, system_monitor=None):
             "display_path": display_url,
             "gallery_date": _date_iso_from_timestamp(ts),
             "is_favorite": bool(int(det.get("is_favorite") or 0)),
+            "is_gallery_eligible": bool(int(det.get("is_gallery_eligible") or 0)),
             "score": float(det.get("score") or 0.0),
         }
 
@@ -461,6 +478,7 @@ def create_web_interface(detection_manager, system_monitor=None):
                         "display_path": primary_payload["display_path"],
                         "gallery_date": primary_payload["gallery_date"],
                         "is_favorite": primary_payload["is_favorite"],
+                        "is_gallery_eligible": primary_payload["is_gallery_eligible"],
                         "score": primary_payload["score"],
                         "story_frames": story_frames,
                     }
@@ -2214,6 +2232,7 @@ def create_web_interface(detection_manager, system_monitor=None):
                 "bbox_w": raw.get("bbox_w", 0.0) or 0.0,
                 "bbox_h": raw.get("bbox_h", 0.0) or 0.0,
                 "is_favorite": bool(int(raw.get("is_favorite") or 0)),
+                "is_gallery_eligible": bool(int(raw.get("is_gallery_eligible") or 0)),
             }
 
         def _format_epoch_human(ts: float) -> str:
@@ -2441,6 +2460,7 @@ def create_web_interface(detection_manager, system_monitor=None):
                         "bbox_w": det.get("bbox_w", 0.0) or 0.0,
                         "bbox_h": det.get("bbox_h", 0.0) or 0.0,
                         "is_favorite": bool(int(det.get("is_favorite") or 0)),
+                        "is_gallery_eligible": bool(int(det.get("is_gallery_eligible") or 0)),
                     }
                 )
 

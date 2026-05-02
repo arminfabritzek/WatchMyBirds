@@ -160,6 +160,7 @@ def _build_minimal_db() -> sqlite3.Connection:
         rating INTEGER,
         rating_source TEXT DEFAULT 'auto',
         is_favorite INTEGER DEFAULT 0,
+        is_gallery_eligible INTEGER DEFAULT 0,
         aesthetic_score REAL,
         aesthetic_score_at TEXT,
         decision_state TEXT,

@@ -94,8 +94,9 @@ def get_species_thumbnail_map(
 
     Priority:
     1. Dedicated local species art in assets/review_species
-    2. Favorite detections
-    3. Any detection/optimized image for that species
+    2. HUMAN favorite detections (is_favorite=1)
+    3. KI gallery-eligible detections (is_gallery_eligible=1)
+    4. Any detection/optimized image for that species
     """
     common_names = common_names or {}
     use_cache = detections is None and cache_key is not None
@@ -110,6 +111,7 @@ def get_species_thumbnail_map(
         detections = gallery_service.get_all_detections()
 
     favorite_by_species: dict[str, tuple[float, str]] = {}
+    ki_pick_by_species: dict[str, tuple[float, str]] = {}
     general_by_species: dict[str, tuple[float, str]] = {}
     all_species: set[str] = set()
 
@@ -138,6 +140,13 @@ def get_species_thumbnail_map(
             current_favorite = favorite_by_species.get(species_key)
             if current_favorite is None or score >= current_favorite[0]:
                 favorite_by_species[species_key] = (score, preview_url)
+        elif bool(int(det.get("is_gallery_eligible") or 0)):
+            # Only count as KI pick when not already a HUMAN favorite — the two
+            # tiers are mutually exclusive in this map (favorite always wins
+            # within the cascade).
+            current_ki = ki_pick_by_species.get(species_key)
+            if current_ki is None or score >= current_ki[0]:
+                ki_pick_by_species[species_key] = (score, preview_url)
 
     mapping: dict[str, str] = {}
     static_species: set[str] = set()
@@ -152,8 +161,14 @@ def get_species_thumbnail_map(
         if species_key not in static_species:
             _assign_species_keys(mapping, species_key, url, common_names)
 
-    for species_key, (_score, url) in general_by_species.items():
+    for species_key, (_score, url) in ki_pick_by_species.items():
         if species_key not in static_species and species_key not in favorite_by_species:
+            _assign_species_keys(mapping, species_key, url, common_names)
+
+    for species_key, (_score, url) in general_by_species.items():
+        if (species_key not in static_species
+                and species_key not in favorite_by_species
+                and species_key not in ki_pick_by_species):
             _assign_species_keys(mapping, species_key, url, common_names)
 
     if use_cache:

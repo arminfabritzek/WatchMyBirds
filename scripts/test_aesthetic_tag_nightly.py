@@ -61,8 +61,10 @@ def setup_schema(conn: sqlite3.Connection) -> None:
         created_at TEXT,
         status TEXT DEFAULT 'active',
         is_favorite INTEGER DEFAULT 0,
+        is_gallery_eligible INTEGER DEFAULT 0,
         rating_source TEXT DEFAULT 'auto',
         decision_state TEXT,
+        decision_level TEXT,
         aesthetic_score REAL,
         aesthetic_score_at TEXT,
         FOREIGN KEY(image_filename) REFERENCES images(filename) ON DELETE CASCADE
@@ -188,7 +190,7 @@ def test_basic_run() -> None:
 
     conn = sqlite3.connect(str(DB_PATH))
     rows = conn.execute(
-        "SELECT detection_id, aesthetic_score, is_favorite, rating_source "
+        "SELECT detection_id, aesthetic_score, is_gallery_eligible, is_favorite "
         "FROM detections ORDER BY detection_id"
     ).fetchall()
     conn.close()
@@ -197,21 +199,25 @@ def test_basic_run() -> None:
     n_scored = sum(1 for r in rows if r[1] is not None)
     assert_eq(n_scored, 11, "all 11 scored")
 
-    # Parus_major (4) -- top 3 tagged
-    parus_tagged = sum(1 for r in rows if 101 <= r[0] <= 104 and r[2] == 1 and r[3] == "auto")
-    assert_eq(parus_tagged, 3, "top-3 parus tagged")
+    # Parus_major (4) -- top 3 marked gallery-eligible (is_favorite never touched)
+    parus_tagged = sum(1 for r in rows if 101 <= r[0] <= 104 and r[2] == 1)
+    assert_eq(parus_tagged, 3, "top-3 parus gallery-eligible")
 
-    # Pigeons (3) -- all 3 tagged (top-3 of 3)
-    pigeon_tagged = sum(1 for r in rows if 201 <= r[0] <= 203 and r[2] == 1 and r[3] == "auto")
-    assert_eq(pigeon_tagged, 3, "all 3 pigeons tagged")
+    # Pigeons (3) -- all 3 marked gallery-eligible (top-3 of 3)
+    pigeon_tagged = sum(1 for r in rows if 201 <= r[0] <= 203 and r[2] == 1)
+    assert_eq(pigeon_tagged, 3, "all 3 pigeons gallery-eligible")
 
-    # Unknowns (2) -- NOT tagged (TAG_UNKNOWN_SPECIES = False)
+    # Unknowns (2) -- NOT marked (TAG_UNKNOWN_SPECIES = False)
     unknown_tagged = sum(1 for r in rows if 301 <= r[0] <= 302 and r[2] == 1)
-    assert_eq(unknown_tagged, 0, "unknowns NOT tagged")
+    assert_eq(unknown_tagged, 0, "unknowns NOT gallery-eligible")
 
-    # Phoenicurus (2) -- NOT tagged (not in TAGGABLE_SPECIES)
+    # Phoenicurus (2) -- NOT marked (not in TAGGABLE_SPECIES)
     rare_tagged = sum(1 for r in rows if 401 <= r[0] <= 402 and r[2] == 1)
-    assert_eq(rare_tagged, 0, "Phoenicurus NOT tagged")
+    assert_eq(rare_tagged, 0, "Phoenicurus NOT gallery-eligible")
+
+    # is_favorite must remain 0 for ALL these — the tagger never touches it.
+    n_human_favs = sum(1 for r in rows if r[3] == 1)
+    assert_eq(n_human_favs, 0, "is_favorite untouched by tagger")
 
     print("PASS test_basic_run")
 
@@ -301,7 +307,7 @@ def test_dry_run() -> None:
         "SELECT COUNT(*) FROM detections WHERE aesthetic_score IS NOT NULL"
     ).fetchone()[0]
     n_tagged = conn.execute(
-        "SELECT COUNT(*) FROM detections WHERE is_favorite = 1"
+        "SELECT COUNT(*) FROM detections WHERE is_gallery_eligible = 1"
     ).fetchone()[0]
     conn.close()
     assert_eq(n_scored, 0, "dry-run wrote no scores")
@@ -331,13 +337,13 @@ def test_decision_state_filter() -> None:
 
     conn = sqlite3.connect(str(DB_PATH))
     rows = {r[0]: r for r in conn.execute(
-        "SELECT detection_id, aesthetic_score, is_favorite FROM detections"
+        "SELECT detection_id, aesthetic_score, is_gallery_eligible FROM detections"
     ).fetchall()}
     conn.close()
 
-    # Only confirmed got scored AND tagged; others get nothing.
+    # Only confirmed got scored AND marked eligible; others get nothing.
     assert rows[901][1] is not None, "confirmed got score"
-    assert rows[901][2] == 1, "confirmed got tagged"
+    assert rows[901][2] == 1, "confirmed got gallery-eligible"
     assert rows[902][1] is None, "uncertain skipped at scoring"
     assert rows[903][1] is None, "null decision skipped"
     print("PASS test_decision_state_filter")
@@ -370,7 +376,7 @@ def test_min_score_threshold() -> None:
         "SELECT COUNT(*) FROM detections WHERE aesthetic_score IS NOT NULL"
     ).fetchone()[0]
     n_tagged = conn.execute(
-        "SELECT COUNT(*) FROM detections WHERE is_favorite = 1"
+        "SELECT COUNT(*) FROM detections WHERE is_gallery_eligible = 1"
     ).fetchone()[0]
     conn.close()
     assert_eq(n_scored, 3, "all 3 scored (score is written even if low)")

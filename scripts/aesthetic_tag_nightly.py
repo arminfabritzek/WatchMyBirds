@@ -136,6 +136,7 @@ def fetch_unscored_detections(
       AND d.created_at >= ?
       AND (d.aesthetic_score IS NULL OR d.aesthetic_score_at IS NULL)
       AND d.thumbnail_path IS NOT NULL
+      AND (d.decision_level IS NULL OR lower(d.decision_level) != 'reject')
       {where_extra}
     ORDER BY d.created_at DESC
     """
@@ -157,9 +158,17 @@ def write_score(conn: sqlite3.Connection, det_id: int, score: float, ts: str) ->
 def apply_auto_favorites(conn: sqlite3.Connection, since: str, dry_run: bool) -> dict:
     """
     For each (species, day) bucket: pick the top N detections by aesthetic_score
-    and set is_favorite=1, rating_source='auto'. By default, ALL species are
-    eligible (TAGGABLE_SPECIES is empty); set the constant to a non-empty set
-    to restrict. Pre-existing manual favorites are never overwritten.
+    and set is_gallery_eligible=1. By default, ALL species are eligible
+    (TAGGABLE_SPECIES is empty); set the constant to a non-empty set to restrict.
+
+    is_favorite (HUMAN gold-label) is NEVER touched by this job. The two
+    columns are deliberately decoupled:
+      - is_favorite      = HUMAN clicked the heart, used as training label
+      - is_gallery_eligible = model-decided gallery candidate, badged in UI
+
+    Re-tagging is idempotent: rows already at is_gallery_eligible=1 simply
+    stay at 1. We do not unset stale eligibles in this pass — that policy
+    (decay / re-evaluation) is a follow-up question.
 
     Detections whose aesthetic_score is below MIN_SCORE_FOR_TAG are excluded
     even if they win their bucket -- this prevents "best-of-a-bad-day" tags
@@ -193,8 +202,7 @@ def apply_auto_favorites(conn: sqlite3.Connection, since: str, dry_run: bool) ->
              COALESCE(c.cls_class_name, 'unknown') AS species,
              substr(d.created_at, 1, 10) AS day,
              d.aesthetic_score,
-             d.is_favorite,
-             d.rating_source,
+             d.is_gallery_eligible,
              ROW_NUMBER() OVER (
                PARTITION BY COALESCE(c.cls_class_name, 'unknown'),
                             substr(d.created_at, 1, 10)
@@ -208,10 +216,11 @@ def apply_auto_favorites(conn: sqlite3.Connection, since: str, dry_run: bool) ->
         AND d.created_at >= ?
         AND d.aesthetic_score IS NOT NULL
         AND d.aesthetic_score >= ?
+        AND (d.decision_level IS NULL OR lower(d.decision_level) != 'reject')
         {species_clause}
         {decision_clause}
     )
-    SELECT detection_id, species, day, aesthetic_score, is_favorite, rating_source
+    SELECT detection_id, species, day, aesthetic_score, is_gallery_eligible
     FROM ranked WHERE rn <= ?
     """
     cur = conn.execute(
@@ -221,27 +230,27 @@ def apply_auto_favorites(conn: sqlite3.Connection, since: str, dry_run: bool) ->
     rows = cur.fetchall()
 
     by_species: dict[str, int] = {}
-    skipped_manual = 0
+    already_eligible = 0
     newly_tagged: list[int] = []
 
-    for det_id, species, day, score, is_fav, source in rows:
-        # Don't touch manually-favorited detections.
-        if is_fav and source == "manual":
-            skipped_manual += 1
-            continue
-        newly_tagged.append(det_id)
+    for det_id, species, _day, _score, was_eligible in rows:
+        # Already model-picked → no UPDATE needed, but still count in by_species
+        # for an honest "what would this run pick?" report.
+        if was_eligible:
+            already_eligible += 1
+        else:
+            newly_tagged.append(det_id)
         by_species[species] = by_species.get(species, 0) + 1
 
     if not dry_run and newly_tagged:
         conn.executemany(
-            "UPDATE detections SET is_favorite = 1, rating_source = 'auto' "
-            "WHERE detection_id = ?",
+            "UPDATE detections SET is_gallery_eligible = 1 WHERE detection_id = ?",
             [(d,) for d in newly_tagged],
         )
 
     return {
         "total_tagged": len(newly_tagged),
-        "skipped_manual": skipped_manual,
+        "already_eligible": already_eligible,
         "by_species": by_species,
     }
 
@@ -412,8 +421,8 @@ def main_with_args(argv: list[str] | None = None) -> int:
             tagging_stats = apply_auto_favorites(conn, since=since, dry_run=args.dry_run)
             if not args.dry_run:
                 conn.commit()
-            log.info(f"Auto-tagged {tagging_stats['total_tagged']} detections as favorite "
-                     f"(skipped {tagging_stats['skipped_manual']} manual favorites)")
+            log.info(f"Marked {tagging_stats['total_tagged']} detections as gallery-eligible "
+                     f"(already eligible from prior run: {tagging_stats['already_eligible']})")
             for sp, n in tagging_stats["by_species"].items():
                 log.info(f"   {sp}: {n}")
         else:
