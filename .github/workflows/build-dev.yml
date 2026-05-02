@@ -148,6 +148,11 @@ jobs:
           # startup with PermissionError on settings.yaml because output/
           # ends up admin-owned.)
           sudo chroot mount_point find /opt/app -path /opt/app/data -prune -o -exec chown admin:admin {} +
+          # chown without -h followed symlink targets, not symlink inodes —
+          # tracked symlinks like /opt/app/CLAUDE.md kept the GHA-runner's
+          # UID (1001) and triggered "Operation not permitted" on every
+          # rsync from the operator's Mac. Fix the inode directly.
+          sudo chroot mount_point find /opt/app -path /opt/app/data -prune -o -type l -exec chown -h admin:admin {} +
           sudo chroot mount_point install -d -o watchmybirds -g watchmybirds -m 0750 /opt/app/data
 
           # Install DEV service (relaxed security)

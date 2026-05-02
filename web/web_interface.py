@@ -3168,6 +3168,19 @@ def create_web_interface(detection_manager, system_monitor=None):
     # ==========================================================================
 
     # -----------------------------
+    # Liveness probe (unauth)
+    # -----------------------------
+    # Single short text response, no DB hit, no auth. Used by:
+    # - the OTA update path (poll for app.service back online after restart)
+    # - external monitors and reverse proxies
+    # - the manual restore helper (ops/tools/usb_migration/03_restore_data.sh)
+    # Authenticated endpoints sit behind /login → 302; this is the one
+    # endpoint scripts can rely on for "is the Python process answering".
+    @server.route("/healthz", methods=["GET"])
+    def healthz():
+        return "ok\n", 200, {"Content-Type": "text/plain; charset=utf-8"}
+
+    # -----------------------------
     # Security: Request Audit Logging
     # -----------------------------
     security_logger = logging.getLogger("security.access")
@@ -3179,6 +3192,7 @@ def create_web_interface(detection_manager, system_monitor=None):
         "/api/v1/health", "/api/v1/weather/",
         "/api/v1/system/versions", "/api/v1/system/diagnostics",
         "/api/v1/public/go2rtc/health", "/api/v1/cameras",
+        "/healthz",
         "/logs",
         # High-frequency status polls: zero forensic value, dominate the log.
         "/api/inbox/status",

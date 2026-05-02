@@ -151,6 +151,11 @@ jobs:
 
           # Fix Permissions (Resolve user inside chroot)
           sudo chroot mount_point chown -R watchmybirds:watchmybirds /opt/app
+          # chown -R follows symlink targets, leaving symlink inodes with the
+          # GHA-runner's UID (1001) — that broke rsync from the operator's
+          # Mac with "Operation not permitted" on tracked symlinks like
+          # /opt/app/CLAUDE.md. Fix the symlink inodes themselves.
+          sudo chroot mount_point find /opt/app -type l -exec chown -h watchmybirds:watchmybirds {} +
 
           sudo cp mount_point/opt/app/systemd/app.service mount_point/etc/systemd/system/
           sudo ln -sf /etc/systemd/system/app.service mount_point/etc/systemd/system/multi-user.target.wants/app.service
