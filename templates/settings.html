@@ -814,7 +814,7 @@
     <!-- ╔══════════════════════════════════════════════╗
          ║ 1. AI                                        ║
          ╚══════════════════════════════════════════════╝ -->
-    <div class="settings-panel is-open" id="panelAI">
+    <div class="settings-panel" id="panelAI">
         <button type="button" class="settings-panel__trigger" onclick="togglePanel('panelAI')"
                 title="Choose which detector model the app runs">
             AI
@@ -1008,7 +1008,7 @@
 
             <!-- Source inputs -->
             <div class="row g-2 mb-3">
-                <div class="col-md-3">
+                <div class="col-12">
                     <div class="settings-field__label">USB Camera</div>
                     <div class="input-group input-group-sm">
                         <select id="usbIndexSelect" class="form-select form-select-sm">
@@ -1019,7 +1019,7 @@
                         <button type="button" class="btn btn--primary btn--sm" onclick="setCameraUrl(document.getElementById('usbIndexSelect').value)">Set</button>
                     </div>
                 </div>
-                <div class="col-md-9">
+                <div class="col-12">
                     <div class="settings-field__label">Camera URL (rtsp:// or http://)</div>
                     <div class="input-group input-group-sm">
                         <input type="text" id="cameraUrlInput" class="form-control form-control-sm"

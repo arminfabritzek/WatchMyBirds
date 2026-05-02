@@ -1044,6 +1044,12 @@ code {
     border-left-color: var(--color-warning);
 }
 
+.stat-item--neon {
+    border: 2px solid #ff2bd6;
+    border-left: 2px solid #ff2bd6;
+    box-shadow: 0 0 10px rgba(255, 43, 214, 0.5);
+}
+
 .stat-item__value {
     font-size: var(--font-size-2xl);
     font-weight: 800;

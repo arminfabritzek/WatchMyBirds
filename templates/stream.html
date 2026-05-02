@@ -242,9 +242,9 @@
             <div class="stat-item__value">{{ dashboard_stats.total_species | default(0) }}</div>
             <div class="stat-item__label">Total Species</div>
         </div>
-        <div class="stat-item stat-item--warning">
-            <div class="stat-item__value">{{ dashboard_stats.today_avg_confidence | default(0) }}</div>
-            <div class="stat-item__label">Avg. Confidence</div>
+        <div class="stat-item stat-item--neon">
+            <div class="stat-item__value">{{ dashboard_stats.today_busiest_hour | default('—') }}</div>
+            <div class="stat-item__label">Busiest Hour</div>
         </div>
     </div>
     {% endif %}

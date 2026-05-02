@@ -2301,9 +2301,17 @@ def create_web_interface(detection_manager, system_monitor=None):
             )
             today_summary_stats = today_summary["summary"]
             dashboard_stats["today_visits"] = today_summary_stats["total_observations"]
-            dashboard_stats["today_avg_confidence"] = today_summary_stats["avg_score"]
             species_visit_counts = today_summary_stats["species_counts"]
             today_rows = today_summary["detections"]
+
+            hour_buckets: dict[str, int] = {}
+            for _det in today_rows:
+                _ts = _det.get("image_timestamp", "") or ""
+                if len(_ts) >= 11:
+                    hour_buckets[_ts[9:11]] = hour_buckets.get(_ts[9:11], 0) + 1
+            if hour_buckets:
+                _peak = max(hour_buckets.items(), key=lambda kv: kv[1])[0]
+                dashboard_stats["today_busiest_hour"] = f"{_peak}:00"
         except Exception as e:
             logger.error(f"Error fetching today observation stats: {e}")
 
