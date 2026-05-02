@@ -41,16 +41,28 @@ LABEL org.opencontainers.image.title="WatchMyBirds" \
     org.opencontainers.image.created="${BUILD_DATE}"
 
 COPY requirements.txt /app/requirements.txt
+COPY requirements-aesthetic.txt /app/requirements-aesthetic.txt
 
 # Install Python dependencies (upgrade pip, setuptools, and wheel first)
 RUN python -m pip install --upgrade pip setuptools wheel && \
     pip install --no-cache-dir -r requirements.txt
+
+# Install the aesthetic-tagger stack (torch CPU-only, open_clip).
+# Kept as a separate pip invocation so the index pin doesn't interfere
+# with the main resolver run. Adds ~900 MB to the image; if you want a
+# slim variant without the tagger, comment this RUN out and the
+# in-app scheduler will skip itself when the imports fail.
+RUN pip install --no-cache-dir \
+    --index-url https://download.pytorch.org/whl/cpu \
+    --extra-index-url https://pypi.org/simple \
+    -r requirements-aesthetic.txt
 
 # Copy the rest of the application source code
 COPY assets ./assets
 COPY camera ./camera
 COPY core ./core
 COPY detectors ./detectors
+COPY scripts ./scripts
 COPY templates ./templates
 COPY utils ./utils
 COPY web ./web

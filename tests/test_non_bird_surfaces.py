@@ -98,6 +98,7 @@ def _make_minimal_schema(conn: sqlite3.Connection) -> None:
             manual_species_override TEXT,
             score REAL,
             bbox_quality REAL,
+            aesthetic_score REAL,
             decision_state TEXT,
             decision_level TEXT,
             bbox_x REAL, bbox_y REAL, bbox_w REAL, bbox_h REAL

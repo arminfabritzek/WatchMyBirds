@@ -330,6 +330,10 @@ def fetch_detections_for_gallery(
             d.rating,
             d.rating_source,
             d.is_favorite,
+            -- Aesthetic auto-tagger score (NULL on legacy / non-taggable species).
+            -- Consumed by core/gallery_core._story_board_candidate_quality and any
+            -- caller that wants to rank by "facing the camera" probability.
+            d.aesthetic_score,
             -- Count of sibling detections on the same image (for multi-bird display)
             (
                 SELECT COUNT(*)
@@ -491,7 +495,13 @@ def fetch_daily_covers(
             d.thumbnail_path,
             ROW_NUMBER() OVER (
                 PARTITION BY (substr(d.image_filename, 1, 4) || '-' || substr(d.image_filename, 5, 2) || '-' || substr(d.image_filename, 7, 2))
-                ORDER BY COALESCE(d.rating, 0) DESC, d.score DESC
+                -- Cover ranking: manual rating wins first, then nightly aesthetic
+                -- score from scripts/aesthetic_tag_nightly.py (NULL on legacy /
+                -- non-taggable species → ranked behind anything scored), then
+                -- fall back to detector confidence so legacy data still ranks.
+                ORDER BY COALESCE(d.rating, 0) DESC,
+                         COALESCE(d.aesthetic_score, -1) DESC,
+                         d.score DESC
             ) as rn
         FROM detections d
         JOIN images i ON d.image_filename = i.filename

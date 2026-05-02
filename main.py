@@ -202,6 +202,17 @@ def _create_runtime():
     except Exception as e:
         logger.warning(f"Daily report scheduler failed to start: {e}")
 
+    # Start Aesthetic Tag Scheduler (nightly CLIP-based auto-favorite tagger).
+    # Runs in the same process so Pi and Docker behave identically; replaces
+    # the systemd-based design from 2026-04-30. Skips itself silently when
+    # the optional torch / open_clip packages are not installed.
+    try:
+        from web.services.aesthetic_tag_scheduler import start_aesthetic_tag_scheduler
+
+        start_aesthetic_tag_scheduler()
+    except Exception as e:
+        logger.warning(f"Aesthetic tag scheduler failed to start: {e}")
+
     app = create_web_interface(detection_manager, system_monitor=system_monitor)
     return app, detection_manager
 

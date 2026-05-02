@@ -55,11 +55,17 @@ private_docs/
 .venv/
 systemd/
 tests/
-# scripts/ stays fully out of the container. The runtime code path for
+# scripts/ stays mostly out of the container. The runtime code path for
 # regenerating model_metadata.json lives in utils/model_metadata_generator;
 # scripts/generate_model_metadata.py is only a thin CLI wrapper used by
 # the deploy script on the build host.
+#
+# Exception: scripts/aesthetic_tag_nightly.py is the worker invoked by
+# web/services/aesthetic_tag_scheduler.py inside the running app process,
+# so it must live in the image. See .dockerignore syntax: leading "!" means
+# "do not exclude". Order matters; this rule must follow the broad exclude.
 scripts/
+!scripts/aesthetic_tag_nightly.py
 
 # Go2RTC config (credentials; not used in container image)
 go2rtc.yaml

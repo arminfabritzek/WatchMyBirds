@@ -1,0 +1,20 @@
+# Optional dependencies for the nightly aesthetic tagger
+# (web/services/aesthetic_tag_scheduler.py + scripts/aesthetic_tag_nightly.py).
+#
+# Kept separate from the main requirements.txt because:
+#  * torch + torchvision pull ~900 MB, which doubles the Docker image size
+#    and slows cold-pull. Some deployments may not need the tagger at all.
+#  * The CPU-only PyTorch wheels (~150 MB instead of ~1.5 GB with cuDNN)
+#    require a custom index URL, which would clutter the main file.
+#
+# Install with:
+#   pip install --index-url https://download.pytorch.org/whl/cpu \
+#               --extra-index-url https://pypi.org/simple \
+#               -r requirements-aesthetic.txt
+#
+# The custom index ensures torch/torchvision come from PyTorch's CPU
+# distribution; --extra-index-url falls back to PyPI for open_clip_torch.
+
+torch>=2.0
+torchvision>=0.15
+open_clip_torch>=2.20

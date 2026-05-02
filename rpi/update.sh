@@ -176,12 +176,28 @@ echo "[wmb-update] Files installed."
 
 VENV="${APP_DIR}/.venv"
 REQUIREMENTS="${APP_DIR}/requirements.txt"
+REQUIREMENTS_AESTHETIC="${APP_DIR}/requirements-aesthetic.txt"
 
 if [ -f "$REQUIREMENTS" ] && [ -d "$VENV" ]; then
     write_status "installing" "Updating Python dependencies..." "$TARGET"
     "${VENV}/bin/pip" install --quiet --no-cache-dir -r "$REQUIREMENTS" \
         || { write_status "error" "pip install failed." "$TARGET"; exit 1; }
     echo "[wmb-update] Dependencies updated."
+
+    # Aesthetic tagger optional stack. Use the PyTorch CPU index so
+    # we don't drag in the CUDA wheel + cuDNN (~1.5 GB instead of
+    # ~150 MB). The Pi has no GPU; CPU-only is the right choice.
+    # Conditional on the file existing so older deployments without
+    # the aesthetic feature still self-update cleanly.
+    if [ -f "$REQUIREMENTS_AESTHETIC" ]; then
+        write_status "installing" "Updating aesthetic tagger dependencies..." "$TARGET"
+        "${VENV}/bin/pip" install --quiet --no-cache-dir \
+            --index-url https://download.pytorch.org/whl/cpu \
+            --extra-index-url https://pypi.org/simple \
+            -r "$REQUIREMENTS_AESTHETIC" \
+            || { write_status "error" "aesthetic pip install failed." "$TARGET"; exit 1; }
+        echo "[wmb-update] Aesthetic dependencies updated."
+    fi
 fi
 
 # ------------------------------------------------------------------------------

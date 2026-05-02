@@ -1,19 +1,40 @@
 # Aesthetic Auto-Tagger — Deployment
 
-A nightly batch job on the RPi that scores every new bird crop with a CLIP
+A nightly batch job that scores every new bird crop with a CLIP
 "facing-camera" probability and auto-tags the top-3-per-species-per-day as
 `is_favorite=1` for selected species (small songbirds where the score has
 been validated).
+
+## Architecture (2026-05-02 onward)
+
+The scheduler runs **inside the main app process** as a daemon thread
+(`web/services/aesthetic_tag_scheduler.py`) so Pi and Docker behave
+identically. The previous systemd-based design (`wmb-aesthetic-tag.timer`)
+is retained in the repo but no longer the production path; new image
+builds and Docker pulls do not enable it.
+
+Zero-touch deploy: `pip install -r requirements.txt -r requirements-aesthetic.txt`
+and start the app — the scheduler initialises, daemon thread polls
+once per 30 s, fires `aesthetic_tag_nightly.main_with_args([])` once
+per day at the configured `AESTHETIC_TAG_TIME` (default 02:10).
+
+If `requirements-aesthetic.txt` is **not** installed (slim image
+variant), the scheduler logs a single warning and stays idle. The app
+boots normally without the tagger.
 
 ## What it ships
 
 | File | Purpose |
 |---|---|
-| `scripts/aesthetic_tag_nightly.py` | The job. CLI flags: `--since`, `--limit`, `--dry-run`, `--skip-tagging`. |
-| `scripts/test_aesthetic_tag_nightly.py` | Smoke test. Run on Mac before each deploy. |
-| `rpi/systemd/wmb-aesthetic-tag.service` | systemd unit. CPU-bound, niced 15, MemoryMax 1.2 GB. |
-| `rpi/systemd/wmb-aesthetic-tag.timer` | Fires at 02:00 local, persistent (catches up missed runs). |
+| `scripts/aesthetic_tag_nightly.py` | The worker. CLI flags: `--since`, `--limit`, `--dry-run`, `--skip-tagging`. Also imported in-process. |
+| `scripts/test_aesthetic_tag_nightly.py` | Worker smoke tests. |
+| `web/services/aesthetic_tag_scheduler.py` | Daemon-thread scheduler (replaces systemd). |
+| `tests/test_aesthetic_tag_scheduler.py` | Scheduler unit tests (8). |
+| `tests/test_aesthetic_integration.py` | UI ranking tests (10). |
+| `requirements-aesthetic.txt` | Optional torch + open_clip deps. |
+| `Dockerfile` | Pip-installs both requirement files in two RUN steps. |
 | `utils/db/connection.py` | Adds `aesthetic_score REAL` + `aesthetic_score_at TEXT` to `detections`. |
+| `rpi/systemd/wmb-aesthetic-tag.service` + `.timer` | **Deprecated** as of 2026-05-02. Kept in the repo for reference; not enabled in new images. |
 
 ## Schema additions
 
@@ -73,9 +94,9 @@ threshold (default 0.15) prevents "best-of-a-bad-day" tags on weak buckets.
 | Metric | Value |
 |---|---|
 | Model RAM (CLIP ViT-B/32) | ~700 MB |
-| Inference time per crop | 1.5–2.5 s |
-| 1000 crops/night | ~30–45 min |
-| Disk: separate venv | ~1.5 GB (`~/.venv-aesthetic`) |
+| Inference time per crop | ~0.7 s (1.4 img/s, measured 2026-05-01) |
+| 1000 crops/night | ~12 min |
+| Disk: separate venv | ~900 MB (`/opt/app/.venv-aesthetic`, with --index-url cpu) |
 | Disk: HF model cache | ~340 MB |
 | systemd MemoryMax | 1200 MB |
 
@@ -83,40 +104,50 @@ The job is single-threaded by default (`OMP_NUM_THREADS=2`). Don't push
 parallelism higher — the detector pipeline has priority during the day, the
 tagger runs at 02:00 when nothing else is happening.
 
-## First-time deploy on the RPi
+## First-time deploy
 
-The job needs `torch` + `open_clip_torch` + `transformers` which are too
-heavy for the main app venv. Use a separate one:
+**Pi (image-based)**: the image build runs `pip install -r requirements.txt
+-r requirements-aesthetic.txt` against the app venv. After flash, the
+scheduler is automatically active when the app boots — no manual setup.
+
+**Docker**: the Dockerfile installs both requirement files in two RUN
+steps. After `docker pull && docker run`, the scheduler is active.
+
+**Dev machine**: `pip install --index-url https://download.pytorch.org/whl/cpu
+--extra-index-url https://pypi.org/simple -r requirements-aesthetic.txt`
+adds the optional stack to your existing venv.
+
+The CLIP model (~340 MB) downloads on the first scheduler fire and is
+then cached. To pre-warm so the first run doesn't stall, run the
+following once before the first scheduled fire:
 
 ```bash
-ssh admin@watchmybirds.local
-sudo -u watchmybirds python3 -m venv /opt/app/.venv-aesthetic
-sudo -u watchmybirds /opt/app/.venv-aesthetic/bin/pip install \
-    torch torchvision open_clip_torch pillow
+python -c "import open_clip; open_clip.create_model_and_transforms('ViT-B-32', pretrained='laion2b_s34b_b79k')"
+```
 
-# Pre-warm the model cache so the first scheduled run doesn't time out
-# downloading 340 MB at 02:00.
-sudo -u watchmybirds /opt/app/.venv-aesthetic/bin/python -c "
-import open_clip
-open_clip.create_model_and_transforms('ViT-B-32', pretrained='laion2b_s34b_b79k')
-print('CLIP cached.')
-"
+### Configuration
 
-# Install the systemd files (already synced via sync_preview.sh).
-sudo cp /opt/app/rpi/systemd/wmb-aesthetic-tag.service /etc/systemd/system/
-sudo cp /opt/app/rpi/systemd/wmb-aesthetic-tag.timer   /etc/systemd/system/
+| Config key | Default | Purpose |
+|---|---|---|
+| `AESTHETIC_TAG_ENABLED` | `True` | Master switch. Set `False` to disable the scheduler entirely. |
+| `AESTHETIC_TAG_TIME` | `"02:10"` | When to run, `HH:MM` 24h. |
+
+### Legacy systemd path (deprecated)
+
+For Pis with the old systemd-based setup that have not been re-flashed,
+disable the unit before relying on the in-app scheduler so the tagger
+doesn't run twice:
+
+```bash
+sudo systemctl disable --now wmb-aesthetic-tag.timer
+sudo rm /etc/systemd/system/wmb-aesthetic-tag.{service,timer}
 sudo systemctl daemon-reload
-sudo systemctl enable --now wmb-aesthetic-tag.timer
-
-# Verify
-systemctl list-timers wmb-aesthetic-tag.timer
-journalctl -u wmb-aesthetic-tag.service -n 50
 ```
 
 ## Smoke test before going live
 
-After the first run completes (or a manual `systemctl start
-wmb-aesthetic-tag.service`), check what got tagged:
+Check what the scheduler actually tagged after the first daily fire
+(or after manually invoking the worker via `python -m scripts.aesthetic_tag_nightly`):
 
 ```sql
 SELECT
@@ -132,21 +163,24 @@ GROUP BY species, day
 ORDER BY day DESC, species;
 ```
 
-Expected: 3 per (species, day) for `Parus_major` and `unknown`. **No** rows
-for `Columba_palumbus` (pigeons explicitly excluded).
+Expected: 3 per (species, day) for `Parus_major`, `Cyanistes_caeruleus`,
+and `Columba_palumbus`. Other species and `unknown` are not tagged
+(see `TAGGABLE_SPECIES` in `aesthetic_tag_nightly.py`).
 
 ## Operational notes
 
-**Manual run:**
+**Manual run** (Pi or Docker, app's own venv):
 ```bash
-sudo -u watchmybirds /opt/app/.venv-aesthetic/bin/python \
-  /opt/app/scripts/aesthetic_tag_nightly.py --since 2026-04-29 --verbose
+# On the Pi
+sudo -u watchmybirds /opt/app/.venv/bin/python \
+    /opt/app/scripts/aesthetic_tag_nightly.py --since 2026-04-29 --verbose
+# Inside the Docker container
+docker exec <container> python /app/scripts/aesthetic_tag_nightly.py --since 2026-04-29 --verbose
 ```
 
 **Backfill historical detections** (will take hours for large windows):
 ```bash
-sudo -u watchmybirds /opt/app/.venv-aesthetic/bin/python \
-  /opt/app/scripts/aesthetic_tag_nightly.py --since 2026-03-01 --skip-tagging
+python scripts/aesthetic_tag_nightly.py --since 2026-03-01 --skip-tagging
 ```
 The `--skip-tagging` flag computes scores without setting `is_favorite`, so
 the historical record stays unchanged but you can later analyze score

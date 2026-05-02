@@ -568,15 +568,33 @@ def _story_board_bbox_touches_edge(det: dict, margin: float = 0.01) -> bool:
     )
 
 
-def _story_board_candidate_quality(det: dict) -> tuple[int, int, float, float, str, int]:
-    """Quality key for story-board cover candidates."""
+def _story_board_candidate_quality(det: dict) -> tuple[int, int, float, float, float, str, int]:
+    """Quality key for story-board cover candidates.
+
+    Tuple ordering (highest priority first):
+        is_favorite     manual stars + nightly auto-tags both qualify
+        is_interior     bbox not touching the frame edge
+        aesthetic_score CLIP "facing camera" probability from
+                        scripts/aesthetic_tag_nightly.py; 0.0 when missing
+                        so legacy / non-taggable detections sort by `score`
+                        downstream instead of being penalised globally
+        score           detector OD confidence (legacy primary tiebreaker)
+        bbox_quality    geometric heuristic from BBoxQualityService
+        ts              recency
+        det_id          stable id so the sort is deterministic
+    """
     is_favorite = 1 if int(det.get("is_favorite") or 0) else 0
     is_interior = 0 if _story_board_bbox_touches_edge(det) else 1
+    # NULL aesthetic_score → -1.0 mirrors the SQL `COALESCE(.., -1)` fallback
+    # in fetch_daily_covers / _fetch_species_best_photos. Legacy and
+    # non-taggable detections sink behind anything actually scored.
+    raw_aesthetic = det.get("aesthetic_score")
+    aesthetic_score = float(raw_aesthetic) if raw_aesthetic is not None else -1.0
     score = float(det.get("score") or 0.0)
     bbox_quality = float(det.get("bbox_quality") or 0.0)
     ts = det.get("image_timestamp", "") or ""
     det_id = int(det.get("detection_id") or 0)
-    return (is_favorite, is_interior, score, bbox_quality, ts, det_id)
+    return (is_favorite, is_interior, aesthetic_score, score, bbox_quality, ts, det_id)
 
 
 def _rank_story_board_candidates(candidates: list[dict]) -> list[dict]:

@@ -53,6 +53,8 @@ def _build_conn() -> sqlite3.Connection:
             rating REAL,
             rating_source TEXT,
             is_favorite INTEGER DEFAULT 0,
+            aesthetic_score REAL,
+            aesthetic_score_at TEXT,
             decision_state TEXT,
             bbox_quality REAL,
             unknown_score REAL,

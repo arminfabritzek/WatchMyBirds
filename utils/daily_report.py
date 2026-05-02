@@ -238,6 +238,7 @@ def _fetch_species_best_photos(conn, date_iso: str) -> list[dict]:
                 d.image_filename,
                 d.score,
                 d.bbox_quality,
+                d.aesthetic_score,
                 d.bbox_x,
                 d.bbox_y,
                 d.bbox_w,
@@ -252,24 +253,28 @@ def _fetch_species_best_photos(conn, date_iso: str) -> list[dict]:
                   OR lower(d.decision_level) != 'reject'
               )
         )
+        -- "Best photo" ranking: prefer the nightly aesthetic_score from
+        -- scripts/aesthetic_tag_nightly.py, then detector confidence, then
+        -- bbox-quality heuristic. NULL aesthetic_score (legacy / non-taggable
+        -- species) sinks behind anything scored via the COALESCE(..., -1).
         SELECT
             species,
             COUNT(detection_id) AS count,
             (SELECT image_filename FROM effective e2
              WHERE e2.species = effective.species
-             ORDER BY e2.score DESC, e2.bbox_quality DESC LIMIT 1) AS best_image_filename,
+             ORDER BY COALESCE(e2.aesthetic_score, -1) DESC, e2.score DESC, e2.bbox_quality DESC LIMIT 1) AS best_image_filename,
             (SELECT bbox_x FROM effective e2
              WHERE e2.species = effective.species
-             ORDER BY e2.score DESC, e2.bbox_quality DESC LIMIT 1) AS best_bbox_x,
+             ORDER BY COALESCE(e2.aesthetic_score, -1) DESC, e2.score DESC, e2.bbox_quality DESC LIMIT 1) AS best_bbox_x,
             (SELECT bbox_y FROM effective e2
              WHERE e2.species = effective.species
-             ORDER BY e2.score DESC, e2.bbox_quality DESC LIMIT 1) AS best_bbox_y,
+             ORDER BY COALESCE(e2.aesthetic_score, -1) DESC, e2.score DESC, e2.bbox_quality DESC LIMIT 1) AS best_bbox_y,
             (SELECT bbox_w FROM effective e2
              WHERE e2.species = effective.species
-             ORDER BY e2.score DESC, e2.bbox_quality DESC LIMIT 1) AS best_bbox_w,
+             ORDER BY COALESCE(e2.aesthetic_score, -1) DESC, e2.score DESC, e2.bbox_quality DESC LIMIT 1) AS best_bbox_w,
             (SELECT bbox_h FROM effective e2
              WHERE e2.species = effective.species
-             ORDER BY e2.score DESC, e2.bbox_quality DESC LIMIT 1) AS best_bbox_h,
+             ORDER BY COALESCE(e2.aesthetic_score, -1) DESC, e2.score DESC, e2.bbox_quality DESC LIMIT 1) AS best_bbox_h,
             MAX(score) AS best_score
         FROM effective
         WHERE species != '{UNKNOWN_SPECIES_KEY}'
