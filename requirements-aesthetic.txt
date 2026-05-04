@@ -17,4 +17,4 @@
 
 torch>=2.0
 torchvision>=0.15
-open_clip_torch>=2.20
+open_clip_torch>=3.3.0
