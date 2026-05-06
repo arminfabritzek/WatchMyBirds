@@ -2570,7 +2570,9 @@
         function currentMode() {
             var stored = null;
             try { stored = localStorage.getItem(STORAGE_KEY); } catch (e) {}
-            return (stored === 'light' || stored === 'dark') ? stored : 'system';
+            if (stored === 'light' || stored === 'dark' || stored === 'system') return stored;
+            // Absent key = the new default (light), not "system".
+            return 'light';
         }
 
         // Inline confirmation: show a short "✓ <label> applied" line
@@ -2595,7 +2597,10 @@
                 try { localStorage.setItem(STORAGE_KEY, mode); } catch (e) {}
                 resolved = mode;
             } else {
-                try { localStorage.removeItem(STORAGE_KEY); } catch (e) {}
+                // "system" is now an explicit opt-in — store it so the
+                // global OS-change listener in base.html knows to track
+                // OS flips. Absent key means "light" (the new default).
+                try { localStorage.setItem(STORAGE_KEY, 'system'); } catch (e) {}
                 resolved = (window.matchMedia &&
                             window.matchMedia('(prefers-color-scheme: dark)').matches)
                     ? 'dark' : 'light';

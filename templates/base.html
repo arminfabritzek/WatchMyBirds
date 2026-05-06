@@ -24,28 +24,40 @@
        and stamps the result on the <html> element as data-theme:
          - localStorage "light" -> data-theme="light"  (user override)
          - localStorage "dark"  -> data-theme="dark"   (user override)
-         - localStorage "system" or absent:
-             OS dark  -> data-theme="dark"
-             OS light -> data-theme="light"
+         - localStorage "system" -> follow OS preference (live)
+         - absent -> "light" (the default; OS dark does NOT auto-apply)
        Because the attribute is always set, downstream CSS only needs
-       one selector (`:root[data-theme="dark"]`) — no parallel
-       `@media (prefers-color-scheme: dark)` rules. The media query
-       still lives in design-system.css as a safety net in case this
-       script fails (e.g. strict CSP) so users without JS still get
-       a sensible theme. #}
+       one selector (`:root[data-theme="dark"]`). The global OS-change
+       listener below keeps "system"-mode users in sync when the OS
+       theme flips while a page is open — without it, the page would
+       stay on its hydrated value until reload (the bug a user hit on
+       mobile). #}
     <script>
     (function () {
-        var pref = null;
-        try { pref = localStorage.getItem('wmb-theme'); } catch (e) {}
-        var resolved;
-        if (pref === 'light' || pref === 'dark') {
-            resolved = pref;
-        } else {
-            resolved = (window.matchMedia &&
-                        window.matchMedia('(prefers-color-scheme: dark)').matches)
-                ? 'dark' : 'light';
+        var STORAGE_KEY = 'wmb-theme';
+        function resolve() {
+            var pref = null;
+            try { pref = localStorage.getItem(STORAGE_KEY); } catch (e) {}
+            if (pref === 'light' || pref === 'dark') return pref;
+            if (pref === 'system' && window.matchMedia &&
+                window.matchMedia('(prefers-color-scheme: dark)').matches) {
+                return 'dark';
+            }
+            return 'light';
         }
-        document.documentElement.setAttribute('data-theme', resolved);
+        document.documentElement.setAttribute('data-theme', resolve());
+        if (window.matchMedia) {
+            var mql = window.matchMedia('(prefers-color-scheme: dark)');
+            var onChange = function () {
+                var pref = null;
+                try { pref = localStorage.getItem(STORAGE_KEY); } catch (e) {}
+                if (pref === 'system') {
+                    document.documentElement.setAttribute('data-theme', resolve());
+                }
+            };
+            if (mql.addEventListener) mql.addEventListener('change', onChange);
+            else if (mql.addListener) mql.addListener(onChange);
+        }
     })();
     </script>
 
@@ -80,6 +92,10 @@
     <footer class="app-footer py-2 text-center text-muted">
         <small>WatchMyBirds</small>
         <small class="ms-1 font-monospace" id="footer-version" style="opacity:.55"></small>
+        <a href="/privacy" class="ms-2 text-muted" title="Privacy" style="opacity:.55;transition:opacity .2s;"
+           onmouseover="this.style.opacity='1'" onmouseout="this.style.opacity='.55'">
+            <small>Privacy</small>
+        </a>
         <a id="footer-github" href="https://github.com/arminfabritzek/WatchMyBirds" target="_blank" rel="noopener noreferrer"
            class="ms-2 text-muted" title="View on GitHub" style="opacity:.55;transition:opacity .2s;"
            onmouseover="this.style.opacity='1'" onmouseout="this.style.opacity='.55'">

@@ -358,6 +358,14 @@ code {
     z-index: var(--z-appbar);
 }
 
+/* Dark scope override — the hardcoded cream above is fine on light
+   skins but stranded light text (--color-text becomes near-white) on
+   a cream background in dark mode. Keep it token-driven only inside
+   the dark scope so the existing light look is unchanged. */
+:root[data-theme="dark"] .app-bar {
+    background: var(--color-surface);
+}
+
 .app-bar__brand {
     display: flex;
     align-items: center;
@@ -376,11 +384,23 @@ code {
 
 .app-bar__toggle {
     display: none;
-    background: none;
-    border: none;
-    padding: var(--space-xs);
+    align-items: center;
+    justify-content: center;
+    width: 44px;
+    height: 44px;
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    padding: 0;
     cursor: pointer;
     color: var(--color-text);
+    box-shadow: var(--shadow-sm);
+}
+
+.app-bar__toggle:hover,
+.app-bar__toggle:focus-visible {
+    background: var(--color-surface-2);
+    border-color: var(--color-primary);
 }
 
 .app-bar__nav {
@@ -873,7 +893,7 @@ code {
 
     /* Show hamburger menu on mobile */
     .app-bar__toggle {
-        display: block;
+        display: inline-flex;
         margin-left: auto;
     }
 
