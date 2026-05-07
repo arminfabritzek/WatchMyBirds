@@ -4,6 +4,62 @@
 
 ### Added
 
+- **Telemetry Phase 2 — consent + aggregation + instant toggle.** Three
+  improvements on top of the Phase 1 heartbeat:
+  - **First-Run consent checkbox** in `setup_password.html` so new
+    operators see the opt-in question once at install time, not buried
+    in Settings. Default unchecked. Submitting the password without
+    ticking the box leaves telemetry off, exactly as before — proactive
+    transparency, not nudge-toward-yes.
+  - **24-hour individual-heartbeat retention.** A second Worker cron at
+    04:30 UTC aggregates yesterday's heartbeats into a `daily_aggregates`
+    table by (date, cohort, app_version, detector_variant) and deletes
+    the raw rows. The aggregate has no `installation_id` — the
+    per-install timeline is gone after 24h. Privacy claim upgraded from
+    "90-day TTL on raw rows" to "24h on raw rows + cohort counts kept."
+  - **Instant toggle-on response.** A `threading.Event` in
+    `telemetry_service` lets the toggle endpoint poke the scheduler
+    out of its 5-minute sleep, so the first heartbeat after toggle-on
+    fires within ~10ms instead of waiting up to one full tick.
+  - 9 new tests (3 for Event wake-up, 2 for first-run consent, 4
+    already in Phase 1 for `_detect_detector_variant`).
+
+- **Anonymous opt-in usage heartbeat (default OFF).** A new
+  Settings → Privacy section lets operators optionally send one
+  anonymous JSON payload per UTC day so we can count active
+  installations. Default is off and there is no banner, popup, or
+  weekly nag — the toggle is the only enable surface.
+  - Payload: 8 small fields (random installation ID, app version,
+    OS family, arch, CPU count, rounded RAM in GB, Python version,
+    detector variant). No IP, no country, no locale, no hostname,
+    no MAC, no kernel/Pi-model strings, no exact RAM bytes, no image
+    or detection data.
+  - Storage: Cloudflare D1 with `jurisdiction=eu` (Free-tier-native
+    EU data residency, distinct from the Enterprise-only Data
+    Localization Suite). 90-day retention enforced by a daily cron
+    `DELETE` inside the same Worker.
+  - Worker source is in this repo at `infra/telemetry-worker/`,
+    deployed to `https://heartbeat-wmb.starmin.de`. The Worker
+    rejects requests without the `WatchMyBirds-Heartbeat/<version>`
+    User-Agent (404, no recon hint), validates the payload shape
+    strictly, and drops all CF-injected metadata before writing.
+  - Operator controls: toggle off (pings stop, ID preserved),
+    rotate ID (next ping counted as a fresh install), endpoint
+    override in `settings.yaml` (point at any URL or `/dev/null`),
+    firewall-blockable hostname (separate from any other WMB
+    endpoint).
+  - Full data policy: `docs/PRIVACY.md` (or `/privacy` in the
+    running app, no login required). Footer of every page links to
+    the policy. README has a Privacy H2 above the fold.
+  - 26 unit tests cover the strict default-OFF guarantee, the
+    8-field payload shape, the no-PII allowlist, UUID lifecycle
+    (lazy-gen, persistence, rotate), and atomic last-sent file
+    semantics.
+  - Plan: `agent_handoff/workflow/plans/2026-05-05_FEATURE_telemetry-heartbeat-opt-in.md`.
+  - First-Run consent screen and aggregated public DAU dashboard
+    are deliberately out of scope here; they ship in a follow-up
+    after this introduction release has run for a real interval.
+
 - **USB stick backup (write-only v1).** Daily automatic snapshots of the
   SQLite database, captured imagery, and installed app code to an optional
   USB stick (label `WMB-BACKUP`, ext4). Protects against SD-card death,

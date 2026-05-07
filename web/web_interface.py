@@ -2851,6 +2851,15 @@ def create_web_interface(detection_manager, system_monitor=None):
         return str(value)
 
     # ---------------------------------------------------------
+    # Public Privacy page — no auth, readable before login.
+    # See web/services/telemetry_service.py and docs/PRIVACY.md.
+    # ---------------------------------------------------------
+
+    @server.route("/privacy", methods=["GET"])
+    def privacy_route():
+        return render_template("privacy.html")
+
+    # ---------------------------------------------------------
     # Flask routes for settings
     # ---------------------------------------------------------
 

@@ -1201,6 +1201,164 @@ def settings_post():
 
 
 # =============================================================================
+# Telemetry — Anonymous Opt-In Usage Heartbeat
+# =============================================================================
+# Default OFF. The toggle in Settings -> Privacy is the ONLY enable surface.
+# See web/services/telemetry_service.py and docs/PRIVACY.md.
+
+
+@api_v1.route("/settings/telemetry/status", methods=["GET"])
+@login_required
+def telemetry_status():
+    """Return current telemetry state for the Settings UI.
+
+    No PII: the installation_id is returned only as its first 8 hex
+    chars, enough for the user to verify "yes that matches what's in
+    the cloud" without exposing the full identifier in the page DOM.
+    """
+    from web.services.telemetry_service import (
+        _get_last_sent_path,
+        _read_last_sent_date,
+        is_enabled,
+    )
+
+    cfg = get_config()
+    output_dir = str(cfg.get("OUTPUT_DIR", "./data/output"))
+    full_id = str(cfg.get("telemetry_installation_id", "") or "")
+    short_id = full_id[:8] if len(full_id) == 32 else ""
+
+    return jsonify(
+        {
+            "enabled": is_enabled(cfg),
+            "installation_id_short": short_id,
+            "installation_id_set": bool(short_id),
+            "last_sent_at": _read_last_sent_date(output_dir),
+            "endpoint": str(cfg.get("telemetry_endpoint", "")),
+            "last_sent_marker_path": str(_get_last_sent_path(output_dir)),
+        }
+    )
+
+
+@api_v1.route("/settings/telemetry/preview", methods=["GET"])
+@login_required
+def telemetry_preview():
+    """Return the exact payload that WOULD be sent if telemetry were on.
+
+    Read-only. Does not generate or persist a UUID. Does not touch the
+    last-sent marker. Does not actually send anything anywhere.
+
+    Purpose: let the operator inspect the live payload BEFORE opting
+    in, so consent is informed. Also useful as a transparency check
+    after opt-in ("what is this thing actually sending right now?").
+
+    The endpoint mirror to the Worker that would receive it is also
+    returned, so the operator can verify the destination matches what
+    the Privacy page describes.
+    """
+    from web.services.telemetry_service import USER_AGENT, build_payload_preview
+
+    cfg = get_config()
+    return jsonify(
+        {
+            "endpoint": str(cfg.get("telemetry_endpoint", "")),
+            "method": "POST",
+            "user_agent": USER_AGENT,
+            "payload": build_payload_preview(cfg),
+        }
+    )
+
+
+@api_v1.route("/settings/telemetry", methods=["POST"])
+@login_required
+def telemetry_toggle():
+    """Toggle telemetry on or off.
+
+    Body: {"enabled": true | false}
+
+    Persists to settings.yaml. On enable, also lazily generates the
+    `installation_id` (if not already present) so the Settings UI
+    immediately shows a real UUID instead of the placeholder — and
+    so the scheduler's next tick can find a UUID ready to send.
+
+    Toggling off does NOT wipe the installation_id (per locked
+    decision D5); use /rotate for that.
+    """
+    from utils.settings import load_settings_yaml, save_settings_yaml
+    from web.services.telemetry_service import _ensure_installation_id, wake_now
+
+    try:
+        data = request.get_json(silent=True) or {}
+        enabled = data.get("enabled")
+        if not isinstance(enabled, bool):
+            return jsonify(
+                {"status": "error", "message": "'enabled' must be a boolean"}
+            ), 400
+
+        cfg = get_config()
+        output_dir = str(cfg.get("OUTPUT_DIR", "./data/output"))
+
+        yaml_settings = load_settings_yaml(output_dir)
+        yaml_settings["telemetry_enabled"] = enabled
+        save_settings_yaml(yaml_settings, output_dir)
+
+        # Mirror into in-memory config so other workers see it without
+        # needing to reload settings.yaml from disk.
+        cfg["telemetry_enabled"] = enabled
+
+        # On enable: generate a real installation_id NOW (idempotent —
+        # existing IDs are preserved, only missing/malformed trigger
+        # generation). This way the UI shows a real ID immediately
+        # after the toggle flips, instead of the preview placeholder
+        # that confused operators expecting "toggle on = ID exists".
+        if enabled:
+            new_id = _ensure_installation_id(cfg)
+            cfg["telemetry_installation_id"] = new_id
+
+            # Poke the scheduler thread out of its current sleep so
+            # the first heartbeat goes within ~10ms instead of waiting
+            # up to one full check_interval (300s default).
+            wake_now()
+
+        logger.info("Telemetry toggle changed to %s by user.", enabled)
+        return jsonify({"status": "success", "enabled": enabled})
+    except Exception as e:
+        logger.error(f"Telemetry toggle error: {e}", exc_info=True)
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@api_v1.route("/settings/telemetry/rotate", methods=["POST"])
+@login_required
+def telemetry_rotate():
+    """Rotate the installation_id.
+
+    The user explicitly says "treat me as a new install from now on."
+    Old rows in the cloud DB stay (and TTL out via the daily 90d
+    cleanup); the next ping uses the new UUID.
+
+    Body: {} — no parameters; this is a destructive intent button.
+    """
+    try:
+        from web.services.telemetry_service import rotate_installation_id
+
+        cfg = get_config()
+        output_dir = str(cfg.get("OUTPUT_DIR", "./data/output"))
+        new_id = rotate_installation_id(output_dir)
+
+        # Mirror into in-memory config.
+        cfg["telemetry_installation_id"] = new_id
+
+        return jsonify(
+            {
+                "status": "success",
+                "installation_id_short": new_id[:8],
+            }
+        )
+    except Exception as e:
+        logger.error(f"Telemetry rotate error: {e}", exc_info=True)
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+# =============================================================================
 # Telegram Report  (Job-Status Flow)
 # =============================================================================
 

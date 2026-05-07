@@ -213,6 +213,17 @@ def _create_runtime():
     except Exception as e:
         logger.warning(f"Aesthetic tag scheduler failed to start: {e}")
 
+    # Start Telemetry Scheduler (anonymous opt-in usage heartbeat).
+    # Default OFF; does nothing unless the user toggles it on in
+    # Settings -> Privacy. See web/services/telemetry_service.py and
+    # docs/PRIVACY.md for the data policy.
+    try:
+        from web.services.telemetry_service import start_telemetry_scheduler
+
+        start_telemetry_scheduler()
+    except Exception as e:
+        logger.warning(f"Telemetry scheduler failed to start: {e}")
+
     app = create_web_interface(detection_manager, system_monitor=system_monitor)
     return app, detection_manager
 

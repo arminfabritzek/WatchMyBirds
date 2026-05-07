@@ -1272,6 +1272,254 @@
     </div>
 
     <!-- ╔══════════════════════════════════════════════╗
+         ║ 3a. Privacy — Anonymous Opt-In Heartbeat    ║
+         ╚══════════════════════════════════════════════╝ -->
+    <div class="settings-panel" id="panelPrivacy">
+        <button type="button" class="settings-panel__trigger" onclick="togglePanel('panelPrivacy')">
+            Privacy
+            <span class="settings-panel__trigger-info">Anonymous usage heartbeat (off by default)</span>
+            <svg class="settings-panel__chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+        </button>
+        <div class="settings-panel__body">
+            <div class="settings-field mb-3">
+                <p class="mb-2">
+                    WatchMyBirds runs entirely on your Pi. Nothing about your bird
+                    activity, images, or detections ever leaves the device.
+                </p>
+                <p class="mb-2">
+                    Optionally, you can let this installation send <strong>one
+                    anonymous heartbeat per day</strong> so we can count how many
+                    people actually use the project. The heartbeat contains a
+                    random installation ID, the app version, and basic hardware
+                    info (CPU count, rounded RAM). <strong>No images, no detections,
+                    no IP, no location, no email.</strong>
+                </p>
+                <p class="mb-3">
+                    See <a href="/privacy" target="_blank" rel="noopener">Privacy
+                    page</a> for the full list of what we collect and what we
+                    explicitly never collect.
+                </p>
+            </div>
+
+            <div class="settings-field mb-3">
+                <div class="d-flex align-items-center gap-3">
+                    <div class="form-check form-switch">
+                        <input class="form-check-input" type="checkbox" role="switch" id="telemetry_enabled_toggle">
+                        <label class="form-check-label" for="telemetry_enabled_toggle">
+                            <strong>Send anonymous daily heartbeat</strong>
+                        </label>
+                    </div>
+                    <span id="telemetry_status_badge" class="badge bg-secondary">off</span>
+                </div>
+                <div class="settings-field__help mt-2">
+                    Default is off. Turning this off later stops pings immediately
+                    — your installation ID stays the same, so if you turn it back
+                    on, you're counted as the same install. Use the
+                    <em>Rotate ID</em> button below if you want the next opt-in to
+                    count as a fresh install.
+                </div>
+            </div>
+
+            <div class="settings-field mb-3">
+                <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
+                    <button type="button" class="btn btn-outline-primary btn-sm" id="telemetry_preview_btn">
+                        Show what would be sent
+                    </button>
+                    <small class="text-muted">
+                        Read-only — doesn't enable telemetry, doesn't generate a UUID, doesn't send anything.
+                    </small>
+                </div>
+                <div id="telemetry_preview_box" class="d-none">
+                    <div class="settings-field__label mt-2">Endpoint</div>
+                    <pre class="p-2 bg-body-secondary rounded" style="font-size: 0.85em; margin-bottom: .5rem;"><code id="telemetry_preview_endpoint"></code></pre>
+                    <div class="settings-field__label">User-Agent header</div>
+                    <pre class="p-2 bg-body-secondary rounded" style="font-size: 0.85em; margin-bottom: .5rem;"><code id="telemetry_preview_ua"></code></pre>
+                    <div class="settings-field__label">Payload (POST body, JSON)</div>
+                    <pre class="p-2 bg-body-secondary rounded" style="font-size: 0.85em; margin-bottom: .5rem;"><code id="telemetry_preview_payload"></code></pre>
+                    <small class="text-muted d-block">
+                        These eight fields are <strong>everything</strong> we send. The
+                        Worker rejects any extra field with HTTP 400 — verifiable in
+                        <code>infra/telemetry-worker/src/worker.js</code>.
+                    </small>
+                </div>
+            </div>
+
+            <div class="settings-field mb-3">
+                <div class="row g-2 align-items-center">
+                    <div class="col-md-6">
+                        <div class="settings-field__label">Installation ID</div>
+                        <code id="telemetry_installation_id_display" class="text-muted">(none yet)</code>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="settings-field__label">Last sent</div>
+                        <span id="telemetry_last_sent_display" class="text-muted">never</span>
+                    </div>
+                    <div class="col-md-3 text-md-end">
+                        <button type="button" class="btn btn-outline-warning btn-sm" id="telemetry_rotate_btn" disabled>
+                            Rotate ID
+                        </button>
+                    </div>
+                </div>
+                <div class="settings-field__help mt-2">
+                    Rotating wipes your current ID and generates a new one. The next
+                    heartbeat (if telemetry is on) will use the new ID. Old entries
+                    in the cloud database are never re-attributed and self-delete
+                    after 90 days.
+                </div>
+            </div>
+
+            <div id="telemetry_message" class="alert alert-info d-none mt-2" role="alert"></div>
+        </div>
+    </div>
+
+    <script>
+    (function () {
+        const STATUS_URL = "/api/v1/settings/telemetry/status";
+        const TOGGLE_URL = "/api/v1/settings/telemetry";
+        const ROTATE_URL = "/api/v1/settings/telemetry/rotate";
+        const PREVIEW_URL = "/api/v1/settings/telemetry/preview";
+
+        const toggle = document.getElementById("telemetry_enabled_toggle");
+        const badge = document.getElementById("telemetry_status_badge");
+        const idDisplay = document.getElementById("telemetry_installation_id_display");
+        const lastSentDisplay = document.getElementById("telemetry_last_sent_display");
+        const rotateBtn = document.getElementById("telemetry_rotate_btn");
+        const messageBox = document.getElementById("telemetry_message");
+        const previewBtn = document.getElementById("telemetry_preview_btn");
+        const previewBox = document.getElementById("telemetry_preview_box");
+        const previewEndpoint = document.getElementById("telemetry_preview_endpoint");
+        const previewUa = document.getElementById("telemetry_preview_ua");
+        const previewPayload = document.getElementById("telemetry_preview_payload");
+
+        function showMessage(text, kind) {
+            messageBox.textContent = text;
+            messageBox.classList.remove("d-none", "alert-info", "alert-success", "alert-danger", "alert-warning");
+            messageBox.classList.add("alert-" + (kind || "info"));
+            // Auto-clear after 4s for transient operations.
+            setTimeout(() => messageBox.classList.add("d-none"), 4000);
+        }
+
+        function renderStatus(s) {
+            toggle.checked = !!s.enabled;
+            if (s.enabled) {
+                badge.textContent = "on";
+                badge.classList.remove("bg-secondary");
+                badge.classList.add("bg-success");
+            } else {
+                badge.textContent = "off";
+                badge.classList.remove("bg-success");
+                badge.classList.add("bg-secondary");
+            }
+
+            if (s.installation_id_set) {
+                idDisplay.textContent = s.installation_id_short + "…";
+                idDisplay.classList.remove("text-muted");
+                rotateBtn.disabled = false;
+            } else {
+                idDisplay.textContent = "(generated when you turn telemetry on)";
+                idDisplay.classList.add("text-muted");
+                rotateBtn.disabled = true;
+            }
+
+            if (s.last_sent_at) {
+                lastSentDisplay.textContent = s.last_sent_at;
+                lastSentDisplay.classList.remove("text-muted");
+            } else {
+                lastSentDisplay.textContent = "never";
+                lastSentDisplay.classList.add("text-muted");
+            }
+        }
+
+        async function loadStatus() {
+            try {
+                const r = await fetch(STATUS_URL, { credentials: "same-origin" });
+                if (!r.ok) throw new Error("HTTP " + r.status);
+                const s = await r.json();
+                renderStatus(s);
+                // If the preview box is currently visible, refresh it too
+                // so toggling on/rotating ID updates the displayed payload
+                // immediately instead of leaving stale "<would-be-...>".
+                if (!previewBox.classList.contains("d-none")) {
+                    await loadPreview();
+                }
+            } catch (e) {
+                showMessage("Could not load telemetry status: " + e.message, "danger");
+            }
+        }
+
+        async function loadPreview() {
+            const r = await fetch(PREVIEW_URL, { credentials: "same-origin" });
+            if (!r.ok) throw new Error("HTTP " + r.status);
+            const data = await r.json();
+            previewEndpoint.textContent = data.method + " " + data.endpoint;
+            previewUa.textContent = "User-Agent: " + data.user_agent;
+            previewPayload.textContent = JSON.stringify(data.payload, null, 2);
+        }
+
+        toggle.addEventListener("change", async () => {
+            const enabled = toggle.checked;
+            try {
+                const r = await fetch(TOGGLE_URL, {
+                    method: "POST",
+                    credentials: "same-origin",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ enabled: enabled })
+                });
+                if (!r.ok) throw new Error("HTTP " + r.status);
+                showMessage(
+                    enabled
+                        ? "Telemetry on. First heartbeat will send within ~5 minutes."
+                        : "Telemetry off. No further heartbeats will be sent.",
+                    "success"
+                );
+                await loadStatus();
+            } catch (e) {
+                // Revert toggle on failure.
+                toggle.checked = !enabled;
+                showMessage("Could not change telemetry: " + e.message, "danger");
+            }
+        });
+
+        rotateBtn.addEventListener("click", async () => {
+            if (!confirm("Rotate the installation ID? This wipes the current ID. Old entries in the cloud DB stay until they self-delete after 90 days.")) {
+                return;
+            }
+            try {
+                const r = await fetch(ROTATE_URL, {
+                    method: "POST",
+                    credentials: "same-origin",
+                    headers: { "Content-Type": "application/json" },
+                    body: "{}"
+                });
+                if (!r.ok) throw new Error("HTTP " + r.status);
+                showMessage("Installation ID rotated.", "success");
+                await loadStatus();
+            } catch (e) {
+                showMessage("Could not rotate ID: " + e.message, "danger");
+            }
+        });
+
+        previewBtn.addEventListener("click", async () => {
+            try {
+                previewBtn.disabled = true;
+                previewBtn.textContent = "Loading…";
+                await loadPreview();
+                previewBox.classList.remove("d-none");
+                previewBtn.textContent = "Refresh preview";
+            } catch (e) {
+                showMessage("Could not load preview: " + e.message, "danger");
+                previewBtn.textContent = "Show what would be sent";
+            } finally {
+                previewBtn.disabled = false;
+            }
+        });
+
+        // Load status when the panel is opened (lazy) and on page load.
+        document.addEventListener("DOMContentLoaded", loadStatus);
+    })();
+    </script>
+
+    <!-- ╔══════════════════════════════════════════════╗
          ║ 4. General                                  ║
          ╚══════════════════════════════════════════════╝ -->
     <div class="settings-panel" id="panelGeneral">

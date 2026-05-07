@@ -1,0 +1,36 @@
+# WatchMyBirds telemetry Worker — Cloudflare config.
+#
+# Account ID and Zone ID are NOT secrets, they're public-by-design
+# identifiers and safe to commit. Real secrets (deploy API tokens)
+# go via `wrangler secret put`, not here.
+
+name = "watchmybirds-telemetry"
+main = "src/worker.js"
+compatibility_date = "2026-01-01"
+account_id = "65e8213da15d585089acc04cc0936a37"
+
+# Route: traffic to heartbeat-wmb.starmin.de hits this Worker.
+# Requires the DNS record on starmin.de to be proxied (orange cloud).
+# Zone ID for starmin.de: 29b5abd603bd4dc7e9bf48e7b6bcf4de
+# (resolved automatically from zone_name; kept here for traceability).
+[[routes]]
+pattern = "heartbeat-wmb.starmin.de/*"
+zone_name = "starmin.de"
+
+# D1 binding — created with:
+#   wrangler d1 create watchmybirds-heartbeats --location=weur
+# After creation, copy the database_id from the output here, or run
+# `wrangler d1 list` to retrieve it. Jurisdiction=eu is set at create
+# time, not in this file.
+[[d1_databases]]
+binding = "DB"
+database_name = "watchmybirds-heartbeats"
+database_id = "27c5a175-0eab-42da-b214-8e75a59dbae9"
+
+# Daily cron schedules:
+#   04:00 UTC — 90-day retention sweep (Phase 1, safety net)
+#   04:30 UTC — yesterday's heartbeats aggregated + pruned (Phase 2)
+# The order matters: aggregation runs after the retention sweep so
+# that any rows the sweep would have deleted aren't doubly handled.
+[triggers]
+crons = ["0 4 * * *", "30 4 * * *"]

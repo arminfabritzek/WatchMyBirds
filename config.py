@@ -119,6 +119,14 @@ DEFAULTS = {
     "GO2RTC_API_BASE": "http://127.0.0.1:1984",
     "GO2RTC_CONFIG_PATH": "./go2rtc.yaml",
     "SPECIES_COMMON_NAME_LOCALE": "DE",
+    # --- Anonymous opt-in usage heartbeat (default OFF) ---
+    # See web/services/telemetry_service.py and docs/PRIVACY.md.
+    # The toggle is the ONLY enable surface; there is no banner or
+    # popup. Endpoint is overridable for self-hosters / privacy-paranoid
+    # operators (point it at /dev/null or a self-hosted Worker).
+    "telemetry_enabled": False,
+    "telemetry_endpoint": "https://heartbeat-wmb.starmin.de/v1/heartbeat",
+    "telemetry_installation_id": "",  # lazily generated on first opt-in
 }
 
 RUNTIME_KEYS = {
@@ -283,6 +291,16 @@ def _load_config():
     for key, value in yaml_settings.items():
         if key in RUNTIME_KEYS:
             config[key] = value
+
+    # Telemetry keys persist via a dedicated endpoint (/api/v1/settings/telemetry)
+    # and deliberately bypass RUNTIME_KEYS so the generic Settings form can't
+    # touch them. But they MUST be loaded from YAML at boot — otherwise the
+    # toggle "on" state is forgotten on every service restart. (Bug discovered
+    # 2026-05-06 on RPi: scheduler logged "started" but never sent because
+    # _load_config silently dropped telemetry_enabled=true from YAML.)
+    for key in ("telemetry_enabled", "telemetry_endpoint", "telemetry_installation_id"):
+        if key in yaml_settings:
+            config[key] = yaml_settings[key]
 
     # Legacy migration: users upgrading from pre-TELEGRAM_MODE builds have a
     # bare `TELEGRAM_ENABLED: true/false` in settings.yaml and no mode key.

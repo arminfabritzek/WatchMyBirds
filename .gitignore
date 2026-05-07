@@ -284,3 +284,7 @@ inbox/
 
 # Local-only scratch for debugging / one-off model smoketests.
 privat_debugging_now/
+
+# Cloudflare Wrangler local cache and node_modules for the telemetry Worker.
+.wrangler/
+infra/telemetry-worker/node_modules/
