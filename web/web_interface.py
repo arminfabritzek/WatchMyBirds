@@ -2744,6 +2744,80 @@ def create_web_interface(detection_manager, system_monitor=None):
 
     server.add_url_rule("/", endpoint="index", view_func=index_route, methods=["GET"])
 
+    # -----------------------------
+    # Admin profiling endpoint (Phase 0 of web TTFB plan)
+    # -----------------------------
+    # Behind @login_required only — same auth bar as /logs and /admin/review,
+    # which already expose richer state. Returns a cProfile dump for one of a
+    # small whitelist of routes, executed via the Flask test client inside
+    # the live worker (same process, same locks).
+    @server.route("/admin/_profile", methods=["GET"])
+    @login_required
+    def admin_profile():
+        import cProfile
+        import io
+        import pstats
+
+        ALLOWED_ROUTES = {"/", "/analytics"}
+        target = request.args.get("route", "/").strip()
+        if target not in ALLOWED_ROUTES:
+            return jsonify({
+                "error": "route not whitelisted",
+                "allowed": sorted(ALLOWED_ROUTES),
+            }), 400
+
+        try:
+            top_n = max(1, min(100, int(request.args.get("top", "30"))))
+        except ValueError:
+            top_n = 30
+        sort_key = request.args.get("sort", "cumulative")
+        if sort_key not in ("cumulative", "tottime", "calls"):
+            sort_key = "cumulative"
+
+        client = server.test_client()
+        with client.session_transaction() as sess:
+            sess["authenticated"] = True
+
+        profiler = cProfile.Profile()
+        wall_start = time.perf_counter()
+        profiler.enable()
+        try:
+            resp = client.get(target)
+        finally:
+            profiler.disable()
+        wall_ms = int((time.perf_counter() - wall_start) * 1000)
+
+        buf = io.StringIO()
+        stats = pstats.Stats(profiler, stream=buf).sort_stats(sort_key)
+        stats.print_stats(top_n)
+        text_dump = buf.getvalue()
+
+        rows = []
+        for func, (cc, nc, tt, ct, _callers) in stats.stats.items():
+            rows.append({
+                "file": func[0],
+                "line": func[1],
+                "func": func[2],
+                "ncalls": nc,
+                "tottime": round(tt, 4),
+                "cumtime": round(ct, 4),
+            })
+        rows.sort(
+            key=lambda r: r["cumtime" if sort_key == "cumulative" else "tottime"],
+            reverse=True,
+        )
+        rows = rows[:top_n]
+
+        return jsonify({
+            "route": target,
+            "status": resp.status_code,
+            "response_bytes": len(resp.data),
+            "wall_ms": wall_ms,
+            "sort": sort_key,
+            "top": rows,
+            "text": text_dump,
+        })
+
     RUNTIME_BOOL_KEYS = {
         "DAY_AND_NIGHT_CAPTURE",
         "TELEGRAM_ENABLED",
