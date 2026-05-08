@@ -1102,11 +1102,22 @@ def _parse_timestamp(ts: str) -> float:
 
     Returns 0.0 on parse failure so sorting still works.
     """
+    # Hand-rolled slice parser; see core.gallery_core._ts_to_epoch for the
+    # rationale (5× faster than `strptime`, called thousands of times per
+    # `/analytics` render).
     from datetime import datetime
 
+    if not ts or len(ts) < 15:
+        return 0.0
     try:
-        dt = datetime.strptime(ts, "%Y%m%d_%H%M%S")
-        return dt.timestamp()
+        return datetime(
+            int(ts[0:4]),
+            int(ts[4:6]),
+            int(ts[6:8]),
+            int(ts[9:11]),
+            int(ts[11:13]),
+            int(ts[13:15]),
+        ).timestamp()
     except (ValueError, TypeError):
         return 0.0
 

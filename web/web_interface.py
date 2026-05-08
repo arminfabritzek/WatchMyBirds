@@ -10,6 +10,7 @@ import random
 import re
 import secrets
 import subprocess
+import threading
 import time
 from datetime import datetime
 from pathlib import Path
@@ -56,6 +57,30 @@ from web.services import (
 
 # In-Memory Caches
 _species_summary_cache = {"timestamp": 0, "payload": None}
+
+# Best-of-Species board cache. Plan 2026-05-07_PERFORMANCE_web-ttfb,
+# Phase 6: profile on Martin's 350 MB DB shows
+# `build_species_story_board(all_detections)` costs ~3.5 s per `/` render
+# (alone half of the 8 s wall time). The board is an all-time aggregate
+# whose top-12 species cannot meaningfully change sub-minute, so a short
+# TTL eliminates the cost on subsequent renders without staleness that
+# matters for the user. 5 min keeps the board fresh enough that a newly
+# rated detection appears within one tab refresh and a 5-min wait.
+# Stored as ``{"timestamp": float, "board": dict, "preview": list,
+# "modal_dets": list}``; readers check ``time.time() - timestamp < TTL``.
+_BEST_SPECIES_CACHE_TTL_SECONDS = 5 * 60
+_best_species_cache: dict = {"timestamp": 0.0, "payload": None}
+
+# All-time analytics summary cache. Plan 2026-05-07_PERFORMANCE_web-ttfb,
+# Phase 7: profile on .52 shows `db_service.fetch_analytics_summary` costs
+# ~1.3 s per `/` render — a single SQL `COUNT(*) GROUP BY species` over
+# the full detections table. Total detections / total species / date
+# range cannot meaningfully change sub-minute, so the same 5-min TTL
+# pragma as the best-species cache applies. Day-count is NOT cached
+# alongside (it advances throughout the day with new captures); only
+# the all-time aggregate goes through this cache.
+_ANALYTICS_SUMMARY_CACHE_TTL_SECONDS = 5 * 60
+_analytics_summary_cache: dict = {"timestamp": 0.0, "payload": None}
 
 
 def create_web_interface(detection_manager, system_monitor=None):
@@ -760,6 +785,15 @@ def create_web_interface(detection_manager, system_monitor=None):
             lambda filename: send_from_directory(assets_folder, filename)
         )
 
+        # Cap concurrent /video_feed clients so a few zombie tabs cannot
+        # starve the Waitress worker pool. Plan 2026-05-07_PERFORMANCE_web-ttfb
+        # Phase 1: each MJPEG stream pins one worker thread for as long as
+        # the browser keeps the TCP connection open; with 8 workers, even
+        # a handful of forgotten tabs accumulating across days can block
+        # every regular request. Cap at 2 (one desktop + one mobile is the
+        # realistic ceiling per THE_FUTURE.md's single-station design).
+        _video_feed_semaphore = threading.BoundedSemaphore(2)
+
         @server.route("/video_feed")
         def video_feed():
             """Compatibility MJPEG stream for browsers that cannot reach Go2RTC."""
@@ -768,37 +802,73 @@ def create_web_interface(detection_manager, system_monitor=None):
             stream_fps = max(1.0, stream_fps)
             frame_interval = 1.0 / stream_fps
 
+            # Non-blocking acquire: if 2 streams are already running, refuse
+            # the third immediately rather than queueing behind them. The
+            # browser sees a 503 and falls back through the same retry path
+            # it already uses for go2rtc failures.
+            if not _video_feed_semaphore.acquire(blocking=False):
+                logger.info(
+                    "MJPEG /video_feed refused (cap=2 reached) ip=%s",
+                    request.remote_addr,
+                )
+                return (
+                    "Stream cap reached; close other tabs and retry.\n",
+                    503,
+                    {"Content-Type": "text/plain; charset=utf-8", "Retry-After": "5"},
+                )
+
             def generate():
-                while True:
-                    loop_start = time.time()
-                    frame = detection_manager.get_display_frame()
-                    if frame is None:
-                        time.sleep(0.1)
-                        continue
-
-                    try:
-                        h, w = frame.shape[:2]
-                        output_h = int(h * output_resize_width / w) if w else h
-                        resized = cv2.resize(frame, (output_resize_width, output_h))
-                        ok, buffer = cv2.imencode(
-                            ".jpg", resized, [cv2.IMWRITE_JPEG_QUALITY, 80]
-                        )
-                        if not ok:
+                # Belt-and-suspenders idle ceiling: any single client gets
+                # at most this many seconds of streaming, then the generator
+                # exits cleanly. Stops a single forgotten tab from holding
+                # a worker forever even if Waitress's disconnect detection
+                # somehow misses the close.
+                MAX_STREAM_SECONDS = 30 * 60  # 30 min
+                stream_started = time.time()
+                try:
+                    while True:
+                        if time.time() - stream_started > MAX_STREAM_SECONDS:
+                            logger.info(
+                                "MJPEG /video_feed self-closed after %ss ip=%s",
+                                MAX_STREAM_SECONDS,
+                                request.remote_addr,
+                            )
+                            return
+                        loop_start = time.time()
+                        frame = detection_manager.get_display_frame()
+                        if frame is None:
+                            time.sleep(0.1)
                             continue
-                    except Exception as e:
-                        logger.debug(f"Failed to encode MJPEG frame: {e}")
-                        time.sleep(0.05)
-                        continue
 
-                    yield (
-                        b"--frame\r\n"
-                        b"Content-Type: image/jpeg\r\n\r\n" + buffer.tobytes() + b"\r\n"
-                    )
+                        try:
+                            h, w = frame.shape[:2]
+                            output_h = int(h * output_resize_width / w) if w else h
+                            resized = cv2.resize(frame, (output_resize_width, output_h))
+                            ok, buffer = cv2.imencode(
+                                ".jpg", resized, [cv2.IMWRITE_JPEG_QUALITY, 80]
+                            )
+                            if not ok:
+                                continue
+                        except Exception as e:
+                            logger.debug(f"Failed to encode MJPEG frame: {e}")
+                            time.sleep(0.05)
+                            continue
 
-                    elapsed = time.time() - loop_start
-                    sleep_for = frame_interval - elapsed
-                    if sleep_for > 0:
-                        time.sleep(sleep_for)
+                        yield (
+                            b"--frame\r\n"
+                            b"Content-Type: image/jpeg\r\n\r\n" + buffer.tobytes() + b"\r\n"
+                        )
+
+                        elapsed = time.time() - loop_start
+                        sleep_for = frame_interval - elapsed
+                        if sleep_for > 0:
+                            time.sleep(sleep_for)
+                finally:
+                    # Always release, whether the client disconnected,
+                    # the generator hit MAX_STREAM_SECONDS, or an exception
+                    # bubbled up. Without this a single broken stream would
+                    # permanently shrink the cap.
+                    _video_feed_semaphore.release()
 
             return Response(
                 generate(),
@@ -2158,6 +2228,14 @@ def create_web_interface(detection_manager, system_monitor=None):
             except ValueError:
                 return "Unknown"
 
+        # Phase 3 of the Web TTFB plan: callers populate this dict once via
+        # gallery_service.fetch_sibling_detections_batch(...) before the
+        # render loop, and _load_modal_siblings reads from it instead of
+        # opening a new DB connection per detection. Falls back to the
+        # per-row lookup when the cache is empty (preserves existing
+        # behaviour for any code path that didn't pre-batch).
+        sibling_rows_cache: dict[str, list] = {}
+
         def _load_modal_siblings(raw: dict) -> list[dict]:
             """Build the siblings list for a detail modal.
 
@@ -2173,7 +2251,11 @@ def create_web_interface(detection_manager, system_monitor=None):
             original_name = raw.get("original_name", "")
             if not original_name:
                 return []
-            sib_rows = gallery_service.get_sibling_detections(original_name)
+            cached = sibling_rows_cache.get(original_name)
+            if cached is not None:
+                sib_rows = cached
+            else:
+                sib_rows = gallery_service.get_sibling_detections(original_name)
             out: list[dict] = []
             for sib in sib_rows:
                 sib_sk = _get_species_key_local(sib)
@@ -2263,36 +2345,62 @@ def create_web_interface(detection_manager, system_monitor=None):
             except ValueError:
                 return "n/a"
 
-        # 1. 24h Count (kept for downstream preview/feed usage)
+        # 1. 24h Count + 1b. Dashboard Stats + 1c. Today Observation Stats
+        # Phase 2 of the Web TTFB plan: collapse three separate
+        # `closing_connection()` blocks into one — none of them write or
+        # commit, so they are safe to share a single read transaction.
+        # Per-section try/except is preserved so a DB error inside one
+        # section still leaves the others with valid output.
         last_24h_count = 0
         last_24h_rows: list[dict] = []
-        try:
-            with db_service.closing_connection() as conn:
+        last_24h_summary: dict = {}
+        dashboard_stats = {
+            "total_detections": 0,
+            "total_species": 0,
+            "last_24h_count": 0,
+            "today_count": 0,
+            "first_date": None,
+            "last_date": None,
+        }
+        species_visit_counts: dict[str, int] = {}
+        today_rows: list[dict] = []
+        today_summary: dict = {}
+
+        with db_service.closing_connection() as conn:
+            try:
                 last_24h_rows = [
                     dict(row)
                     for row in db_service.fetch_detections_last_24h(
                         conn, threshold_str, order_by="time"
                     )
                 ]
-            last_24h_summary = gallery_service.summarize_observations(
-                last_24h_rows, min_score=gallery_threshold
-            )
-            last_24h_count = last_24h_summary["summary"]["total_observations"]
-        except Exception as e:
-            logger.error(f"Error fetching 24h count: {e}")
+                last_24h_summary = gallery_service.summarize_observations(
+                    last_24h_rows, min_score=gallery_threshold
+                )
+                last_24h_count = last_24h_summary["summary"]["total_observations"]
+                dashboard_stats["last_24h_count"] = last_24h_count
+            except Exception as e:
+                logger.error(f"Error fetching 24h count: {e}")
 
-        # 1b. Dashboard Stats (All-time stats for engagement)
-        dashboard_stats = {
-            "total_detections": 0,
-            "total_species": 0,
-            "last_24h_count": last_24h_count,  # Renamed from today_count
-            "today_count": 0,
-            "first_date": None,
-            "last_date": None,
-        }
-        try:
-            with db_service.closing_connection() as conn:
-                summary = db_service.fetch_analytics_summary(conn)
+            try:
+                # Phase 7: serve the all-time aggregate from a 5-min TTL
+                # cache when warm. The summary's COUNT(*) GROUP BY runs
+                # over the full detections table — ~1.3 s on Martin's
+                # 350 MB DB. Day-count (which advances during the day)
+                # stays uncached and runs every render.
+                _summary_cached = _analytics_summary_cache.get("payload")
+                _summary_age = time.time() - float(
+                    _analytics_summary_cache.get("timestamp") or 0.0
+                )
+                if (
+                    _summary_cached is not None
+                    and _summary_age < _ANALYTICS_SUMMARY_CACHE_TTL_SECONDS
+                ):
+                    summary = _summary_cached
+                else:
+                    summary = db_service.fetch_analytics_summary(conn)
+                    _analytics_summary_cache["timestamp"] = time.time()
+                    _analytics_summary_cache["payload"] = summary
                 dashboard_stats["total_detections"] = summary.get("total_detections", 0)
                 dashboard_stats["total_species"] = summary.get("total_species", 0)
                 date_range = summary.get("date_range", {})
@@ -2301,23 +2409,23 @@ def create_web_interface(detection_manager, system_monitor=None):
                 dashboard_stats["today_count"] = db_service.fetch_day_count(
                     conn, today_iso
                 )
-        except Exception as e:
-            logger.error(f"Error fetching dashboard stats: {e}")
+            except Exception as e:
+                logger.error(f"Error fetching dashboard stats: {e}")
 
-        # 1c. Today Observation Stats (aligned with gallery grouping)
-        species_visit_counts: dict[str, int] = {}
-        today_rows: list[dict] = []
-        try:
-            with db_service.closing_connection() as conn:
+            try:
                 today_rows = [
                     dict(row)
                     for row in db_service.fetch_detections_for_gallery(
                         conn, today_iso, order_by="time"
                     )
                 ]
-            today_summary = gallery_service.summarize_observations(
-                today_rows, min_score=gallery_threshold
-            )
+                today_summary = gallery_service.summarize_observations(
+                    today_rows, min_score=gallery_threshold
+                )
+            except Exception as e:
+                logger.error(f"Error fetching today observation stats: {e}")
+
+        try:
             today_summary_stats = today_summary["summary"]
             dashboard_stats["today_visits"] = today_summary_stats["total_observations"]
             species_visit_counts = today_summary_stats["species_counts"]
@@ -2335,6 +2443,31 @@ def create_web_interface(detection_manager, system_monitor=None):
             logger.error(f"Error fetching today observation stats: {e}")
 
         title = f"Live • {dashboard_stats.get('today_visits', 0)} Observations Today"
+
+        # Phase 3 of the Web TTFB plan: pre-fetch all sibling rows for
+        # detections that the upcoming render loops will look up. Collects
+        # original_names from the candidate sets (top-5 of 24h + today
+        # rows + best-species pool gets added below) and issues one batch
+        # query. _load_modal_siblings reads from this cache; misses fall
+        # back to the per-row lookup so the render is never wrong.
+        try:
+            _sibling_keys: set[str] = set()
+            for _det in last_24h_rows[:5]:
+                if (_det.get("sibling_count") or 1) > 1:
+                    _name = _det.get("original_name") or ""
+                    if _name:
+                        _sibling_keys.add(_name)
+            for _det in today_rows:
+                if (_det.get("sibling_count") or 1) > 1:
+                    _name = _det.get("original_name") or ""
+                    if _name:
+                        _sibling_keys.add(_name)
+            if _sibling_keys:
+                sibling_rows_cache.update(
+                    gallery_service.get_sibling_detections_batch(sorted(_sibling_keys))
+                )
+        except Exception as e:
+            logger.error(f"Error pre-fetching sibling rows: {e}")
 
         # 2. Latest Detections (Top 5 from last 24h)
         latest_detections = []
@@ -2577,44 +2710,64 @@ def create_web_interface(detection_manager, system_monitor=None):
             logger.error(f"Error fetching archive preview: {e}")
 
         # 5b. Best Species Story Board
+        # Phase 6 of the Web TTFB plan: serve from a 5-min TTL cache when
+        # warm. On Martin's 350 MB DB the rebuild costs ~3.5 s per `/`
+        # render (alone half the 8 s wall time); on a small DB it's
+        # cheap. Either way the board's top-12 don't shift sub-minute,
+        # so a short TTL is safe. Cache miss falls through to the full
+        # rebuild path below, which then refreshes the cache.
         best_species_board = {"featured": [], "grid": []}
         best_species_preview = []
         best_species_modal_dets = []
-        try:
-            all_detections = get_captured_detections()
-            best_species_board = _enrich_species_board(
-                gallery_service.build_species_story_board(
-                    all_detections,
-                    total_limit=12,
-                    featured_count=3,
-                    excluded_species={UNKNOWN_SPECIES_KEY},
+        cache_payload = _best_species_cache.get("payload")
+        cache_age = time.time() - float(_best_species_cache.get("timestamp") or 0.0)
+        if cache_payload is not None and cache_age < _BEST_SPECIES_CACHE_TTL_SECONDS:
+            best_species_board = cache_payload["board"]
+            best_species_preview = cache_payload["preview"]
+            best_species_modal_dets = cache_payload["modal_dets"]
+        else:
+            try:
+                all_detections = get_captured_detections()
+                best_species_board = _enrich_species_board(
+                    gallery_service.build_species_story_board(
+                        all_detections,
+                        total_limit=12,
+                        featured_count=3,
+                        excluded_species={UNKNOWN_SPECIES_KEY},
+                    )
                 )
-            )
-            best_species_preview = (
-                best_species_board.get("featured", [])
-                + best_species_board.get("grid", [])
-            )
+                best_species_preview = (
+                    best_species_board.get("featured", [])
+                    + best_species_board.get("grid", [])
+                )
 
-            # Build full modal-ready dicts for all board detections
-            best_det_ids = set()
-            for section in ("featured", "grid"):
-                for item in best_species_board.get(section, []):
-                    if item.get("detection_id"):
-                        best_det_ids.add(item["detection_id"])
-                    for frame in item.get("story_frames", []):
-                        if frame.get("detection_id"):
-                            best_det_ids.add(frame["detection_id"])
+                # Build full modal-ready dicts for all board detections
+                best_det_ids = set()
+                for section in ("featured", "grid"):
+                    for item in best_species_board.get(section, []):
+                        if item.get("detection_id"):
+                            best_det_ids.add(item["detection_id"])
+                        for frame in item.get("story_frames", []):
+                            if frame.get("detection_id"):
+                                best_det_ids.add(frame["detection_id"])
 
-            if best_det_ids:
-                all_by_id = {d.get("detection_id"): d for d in all_detections}
-                for det_id in best_det_ids:
-                    raw = all_by_id.get(det_id)
-                    if raw:
-                        best_species_modal_dets.append(
-                            _build_modal_detection(raw)
-                        )
-        except Exception as e:
-            logger.error(f"Error fetching best species board: {e}")
+                if best_det_ids:
+                    all_by_id = {d.get("detection_id"): d for d in all_detections}
+                    for det_id in best_det_ids:
+                        raw = all_by_id.get(det_id)
+                        if raw:
+                            best_species_modal_dets.append(
+                                _build_modal_detection(raw)
+                            )
+
+                _best_species_cache["timestamp"] = time.time()
+                _best_species_cache["payload"] = {
+                    "board": best_species_board,
+                    "preview": best_species_preview,
+                    "modal_dets": best_species_modal_dets,
+                }
+            except Exception as e:
+                logger.error(f"Error fetching best species board: {e}")
 
         # 6. Landing Status Row
         landing_status = {

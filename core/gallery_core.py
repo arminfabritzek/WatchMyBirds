@@ -223,11 +223,23 @@ def _ts_to_epoch(ts: str) -> float:
 
     Returns 0.0 on failure.
     """
+    # Hand-rolled slice parser — `datetime.strptime` is 5× slower than
+    # building the datetime directly from positional fields, and this
+    # function is called ~4 k times per `/` render. Format is fixed
+    # (`YYYYMMDD_HHMMSS`), so the slice positions are safe.
     from datetime import datetime as _dt
 
+    if not ts or len(ts) < 15:
+        return 0.0
     try:
-        # Truncate to YYYYMMDD_HHMMSS (15 chars), discarding _ffffff
-        return _dt.strptime(ts[:15], "%Y%m%d_%H%M%S").timestamp()
+        return _dt(
+            int(ts[0:4]),
+            int(ts[4:6]),
+            int(ts[6:8]),
+            int(ts[9:11]),
+            int(ts[11:13]),
+            int(ts[13:15]),
+        ).timestamp()
     except (ValueError, TypeError):
         return 0.0
 
@@ -901,6 +913,26 @@ def get_sibling_detections(original_name: str) -> list[dict]:
     with closing_connection() as conn:
         rows = db_fetch_sibling_detections(conn, original_name)
         return [dict(row) for row in rows]
+
+
+def get_sibling_detections_batch(image_filenames: list[str]) -> dict[str, list[dict]]:
+    """Batch variant of get_sibling_detections.
+
+    Returns a mapping ``{image_filename: [sibling_dict, ...]}`` for the
+    given filenames, fetched in a single SQL query and one connection
+    open. Used by index-route render paths that would otherwise issue
+    one query per detection card.
+    """
+    if not image_filenames:
+        return {}
+    from utils.db.detections import fetch_sibling_detections_batch
+
+    with closing_connection() as conn:
+        grouped_rows = fetch_sibling_detections_batch(conn, image_filenames)
+        return {
+            name: [dict(row) for row in rows]
+            for name, rows in grouped_rows.items()
+        }
 
 
 # --- External Links ---

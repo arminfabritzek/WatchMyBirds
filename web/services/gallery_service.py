@@ -135,6 +135,15 @@ def get_sibling_detections(original_name: str) -> list[dict]:
     return gallery_core.get_sibling_detections(original_name)
 
 
+def get_sibling_detections_batch(image_filenames: list[str]) -> dict[str, list[dict]]:
+    """Batch variant: fetch siblings for many image filenames in one query.
+
+    Used by the index route to avoid one connection-open + one query per
+    detection card with sibling_count > 1.
+    """
+    return gallery_core.get_sibling_detections_batch(image_filenames)
+
+
 # --- External Links ---
 
 

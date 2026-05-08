@@ -449,6 +449,57 @@ def fetch_sibling_detections(
     return cur.fetchall()
 
 
+def fetch_sibling_detections_batch(
+    conn: sqlite3.Connection, image_filenames: list[str]
+) -> dict[str, list[sqlite3.Row]]:
+    """
+    Batch variant of fetch_sibling_detections. Returns siblings for several
+    image filenames in a single query, grouped by ``image_filename``.
+
+    Index pages render dozens of detection cards per request, each of which
+    needs its multi-bird companions for the detail modal. Calling the
+    single-row helper in a loop costs one round-trip per row plus
+    connection setup; this batch helper collapses the lot to one query.
+
+    Returns ``{}`` when ``image_filenames`` is empty. Image filenames not
+    present in the result are absent from the returned dict (caller treats
+    missing keys as "no siblings").
+    """
+    if not image_filenames:
+        return {}
+    placeholders = ",".join("?" * len(image_filenames))
+    query = f"""
+        SELECT
+            d.image_filename,
+            d.detection_id,
+            d.od_class_name,
+            d.od_confidence,
+            d.score,
+            i.review_status,
+            d.bbox_x,
+            d.bbox_y,
+            d.bbox_w,
+            d.bbox_h,
+            d.decision_state,
+            d.manual_species_override,
+            d.species_source,
+            {_top1_species_sql("d")} as cls_class_name,
+            {_top1_confidence_sql("d")} as cls_confidence,
+            {effective_species_sql("d")} as species_key,
+            (substr(i.timestamp, 1, 4) || '-' || substr(i.timestamp, 5, 2) || '-' || substr(i.timestamp, 7, 2) || '/' ||
+             COALESCE(d.thumbnail_path, REPLACE(i.filename, '.jpg', '_crop_1.webp'))) AS thumbnail_path_virtual
+        FROM detections d
+        JOIN images i ON d.image_filename = i.filename
+        WHERE d.image_filename IN ({placeholders}) AND {_gallery_visibility_sql("d", "i")}
+        ORDER BY d.image_filename, d.score DESC
+    """
+    cur = conn.execute(query, tuple(image_filenames))
+    grouped: dict[str, list[sqlite3.Row]] = {}
+    for row in cur.fetchall():
+        grouped.setdefault(row["image_filename"], []).append(row)
+    return grouped
+
+
 def fetch_day_count(conn: sqlite3.Connection, date_str_iso: str) -> int:
     """Returns COUNT(*) for a given date (YYYY-MM-DD)."""
     date_prefix = date_str_iso.replace("-", "")
