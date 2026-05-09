@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 from contextlib import nullcontext
 from datetime import datetime
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -10,6 +11,7 @@ import pytest
 import config
 from utils.db import insert_classification, insert_detection, insert_image
 from utils.db import connection as db_connection
+from utils import path_manager
 from web.web_interface import create_web_interface
 
 
@@ -23,6 +25,7 @@ def _reset_test_config(monkeypatch, tmp_path):
     monkeypatch.setenv("EDIT_PASSWORD", "test-password")
     config._CONFIG = None
     db_connection._schema_initialized_paths.clear()
+    path_manager._instance = None
     return output_dir
 
 
@@ -224,3 +227,28 @@ def test_local_sqlite_review_routes_render_real_continuity_batch(seeded_client):
     assert 'data-zoom-pref-key="wmb_review_zoom_pref"' in panel_body
     assert "data-species-colour=" in panel_body
     assert 'data-review-panel-action="trash_event"' in panel_body
+
+
+def test_static_file_routes_emit_browser_cache_headers(local_db_app):
+    output_dir = Path(config.get_config()["OUTPUT_DIR"])
+    thumb_dir = output_dir / "derivatives" / "thumbs" / "2026-03-27"
+    thumb_dir.mkdir(parents=True, exist_ok=True)
+    thumb_path = thumb_dir / "20260327_120000_visible_crop_1.webp"
+    thumb_path.write_bytes(b"fake-webp")
+
+    with local_db_app.test_client() as client:
+        with client.session_transaction() as session:
+            session["authenticated"] = True
+
+        thumb_response = client.get(
+            "/uploads/derivatives/thumbs/2026-03-27/20260327_120000_visible_crop_1.webp"
+        )
+        assert thumb_response.status_code == 200
+        assert (
+            thumb_response.headers["Cache-Control"]
+            == "private, max-age=2592000, immutable"
+        )
+
+        asset_response = client.get("/assets/design-system.css")
+        assert asset_response.status_code == 200
+        assert asset_response.headers["Cache-Control"] == "public, max-age=604800"

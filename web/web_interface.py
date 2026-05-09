@@ -129,6 +129,30 @@ def create_web_interface(detection_manager, system_monitor=None):
     _species_locale = config.get("SPECIES_COMMON_NAME_LOCALE", "DE")
     COMMON_NAMES = load_common_names(_species_locale)
     UNKNOWN_SPECIES_KEY = "Unknown_species"
+    IMAGE_CACHE_SECONDS = 30 * 24 * 60 * 60
+    ASSET_CACHE_SECONDS = 7 * 24 * 60 * 60
+
+    def _send_cached_static_file(
+        directory: str | os.PathLike,
+        filename: str,
+        *,
+        max_age: int,
+        private: bool = True,
+        immutable: bool = False,
+    ):
+        """Send file with explicit browser cache policy."""
+        response = send_from_directory(
+            directory,
+            filename,
+            conditional=True,
+            max_age=max_age,
+        )
+        visibility = "private" if private else "public"
+        cache_control = f"{visibility}, max-age={max_age}"
+        if immutable:
+            cache_control += ", immutable"
+        response.headers["Cache-Control"] = cache_control
+        return response
 
     def _get_species_key_local(det: dict | None) -> str:
         if not det:
@@ -732,8 +756,12 @@ def create_web_interface(detection_manager, system_monitor=None):
             full_path = path_mgr.originals_dir / filename
             if not full_path.exists():
                 return "Not found", 404
-            return send_from_directory(
-                os.path.dirname(full_path), os.path.basename(full_path)
+            return _send_cached_static_file(
+                os.path.dirname(full_path),
+                os.path.basename(full_path),
+                max_age=IMAGE_CACHE_SECONDS,
+                private=True,
+                immutable=True,
             )
 
         @server.route("/uploads/derivatives/thumbs/<path:filename>")
@@ -753,13 +781,20 @@ def create_web_interface(detection_manager, system_monitor=None):
                     )
                     preview_path = path_mgr.thumbs_dir / preview_name
                     if preview_name != filename and preview_path.exists():
-                        return send_from_directory(
+                        return _send_cached_static_file(
                             os.path.dirname(preview_path),
                             os.path.basename(preview_path),
+                            max_age=IMAGE_CACHE_SECONDS,
+                            private=True,
+                            immutable=True,
                         )
                     return "Not found and could not regenerate", 404
-            return send_from_directory(
-                os.path.dirname(full_path), os.path.basename(full_path)
+            return _send_cached_static_file(
+                os.path.dirname(full_path),
+                os.path.basename(full_path),
+                max_age=IMAGE_CACHE_SECONDS,
+                private=True,
+                immutable=True,
             )
 
         @server.route("/uploads/derivatives/optimized/<path:filename>")
@@ -774,8 +809,12 @@ def create_web_interface(detection_manager, system_monitor=None):
                         return "Regeneration failed", 500
                 else:
                     return "Not found and could not regenerate", 404
-            return send_from_directory(
-                os.path.dirname(full_path), os.path.basename(full_path)
+            return _send_cached_static_file(
+                os.path.dirname(full_path),
+                os.path.basename(full_path),
+                max_age=IMAGE_CACHE_SECONDS,
+                private=True,
+                immutable=True,
             )
 
         def daily_species_summary_route():
@@ -793,7 +832,13 @@ def create_web_interface(detection_manager, system_monitor=None):
             return jsonify({"date": date_iso, "summary": summary})
 
         server.route("/assets/<path:filename>")(
-            lambda filename: send_from_directory(assets_folder, filename)
+            lambda filename: _send_cached_static_file(
+                assets_folder,
+                filename,
+                max_age=ASSET_CACHE_SECONDS,
+                private=False,
+                immutable=False,
+            )
         )
 
         # Cap concurrent /video_feed clients so a few zombie tabs cannot
