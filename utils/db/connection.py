@@ -11,6 +11,7 @@ from pathlib import Path
 from config import get_config
 
 DB_FILENAME = "images.db"
+SQLITE_MMAP_SIZE_BYTES = 2 * 1024 * 1024 * 1024
 
 # Module-level cache: initialize schema once per database path.
 # Tests patch OUTPUT_DIR, so schema init must be keyed by db path (not process-global).
@@ -37,13 +38,14 @@ def get_connection() -> sqlite3.Connection:
     # the remaining hot path is dominated by SQL execute
     # + fetchall, which mmap collapses to memory access.
     #
-    # - mmap_size: maps the working set into the process's
-    #   address space; reads become memcpy from the OS page cache.
+    # - mmap_size=2 GB: maps current and near-future long-running DBs into
+    #   the process's address space; reads become memcpy from the OS page
+    #   cache. The mapping is virtual address space, not pre-allocated RAM.
     # - cache_size=100000 (negative would be KB; positive is page-count
     #   so 100k × 4 KB ≈ 400 MB cache, large enough for the working set).
     # - optimize=0x10002: enables both the always-on ANALYZE-when-needed
     #   logic and the optimize-on-close pass below.
-    conn.execute("PRAGMA mmap_size=350000000;")
+    conn.execute(f"PRAGMA mmap_size={SQLITE_MMAP_SIZE_BYTES};")
     conn.execute("PRAGMA cache_size=100000;")
     conn.execute("PRAGMA optimize=0x10002;")
     if db_path not in _schema_initialized_paths:
@@ -225,6 +227,24 @@ def _init_schema(conn: sqlite3.Connection) -> None:
     #   (see below). See workflow/plans/2026-05-02_FEATURE_aesthetic-tagger-three-column-split.md.
     _ensure_column_on_table(conn, "detections", "is_gallery_eligible", "INTEGER DEFAULT 0")
     _backfill_gallery_eligible(conn)
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_detections_gallery_state_filename
+        ON detections(status, lower(COALESCE(decision_state, '')), image_filename);
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_detections_gallery_state_score
+        ON detections(status, lower(COALESCE(decision_state, '')), score DESC);
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_detections_created_at_desc
+        ON detections(created_at DESC);
+        """
+    )
 
     conn.execute("""
         CREATE TABLE IF NOT EXISTS sources (

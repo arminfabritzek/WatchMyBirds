@@ -7,7 +7,7 @@ insert, fetch, reject, restore, and purge functionality.
 
 import sqlite3
 from collections.abc import Iterable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from utils.review_metadata import (
@@ -147,6 +147,26 @@ def effective_species_sql(det_alias: str = "d") -> str:
     """
 
 
+def _effective_species_joined_sql(det_alias: str = "d", cls_alias: str = "c") -> str:
+    """Species expression for queries that already join the rank-1 CLS row."""
+    return f"""
+        COALESCE(
+            NULLIF({det_alias}.manual_species_override, ''),
+            {cls_alias}.cls_class_name,
+            {_normalized_detector_species_sql(det_alias)}
+        )
+    """
+
+
+def _day_bounds(date_str_iso: str) -> tuple[str, str]:
+    """Return inclusive/exclusive timestamp bounds for an ISO date."""
+    day = datetime.strptime(date_str_iso, "%Y-%m-%d")
+    return (
+        day.strftime("%Y%m%d"),
+        (day + timedelta(days=1)).strftime("%Y%m%d"),
+    )
+
+
 def effective_species_sql_for_columns(
     det_alias: str = "d",
     detection_columns: set[str] | None = None,
@@ -283,28 +303,30 @@ def fetch_detections_for_gallery(
     """
     Returns detection-centric records for gallery display.
     """
-    params = []
+    params: list[Any] = []
     where_clauses = [_gallery_visibility_sql("d", "i")]
 
     if date_str_iso:
-        date_prefix = date_str_iso.replace("-", "")
-        where_clauses.append(
-            "i.timestamp LIKE ? || '%'"
-        )  # Using i.timestamp for filtering
-        params.append(date_prefix)
+        start_ts, end_ts = _day_bounds(date_str_iso)
+        where_clauses.append("i.timestamp >= ? AND i.timestamp < ?")
+        params.extend([start_ts, end_ts])
 
     where_sql = " AND ".join(where_clauses)
 
     # Sort order
     if order_by == "time":
         order_clause = "ORDER BY d.created_at DESC"
+        outer_order_clause = "ORDER BY v.created_at DESC"
     else:  # default "score"
         order_clause = "ORDER BY d.score DESC, i.timestamp DESC"
+        outer_order_clause = "ORDER BY v.score DESC, v.image_timestamp DESC"
 
-    query = f"""
-        SELECT
+    species_sql = _effective_species_joined_sql("d", "c")
+    select_body = f"""
             d.detection_id,
             i.timestamp as image_timestamp,
+            d.created_at,
+            d.image_filename,
             d.bbox_x,
             d.bbox_y,
             d.bbox_w,
@@ -312,8 +334,6 @@ def fetch_detections_for_gallery(
             d.od_class_name,
             d.od_confidence,
             d.score,
-            -- Virtual paths matching actual filesystem structure (YYYY-MM-DD folders)
-            -- Prefer explicit thumbnail_path if available (for multi-detection support), else fallback to virtual crop
             (substr(i.timestamp, 1, 4) || '-' || substr(i.timestamp, 5, 2) || '-' || substr(i.timestamp, 7, 2) || '/' ||
              COALESCE(d.thumbnail_path, REPLACE(i.filename, '.jpg', '_crop_1.webp'))) AS thumbnail_path_virtual,
             REPLACE(i.filename, '.jpg', '.webp') as optimized_name_virtual,
@@ -324,42 +344,76 @@ def fetch_detections_for_gallery(
             i.review_status,
             d.manual_species_override,
             d.species_source,
-            {_top1_species_sql("d")} as cls_class_name,
-            {_top1_confidence_sql("d")} as cls_confidence,
-            {effective_species_sql("d")} as species_key,
+            c.cls_class_name,
+            c.cls_confidence,
+            {species_sql} as species_key,
             d.rating,
             d.rating_source,
             d.is_favorite,
-            -- KI gallery-eligibility flag (model decision; UI shows a blue badge).
-            -- Distinct from is_favorite (HUMAN gold-label) — see workflow plan
-            -- 2026-05-02_FEATURE_aesthetic-tagger-three-column-split.
             d.is_gallery_eligible,
-            -- Aesthetic auto-tagger score (NULL on legacy / non-taggable species).
-            -- Consumed by core/gallery_core._story_board_candidate_quality and any
-            -- caller that wants to rank by "facing the camera" probability.
             d.aesthetic_score,
-            -- Count of sibling detections on the same image (for multi-bird display)
-            (
-                SELECT COUNT(*)
-                FROM detections d2
-                JOIN images i2 ON i2.filename = d2.image_filename
-                WHERE d2.image_filename = d.image_filename
-                  AND {_gallery_visibility_sql("d2", "i2")}
-            ) as sibling_count,
-            -- Decision policy fields (P1-04)
             d.decision_state,
             d.bbox_quality,
             d.unknown_score,
             d.decision_reasons
-        FROM detections d
-        JOIN images i ON d.image_filename = i.filename
-        WHERE {where_sql}
-        {order_clause}
     """
 
     if limit is not None:
-        query += " LIMIT ?"
+        query = f"""
+            WITH selected AS (
+                SELECT d.detection_id
+                FROM detections d
+                JOIN images i ON d.image_filename = i.filename
+                WHERE {where_sql}
+                {order_clause}
+                LIMIT ?
+            )
+            SELECT
+                {select_body},
+                (
+                    SELECT COUNT(*)
+                    FROM detections d2
+                    JOIN images i2 ON i2.filename = d2.image_filename
+                    WHERE d2.image_filename = d.image_filename
+                      AND {_gallery_visibility_sql("d2", "i2")}
+                ) as sibling_count
+            FROM selected s
+            JOIN detections d ON d.detection_id = s.detection_id
+            JOIN images i ON d.image_filename = i.filename
+            LEFT JOIN classifications c
+              ON c.detection_id = d.detection_id
+             AND c.rank = 1
+             AND COALESCE(c.status, 'active') = 'active'
+            {order_clause}
+        """
         params.append(limit)
+        cur = conn.execute(query, params)
+        return cur.fetchall()
+
+    query = f"""
+        WITH visible AS (
+            SELECT
+                {select_body}
+            FROM detections d
+            JOIN images i ON d.image_filename = i.filename
+            LEFT JOIN classifications c
+              ON c.detection_id = d.detection_id
+             AND c.rank = 1
+             AND COALESCE(c.status, 'active') = 'active'
+            WHERE {where_sql}
+        ),
+        sibling_counts AS (
+            SELECT image_filename, COUNT(*) AS sibling_count
+            FROM visible
+            GROUP BY image_filename
+        )
+        SELECT
+            v.*,
+            COALESCE(sc.sibling_count, 1) AS sibling_count
+        FROM visible v
+        LEFT JOIN sibling_counts sc ON sc.image_filename = v.image_filename
+        {outer_order_clause}
+    """
 
     cur = conn.execute(query, params)
     return cur.fetchall()
@@ -413,6 +467,243 @@ def fetch_random_favorites(
     return cur.fetchall()
 
 
+def fetch_gallery_total_species_count(conn: sqlite3.Connection) -> int:
+    """Return the number of visible gallery species without full row hydration."""
+    species_sql = _effective_species_joined_sql("d", "c")
+    cur = conn.execute(
+        f"""
+        SELECT COUNT(DISTINCT species_key) AS total
+        FROM (
+            SELECT {species_sql} AS species_key
+            FROM detections d
+            JOIN images i ON i.filename = d.image_filename
+            LEFT JOIN classifications c
+              ON c.detection_id = d.detection_id
+             AND c.rank = 1
+             AND COALESCE(c.status, 'active') = 'active'
+            WHERE {_gallery_visibility_sql("d", "i")}
+        )
+        WHERE species_key IS NOT NULL
+          AND species_key != ?
+        """,
+        (UNKNOWN_SPECIES_KEY,),
+    )
+    row = cur.fetchone()
+    return int(row["total"] or 0) if row else 0
+
+
+def fetch_species_story_board_candidates(
+    conn: sqlite3.Connection,
+    *,
+    total_limit: int = 12,
+    frames_per_species: int = 3,
+    excluded_species: Iterable[str] | None = None,
+) -> list[sqlite3.Row]:
+    """Return a bounded, SQL-ranked candidate set for the homepage board.
+
+    The legacy homepage path hydrated every visible detection, grouped all
+    events in Python, then kept only 12 species and up to 3 images each. On
+    long-running stations this made the first byte wait scale with the entire
+    database. This query keeps the expensive scan inside SQLite and returns at
+    most ``total_limit * frames_per_species`` rows to Python.
+    """
+    total_limit = max(1, int(total_limit or 1))
+    frames_per_species = max(1, int(frames_per_species or 1))
+    excluded = [str(species) for species in (excluded_species or []) if species]
+
+    species_filter_sql = ""
+    params: list[Any] = []
+    if excluded:
+        placeholders = ",".join("?" for _ in excluded)
+        species_filter_sql = f"WHERE species_key NOT IN ({placeholders})"
+        params.extend(excluded)
+
+    params.extend([total_limit, frames_per_species])
+    species_sql = _effective_species_joined_sql("d", "c")
+
+    query = f"""
+    WITH visible AS (
+        SELECT
+            d.detection_id,
+            i.timestamp AS image_timestamp,
+            CAST(strftime(
+                '%s',
+                substr(i.timestamp, 1, 4) || '-' ||
+                substr(i.timestamp, 5, 2) || '-' ||
+                substr(i.timestamp, 7, 2) || ' ' ||
+                substr(i.timestamp, 10, 2) || ':' ||
+                substr(i.timestamp, 12, 2) || ':' ||
+                substr(i.timestamp, 14, 2)
+            ) AS INTEGER) AS image_epoch,
+            d.bbox_x,
+            d.bbox_y,
+            d.bbox_w,
+            d.bbox_h,
+            d.od_class_name,
+            d.od_confidence,
+            d.score,
+            (substr(i.timestamp, 1, 4) || '-' || substr(i.timestamp, 5, 2) || '-' || substr(i.timestamp, 7, 2) || '/' ||
+             COALESCE(d.thumbnail_path, REPLACE(i.filename, '.jpg', '_crop_1.webp'))) AS thumbnail_path_virtual,
+            REPLACE(i.filename, '.jpg', '.webp') AS optimized_name_virtual,
+            (substr(i.timestamp, 1, 4) || '-' || substr(i.timestamp, 5, 2) || '-' || substr(i.timestamp, 7, 2) || '/' ||
+             REPLACE(i.filename, '.jpg', '.webp')) AS relative_path,
+            i.filename AS original_name,
+            i.downloaded_timestamp,
+            i.review_status,
+            d.manual_species_override,
+            d.species_source,
+            c.cls_class_name,
+            c.cls_confidence,
+            {species_sql} AS species_key,
+            d.rating,
+            d.rating_source,
+            d.is_favorite,
+            d.is_gallery_eligible,
+            d.aesthetic_score,
+            d.decision_state,
+            d.bbox_quality,
+            d.unknown_score,
+            d.decision_reasons,
+            CASE
+                WHEN COALESCE(d.bbox_w, 0) <= 0 OR COALESCE(d.bbox_h, 0) <= 0 THEN 0
+                WHEN COALESCE(d.bbox_x, 0) <= 0.01 THEN 0
+                WHEN COALESCE(d.bbox_y, 0) <= 0.01 THEN 0
+                WHEN COALESCE(d.bbox_x, 0) + COALESCE(d.bbox_w, 0) >= 0.99 THEN 0
+                WHEN COALESCE(d.bbox_y, 0) + COALESCE(d.bbox_h, 0) >= 0.99 THEN 0
+                ELSE 1
+            END AS is_interior
+        FROM detections d
+        JOIN images i ON i.filename = d.image_filename
+        LEFT JOIN classifications c
+          ON c.detection_id = d.detection_id
+         AND c.rank = 1
+         AND COALESCE(c.status, 'active') = 'active'
+        WHERE {_gallery_visibility_sql("d", "i")}
+    ),
+    eligible AS (
+        SELECT *
+        FROM visible
+        {species_filter_sql}
+    ),
+    ordered_events AS (
+        SELECT
+            species_key,
+            image_epoch,
+            LAG(image_epoch) OVER (
+                PARTITION BY species_key
+                ORDER BY image_epoch ASC, detection_id ASC
+            ) AS prev_epoch
+        FROM eligible
+        WHERE image_epoch IS NOT NULL
+    ),
+    species_visits AS (
+        SELECT
+            species_key,
+            SUM(
+                CASE
+                    WHEN prev_epoch IS NULL THEN 1
+                    WHEN image_epoch - prev_epoch > 1800 THEN 1
+                    ELSE 0
+                END
+            ) AS visit_count
+        FROM ordered_events
+        GROUP BY species_key
+    ),
+    species_stats AS (
+        SELECT
+            e.species_key,
+            COALESCE(MAX(sv.visit_count), COUNT(*)) AS visit_count,
+            MAX(e.image_timestamp) AS last_seen_timestamp,
+            MAX(COALESCE(e.score, 0)) AS best_cover_score,
+            MAX(COALESCE(e.is_favorite, 0)) AS is_favorite_available
+        FROM eligible e
+        LEFT JOIN species_visits sv ON sv.species_key = e.species_key
+        GROUP BY e.species_key
+    ),
+    ranked_species AS (
+        SELECT
+            species_stats.*,
+            ROW_NUMBER() OVER (
+                ORDER BY
+                    visit_count DESC,
+                    substr(last_seen_timestamp, 1, 8) DESC,
+                    last_seen_timestamp DESC,
+                    best_cover_score DESC,
+                    species_key ASC
+            ) AS species_rank
+        FROM species_stats
+    ),
+    ranked_frames AS (
+        SELECT
+            e.*,
+            ROW_NUMBER() OVER (
+                PARTITION BY e.species_key
+                ORDER BY
+                    COALESCE(e.is_favorite, 0) DESC,
+                    COALESCE(e.is_gallery_eligible, 0) DESC,
+                    e.is_interior DESC,
+                    COALESCE(e.aesthetic_score, -1) DESC,
+                    COALESCE(e.score, 0) DESC,
+                    e.image_timestamp DESC,
+                    e.detection_id DESC
+            ) AS frame_rank
+        FROM eligible e
+        JOIN ranked_species rs ON rs.species_key = e.species_key
+        WHERE rs.species_rank <= ?
+    )
+    SELECT
+        rf.detection_id,
+        rf.image_timestamp,
+        rf.bbox_x,
+        rf.bbox_y,
+        rf.bbox_w,
+        rf.bbox_h,
+        rf.od_class_name,
+        rf.od_confidence,
+        rf.score,
+        rf.thumbnail_path_virtual,
+        rf.optimized_name_virtual,
+        rf.relative_path,
+        rf.original_name,
+        rf.downloaded_timestamp,
+        rf.review_status,
+        rf.manual_species_override,
+        rf.species_source,
+        rf.cls_class_name,
+        rf.cls_confidence,
+        rf.species_key,
+        rf.rating,
+        rf.rating_source,
+        rf.is_favorite,
+        rf.is_gallery_eligible,
+        rf.aesthetic_score,
+        rf.decision_state,
+        rf.bbox_quality,
+        rf.unknown_score,
+        rf.decision_reasons,
+        (
+            SELECT COUNT(*)
+            FROM detections d2
+            JOIN images i2 ON i2.filename = d2.image_filename
+            WHERE d2.image_filename = rf.original_name
+              AND {_gallery_visibility_sql("d2", "i2")}
+        ) AS sibling_count,
+        rs.species_rank,
+        rf.frame_rank,
+        rs.visit_count,
+        rs.last_seen_timestamp,
+        rs.best_cover_score,
+        rs.is_favorite_available
+    FROM ranked_frames rf
+    JOIN ranked_species rs ON rs.species_key = rf.species_key
+    WHERE rf.frame_rank <= ?
+    ORDER BY rs.species_rank ASC, rf.frame_rank ASC
+    """
+
+    cur = conn.execute(query, params)
+    return cur.fetchall()
+
+
 def fetch_sibling_detections(
     conn: sqlite3.Connection, image_filename: str
 ) -> list[sqlite3.Row]:
@@ -421,6 +712,7 @@ def fetch_sibling_detections(
     Used to display all birds when viewing a multi-detection image in the modal.
     Includes bbox coordinates for bounding box visualization.
     """
+    species_sql = _effective_species_joined_sql("d", "c")
     query = f"""
         SELECT
             d.detection_id,
@@ -435,13 +727,17 @@ def fetch_sibling_detections(
             d.decision_state,
             d.manual_species_override,
             d.species_source,
-            {_top1_species_sql("d")} as cls_class_name,
-            {_top1_confidence_sql("d")} as cls_confidence,
-            {effective_species_sql("d")} as species_key,
+            c.cls_class_name,
+            c.cls_confidence,
+            {species_sql} as species_key,
             (substr(i.timestamp, 1, 4) || '-' || substr(i.timestamp, 5, 2) || '-' || substr(i.timestamp, 7, 2) || '/' ||
              COALESCE(d.thumbnail_path, REPLACE(i.filename, '.jpg', '_crop_1.webp'))) AS thumbnail_path_virtual
         FROM detections d
         JOIN images i ON d.image_filename = i.filename
+        LEFT JOIN classifications c
+          ON c.detection_id = d.detection_id
+         AND c.rank = 1
+         AND COALESCE(c.status, 'active') = 'active'
         WHERE d.image_filename = ? AND {_gallery_visibility_sql("d", "i")}
         ORDER BY d.score DESC
     """
@@ -468,6 +764,7 @@ def fetch_sibling_detections_batch(
     if not image_filenames:
         return {}
     placeholders = ",".join("?" * len(image_filenames))
+    species_sql = _effective_species_joined_sql("d", "c")
     query = f"""
         SELECT
             d.image_filename,
@@ -483,13 +780,17 @@ def fetch_sibling_detections_batch(
             d.decision_state,
             d.manual_species_override,
             d.species_source,
-            {_top1_species_sql("d")} as cls_class_name,
-            {_top1_confidence_sql("d")} as cls_confidence,
-            {effective_species_sql("d")} as species_key,
+            c.cls_class_name,
+            c.cls_confidence,
+            {species_sql} as species_key,
             (substr(i.timestamp, 1, 4) || '-' || substr(i.timestamp, 5, 2) || '-' || substr(i.timestamp, 7, 2) || '/' ||
              COALESCE(d.thumbnail_path, REPLACE(i.filename, '.jpg', '_crop_1.webp'))) AS thumbnail_path_virtual
         FROM detections d
         JOIN images i ON d.image_filename = i.filename
+        LEFT JOIN classifications c
+          ON c.detection_id = d.detection_id
+         AND c.rank = 1
+         AND COALESCE(c.status, 'active') = 'active'
         WHERE d.image_filename IN ({placeholders}) AND {_gallery_visibility_sql("d", "i")}
         ORDER BY d.image_filename, d.score DESC
     """
@@ -502,16 +803,16 @@ def fetch_sibling_detections_batch(
 
 def fetch_day_count(conn: sqlite3.Connection, date_str_iso: str) -> int:
     """Returns COUNT(*) for a given date (YYYY-MM-DD)."""
-    date_prefix = date_str_iso.replace("-", "")
+    start_ts, end_ts = _day_bounds(date_str_iso)
     cur = conn.execute(
         f"""
         SELECT COUNT(*) AS cnt
         FROM detections d
         JOIN images i ON i.filename = d.image_filename
-        WHERE d.image_filename LIKE ? || '%'
+        WHERE i.timestamp >= ? AND i.timestamp < ?
         AND {_gallery_visibility_sql("d", "i")};
         """,
-        (date_prefix,),
+        (start_ts, end_ts),
     )
     row = cur.fetchone()
     return int(row["cnt"]) if row else 0
@@ -521,20 +822,20 @@ def fetch_hourly_counts(
     conn: sqlite3.Connection, date_str_iso: str
 ) -> list[sqlite3.Row]:
     """Returns hourly counts for a given date (YYYY-MM-DD)."""
-    date_prefix = date_str_iso.replace("-", "")
+    start_ts, end_ts = _day_bounds(date_str_iso)
     cur = conn.execute(
         f"""
         SELECT
-            substr(d.image_filename, 10, 2) AS hour,
+            substr(i.timestamp, 10, 2) AS hour,
             COUNT(*) AS count
         FROM detections d
         JOIN images i ON i.filename = d.image_filename
-        WHERE d.image_filename LIKE ? || '%'
+        WHERE i.timestamp >= ? AND i.timestamp < ?
         AND {_gallery_visibility_sql("d", "i")}
         GROUP BY hour
         ORDER BY hour;
         """,
-        (date_prefix,),
+        (start_ts, end_ts),
     )
     return cur.fetchall()
 
@@ -553,6 +854,7 @@ def fetch_daily_covers(
     WITH DailyBest AS (
         SELECT
             (substr(d.image_filename, 1, 4) || '-' || substr(d.image_filename, 5, 2) || '-' || substr(d.image_filename, 7, 2)) as date_iso,
+            d.detection_id,
             d.image_filename,
             i.filename as original_name,
             d.bbox_x, d.bbox_y, d.bbox_w, d.bbox_h,
@@ -585,6 +887,7 @@ def fetch_daily_covers(
     )
     SELECT
         db.date_iso as date_key,
+        db.detection_id,
         REPLACE(db.original_name, '.jpg', '.webp') as optimized_name_virtual,
         (substr(db.image_filename, 1, 4) || '-' || substr(db.image_filename, 5, 2) || '-' || substr(db.image_filename, 7, 2) || '/' ||
          REPLACE(db.original_name, '.jpg', '.webp')) AS relative_path,
@@ -610,21 +913,26 @@ def fetch_detection_species_summary(
     If no classification class name, we consider it 'Unclassified' (or handle OD class if desired,
     but per plan we rely on CLS).
     """
-    date_prefix = date_str_iso.replace("-", "")
+    start_ts, end_ts = _day_bounds(date_str_iso)
+    species_sql = _effective_species_joined_sql("d", "c")
 
     cur = conn.execute(
         f"""
         SELECT
-            {effective_species_sql("d")} as species,
+            {species_sql} as species,
             COUNT(d.detection_id) as count
         FROM detections d
         JOIN images i ON i.filename = d.image_filename
-        WHERE d.image_filename LIKE ? || '%'
+        LEFT JOIN classifications c
+          ON c.detection_id = d.detection_id
+         AND c.rank = 1
+         AND COALESCE(c.status, 'active') = 'active'
+        WHERE i.timestamp >= ? AND i.timestamp < ?
         AND {_gallery_visibility_sql("d", "i")}
         GROUP BY species
         ORDER BY count DESC;
         """,
-        (date_prefix,),
+        (start_ts, end_ts),
     )
     return cur.fetchall()
 
@@ -1068,15 +1376,16 @@ def fetch_detections_last_24h(
     # Sort order
     if order_by == "time":
         order_clause = "ORDER BY i.timestamp DESC, d.score DESC"
+        outer_order_clause = "ORDER BY v.image_timestamp DESC, v.score DESC"
     else:  # "score"
         order_clause = "ORDER BY d.score DESC, i.timestamp DESC"
+        outer_order_clause = "ORDER BY v.score DESC, v.image_timestamp DESC"
 
-    limit_clause = f"LIMIT {limit}" if limit else ""
-
-    query = f"""
-        SELECT
+    species_sql = _effective_species_joined_sql("d", "c")
+    select_body = f"""
             d.detection_id,
             i.timestamp as image_timestamp,
+            d.image_filename,
             d.bbox_x,
             d.bbox_y,
             d.bbox_w,
@@ -1094,27 +1403,74 @@ def fetch_detections_last_24h(
             i.review_status,
             d.manual_species_override,
             d.species_source,
-            {_top1_species_sql("d")} as cls_class_name,
-            {_top1_confidence_sql("d")} as cls_confidence,
-            {effective_species_sql("d")} as species_key,
+            c.cls_class_name,
+            c.cls_confidence,
+            {species_sql} as species_key,
             d.is_favorite,
-            d.is_gallery_eligible,
-            (
-                SELECT COUNT(*)
-                FROM detections d2
-                JOIN images i2 ON i2.filename = d2.image_filename
-                WHERE d2.image_filename = d.image_filename
-                  AND {_gallery_visibility_sql("d2", "i2")}
-            ) as sibling_count
-        FROM detections d
-        JOIN images i ON d.image_filename = i.filename
-        WHERE {_gallery_visibility_sql("d", "i")}
-        AND i.timestamp >= ?
-        {order_clause}
-        {limit_clause}
+            d.is_gallery_eligible
     """
 
-    cur = conn.execute(query, (threshold_timestamp,))
+    params: list[Any] = [threshold_timestamp]
+    if limit is not None:
+        query = f"""
+            WITH selected AS (
+                SELECT d.detection_id
+                FROM detections d
+                JOIN images i ON d.image_filename = i.filename
+                WHERE {_gallery_visibility_sql("d", "i")}
+                AND i.timestamp >= ?
+                {order_clause}
+                LIMIT ?
+            )
+            SELECT
+                {select_body},
+                (
+                    SELECT COUNT(*)
+                    FROM detections d2
+                    JOIN images i2 ON i2.filename = d2.image_filename
+                    WHERE d2.image_filename = d.image_filename
+                      AND {_gallery_visibility_sql("d2", "i2")}
+                ) as sibling_count
+            FROM selected s
+            JOIN detections d ON d.detection_id = s.detection_id
+            JOIN images i ON d.image_filename = i.filename
+            LEFT JOIN classifications c
+              ON c.detection_id = d.detection_id
+             AND c.rank = 1
+             AND COALESCE(c.status, 'active') = 'active'
+            {order_clause}
+        """
+        params.append(limit)
+        cur = conn.execute(query, params)
+        return cur.fetchall()
+
+    query = f"""
+        WITH visible AS (
+            SELECT
+                {select_body}
+            FROM detections d
+            JOIN images i ON d.image_filename = i.filename
+            LEFT JOIN classifications c
+              ON c.detection_id = d.detection_id
+             AND c.rank = 1
+             AND COALESCE(c.status, 'active') = 'active'
+            WHERE {_gallery_visibility_sql("d", "i")}
+            AND i.timestamp >= ?
+        ),
+        sibling_counts AS (
+            SELECT image_filename, COUNT(*) AS sibling_count
+            FROM visible
+            GROUP BY image_filename
+        )
+        SELECT
+            v.*,
+            COALESCE(sc.sibling_count, 1) AS sibling_count
+        FROM visible v
+        LEFT JOIN sibling_counts sc ON sc.image_filename = v.image_filename
+        {outer_order_clause}
+    """
+
+    cur = conn.execute(query, params)
     return cur.fetchall()
 
 
@@ -1136,17 +1492,22 @@ def fetch_bbox_centers(
     Returns:
         List of rows: (center_x, center_y, species, score, image_timestamp)
     """
+    species_sql = _effective_species_joined_sql("d", "c")
     query = f"""
         SELECT
             (d.bbox_x + d.bbox_w / 2.0) AS center_x,
             (d.bbox_y + d.bbox_h / 2.0) AS center_y,
             d.bbox_w,
             d.bbox_h,
-            {effective_species_sql("d")} AS species,
+            {species_sql} AS species,
             d.score,
             i.timestamp AS image_timestamp
         FROM detections d
         JOIN images i ON d.image_filename = i.filename
+        LEFT JOIN classifications c
+          ON c.detection_id = d.detection_id
+         AND c.rank = 1
+         AND COALESCE(c.status, 'active') = 'active'
         WHERE {_gallery_visibility_sql("d", "i")}
           AND d.bbox_x IS NOT NULL
           AND d.bbox_y IS NOT NULL

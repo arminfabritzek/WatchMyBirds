@@ -54,6 +54,9 @@ from utils.db import (
     fetch_detections_last_24h as _fetch_detections_last_24h,
 )
 from utils.db import (
+    fetch_gallery_total_species_count as _fetch_gallery_total_species_count,
+)
+from utils.db import (
     fetch_random_favorites as _fetch_random_favorites,
 )
 from utils.db import (
@@ -73,6 +76,9 @@ from utils.db import (
 )
 from utils.db import (
     fetch_species_timestamps as _fetch_species_timestamps,
+)
+from utils.db import (
+    fetch_species_story_board_candidates as _fetch_species_story_board_candidates,
 )
 from utils.db import (
     fetch_trash_count as _fetch_trash_count,
@@ -196,6 +202,25 @@ def fetch_daily_covers(conn, min_score: float = 0.0) -> list:
 
 def fetch_random_favorites(conn, limit: int = 6) -> list:
     return _fetch_random_favorites(conn, limit=limit)
+
+
+def fetch_gallery_total_species_count(conn) -> int:
+    return _fetch_gallery_total_species_count(conn)
+
+
+def fetch_species_story_board_candidates(
+    conn,
+    *,
+    total_limit: int = 12,
+    frames_per_species: int = 3,
+    excluded_species=None,
+) -> list:
+    return _fetch_species_story_board_candidates(
+        conn,
+        total_limit=total_limit,
+        frames_per_species=frames_per_species,
+        excluded_species=excluded_species,
+    )
 
 
 def fetch_detection_species_summary(conn, date_iso: str) -> list:

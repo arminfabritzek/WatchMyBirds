@@ -71,14 +71,9 @@ _species_summary_cache = {"timestamp": 0, "payload": None}
 _BEST_SPECIES_CACHE_TTL_SECONDS = 5 * 60
 _best_species_cache: dict = {"timestamp": 0.0, "payload": None}
 
-# All-time analytics summary cache. Plan 2026-05-07_PERFORMANCE_web-ttfb,
-# Phase 7: profile on .52 shows `db_service.fetch_analytics_summary` costs
-# ~1.3 s per `/` render — a single SQL `COUNT(*) GROUP BY species` over
-# the full detections table. Total detections / total species / date
-# range cannot meaningfully change sub-minute, so the same 5-min TTL
-# pragma as the best-species cache applies. Day-count is NOT cached
-# alongside (it advances throughout the day with new captures); only
-# the all-time aggregate goes through this cache.
+# All-time species-count cache. The stream page only renders the total species
+# scalar, so it should not run the heavier analytics summary (total detections
+# + date range) before first byte.
 _ANALYTICS_SUMMARY_CACHE_TTL_SECONDS = 5 * 60
 _analytics_summary_cache: dict = {"timestamp": 0.0, "payload": None}
 
@@ -240,58 +235,11 @@ def create_web_interface(detection_manager, system_monitor=None):
 
     def get_daily_covers():
         """Returns a dict of {YYYY-MM-DD: {path, bbox}} for gallery overview."""
-        covers = {}
         try:
-            detections = get_captured_detections()
-            by_date = {}
-            for det in detections:
-                date_key = _date_iso_from_timestamp(det.get("image_timestamp", ""))
-                if not date_key:
-                    continue
-                by_date.setdefault(date_key, []).append(det)
-
-            for date_key, day_detections in by_date.items():
-                chosen = _pick_cover_for_group(
-                    day_detections, seed_key=f"day:{date_key}", date_iso=date_key
-                )
-                if not chosen:
-                    continue
-
-                full_path = chosen.get("relative_path") or chosen.get(
-                    "optimized_name_virtual", ""
-                )
-                thumb_path_virtual = chosen.get("thumbnail_path_virtual")
-                if not full_path and not thumb_path_virtual:
-                    continue
-
-                if thumb_path_virtual:
-                    display_path = f"/uploads/derivatives/thumbs/{thumb_path_virtual}"
-                    is_thumb = True
-                else:
-                    display_path = f"/uploads/derivatives/optimized/{full_path}"
-                    is_thumb = False
-
-                # Count = number of observations (grouped visits)
-                obs = gallery_service.group_detections_into_observations(day_detections)
-                count = len(obs)
-
-                bbox = (
-                    chosen.get("bbox_x", 0.0),
-                    chosen.get("bbox_y", 0.0),
-                    chosen.get("bbox_w", 0.0),
-                    chosen.get("bbox_h", 0.0),
-                )
-
-                covers[date_key] = {
-                    "path": display_path,
-                    "bbox": bbox,
-                    "is_thumb": is_thumb,
-                    "count": count,
-                    "detection_id": chosen.get("detection_id"),
-                }
+            return gallery_service.get_daily_covers(COMMON_NAMES)
         except Exception as e:
             logger.error(f"Error reading daily covers from SQLite: {e}")
-        return covers
+        return {}
 
     def _bbox_touches_edge(det: dict, margin: float = 0.01) -> bool:
         """Return True if the detection's bounding box touches or exceeds the image edge.
@@ -522,6 +470,58 @@ def create_web_interface(detection_manager, system_monitor=None):
                 for frame in item.get("story_frames", []):
                     frame["species_colour"] = slot
         return enriched_board
+
+    def _build_best_species_story_board(
+        *,
+        total_limit: int = 12,
+        featured_count: int = 3,
+        frames_per_species: int = 3,
+    ) -> tuple[dict[str, list[dict]], list[dict]]:
+        """Build the all-time homepage board from a bounded SQL row set."""
+        with db_service.closing_connection() as conn:
+            rows = db_service.fetch_species_story_board_candidates(
+                conn,
+                total_limit=total_limit,
+                frames_per_species=frames_per_species,
+                excluded_species={UNKNOWN_SPECIES_KEY},
+            )
+
+        items_by_species: dict[str, dict] = {}
+        ordered_species: list[str] = []
+        modal_rows_by_id: dict[int, dict] = {}
+
+        for row in rows:
+            det = dict(row)
+            species_key = det.get("species_key") or UNKNOWN_SPECIES_KEY
+            if species_key not in items_by_species:
+                items_by_species[species_key] = {
+                    "species_key": species_key,
+                    "visit_count": int(det.get("visit_count") or 0),
+                    "last_seen_timestamp": det.get("last_seen_timestamp") or "",
+                    "best_cover_score": float(det.get("best_cover_score") or 0.0),
+                    "is_favorite_available": bool(
+                        int(det.get("is_favorite_available") or 0)
+                    ),
+                    "primary_detection": det,
+                    "story_detections": [],
+                }
+                ordered_species.append(species_key)
+
+            item = items_by_species[species_key]
+            item["story_detections"].append(det)
+            if int(det.get("frame_rank") or 0) == 1:
+                item["primary_detection"] = det
+
+            det_id = int(det.get("detection_id") or 0)
+            if det_id > 0:
+                modal_rows_by_id.setdefault(det_id, det)
+
+        board_items = [items_by_species[species] for species in ordered_species]
+        board = {
+            "featured": board_items[:featured_count],
+            "grid": board_items[featured_count:total_limit],
+        }
+        return board, list(modal_rows_by_id.values())
 
     def get_captured_detections_by_date():
         """
@@ -2394,32 +2394,24 @@ def create_web_interface(detection_manager, system_monitor=None):
                 logger.error(f"Error fetching 24h count: {e}")
 
             try:
-                # Phase 7: serve the all-time aggregate from a 5-min TTL
-                # cache when warm. The summary's COUNT(*) GROUP BY runs
-                # over the full detections table — ~1.3 s on Martin's
-                # 350 MB DB. Day-count (which advances during the day)
-                # stays uncached and runs every render.
-                _summary_cached = _analytics_summary_cache.get("payload")
+                # The stream page renders only the total species number from
+                # the all-time aggregate. Avoid hydrating the heavier analytics
+                # summary (total detections + date range) on every first page
+                # load; cache this scalar because it changes slowly.
+                _species_total_cached = _analytics_summary_cache.get("payload")
                 _summary_age = time.time() - float(
                     _analytics_summary_cache.get("timestamp") or 0.0
                 )
                 if (
-                    _summary_cached is not None
+                    isinstance(_species_total_cached, int)
                     and _summary_age < _ANALYTICS_SUMMARY_CACHE_TTL_SECONDS
                 ):
-                    summary = _summary_cached
+                    total_species = _species_total_cached
                 else:
-                    summary = db_service.fetch_analytics_summary(conn)
+                    total_species = db_service.fetch_gallery_total_species_count(conn)
                     _analytics_summary_cache["timestamp"] = time.time()
-                    _analytics_summary_cache["payload"] = summary
-                dashboard_stats["total_detections"] = summary.get("total_detections", 0)
-                dashboard_stats["total_species"] = summary.get("total_species", 0)
-                date_range = summary.get("date_range", {})
-                dashboard_stats["first_date"] = date_range.get("first")
-                dashboard_stats["last_date"] = date_range.get("last")
-                dashboard_stats["today_count"] = db_service.fetch_day_count(
-                    conn, today_iso
-                )
+                    _analytics_summary_cache["payload"] = total_species
+                dashboard_stats["total_species"] = total_species
             except Exception as e:
                 logger.error(f"Error fetching dashboard stats: {e}")
 
@@ -2721,12 +2713,8 @@ def create_web_interface(detection_manager, system_monitor=None):
             logger.error(f"Error fetching archive preview: {e}")
 
         # 5b. Best Species Story Board
-        # Phase 6 of the Web TTFB plan: serve from a 5-min TTL cache when
-        # warm. On Martin's 350 MB DB the rebuild costs ~3.5 s per `/`
-        # render (alone half the 8 s wall time); on a small DB it's
-        # cheap. Either way the board's top-12 don't shift sub-minute,
-        # so a short TTL is safe. Cache miss falls through to the full
-        # rebuild path below, which then refreshes the cache.
+        # Cache the bounded SQL result. The cold path now returns only the
+        # board rows instead of hydrating every all-time detection into Python.
         best_species_board = {"featured": [], "grid": []}
         best_species_preview = []
         best_species_modal_dets = []
@@ -2738,38 +2726,19 @@ def create_web_interface(detection_manager, system_monitor=None):
             best_species_modal_dets = cache_payload["modal_dets"]
         else:
             try:
-                all_detections = get_captured_detections()
-                best_species_board = _enrich_species_board(
-                    gallery_service.build_species_story_board(
-                        all_detections,
-                        total_limit=12,
-                        featured_count=3,
-                        excluded_species={UNKNOWN_SPECIES_KEY},
-                    )
+                raw_best_board, raw_best_modal_rows = _build_best_species_story_board(
+                    total_limit=12,
+                    featured_count=3,
+                    frames_per_species=3,
                 )
+                best_species_board = _enrich_species_board(raw_best_board)
                 best_species_preview = (
                     best_species_board.get("featured", [])
                     + best_species_board.get("grid", [])
                 )
 
-                # Build full modal-ready dicts for all board detections
-                best_det_ids = set()
-                for section in ("featured", "grid"):
-                    for item in best_species_board.get(section, []):
-                        if item.get("detection_id"):
-                            best_det_ids.add(item["detection_id"])
-                        for frame in item.get("story_frames", []):
-                            if frame.get("detection_id"):
-                                best_det_ids.add(frame["detection_id"])
-
-                if best_det_ids:
-                    all_by_id = {d.get("detection_id"): d for d in all_detections}
-                    for det_id in best_det_ids:
-                        raw = all_by_id.get(det_id)
-                        if raw:
-                            best_species_modal_dets.append(
-                                _build_modal_detection(raw)
-                            )
+                for raw in raw_best_modal_rows:
+                    best_species_modal_dets.append(_build_modal_detection(raw))
 
                 _best_species_cache["timestamp"] = time.time()
                 _best_species_cache["payload"] = {

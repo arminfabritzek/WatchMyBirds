@@ -10,8 +10,10 @@ from utils.db.detections import (
     fetch_detection_species_summary,
     fetch_detections_for_gallery,
     fetch_detections_last_24h,
+    fetch_gallery_total_species_count,
     fetch_hourly_counts,
     fetch_random_favorites,
+    fetch_species_story_board_candidates,
     fetch_sibling_detections,
 )
 
@@ -250,10 +252,25 @@ def test_visibility_policy_filters_gallery_like_surfaces():
         row["detection_id"] for row in fetch_random_favorites(conn, limit=10)
     }
     assert favorite_ids == {1, 2}
+    assert fetch_gallery_total_species_count(conn) == 2
+
+    board_rows = fetch_species_story_board_candidates(
+        conn,
+        total_limit=5,
+        frames_per_species=2,
+        excluded_species={"Unknown_species"},
+    )
+    board_ids = {row["detection_id"] for row in board_rows}
+    assert board_ids == {1, 2}
+    assert {row["species_key"] for row in board_rows} == {
+        "Visible_species",
+        "Mixed_species",
+    }
 
     covers = {
         row["date_key"]: {
             "relative_path": row["relative_path"],
+            "detection_id": row["detection_id"],
             "image_count": row["image_count"],
         }
         for row in fetch_daily_covers(conn, min_score=0.0)
@@ -261,6 +278,7 @@ def test_visibility_policy_filters_gallery_like_surfaces():
     assert covers["2026-03-27"]["relative_path"].endswith(
         "20260327_130000_mixed.webp"
     )
+    assert covers["2026-03-27"]["detection_id"] == 2
     assert covers["2026-03-27"]["image_count"] == 2
 
     assert "2026-03-28" not in covers

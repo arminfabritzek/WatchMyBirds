@@ -160,6 +160,7 @@ def get_daily_covers(common_names: dict[str, str] | None = None) -> dict[str, di
                     "bbox": bbox,
                     "is_thumb": is_thumb,
                     "count": row["image_count"],
+                    "detection_id": row["detection_id"],
                 }
     except Exception as e:
         logger.error(f"Error reading daily covers from SQLite: {e}")

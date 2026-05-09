@@ -103,6 +103,25 @@ def fetch_random_favorites(conn, limit: int = 6) -> list:
     return db_core.fetch_random_favorites(conn, limit=limit)
 
 
+def fetch_gallery_total_species_count(conn) -> int:
+    return db_core.fetch_gallery_total_species_count(conn)
+
+
+def fetch_species_story_board_candidates(
+    conn,
+    *,
+    total_limit: int = 12,
+    frames_per_species: int = 3,
+    excluded_species=None,
+) -> list:
+    return db_core.fetch_species_story_board_candidates(
+        conn,
+        total_limit=total_limit,
+        frames_per_species=frames_per_species,
+        excluded_species=excluded_species,
+    )
+
+
 def fetch_detection_species_summary(conn, date_iso: str) -> list:
     return db_core.fetch_detection_species_summary(conn, date_iso)
 
