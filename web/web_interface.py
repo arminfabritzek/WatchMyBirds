@@ -58,8 +58,7 @@ from web.services import (
 # In-Memory Caches
 _species_summary_cache = {"timestamp": 0, "payload": None}
 
-# Best-of-Species board cache. Plan 2026-05-07_PERFORMANCE_web-ttfb,
-# Phase 6: profile on Martin's 350 MB DB shows
+# Best-of-Species board cache: profiling shows
 # `build_species_story_board(all_detections)` costs ~3.5 s per `/` render
 # (alone half of the 8 s wall time). The board is an all-time aggregate
 # whose top-12 species cannot meaningfully change sub-minute, so a short
@@ -690,7 +689,7 @@ def create_web_interface(detection_manager, system_monitor=None):
 
     server.register_blueprint(moderation_bp)
 
-    # Register Training-Export Blueprint (Phase 1: approved-event ZIP)
+    # Register Training-Export Blueprint (approved-event ZIP)
     from utils.deploy_info import read_build_metadata
     from web.blueprints.training_export import (
         init_training_export_bp,
@@ -786,8 +785,8 @@ def create_web_interface(detection_manager, system_monitor=None):
         )
 
         # Cap concurrent /video_feed clients so a few zombie tabs cannot
-        # starve the Waitress worker pool. Plan 2026-05-07_PERFORMANCE_web-ttfb
-        # Phase 1: each MJPEG stream pins one worker thread for as long as
+        # starve the Waitress worker pool. Each MJPEG stream pins one
+        # worker thread for as long as
         # the browser keeps the TCP connection open; with 8 workers, even
         # a handful of forgotten tabs accumulating across days can block
         # every regular request. Cap at 2 (one desktop + one mobile is the
@@ -2228,7 +2227,7 @@ def create_web_interface(detection_manager, system_monitor=None):
             except ValueError:
                 return "Unknown"
 
-        # Phase 3 of the Web TTFB plan: callers populate this dict once via
+        # Callers populate this dict once via
         # gallery_service.fetch_sibling_detections_batch(...) before the
         # render loop, and _load_modal_siblings reads from it instead of
         # opening a new DB connection per detection. Falls back to the
@@ -2346,7 +2345,7 @@ def create_web_interface(detection_manager, system_monitor=None):
                 return "n/a"
 
         # 1. 24h Count + 1b. Dashboard Stats + 1c. Today Observation Stats
-        # Phase 2 of the Web TTFB plan: collapse three separate
+        # Collapse three separate
         # `closing_connection()` blocks into one — none of them write or
         # commit, so they are safe to share a single read transaction.
         # Per-section try/except is preserved so a DB error inside one
@@ -2444,7 +2443,7 @@ def create_web_interface(detection_manager, system_monitor=None):
 
         title = f"Live • {dashboard_stats.get('today_visits', 0)} Observations Today"
 
-        # Phase 3 of the Web TTFB plan: pre-fetch all sibling rows for
+        # Pre-fetch all sibling rows for
         # detections that the upcoming render loops will look up. Collects
         # original_names from the candidate sets (top-5 of 24h + today
         # rows + best-species pool gets added below) and issues one batch
@@ -2898,7 +2897,7 @@ def create_web_interface(detection_manager, system_monitor=None):
     server.add_url_rule("/", endpoint="index", view_func=index_route, methods=["GET"])
 
     # -----------------------------
-    # Admin profiling endpoint (Phase 0 of web TTFB plan)
+    # Admin profiling endpoint
     # -----------------------------
     # Behind @login_required only — same auth bar as /logs and /admin/review,
     # which already expose richer state. Returns a cProfile dump for one of a

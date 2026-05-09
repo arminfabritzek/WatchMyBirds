@@ -54,7 +54,7 @@ LAST_SENT_FILENAME = "telemetry_last_sent.txt"
 # Module-level wake-up Event: lets the toggle endpoint poke the
 # scheduler thread out of its sleep so the first heartbeat after
 # toggle-on goes within ~10ms instead of waiting up to one full
-# check_interval cycle (P3 of Phase 2 plan).
+# check_interval cycle.
 _wake_event = threading.Event()
 
 

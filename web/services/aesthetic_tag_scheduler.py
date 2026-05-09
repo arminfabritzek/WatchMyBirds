@@ -10,7 +10,6 @@ Why a thread instead of systemd:
   now share one scheduling mechanism.
 - Zero-touch deploy: pip install requirements + requirements-aesthetic
   is enough, no separate venv, no systemctl enable.
-- See agent_handoff/workflow/plans/2026-05-02_HANDOFF_aesthetic-tagger-in-app-scheduler.md
 
 Duplicate-send protection is minute-grained (guards against restart
 storms near the scheduled minute), mirroring report_scheduler.py.

@@ -31,6 +31,21 @@ def get_connection() -> sqlite3.Connection:
     conn.execute("PRAGMA journal_mode=WAL;")
     conn.execute("PRAGMA synchronous=NORMAL;")
     conn.execute("PRAGMA foreign_keys=ON;")
+    # Keep the DB resident in memory rather
+    # than re-reading pages from disk on every query. Originally proposed
+    # by the upstream fork-PR; profiling on a representative dataset confirmed
+    # the remaining hot path is dominated by SQL execute
+    # + fetchall, which mmap collapses to memory access.
+    #
+    # - mmap_size: maps the working set into the process's
+    #   address space; reads become memcpy from the OS page cache.
+    # - cache_size=100000 (negative would be KB; positive is page-count
+    #   so 100k × 4 KB ≈ 400 MB cache, large enough for the working set).
+    # - optimize=0x10002: enables both the always-on ANALYZE-when-needed
+    #   logic and the optimize-on-close pass below.
+    conn.execute("PRAGMA mmap_size=350000000;")
+    conn.execute("PRAGMA cache_size=100000;")
+    conn.execute("PRAGMA optimize=0x10002;")
     if db_path not in _schema_initialized_paths:
         _init_schema(conn)
         _schema_initialized_paths.add(db_path)
@@ -58,6 +73,13 @@ def closing_connection():
         conn.rollback()
         raise
     finally:
+        # Let SQLite run any pending ANALYZE work cheaply on close;
+        # paired with `PRAGMA optimize=0x10002;` in get_connection so
+        # statistics stay current without a manual maintenance window.
+        try:
+            conn.execute("PRAGMA optimize;")
+        except Exception:
+            pass
         conn.close()
 
 
