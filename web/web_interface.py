@@ -27,6 +27,7 @@ from flask import (
     session,
     url_for,
 )
+from flask_compress import Compress
 
 from config import (
     ensure_go2rtc_stream_synced,
@@ -569,6 +570,17 @@ def create_web_interface(detection_manager, system_monitor=None):
     template_folder = os.path.join(project_root, "templates")
     assets_folder = os.path.join(project_root, "assets")
     server = Flask(__name__, template_folder=template_folder)
+
+    # Compression for the response body:
+    # HTML and JSON. The index page renders to a few hundred KB (down
+    # from a multi-MB original once the best-species cache
+    # stopped inlining the all-time set, but still worth compressing).
+    # Flask-Compress only kicks in
+    # when the client advertises Accept-Encoding, falls back to the raw
+    # body otherwise, and skips the already-gzipped /uploads paths.
+    Compress(server)
+    server.config["COMPRESS_MIMETYPES"] = ["text/html", "application/json"]
+
     # Expose helper globally for imported Jinja macros (works without "with context").
     server.jinja_env.globals["wikipedia_species_url"] = (
         gallery_service.get_species_wikipedia_url
