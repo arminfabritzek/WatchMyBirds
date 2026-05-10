@@ -206,8 +206,14 @@ class DetectionManager:
         cls_conf: float,
         top_k_confidences: list[float] | None,
         species_key: str,
+        od_class_name: str | None = None,
     ) -> "ScoringResult":
-        """Delegate to :func:`scoring_pipeline.compute_detection_signals`."""
+        """Delegate to :func:`scoring_pipeline.compute_detection_signals`.
+
+        ``od_class_name`` routes deep-review reanalysis through the same
+        non-bird gate as live ingest. Omitting it preserves the legacy
+        bird-track-only behaviour for callers that have no class info.
+        """
         return compute_detection_signals(
             bbox=bbox,
             frame_shape=frame_shape,
@@ -218,6 +224,10 @@ class DetectionManager:
             temporal_service=self.temporal_decision_service,
             capability_registry=self.capability_registry,
             species_key=species_key,
+            od_class_name=od_class_name,
+            non_bird_confirm_threshold=self.config.get(
+                "NON_BIRD_CONFIRM_THRESHOLD", 0.80
+            ),
         )
 
     def run_exhaustive_scan(self, frame):
@@ -720,6 +730,25 @@ class DetectionManager:
                 if od_conf < save_thr:
                     continue
 
+                # Filter (A2): non-bird pre-persist gate. Non-bird OD classes
+                # ride OD confidence directly with no CLS sanity check, so a
+                # weaker floor than the bird track is the wrong default. Drop
+                # non-bird detections below NON_BIRD_CONFIRM_THRESHOLD entirely
+                # — no crop, no DB row, no derivative files. The downstream
+                # scoring pipeline would have gated them to UNCERTAIN anyway;
+                # this just stops them from costing disk and compute on the
+                # way there. Flip NON_BIRD_DROP_BELOW_CONFIRM=false to keep
+                # them in the DB as UNCERTAIN (e.g. during a Phase-7
+                # bbox-cluster collection window).
+                if not is_bird and self.config.get(
+                    "NON_BIRD_DROP_BELOW_CONFIRM", True
+                ):
+                    non_bird_floor = self.config.get(
+                        "NON_BIRD_CONFIRM_THRESHOLD", 0.80
+                    )
+                    if od_conf < non_bird_floor:
+                        continue
+
                 # Filter (B): sliding-window burst cap. When too many
                 # detections fire in a short window (e.g. sparrow flock),
                 # stop persisting until the burst subsides.
@@ -780,7 +809,7 @@ class DetectionManager:
                     species_key=species_key,
                     od_class_name=od_class_name,
                     non_bird_confirm_threshold=self.config.get(
-                        "SAVE_THRESHOLD", 0.65
+                        "NON_BIRD_CONFIRM_THRESHOLD", 0.80
                     ),
                 )
                 score = signals.score

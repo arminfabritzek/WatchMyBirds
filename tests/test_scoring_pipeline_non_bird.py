@@ -246,3 +246,114 @@ def test_default_od_class_name_is_bird_track():
         # no od_class_name, no non_bird_confirm_threshold
     )
     assert result.score == pytest.approx(0.8)  # bird track: score = cls_conf
+
+
+# ---------------------------------------------------------------------------
+# Default-threshold sourcing — pinned at 0.80 by the night-FP suppression plan
+# ---------------------------------------------------------------------------
+
+
+def test_default_non_bird_threshold_is_80():
+    """The default DEFAULT_NON_BIRD_CONFIRM_THRESHOLD is 0.80.
+
+    Live RPi data on 2026-05-10 showed marten_mustelid never exceeds OD
+    confidence 0.77 across 1760 detections in 7 days. A 0.80 default gates
+    every observed marten while leaving bird detections (separate track)
+    unaffected.
+    """
+    from detectors.services.scoring_pipeline import DEFAULT_NON_BIRD_CONFIRM_THRESHOLD
+
+    assert DEFAULT_NON_BIRD_CONFIRM_THRESHOLD == pytest.approx(0.80)
+
+
+def test_non_bird_marten_at_077_is_uncertain_with_default(
+    good_bbox,
+    hd_frame_shape,
+    decision_policy,
+    temporal_service,
+    capability_registry,
+):
+    """marten_mustelid at the observed live max (0.77) -> UNCERTAIN by default.
+
+    This is the key behaviour change: the same detection that would have
+    been CONFIRMED under the previous 0.65 default is now correctly
+    classified as UNCERTAIN, removing it from gallery / Stream / Telegram
+    surfaces while keeping it in the DB for review.
+    """
+    result = compute_detection_signals(
+        bbox=good_bbox,
+        frame_shape=hd_frame_shape,
+        od_conf=0.77,
+        cls_conf=0.0,
+        top_k_confidences=None,
+        decision_policy=decision_policy,
+        temporal_service=temporal_service,
+        capability_registry=capability_registry,
+        species_key="marten_mustelid",
+        od_class_name="marten_mustelid",
+        # no explicit non_bird_confirm_threshold -> use the new 0.80 default
+    )
+    assert result.decision_state == DecisionState.UNCERTAIN
+
+
+def test_non_bird_high_conf_cat_still_confirms_at_default(
+    good_bbox,
+    hd_frame_shape,
+    decision_policy,
+    temporal_service,
+    capability_registry,
+):
+    """A genuine cat sighting (od=0.90) still CONFIRMS at the new default.
+
+    Cats max out at 0.92 in the live data — they pass the 0.80 floor cleanly
+    when the OD model is genuinely confident. Only the low-confidence,
+    static-bbox night triggers fall through.
+    """
+    result = compute_detection_signals(
+        bbox=good_bbox,
+        frame_shape=hd_frame_shape,
+        od_conf=0.90,
+        cls_conf=0.0,
+        top_k_confidences=None,
+        decision_policy=decision_policy,
+        temporal_service=temporal_service,
+        capability_registry=capability_registry,
+        species_key="cat",
+        od_class_name="cat",
+        # no explicit non_bird_confirm_threshold -> use the new 0.80 default
+    )
+    assert result.decision_state == DecisionState.CONFIRMED
+
+
+def test_bird_track_at_077_unaffected_by_non_bird_default(
+    good_bbox,
+    hd_frame_shape,
+    decision_policy,
+    temporal_service,
+    capability_registry,
+):
+    """Bird detections at OD 0.77 are unaffected by the non-bird default.
+
+    Critical regression guard for long-sitter species: a Columba_palumbus
+    or Garrulus_glandarius detection at the same OD confidence as a flagged
+    marten must still flow through the bird track and be governed by CLS
+    confidence, not by NON_BIRD_CONFIRM_THRESHOLD.
+    """
+    result = compute_detection_signals(
+        bbox=good_bbox,
+        frame_shape=hd_frame_shape,
+        od_conf=0.77,
+        cls_conf=0.85,
+        top_k_confidences=[0.85, 0.05, 0.03, 0.02, 0.01],
+        decision_policy=decision_policy,
+        temporal_service=temporal_service,
+        capability_registry=capability_registry,
+        species_key="Columba_palumbus",
+        od_class_name="bird",
+        # no explicit non_bird_confirm_threshold -> default does not apply
+    )
+    # Bird track: score is driven by CLS, not OD. Decision policy uses
+    # CLS confidence and bbox quality; with CLS=0.85 and a healthy bbox
+    # this lands CONFIRMED regardless of OD being below 0.80.
+    assert result.score == pytest.approx(0.85)
+    assert result.decision_state == DecisionState.CONFIRMED

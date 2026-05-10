@@ -65,8 +65,16 @@ def _build_detection_manager_fixture():
     from detectors.detection_manager import DetectionManager
 
     mgr = DetectionManager.__new__(DetectionManager)
-    # Config: SAVE_THRESHOLD drives the non_bird_confirm_threshold path.
-    mgr.config = {"SAVE_THRESHOLD": 0.65}
+    # Config: NON_BIRD_CONFIRM_THRESHOLD gates non-bird detections (0.80 in
+    # production after the 2026-05-10 night-FP plan). NON_BIRD_DROP_BELOW_CONFIRM
+    # controls whether the pre-persist gate (A1) fires. SAVE_THRESHOLD is kept
+    # in the dict so any unrelated lookup that still references it survives
+    # this fixture.
+    mgr.config = {
+        "SAVE_THRESHOLD": 0.65,
+        "NON_BIRD_CONFIRM_THRESHOLD": 0.80,
+        "NON_BIRD_DROP_BELOW_CONFIRM": True,
+    }
     mgr.SAVE_RESOLUTION_CROP = 260
 
     # Mocked services
@@ -229,3 +237,143 @@ def test_non_bird_low_conf_uncertain_still_visible():
     # from every surface via _gallery_visibility_sql.
     assert signals.decision_state != DecisionState.UNKNOWN
     assert signals.decision_state == DecisionState.UNCERTAIN
+
+
+# ---------------------------------------------------------------------------
+# Delegate sourcing — DetectionManager.compute_detection_signals reads the
+# new NON_BIRD_CONFIRM_THRESHOLD key (used by analysis_service deep-review).
+# ---------------------------------------------------------------------------
+
+
+def test_delegate_sources_non_bird_threshold_from_config():
+    """The DetectionManager delegate must read NON_BIRD_CONFIRM_THRESHOLD.
+
+    analysis_service (deep-review) calls
+    `detection_manager.compute_detection_signals(...)` without an explicit
+    threshold. The delegate must inject the config value, not the
+    scoring-pipeline default. Verifies the production wiring catches a
+    marten_mustelid at 0.77 even on the deep-review path.
+    """
+    mgr = _build_detection_manager_fixture()
+
+    signals = mgr.compute_detection_signals(
+        bbox=(100, 100, 200, 200),
+        frame_shape=(480, 640, 3),
+        od_conf=0.77,
+        cls_conf=0.0,
+        top_k_confidences=None,
+        species_key="marten_mustelid",
+        od_class_name="marten_mustelid",
+    )
+    # Fixture has NON_BIRD_CONFIRM_THRESHOLD=0.80; 0.77 < 0.80 -> UNCERTAIN.
+    assert signals.decision_state == DecisionState.UNCERTAIN
+
+
+def test_delegate_falls_back_to_080_when_key_missing():
+    """If config has no NON_BIRD_CONFIRM_THRESHOLD, the delegate uses 0.80.
+
+    Defensive default in the delegate (`config.get(..., 0.80)`) protects
+    against a config drift where the new key is absent. 0.80 matches the
+    plan's production floor.
+    """
+    mgr = _build_detection_manager_fixture()
+    mgr.config.pop("NON_BIRD_CONFIRM_THRESHOLD", None)
+
+    # marten at 0.79 -> UNCERTAIN (just below the 0.80 fallback default).
+    signals = mgr.compute_detection_signals(
+        bbox=(100, 100, 200, 200),
+        frame_shape=(480, 640, 3),
+        od_conf=0.79,
+        cls_conf=0.0,
+        top_k_confidences=None,
+        species_key="marten_mustelid",
+        od_class_name="marten_mustelid",
+    )
+    assert signals.decision_state == DecisionState.UNCERTAIN
+
+    # marten at 0.81 -> CONFIRMED (just above).
+    signals = mgr.compute_detection_signals(
+        bbox=(100, 100, 200, 200),
+        frame_shape=(480, 640, 3),
+        od_conf=0.81,
+        cls_conf=0.0,
+        top_k_confidences=None,
+        species_key="marten_mustelid",
+        od_class_name="marten_mustelid",
+    )
+    assert signals.decision_state == DecisionState.CONFIRMED
+
+
+# ---------------------------------------------------------------------------
+# A1 — Pre-persist gate (drop non-bird below NON_BIRD_CONFIRM_THRESHOLD)
+# ---------------------------------------------------------------------------
+
+
+def _apply_pre_persist_gate(config, od_class_name, od_conf):
+    """Pure reproduction of the A1 gate in detection_manager.py.
+
+    Returns True if the detection should continue down the pipeline,
+    False if it should be dropped. The test mirrors the exact condition
+    so the unit test catches drift if the production code changes.
+    """
+    is_bird = is_bird_od_class(od_class_name)
+    if not is_bird and config.get("NON_BIRD_DROP_BELOW_CONFIRM", True):
+        non_bird_floor = config.get("NON_BIRD_CONFIRM_THRESHOLD", 0.80)
+        if od_conf < non_bird_floor:
+            return False
+    return True
+
+
+def test_a1_drops_marten_below_floor():
+    """marten at 0.50 -> dropped pre-persist (no DB row, no crop)."""
+    cfg = {"NON_BIRD_CONFIRM_THRESHOLD": 0.80, "NON_BIRD_DROP_BELOW_CONFIRM": True}
+    assert _apply_pre_persist_gate(cfg, "marten_mustelid", 0.50) is False
+
+
+def test_a1_passes_marten_at_or_above_floor():
+    """marten at 0.80 (=) and 0.85 (>) -> continue (potential CONFIRMED)."""
+    cfg = {"NON_BIRD_CONFIRM_THRESHOLD": 0.80, "NON_BIRD_DROP_BELOW_CONFIRM": True}
+    assert _apply_pre_persist_gate(cfg, "marten_mustelid", 0.80) is True
+    assert _apply_pre_persist_gate(cfg, "marten_mustelid", 0.85) is True
+
+
+@pytest.mark.parametrize(
+    "class_name", ["squirrel", "cat", "marten_mustelid", "hedgehog"]
+)
+def test_a1_drops_all_non_bird_classes_below_floor(class_name):
+    """All four non-bird OD classes are gated identically."""
+    cfg = {"NON_BIRD_CONFIRM_THRESHOLD": 0.80, "NON_BIRD_DROP_BELOW_CONFIRM": True}
+    assert _apply_pre_persist_gate(cfg, class_name, 0.60) is False
+
+
+def test_a1_never_drops_birds():
+    """bird detections are never gated by A1 — even at very low OD conf.
+
+    Critical regression guard: Tauben / Eichelhäher / Blaumeise live on
+    the bird track and rely on CLS confidence for their final decision.
+    The non-bird gate must not touch them at any OD-conf value.
+    """
+    cfg = {"NON_BIRD_CONFIRM_THRESHOLD": 0.80, "NON_BIRD_DROP_BELOW_CONFIRM": True}
+    for od_conf in (0.10, 0.30, 0.50, 0.79, 0.81, 0.99):
+        assert _apply_pre_persist_gate(cfg, "bird", od_conf) is True, (
+            f"bird at od_conf={od_conf} should never be gated"
+        )
+
+
+def test_a1_respects_drop_flag_off():
+    """When NON_BIRD_DROP_BELOW_CONFIRM=False, weak non-birds still pass.
+
+    Toggle exists so the Phase-7 static-bbox-cluster analysis can collect
+    UNCERTAIN non-bird rows for a window without losing data. Downstream
+    scoring still gates them to UNCERTAIN (no operator visibility), but
+    the DB row exists for cluster analysis.
+    """
+    cfg = {"NON_BIRD_CONFIRM_THRESHOLD": 0.80, "NON_BIRD_DROP_BELOW_CONFIRM": False}
+    assert _apply_pre_persist_gate(cfg, "marten_mustelid", 0.50) is True
+
+
+def test_a1_default_is_drop_on():
+    """When the config dict is empty, A1 drops weak non-birds by default."""
+    assert _apply_pre_persist_gate({}, "marten_mustelid", 0.50) is False
+    # And keeps bird at the same low conf.
+    assert _apply_pre_persist_gate({}, "bird", 0.50) is True

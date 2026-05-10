@@ -751,15 +751,15 @@ def create_web_interface(detection_manager, system_monitor=None):
             companion_bp,
             init_companion_bp,
         )
-        from web.services.companion.ollama_adapter import OllamaInferenceAdapter
+        from web.services.companion.factory import build_inference_client
         from web.services.companion.recorder import CompanionRecorder
         from web.services.companion.service import CompanionService
         from web.services.compute_lease_service import init_compute_lease_service
 
         lease_service = init_compute_lease_service(detection_manager)
-        companion_client = OllamaInferenceAdapter(
-            base_url=str(config.get("COMPANION_OLLAMA_URL", "http://127.0.0.1:11434")),
-            model_tag=str(config.get("COMPANION_OLLAMA_MODEL_TAG", "wmb-companion:1b-q4")),
+        companion_client = build_inference_client(
+            config,
+            model_base_path=str(config.get("MODEL_BASE_PATH", "./data/models")),
         )
         companion_recorder = CompanionRecorder(base_dir=output_dir)
         companion_service = CompanionService(
@@ -774,8 +774,12 @@ def create_web_interface(detection_manager, system_monitor=None):
         )
         init_companion_bp(companion_service)
         server.register_blueprint(companion_bp)
-        logger.info("Companion v1 backend registered (enabled=%s, model=%s)",
-                    companion_service.enabled, companion_client.model_id)
+        backend = str(config.get("COMPANION_INFERENCE_BACKEND", "llama_cpp"))
+        model_id = getattr(companion_client, "model_id", "<unconfigured>")
+        logger.info(
+            "Companion v1 backend registered (enabled=%s, backend=%s, model=%s)",
+            companion_service.enabled, backend, model_id,
+        )
     except Exception as exc:
         logger.error("Companion v1 backend registration failed: %s", exc, exc_info=True)
 
@@ -3044,6 +3048,7 @@ def create_web_interface(detection_manager, system_monitor=None):
     }
     RUNTIME_NUMBER_KEYS = {
         "SAVE_THRESHOLD",
+        "NON_BIRD_CONFIRM_THRESHOLD",
         "DETECTION_INTERVAL_SECONDS",
         "STREAM_FPS",
         "STREAM_FPS_CAPTURE",
@@ -3056,6 +3061,8 @@ def create_web_interface(detection_manager, system_monitor=None):
     SETTING_LABELS = {
         "SAVE_THRESHOLD": "OD Save Threshold (Minimum detector confidence to save image to disk; ignored in Auto mode)",
         "SAVE_THRESHOLD_MODE": "Save Threshold Mode (Auto: derive from active model · Manual: use Save Threshold value)",
+        "NON_BIRD_CONFIRM_THRESHOLD": "Non-bird Confidence Floor (Minimum OD confidence for marten/cat/squirrel/hedgehog to be saved and confirmed; birds use a separate CLS-based gate and are unaffected)",
+        "NON_BIRD_DROP_BELOW_CONFIRM": "Drop Non-bird Below Floor (When on, weak non-bird detections are dropped pre-persist — no DB row, no image saved. Off keeps them as UNCERTAIN for bbox-cluster analysis)",
         "DETECTION_INTERVAL_SECONDS": "Detection Interval (Seconds between AI analysis cycles - higher = less CPU)",
         "DAY_AND_NIGHT_CAPTURE": "24/7 Capture (Enable or disable night-time detection)",
         "DAY_AND_NIGHT_CAPTURE_LOCATION": "Sun Event Location (City name for sunrise/sunset checks)",
@@ -3090,6 +3097,8 @@ def create_web_interface(detection_manager, system_monitor=None):
         "VIDEO_SOURCE",
         "SAVE_THRESHOLD_MODE",
         "SAVE_THRESHOLD",
+        "NON_BIRD_CONFIRM_THRESHOLD",
+        "NON_BIRD_DROP_BELOW_CONFIRM",
         "MAX_DETECTIONS_PER_BURST",
         "BURST_WINDOW_SECONDS",
         "DETECTION_INTERVAL_SECONDS",

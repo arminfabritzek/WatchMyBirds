@@ -69,6 +69,16 @@ DEFAULTS = {
     # model_metadata.json). CONFIDENCE_THRESHOLD_DETECTION has been retired.
     "SAVE_THRESHOLD": 0.65,
     "SAVE_THRESHOLD_MODE": "auto",  # "auto" (derived from model) or "manual"
+    # Non-bird OD-confidence floor for CONFIRMED. Bird detections take a
+    # separate track in scoring_pipeline.py (CLS-based) and are unaffected.
+    # Tightens the gate against static-bbox night triggers (marten/cat/etc.)
+    # without touching long-sitter Tauben/Eichelhäher.
+    "NON_BIRD_CONFIRM_THRESHOLD": 0.80,
+    # When True (default), non-bird detections below NON_BIRD_CONFIRM_THRESHOLD
+    # are dropped pre-persist — no DB row, no crop, no derivative files. Flip
+    # to False to keep them as UNCERTAIN rows for Phase-7 static-bbox cluster
+    # analysis. Has no effect on bird detections.
+    "NON_BIRD_DROP_BELOW_CONFIRM": True,
     # Burst-cap (Filter B): max detections persisted within
     # BURST_WINDOW_SECONDS. Protects the review queue from being flooded by
     # flocks of common species (issue #32). Set MAX_DETECTIONS_PER_BURST to
@@ -158,6 +168,8 @@ DEFAULTS = {
 RUNTIME_KEYS = {
     "SAVE_THRESHOLD",
     "SAVE_THRESHOLD_MODE",
+    "NON_BIRD_CONFIRM_THRESHOLD",
+    "NON_BIRD_DROP_BELOW_CONFIRM",
     "DETECTION_INTERVAL_SECONDS",
     "DAY_AND_NIGHT_CAPTURE",
     "DAY_AND_NIGHT_CAPTURE_LOCATION",
@@ -265,6 +277,7 @@ def _load_config():
 
     for key in (
         "SAVE_THRESHOLD",
+        "NON_BIRD_CONFIRM_THRESHOLD",
         "DETECTION_INTERVAL_SECONDS",
         "BBOX_QUALITY_THRESHOLD",
         "SPECIES_CONF_THRESHOLD",
@@ -628,6 +641,7 @@ def _coerce_config_types(config):
         "INBOX_REQUIRE_EXIF_GPS",
         "MOTION_DETECTION_ENABLED",
         "ENABLE_NIGHTLY_DEEP_SCAN",
+        "NON_BIRD_DROP_BELOW_CONFIRM",
     ):
         if key in config:
             config[key] = _coerce_bool(config.get(key))
@@ -679,6 +693,7 @@ def _coerce_config_types(config):
     # Numeric values
     for key in (
         "SAVE_THRESHOLD",
+        "NON_BIRD_CONFIRM_THRESHOLD",
         "BBOX_QUALITY_THRESHOLD",
         "SPECIES_CONF_THRESHOLD",
         "UNKNOWN_SCORE_THRESHOLD",
@@ -983,6 +998,7 @@ def _validate_value(key, value):
         "DEBUG_MODE",
         "EXIF_GPS_ENABLED",
         "TRAINING_EXPORT_AUTO_OPT_IN",
+        "NON_BIRD_DROP_BELOW_CONFIRM",
     ):
         return True, _coerce_bool(value)
     if key == "SAVE_THRESHOLD_MODE":
@@ -992,6 +1008,7 @@ def _validate_value(key, value):
         return False, None
     if key in (
         "SAVE_THRESHOLD",
+        "NON_BIRD_CONFIRM_THRESHOLD",
         "BBOX_QUALITY_THRESHOLD",
         "SPECIES_CONF_THRESHOLD",
         "UNKNOWN_SCORE_THRESHOLD",

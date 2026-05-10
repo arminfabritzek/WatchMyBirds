@@ -19,9 +19,13 @@ from detectors.services.decision_policy_service import DecisionPolicyService
 from detectors.services.temporal_decision_service import TemporalDecisionService
 
 # Default OD-confidence threshold above which a non-bird detection is
-# considered CONFIRMED. Matches the app-wide SAVE_THRESHOLD default;
-# call-sites override via ``non_bird_confirm_threshold`` when needed.
-DEFAULT_NON_BIRD_CONFIRM_THRESHOLD = 0.65
+# considered CONFIRMED. Higher than SAVE_THRESHOLD because non-bird OD
+# classes (marten/cat/squirrel/hedgehog) ride OD confidence directly with
+# no CLS sanity check, so they need a stricter floor than bird detections
+# (which are gated on CLS confidence in a separate code path). Production
+# call-sites override via ``non_bird_confirm_threshold`` from
+# ``config["NON_BIRD_CONFIRM_THRESHOLD"]``.
+DEFAULT_NON_BIRD_CONFIRM_THRESHOLD = 0.80
 
 
 @dataclass

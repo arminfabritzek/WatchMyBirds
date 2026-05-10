@@ -224,6 +224,7 @@ def _build_detection_payload(
             else None
         ),
         species_key=cls_name or "unknown",
+        od_class_name=raw_detection.get("class_name") or None,
     )
 
     payload = _DeepReviewDetectionData(

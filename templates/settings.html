@@ -891,6 +891,67 @@
                 </div>
             </div>
 
+            <!-- ── Non-bird Confidence Floor ─────────────────────────
+                 Tighter gate for non-bird OD classes (marten/cat/squirrel/
+                 hedgehog). Birds run a separate CLS-based decision and are
+                 NOT affected by this knob. Designed against static-bbox
+                 night-FP triggers: marten max OD-conf on 1700+ live samples
+                 is 0.77, so 0.80 gates them all while a genuine cat near
+                 the feeder (max 0.92) still confirms. -->
+            <div class="settings-field mt-4">
+                <label class="settings-field__label" for="NON_BIRD_CONFIRM_THRESHOLD"
+                    title="Minimum OD confidence for non-bird species (marten, cat, squirrel, hedgehog) to be CONFIRMED. Birds use a separate CLS-gated track and are unaffected.">
+                    Non-bird Confidence Floor
+                </label>
+                <div class="d-flex align-items-center gap-2">
+                    <input type="number" step="0.05" min="0" max="1"
+                        name="NON_BIRD_CONFIRM_THRESHOLD" id="NON_BIRD_CONFIRM_THRESHOLD"
+                        class="form-control" style="max-width: 8rem;"
+                        value="{{ payload['NON_BIRD_CONFIRM_THRESHOLD'].value if 'NON_BIRD_CONFIRM_THRESHOLD' in payload else 0.80 }}">
+                    <span class="settings-field__help mb-0">marten · cat · squirrel · hedgehog</span>
+                </div>
+                <div class="settings-field__help">
+                    Bird detections ride a CLS sanity check, non-bird OD classes do
+                    not — so they need a stricter floor. Default <code>0.80</code>
+                    is calibrated against live RPi data: marten_mustelid peaks at
+                    OD-conf <code>0.77</code> on static-bbox night triggers, while
+                    a genuine cat near the feeder reaches <code>0.92</code>. Below
+                    this floor the detection is gated to UNCERTAIN and hidden from
+                    Stream / Gallery / Telegram. <strong>Bird detections
+                    (Tauben, Eichelhäher, Blaumeise, …) are not touched by this
+                    knob</strong> regardless of their OD confidence.
+                </div>
+            </div>
+
+            <!-- ── Drop Non-bird Below Floor (A1 pre-persist gate) ────
+                 When on, weak non-bird detections are dropped BEFORE the
+                 DB write — no row, no crop, no derivative files. Saves
+                 ~250 MB / night when marten background-triggers are
+                 active. Off keeps them as UNCERTAIN rows for Phase-7
+                 bbox-cluster analysis. -->
+            <div class="settings-field mt-3">
+                <label class="settings-field__label" for="NON_BIRD_DROP_BELOW_CONFIRM"
+                    title="When on (default), non-bird detections below the floor are dropped pre-persist — no DB row, no image saved. Off keeps them as UNCERTAIN for bbox-cluster analysis.">
+                    Drop Non-bird Below Floor
+                </label>
+                <select name="NON_BIRD_DROP_BELOW_CONFIRM" id="NON_BIRD_DROP_BELOW_CONFIRM"
+                    class="form-select" style="max-width: 12rem;">
+                    {% set _drop = payload['NON_BIRD_DROP_BELOW_CONFIRM'].value if 'NON_BIRD_DROP_BELOW_CONFIRM' in payload else true %}
+                    <option value="True" {% if _drop %}selected{% endif %}>On (recommended)</option>
+                    <option value="False" {% if not _drop %}selected{% endif %}>Off (collect for analysis)</option>
+                </select>
+                <div class="settings-field__help">
+                    <strong>On</strong>: non-bird detections below the floor are
+                    dropped before the database write — no image saved, no
+                    compute spent. Saves ~250 MB per night against static-bbox
+                    triggers like the marten background false positives.
+                    <strong>Off</strong>: keep them as UNCERTAIN rows in the DB
+                    (still hidden from Stream / Gallery / Telegram). Useful
+                    during a Phase-7 bbox-cluster collection window when you
+                    want to see where the FPs cluster on the camera.
+                </div>
+            </div>
+
             <!-- ── Burst cap (Filter B) ──────────────────────────────
                  Sliding-window cap on persisted detections, designed to
                  protect the review queue when a flock of common species
