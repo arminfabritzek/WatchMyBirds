@@ -69,6 +69,134 @@ def neon_for_species(
     return _NEON_PALETTE[slot]
 
 
+def _draw_check_icon(
+    canvas: np.ndarray,
+    centre: tuple[int, int],
+    *,
+    size: int,
+    color: tuple[int, int, int],
+    thickness: int = 3,
+) -> None:
+    """Draw a circled checkmark — used as the 'verified' glyph next to
+    the headline. ``size`` is the diameter of the surrounding circle.
+    Color is BGR, matching the rest of the canvas."""
+    cx, cy = centre
+    r = size // 2
+    cv2.circle(canvas, (cx, cy), r, color, thickness=thickness, lineType=cv2.LINE_AA)
+    # Checkmark — three points: bottom-left → bottom-centre → top-right.
+    p1 = (cx - r // 2, cy + 1)
+    p2 = (cx - r // 8, cy + r // 3)
+    p3 = (cx + r // 2, cy - r // 3)
+    cv2.line(canvas, p1, p2, color, thickness=thickness, lineType=cv2.LINE_AA)
+    cv2.line(canvas, p2, p3, color, thickness=thickness, lineType=cv2.LINE_AA)
+
+
+def _draw_calendar_icon(
+    canvas: np.ndarray,
+    top_left: tuple[int, int],
+    *,
+    size: int,
+    color: tuple[int, int, int],
+    thickness: int = 2,
+) -> None:
+    """Draw a small calendar glyph at ``top_left`` with the given side
+    ``size``. The glyph is a rounded rectangle with two vertical 'staple'
+    legs at the top and a single horizontal divider for the header row."""
+    x, y = top_left
+    cv2.rectangle(canvas, (x, y + size // 5), (x + size, y + size), color,
+                  thickness=thickness, lineType=cv2.LINE_AA)
+    # Staples on top
+    leg_h = size // 4
+    cv2.line(canvas, (x + size // 4, y), (x + size // 4, y + leg_h),
+             color, thickness=thickness, lineType=cv2.LINE_AA)
+    cv2.line(canvas, (x + 3 * size // 4, y), (x + 3 * size // 4, y + leg_h),
+             color, thickness=thickness, lineType=cv2.LINE_AA)
+    # Header divider
+    cv2.line(canvas, (x, y + size // 5 + size // 4),
+             (x + size, y + size // 5 + size // 4),
+             color, thickness=max(1, thickness - 1), lineType=cv2.LINE_AA)
+
+
+def _draw_pin_icon(
+    canvas: np.ndarray,
+    top_left: tuple[int, int],
+    *,
+    size: int,
+    color: tuple[int, int, int],
+    thickness: int = 2,
+) -> None:
+    """Draw a location-pin glyph: a circle on top, triangle pointing down."""
+    x, y = top_left
+    cx = x + size // 2
+    head_r = size // 3
+    cv2.circle(canvas, (cx, y + head_r + 1), head_r, color,
+               thickness=thickness, lineType=cv2.LINE_AA)
+    # Triangle from circle bottom to a point at (cx, y + size).
+    pts = np.array(
+        [
+            [cx - head_r + 1, y + head_r + thickness],
+            [cx + head_r - 1, y + head_r + thickness],
+            [cx, y + size],
+        ],
+        dtype=np.int32,
+    )
+    cv2.polylines(canvas, [pts], isClosed=False, color=color,
+                  thickness=thickness, lineType=cv2.LINE_AA)
+
+
+def _draw_camera_icon(
+    canvas: np.ndarray,
+    top_left: tuple[int, int],
+    *,
+    size: int,
+    color: tuple[int, int, int],
+    thickness: int = 2,
+) -> None:
+    """Draw a camera glyph: rounded body with a smaller hump on top and
+    a circular lens in the centre."""
+    x, y = top_left
+    body_top = y + size // 4
+    cv2.rectangle(canvas, (x, body_top), (x + size, y + size), color,
+                  thickness=thickness, lineType=cv2.LINE_AA)
+    # Top hump (the viewfinder bump)
+    hump_w = size // 3
+    hx = x + (size - hump_w) // 2
+    cv2.rectangle(canvas, (hx, y), (hx + hump_w, body_top), color,
+                  thickness=thickness, lineType=cv2.LINE_AA)
+    # Lens
+    lens_r = (size - body_top + y) // 3
+    cv2.circle(canvas, (x + size // 2, body_top + (size - body_top + y) // 2),
+               lens_r, color, thickness=thickness, lineType=cv2.LINE_AA)
+
+
+def _draw_heart_icon(
+    canvas: np.ndarray,
+    top_left: tuple[int, int],
+    *,
+    size: int,
+    color: tuple[int, int, int],
+    thickness: int = 2,
+) -> None:
+    """Draw a heart glyph — two top circles fused with a downward triangle."""
+    x, y = top_left
+    r = size // 4
+    cv2.circle(canvas, (x + r, y + r), r, color,
+               thickness=thickness, lineType=cv2.LINE_AA)
+    cv2.circle(canvas, (x + size - r, y + r), r, color,
+               thickness=thickness, lineType=cv2.LINE_AA)
+    # Tip triangle
+    pts = np.array(
+        [
+            [x + 1, y + r],
+            [x + size - 1, y + r],
+            [x + size // 2, y + size - 1],
+        ],
+        dtype=np.int32,
+    )
+    cv2.polylines(canvas, [pts], isClosed=False, color=color,
+                  thickness=thickness, lineType=cv2.LINE_AA)
+
+
 def _resize_cover(image: np.ndarray, width: int, height: int) -> np.ndarray:
     """Centre-crop *image* to fill *width* x *height* without distortion."""
     src_h, src_w = image.shape[:2]
@@ -83,6 +211,72 @@ def _resize_cover(image: np.ndarray, width: int, height: int) -> np.ndarray:
     y1 = max(0, (resized.shape[0] - height) // 2)
     x1 = max(0, (resized.shape[1] - width) // 2)
     return resized[y1 : y1 + height, x1 : x1 + width]
+
+
+def _bbox_aspect_crop(
+    image: np.ndarray,
+    bbox: tuple[int, int, int, int],
+    *,
+    target_w: int,
+    target_h: int,
+    margin: float = 0.55,
+) -> np.ndarray:
+    """Crop *image* to a (target_w / target_h) aspect window centred on
+    *bbox*, with a ``margin`` of bbox padding around the subject. The
+    crop window is shifted (not padded) when it would run off the
+    image edges, so the subject stays in frame and there are NO black
+    bars even for bboxes near the camera-frame edge.
+
+    Returns an image resized to target_w × target_h.
+
+    The bbox-centred shift behaviour is what differentiates this from
+    ``utils.image_ops.create_square_crop``: that helper uses
+    BORDER_CONSTANT padding when the desired window goes off-frame,
+    which produces visible black bands. Here we instead pull the
+    window back into the image, accepting that the bbox may no longer
+    sit exactly in the middle of the crop (it just stays inside it).
+    """
+    src_h, src_w = image.shape[:2]
+    bx1, by1, bx2, by2 = bbox
+    bbox_w = max(1, bx2 - bx1)
+    bbox_h = max(1, by2 - by1)
+    cx = (bx1 + bx2) // 2
+    cy = (by1 + by2) // 2
+
+    target_aspect = target_w / max(1, target_h)
+    # Pick a desired window: at least the bbox + margin in both
+    # dimensions, then expand whichever side is necessary to hit the
+    # aspect ratio.
+    desired_w = int(bbox_w * (1 + margin))
+    desired_h = int(bbox_h * (1 + margin))
+    # Match aspect by enlarging the smaller side.
+    if desired_w / desired_h < target_aspect:
+        desired_w = int(desired_h * target_aspect)
+    else:
+        desired_h = int(desired_w / target_aspect)
+    # Don't ask for more than the image has.
+    desired_w = min(desired_w, src_w)
+    desired_h = min(desired_h, src_h)
+    # If the image is too narrow/short for the aspect, downsize the
+    # other side too — the resize at the end will scale up.
+    if desired_w / desired_h > target_aspect:
+        desired_w = int(desired_h * target_aspect)
+    elif desired_w / desired_h < target_aspect:
+        desired_h = int(desired_w / target_aspect)
+
+    desired_w = max(2, desired_w)
+    desired_h = max(2, desired_h)
+
+    # Centre on bbox, then clamp into image bounds (shift instead of pad).
+    x1 = cx - desired_w // 2
+    y1 = cy - desired_h // 2
+    x1 = max(0, min(src_w - desired_w, x1))
+    y1 = max(0, min(src_h - desired_h, y1))
+    x2 = x1 + desired_w
+    y2 = y1 + desired_h
+
+    crop = image[y1:y2, x1:x2]
+    return cv2.resize(crop, (target_w, target_h), interpolation=cv2.INTER_AREA)
 
 
 def render_achievement_card(
@@ -274,21 +468,18 @@ def render_collector_card(
     colour_map: dict[str, int],
     device_label: str = "",
     date_label: str = "",
-    set_code: str = "",
 ) -> np.ndarray:
     """Render the daily 'collector card' summarising every species seen.
 
     Layout (top to bottom on 1080x1080):
 
-    * **Header band** — bold stats line ("6 ARTEN · 29 SICHTUNGEN") with
-      a wide neon glow halo. Date / device on a sub-line below.
-    * **Roster grid** — up to 6 species vignettes (2 columns × 3 rows
-      max). Each vignette is a square photo crop with a slot-coloured
-      neon border, the common name centred underneath in the species
-      hue, and the count as a small pill in the vignette's top-right.
-    * **Footer set-code** — discreet bottom strip with a "set code"
-      string ("30.04.2026 · 6/6") so the card reads as a unique daily
-      collectible, like a TCG card.
+    * **Header band** — compact stats line ("4 CONFIRMED SPECIES · 37
+      VISITS") with a wide neon glow halo. Date / device on a sub-line
+      below.
+    * **Roster grid** — up to 6 species vignettes in a near-square grid
+      (1 col for n=1, 2 cols for n=2/4, 3 cols for n=3/5/6). Each
+      vignette is a square photo crop with a slot-coloured neon border
+      and the common name centred underneath.
 
     The whole card uses a thicker, double-stacked frame (white outer
     + species-aware inner halo) to differentiate it from the per-species
@@ -303,8 +494,6 @@ def render_collector_card(
             hue as its standalone card earlier in the album.
         device_label: optional device name shown in the header sub-line.
         date_label: optional pre-formatted date shown in the header.
-        set_code: short identifier shown in the footer (e.g.
-            "30.04.2026 · 6 SPECIES"). Falls back to the date if empty.
     """
     canvas_w = CARD_SIZE
     canvas_h = CARD_SIZE
@@ -318,111 +507,235 @@ def render_collector_card(
     # species hue and reads as the "this is the daily set" frame.
     hero_rim, hero_glow = _NEON_PALETTE[6]
 
-    # 1. Outer double frame — wider than per-species cards so the
-    #    collector card feels like the "boss" of the album.
-    rim_inset = 14
-    # Outer halo (white, very wide bloom).
+    # 1. Outer double frame — tightened on HUMAN request so more of the
+    #    canvas is photo. Outer hairline at 6px from the edge, coloured
+    #    inner rim at +4. Total reclaimed: ~16px on every side vs. the
+    #    previous 14+6+14 stack.
+    rim_inset = 6
     draw_glow_rect(
         canvas,
         (rim_inset, rim_inset),
         (canvas_w - rim_inset - 1, canvas_h - rim_inset - 1),
         color=(245, 250, 255),
-        thickness=3,
-        glow_radius=58,
-        glow_intensity=1.4,
-        radius=32,
+        thickness=2,
+        glow_radius=36,
+        glow_intensity=1.3,
+        radius=22,
     )
-    # Coloured inner rim (hero hue).
     draw_glow_rect(
         canvas,
-        (rim_inset + 6, rim_inset + 6),
-        (canvas_w - rim_inset - 7, canvas_h - rim_inset - 7),
+        (rim_inset + 4, rim_inset + 4),
+        (canvas_w - rim_inset - 5, canvas_h - rim_inset - 5),
         color=hero_rim,
-        thickness=14,
-        glow_radius=28,
-        glow_intensity=1.7,
-        radius=26,
+        thickness=8,
+        glow_radius=20,
+        glow_intensity=1.6,
+        radius=18,
     )
 
-    # 2. Header band: "X ARTEN · Y SICHTUNGEN".
-    total_obs = sum(int(s.get("count", 0) or 0) for s in species)
-    art_label = "ART" if n == 1 else "ARTEN"
-    obs_label = "SICHTUNG" if total_obs == 1 else "SICHTUNGEN"
-    headline = f"{n} {art_label}  ·  {total_obs} {obs_label}"
-    header_y = 96
+    # 2. Header band — single centred headline "✓ N CONFIRMED SPECIES",
+    #    with a sub-line below it carrying a calendar-icon date and a
+    #    pin-icon device label, separated by a thin divider. The total
+    #    visit count was removed on HUMAN request: aggregate numbers
+    #    competed with the per-vignette visit counts and the headline
+    #    became noisy.
+    species_word = "SPECIES"  # singular/plural identical, like in EN news headlines
+    headline = f"{n} CONFIRMED {species_word}"
+    headline_size = 36
+    headline_y = 56
+    # Measure the headline so we can place a check-icon to its left.
+    headline_w, _ = measure_text(headline, size=headline_size, bold=True)
+    icon_size = 32
+    icon_gap = 14
+    block_w = icon_size + icon_gap + headline_w
+    block_x = (canvas_w - block_w) // 2
+    icon_cx = block_x + icon_size // 2
+    icon_cy = headline_y
+    _draw_check_icon(
+        canvas,
+        (icon_cx, icon_cy),
+        size=icon_size,
+        color=hero_rim,
+        thickness=3,
+    )
     draw_text_with_glow(
         canvas,
         headline,
-        (canvas_w // 2, header_y),
-        size=58,
+        (block_x + icon_size + icon_gap, headline_y),
+        size=headline_size,
         color=(248, 250, 255),
         glow_color=hero_glow,
-        glow_radius=22,
-        glow_intensity=1.8,
+        glow_radius=14,
+        glow_intensity=1.5,
         bold=True,
-        anchor="mm",
+        anchor="lm",  # left-middle: anchor at the start of the text
     )
 
-    # Sub-line: date + device, all-caps.
-    sub_parts = [p for p in (date_label, device_label) if p]
-    if sub_parts:
-        sub_text = "   ·   ".join(p.upper() for p in sub_parts)
-        draw_text(
-            canvas,
-            sub_text,
-            (canvas_w // 2, header_y + 50),
-            size=24,
-            color=(180, 190, 205),
-            bold=True,
-            anchor="mm",
-        )
+    # Sub-line: optional calendar+date and pin+device with a vertical
+    # divider between them when both are present.
+    sub_y = headline_y + 38
+    sub_text_size = 20
+    sub_color = (180, 190, 205)
+    sub_icon_size = 22
+    sub_icon_gap = 10
 
-    # 3. Roster grid. 2 columns × up to 3 rows. Each vignette is a
-    #    square photo crop with a slot-coloured neon border and a
-    #    species-name strip underneath. Precise grid math depends on n
-    #    so a 3-species card centres nicely in the available area.
-    grid_top = 200
-    grid_bottom = canvas_h - 110
-    grid_left = 64
-    grid_right = canvas_w - 64
+    date_text = (date_label or "").upper()
+    device_text = (device_label or "").upper()
+
+    # Pre-measure each segment's width so we can centre-align the whole
+    # sub-line. Each segment is "[icon] [icon_gap] [text]".
+    segments: list[tuple[str, str]] = []  # (kind, text)
+    if date_text:
+        segments.append(("calendar", date_text))
+    if device_text:
+        segments.append(("pin", device_text))
+
+    if segments:
+        seg_widths = []
+        for kind, text in segments:
+            tw, _ = measure_text(text, size=sub_text_size, bold=True)
+            seg_widths.append(sub_icon_size + sub_icon_gap + tw)
+        divider_w = 28  # space + thin vertical bar + space between segments
+        total_w = sum(seg_widths) + divider_w * (len(segments) - 1)
+        cursor_x = (canvas_w - total_w) // 2
+
+        for idx, (kind, text) in enumerate(segments):
+            icon_y = sub_y - sub_icon_size // 2
+            if kind == "calendar":
+                _draw_calendar_icon(
+                    canvas,
+                    (cursor_x, icon_y),
+                    size=sub_icon_size,
+                    color=hero_rim,
+                    thickness=2,
+                )
+            else:
+                _draw_pin_icon(
+                    canvas,
+                    (cursor_x, icon_y),
+                    size=sub_icon_size,
+                    color=hero_rim,
+                    thickness=2,
+                )
+            text_x = cursor_x + sub_icon_size + sub_icon_gap
+            draw_text(
+                canvas,
+                text,
+                (text_x, sub_y),
+                size=sub_text_size,
+                color=sub_color,
+                bold=True,
+                anchor="lm",
+            )
+            cursor_x += seg_widths[idx]
+            if idx < len(segments) - 1:
+                # Thin vertical divider between segments.
+                bar_x = cursor_x + divider_w // 2
+                cv2.line(
+                    canvas,
+                    (bar_x, sub_y - 10),
+                    (bar_x, sub_y + 10),
+                    (90, 100, 115),
+                    thickness=1,
+                    lineType=cv2.LINE_AA,
+                )
+                cursor_x += divider_w
+
+    # 3. Roster grid. We pick the column count to keep the grid as
+    #    square as possible:
+    #      n=1 → 1 col            n=4 → 2 cols (2×2)
+    #      n=2 → 2 cols           n=5 → 3 cols (3+2)
+    #      n=3 → 3 cols           n=6 → 3 cols (3×3 → 3×2)
+    #    The 2×2 case for n=4 is symmetric and reads better than 3+1.
+    #    Grid is bracketed top by the sub-line and bottom by the
+    #    "Keep watching" banner.
+    grid_top = 120
+    grid_bottom = canvas_h - 100  # banner takes the bottom ~68px (32 rim + 36 banner)
+    grid_left = 22
+    grid_right = canvas_w - 22
     grid_w = grid_right - grid_left
     grid_h = grid_bottom - grid_top
 
-    cols = 2 if n > 1 else 1
+    if n <= 0:
+        cols = 1
+    elif n == 4:
+        cols = 2
+    else:
+        cols = min(3, n)
     rows = max(1, (n + cols - 1) // cols)
-    cell_gap = 28
-    cell_w = (grid_w - (cols - 1) * cell_gap) // cols
-    cell_h = (grid_h - (rows - 1) * cell_gap) // rows
-    # Reserve the bottom 64px of each cell for the species name strip.
-    photo_h_in_cell = cell_h - 64
+    cell_gap = 12
+    # The name strip carries three lines: common name + scientific
+    # name + visit count. 120px is comfortable.
+    name_strip_h = 120
+
+    # Photo width = full cell-width budget. Photo height = whatever's
+    # left in the cell after the name strip. This intentionally stops
+    # forcing photos into a square — real frames are 16:9 / 4:3, and
+    # photos now spread out to fill the available width AND height
+    # of each cell, eliminating the side-gutters that the previous
+    # square-clamp logic produced (especially at n=4 where cells were
+    # ~470 wide but photos clamped to ~272).
+    cell_w_budget = (grid_w - (cols - 1) * cell_gap) // cols
+    cell_h_budget = (grid_h - (rows - 1) * cell_gap) // rows
+    photo_w_in_cell = cell_w_budget
+    photo_h_in_cell = cell_h_budget - name_strip_h
+    # Guard against pathological cases (n=1 fills the whole canvas, photo
+    # could be obscenely tall). Cap the height at 1.4x the width so the
+    # frame stays roughly photographic.
+    max_photo_h = int(photo_w_in_cell * 1.4)
+    if photo_h_in_cell > max_photo_h:
+        photo_h_in_cell = max_photo_h
+    cell_w = photo_w_in_cell
+    cell_h = photo_h_in_cell + name_strip_h
 
     for idx, entry in enumerate(species):
         row = idx // cols
         col = idx % cols
-        # When the last row is partial (3 species → row 1 has only 1),
-        # centre the trailing cells in the row.
+        # When the last row is partial (e.g. 5 species over a 3-col
+        # grid → row 1 has only 2), centre the trailing cells in the row.
         items_in_row = min(cols, n - row * cols)
         row_w = items_in_row * cell_w + (items_in_row - 1) * cell_gap
-        row_x0 = grid_left + (grid_w - row_w) // 2
-        x0 = row_x0 + col * (cell_w + cell_gap)
+        row_x0 = (canvas_w - row_w) // 2
+        x0_cell = row_x0 + col * (cell_w + cell_gap)
         y0 = grid_top + row * (cell_h + cell_gap)
+        # Photo and cell share the same width now — no inner offset.
+        x0 = x0_cell
 
         # Per-species hue.
         scientific = str(entry.get("scientific") or entry.get("common_name") or "")
         rim_color, glow_color = neon_for_species(scientific, colour_map)
 
-        # 3a. Photo cropped to fill the cell's photo region.
+        # 3a. Photo cropped to fill the cell's photo region. When the
+        #     entry carries a pixel bbox, we do a bbox-aware crop at
+        #     the cell's aspect ratio (4:3 / similar) so the bird stays
+        #     centred AND the cell fills cleanly without black bars.
+        #     Without a bbox we fall back to a centred resize-cover.
         photo = entry.get("photo")
-        if photo is not None:
-            fitted = _resize_cover(photo, cell_w, photo_h_in_cell)
-            canvas[y0 : y0 + photo_h_in_cell, x0 : x0 + cell_w] = fitted
+        bbox_px = entry.get("bbox_px")
+        fallback_photo = entry.get("fallback_photo")
+        fitted = None
+        if photo is not None and bbox_px is not None:
+            try:
+                fitted = _bbox_aspect_crop(
+                    photo, bbox_px,
+                    target_w=photo_w_in_cell, target_h=photo_h_in_cell,
+                    margin=0.55,
+                )
+            except Exception:
+                fitted = None
+        if fitted is None and photo is not None:
+            fitted = _resize_cover(photo, photo_w_in_cell, photo_h_in_cell)
+        if fitted is None and fallback_photo is not None:
+            fitted = _resize_cover(fallback_photo, photo_w_in_cell, photo_h_in_cell)
+        if fitted is not None:
+            canvas[y0 : y0 + photo_h_in_cell, x0 : x0 + photo_w_in_cell] = fitted
 
         # 3b. Vignette neon border (rim only, no glow inside the photo
         #     so the bird stays visible).
         draw_glow_rect(
             canvas,
             (x0, y0),
-            (x0 + cell_w - 1, y0 + photo_h_in_cell - 1),
+            (x0 + photo_w_in_cell - 1, y0 + photo_h_in_cell - 1),
             color=rim_color,
             thickness=6,
             glow_radius=14,
@@ -430,83 +743,150 @@ def render_collector_card(
             radius=12,
         )
 
-        # 3c. Count pill in the cell's top-right corner.
-        count = int(entry.get("count", 0) or 0)
-        count_text = f"{count}×"
-        count_size = 26
-        cw, ch = measure_text(count_text, size=count_size, bold=True)
-        pill_w = cw + 22
-        pill_h = ch + 14
-        pill_x2 = x0 + cell_w - 12
-        pill_x1 = pill_x2 - pill_w
-        pill_y1 = y0 + 12
-        pill_y2 = pill_y1 + pill_h
-        draw_glow_pill(
-            canvas,
-            (pill_x1, pill_y1),
-            (pill_x2, pill_y2),
-            fill=rim_color,
-            glow_color=glow_color,
-            glow_radius=18,
-            glow_intensity=1.6,
-        )
-        draw_text(
-            canvas,
-            count_text,
-            (pill_x1 + pill_w // 2, pill_y1 + pill_h // 2),
-            size=count_size,
-            color=(15, 15, 18),
-            bold=True,
-            anchor="mm",
-        )
-
-        # 3d. Species name strip underneath the photo.
-        name_y = y0 + photo_h_in_cell + 30
+        # 3c. Species name strip — three stacked lines below the photo:
+        #       1. Common name (large, all-caps, glow-stroked). Italic
+        #          when the resolved name is itself a Latin / genus
+        #          fallback (e.g. "Phoenicurus (Art unklar)" — the
+        #          ``common_is_latin`` flag from
+        #          daily_report._resolve_common_name).
+        #       2. Scientific name (smaller, dimmer, ITALIC — Latin
+        #          binomial convention from field guides). Suppressed
+        #          when the common name is itself Latin to avoid the
+        #          "Phoenicurus (Art unklar) / Phoenicurus sp." doublet.
+        #       3. Visit count (large coloured number + "VISITS" suffix).
         common = str(entry.get("common_name") or scientific.replace("_", " "))
-        # Clip names that are too long for narrow cells.
-        max_chars = max(8, cell_w // 22)
-        if len(common) > max_chars:
-            common = common[: max_chars - 1].rstrip() + "…"
+        common_is_latin = bool(entry.get("common_is_latin", False))
+        sci_label = scientific.replace("_", " ").strip()
+        count = int(entry.get("count", 0) or 0)
+        visits_word = "VISIT" if count == 1 else "VISITS"
+
+        common_max = max(8, cell_w // 22)
+        if len(common) > common_max:
+            common = common[: common_max - 1].rstrip() + "…"
+        sci_max = max(10, cell_w // 14)
+        if len(sci_label) > sci_max:
+            sci_label = sci_label[: sci_max - 1].rstrip() + "…"
+
+        # Y positions: common name baseline 24px below photo, scientific
+        # name 26px below that, count line 36px below scientific.
+        # When the common name is already Latin we skip the scientific
+        # subline entirely and shift the count up to fill the gap.
+        common_y = y0 + photo_h_in_cell + 24
+        if common_is_latin:
+            sci_y = None
+            count_y = common_y + 36
+        else:
+            sci_y = common_y + 26
+            count_y = sci_y + 36
+
+        cell_cx = x0_cell + cell_w // 2
+
         draw_text_with_glow(
             canvas,
             common.upper(),
-            (x0 + cell_w // 2, name_y),
-            size=30,
+            (cell_cx, common_y),
+            size=28,
             color=(245, 250, 255),
             glow_color=glow_color,
             glow_radius=10,
             glow_intensity=1.3,
             bold=True,
+            italic=common_is_latin,
             anchor="mm",
         )
-
-    # 4. Footer "set code" — bottom strip below the grid.
-    footer_text = (set_code or date_label or "").upper()
-    if footer_text:
-        # Tag styled like "30.04.2026  ·  6 / 6  COLLECTED"
-        if "·" not in footer_text:
-            footer_text = f"{footer_text}   ·   {n} / {n}   COLLECTED"
+        if sci_y is not None:
+            draw_text(
+                canvas,
+                sci_label,
+                (cell_cx, sci_y),
+                size=18,
+                color=(160, 170, 185),
+                bold=False,
+                italic=True,
+                anchor="mm",
+            )
+        # Visit count: big tinted number + small uppercased "VISITS".
+        count_text = str(count)
+        count_w, _ = measure_text(count_text, size=30, bold=True)
+        gap = 8
+        word_w, _ = measure_text(visits_word, size=15, bold=True)
+        line_w = count_w + gap + word_w
+        line_x0 = cell_cx - line_w // 2
         draw_text(
             canvas,
-            footer_text,
-            (canvas_w // 2, canvas_h - 56),
-            size=22,
-            color=(170, 178, 190),
+            count_text,
+            (line_x0, count_y),
+            size=30,
+            color=glow_color,
             bold=True,
-            anchor="mm",
+            anchor="lm",
+        )
+        draw_text(
+            canvas,
+            visits_word,
+            (line_x0 + count_w + gap, count_y + 2),
+            size=15,
+            color=(170, 180, 195),
+            bold=True,
+            anchor="lm",
         )
 
-    # 5. Tiny watermark "SAMMELKARTE" on the very bottom edge — nothing
-    #    overlapping the rim, just a small label so the operator sees
-    #    this card differs from the per-species cards.
+    # 4. Bottom-right pill — "[heart] Thanks to nature!" sign-off on a
+    #    short translucent slab. The slab is sized to the content (icon
+    #    + gap + text + horizontal padding) instead of running canvas-
+    #    wide, so the empty left side from the removed "Keep watching"
+    #    text doesn't draw a long ghost line.
+    banner_y_top = canvas_h - 88
+    banner_y_bot = canvas_h - 44
+    banner_cy = (banner_y_top + banner_y_bot) // 2
+    banner_icon_size = 22
+    banner_text_size = 19
+    pill_pad_x = 22
+    icon_text_gap = 14
+    right_canvas_margin = 60
+
+    thanks_text = "Thanks to nature!"
+    thanks_w, _ = measure_text(thanks_text, size=banner_text_size, bold=True)
+    pill_inner_w = banner_icon_size + icon_text_gap + thanks_w
+    pill_w = pill_inner_w + 2 * pill_pad_x
+    pill_x2 = canvas_w - right_canvas_margin
+    pill_x1 = pill_x2 - pill_w
+
+    overlay = canvas.copy()
+    cv2.rectangle(
+        overlay,
+        (pill_x1, banner_y_top),
+        (pill_x2, banner_y_bot),
+        (18, 22, 30),
+        thickness=-1,
+        lineType=cv2.LINE_AA,
+    )
+    cv2.addWeighted(overlay, 0.65, canvas, 0.35, 0, dst=canvas)
+    cv2.rectangle(
+        canvas,
+        (pill_x1, banner_y_top),
+        (pill_x2, banner_y_bot),
+        (60, 70, 85),
+        thickness=1,
+        lineType=cv2.LINE_AA,
+    )
+
+    heart_x = pill_x1 + pill_pad_x
+    _draw_heart_icon(
+        canvas,
+        (heart_x, banner_cy - banner_icon_size // 2),
+        size=banner_icon_size,
+        color=hero_rim,
+        thickness=2,
+    )
     draw_text(
         canvas,
-        "· SAMMELKARTE ·",
-        (canvas_w // 2, canvas_h - 30),
-        size=16,
-        color=(120, 130, 145),
+        thanks_text,
+        (heart_x + banner_icon_size + icon_text_gap, banner_cy),
+        size=banner_text_size,
+        color=(220, 228, 240),
         bold=True,
-        anchor="mm",
+        anchor="lm",
     )
 
     return canvas

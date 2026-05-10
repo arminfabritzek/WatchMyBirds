@@ -37,22 +37,34 @@ from PIL import Image, ImageDraw, ImageFilter, ImageFont
 REPO_ROOT = Path(__file__).resolve().parent.parent
 _BUNDLED_FONTS_DIR = REPO_ROOT / "assets" / "fonts"
 
-# Searched in order. Each tuple is (regular_path, bold_path); the first
-# pair where regular_path exists wins.
-_FONT_CANDIDATES: list[tuple[str, str]] = [
+# Searched in order. Each tuple has four slots:
+#   (regular_path, bold_path, italic_path, bold_italic_path)
+# The first tuple whose regular_path exists wins. Italic / bold-italic
+# may be empty strings — the loader then falls back to italic→regular
+# (and a transform-shear could be added later if italic ever matters
+# enough on a font that doesn't ship one).
+_FONT_CANDIDATES: list[tuple[str, str, str, str]] = [
     (
         str(_BUNDLED_FONTS_DIR / "DejaVuSans.ttf"),
         str(_BUNDLED_FONTS_DIR / "DejaVuSans-Bold.ttf"),
+        str(_BUNDLED_FONTS_DIR / "DejaVuSans-Oblique.ttf"),
+        str(_BUNDLED_FONTS_DIR / "DejaVuSans-BoldOblique.ttf"),
     ),
     (
         "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
         "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Oblique.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-BoldOblique.ttf",
     ),
     (
         "/System/Library/Fonts/Supplemental/Arial.ttf",
         "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
+        "/System/Library/Fonts/Supplemental/Arial Italic.ttf",
+        "/System/Library/Fonts/Supplemental/Arial Bold Italic.ttf",
     ),
     (
+        "/System/Library/Fonts/Helvetica.ttc",
+        "/System/Library/Fonts/Helvetica.ttc",
         "/System/Library/Fonts/Helvetica.ttc",
         "/System/Library/Fonts/Helvetica.ttc",
     ),
@@ -73,28 +85,50 @@ def _boost_alpha(layer: Image.Image, intensity: float) -> Image.Image:
     return layer
 
 
-@lru_cache(maxsize=64)
+@lru_cache(maxsize=128)
 def _resolve_font(
-    size: int, bold: bool = False
+    size: int, bold: bool = False, italic: bool = False
 ) -> "ImageFont.FreeTypeFont | ImageFont.ImageFont":
-    """Return an ImageFont at the requested size, bold or regular."""
-    for regular, bold_path in _FONT_CANDIDATES:
-        path = bold_path if bold else regular
-        if os.path.isfile(path):
-            try:
-                return ImageFont.truetype(path, size=size)
-            except (OSError, ValueError):
-                continue
+    """Return an ImageFont at the requested size, bold/italic combination.
+
+    Slot picking inside each candidate tuple:
+      bold + italic → slot 3 (bold-italic)
+      italic        → slot 2
+      bold          → slot 1
+      regular       → slot 0
+
+    Empty / missing-on-disk slots fall back to the closest match: a
+    missing italic falls back to the regular weight of the same family
+    (so the renderer doesn't accidentally jump to a different family
+    just because the italic file isn't there).
+    """
+    for slot_regular, slot_bold, slot_italic, slot_bold_italic in _FONT_CANDIDATES:
+        if bold and italic:
+            primary = slot_bold_italic or slot_italic or slot_bold or slot_regular
+        elif italic:
+            primary = slot_italic or slot_regular
+        elif bold:
+            primary = slot_bold or slot_regular
+        else:
+            primary = slot_regular
+        if not primary or not os.path.isfile(primary):
+            continue
+        try:
+            return ImageFont.truetype(primary, size=size)
+        except (OSError, ValueError):
+            continue
     return ImageFont.load_default()
 
 
-def measure_text(text: str, *, size: int, bold: bool = False) -> tuple[int, int]:
+def measure_text(
+    text: str, *, size: int, bold: bool = False, italic: bool = False
+) -> tuple[int, int]:
     """Return (width, height) of *text* rendered at the given size.
 
     Used by callers that need to right-align or centre text without
     drawing a sacrificial copy first.
     """
-    font = _resolve_font(size, bold=bold)
+    font = _resolve_font(size, bold=bold, italic=italic)
     # Pillow >= 10 uses textbbox; fall back gracefully for older versions.
     try:
         bbox = font.getbbox(text)
@@ -113,6 +147,7 @@ def draw_text(
     size: int,
     color: tuple[int, int, int],
     bold: bool = False,
+    italic: bool = False,
     anchor: str = "lt",
 ) -> np.ndarray:
     """Draw *text* onto a BGR numpy image and return the modified image.
@@ -139,7 +174,7 @@ def draw_text(
     if not text:
         return bgr_image
 
-    font = _resolve_font(size, bold=bold)
+    font = _resolve_font(size, bold=bold, italic=italic)
     # OpenCV BGR -> PIL RGB. Pillow's draw works on RGB Images.
     rgb = cv2.cvtColor(bgr_image, cv2.COLOR_BGR2RGB)
     pil_image = Image.fromarray(rgb)
@@ -170,6 +205,7 @@ def draw_text_with_glow(
     glow_radius: int = 8,
     glow_intensity: float = 1.0,
     bold: bool = False,
+    italic: bool = False,
     anchor: str = "lt",
 ) -> np.ndarray:
     """Draw text with a soft outer glow (Pillow GaussianBlur on a mask).
@@ -181,7 +217,7 @@ def draw_text_with_glow(
     if not text:
         return bgr_image
 
-    font = _resolve_font(size, bold=bold)
+    font = _resolve_font(size, bold=bold, italic=italic)
     img_h, img_w = bgr_image.shape[:2]
 
     # Build the glow on its own RGBA layer so blur doesn't leak into
