@@ -29,6 +29,19 @@ def get_connection() -> sqlite3.Connection:
     global _schema_initialized_paths
     db_path = _get_db_path()
     conn = sqlite3.connect(db_path, check_same_thread=False)
+    # busy_timeout MUST be the very first PRAGMA on every new connection.
+    # Every subsequent statement (`journal_mode=WAL`, `synchronous=NORMAL`,
+    # `foreign_keys=ON`, the cache/mmap settings, even `optimize`) needs
+    # to acquire a lock on the DB file briefly. If a writer (e.g. the
+    # aesthetic-tagger bridge committing scores) is already holding a
+    # write lock, those PRAGMAs throw `database is locked` instantly
+    # unless busy_timeout has already been installed.
+    #
+    # 15000 ms: under combined detector + tagger + health-check load,
+    # an SD-card-backed deploy can take longer than 5 s to release the
+    # lock (fsync is the slow path). 15 s absorbs that; waiting once
+    # is preferable to ERROR-spam in the log.
+    conn.execute("PRAGMA busy_timeout=15000;")
     conn.execute("PRAGMA journal_mode=WAL;")
     conn.execute("PRAGMA synchronous=NORMAL;")
     conn.execute("PRAGMA foreign_keys=ON;")
