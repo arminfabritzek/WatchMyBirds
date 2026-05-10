@@ -96,7 +96,27 @@ def start_report_scheduler(check_interval: int = 30, detection_manager=None):
     """
 
     def _run_report(reason: str) -> None:
-        """Fire utils.daily_report.main() with the optional health provider."""
+        """Fire utils.daily_report.main() with the optional health provider.
+
+        Pre-step (the "bridge"): synchronously trigger the aesthetic
+        tagger for today's local-day window first, so the Telegram
+        report has aesthetic_score available for detections that
+        happened since the nightly 02:10 run. Without this bridge,
+        anything detected between 02:10 and the report-send time falls
+        back to detector-confidence ranking, which picks "biggest /
+        most-confident detection" instead of "prettiest photo".
+        """
+        # Bridge: tag today's unscored detections before composing the
+        # report. Best-effort — if the tagger is disabled, deps are
+        # missing, or another run is already in progress, run_now()
+        # returns False and we just send the report unchanged.
+        try:
+            from web.services.aesthetic_tag_scheduler import run_now as tag_now
+            tag_now(f"pre-telegram bridge ({reason})", today_only=True)
+        except Exception as exc:
+            # Never let the bridge block the report — log and proceed.
+            logger.warning("Aesthetic pre-run bridge failed (%s): %s", reason, exc)
+
         try:
             from utils.daily_report import main as run_report
 

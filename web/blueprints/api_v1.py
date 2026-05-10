@@ -1421,6 +1421,19 @@ def telegram_send_report():
         logger.info("Telegram report job %s started.", jid)
 
         try:
+            # Bridge: tag today's unscored detections before composing
+            # the manual report so the operator sees aesthetic-ranked
+            # photos even when triggering ad-hoc. Best-effort —
+            # see web/services/report_scheduler.py for the same pattern
+            # on the scheduled path.
+            try:
+                from web.services.aesthetic_tag_scheduler import run_now as tag_now
+                tag_now(f"pre-telegram bridge (manual job {jid})", today_only=True)
+            except Exception as exc:
+                logger.warning(
+                    "Aesthetic pre-run bridge failed for job %s: %s", jid, exc
+                )
+
             from utils.daily_report import main as run_report
 
             # Provide ingest health for truthful status rendering
@@ -1490,6 +1503,171 @@ def telegram_report_status(job_id: str):
             "job_id": job_id,
             "status": job["status"],
             "message": job["message"],
+        }
+    )
+
+
+# --- Aesthetic re-score endpoint -----------------------------------------
+#
+# Re-runs the CLIP aesthetic scorer on detections that *already* have a
+# score. The nightly tagger and the pre-Telegram bridge both skip
+# already-scored detections (idempotency). When prompts or the score
+# threshold change, the operator wants to bring existing data up to
+# date — that's what this endpoint exists for.
+#
+# Pattern mirrors /telegram/send-report: POST starts a background job,
+# GET /aesthetic/rescore/<job_id>/status polls progress.
+
+_rescore_jobs: dict[str, dict] = {}
+_rescore_jobs_lock = threading.Lock()
+_RESCORE_JOB_TTL = 1800  # 30 min — re-scoring can take a while on the Pi
+
+
+def _evict_stale_rescore_jobs() -> None:
+    """Remove jobs older than TTL. Called under lock."""
+    cutoff = time.time() - _RESCORE_JOB_TTL
+    stale = [jid for jid, j in _rescore_jobs.items() if j["created_at"] < cutoff]
+    for jid in stale:
+        del _rescore_jobs[jid]
+
+
+@api_v1.route("/aesthetic/rescore", methods=["POST"])
+@login_required
+def aesthetic_rescore():
+    """Re-run the aesthetic scorer on already-scored detections.
+
+    Body / query params (all optional):
+      since:   ISO date "YYYY-MM-DD" — defaults to today (local).
+      species: CLS class name like "Parus_major" — restrict to one species.
+      limit:   Cap detections processed (debug / quick smoke).
+
+    Returns a job_id; poll /aesthetic/rescore/<job_id>/status for progress.
+    """
+    payload = request.get_json(silent=True) or {}
+    since = (
+        payload.get("since")
+        or request.args.get("since")
+        or datetime.now().date().isoformat()
+    )
+    species = payload.get("species") or request.args.get("species")
+    raw_limit = payload.get("limit") or request.args.get("limit")
+    limit: int | None
+    try:
+        limit = int(raw_limit) if raw_limit is not None else None
+    except (TypeError, ValueError):
+        limit = None
+
+    job_id = uuid.uuid4().hex[:12]
+    with _rescore_jobs_lock:
+        _evict_stale_rescore_jobs()
+        _rescore_jobs[job_id] = {
+            "status": "pending",
+            "message": "Re-score job queued.",
+            "created_at": time.time(),
+            "since": since,
+            "species": species,
+            "limit": limit,
+        }
+
+    def _run(jid: str) -> None:
+        with _rescore_jobs_lock:
+            if jid in _rescore_jobs:
+                _rescore_jobs[jid]["status"] = "running"
+                _rescore_jobs[jid]["message"] = (
+                    f"Re-scoring detections since={since}"
+                    + (f", species={species}" if species else "")
+                    + (f", limit={limit}" if limit else "")
+                )
+        logger.info("Aesthetic rescore job %s started.", jid)
+
+        try:
+            from scripts.aesthetic_tag_nightly import main_with_args
+        except ImportError as exc:
+            with _rescore_jobs_lock:
+                if jid in _rescore_jobs:
+                    _rescore_jobs[jid]["status"] = "error"
+                    _rescore_jobs[jid]["message"] = (
+                        f"Aesthetic worker not importable: {exc}"
+                    )
+            logger.error("Aesthetic rescore job %s: worker missing (%s)", jid, exc)
+            return
+
+        argv: list[str] = ["--rescore", "--since", since]
+        if species:
+            argv.extend(["--species", species])
+        if limit:
+            argv.extend(["--limit", str(limit)])
+
+        try:
+            rc = main_with_args(argv)
+            with _rescore_jobs_lock:
+                if jid in _rescore_jobs:
+                    if rc == 0:
+                        _rescore_jobs[jid]["status"] = "success"
+                        _rescore_jobs[jid]["message"] = "Re-score completed."
+                    else:
+                        _rescore_jobs[jid]["status"] = "error"
+                        _rescore_jobs[jid]["message"] = (
+                            f"Worker returned non-zero exit code {rc}."
+                        )
+            logger.info("Aesthetic rescore job %s finished (rc=%d).", jid, rc)
+        except Exception as exc:
+            error_msg = str(exc) or "Unknown error"
+            with _rescore_jobs_lock:
+                if jid in _rescore_jobs:
+                    _rescore_jobs[jid]["status"] = "error"
+                    _rescore_jobs[jid]["message"] = error_msg
+            logger.error(
+                "Aesthetic rescore job %s failed: %s", jid, exc, exc_info=True
+            )
+
+    t = threading.Thread(
+        target=_run, args=(job_id,), name=f"AestheticRescore-{job_id}", daemon=True
+    )
+    t.start()
+
+    return jsonify(
+        {
+            "status": "accepted",
+            "job_id": job_id,
+            "message": "Re-score job started.",
+            "since": since,
+            "species": species,
+            "limit": limit,
+        }
+    )
+
+
+@api_v1.route("/aesthetic/rescore/<job_id>/status", methods=["GET"])
+@login_required
+def aesthetic_rescore_status(job_id: str):
+    """Poll the status of an aesthetic re-score job.
+
+    Response shape mirrors /telegram/send-report status::
+
+        { "job_id": "...", "status": "pending|running|success|error",
+          "message": "...", "since": "...", "species": "...", "limit": ... }
+    """
+    with _rescore_jobs_lock:
+        job = _rescore_jobs.get(job_id)
+
+    if not job:
+        return jsonify(
+            {
+                "job_id": job_id,
+                "status": "error",
+                "message": "Job not found (expired or invalid ID).",
+            }
+        ), 404
+
+    return jsonify(
+        {
+            "job_id": job_id,
+            "status": job["status"],
+            "message": job["message"],
+            "since": job.get("since"),
+            "species": job.get("species"),
+            "limit": job.get("limit"),
         }
     )
 

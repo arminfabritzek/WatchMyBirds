@@ -102,6 +102,22 @@ DEFAULTS = {
     # frame. 1 = keep all confirmed species; raise to 2 or 3 for stricter
     # rarity filtering.
     "TELEGRAM_MIN_CONFIRMED_OBSERVATIONS": 1,
+    # Reserved aesthetic-score floor for future per-photo filtering inside
+    # the daily Telegram report. Currently NOT applied (the previous
+    # implementation treated it as a species-level gate, which made
+    # taggable species vanish on days when none cleared the floor —
+    # see utils/daily_report.py:_fetch_species_best_photos for the
+    # full rationale). The constant stays so we can re-introduce it as
+    # a per-photo floor later (e.g. "use detector_confidence ranking
+    # instead of aesthetic_score when no photo of the species clears
+    # this threshold"). Today it is purely informational.
+    "TELEGRAM_MIN_AESTHETIC_SCORE": 0.20,
+    # Nightly aesthetic auto-tagger (CLIP-based). The scheduler in
+    # web/services/aesthetic_tag_scheduler.py reads these. Time is HH:MM
+    # 24h, default 02:10 (low-traffic). Disable on slim images / low-RAM
+    # devices that can't load the CLIP weights (~700 MB transient).
+    "AESTHETIC_TAG_ENABLED": True,
+    "AESTHETIC_TAG_TIME": "02:10",
     "DEVICE_NAME": "",
     "EXIF_GPS_ENABLED": True,
     "INBOX_REQUIRE_EXIF_DATETIME": True,
@@ -158,6 +174,9 @@ RUNTIME_KEYS = {
     "TELEGRAM_MODE",
     "TELEGRAM_REPORT_INTERVAL_HOURS",
     "TELEGRAM_MIN_CONFIRMED_OBSERVATIONS",
+    "TELEGRAM_MIN_AESTHETIC_SCORE",
+    "AESTHETIC_TAG_ENABLED",
+    "AESTHETIC_TAG_TIME",
     "DEVICE_NAME",
     "LOCATION_DATA",
     "EXIF_GPS_ENABLED",
@@ -263,6 +282,12 @@ def _load_config():
         config["TELEGRAM_REPORT_TIME"] = os.getenv("TELEGRAM_REPORT_TIME")
     if os.getenv("TELEGRAM_MODE") is not None:
         config["TELEGRAM_MODE"] = os.getenv("TELEGRAM_MODE")
+    if os.getenv("TELEGRAM_MIN_AESTHETIC_SCORE") is not None:
+        config["TELEGRAM_MIN_AESTHETIC_SCORE"] = os.getenv("TELEGRAM_MIN_AESTHETIC_SCORE")
+    if os.getenv("AESTHETIC_TAG_ENABLED") is not None:
+        config["AESTHETIC_TAG_ENABLED"] = os.getenv("AESTHETIC_TAG_ENABLED")
+    if os.getenv("AESTHETIC_TAG_TIME") is not None:
+        config["AESTHETIC_TAG_TIME"] = os.getenv("AESTHETIC_TAG_TIME")
     if os.getenv("TELEGRAM_REPORT_INTERVAL_HOURS") is not None:
         config["TELEGRAM_REPORT_INTERVAL_HOURS"] = os.getenv(
             "TELEGRAM_REPORT_INTERVAL_HOURS"
@@ -785,6 +810,38 @@ def _coerce_config_types(config):
         min_obs = 1
     config["TELEGRAM_MIN_CONFIRMED_OBSERVATIONS"] = max(1, min(100, min_obs))
 
+    # TELEGRAM_MIN_AESTHETIC_SCORE: float in [0, 1]. Floor for the daily
+    # report's photo-picking. Anything outside the range falls back to
+    # the default so a fat-fingered "30" can't suddenly empty the report.
+    try:
+        min_aes = float(config.get("TELEGRAM_MIN_AESTHETIC_SCORE", 0.20))
+    except (TypeError, ValueError):
+        min_aes = 0.20
+    if not (0.0 <= min_aes <= 1.0):
+        min_aes = 0.20
+    config["TELEGRAM_MIN_AESTHETIC_SCORE"] = min_aes
+
+    # AESTHETIC_TAG_ENABLED: bool. Coerce loose strings ("true"/"yes"/"1").
+    # AESTHETIC_TAG_TIME: HH:MM 24h. Re-uses the same regex as
+    # TELEGRAM_REPORT_TIME further down (validator path); here we just
+    # normalise to a clean two-digits-each format and fall back if the
+    # value is junk.
+    config["AESTHETIC_TAG_ENABLED"] = _coerce_bool(
+        config.get("AESTHETIC_TAG_ENABLED", True)
+    )
+    raw_tag_time = str(
+        config.get("AESTHETIC_TAG_TIME", "")
+        or DEFAULTS.get("AESTHETIC_TAG_TIME", "02:10")
+    ).strip()
+    try:
+        hh, mm = raw_tag_time.split(":")
+        if 0 <= int(hh) <= 23 and 0 <= int(mm) <= 59:
+            config["AESTHETIC_TAG_TIME"] = f"{int(hh):02d}:{int(mm):02d}"
+        else:
+            raise ValueError
+    except (ValueError, AttributeError):
+        config["AESTHETIC_TAG_TIME"] = DEFAULTS.get("AESTHETIC_TAG_TIME", "02:10")
+
 
 def _coerce_bool(value):
     if isinstance(value, bool):
@@ -1017,6 +1074,29 @@ def _validate_value(key, value):
             return False, None
         if 1 <= count <= 100:
             return True, count
+        return False, None
+
+    if key == "TELEGRAM_MIN_AESTHETIC_SCORE":
+        try:
+            v = float(value)
+        except (TypeError, ValueError):
+            return False, None
+        if 0.0 <= v <= 1.0:
+            return True, v
+        return False, None
+
+    if key == "AESTHETIC_TAG_ENABLED":
+        return True, _coerce_bool(value)
+
+    if key == "AESTHETIC_TAG_TIME":
+        if not isinstance(value, str):
+            return False, None
+        cleaned = value.strip()
+        if not cleaned:
+            return True, DEFAULTS.get("AESTHETIC_TAG_TIME", "02:10")
+        import re
+        if re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", cleaned):
+            return True, cleaned
         return False, None
 
     if key == "TELEGRAM_REPORT_TIME":

@@ -43,34 +43,57 @@ from pathlib import Path
 
 # --- Configuration ---------------------------------------------------------
 
-# Species filter. Only these CLS labels can become auto-favorites.
+# Species filter. Only these CLS labels can become auto-favorites
+# (i.e. get is_gallery_eligible=1 for the top-N per day). All species
+# still get an aesthetic_score written for analytics — this set only
+# gates the gallery-pick decision.
 #
-# Rationale: HUMAN review of 5-day mixed-species output showed that rare
-# species (Phoenicurus, Phylloscopus, Sylvia, Aegithalos, Poecile, Passer,
-# Turdus_sp.) are mostly mis-classifications -- the CLS stage guesses an
-# exotic species on uncertain crops instead of staying on 'unknown'. Tagging
-# those is worse than not tagging them. Common, reliably-classified species
-# (great tit, blue tit, pigeons) are tagged.
+# Currently empty: temporarily allowing every CLS-labelled species
+# through so per-species pick quality can be evaluated across the
+# full classifier output, not just the validated three. Revert to a
+# conservative subset (e.g. {Parus_major, Cyanistes_caeruleus,
+# Columba_palumbus}) if the rare-species CLS hallucination problem
+# returns — Phoenicurus, Phylloscopus, Sylvia, Aegithalos, Poecile,
+# Passer, Turdus_sp. were mostly mis-classifications in the original
+# review.
 #
-# Add a species here only after enough HUMAN validation labels prove the
-# CLS classification is reliable for it.
-TAGGABLE_SPECIES: set[str] = {
-    "Parus_major",          # Kohlmeise (great tit)
-    "Cyanistes_caeruleus",  # Blaumeise (blue tit)
-    "Columba_palumbus",     # Ringeltaube (pigeon)
-}
+# Add a species back to a non-empty set only after enough validation
+# labels prove the CLS classification is reliable for it.
+TAGGABLE_SPECIES: set[str] = set()
+# Conservative reference for restore:
+# TAGGABLE_SPECIES: set[str] = {
+#     "Parus_major",          # Kohlmeise (great tit)
+#     "Cyanistes_caeruleus",  # Blaumeise (blue tit)
+#     "Columba_palumbus",     # Ringeltaube (pigeon)
+# }
 
 # Don't tag CLS-rejected detections: 'unknown' often means the classifier
 # bailed because the crop was bad. Tagging the "best of the unknowns" leads
 # to back-of-bird and partial-bird picks. Re-enable only with evidence.
+#
+# This stays False even with TAGGABLE_SPECIES empty: "all CLS-labelled
+# species" still excludes unknown. The combination (empty TAGGABLE +
+# False UNKNOWN) maps to the SQL clause `AND c.cls_class_name IS NOT
+# NULL` — every species the classifier could put a confident name on,
+# but nothing it punted to 'unknown'.
 TAG_UNKNOWN_SPECIES = False
 
 # Minimum aesthetic_score required for auto-tagging. Detections below this
-# threshold get a score (for analytics) but no is_favorite flag, even if
-# they're top-3 in their bucket. Set to 0.0 to disable the threshold.
-# Value 0.15 chosen empirically: most "obviously bad" picks (back of bird,
-# motion blur) score below this.
-MIN_SCORE_FOR_TAG = 0.15
+# threshold get a score (for analytics) but no is_gallery_eligible flag,
+# even if they're top-3 in their bucket. Set to 0.0 to disable the threshold.
+#
+# Calibration history (no dates — see git log for those):
+# - 0.15 was tuned against an older "facing camera" prompt pair where
+#   genuine picks routinely scored 0.5–0.7. It caught only obvious junk.
+# - 0.30 was attempted once the prompts began combining pose AND
+#   sharpness; the sharper prompts compress the distribution downward
+#   so even the best pick of the day topped out around 0.28, producing
+#   zero auto-tags on otherwise good days.
+# - 0.20 is calibrated against the current rescore distribution: it
+#   keeps the genuinely good picks while still rejecting back-of-bird
+#   and occluded shots near 0.05. Should track TELEGRAM_MIN_AESTHETIC_SCORE
+#   in config.py.
+MIN_SCORE_FOR_TAG = 0.20
 
 # Detections must have passed all upstream Pipeline-Stages before the
 # aesthetic tagger considers them. The Pi runs:
@@ -84,11 +107,19 @@ REQUIRED_DECISION_STATE: str | None = "confirmed"
 # How many detections per (species, day) to mark as is_favorite_auto.
 TOP_N_PER_SPECIES_PER_DAY = 3
 
-# CLIP model + prompt pair. Tuned on agent_handoff/lab/experiments/aesthetic_tagger/aesthetic_sanity.
+# CLIP model + prompt pair. The previous "facing camera" prompt pair
+# was tuned in agent_handoff/lab/experiments/aesthetic_tagger/aesthetic_sanity.
+# The current pair combines pose AND sharpness into a single signal:
+# the preferred picks are sharp, in-focus birds looking toward the
+# camera with face and eyes visible — not just any frontal pose. The
+# negative prompt also penalises blur, so a sharp profile bird ranks
+# higher than a blurry frontal one. Existing per-species AUCs from
+# the Lab are no longer directly applicable; expect to re-validate
+# after a week or so of picks.
 CLIP_MODEL_NAME = "ViT-B-32"
 CLIP_PRETRAINED = "laion2b_s34b_b79k"
-CLIP_PROMPT_POSITIVE = "a bird with its face, head and chest visible toward the viewer"
-CLIP_PROMPT_NEGATIVE = "a bird seen from behind, showing only its back or tail"
+CLIP_PROMPT_POSITIVE = "a sharp, well-focused photo of a bird looking toward the camera, face and eyes clearly visible"
+CLIP_PROMPT_NEGATIVE = "a blurry photo of a bird from behind, in profile, or with its head turned away"
 
 # Default paths on RPi (overridable via env).
 DB_PATH = Path(os.environ.get("WMB_DB_PATH", "/opt/app/data/output/images.db"))
@@ -114,14 +145,33 @@ def fetch_unscored_detections(
     conn: sqlite3.Connection,
     since: str,
     limit: int | None = None,
+    *,
+    rescore: bool = False,
+    species_filter: str | None = None,
 ) -> list[dict]:
     """Detections that need scoring: created since `since`, never scored, and
-    (if REQUIRED_DECISION_STATE is set) confirmed by the upstream pipeline."""
-    where_extra = ""
+    (if REQUIRED_DECISION_STATE is set) confirmed by the upstream pipeline.
+
+    With ``rescore=True``, the ``aesthetic_score IS NULL`` filter is dropped
+    so already-scored detections are re-evaluated. Used when prompts or
+    the threshold change and we want the existing data brought up to date.
+
+    With ``species_filter`` set to a CLS class name (e.g. ``"Parus_major"``),
+    only that species is considered. Useful for targeted re-scoring.
+    """
+    where_clauses: list[str] = []
     params: list = [since]
     if REQUIRED_DECISION_STATE is not None:
-        where_extra = " AND d.decision_state = ?"
+        where_clauses.append("AND d.decision_state = ?")
         params.append(REQUIRED_DECISION_STATE)
+    if species_filter is not None:
+        where_clauses.append("AND COALESCE(c.cls_class_name, 'unknown') = ?")
+        params.append(species_filter)
+
+    score_filter = (
+        "" if rescore
+        else "AND (d.aesthetic_score IS NULL OR d.aesthetic_score_at IS NULL)"
+    )
 
     sql = f"""
     SELECT d.detection_id, d.image_filename, d.thumbnail_path, d.created_at,
@@ -134,10 +184,10 @@ def fetch_unscored_detections(
     WHERE d.status = 'active'
       AND d.od_class_name = 'bird'
       AND d.created_at >= ?
-      AND (d.aesthetic_score IS NULL OR d.aesthetic_score_at IS NULL)
+      {score_filter}
       AND d.thumbnail_path IS NOT NULL
       AND (d.decision_level IS NULL OR lower(d.decision_level) != 'reject')
-      {where_extra}
+      {' '.join(where_clauses)}
     ORDER BY d.created_at DESC
     """
     if limit is not None:
@@ -344,8 +394,38 @@ def main_with_args(argv: list[str] | None = None) -> int:
         "--skip-tagging", action="store_true",
         help="Score only; do NOT update is_favorite. Use to backfill aesthetic_score.",
     )
+    p.add_argument(
+        "--rescore", action="store_true",
+        help="Re-score detections that already have a score. Use after prompt or "
+             "threshold changes — the regular run skips already-scored detections "
+             "for idempotency. Combine with --since to limit scope (e.g. only "
+             "today). Resets is_gallery_eligible for the affected detections "
+             "before re-scoring so the top-N pick is recomputed cleanly.",
+    )
+    p.add_argument(
+        "--species", default=None,
+        help="Restrict to a single CLS class (e.g. Parus_major). Useful with "
+             "--rescore for targeted fixes.",
+    )
+    p.add_argument(
+        "--throttle-ms", type=int, default=None,
+        help="Sleep N milliseconds between each CLIP inference. Default 0 "
+             "(no throttling) — bumps to ~100 ms relieve CPU pressure on "
+             "the live detector during pre-Telegram bridge runs. Env "
+             "override: WMB_AESTHETIC_THROTTLE_MS.",
+    )
     p.add_argument("--verbose", "-v", action="store_true")
     args = p.parse_args(argv)
+
+    # Throttle: CLI overrides env overrides default 0.
+    if args.throttle_ms is not None:
+        throttle_ms = max(0, int(args.throttle_ms))
+    else:
+        try:
+            throttle_ms = max(0, int(os.environ.get("WMB_AESTHETIC_THROTTLE_MS", "0")))
+        except ValueError:
+            throttle_ms = 0
+    throttle_sec = throttle_ms / 1000.0
 
     setup_logging(args.verbose)
     log = logging.getLogger(__name__)
@@ -370,12 +450,40 @@ def main_with_args(argv: list[str] | None = None) -> int:
     conn.execute("PRAGMA busy_timeout = 30000")  # 30s, in case detector pipeline holds locks
 
     try:
-        unscored = fetch_unscored_detections(conn, since=since, limit=args.limit)
-        log.info(f"Found {len(unscored)} detections needing aesthetic_score")
+        unscored = fetch_unscored_detections(
+            conn,
+            since=since,
+            limit=args.limit,
+            rescore=args.rescore,
+            species_filter=args.species,
+        )
+        if args.rescore:
+            log.info(
+                f"Found {len(unscored)} detections to RE-SCORE "
+                f"(--rescore active; existing scores will be overwritten)"
+            )
+        else:
+            log.info(f"Found {len(unscored)} detections needing aesthetic_score")
 
         if not unscored:
             log.info("Nothing to score; exiting.")
             return 0
+
+        # Re-score path: clear is_gallery_eligible on the affected
+        # detections so the post-score top-N recompute starts from a
+        # clean slate. Without this, a previously eligible bad pick
+        # would stay eligible until manually overridden.
+        if args.rescore and not args.dry_run:
+            det_ids = [d["detection_id"] for d in unscored]
+            placeholders = ",".join("?" * len(det_ids))
+            conn.execute(
+                f"UPDATE detections SET is_gallery_eligible = 0 "
+                f"WHERE detection_id IN ({placeholders})",
+                det_ids,
+            )
+            conn.commit()
+            log.info(f"Reset is_gallery_eligible for {len(det_ids)} detections "
+                     f"before re-scoring")
 
         device = pick_device()
         model, preprocess, text_features = load_clip_model(device)
@@ -400,7 +508,11 @@ def main_with_args(argv: list[str] | None = None) -> int:
 
             if not args.dry_run:
                 write_score(conn, det["detection_id"], score, datetime.now(timezone.utc).isoformat())
-                if scored % 50 == 0:
+                # Commit every 10 scores instead of 50: keeps each
+                # write-lock window short (~30 ms instead of ~150 ms),
+                # which is friendlier to concurrent readers like the
+                # health check.
+                if scored % 10 == 0:
                     conn.commit()
 
             scored += 1
@@ -409,6 +521,15 @@ def main_with_args(argv: list[str] | None = None) -> int:
                 rate = scored / elapsed if elapsed > 0 else 0
                 log.info(f"  [{i}/{len(unscored)}] scored={scored}, missing={skipped_missing}, "
                          f"rate={rate:.1f} img/s")
+
+            # Optional throttle: yield CPU between inferences so the
+            # live detector pipeline keeps its frame budget. Default
+            # 0 — the bridge run on a Pi 5 with idle headroom doesn't
+            # need it. Bump via --throttle-ms or
+            # WMB_AESTHETIC_THROTTLE_MS when the bridge starves the
+            # detector (visible in the log as DET frames > 1500ms).
+            if throttle_sec > 0:
+                time.sleep(throttle_sec)
 
         if not args.dry_run:
             conn.commit()

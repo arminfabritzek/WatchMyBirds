@@ -137,15 +137,22 @@ class MockClipModel:
 
 
 def mock_score_image(model, preprocess, text_features, image_path, device):
-    """Deterministic scoring; values stay above MIN_SCORE_FOR_TAG (0.15)."""
+    """Deterministic scoring; values stay above MIN_SCORE_FOR_TAG (0.30).
+
+    The range is intentionally [0.40, 0.95] so every mocked detection
+    clears the production floor. Tests that need to probe the floor
+    (e.g. test_min_score_threshold) override the score directly.
+    """
     name = image_path.stem
     # filename pattern: 20260430_NNNNNN_test_crop_1
     try:
         det_id = int(name.split("_")[1])
     except (ValueError, IndexError):
-        return 0.5
-    # Map det_id deterministically into [0.20, 0.95] range, well above 0.15 floor.
-    return 0.20 + ((det_id * 0.07) % 1.0) * 0.75
+        return 0.6
+    # Map det_id deterministically into [0.40, 0.95] range, well above
+    # the 0.30 floor so the top-N selection logic is what's actually
+    # being tested.
+    return 0.40 + ((det_id * 0.07) % 1.0) * 0.55
 
 
 def mock_load_clip(device):
@@ -211,9 +218,12 @@ def test_basic_run() -> None:
     unknown_tagged = sum(1 for r in rows if 301 <= r[0] <= 302 and r[2] == 1)
     assert_eq(unknown_tagged, 0, "unknowns NOT gallery-eligible")
 
-    # Phoenicurus (2) -- NOT marked (not in TAGGABLE_SPECIES)
+    # Phoenicurus (2) -- gallery-eligible because TAGGABLE_SPECIES is
+    # currently empty (test mode: all CLS-labelled species are eligible).
+    # Both detections clear MIN_SCORE_FOR_TAG and there are only 2 of
+    # them, so both win the top-3-of-2 bucket.
     rare_tagged = sum(1 for r in rows if 401 <= r[0] <= 402 and r[2] == 1)
-    assert_eq(rare_tagged, 0, "Phoenicurus NOT gallery-eligible")
+    assert_eq(rare_tagged, 2, "Phoenicurus gallery-eligible (test mode)")
 
     # is_favorite must remain 0 for ALL these — the tagger never touches it.
     n_human_favs = sum(1 for r in rows if r[3] == 1)
