@@ -19,20 +19,23 @@ from utils.daily_report import (
 
 
 def test_render_text_report_formats_polished_sections():
+    # ``top_species_name`` is the already-resolved display name from
+    # main() (passing the common name resolver). The renderer no
+    # longer re-humanises it — that was a bug-prone double-pass.
     message = render_text_report(
         report_date="2026-04-15",
         total_events=245,
         species_count=5,
-        top_species_name="Cyanistes_caeruleus",
+        top_species_name="Blaumeise",
         top_species_count=7,
     )
 
     assert "WatchMyBirds" in message
     assert "15.04.2026" in message
-    assert "<b>245</b> Events" in message
-    assert "<b>5</b> Arten" in message
-    assert "Cyanistes caeruleus" in message
-    assert "(7x)" in message
+    assert "<b>245</b> events" in message
+    assert "<b>5</b> species" in message
+    assert "Blaumeise" in message
+    assert "(7 visits)" in message
     assert "System" not in message
     assert "Dashboard" not in message
 
@@ -46,16 +49,16 @@ def test_render_text_report_handles_no_species():
         top_species_count=0,
     )
 
-    assert "Keine Arten erkannt." in message
-    assert "<b>0</b> Events" in message
-    assert "<b>0</b> Arten" in message
+    assert "No species detected." in message
+    assert "<b>0</b> events" in message
+    assert "<b>0</b> species" in message
 
 
 def test_render_species_photo_caption_uses_singular_and_escapes_html():
     caption = render_species_photo_caption("Meise & <Co>", 1)
 
     assert "<b>Meise &amp; &lt;Co&gt;</b>" in caption
-    assert "1 Sichtung heute" in caption
+    assert "1 visit today" in caption
     assert "🖼️" not in caption
 
 
@@ -114,7 +117,7 @@ def test_send_report_variant_previews_sends_intro_and_each_variant():
 
     assert len(responses) == 3
     assert mock_send.call_count == 3
-    assert mock_send.call_args_list[0].args[0].startswith("<b>Abendbericht Varianten-Test</b>")
+    assert mock_send.call_args_list[0].args[0].startswith("<b>Daily Report Variant Test</b>")
     assert mock_send.call_args_list[1].kwargs["photo_path"] == "/tmp/a.jpg"
     assert mock_send.call_args_list[2].kwargs["photo_path"] == "/tmp/b.jpg"
 
@@ -176,7 +179,7 @@ def test_build_production_collage_creates_single_image():
 
         assert collage is not None
         assert Path(collage["photo_path"]).is_file()
-        assert "Abendbericht" in collage["caption"]
+        assert "Daily Report" in collage["caption"]
         assert "15.04.2026" in collage["caption"]
 
 
@@ -282,12 +285,12 @@ def test_build_report_mobile_album_appends_collector_card_last():
         assert len(tiles) == 4
         # The collector card sits last and is labelled in the caption so
         # downstream surfaces (and the operator) can identify it.
-        assert "Sammelkarte" in tiles[-1]["caption"]
+        assert "Daily Roundup" in tiles[-1]["caption"]
         # And it carries the daily species count.
-        assert "3 Arten" in tiles[-1]["caption"]
-        # Earlier tiles must NOT carry the Sammelkarte label.
+        assert "3 species" in tiles[-1]["caption"]
+        # Earlier tiles must NOT carry the Daily Roundup label.
         for tile in tiles[:-1]:
-            assert "Sammelkarte" not in tile["caption"]
+            assert "Daily Roundup" not in tile["caption"]
         # Every tile, including the collector card, is 1080x1080.
         for tile in tiles:
             rendered = cv2.imread(tile["photo_path"])
@@ -334,7 +337,7 @@ def test_build_report_mobile_album_renders_square_1080_cards():
 
 
 def test_build_report_mobile_album_pluralises_count_and_drops_pagination():
-    """Mobile tile captions should read '1 Sichtung' / 'N Sichtungen' and
+    """Mobile tile captions should read '1 visit' / 'N visits' and
     must NOT carry the legacy '1/N' pagination tag."""
     with TemporaryDirectory() as tmpdir:
         image_paths = []
@@ -370,11 +373,11 @@ def test_build_report_mobile_album_pluralises_count_and_drops_pagination():
     # 2 species cards + 1 collector card.
     assert len(tiles) == 3
     # Plural for count > 1, singular for count == 1.
-    assert "7 Sichtungen" in tiles[0]["caption"]
-    assert "1 Sichtung" in tiles[1]["caption"]
-    assert "1 Sichtungen" not in tiles[1]["caption"]  # no plural-on-one
+    assert "7 visits" in tiles[0]["caption"]
+    assert "1 visit" in tiles[1]["caption"]
+    assert "1 visits" not in tiles[1]["caption"]  # no plural-on-one
     # Collector card sits last with its own caption shape.
-    assert "Sammelkarte" in tiles[-1]["caption"]
+    assert "Daily Roundup" in tiles[-1]["caption"]
     # The "1/2" pagination tag is gone from species cards — Telegram
     # album order replaces it.
     for tile in tiles[:-1]:
@@ -456,30 +459,32 @@ def test_fetch_species_best_photos_drops_catalog_orphans(report_db, tmp_path):
     assert species_in_report == {"Cyanistes_caeruleus", "cat"}
 
 
-def test_fetch_species_best_photos_respects_min_confirmed_observations(
+def test_fetch_species_best_photos_does_not_apply_visit_threshold(
     report_db, tmp_path, monkeypatch
 ):
-    """TELEGRAM_MIN_CONFIRMED_OBSERVATIONS=2 drops species with a single
-    confirmed sighting in the report window.
+    """``_fetch_species_best_photos`` returns *all* known species in the
+    window without applying TELEGRAM_MIN_CONFIRMED_OBSERVATIONS.
 
-    Operators raise this threshold when they want even tighter rarity
-    filtering than 'one confirmed frame'. The default is 1 so this stays
-    a deliberate operator choice.
+    The threshold is intentionally NOT applied at this layer because the
+    raw row counts here are per-detection (every bbox in every frame),
+    while the operator-facing report shows visit counts (events from
+    summarize_observations). Comparing the threshold against raw counts
+    would let species with visit-count = 1 through whenever they had
+    >threshold detections in a single visit. main() applies the threshold
+    against the visit-count instead — see
+    test_main_filters_species_below_visit_threshold for that contract.
     """
-    # 3 confirmed Parus -> survives at threshold 2
+    # 3 confirmed Parus, 1 confirmed Garrulus — both should come through
+    # because the layer no longer filters on raw detection count.
     for _ in range(3):
         _seed_detection(
             report_db, species="Parus_major", decision_state="confirmed", score=0.9
         )
-    # 1 confirmed Garrulus -> dropped at threshold 2
     _seed_detection(
         report_db, species="Garrulus_glandarius", decision_state="confirmed", score=0.95
     )
     report_db.commit()
 
-    # Override the threshold via the live config that _fetch_species_best_photos
-    # reads. We monkeypatch the get_config call site, not the global, so we
-    # don't pollute neighbouring tests.
     real_get_config = __import__("config").get_config
 
     def stricter_config():
@@ -496,6 +501,7 @@ def test_fetch_species_best_photos_respects_min_confirmed_observations(
         with patch("utils.daily_report.os.path.isfile", return_value=True):
             results = _fetch_species_best_photos(report_db, "2026-04-30")
 
+    # Threshold lives in main() now — both species survive this layer
+    # even though the threshold is set to 2.
     species_in_report = {r["species"] for r in results}
-    assert species_in_report == {"Parus_major"}
-    assert "Garrulus_glandarius" not in species_in_report
+    assert species_in_report == {"Parus_major", "Garrulus_glandarius"}

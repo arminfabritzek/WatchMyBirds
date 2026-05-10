@@ -49,14 +49,14 @@ logging.basicConfig(
 )
 logger = logging.getLogger("daily_report")
 
-_GERMAN_WEEKDAYS = {
-    0: "Montag",
-    1: "Dienstag",
-    2: "Mittwoch",
-    3: "Donnerstag",
-    4: "Freitag",
-    5: "Samstag",
-    6: "Sonntag",
+_WEEKDAYS_EN = {
+    0: "Monday",
+    1: "Tuesday",
+    2: "Wednesday",
+    3: "Thursday",
+    4: "Friday",
+    5: "Saturday",
+    6: "Sunday",
 }
 
 
@@ -76,46 +76,92 @@ def _row_value(row, key: str, index: int, default=None):
         return default
 
 
+# Suffix added to genus-only fallbacks (e.g. ``Phoenicurus_sp.``) when the
+# JSON mapping doesn't contain an explicit entry. Per locale so the report
+# stays in the operator's language.
+_GENUS_FALLBACK_SUFFIX = {
+    "DE": " (Art unklar)",
+    "NO": " (art usikker)",
+    "EN": " (species unclear)",
+}
+
+
 def _load_common_names() -> dict[str, str]:
-    """Load the configured common-name mapping with a DE fallback."""
+    """Load the configured common-name mapping with a DE fallback.
+
+    Layered: when locale != DE, NO/etc. is overlaid on top of the DE
+    base. That mirrors ``utils.species_names.load_common_names`` and
+    means a key missing from the locale file falls back to its DE name
+    instead of the bare scientific name.
+    """
     config = get_config()
     locale = str(config.get("SPECIES_COMMON_NAME_LOCALE", "DE") or "DE").upper()
-    candidates = [REPO_ROOT / "assets" / f"common_names_{locale}.json"]
-    if locale != "DE":
-        candidates.append(REPO_ROOT / "assets" / "common_names_DE.json")
 
-    for names_file in candidates:
-        try:
-            with open(names_file, encoding="utf-8") as f:
-                return json.load(f)
-        except FileNotFoundError:
-            continue
-        except Exception as exc:
-            logger.warning("Could not load common names from %s: %s", names_file, exc)
-
-    logger.warning("Could not load any common-names mapping.")
-    return {}
-
-
-def _resolve_dashboard_url() -> str:
-    """Resolve the dashboard URL from config/env or fall back to local mDNS."""
-    config = get_config()
-
-    for key in ("WMB_PUBLIC_URL", "APP_PUBLIC_URL", "PUBLIC_BASE_URL"):
-        raw = str(config.get(key, "") or os.environ.get(key, "")).strip()
-        if raw:
-            return raw.rstrip("/") + "/"
-
-    http_port = config.get("HTTP_PORT", 8050)
+    merged: dict[str, str] = {}
+    base_path = REPO_ROOT / "assets" / "common_names_DE.json"
+    overlay_path = REPO_ROOT / "assets" / f"common_names_{locale}.json"
 
     try:
-        hostname = socket.gethostname().strip()
-        if hostname:
-            return f"http://{hostname}.local:{http_port}/"
-    except Exception:
-        pass
+        with open(base_path, encoding="utf-8") as f:
+            merged = dict(json.load(f))
+    except FileNotFoundError:
+        logger.warning("Common names base file missing: %s", base_path)
+    except Exception as exc:
+        logger.warning("Could not load common names base from %s: %s", base_path, exc)
 
-    return ""
+    if locale != "DE":
+        try:
+            with open(overlay_path, encoding="utf-8") as f:
+                merged.update(json.load(f))
+        except FileNotFoundError:
+            logger.warning("Common names overlay missing for %s: %s", locale, overlay_path)
+        except Exception as exc:
+            logger.warning(
+                "Could not load common names overlay from %s: %s", overlay_path, exc
+            )
+
+    return merged
+
+
+def _resolve_common_name(
+    scientific: str, common_names: dict[str, str]
+) -> tuple[str, bool]:
+    """Resolve a CLS scientific name to ``(display, is_latin_fallback)``.
+
+    Three-step resolution so genus-fallback labels (e.g. ``Phoenicurus_sp.``)
+    don't degrade to bare Latin in the report:
+
+    1. Direct lookup in the loaded common-names map → (name, False).
+    2. For ``<Genus>_sp.`` keys not in the map: derive a localised
+       "(Art unklar)" / "(art usikker)" / "(species unclear)" fallback
+       from the genus name → (name, True). The genus part itself IS
+       Latin, so the caller may want to italicise.
+    3. Plain humanise — replace underscores with spaces → (name, True).
+       Last resort, always Latin.
+
+    The ``is_latin_fallback`` flag lets callers wrap the display string
+    in italic markup (HTML ``<i>…</i>`` for Telegram captions, future
+    italic font in the rendered collector card).
+    """
+    if not scientific:
+        return "—", False
+    direct = common_names.get(scientific)
+    if direct:
+        return direct, False
+    if scientific.endswith("_sp."):
+        try:
+            cfg = get_config()
+            locale = str(cfg.get("SPECIES_COMMON_NAME_LOCALE", "DE") or "DE").upper()
+        except Exception:
+            locale = "DE"
+        suffix = _GENUS_FALLBACK_SUFFIX.get(locale, _GENUS_FALLBACK_SUFFIX["DE"])
+        # ``Phoenicurus_sp.`` → ``Phoenicurus`` + suffix. The genus portion
+        # is Latin; the suffix is the localised parenthetical. Caller
+        # italics the whole string for consistency.
+        genus = scientific[: -len("_sp.")].replace("_", " ").strip()
+        if genus:
+            return f"{genus}{suffix}", True
+    return _humanize_species_name(scientific), True
 
 
 def _html_escape(text: str) -> str:
@@ -148,13 +194,16 @@ def _humanize_species_name(name: str) -> str:
 
 
 def _format_report_date(report_date: str) -> str:
-    """Render ISO date strings in a compact, chat-friendly German format."""
+    """Render ISO date strings in a compact, chat-friendly English format
+    (e.g. "Saturday, 09.05.2026"). Day-month-year stays for European
+    operators; only the weekday name shifts to English to match the rest
+    of the report copy."""
     try:
         parsed = datetime.date.fromisoformat(report_date)
     except ValueError:
         return report_date
 
-    weekday = _GERMAN_WEEKDAYS.get(parsed.weekday())
+    weekday = _WEEKDAYS_EN.get(parsed.weekday())
     if weekday:
         return f"{weekday}, {parsed:%d.%m.%Y}"
     return parsed.strftime("%d.%m.%Y")
@@ -164,42 +213,11 @@ def _count_label(count: int, singular: str, plural: str) -> str:
     return singular if count == 1 else plural
 
 
-def _render_ingest_status(ingest_health: dict | None) -> tuple[str, list[str]]:
-    """Derive a presentation-ready status indicator from ingest health."""
-    if ingest_health is None:
-        return "", ["Status unbekannt (manuell gestarteter Bericht)"]
-
-    state = ingest_health.get("stream_state", "unknown")
-    grace = ingest_health.get("startup_grace_active", False)
-    frame_age = ingest_health.get("latest_frame_age_sec", -1.0)
-    audio_open = ingest_health.get("audio_circuit_open", False)
-
-    if state == "online" and not audio_open:
-        return "", ["System aktiv", "Video online", "Audio in Ordnung"]
-
-    parts: list[str] = []
-    if state == "online":
-        parts.append("Video online")
-    elif state == "starting":
-        parts.append("Video startet noch")
-    elif state == "degraded":
-        age_str = f"{frame_age:.0f}s" if frame_age >= 0 else "unbekannt"
-        suffix = "" if grace else ", Startphase beendet"
-        parts.append(f"Video-Import gestört, seit {age_str} keine Frames{suffix}")
-    else:
-        parts.append("Video-Import offline, keine Frames empfangen")
-
-    if audio_open:
-        parts.append("Audio-Schutzschalter offen")
-
-    return "", parts
-
-
 def render_species_photo_caption(common_name: str, count: int) -> str:
     """Build a short, polished Telegram caption for the species album."""
     safe_name = _html_escape(common_name)
-    count_label = _count_label(count, "Sichtung", "Sichtungen")
-    return f"<b>{safe_name}</b>\n{count} {count_label} heute · bestes Foto des Tages"
+    count_label = _count_label(count, "visit", "visits")
+    return f"<b>{safe_name}</b>\n{count} {count_label} today · best photo of the day"
 
 
 def _fetch_species_best_photos(conn, date_iso: str) -> list[dict]:
@@ -231,6 +249,22 @@ def _fetch_species_best_photos(conn, date_iso: str) -> list[dict]:
     # (d.species == d2.species) instead of raw CLS comparison — this keeps
     # the manual-override / CLS top1 / normalized-OD priority chain in sync
     # across the whole query.
+    # NOTE: TELEGRAM_MIN_AESTHETIC_SCORE is intentionally NOT applied as a
+    # CTE-level filter here. An earlier version did `aesthetic_score IS NULL
+    # OR aesthetic_score >= ?` which produced a nasty side-effect: on days
+    # where the three taggable species (Parus_major / Cyanistes_caeruleus /
+    # Columba_palumbus) had no detection above the floor, they vanished
+    # from the report entirely while non-taggable species (NULL score —
+    # always passed) stayed visible. The result: the operator saw a report
+    # with only Garrulus / unknown / Sylvia_sp., even though there were
+    # plenty of confirmed Kohlmeise / Blaumeise / Ringeltaube.
+    # The right place for an aesthetic-score gate is the per-photo ORDER BY
+    # below — we already prefer high scores via `COALESCE(aesthetic_score,
+    # -1) DESC`. If all photos of a species score low, we still surface
+    # the best of them (which is the operator's actual question: "what's
+    # the best you've got?").
+    config = get_config()
+
     query = f"""
         WITH effective AS (
             SELECT
@@ -285,14 +319,19 @@ def _fetch_species_best_photos(conn, date_iso: str) -> list[dict]:
     cur = conn.execute(query, (date_prefix,))
     rows = cur.fetchall()
 
-    config = get_config()
     pm = get_path_manager(config.get("OUTPUT_DIR"))
     locale = str(config.get("SPECIES_COMMON_NAME_LOCALE", "DE") or "DE").upper()
-    try:
-        min_observations = int(config.get("TELEGRAM_MIN_CONFIRMED_OBSERVATIONS", 1))
-    except (TypeError, ValueError):
-        min_observations = 1
-    min_observations = max(1, min_observations)
+
+    # NOTE: TELEGRAM_MIN_CONFIRMED_OBSERVATIONS is *not* applied here.
+    # The raw `count` we read in this query is the per-detection row count
+    # (every bbox in every frame), but the operator-facing report shows
+    # *visit* counts (events from summarize_observations, which collapse
+    # adjacent detections of the same species into one sighting). Applying
+    # the threshold against the raw count would let species with
+    # visit-count = 1 through whenever they had >threshold detections in
+    # a single visit. The threshold is applied in main() against the
+    # visit-count instead, so what the operator sees and what the filter
+    # decides on are the same number.
 
     results = []
     for row in rows:
@@ -310,13 +349,6 @@ def _fetch_species_best_photos(conn, date_iso: str) -> list[dict]:
 
         if not is_known_species(species, locale=locale):
             logger.debug("Dropping catalog-orphan species from report: %r", species)
-            continue
-
-        if count < min_observations:
-            logger.debug(
-                "Dropping low-evidence species %r (count=%d, threshold=%d)",
-                species, count, min_observations,
-            )
             continue
 
         photo_path = str(pm.get_original_path(image_filename))
@@ -444,7 +476,7 @@ def _prepare_species_visual(photo: dict, common_names: dict[str, str]) -> dict |
         return None
 
     scientific = str(photo["species"] or "—")
-    common = common_names.get(scientific, _humanize_species_name(scientific))
+    common, common_is_latin = _resolve_common_name(scientific, common_names)
     bbox = _resolve_bbox_pixels(photo, image)
     if bbox is not None:
         crops = {
@@ -465,9 +497,18 @@ def _prepare_species_visual(photo: dict, common_names: dict[str, str]) -> dict |
     return {
         "scientific": scientific,
         "common_name": common,
+        # True when ``common_name`` is itself a Latin/genus fallback
+        # (no real common name available in the loaded mapping). The
+        # collector renderer uses this to italicise the label text.
+        "common_is_latin": common_is_latin,
         "count": int(photo.get("count", 0) or 0),
         "full_image": image,
         "crop_images": crops,
+        # Pass through pixel bbox so downstream renderers (e.g. the
+        # collector card with cell-aspect 4:3 vignettes) can do their
+        # own bbox-aware cropping at any aspect ratio without going
+        # through the padded square crop.
+        "bbox_px": bbox,
     }
 
 
@@ -512,7 +553,7 @@ def _build_zoom_collage_variant(species_visuals: list[dict], report_date: str, o
             tile_w,
             tile_h,
             visual["common_name"],
-            f'{visual["count"]} Sichtungen · enger Crop',
+            f'{visual["count"]} visits · tight crop',
         )
         canvas[y : y + tile_h, x : x + tile_w] = tile
 
@@ -593,7 +634,7 @@ def _build_story_strip_variant(species_visuals: list[dict], report_date: str, ou
         card[170:366, :card_w] = bottom
         cv2.rectangle(card, (0, 366), (card_w, card_h), (12, 15, 20), thickness=-1)
         cv2.putText(card, _truncate_label(visual["common_name"], 23), (18, 392), cv2.FONT_HERSHEY_SIMPLEX, 0.62, (245, 247, 250), 1, cv2.LINE_AA)
-        cv2.putText(card, f'{visual["count"]} Sichtungen heute', (18, 417), cv2.FONT_HERSHEY_SIMPLEX, 0.46, (171, 179, 189), 1, cv2.LINE_AA)
+        cv2.putText(card, f'{visual["count"]} visits today', (18, 417), cv2.FONT_HERSHEY_SIMPLEX, 0.46, (171, 179, 189), 1, cv2.LINE_AA)
         canvas[y : y + card_h, x : x + card_w] = card
 
     path = _save_variant_image(canvas, output_dir, "variant_c_story_board.jpg")
@@ -658,7 +699,7 @@ def _build_triplet_zoom_variant(
         )
         cv2.putText(
             card,
-            f'{visual["count"]} Sichtungen',
+            f'{visual["count"]} visits',
             (18, 54),
             cv2.FONT_HERSHEY_SIMPLEX,
             0.5,
@@ -799,7 +840,7 @@ def build_report_collage(
         color=(170, 177, 186),
     )
 
-    species_summary = f"{len(picks)} {_count_label(len(picks), 'Art', 'Arten')}"
+    species_summary = f"{len(picks)} {_count_label(len(picks), 'species', 'species')}"
     summary_w, _ = measure_text(species_summary, size=17)
     draw_text(
         canvas,
@@ -815,7 +856,7 @@ def build_report_collage(
         x = gap + col * (tile_w + gap)
         y = header_h + gap + row * (tile_h + gap)
         count = int(visual["count"])
-        sighting_label = _count_label(count, "Sichtung", "Sichtungen")
+        sighting_label = _count_label(count, "visit", "visits")
         tile = _tile_with_footer(
             _resize_cover(visual["crop_images"]["medium"], tile_w, tile_h - 64),
             tile_w,
@@ -828,57 +869,14 @@ def build_report_collage(
     path = _save_variant_image(canvas, output_dir, "report_collage.jpg")
     return {
         "photo_path": path,
-        "caption": f"{_device_html_prefix()}<b>Abendbericht {_html_escape(_format_report_date(report_date))}</b>",
+        "caption": f"{_device_html_prefix()}<b>Daily Report {_html_escape(_format_report_date(report_date))}</b>",
     }
 
 
-def _draw_corner_chip(
-    canvas: np.ndarray,
-    text: str,
-    *,
-    margin: int = 10,
-    pad_x: int = 8,
-    pad_y: int = 4,
-    text_size: int = 13,
-    bg_alpha: float = 0.55,
-) -> None:
-    """Bake a small dark pill in the top-right of *canvas* with *text*.
-
-    Used for the discreet device + date overlay on each mobile tile. The
-    pill is alpha-blended onto the underlying photo so the image stays
-    visible but the text remains readable on any background.
-    """
-    from utils.image_text import draw_text, measure_text
-
-    if not text:
-        return
-
-    text_w, text_h = measure_text(text, size=text_size)
-    pill_w = text_w + pad_x * 2
-    pill_h = text_h + pad_y * 2 + 2  # extra 2px for descender breathing room
-    img_h, img_w = canvas.shape[:2]
-    x2 = img_w - margin
-    x1 = max(0, x2 - pill_w)
-    y1 = margin
-    y2 = min(img_h, y1 + pill_h)
-
-    overlay = canvas.copy()
-    cv2.rectangle(overlay, (x1, y1), (x2, y2), (8, 10, 14), thickness=-1)
-    cv2.addWeighted(overlay, bg_alpha, canvas, 1 - bg_alpha, 0, dst=canvas)
-
-    # Pillow draws crisp Unicode (umlauts, the narrow-no-break-space inside
-    # the formatted German date) — cv2.putText would render those as `??`.
-    draw_text(
-        canvas,
-        text,
-        (x1 + pad_x, y1 + pad_y),
-        size=text_size,
-        color=(232, 236, 242),
-    )
-
-
 def build_report_mobile_tiles(
-    species_visuals: list[dict], report_date: str, output_dir: Path
+    species_visuals: list[dict],
+    report_date: str,
+    output_dir: Path,
 ) -> list[dict]:
     """Render one 1080x1080 'achievement card' per species for the album,
     plus a final 'collector card' summarising the day.
@@ -920,22 +918,22 @@ def build_report_mobile_tiles(
 
     for idx, visual in enumerate(picks):
         count = int(visual["count"])
-        sighting_label = _count_label(count, "Sichtung", "Sichtungen")
+        sighting_label = _count_label(count, "visit", "visits")
         scientific = str(visual.get("scientific") or visual.get("common_name", ""))
         rim_color, glow_color = neon_for_species(scientific, colour_map)
 
-        # The medium crop already has the bird centred — give the card
-        # the best framing for the bird subject. Fall back to the full
-        # image when no bbox-derived crop is available.
+        # The achievement card (per-species 1080×1080 standalone card)
+        # uses the bbox-centred medium crop so the bird is always
+        # framed dead-centre.
         crops = visual.get("crop_images") or {}
-        photo_source = crops.get("medium")
-        if photo_source is None:
-            photo_source = visual.get("full_image")
-        if photo_source is None:
+        achievement_photo = crops.get("medium")
+        if achievement_photo is None:
+            achievement_photo = visual.get("full_image")
+        if achievement_photo is None:
             continue
 
         card = render_achievement_card(
-            photo_source,
+            achievement_photo,
             common_name=visual["common_name"],
             count=count,
             rim_color=rim_color,
@@ -952,42 +950,42 @@ def build_report_mobile_tiles(
         )
         tiles.append({"photo_path": path, "caption": caption})
 
+        # Collector vignettes get the FULL image plus the pixel bbox.
+        # The collector renderer does its own cell-aspect bbox-aware
+        # crop so the bird fills the 4:3 cell without the black-band
+        # artifact that the padded square crop produced when the
+        # bbox sat near the camera-frame edge.
         collector_entries.append(
             {
                 "scientific": scientific,
                 "common_name": visual["common_name"],
                 "count": count,
-                "photo": photo_source,
+                "photo": visual.get("full_image"),
+                "bbox_px": visual.get("bbox_px"),
+                # Fallback: if there's no full_image / bbox we still
+                # pass the medium crop so the cell isn't empty.
+                "fallback_photo": achievement_photo,
             }
         )
 
     # Final collector card — reuses the same colour map + photos so each
     # vignette matches its standalone card earlier in the album.
     if collector_entries:
-        # Set code for the footer: ISO date + roster size, e.g.
-        # "30.04.2026  ·  6 / 6  COLLECTED". The renderer auto-fills
-        # the "/N COLLECTED" suffix when only the date prefix is given.
-        try:
-            iso_short = datetime.date.fromisoformat(report_date).strftime(
-                "%d.%m.%Y"
-            )
-        except ValueError:
-            iso_short = report_date
-        set_code = f"{iso_short}   ·   {len(collector_entries)} / {len(collector_entries)}   COLLECTED"
-
         collector_card = render_collector_card(
             collector_entries,
             colour_map=colour_map,
             device_label=device,
             date_label=date_label,
-            set_code=set_code,
         )
         collector_path = _save_variant_image(
             collector_card, output_dir, "report_mobile_99_collector.jpg"
         )
+        species_word = (
+            "species" if len(collector_entries) == 1 else "species"
+        )
         collector_caption = (
-            f"{_device_html_prefix()}<b>Sammelkarte</b> · "
-            f"{len(collector_entries)} {_count_label(len(collector_entries), 'Art', 'Arten')} heute"
+            f"{_device_html_prefix()}<b>Daily Roundup</b> · "
+            f"{len(collector_entries)} {species_word} today"
         )
         tiles.append(
             {"photo_path": collector_path, "caption": collector_caption}
@@ -1074,8 +1072,8 @@ def send_report_variant_previews(variants: list[dict]) -> list:
 
     responses = []
     intro = (
-        "<b>Abendbericht Varianten-Test</b>\n"
-        "Ich schicke mehrere lokal gerenderte Bildvarianten. Danach verwenden wir nur eine davon."
+        "<b>Daily Report Variant Test</b>\n"
+        "Sending several locally-rendered image variants. We'll use only one of them afterward."
     )
     responses.append(send_telegram_message(intro, parse_mode="HTML"))
 
@@ -1092,11 +1090,17 @@ def send_report_variant_previews(variants: list[dict]) -> list:
 
 
 def _report_title_for_mode() -> str:
-    """Return the report title based on the configured Telegram mode."""
+    """Return the report title based on the configured Telegram mode.
+
+    English copy by HUMAN convention "Sprache ist IMMER ENGLISH IM CODE".
+    Species names themselves stay in the operator's locale (handled
+    upstream in common_names_<LOCALE>.json) — only the wrapper text
+    is English here.
+    """
     try:
         cfg = get_config()
     except Exception:
-        return "Abendbericht"
+        return "Daily Report"
     mode = str(cfg.get("TELEGRAM_MODE", "off") or "off").strip().lower()
     if mode == "interval":
         try:
@@ -1105,10 +1109,10 @@ def _report_title_for_mode() -> str:
             hours = 1
         hours = max(1, min(24, hours))
         if hours == 1:
-            return "Stündlicher Bericht"
-        return f"Zwischenbericht ({hours}h)"
+            return "Hourly Report"
+        return f"Interval Report ({hours}h)"
     # "daily", "off" (manual send), "live" (manual send) -> evening-style title.
-    return "Abendbericht"
+    return "Daily Report"
 
 
 def render_text_report(
@@ -1117,8 +1121,20 @@ def render_text_report(
     species_count: int,
     top_species_name: str,
     top_species_count: int,
+    top_is_latin: bool = False,
 ) -> str:
-    """Render the report header + summary as valid Telegram HTML."""
+    """Render the report header + summary as valid Telegram HTML.
+
+    All wrapper copy is English (by HUMAN convention). The species name
+    in the "most frequent" line stays in whatever locale common_names
+    resolved it to — that's a proper noun and shouldn't be translated.
+
+    ``top_is_latin`` flags whether the resolved name is a Latin-only
+    fallback (e.g. ``Phoenicurus (Art unklar)`` when the JSON mapping
+    missed the genus). When True, the name is wrapped in ``<i>…</i>``
+    for italic display in Telegram, matching the scientific-name
+    convention in field guides.
+    """
     lines: list[str] = []
 
     title = _report_title_for_mode()
@@ -1127,14 +1143,26 @@ def render_text_report(
         f"{_html_escape(_format_report_date(report_date))}</b>"
     )
     lines.append("")
-    event_label = _count_label(total_events, "Event", "Events")
-    species_label = _count_label(species_count, "Art", "Arten")
+    event_label = _count_label(total_events, "event", "events")
+    species_label = _count_label(species_count, "species", "species")
+    visit_word = "visit" if top_species_count == 1 else "visits"
     lines.append(f"<b>{total_events}</b> {event_label}, <b>{species_count}</b> {species_label}.")
     if top_species_name and top_species_name != "—" and top_species_count > 0:
-        top_label = _html_escape(_humanize_species_name(top_species_name))
-        lines.append(f"Häufigste Art: <b>{top_label}</b> ({top_species_count}x).")
+        # ``top_species_name`` is already a resolved display string from
+        # main() (e.g. "Eichelhäher"), not a CLS scientific name. The
+        # earlier ``_humanize_species_name`` second pass was redundant
+        # and confusing — it only mattered for inputs with underscores,
+        # which a resolved common name doesn't have. Just escape & emit.
+        escaped = _html_escape(top_species_name)
+        # Bold wraps italic so Telegram renders both: <b><i>Phoenicurus
+        # (Art unklar)</i></b>. Plain common names get only <b>.
+        if top_is_latin:
+            top_label = f"<i>{escaped}</i>"
+        else:
+            top_label = escaped
+        lines.append(f"Most frequent: <b>{top_label}</b> ({top_species_count} {visit_word}).")
     else:
-        lines.append("Keine Arten erkannt.")
+        lines.append("No species detected.")
 
     return "\n".join(lines)
 
@@ -1149,7 +1177,7 @@ def send_species_best_photos_album(
     media_items = []
     for sp in species_photos:
         scientific = sp["species"]
-        common = common_names.get(scientific, _humanize_species_name(scientific))
+        common, _is_latin = _resolve_common_name(scientific, common_names)
         media_items.append(
             {
                 "photo_path": sp["best_photo_path"],
@@ -1197,35 +1225,69 @@ def main(**_kwargs):
 
         common_names = _load_common_names()
 
-        if species_counts:
-            top_scientific = max(species_counts, key=species_counts.get)
-            top_species_count = species_counts[top_scientific]
-            top_species_name = common_names.get(
-                top_scientific, _humanize_species_name(top_scientific)
-            )
-        else:
-            top_species_name = "—"
-            top_species_count = 0
-
         all_species_photos = _fetch_species_best_photos(conn, report_date)
-        # Filter to species that passed the observation threshold, sorted by
-        # visit count descending (same ranking the live page uses).
-        # Override raw detection counts with observation-based visit counts.
+        # Override raw detection counts with observation-based visit
+        # counts (same numbers shown on the live gallery), then apply
+        # TELEGRAM_MIN_CONFIRMED_OBSERVATIONS against those visit counts.
+        # Doing the threshold here, post-aggregation, keeps the filter
+        # semantically aligned with what the operator sees in the report:
+        # threshold=3 means "must have at least 3 separate visits today",
+        # not "must have at least 3 raw bbox detections" (which a single
+        # long-stay visit easily clears even though it's one sighting).
+        try:
+            min_visits = int(config.get("TELEGRAM_MIN_CONFIRMED_OBSERVATIONS", 1))
+        except (TypeError, ValueError):
+            min_visits = 1
+        min_visits = max(1, min_visits)
+
         species_photos = []
         for sp in all_species_photos:
-            if sp["species"] in species_counts:
-                sp["count"] = species_counts[sp["species"]]
-                species_photos.append(sp)
+            visits = species_counts.get(sp["species"])
+            if visits is None:
+                continue
+            if visits < min_visits:
+                logger.debug(
+                    "Dropping species %r (visits=%d, threshold=%d)",
+                    sp["species"], visits, min_visits,
+                )
+                continue
+            sp["count"] = visits
+            species_photos.append(sp)
         species_photos.sort(
             key=lambda sp: sp["count"], reverse=True
         )
 
+        # Stats for the text-report header are derived from the
+        # POST-FILTER set so the wording matches what the operator
+        # sees in the collector card. Otherwise the header would
+        # claim "7 species" while the card only shows the 4 that
+        # cleared the visit threshold.
+        if species_photos:
+            visible_species_count = len(species_photos)
+            visible_total_events = sum(sp["count"] for sp in species_photos)
+            top_pick = species_photos[0]  # highest visit count
+            top_scientific = top_pick["species"]
+            top_species_count = top_pick["count"]
+            top_species_name, top_is_latin = _resolve_common_name(
+                top_scientific, common_names
+            )
+        else:
+            # No species cleared the threshold. Fall back to the raw
+            # totals so the operator at least sees "0 events / 0
+            # species" instead of an empty card with stale numbers.
+            visible_species_count = 0
+            visible_total_events = 0
+            top_species_name = "—"
+            top_species_count = 0
+            top_is_latin = False
+
         text_message = render_text_report(
             report_date=report_date,
-            total_events=total_events,
-            species_count=len(species_counts),
+            total_events=visible_total_events,
+            species_count=visible_species_count,
             top_species_name=top_species_name,
             top_species_count=top_species_count,
+            top_is_latin=top_is_latin,
         )
 
         logger.info("Sending text report via Telegram...")
@@ -1233,28 +1295,30 @@ def main(**_kwargs):
         logger.info("Text report sent. Responses: %s", text_responses)
 
         if species_photos:
-            logger.info("Building mobile-friendly per-species album...")
-            mobile_tiles = build_report_mobile_album(
+            # Single output path: build the album (which internally
+            # renders both per-species achievement cards and a final
+            # collector card) and send only the collector card. The
+            # per-species cards are rendered as a side-effect — they
+            # stay in temp storage and aren't sent, kept that way so
+            # the deck can come back later without reshaping the album
+            # builder.
+            logger.info("Building report album...")
+            tiles_variant = build_report_mobile_album(
                 species_photos,
                 common_names,
                 report_date=report_date,
             )
-            if mobile_tiles:
-                logger.info(
-                    "Sending %d mobile tile(s) via Telegram media group...",
-                    len(mobile_tiles),
-                )
-                # Telegram media groups are capped at 10 items per request.
-                for i in range(0, len(mobile_tiles), 10):
-                    chunk = mobile_tiles[i : i + 10]
-                    album_response = send_telegram_media_group(chunk)
-                    logger.info(
-                        "Mobile album chunk %d sent. Response: %s",
-                        i // 10 + 1,
-                        album_response,
-                    )
-            else:
+            if not tiles_variant:
                 logger.warning("Mobile album build returned no tiles.")
+            else:
+                overview_tile = tiles_variant[-1]
+                logger.info("Sending collector card via Telegram...")
+                response = send_telegram_message(
+                    overview_tile["caption"],
+                    photo_path=overview_tile["photo_path"],
+                    parse_mode="HTML",
+                )
+                logger.info("Collector card sent. Response: %s", response)
         else:
             logger.info("No species photos to send.")
 
