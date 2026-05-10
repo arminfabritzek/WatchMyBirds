@@ -137,6 +137,18 @@ def _create_runtime():
     threading.Thread(target=detection_manager.start, daemon=True).start()
     atexit.register(detection_manager.stop)
 
+    # Initialise the compute lease BEFORE the aesthetic tag scheduler so the
+    # tagger's pre-telegram bridge run (which can fire seconds after boot)
+    # acquires the lease instead of falling back to the unguarded direct
+    # call. The Companion backend re-uses the same lease later in
+    # create_web_interface(); init_compute_lease_service is idempotent.
+    try:
+        from web.services.compute_lease_service import init_compute_lease_service
+
+        init_compute_lease_service(detection_manager)
+    except Exception as e:
+        logger.warning(f"Compute lease init failed: {e}")
+
     monitor_interval_raw = os.environ.get("SYSTEM_MONITOR_INTERVAL_SECONDS", "15")
     try:
         monitor_interval_seconds = float(monitor_interval_raw)

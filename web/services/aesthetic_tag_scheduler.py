@@ -92,6 +92,9 @@ def _today_midnight_utc_iso() -> str:
     ).isoformat()
 
 
+_LEASE_HOLDER = "aesthetic_tagger"
+
+
 def _run_tagger(
     reason: str,
     *,
@@ -112,6 +115,11 @@ def _run_tagger(
     nightly run is 0 (camera is idle at 02:10, no live detector to
     starve), but the bridge passes 100 by default so the daytime
     detector keeps its frame budget while CLIP runs on the same CPU.
+
+    Acquires the shared compute lease with ``pause_detection=False`` so
+    Companion inference and the tagger cannot run concurrently. The
+    tagger does not pause OD on its own — the existing throttle
+    behaviour stays in place.
     """
     try:
         from scripts.aesthetic_tag_nightly import main_with_args
@@ -129,6 +137,34 @@ def _run_tagger(
         argv += ["--throttle-ms", str(throttle_ms)]
 
     logger.info("Aesthetic tagger firing (%s, argv=%s)...", reason, argv)
+    from web.services.compute_lease_service import (
+        LeaseBusy,
+        get_compute_lease_service,
+    )
+
+    lease = get_compute_lease_service()
+    if lease is None:
+        # Lease not initialised (early boot, slim test harness). Fall
+        # back to the old direct-call behaviour. This keeps the tagger
+        # functional even when the WMB Flask app is not the host.
+        return _invoke_tagger(reason, main_with_args, argv)
+
+    try:
+        with lease.acquire(
+            _LEASE_HOLDER,
+            pause_detection=False,
+            reason=f"aesthetic tagger: {reason}",
+        ):
+            return _invoke_tagger(reason, main_with_args, argv)
+    except LeaseBusy as exc:
+        logger.info(
+            "Aesthetic tagger skipped (%s): compute lease busy with %r.",
+            reason, exc.current_holder,
+        )
+        return 1
+
+
+def _invoke_tagger(reason, main_with_args, argv: list[str]) -> int:
     try:
         rc = main_with_args(argv)
         if rc == 0:
