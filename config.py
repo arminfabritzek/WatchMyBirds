@@ -135,6 +135,16 @@ DEFAULTS = {
     "GO2RTC_API_BASE": "http://127.0.0.1:1984",
     "GO2RTC_CONFIG_PATH": "./go2rtc.yaml",
     "SPECIES_COMMON_NAME_LOCALE": "DE",
+    # --- Companion v1 backend (default OFF) ---
+    # Backend-only in v1. All keys default conservative so a fresh
+    # install never reaches an LLM runtime by accident.
+    "COMPANION_ENABLED": False,
+    "COMPANION_OLLAMA_URL": "http://127.0.0.1:11434",
+    "COMPANION_OLLAMA_MODEL_TAG": "wmb-companion:1b-q4",
+    "COMPANION_INFERENCE_TIMEOUT_S": 60,
+    "COMPANION_PAUSE_DETECTION_DURING_INFERENCE": True,
+    "COMPANION_LANGUAGE": "de",
+    "COMPANION_TONE": "adult_dry",
     # --- Anonymous opt-in usage heartbeat (default OFF) ---
     # See web/services/telemetry_service.py and docs/PRIVACY.md.
     # The toggle is the ONLY enable surface; there is no banner or
@@ -177,6 +187,16 @@ RUNTIME_KEYS = {
     "TELEGRAM_MIN_AESTHETIC_SCORE",
     "AESTHETIC_TAG_ENABLED",
     "AESTHETIC_TAG_TIME",
+    # Companion runtime knobs. Enable / pause / language / tone are
+    # safe to flip live; the URL and model tag re-bind on next service
+    # init (we re-read them when constructing the Ollama adapter at
+    # process boot, not on every API call, so changes there require a
+    # restart — same as the existing telemetry endpoint key).
+    "COMPANION_ENABLED",
+    "COMPANION_PAUSE_DETECTION_DURING_INFERENCE",
+    "COMPANION_LANGUAGE",
+    "COMPANION_TONE",
+    "COMPANION_INFERENCE_TIMEOUT_S",
     "DEVICE_NAME",
     "LOCATION_DATA",
     "EXIF_GPS_ENABLED",

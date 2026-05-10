@@ -743,6 +743,42 @@ def create_web_interface(detection_manager, system_monitor=None):
     )
     server.register_blueprint(training_export_bp)
 
+    # Register Compute Lease + Companion (v1 backend-only).
+    # See docs/COMPANION_V1.md. Lease is initialised even when the
+    # Companion is disabled so the aesthetic tagger can also use it.
+    try:
+        from web.blueprints.companion import (
+            companion_bp,
+            init_companion_bp,
+        )
+        from web.services.companion.ollama_adapter import OllamaInferenceAdapter
+        from web.services.companion.recorder import CompanionRecorder
+        from web.services.companion.service import CompanionService
+        from web.services.compute_lease_service import init_compute_lease_service
+
+        lease_service = init_compute_lease_service(detection_manager)
+        companion_client = OllamaInferenceAdapter(
+            base_url=str(config.get("COMPANION_OLLAMA_URL", "http://127.0.0.1:11434")),
+            model_tag=str(config.get("COMPANION_OLLAMA_MODEL_TAG", "wmb-companion:1b-q4")),
+        )
+        companion_recorder = CompanionRecorder(base_dir=output_dir)
+        companion_service = CompanionService(
+            client=companion_client,
+            recorder=companion_recorder,
+            lease=lease_service,
+            enabled=bool(config.get("COMPANION_ENABLED", False)),
+            pause_detection=bool(
+                config.get("COMPANION_PAUSE_DETECTION_DURING_INFERENCE", True)
+            ),
+            timeout_s=float(config.get("COMPANION_INFERENCE_TIMEOUT_S", 60)),
+        )
+        init_companion_bp(companion_service)
+        server.register_blueprint(companion_bp)
+        logger.info("Companion v1 backend registered (enabled=%s, model=%s)",
+                    companion_service.enabled, companion_client.model_id)
+    except Exception as exc:
+        logger.error("Companion v1 backend registration failed: %s", exc, exc_info=True)
+
     # Auth helper is now imported from web.blueprints.auth
 
     def setup_web_routes(server):
