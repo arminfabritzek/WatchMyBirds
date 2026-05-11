@@ -121,7 +121,7 @@ DEFAULTS = {
     # a per-photo floor later (e.g. "use detector_confidence ranking
     # instead of aesthetic_score when no photo of the species clears
     # this threshold"). Today it is purely informational.
-    "TELEGRAM_MIN_AESTHETIC_SCORE": 0.20,
+    "TELEGRAM_MIN_AESTHETIC_SCORE": 0.10,
     # Nightly aesthetic auto-tagger (CLIP-based). The scheduler in
     # web/services/aesthetic_tag_scheduler.py reads these. Time is HH:MM
     # 24h, default 02:10 (low-traffic). Disable on slim images / low-RAM

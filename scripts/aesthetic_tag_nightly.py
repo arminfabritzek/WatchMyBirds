@@ -101,11 +101,19 @@ TAG_UNKNOWN_SPECIES = False
 #   sharpness; the sharper prompts compress the distribution downward
 #   so even the best pick of the day topped out around 0.28, producing
 #   zero auto-tags on otherwise good days.
-# - 0.20 is calibrated against the current rescore distribution: it
-#   keeps the genuinely good picks while still rejecting back-of-bird
-#   and occluded shots near 0.05. Should track TELEGRAM_MIN_AESTHETIC_SCORE
-#   in config.py.
-MIN_SCORE_FOR_TAG = 0.20
+# - 0.20 was calibrated against an earlier prompt pair that included
+#   "in profile" in the negative — that pair produced a wider score
+#   spread because rear-vs-front separation was looser.
+# - An earlier 0.03 threshold was tuned on a smaller lab pool with a
+#   narrower score distribution; on the wider live distribution it
+#   let too many candidates through and the floor wasn't doing useful
+#   work. The per-species top-3 logic downstream still filtered, but
+#   the floor was no longer load-bearing.
+# - 0.10 is calibrated against the current live CLIP-rescore
+#   distribution: every HUMAN-favorited pick scores at or above it,
+#   so the floor doesn't lose preferred picks while still cutting the
+#   candidate pool roughly in half. Should track TELEGRAM_MIN_AESTHETIC_SCORE.
+MIN_SCORE_FOR_TAG = 0.10
 
 # Detections must have passed all upstream Pipeline-Stages before the
 # aesthetic tagger considers them. The Pi runs:
@@ -119,19 +127,23 @@ REQUIRED_DECISION_STATE: str | None = "confirmed"
 # How many detections per (species, day) to mark as is_favorite_auto.
 TOP_N_PER_SPECIES_PER_DAY = 3
 
-# CLIP model + prompt pair. The previous "facing camera" prompt pair
-# was tuned in agent_handoff/lab/experiments/aesthetic_tagger/aesthetic_sanity.
-# The current pair combines pose AND sharpness into a single signal:
-# the preferred picks are sharp, in-focus birds looking toward the
-# camera with face and eyes visible — not just any frontal pose. The
-# negative prompt also penalises blur, so a sharp profile bird ranks
-# higher than a blurry frontal one. Existing per-species AUCs from
-# the Lab are no longer directly applicable; expect to re-validate
-# after a week or so of picks.
+# CLIP model + prompt pair. Tuned for "cute/funny bird portrait" picks:
+# the discriminating signal is whether the bird's EYE is visible and the
+# head is turned toward the camera. Strict side-profile shots with the
+# eye toward the lens are acceptable; only fully-rear / head-turned-away
+# poses should be penalised. The word "profile" is deliberately avoided
+# in both prompts — it conflates two cases the operator wants to treat
+# differently (eye-visible side view = good, eye-hidden rear view = bad).
+# Both prompts retain a sharpness term so a sharp 3/4 view ranks above
+# a blurry frontal one. Existing per-species AUCs from earlier Lab runs
+# (agent_handoff/lab/experiments/aesthetic_tagger/aesthetic_sanity) are
+# no longer directly applicable; expect MIN_SCORE_FOR_TAG and
+# TELEGRAM_MIN_AESTHETIC_SCORE to need re-calibration once a few days
+# of fresh picks are in.
 CLIP_MODEL_NAME = "ViT-B-32"
 CLIP_PRETRAINED = "laion2b_s34b_b79k"
-CLIP_PROMPT_POSITIVE = "a sharp, well-focused photo of a bird looking toward the camera, face and eyes clearly visible"
-CLIP_PROMPT_NEGATIVE = "a blurry photo of a bird from behind, in profile, or with its head turned away"
+CLIP_PROMPT_POSITIVE = "a sharp, well-focused close-up portrait of a bird with its eye visible and its head turned toward the camera"
+CLIP_PROMPT_NEGATIVE = "a blurry or back-facing photo of a bird showing its back, tail, or the back of its head, with the eye hidden and the face turned away from the camera"
 
 # Default paths. Precedence per knob: explicit WMB_* env var → derived
 # from the app's canonical OUTPUT_DIR (works on Pi systemd, NAS Docker
