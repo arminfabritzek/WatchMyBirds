@@ -118,13 +118,13 @@ sudo cp "$repo_root/rpi/systemd/wmb-wifi-watchdog.service" "$mount_point/tmp/sys
 sudo cp "$repo_root/rpi/systemd/wmb-wifi-watchdog.timer" "$mount_point/tmp/systemd/"
 sudo cp "$repo_root/rpi/systemd/wmb-boot-diag.service" "$mount_point/tmp/systemd/"
 sudo cp "$repo_root/rpi/systemd/wmb-boot-diag.sh" "$mount_point/tmp/systemd/"
-# USB backup volume (Phase 1 of usb-data-backup plan).
+# USB backup volume.
 # The literal '\x2d' in the filename is the systemd-escape for '-' inside
 # a path segment ('-' inside the unit name is reserved as a path separator).
 # Produced by: systemd-escape -p /mnt/wmb-backup
 sudo cp "$repo_root/rpi/systemd/mnt-wmb\\x2dbackup.mount" "$mount_point/tmp/systemd/"
 sudo cp "$repo_root/rpi/systemd/mnt-wmb\\x2dbackup.automount" "$mount_point/tmp/systemd/"
-# Scheduled backup service + timer (Phase 3 of usb-data-backup plan).
+# Scheduled backup service + timer.
 sudo cp "$repo_root/rpi/systemd/wmb-backup.service" "$mount_point/tmp/systemd/"
 sudo cp "$repo_root/rpi/systemd/wmb-backup.timer" "$mount_point/tmp/systemd/"
 # One-shot USB stick formatter (root, polkit-gated to watchmybirds).

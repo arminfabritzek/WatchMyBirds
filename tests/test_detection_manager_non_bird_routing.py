@@ -1,4 +1,4 @@
-"""Phase 1 regression: DetectionManager skips CLS for non-bird classes.
+"""DetectionManager skips CLS for non-bird classes.
 
 Covers the end-to-end contract at the _processing_loop level:
 

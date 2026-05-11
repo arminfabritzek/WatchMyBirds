@@ -203,7 +203,7 @@ def test_bird_track_without_cls_uses_od(
 
     But unknown_score = 1.0 because CLS never ran; decision policy then
     classifies this as UNKNOWN (not CONFIRMED). This mirrors the legacy
-    behaviour before Phase 1 and is intentionally kept for birds with CLS
+    legacy behaviour and is intentionally kept for birds with CLS
     failures. Non-bird gets a different treatment.
     """
     result = compute_detection_signals(

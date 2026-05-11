@@ -3,9 +3,9 @@
 Packages human-reviewed detections from the local DB into a ZIP bundle
 for handoff to the upstream training dev. Only **positive samples**
 (Option A strict: ``manual_species_override IS NOT NULL`` AND
-``manual_bbox_review = 'correct'``) are included in Phase 1 — hard
-negatives and bbox-wrong rows stay out so the dev's downstream pipeline
-has no extra branches to handle.
+``manual_bbox_review = 'correct'``) are included — hard negatives and
+bbox-wrong rows stay out so the downstream training pipeline has no
+extra branches to handle.
 
 Lifecycle:
 1. Every approved review event optionally lands in ``training_exports``
@@ -492,7 +492,7 @@ def stream_export_zip(
     would mislead the dev's OD trainer (unlabelled vogel =
     background in its loss).
 
-    For Phase 1 we stay in-memory because the default 500-row cap
+    We stay in-memory because the default 500-row cap
     keeps the ZIP small (a 1080p frame at ~300KB × 500 ≈ 150 MB
     worst case, well within a single HTTP response). If we ever lift
     the cap significantly, switch this to a streaming generator that

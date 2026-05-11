@@ -11,7 +11,7 @@ exercise:
 - Model-Compatibility-Guard passing with 'bird' label present
 - warm-up path (calls detect() before returning from __init__)
 
-This gives us end-to-end coverage of Phase 0 without depending on downloaded
+This gives us end-to-end coverage without depending on downloaded
 weights or a GPU.
 """
 

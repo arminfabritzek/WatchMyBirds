@@ -1,4 +1,4 @@
-"""Unit tests for the YOLOX detector backend (Phase 0 of the YOLOX swap).
+"""Unit tests for the YOLOX detector backend.
 
 Covers the pure helpers in detectors/detector.py:
 - _normalize_class_names (dict + list formats)

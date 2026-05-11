@@ -153,7 +153,7 @@ def test_single_class_topk_fallback(
 @pytest.mark.parametrize(
     "od_conf, cls_conf, expected_score, expected_agreement",
     [
-        # Score = cls_conf when > 0, else od_conf (Phase 1 semantics).
+        # Score = cls_conf when > 0, else od_conf.
         # Agreement = min(od, cls) when cls > 0.
         (0.9, 0.8, 0.8, 0.8),
         (0.5, 0.5, 0.5, 0.5),
