@@ -65,6 +65,8 @@ def setup_schema(conn: sqlite3.Connection) -> None:
         rating_source TEXT DEFAULT 'auto',
         decision_state TEXT,
         decision_level TEXT,
+        score REAL,
+        bbox_quality REAL,
         aesthetic_score REAL,
         aesthetic_score_at TEXT,
         FOREIGN KEY(image_filename) REFERENCES images(filename) ON DELETE CASCADE
@@ -100,6 +102,8 @@ def insert_detection(
     rating_source: str = "auto",
     has_crop: bool = True,
     decision_state: str | None = "confirmed",
+    score: float | None = None,
+    bbox_quality: float | None = None,
 ) -> None:
     image = f"20260430_{detection_id:06d}_test.jpg"
     thumb = f"20260430_{detection_id:06d}_test_crop_1.webp"
@@ -108,9 +112,11 @@ def insert_detection(
     conn.execute(
         "INSERT INTO detections "
         "(detection_id, image_filename, thumbnail_path, od_class_name, "
-        " created_at, status, is_favorite, rating_source, decision_state) "
-        "VALUES (?, ?, ?, 'bird', ?, 'active', ?, ?, ?)",
-        (detection_id, image, thumb if has_crop else None, when, is_favorite, rating_source, decision_state),
+        " created_at, status, is_favorite, rating_source, decision_state, "
+        " score, bbox_quality) "
+        "VALUES (?, ?, ?, 'bird', ?, 'active', ?, ?, ?, ?, ?)",
+        (detection_id, image, thumb if has_crop else None, when,
+         is_favorite, rating_source, decision_state, score, bbox_quality),
     )
     if species is not None:
         conn.execute(
@@ -394,6 +400,184 @@ def test_min_score_threshold() -> None:
     print("PASS test_min_score_threshold")
 
 
+def test_per_species_cap_basic() -> None:
+    """--per-species-cap N caps the run at N detections per CLS species,
+    ranked by score DESC, bbox_quality DESC, created_at DESC. Unknown
+    (CLS-null) detections are excluded entirely."""
+    if DB_PATH.exists():
+        DB_PATH.unlink()
+    conn = sqlite3.connect(str(DB_PATH))
+    setup_schema(conn)
+
+    # Parus: 10 detections, ranked by score (lower id = lower score so the
+    # cap should keep the HIGHEST ids).
+    for i in range(1, 11):
+        insert_detection(
+            conn, i, "Parus_major",
+            when="2026-04-30T12:00:00+00:00",
+            score=0.1 * i,           # 0.1 .. 1.0
+            bbox_quality=0.5,
+        )
+    # Cyanistes: 6 detections, all same score — bbox_quality breaks ties.
+    for i in range(101, 107):
+        insert_detection(
+            conn, i, "Cyanistes_caeruleus",
+            when="2026-04-30T12:00:00+00:00",
+            score=0.5,
+            bbox_quality=0.1 * (i - 100),  # 0.1 .. 0.6
+        )
+    # Two unknowns (CLS null) — must NOT show up at all.
+    for i in range(201, 203):
+        insert_detection(conn, i, None, score=0.99, bbox_quality=0.99)
+    conn.commit()
+
+    rows = job.fetch_unscored_detections(
+        conn, since="2026-04-29", per_species_cap=3
+    )
+    conn.close()
+
+    by_species: dict[str, list[int]] = {}
+    for r in rows:
+        by_species.setdefault(r["species"], []).append(r["detection_id"])
+
+    # No unknowns slip through.
+    assert "unknown" not in by_species, f"unknowns must be excluded, got {by_species}"
+
+    # Parus: top 3 by score DESC → ids 10, 9, 8.
+    assert_eq(
+        sorted(by_species.get("Parus_major", []), reverse=True),
+        [10, 9, 8],
+        "Parus top-3 by score DESC",
+    )
+    # Cyanistes: scores tie, so bbox_quality DESC → ids 106, 105, 104.
+    assert_eq(
+        sorted(by_species.get("Cyanistes_caeruleus", []), reverse=True),
+        [106, 105, 104],
+        "Cyanistes top-3 by bbox_quality DESC (score tie)",
+    )
+
+    print("PASS test_per_species_cap_basic")
+
+
+def test_per_species_cap_created_at_tiebreak() -> None:
+    """When score AND bbox_quality tie, created_at DESC (newest) wins."""
+    if DB_PATH.exists():
+        DB_PATH.unlink()
+    conn = sqlite3.connect(str(DB_PATH))
+    setup_schema(conn)
+
+    times = [
+        "2026-04-30T08:00:00+00:00",
+        "2026-04-30T09:00:00+00:00",
+        "2026-04-30T10:00:00+00:00",
+        "2026-04-30T11:00:00+00:00",
+    ]
+    for idx, t in enumerate(times, start=1):
+        insert_detection(
+            conn, idx, "Parus_major",
+            when=t, score=0.5, bbox_quality=0.5,
+        )
+    conn.commit()
+
+    rows = job.fetch_unscored_detections(
+        conn, since="2026-04-29", per_species_cap=2
+    )
+    conn.close()
+    got = sorted([r["detection_id"] for r in rows], reverse=True)
+    assert_eq(got, [4, 3], "newest two win the tiebreak")
+    print("PASS test_per_species_cap_created_at_tiebreak")
+
+
+def test_per_species_cap_rejects_limit_combo() -> None:
+    """Passing both --limit and --per-species-cap is a programming error."""
+    if DB_PATH.exists():
+        DB_PATH.unlink()
+    conn = sqlite3.connect(str(DB_PATH))
+    setup_schema(conn)
+    conn.commit()
+    raised = False
+    try:
+        job.fetch_unscored_detections(
+            conn, since="2026-04-29", limit=5, per_species_cap=3
+        )
+    except ValueError:
+        raised = True
+    conn.close()
+    assert raised, "fetch_unscored_detections must reject limit+per_species_cap"
+    print("PASS test_per_species_cap_rejects_limit_combo")
+
+
+def test_per_species_cap_end_to_end_bridge() -> None:
+    """Full bridge-shaped invocation via main_with_args.
+
+    Asserts:
+      - --per-species-cap=N scores the top N unscored per species
+      - Unknown (CLS-null) detections are skipped
+      - Successive bridge runs chip away at the backlog (cap is
+        per-run, not lifetime) — this is the intended semantics so
+        the bridge can recover from gaps left by earlier runs
+      - Once everything is scored, a re-run is a no-op
+    """
+    if DB_PATH.exists():
+        DB_PATH.unlink()
+    conn = sqlite3.connect(str(DB_PATH))
+    setup_schema(conn)
+    # Parus: 3 detections. Bridge cap=2 should score the 2 best.
+    for i in range(1, 4):
+        insert_detection(conn, i, "Parus_major", score=0.1 * i, bbox_quality=0.5)
+    # Columba: 1 detection only. Bridge cap=2 should score it.
+    insert_detection(conn, 101, "Columba_palumbus", score=0.5, bbox_quality=0.5)
+    # Unknown: 2 detections. Bridge MUST leave them untouched.
+    for i in range(201, 203):
+        insert_detection(conn, i, None, score=0.9, bbox_quality=0.9)
+    conn.commit()
+    conn.close()
+
+    job.load_clip_model = mock_load_clip
+    job.score_image = mock_score_image
+    rc = job.main_with_args([
+        "--since", "2026-04-29",
+        "--per-species-cap", "2",
+    ])
+    assert_eq(rc, 0, "first run exit code")
+
+    conn = sqlite3.connect(str(DB_PATH))
+    scored_ids = sorted([r[0] for r in conn.execute(
+        "SELECT detection_id FROM detections WHERE aesthetic_score IS NOT NULL"
+    ).fetchall()])
+    conn.close()
+    # Parus top 2 by score (ids 3, 2) + Columba (only candidate, id 101).
+    # Unknowns (201, 202) NOT scored.
+    assert_eq(scored_ids, [2, 3, 101], "first run scored expected ids")
+
+    # Second bridge run: only Parus 1 is still unscored, cap=2 picks it up.
+    rc2 = job.main_with_args([
+        "--since", "2026-04-29",
+        "--per-species-cap", "2",
+    ])
+    assert_eq(rc2, 0, "second run exit code")
+    conn = sqlite3.connect(str(DB_PATH))
+    scored_ids2 = sorted([r[0] for r in conn.execute(
+        "SELECT detection_id FROM detections WHERE aesthetic_score IS NOT NULL"
+    ).fetchall()])
+    conn.close()
+    assert_eq(scored_ids2, [1, 2, 3, 101], "second run filled the Parus gap")
+
+    # Third run: nothing left unscored → no-op.
+    rc3 = job.main_with_args([
+        "--since", "2026-04-29",
+        "--per-species-cap", "2",
+    ])
+    assert_eq(rc3, 0, "third run exit code")
+    conn = sqlite3.connect(str(DB_PATH))
+    n_scored_after = conn.execute(
+        "SELECT COUNT(*) FROM detections WHERE aesthetic_score IS NOT NULL"
+    ).fetchone()[0]
+    conn.close()
+    assert_eq(n_scored_after, 4, "third run is a no-op (everything scored)")
+    print("PASS test_per_species_cap_end_to_end_bridge")
+
+
 def test_missing_crop_handled() -> None:
     """Detections without thumbnail_path are skipped without crashing."""
     if DB_PATH.exists():
@@ -430,6 +614,10 @@ def main() -> int:
         test_dry_run,
         test_decision_state_filter,
         test_min_score_threshold,
+        test_per_species_cap_basic,
+        test_per_species_cap_created_at_tiebreak,
+        test_per_species_cap_rejects_limit_combo,
+        test_per_species_cap_end_to_end_bridge,
         test_missing_crop_handled,
     ]
     failed = 0

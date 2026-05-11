@@ -166,6 +166,7 @@ def fetch_unscored_detections(
     *,
     rescore: bool = False,
     species_filter: str | None = None,
+    per_species_cap: int | None = None,
 ) -> list[dict]:
     """Detections that need scoring: created since `since`, never scored, and
     (if REQUIRED_DECISION_STATE is set) confirmed by the upstream pipeline.
@@ -176,7 +177,20 @@ def fetch_unscored_detections(
 
     With ``species_filter`` set to a CLS class name (e.g. ``"Parus_major"``),
     only that species is considered. Useful for targeted re-scoring.
+
+    With ``per_species_cap`` set, returns at most N detections per CLS
+    species, ranked within each species by ``score DESC, bbox_quality
+    DESC, created_at DESC`` — i.e. the detector's own best guesses first.
+    Used by the pre-Telegram bridge to keep the run bounded; pairs with
+    ``rescore=False`` so the bridge only fills gaps the nightly missed.
+    Unknown (CLS-null) detections are excluded from this path because
+    ``apply_auto_favorites`` would discard their scores under the default
+    ``TAG_UNKNOWN_SPECIES=False`` policy. Mutually exclusive with
+    ``limit`` (global LIMIT would defeat the per-species fairness).
     """
+    if per_species_cap is not None and limit is not None:
+        raise ValueError("pass per_species_cap or limit, not both")
+
     where_clauses: list[str] = []
     params: list = [since]
     if REQUIRED_DECISION_STATE is not None:
@@ -191,25 +205,61 @@ def fetch_unscored_detections(
         else "AND (d.aesthetic_score IS NULL OR d.aesthetic_score_at IS NULL)"
     )
 
-    sql = f"""
-    SELECT d.detection_id, d.image_filename, d.thumbnail_path, d.created_at,
-           COALESCE(c.cls_class_name, 'unknown') AS species,
-           d.is_favorite, d.rating_source, d.aesthetic_score, d.aesthetic_score_at,
-           d.decision_state
-    FROM detections d
-    LEFT JOIN classifications c ON c.detection_id = d.detection_id
-        AND c.rank = 1 AND c.status = 'active'
-    WHERE d.status = 'active'
-      AND d.od_class_name = 'bird'
-      AND d.created_at >= ?
-      {score_filter}
-      AND d.thumbnail_path IS NOT NULL
-      AND (d.decision_level IS NULL OR lower(d.decision_level) != 'reject')
-      {' '.join(where_clauses)}
-    ORDER BY d.created_at DESC
-    """
-    if limit is not None:
-        sql += f" LIMIT {int(limit)}"
+    if per_species_cap is not None:
+        # Bridge-only path: rank detections per CLS species and keep top N.
+        # Exclude unknown (CLS-null) because their scores are unusable
+        # downstream under TAG_UNKNOWN_SPECIES=False.
+        sql = f"""
+        WITH eligible AS (
+          SELECT d.detection_id, d.image_filename, d.thumbnail_path, d.created_at,
+                 c.cls_class_name AS species,
+                 d.is_favorite, d.rating_source, d.aesthetic_score, d.aesthetic_score_at,
+                 d.decision_state,
+                 ROW_NUMBER() OVER (
+                   PARTITION BY c.cls_class_name
+                   ORDER BY COALESCE(d.score, 0) DESC,
+                            COALESCE(d.bbox_quality, 0) DESC,
+                            d.created_at DESC
+                 ) AS rn
+          FROM detections d
+          LEFT JOIN classifications c ON c.detection_id = d.detection_id
+              AND c.rank = 1 AND c.status = 'active'
+          WHERE d.status = 'active'
+            AND d.od_class_name = 'bird'
+            AND d.created_at >= ?
+            {score_filter}
+            AND d.thumbnail_path IS NOT NULL
+            AND (d.decision_level IS NULL OR lower(d.decision_level) != 'reject')
+            AND c.cls_class_name IS NOT NULL
+            {' '.join(where_clauses)}
+        )
+        SELECT detection_id, image_filename, thumbnail_path, created_at,
+               species, is_favorite, rating_source, aesthetic_score,
+               aesthetic_score_at, decision_state
+        FROM eligible
+        WHERE rn <= ?
+        """
+        params.append(int(per_species_cap))
+    else:
+        sql = f"""
+        SELECT d.detection_id, d.image_filename, d.thumbnail_path, d.created_at,
+               COALESCE(c.cls_class_name, 'unknown') AS species,
+               d.is_favorite, d.rating_source, d.aesthetic_score, d.aesthetic_score_at,
+               d.decision_state
+        FROM detections d
+        LEFT JOIN classifications c ON c.detection_id = d.detection_id
+            AND c.rank = 1 AND c.status = 'active'
+        WHERE d.status = 'active'
+          AND d.od_class_name = 'bird'
+          AND d.created_at >= ?
+          {score_filter}
+          AND d.thumbnail_path IS NOT NULL
+          AND (d.decision_level IS NULL OR lower(d.decision_level) != 'reject')
+          {' '.join(where_clauses)}
+        ORDER BY d.created_at DESC
+        """
+        if limit is not None:
+            sql += f" LIMIT {int(limit)}"
     cur = conn.execute(sql, params)
     cols = [d[0] for d in cur.description]
     return [dict(zip(cols, row)) for row in cur.fetchall()]
@@ -408,7 +458,16 @@ def main_with_args(argv: list[str] | None = None) -> int:
     )
     p.add_argument(
         "--limit", type=int, default=None,
-        help="Cap detections processed per run (smoke testing).",
+        help="Cap detections processed per run (smoke testing). Mutually "
+             "exclusive with --per-species-cap.",
+    )
+    p.add_argument(
+        "--per-species-cap", type=int, default=None,
+        help="Score at most N detections per CLS species, ranked within "
+             "each species by detector score / bbox quality / created_at. "
+             "Used by the pre-Telegram bridge to bound the run while "
+             "keeping a fair sample across species. Mutually exclusive "
+             "with --limit. Excludes CLS-null (unknown) detections.",
     )
     p.add_argument(
         "--dry-run", action="store_true",
@@ -440,6 +499,9 @@ def main_with_args(argv: list[str] | None = None) -> int:
     )
     p.add_argument("--verbose", "-v", action="store_true")
     args = p.parse_args(argv)
+
+    if args.limit is not None and args.per_species_cap is not None:
+        p.error("--limit and --per-species-cap are mutually exclusive")
 
     # Throttle: CLI overrides env overrides default 0.
     if args.throttle_ms is not None:
@@ -526,11 +588,18 @@ def main_with_args(argv: list[str] | None = None) -> int:
             limit=args.limit,
             rescore=args.rescore,
             species_filter=args.species,
+            per_species_cap=args.per_species_cap,
         )
         if args.rescore:
             log.info(
                 f"Found {len(unscored)} detections to RE-SCORE "
                 f"(--rescore active; existing scores will be overwritten)"
+            )
+        elif args.per_species_cap is not None:
+            log.info(
+                f"Found {len(unscored)} detections needing aesthetic_score "
+                f"(--per-species-cap={args.per_species_cap}, ranked by detector "
+                f"score / bbox_quality / created_at)"
             )
         else:
             log.info(f"Found {len(unscored)} detections needing aesthetic_score")

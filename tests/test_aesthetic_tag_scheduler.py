@@ -114,3 +114,122 @@ def test_check_dependencies_available_returns_bool():
     """The dependency probe always returns bool, never raises."""
     rv = ats._check_dependencies_available()
     assert isinstance(rv, bool)
+
+
+def _capture_argv():
+    """Patch main_with_args to capture the argv the scheduler passes."""
+    captured = {"argv": None}
+
+    def fake_main(argv):
+        captured["argv"] = argv
+        return 0
+
+    return captured, fake_main
+
+
+def _patch_lease_passthrough():
+    """A lease stub whose acquire() yields without altering state."""
+    class _Stub:
+        def acquire(self, *_args, **_kwargs):
+            from contextlib import contextmanager
+
+            @contextmanager
+            def cm():
+                yield self
+            return cm()
+
+    return _Stub()
+
+
+def test_run_now_passes_per_species_cap_to_worker():
+    """run_now() with an explicit cap forwards --per-species-cap=N
+    into the worker argv. The pre-Telegram bridge depends on this
+    plumbing — the cap is meaningless if it never reaches the CLI."""
+    ats._last_run_date = None
+    ats._run_mutex = __import__("threading").Lock()  # fresh mutex per test
+    captured, fake_main = _capture_argv()
+
+    with patch("config.get_config", return_value={
+        "AESTHETIC_TAG_ENABLED": True,
+        "AESTHETIC_BRIDGE_PER_SPECIES_CAP": 8,  # default; explicit cap=5 should override
+    }), patch.object(ats, "_check_dependencies_available", return_value=True), \
+         patch("scripts.aesthetic_tag_nightly.main_with_args", fake_main), \
+         patch("web.services.compute_lease_service.get_compute_lease_service",
+               return_value=_patch_lease_passthrough()):
+        ok = ats.run_now(
+            "test bridge",
+            since="2026-05-11T00:00:00+00:00",
+            throttle_ms=100,
+            per_species_cap=5,
+        )
+
+    assert ok is True
+    assert captured["argv"] is not None
+    assert "--per-species-cap" in captured["argv"]
+    cap_idx = captured["argv"].index("--per-species-cap")
+    assert captured["argv"][cap_idx + 1] == "5"
+
+
+def test_run_now_falls_back_to_config_default_for_cap():
+    """When per_species_cap is unset, run_now reads
+    AESTHETIC_BRIDGE_PER_SPECIES_CAP from config. The Telegram
+    blueprint always calls run_now(today_only=True) without the cap
+    kwarg, so the config-driven default is the only knob the operator
+    can turn without code changes."""
+    ats._last_run_date = None
+    ats._run_mutex = __import__("threading").Lock()
+    captured, fake_main = _capture_argv()
+
+    with patch("config.get_config", return_value={
+        "AESTHETIC_TAG_ENABLED": True,
+        "AESTHETIC_BRIDGE_PER_SPECIES_CAP": 12,
+    }), patch.object(ats, "_check_dependencies_available", return_value=True), \
+         patch("scripts.aesthetic_tag_nightly.main_with_args", fake_main), \
+         patch("web.services.compute_lease_service.get_compute_lease_service",
+               return_value=_patch_lease_passthrough()):
+        ats.run_now("test bridge", today_only=True)
+
+    assert captured["argv"] is not None
+    cap_idx = captured["argv"].index("--per-species-cap")
+    assert captured["argv"][cap_idx + 1] == "12"
+
+
+def test_run_now_zero_cap_disables_the_flag():
+    """per_species_cap=0 (or config value 0) means 'no cap'. The
+    --per-species-cap flag must NOT be passed in that case so the
+    worker reverts to the full-backfill behaviour."""
+    ats._last_run_date = None
+    ats._run_mutex = __import__("threading").Lock()
+    captured, fake_main = _capture_argv()
+
+    with patch("config.get_config", return_value={
+        "AESTHETIC_TAG_ENABLED": True,
+        "AESTHETIC_BRIDGE_PER_SPECIES_CAP": 0,
+    }), patch.object(ats, "_check_dependencies_available", return_value=True), \
+         patch("scripts.aesthetic_tag_nightly.main_with_args", fake_main), \
+         patch("web.services.compute_lease_service.get_compute_lease_service",
+               return_value=_patch_lease_passthrough()):
+        ats.run_now("test bridge", today_only=True)
+
+    assert captured["argv"] is not None
+    assert "--per-species-cap" not in captured["argv"], (
+        f"cap=0 must omit the flag, got argv={captured['argv']!r}"
+    )
+
+
+def test_run_tagger_nightly_path_omits_per_species_cap():
+    """The daily loop calls _run_tagger(reason) with no per_species_cap
+    kwarg. The nightly run must score every detection of the previous
+    day; passing a cap would silently leave species under-scored."""
+    captured, fake_main = _capture_argv()
+
+    with patch("scripts.aesthetic_tag_nightly.main_with_args", fake_main), \
+         patch("web.services.compute_lease_service.get_compute_lease_service",
+               return_value=_patch_lease_passthrough()):
+        rc = ats._run_tagger("daily @ 02:10")
+
+    assert rc == 0
+    assert "--per-species-cap" not in (captured["argv"] or []), (
+        "nightly _run_tagger must never pass --per-species-cap; "
+        f"got argv={captured['argv']!r}"
+    )

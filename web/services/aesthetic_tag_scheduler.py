@@ -139,6 +139,7 @@ def _run_tagger(
     *,
     since: str | None = None,
     throttle_ms: int | None = None,
+    per_species_cap: int | None = None,
 ) -> int:
     """Fire scripts.aesthetic_tag_nightly.main_with_args() in this process.
 
@@ -154,6 +155,11 @@ def _run_tagger(
     nightly run is 0 (camera is idle at 02:10, no live detector to
     starve), but the bridge passes 100 by default so the daytime
     detector keeps its frame budget while CLIP runs on the same CPU.
+
+    ``per_species_cap`` is the bridge-only knob that caps the run at N
+    detections per CLS species, ranked by detector score / bbox quality
+    / created_at. The nightly loop never sets this — it must still
+    score every detection of the previous day for completeness.
 
     Acquires the shared compute lease with ``pause_detection=False`` so
     Companion inference and the tagger cannot run concurrently. The
@@ -179,6 +185,8 @@ def _run_tagger(
         argv = ["--since", since]
     if throttle_ms is not None and throttle_ms >= 0:
         argv += ["--throttle-ms", str(throttle_ms)]
+    if per_species_cap is not None and per_species_cap > 0:
+        argv += ["--per-species-cap", str(per_species_cap)]
 
     _apply_cpu_friendliness_env()
 
@@ -234,6 +242,7 @@ def run_now(
     since: str | None = None,
     today_only: bool = False,
     throttle_ms: int | None = 100,
+    per_species_cap: int | None = None,
 ) -> bool:
     """Synchronously trigger the tagger from outside the daily loop.
 
@@ -256,6 +265,12 @@ def run_now(
             running on the same CPU; nightly runs (which call
             ``_run_tagger`` directly) leave it at 0. Pass ``None`` here
             to defer to the worker's env / CLI default (also 0).
+        per_species_cap: Cap the bridge at N detections per CLS species.
+            ``None`` (default) falls back to config key
+            ``AESTHETIC_BRIDGE_PER_SPECIES_CAP``; that key defaults to 8
+            so the bridge stays bounded even on busy days. Pass ``0`` to
+            disable the cap and score every unscored detection (the
+            old pre-cap behaviour).
 
     Returns:
         True on success (rc == 0), False on failure or when the
@@ -283,11 +298,27 @@ def run_now(
     if today_only:
         since = _today_midnight_utc_iso()
 
+    if per_species_cap is None:
+        try:
+            per_species_cap = int(config.get("AESTHETIC_BRIDGE_PER_SPECIES_CAP", 8))
+        except (TypeError, ValueError):
+            per_species_cap = 8
+    if per_species_cap <= 0:
+        # Explicit opt-out from the cap (e.g. operator wants the full
+        # backfill); pass None to _run_tagger so no --per-species-cap
+        # flag reaches the worker.
+        per_species_cap = None
+
     if not _run_mutex.acquire(blocking=False):
         logger.info("Aesthetic run_now (%s): another run in progress; skipping.", reason)
         return False
     try:
-        rc = _run_tagger(reason, since=since, throttle_ms=throttle_ms)
+        rc = _run_tagger(
+            reason,
+            since=since,
+            throttle_ms=throttle_ms,
+            per_species_cap=per_species_cap,
+        )
         # Mark today as run too: the daily loop's duplicate guard should
         # not fire a second run a few hours later when we already
         # bridged this date.

@@ -145,6 +145,18 @@ DEFAULTS = {
     #     CPU footprint, leaving 2 cores for OD/CLS.
     "AESTHETIC_TAGGER_NICE": 10,
     "AESTHETIC_TAGGER_TORCH_THREADS": 2,
+    # Pre-Telegram bridge cap: maximum aesthetic-score inferences per CLS
+    # species during a bridge run. The bridge fills the gap between the
+    # 02:10 nightly tagger and the report send (~21:00) so today's
+    # detections have aesthetic scores in time. Without a cap, the bridge
+    # has to score every unscored detection of the day — that takes
+    # ~1.0s/image on the Pi 5 with live OD competing, which can stretch
+    # the bridge run past the report-send window on busy days. Capping
+    # per species (ranked by detector score, bbox quality, created_at)
+    # keeps the run bounded while still giving the report a fair sample
+    # across species. 0 disables the cap (scores everything). Only the
+    # bridge path honours this; the nightly run still scores everything.
+    "AESTHETIC_BRIDGE_PER_SPECIES_CAP": 8,
     "DEVICE_NAME": "",
     "EXIF_GPS_ENABLED": True,
     "INBOX_REQUIRE_EXIF_DATETIME": True,
@@ -230,6 +242,7 @@ RUNTIME_KEYS = {
     "AESTHETIC_TAG_TIME",
     "AESTHETIC_TAGGER_NICE",
     "AESTHETIC_TAGGER_TORCH_THREADS",
+    "AESTHETIC_BRIDGE_PER_SPECIES_CAP",
     # Companion runtime knobs. Enable / pause / language / tone are
     # safe to flip live; backend, GGUF path, n_ctx, n_threads, the URL
     # and model tag re-bind on next service init (read once when
