@@ -402,7 +402,16 @@ def _load_config():
     # bare `TELEGRAM_ENABLED: true/false` in settings.yaml and no mode key.
     # Translate that to the closest equivalent so live alerts don't silently
     # stop after upgrade.
-    if "TELEGRAM_MODE" not in yaml_settings:
+    #
+    # Guard: only fire when `TELEGRAM_ENABLED` lives inside the YAML
+    # itself. The previous version looked at any source of
+    # `TELEGRAM_ENABLED` and would flip the mode to "live" on every
+    # Docker rebuild where the compose file set TELEGRAM_ENABLED=True
+    # via env — even after the operator had explicitly chosen
+    # TELEGRAM_MODE=off in the UI (the choice persisted into YAML but
+    # the old save logic dropped default values, so the mode key was
+    # absent on the next boot).
+    if "TELEGRAM_MODE" not in yaml_settings and "TELEGRAM_ENABLED" in yaml_settings:
         legacy_enabled = yaml_settings.get("TELEGRAM_ENABLED")
         if legacy_enabled is not None:
             config["TELEGRAM_MODE"] = "live" if _coerce_bool(legacy_enabled) else "off"
@@ -1007,20 +1016,24 @@ def validate_runtime_updates(updates):
 
 
 def update_runtime_settings(updates):
-    """Saves runtime settings and updates the running configuration."""
+    """Saves runtime settings and updates the running configuration.
+
+    Persistence rule: an explicit user choice is ALWAYS written to
+    settings.yaml — even when the value matches the default. The
+    earlier "drop default values from YAML to keep it slim" heuristic
+    looked clean but produced a nasty Docker-deploy regression: setting
+    TELEGRAM_MODE to "off" (default) dropped the key from YAML, then
+    the legacy-migration in _load_config re-derived TELEGRAM_MODE from
+    a leftover TELEGRAM_ENABLED on the next boot — flipping the mode
+    back to "live" ("Instant" in the UI). Writing every explicit choice
+    means the user's intent survives restarts and image rebuilds.
+    """
     cfg = get_config()
     yaml_settings = load_settings_yaml(str(cfg["OUTPUT_DIR"]))
     for key, value in updates.items():
         if key not in RUNTIME_KEYS:
             continue
-        # Only remove from YAML if it matches default AND is not overridden by ENV.
-        is_default = value == DEFAULTS.get(key)
-        has_env = os.getenv(key) is not None
-
-        if is_default and not has_env:
-            yaml_settings.pop(key, None)
-        else:
-            yaml_settings[key] = value
+        yaml_settings[key] = value
         cfg[key] = value
     _coerce_config_types(cfg)
     save_settings_yaml(yaml_settings, str(cfg["OUTPUT_DIR"]))
