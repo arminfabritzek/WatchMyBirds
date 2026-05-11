@@ -28,6 +28,20 @@ import threading
 import time
 from datetime import date, datetime, timezone
 
+# Redirect HF cache to a writable location BEFORE huggingface_hub gets
+# imported transitively (which happens inside _check_dependencies_available
+# the first time `import open_clip` runs). huggingface_hub.constants reads
+# HF_HOME / XDG_CACHE_HOME at module-import time and freezes the resolved
+# cache path into module globals — setting HF_HOME afterwards is a no-op.
+# Container deploys set XDG_CACHE_HOME=/tmp/fontconfig (fontconfig workaround)
+# which the runtime user can't write to; HF would derive its cache there
+# and fail with EACCES. Honour an explicit HF_HOME if the operator set
+# one; otherwise root the cache inside OUTPUT_DIR so it sits on the
+# mounted volume and survives container rebuilds (~600MB of weights).
+if not os.environ.get("HF_HOME"):
+    _output_dir = os.environ.get("OUTPUT_DIR", "/opt/app/data/output")
+    os.environ["HF_HOME"] = os.path.join(_output_dir, "huggingface")
+
 logger = logging.getLogger(__name__)
 
 # Daily-mode guard: tracks the last date a tag-run finished so we don't

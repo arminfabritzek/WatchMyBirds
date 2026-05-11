@@ -41,6 +41,18 @@ import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+# Redirect HF cache to a writable location BEFORE huggingface_hub gets
+# imported transitively via open_clip. huggingface_hub.constants reads
+# HF_HOME / XDG_CACHE_HOME at module-import time and freezes the resolved
+# cache path into module globals — setting HF_HOME after the first import
+# has no effect. Must run before any `import open_clip`, hence module-top.
+# Container deploys set XDG_CACHE_HOME=/tmp/fontconfig (fontconfig workaround)
+# which the runtime user can't write to. Root the cache inside OUTPUT_DIR
+# so it sits on the mounted volume and survives container rebuilds.
+if not os.environ.get("HF_HOME"):
+    _hf_output_dir = os.environ.get("OUTPUT_DIR", "/opt/app/data/output")
+    os.environ["HF_HOME"] = os.path.join(_hf_output_dir, "huggingface")
+
 # --- Configuration ---------------------------------------------------------
 
 # Species filter. Only these CLS labels can become auto-favorites
@@ -121,10 +133,16 @@ CLIP_PRETRAINED = "laion2b_s34b_b79k"
 CLIP_PROMPT_POSITIVE = "a sharp, well-focused photo of a bird looking toward the camera, face and eyes clearly visible"
 CLIP_PROMPT_NEGATIVE = "a blurry photo of a bird from behind, in profile, or with its head turned away"
 
-# Default paths on RPi (overridable via env).
-DB_PATH = Path(os.environ.get("WMB_DB_PATH", "/opt/app/data/output/images.db"))
-CROPS_ROOT = Path(os.environ.get("WMB_CROPS_ROOT", "/opt/app/data/output/derivatives/thumbs"))
-LOG_PATH = Path(os.environ.get("WMB_AESTHETIC_LOG", "/opt/app/data/logs/aesthetic_tag.log"))
+# Default paths. Precedence per knob: explicit WMB_* env var → derived
+# from the app's canonical OUTPUT_DIR (works on Pi systemd, NAS Docker
+# `/output`, and local `./data/output` alike) → legacy `/opt/app/data`
+# fallback for old systemd units that pre-date OUTPUT_DIR awareness.
+# Logs live inside OUTPUT_DIR (not as a sibling) so the container deploy
+# only has to mount one volume.
+_OUTPUT_DIR = Path(os.environ.get("OUTPUT_DIR", "/opt/app/data/output"))
+DB_PATH = Path(os.environ.get("WMB_DB_PATH", str(_OUTPUT_DIR / "images.db")))
+CROPS_ROOT = Path(os.environ.get("WMB_CROPS_ROOT", str(_OUTPUT_DIR / "derivatives" / "thumbs")))
+LOG_PATH = Path(os.environ.get("WMB_AESTHETIC_LOG", str(_OUTPUT_DIR / "logs" / "aesthetic_tag.log")))
 
 
 def setup_logging(verbose: bool) -> None:
@@ -308,12 +326,18 @@ def apply_auto_favorites(conn: sqlite3.Connection, since: str, dry_run: bool) ->
 # --- CLIP scoring ----------------------------------------------------------
 
 def load_clip_model(device: str):
-    """Lazy import + load. Returns (model, preprocess, text_features)."""
+    """Lazy import + load. Returns (model, preprocess, text_features).
+
+    Note: HF cache redirection happens at module-top, not here — it must
+    occur before huggingface_hub's transitive import freezes the cache
+    path into its constants module.
+    """
     import open_clip
     import torch
 
     log = logging.getLogger(__name__)
     log.info(f"Loading CLIP {CLIP_MODEL_NAME} ({CLIP_PRETRAINED}) on {device}...")
+    log.debug(f"HF_HOME={os.environ.get('HF_HOME')}")
     t0 = time.time()
     model, _, preprocess = open_clip.create_model_and_transforms(
         CLIP_MODEL_NAME, pretrained=CLIP_PRETRAINED, device=device
