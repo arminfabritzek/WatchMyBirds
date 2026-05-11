@@ -38,7 +38,7 @@ class CompanionService:
     def __init__(
         self,
         *,
-        client: CompanionInferenceClient,
+        client: CompanionInferenceClient | None,
         recorder: CompanionRecorder,
         lease,
         enabled: bool,
@@ -62,7 +62,7 @@ class CompanionService:
             busy_holder = lease_status.holder
         return {
             "enabled": self.enabled,
-            "configured": True,
+            "configured": self._client is not None,
             "model_id": getattr(self._client, "model_id", ""),
             "pause_detection": self.pause_detection,
             "timeout_s": self.timeout_s,
@@ -145,6 +145,13 @@ class CompanionService:
                 "ok": False,
                 "status": "disabled",
                 "reason": "COMPANION_ENABLED is false",
+            }
+
+        if self._client is None:
+            return {
+                "ok": False,
+                "status": "unreachable",
+                "reason": "inference adapter not configured",
             }
 
         if self._lease is None:

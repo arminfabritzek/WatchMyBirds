@@ -148,9 +148,21 @@ DEFAULTS = {
     # --- Companion v1 backend (default OFF) ---
     # Backend-only in v1. All keys default conservative so a fresh
     # install never reaches an LLM runtime by accident.
+    #
+    # The default backend is `llama_cpp` (in-process GGUF via
+    # llama-cpp-python). Ollama remains an alternative for hosts that
+    # already serve the model via a local daemon. Switching the backend
+    # takes effect on next boot.
     "COMPANION_ENABLED": False,
+    "COMPANION_INFERENCE_BACKEND": "llama_cpp",  # "llama_cpp" | "ollama"
+    # llama_cpp adapter knobs:
+    "COMPANION_LLAMA_CPP_GGUF_PATH": "",  # empty -> auto-pick newest .gguf under <models>/companion/
+    "COMPANION_LLAMA_CPP_N_CTX": 4096,
+    "COMPANION_LLAMA_CPP_N_THREADS": 0,  # 0 -> library default (typically all cores)
+    # ollama adapter knobs:
     "COMPANION_OLLAMA_URL": "http://127.0.0.1:11434",
     "COMPANION_OLLAMA_MODEL_TAG": "wmb-companion:1b-q4",
+    # shared:
     "COMPANION_INFERENCE_TIMEOUT_S": 60,
     "COMPANION_PAUSE_DETECTION_DURING_INFERENCE": True,
     "COMPANION_LANGUAGE": "de",
@@ -200,15 +212,22 @@ RUNTIME_KEYS = {
     "AESTHETIC_TAG_ENABLED",
     "AESTHETIC_TAG_TIME",
     # Companion runtime knobs. Enable / pause / language / tone are
-    # safe to flip live; the URL and model tag re-bind on next service
-    # init (we re-read them when constructing the Ollama adapter at
-    # process boot, not on every API call, so changes there require a
-    # restart — same as the existing telemetry endpoint key).
+    # safe to flip live; backend, GGUF path, n_ctx, n_threads, the URL
+    # and model tag re-bind on next service init (read once when
+    # constructing the adapter at process boot, not on every API call),
+    # so those changes need a restart — same as the existing telemetry
+    # endpoint key.
     "COMPANION_ENABLED",
     "COMPANION_PAUSE_DETECTION_DURING_INFERENCE",
     "COMPANION_LANGUAGE",
     "COMPANION_TONE",
     "COMPANION_INFERENCE_TIMEOUT_S",
+    "COMPANION_INFERENCE_BACKEND",
+    "COMPANION_LLAMA_CPP_GGUF_PATH",
+    "COMPANION_LLAMA_CPP_N_CTX",
+    "COMPANION_LLAMA_CPP_N_THREADS",
+    "COMPANION_OLLAMA_URL",
+    "COMPANION_OLLAMA_MODEL_TAG",
     "DEVICE_NAME",
     "LOCATION_DATA",
     "EXIF_GPS_ENABLED",

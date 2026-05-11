@@ -1,0 +1,12 @@
+# Optional dependencies for the Companion v1 backend
+# (web/services/companion/, default backend = llama_cpp).
+#
+# Kept separate from the main requirements.txt because the
+# llama-cpp-python build chain is heavy on aarch64 and the Companion
+# is opt-in via COMPANION_ENABLED=true; hosts that do not enable it
+# should not pay the install cost.
+#
+# Install:
+#   pip install -r requirements-companion.txt
+
+llama-cpp-python>=0.2,<0.4
