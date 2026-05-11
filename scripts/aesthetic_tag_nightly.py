@@ -430,6 +430,52 @@ def main_with_args(argv: list[str] | None = None) -> int:
     setup_logging(args.verbose)
     log = logging.getLogger(__name__)
 
+    # CPU-friendliness for the live detector. The tagger thread runs in
+    # the same process as DetectionManager; on a Pi 5 with 4 cores the
+    # ONNX OD pipeline and CLIP fight for cores unless we ask the OS to
+    # prioritise OD. Two orthogonal knobs:
+    #
+    #   * os.nice(N) — raises the scheduler "niceness" of this thread.
+    #     When OD wants CPU, the kernel preempts the tagger first.
+    #     Niceness is best-effort under load; threads in 3 mode behave
+    #     better than naive throttling because the OS does the work.
+    #
+    #   * torch.set_num_threads(N) — caps how many cores CLIP can pin
+    #     for matrix ops. The default uses all cores, which leaves OD
+    #     scrambling for slots; capping to 1-2 reserves headroom for OD
+    #     at the cost of slower per-image CLIP inference.
+    #
+    # Both knobs are env-overridable so the nightly run (when no live
+    # OD is competing) can dial them off via env vars.
+    _nice_delta_raw = os.environ.get("WMB_AESTHETIC_NICE", "10")
+    try:
+        nice_delta = max(0, min(19, int(_nice_delta_raw)))
+    except ValueError:
+        nice_delta = 10
+    if nice_delta > 0:
+        try:
+            os.nice(nice_delta)
+            log.info(f"Tagger niceness raised by +{nice_delta} (live OD gets priority)")
+        except (OSError, PermissionError) as exc:
+            log.warning(f"Tagger niceness raise failed (continuing): {exc}")
+
+    _thread_cap_raw = os.environ.get("WMB_AESTHETIC_TORCH_THREADS", "2")
+    try:
+        torch_threads = max(0, int(_thread_cap_raw))
+    except ValueError:
+        torch_threads = 2
+    if torch_threads > 0:
+        try:
+            import torch  # noqa: WPS433 — local so the slim-image fallback path stays import-safe
+            torch.set_num_threads(torch_threads)
+            log.info(f"Tagger torch thread cap = {torch_threads} (reserves cores for OD)")
+        except ImportError:
+            # If torch is missing, the dependency check below will skip
+            # the whole run anyway.
+            pass
+        except Exception as exc:
+            log.warning(f"Tagger torch thread cap failed (continuing): {exc}")
+
     if args.since is None:
         # Default: yesterday 00:00 UTC. Catches everything from the prior calendar day.
         since_dt = (datetime.now(timezone.utc) - timedelta(days=1)).replace(

@@ -25,7 +25,13 @@ logger = logging.getLogger(__name__)
 # double-fire after restart near the scheduled minute.
 _last_report_date: date | None = None
 # Interval-mode guard: wall-clock timestamp of the last successful send.
+# Initialised lazily on first scheduler tick to the process start time so
+# an app restart does NOT trigger an immediate bridge+report+tagger storm
+# (the previous 0.0 sentinel always satisfied "now - 0 >= interval_hours
+# * 3600"). The first interval-tick after restart now fires interval_hours
+# after boot, matching wall-clock cadence regardless of restarts.
 _last_interval_send_ts: float = 0.0
+_interval_guard_initialised: bool = False
 _lock = threading.Lock()
 
 
@@ -45,10 +51,19 @@ def _should_send_daily(report_hour: int, report_minute: int) -> bool:
 
 
 def _should_send_interval(interval_hours: int) -> bool:
-    """True when enough wall-clock time has passed since the last send."""
-    global _last_interval_send_ts
+    """True when enough wall-clock time has passed since the last send.
+
+    On first call after process start, anchors the guard to ``now()`` so
+    a restart does not retrigger an immediate send. From there on the
+    guard works on real elapsed wall-clock between successful sends.
+    """
+    global _last_interval_send_ts, _interval_guard_initialised
     now_ts = time.time()
     with _lock:
+        if not _interval_guard_initialised:
+            _last_interval_send_ts = now_ts
+            _interval_guard_initialised = True
+            return False
         if (now_ts - _last_interval_send_ts) >= max(1, interval_hours) * 3600:
             return True
         return False

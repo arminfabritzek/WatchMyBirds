@@ -128,6 +128,23 @@ DEFAULTS = {
     # devices that can't load the CLIP weights (~700 MB transient).
     "AESTHETIC_TAG_ENABLED": True,
     "AESTHETIC_TAG_TIME": "02:10",
+    # CPU-friendliness knobs for the in-process aesthetic tagger. Both
+    # are read live in web/services/aesthetic_tag_scheduler.py and
+    # surfaced to the worker via env vars (WMB_AESTHETIC_NICE,
+    # WMB_AESTHETIC_TORCH_THREADS) on each run.
+    #
+    #   AESTHETIC_TAGGER_NICE — UNIX nice() delta applied at worker
+    #     start. 0..19; higher = lower priority. 10 (default) keeps the
+    #     live OD pipeline responsive on a Pi 5 with 4 cores. Set to 0
+    #     to opt out (default OS scheduling).
+    #
+    #   AESTHETIC_TAGGER_TORCH_THREADS — caps torch.set_num_threads()
+    #     in the worker. 0 = let torch decide (use all cores), 1-2 keeps
+    #     headroom for OD at the cost of slower per-image CLIP
+    #     inference. Defaults to 2 — on a 4-core Pi this halves CLIP's
+    #     CPU footprint, leaving 2 cores for OD/CLS.
+    "AESTHETIC_TAGGER_NICE": 10,
+    "AESTHETIC_TAGGER_TORCH_THREADS": 2,
     "DEVICE_NAME": "",
     "EXIF_GPS_ENABLED": True,
     "INBOX_REQUIRE_EXIF_DATETIME": True,
@@ -211,6 +228,8 @@ RUNTIME_KEYS = {
     "TELEGRAM_MIN_AESTHETIC_SCORE",
     "AESTHETIC_TAG_ENABLED",
     "AESTHETIC_TAG_TIME",
+    "AESTHETIC_TAGGER_NICE",
+    "AESTHETIC_TAGGER_TORCH_THREADS",
     # Companion runtime knobs. Enable / pause / language / tone are
     # safe to flip live; backend, GGUF path, n_ctx, n_threads, the URL
     # and model tag re-bind on next service init (read once when

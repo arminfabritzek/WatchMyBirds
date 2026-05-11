@@ -23,6 +23,7 @@ Docker image without the aesthetic stack should still boot the app.
 from __future__ import annotations
 
 import logging
+import os
 import threading
 import time
 from datetime import date, datetime, timezone
@@ -95,6 +96,30 @@ def _today_midnight_utc_iso() -> str:
 _LEASE_HOLDER = "aesthetic_tagger"
 
 
+def _apply_cpu_friendliness_env() -> None:
+    """Read the AESTHETIC_TAGGER_* config keys and surface them as env
+    vars the worker honours.
+
+    The worker is invoked in-process via ``main_with_args`` and reads
+    ``os.environ`` for niceness, torch-thread-cap, and throttle. Setting
+    them here (and only here) means config changes via Settings → Apply
+    take effect on the next bridge / daily run with no extra plumbing.
+    """
+    try:
+        from config import get_config
+        cfg = get_config()
+    except Exception:
+        return
+
+    nice = cfg.get("AESTHETIC_TAGGER_NICE")
+    if nice is not None:
+        os.environ["WMB_AESTHETIC_NICE"] = str(int(nice))
+
+    threads = cfg.get("AESTHETIC_TAGGER_TORCH_THREADS")
+    if threads is not None:
+        os.environ["WMB_AESTHETIC_TORCH_THREADS"] = str(int(threads))
+
+
 def _run_tagger(
     reason: str,
     *,
@@ -120,6 +145,11 @@ def _run_tagger(
     Companion inference and the tagger cannot run concurrently. The
     tagger does not pause OD on its own — the existing throttle
     behaviour stays in place.
+
+    CPU-friendliness knobs (``AESTHETIC_TAGGER_NICE``,
+    ``AESTHETIC_TAGGER_TORCH_THREADS``) are read live and exported into
+    the worker's environment so the live OD pipeline gets priority
+    while CLIP runs on the same Pi cores.
     """
     try:
         from scripts.aesthetic_tag_nightly import main_with_args
@@ -135,6 +165,8 @@ def _run_tagger(
         argv = ["--since", since]
     if throttle_ms is not None and throttle_ms >= 0:
         argv += ["--throttle-ms", str(throttle_ms)]
+
+    _apply_cpu_friendliness_env()
 
     logger.info("Aesthetic tagger firing (%s, argv=%s)...", reason, argv)
     from web.services.compute_lease_service import (
