@@ -329,6 +329,89 @@ def test_visibility_policy_propagates_to_rolling_and_bulk_selection_queries():
     }
 
 
+def test_gallery_queries_canonicalize_space_separated_species_labels():
+    conn = _build_conn()
+    conn.executemany(
+        """
+        INSERT INTO images(filename, timestamp, source_id, review_status)
+        VALUES (?, ?, ?, ?)
+        """,
+        [
+            ("20260330_120000_a.jpg", "20260330_120000", 1, "untagged"),
+            ("20260330_120030_b.jpg", "20260330_120030", 1, "untagged"),
+        ],
+    )
+    conn.executemany(
+        """
+        INSERT INTO detections(
+            detection_id,
+            image_filename,
+            status,
+            created_at,
+            bbox_x,
+            bbox_y,
+            bbox_w,
+            bbox_h,
+            od_class_name,
+            od_confidence,
+            score,
+            is_favorite,
+            decision_state
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        [
+            (
+                101,
+                "20260330_120000_a.jpg",
+                "active",
+                "20260330_120000",
+                0.10,
+                0.10,
+                0.20,
+                0.20,
+                "bird",
+                0.91,
+                0.60,
+                0,
+                "confirmed",
+            ),
+            (
+                102,
+                "20260330_120030_b.jpg",
+                "active",
+                "20260330_120030",
+                0.12,
+                0.12,
+                0.20,
+                0.20,
+                "bird",
+                0.88,
+                0.65,
+                0,
+                "confirmed",
+            ),
+        ],
+    )
+    conn.executemany(
+        """
+        INSERT INTO classifications(detection_id, cls_class_name, cls_confidence, rank, status)
+        VALUES (?, ?, ?, ?, ?)
+        """,
+        [
+            (101, "Parus major", 0.91, 1, "active"),
+            (102, "Parus_major", 0.88, 1, "active"),
+        ],
+    )
+    conn.commit()
+
+    rows = list(fetch_detections_for_gallery(conn, "2026-03-30", order_by="time"))
+    assert [row["species_key"] for row in rows] == ["Parus_major", "Parus_major"]
+    assert fetch_gallery_total_species_count(conn) == 1
+
+    summary = list(fetch_detection_species_summary(conn, "2026-03-30"))
+    assert [(row["species"], row["count"]) for row in summary] == [("Parus_major", 2)]
+
+
 def test_uncertain_detection_never_appears_in_gallery_even_if_image_is_confirmed():
     conn = _build_conn()
     conn.execute(

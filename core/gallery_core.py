@@ -14,6 +14,7 @@ from typing import Any
 import cv2
 
 from config import get_config
+from utils.species_names import canonical_species_key, resolve_common_name
 from utils.db import (
     closing_connection,
     fetch_daily_covers,
@@ -195,11 +196,11 @@ def get_daily_species_summary(
 
     summary = []
     for row in rows:
-        species = row["species"]
+        species = canonical_species_key(row["species"])
         count = row["count"]
         if not species:
             continue
-        common_name = common_names.get(species, species.replace("_", " "))
+        common_name = resolve_common_name(species, common_names)
         summary.append(
             {"species": species, "common_name": common_name, "count": int(count)}
         )

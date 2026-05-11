@@ -35,9 +35,24 @@ _NON_SPECIES_OD_TOKENS: frozenset[str] = frozenset(
         "",
         "bird",
         "unknown",
+        "unknown species",
+        "unknown_species",
         "unclassified",
     }
 )
+
+
+def canonical_species_key(value: str | None) -> str:
+    """Return the app's canonical species key form.
+
+    Classifier bundles should use underscored scientific names, but some
+    deploys can carry labels with spaces (``"Parus major"``). The UI,
+    common-name map, and SQL aggregations all key on ``"Parus_major"``.
+    """
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    return "_".join(raw.split())
 
 
 def is_non_species_od_token(od_class_name: str | None) -> bool:
@@ -48,9 +63,7 @@ def is_non_species_od_token(od_class_name: str | None) -> bool:
     Non-bird OD class names like ``"squirrel"`` return False and are passed
     through as valid species keys.
     """
-    if od_class_name is None:
-        return True
-    return str(od_class_name).strip().lower() in _NON_SPECIES_OD_TOKENS
+    return canonical_species_key(od_class_name).lower() in _NON_SPECIES_OD_TOKENS
 
 
 def species_key_from_candidates(
@@ -75,11 +88,11 @@ def species_key_from_candidates(
     use this helper instead.
     """
     for candidate in (manual_override, species_key, cls_class_name):
-        value = str(candidate or "").strip()
+        value = canonical_species_key(candidate)
         if value:
             return value
 
-    od_value = str(od_class_name or "").strip()
+    od_value = canonical_species_key(od_class_name)
     if od_value and not is_non_species_od_token(od_value):
         return od_value
 
@@ -94,10 +107,15 @@ def resolve_common_name(
     scientific_name: str | None, common_names: dict[str, str]
 ) -> str:
     """Resolve a species key to a display name using the provided lookup map."""
-    scientific_name = str(scientific_name or "").strip()
-    if not scientific_name:
+    raw_name = str(scientific_name or "").strip()
+    species_key = canonical_species_key(raw_name)
+    if not species_key:
         return ""
-    return common_names.get(scientific_name, scientific_name.replace("_", " "))
+    return (
+        common_names.get(raw_name)
+        or common_names.get(species_key)
+        or species_key.replace("_", " ")
+    )
 
 
 # Non-bird OD class names that are valid species identities in their own
@@ -126,7 +144,7 @@ def is_known_species(
     from older detector generations. Returns False for empty / None /
     UNKNOWN_SPECIES_KEY so callers can treat both as "drop this row."
     """
-    key = str(species_key or "").strip()
+    key = canonical_species_key(species_key)
     if not key or key == UNKNOWN_SPECIES_KEY:
         return False
     if key in _NON_BIRD_OD_SPECIES:

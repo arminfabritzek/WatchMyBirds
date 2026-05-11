@@ -124,7 +124,11 @@ def create_web_interface(detection_manager, system_monitor=None):
     IMAGE_WIDTH = 150
     PAGE_SIZE = 50
 
-    from utils.species_names import load_common_names, species_key_from_candidates
+    from utils.species_names import (
+        load_common_names,
+        resolve_common_name,
+        species_key_from_candidates,
+    )
 
     _species_locale = config.get("SPECIES_COMMON_NAME_LOCALE", "DE")
     COMMON_NAMES = load_common_names(_species_locale)
@@ -175,9 +179,10 @@ def create_web_interface(detection_manager, system_monitor=None):
         )
 
     def _get_common_name_local(species_key: str | None) -> str:
-        if not species_key:
-            return COMMON_NAMES.get(UNKNOWN_SPECIES_KEY, "Unknown species")
-        return COMMON_NAMES.get(species_key, species_key.replace("_", " "))
+        return resolve_common_name(
+            species_key or UNKNOWN_SPECIES_KEY,
+            COMMON_NAMES,
+        )
 
     def _compute_auto_rating_local(od_confidence, cls_confidence, bbox_w, bbox_h):
         """

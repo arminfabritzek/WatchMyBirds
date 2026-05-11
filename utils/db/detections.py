@@ -18,6 +18,11 @@ from utils.review_metadata import (
 from utils.species_names import UNKNOWN_SPECIES_KEY
 
 
+def _canonical_species_key_sql(expr: str) -> str:
+    """SQL mirror of utils.species_names.canonical_species_key()."""
+    return f"NULLIF(REPLACE(TRIM(COALESCE({expr}, '')), ' ', '_'), '')"
+
+
 def _gallery_visibility_sql(det_alias: str = "d", image_alias: str = "i") -> str:
     """Shared visibility policy for gallery-like detection surfaces.
 
@@ -63,13 +68,14 @@ def _gallery_visibility_sql(det_alias: str = "d", image_alias: str = "i") -> str
 
 
 def _normalized_detector_species_sql(det_alias: str = "d") -> str:
+    canonical_od = _canonical_species_key_sql(f"{det_alias}.od_class_name")
     return f"""
         CASE
-            WHEN {det_alias}.od_class_name IS NULL OR TRIM({det_alias}.od_class_name) = ''
+            WHEN {canonical_od} IS NULL
                 THEN '{UNKNOWN_SPECIES_KEY}'
-            WHEN lower({det_alias}.od_class_name) IN ('bird', 'unknown', 'unclassified')
+            WHEN lower({canonical_od}) IN ('bird', 'unknown', 'unknown_species', 'unclassified')
                 THEN '{UNKNOWN_SPECIES_KEY}'
-            ELSE {det_alias}.od_class_name
+            ELSE {canonical_od}
         END
     """
 
@@ -140,8 +146,8 @@ def table_columns(conn: sqlite3.Connection, table_name: str) -> set[str]:
 def effective_species_sql(det_alias: str = "d") -> str:
     return f"""
         COALESCE(
-            NULLIF({det_alias}.manual_species_override, ''),
-            {_top1_species_sql(det_alias)},
+            {_canonical_species_key_sql(f"NULLIF({det_alias}.manual_species_override, '')")},
+            {_canonical_species_key_sql(_top1_species_sql(det_alias))},
             {_normalized_detector_species_sql(det_alias)}
         )
     """
@@ -151,8 +157,8 @@ def _effective_species_joined_sql(det_alias: str = "d", cls_alias: str = "c") ->
     """Species expression for queries that already join the rank-1 CLS row."""
     return f"""
         COALESCE(
-            NULLIF({det_alias}.manual_species_override, ''),
-            {cls_alias}.cls_class_name,
+            {_canonical_species_key_sql(f"NULLIF({det_alias}.manual_species_override, '')")},
+            {_canonical_species_key_sql(f"{cls_alias}.cls_class_name")},
             {_normalized_detector_species_sql(det_alias)}
         )
     """
@@ -191,8 +197,8 @@ def effective_species_sql_for_columns(
     )
     return f"""
         COALESCE(
-            {manual_sql},
-            {top1_sql},
+            {_canonical_species_key_sql(manual_sql)},
+            {_canonical_species_key_sql(top1_sql)},
             {detector_sql}
         )
     """

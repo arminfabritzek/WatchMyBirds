@@ -81,6 +81,24 @@ def test_story_board_excludes_unknown_and_old_rows():
     assert board["grid"] == []
 
 
+def test_story_board_merges_space_and_underscore_species_labels():
+    detections = [
+        _det(1, "20260103_120000", "Parus major", score=0.7),
+        _det(2, "20260103_120030", "Parus_major", score=0.9),
+    ]
+
+    board = build_species_story_board(
+        detections,
+        total_limit=3,
+        featured_count=1,
+        excluded_species={"Unknown_species"},
+        rng=random.Random(3),
+    )
+
+    assert board["featured"][0]["species_key"] == "Parus_major"
+    assert board["featured"][0]["visit_count"] == 1
+
+
 def test_story_board_primary_uses_favorites_from_same_observation():
     detections = [
         _det(1, "20260103_120000", "Parus_major", score=0.95, favorite=False),

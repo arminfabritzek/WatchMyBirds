@@ -11,7 +11,9 @@ import pytest
 
 from utils.species_names import (
     UNKNOWN_SPECIES_KEY,
+    canonical_species_key,
     is_non_species_od_token,
+    resolve_common_name,
     species_key_from_candidates,
 )
 
@@ -21,9 +23,26 @@ from utils.species_names import (
 # ---------------------------------------------------------------------------
 
 
+def test_canonical_species_key_converts_space_labels_to_app_keys():
+    assert canonical_species_key("Parus major") == "Parus_major"
+    assert canonical_species_key("  Turdus   sp.  ") == "Turdus_sp."
+    assert canonical_species_key("marten_mustelid") == "marten_mustelid"
+
+
 @pytest.mark.parametrize(
     "token",
-    ["bird", "BIRD", "Bird", "unknown", "Unclassified", "", "   ", None],
+    [
+        "bird",
+        "BIRD",
+        "Bird",
+        "unknown",
+        "Unknown species",
+        "Unknown_species",
+        "Unclassified",
+        "",
+        "   ",
+        None,
+    ],
 )
 def test_is_non_species_od_token_rejects_placeholder_tokens(token):
     assert is_non_species_od_token(token) is True
@@ -73,6 +92,26 @@ def test_cls_wins_when_no_species_key():
             od_class_name="bird",
         )
         == "Parus_major"
+    )
+
+
+def test_space_separated_classifier_label_is_canonicalized():
+    assert (
+        species_key_from_candidates(
+            cls_class_name="Cyanistes caeruleus",
+            od_class_name="bird",
+        )
+        == "Cyanistes_caeruleus"
+    )
+
+
+def test_resolve_common_name_uses_canonicalized_lookup_key():
+    assert (
+        resolve_common_name(
+            "Cyanistes caeruleus",
+            {"Cyanistes_caeruleus": "Blaumeise"},
+        )
+        == "Blaumeise"
     )
 
 
