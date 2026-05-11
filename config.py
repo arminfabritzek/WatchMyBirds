@@ -1042,14 +1042,18 @@ def update_runtime_settings(updates):
     means the user's intent survives restarts and image rebuilds.
     """
     cfg = get_config()
-    yaml_settings = load_settings_yaml(str(cfg["OUTPUT_DIR"]))
+    output_dir = str(cfg["OUTPUT_DIR"])
+    yaml_settings = load_settings_yaml(output_dir)
+    next_yaml_settings = dict(yaml_settings)
+    next_cfg = dict(cfg)
     for key, value in updates.items():
         if key not in RUNTIME_KEYS:
             continue
-        yaml_settings[key] = value
-        cfg[key] = value
-    _coerce_config_types(cfg)
-    save_settings_yaml(yaml_settings, str(cfg["OUTPUT_DIR"]))
+        next_yaml_settings[key] = value
+        next_cfg[key] = value
+    _coerce_config_types(next_cfg)
+    save_settings_yaml(next_yaml_settings, output_dir)
+    cfg.update(next_cfg)
 
 
 def _validate_value(key, value):

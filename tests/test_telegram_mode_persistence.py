@@ -129,3 +129,28 @@ def test_explicit_telegram_mode_in_yaml_wins_over_telegram_enabled(
 
     cfg = config.get_config()
     assert cfg["TELEGRAM_MODE"] == "daily"
+
+
+def test_failed_settings_save_does_not_fake_runtime_persistence(
+    monkeypatch, fresh_config
+):
+    """If settings.yaml cannot be written, do not mutate the live config.
+
+    Otherwise the page can look correct after a hard refresh because the
+    in-process config changed, while the next Docker recreate loses the
+    setting because it never actually reached settings.yaml.
+    """
+    cfg = fresh_config.get_config()
+    cfg["TELEGRAM_MODE"] = "live"
+    cfg["TELEGRAM_ENABLED"] = True
+
+    def fail_save(*_args, **_kwargs):
+        raise PermissionError("settings.yaml is read-only")
+
+    monkeypatch.setattr(fresh_config, "save_settings_yaml", fail_save)
+
+    with pytest.raises(PermissionError):
+        fresh_config.update_runtime_settings({"TELEGRAM_MODE": "daily"})
+
+    assert cfg["TELEGRAM_MODE"] == "live"
+    assert cfg["TELEGRAM_ENABLED"] is True
