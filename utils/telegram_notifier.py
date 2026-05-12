@@ -183,12 +183,15 @@ def send_telegram_media_group(media_items, parse_mode="HTML"):
                 media_descriptor.append(media_entry)
 
                 try:
-                    files[attach_key] = stack.enter_context(open(item["photo_path"], "rb"))
-                except Exception as e:
+                    photo_fh = open(item["photo_path"], "rb")
+                except OSError as e:
                     logger.error(f"Cannot open photo {item['photo_path']}: {e}")
                     all_responses.append(None)
                     files = None
                     break
+                # Hand ownership to the ExitStack so it closes on scope exit
+                # even if the request itself raises.
+                files[attach_key] = stack.enter_context(photo_fh)
 
             if files is None:
                 continue

@@ -22,7 +22,8 @@ def _available_cpu_ids(process: psutil.Process) -> list[int]:
         current = process.cpu_affinity()
         if current:
             return sorted(int(cpu) for cpu in current)
-    except Exception:
+    except (AttributeError, OSError):
+        # cpu_affinity is Linux/Windows only; fall back to all CPUs.
         pass
     return list(range(multiprocessing.cpu_count()))
 

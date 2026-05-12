@@ -32,9 +32,9 @@ def test_flicker_reduction(enabled_service):
     svc = enabled_service
     key = "Parus_major"
 
-    # Feed 4 CONFIRMED
+    # Feed 4 CONFIRMED (warm-up; intermediate results discarded)
     for _ in range(4):
-        result = svc.smooth(key, DecisionState.CONFIRMED)
+        svc.smooth(key, DecisionState.CONFIRMED)
 
     # Now a single UNCERTAIN flicker
     result = svc.smooth(key, DecisionState.UNCERTAIN)

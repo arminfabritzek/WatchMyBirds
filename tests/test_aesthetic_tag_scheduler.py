@@ -43,7 +43,7 @@ def test_parse_time_invalid_falls_back():
 def test_should_run_only_at_configured_minute():
     """_should_run returns True only when both hour AND minute match
     AND no run has been recorded today."""
-    from datetime import date, datetime
+    from datetime import datetime
 
     # Reset module-level guard before each test.
     ats._last_run_date = None
@@ -69,11 +69,13 @@ def test_should_run_duplicate_guard():
     from datetime import datetime
 
     ats._last_run_date = None
-    ats._mark_run_today()
 
     with patch("web.services.aesthetic_tag_scheduler.datetime") as mock_dt:
         mock_dt.now.return_value = datetime(2026, 5, 2, 2, 10)
         mock_dt.side_effect = datetime
+        # _mark_run_today must read the same (mocked) clock as _should_run,
+        # so call it inside the patch context.
+        ats._mark_run_today()
         # Even at the right time, the guard prevents another fire today.
         assert ats._should_run(2, 10) is False
 

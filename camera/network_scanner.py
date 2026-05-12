@@ -9,9 +9,9 @@ from urllib.parse import urlparse
 
 import ifaddr
 from onvif import ONVIFCamera
+from wsdiscovery.discovery import ThreadedWSDiscovery
 
 from utils.log_safety import safe_log_value as _slv
-from wsdiscovery.discovery import ThreadedWSDiscovery
 
 logger = logging.getLogger(__name__)
 
@@ -63,7 +63,8 @@ class NetworkScanner:
             candidates.append(
                 Path(onvif_module.__file__).resolve().parent.parent / "wsdl"
             )
-        except Exception:
+        except (ImportError, AttributeError, OSError):
+            # onvif-zeep absent or installed without packaged WSDL dir.
             pass
 
         # Repository-bundled fallback for appliance/dev images.
@@ -100,12 +101,10 @@ class NetworkScanner:
         wsd_thread.start()
 
         # 2. Start Subnet Scan (if not fast mode)
-        msg_scanner = "Active Subnet Scan..."
         if not fast:
             self._scan_subnet()
         else:
-            msg_scanner = "Skipping Subnet Scan (Fast Mode)"
-            logger.info(msg_scanner)
+            logger.info("Skipping Subnet Scan (Fast Mode)")
 
         # Wait for WSD
         wsd_thread.join()
@@ -214,7 +213,8 @@ class NetworkScanner:
                             "Generic ONVIF",
                             "Port Scan",
                         )
-        except Exception:
+        except (OSError, TimeoutError):
+            # Connection refused/timed out; not an ONVIF host.
             pass
 
     def _verify_onvif_http(self, ip: str, port: int) -> bool:
@@ -294,7 +294,8 @@ class NetworkScanner:
                         # Using ipaddress module
                         iface = ipaddress.IPv4Interface(f"{ip.ip}/{ip.network_prefix}")
                         nets.append(str(iface.network))
-                    except Exception:
+                    except (ValueError, TypeError):
+                        # Malformed IP/prefix from ifaddr; skip this interface.
                         pass
         return list(set(nets))
 

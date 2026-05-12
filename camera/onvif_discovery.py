@@ -71,7 +71,7 @@ class ONVIFDiscovery:
             if wsd:
                 try:
                     wsd.stop()
-                except Exception:
+                except Exception:  # noqa: BLE001 — wsdiscovery shutdown is best-effort
                     pass
 
         with self._discovery_lock:

@@ -17,9 +17,11 @@ import shutil
 import subprocess
 import urllib.error
 import urllib.request
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+
+from web.security import safe_log_value as _slv
 
 logger = logging.getLogger(__name__)
 
@@ -104,7 +106,7 @@ def _parse_release(data: dict) -> dict[str, Any]:
 
 
 def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+    return datetime.now(UTC).isoformat(timespec="seconds")
 
 
 def get_update_status() -> dict[str, Any]:
@@ -189,7 +191,7 @@ def request_update(target: str) -> tuple[bool, str]:
             text=True,
             timeout=10,
         )
-        logger.info("wmb-update.service started for target: %s", target)
+        logger.info("wmb-update.service started for target: %s", _slv(target))
         return True, f"Update to {target} started."
     except subprocess.CalledProcessError as e:
         details = (e.stderr or e.stdout or "").strip()

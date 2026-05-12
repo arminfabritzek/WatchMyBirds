@@ -3,7 +3,6 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 VERSION_INFO = REPO_ROOT / "scripts" / "version_info.sh"
 

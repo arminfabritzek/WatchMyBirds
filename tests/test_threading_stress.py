@@ -431,6 +431,7 @@ class TestThreadingStress:
             try:
                 job_queue.put(f"overflow_{i}", block=False)
             except queue.Full:
+                # Expected: overflow_count assertion below verifies these.
                 pass
 
         stats = job_queue.get_stats()
@@ -453,6 +454,7 @@ class TestThreadingStress:
                         job_queue.put(f"item_{i}", timeout=0.01)
                         put_count[0] += 1
                     except queue.Full:
+                        # Expected under contention; consumer will drain.
                         pass
             except Exception as e:
                 errors.append(("producer", e))

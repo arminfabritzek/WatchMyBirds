@@ -8,9 +8,12 @@ class _FakeProcess:
         self.set_calls = []
 
     def cpu_affinity(self, cpus=None):
+        # Mimics psutil.Process.cpu_affinity: getter returns a list, setter
+        # records the call and returns None.
         if cpus is None:
             return list(self.available)
         self.set_calls.append(list(cpus))
+        return None
 
 
 def test_restrict_to_cpus_disabled_by_zero(monkeypatch):

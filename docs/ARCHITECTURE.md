@@ -7,8 +7,8 @@ WatchMyBirds is an AI-powered bird detection system that provides real-time vide
 *   **Originals are Immutable:** The original captured images (`originals/`) are the primary source of truth and must never be modified in place.
 *   **Derivatives are Disposable:** Optimized images and thumbnails (`derivatives/`) are caches generated from originals and can be regenerated or deleted at any time.
 *   **Database as Metadata Authority:** The SQLite database is the sole authority for metadata. It contains *NO* absolute filesystem paths, only filenames and relative references resolved dynamically.
-*   **PathManager Authority:** All filesystem operations (read/write/delete) MUST resolve paths via `utils.path_manager.PathManager`. No module is permitted to construct filesystem paths manually.
-*   **Single Image Ops Source:** `utils.image_ops` is the sole canonical module for image processing logic (e.g., cropping).
+*   **PathManager as the storage-path API:** New storage-path construction and image-IO operations SHOULD go through `utils.path_manager.PathManager`. This is enforced as a SOFT invariant (`S-05` in `INVARIANTS.md`), not as a fact about the current codebase — some legacy call sites still build paths manually. New code must not add to that pile; refactors that remove a manual path are welcome.
+*   **`utils.image_ops` as the image-op API:** Shared image transformations (crop, pad) live in `utils.image_ops`. Same status as PathManager: required for new code, partial in legacy (`O-04` in `INVARIANTS.md` retired the "already-enforced" claim).
 *   **No Dash Dependency:** The legacy Dash application is deprecated. All new UI features must use Flask/Jinja2.
 *   **Deletion Integrity:** Hard deletions MUST attempt removal of files from disk *before* removing database records. If a file is missing from disk, the operation MUST NOT abort; it must proceed to ensure the database record is removed.
 
@@ -25,13 +25,15 @@ WatchMyBirds is an AI-powered bird detection system that provides real-time vide
 
 ## 4. Key Modules and Responsibilities
 ### `utils/path_manager.py`
-*   **MUST:** Be the single source of truth for all path resolution.
+*   **MUST:** Be the canonical API for new storage-path resolution (`S-05` SOFT in `INVARIANTS.md`).
 *   **MUST:** Handle date-based directory structures (`YYYY-MM-DD`).
 *   **MUST NOT:** Perform actual file I/O (only path string manipulation).
+*   **NOTE:** "All storage paths are already exclusively resolved via PathManager" is no longer a factual invariant — see `O-03 OBSOLETE` in `INVARIANTS.md`. Legacy call sites still construct paths manually; do not extend that pattern.
 
 ### `utils/image_ops.py`
-*   **MUST:** Contain all shared image manipulation logic (cropping, padding).
+*   **MUST:** Be the canonical home for shared image transformations (cropping, padding) in new code.
 *   **MUST:** Be stateless and pure (functional).
+*   **NOTE:** "All image manipulation already flows through `utils.image_ops`" is no longer a factual invariant — see `O-04 OBSOLETE` in `INVARIANTS.md`. Add new transforms here; don't duplicate inline.
 
 ### `detectors/detection_manager.py`
 *   **MUST:** Be a thin orchestrator for the AI pipeline (Frame → Detect → Crop → Classify → Save → Notify).
@@ -60,10 +62,11 @@ WatchMyBirds is an AI-powered bird detection system that provides real-time vide
 *   **MUST NOT:** Contain legacy Dash callbacks or layout logic.
 
 ## 5. Change Rules
-*   **Storage Path Changes:** If the filesystem structure changes, `PathManager` MUST be updated. All call sites relying on it will automatically inherit the change.
-*   **New Routes:** All new web routes MUST be implemented in Flask (`server.route`).
-*   **Path Construction:** No new code may use `os.path.join` to build storage paths manually. Use `path_manager`.
-*   **Cross-Cutting Impact:** Any change affecting storage layout, deletion logic, or image processing MUST trigger a simultaneous review of `PathManager`, `detection_manager`, `file_gc`, and `web_interface` to ensure invariant consistency.
+*   **Storage Path Changes:** If the filesystem structure changes, `PathManager` MUST be updated. Call sites that go through it inherit the change; call sites that still build paths manually must be migrated as part of the same change.
+*   **New Routes:** All new web routes MUST be implemented in Flask (`server.route` or a blueprint).
+*   **Path Construction in new code:** Do not use `os.path.join` to build storage paths in new code. Use `path_manager`. (Legacy manual-path call sites exist; do not extend them.)
+*   **Cross-Cutting Impact:** Any change affecting storage layout, deletion logic, or image processing MUST trigger a simultaneous review of `PathManager`, `detection_manager`, `file_gc`, and `web_interface` to ensure consistency.
+*   **Authority hierarchy:** When this document and `INVARIANTS.md` disagree, `INVARIANTS.md` wins. It is schema-versioned (currently `v2`) and tracks what is actually enforced; this document is the narrative companion.
 
 ## 6. Non-Goals
 *   **Client-Side Rendering (CSR):** The core gallery is Server-Side Rendered (SSR). We do not aim to move the app to a SPA framework.

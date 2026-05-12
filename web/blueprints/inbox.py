@@ -21,6 +21,8 @@ from werkzeug.utils import secure_filename
 from config import get_config
 from logging_config import get_logger
 from web.blueprints.auth import login_required
+from web.security import error_response_simple as _error_response_simple
+from web.security import safe_log_value as _slv
 from web.services import backup_restore_service, ingest_service, path_service
 
 logger = get_logger(__name__)
@@ -131,8 +133,14 @@ def inbox_upload():
                 pending_dir.mkdir(parents=True, exist_ok=True)
                 target_path.write_bytes(file_bytes)
                 uploaded.append(safe_name)
-            except Exception as e:
-                errors.append(f"{f.filename}: Save failed ({e})")
+            except Exception as exc:
+                logger.warning(
+                    "Inbox save failed for %s [%s]",
+                    _slv(f.filename),
+                    type(exc).__name__,
+                    exc_info=True,
+                )
+                errors.append(f"{_slv(f.filename)}: Save failed")
 
         return (
             jsonify(
@@ -147,9 +155,8 @@ def inbox_upload():
             200,
         )
 
-    except Exception as e:
-        logger.error(f"Inbox upload error: {e}")
-        return jsonify({"error": str(e)}), 500
+    except Exception as exc:
+        return _error_response_simple("Inbox upload error", exc)
 
 
 @inbox_bp.route("/api/inbox/status", methods=["GET"])
@@ -198,9 +205,8 @@ def inbox_status():
                 "detection_running": detection_running,
             }
         )
-    except Exception as e:
-        logger.error(f"Inbox status error: {e}")
-        return jsonify({"error": str(e)}), 500
+    except Exception as exc:
+        return _error_response_simple("Inbox status error", exc)
 
 
 @inbox_bp.route("/api/inbox/process", methods=["POST"])
@@ -294,6 +300,5 @@ def inbox_process():
             200,
         )
 
-    except Exception as e:
-        logger.error(f"Inbox process error: {e}")
-        return jsonify({"error": str(e)}), 500
+    except Exception as exc:
+        return _error_response_simple("Inbox process error", exc)

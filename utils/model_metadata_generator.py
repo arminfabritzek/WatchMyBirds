@@ -20,7 +20,6 @@ import json
 from pathlib import Path
 from typing import Any
 
-
 __all__ = ["config_to_metadata", "resolve_active_yaml"]
 
 

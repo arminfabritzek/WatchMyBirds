@@ -24,7 +24,6 @@ sys.path.insert(0, str(REPO_ROOT))
 
 from core.gallery_core import _story_board_candidate_quality  # noqa: E402
 
-
 # ---------------------------------------------------------------------------
 # 1) Tuple ordering: aesthetic_score is the third tiebreaker, behind
 #    is_favorite and is_interior, ahead of score and bbox_quality.

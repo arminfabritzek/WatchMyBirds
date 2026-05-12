@@ -38,7 +38,7 @@ def _parse_iso_date(raw_value: str, field_name: str) -> str:
     try:
         datetime.strptime(raw_value, "%Y-%m-%d")
     except (TypeError, ValueError) as exc:
-        raise ValueError(f"Invalid {field_name}: {raw_value}") from exc
+        raise ValueError(f"Invalid {field_name}") from exc
 
     return raw_value
 
@@ -90,8 +90,11 @@ def resolve_selection() -> tuple:
         try:
             ctx = FilterContext.from_dict(raw_ctx)
         except (ValueError, KeyError) as exc:
+            logger.warning(
+                "Invalid filter_context [%s]", type(exc).__name__, exc_info=True
+            )
             return jsonify(
-                {"status": "error", "message": f"Invalid filter_context: {exc}"}
+                {"status": "error", "message": "Invalid filter_context"}
             ), 400
 
         result = resolve_filtered_ids(ctx)
@@ -206,9 +209,7 @@ def bulk_relabel() -> tuple:
     # Invalidate gallery cache
     gallery_service.invalidate_cache()
 
-    logger.info(
-        f"Bulk relabel: {relabeled} succeeded, 0 failed → {_slv(new_species)}"
-    )
+    logger.info(f"Bulk relabel: {relabeled} succeeded, 0 failed → {_slv(new_species)}")
     return jsonify(
         {
             "status": "success",

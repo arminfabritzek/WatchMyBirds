@@ -87,7 +87,9 @@ def test_setup_password_persists_password_and_authenticates_session(client):
         assert sess["authenticated"] is True
 
 
-def test_setup_password_without_telemetry_checkbox_keeps_telemetry_off(client, tmp_path):
+def test_setup_password_without_telemetry_checkbox_keeps_telemetry_off(
+    client, tmp_path
+):
     """First-run setup with NO telemetry_optin field = telemetry stays
     off. No UUID generated, no settings.yaml write to telemetry keys.
 
@@ -158,9 +160,7 @@ def test_setup_password_with_telemetry_checkbox_enables_and_wakes(client, tmp_pa
             return_value=(True, []),
         ),
         patch("config.get_config", return_value=fake_cfg),
-        patch(
-            "web.services.telemetry_service.wake_now"
-        ) as mock_wake,
+        patch("web.services.telemetry_service.wake_now") as mock_wake,
     ):
         response = client.post(
             "/setup/password",
@@ -184,3 +184,49 @@ def test_setup_password_with_telemetry_checkbox_enables_and_wakes(client, tmp_pa
     assert all(c in "0123456789abcdef" for c in uuid)
 
     mock_wake.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# get_redirect_target — open-redirect guard
+# ---------------------------------------------------------------------------
+
+
+class TestGetRedirectTarget:
+    """Verify that ?next= cannot be used as an open-redirect vector."""
+
+    def _call(self, next_param):
+        from web.services.auth_service import get_redirect_target
+
+        return get_redirect_target(next_param, default="/gallery")
+
+    def test_none_falls_back_to_default(self):
+        assert self._call(None) == "/gallery"
+
+    def test_empty_falls_back_to_default(self):
+        assert self._call("") == "/gallery"
+
+    def test_relative_path_is_accepted(self):
+        assert self._call("/review") == "/review"
+
+    def test_relative_path_with_query_is_accepted(self):
+        assert self._call("/review?page=2") == "/review?page=2"
+
+    def test_protocol_relative_url_is_rejected(self):
+        # //evil.com/foo would let an attacker redirect off-origin
+        assert self._call("//evil.com/foo") == "/gallery"
+
+    def test_absolute_url_is_rejected(self):
+        assert self._call("https://evil.com/foo") == "/gallery"
+
+    def test_javascript_scheme_is_rejected(self):
+        assert self._call("javascript:alert(1)") == "/gallery"
+
+    def test_backslash_normalisation_is_rejected(self):
+        # Browsers normalise ``\\`` to ``/``, so /\\evil.com/x would
+        # become //evil.com/x in the address bar. Defense-in-depth.
+        assert self._call(r"/\evil.com/x") == "/gallery"
+
+    def test_path_without_leading_slash_is_rejected(self):
+        # A bare "review" would be interpreted as relative to whatever
+        # the current page is; safer to send the user back to default.
+        assert self._call("review") == "/gallery"

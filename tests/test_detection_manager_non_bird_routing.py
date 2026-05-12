@@ -22,7 +22,6 @@ from detectors.interfaces.classification import (
 )
 from detectors.od_classes import BIRD_OD_CLASSES, is_bird_od_class
 
-
 # ---------------------------------------------------------------------------
 # Pure helper sanity
 # ---------------------------------------------------------------------------

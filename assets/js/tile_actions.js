@@ -61,7 +61,10 @@
             const parsed = new URL(rawUrl, window.location.origin);
             if (parsed.origin !== window.location.origin) return '';
             if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return '';
-            return parsed.pathname + parsed.search + parsed.hash;
+            const pathname = parsed.pathname || '';
+            if (pathname[0] !== '/') return '';
+            if (!/^[A-Za-z0-9_\-./]+$/.test(pathname)) return '';
+            return pathname + parsed.search + parsed.hash;
         } catch (e) {
             return '';
         }

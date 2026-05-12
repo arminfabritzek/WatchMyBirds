@@ -30,9 +30,13 @@ try:
         encoding="utf-8",
     )
     handlers.append(file_handler)
-except Exception as e:
-    # Fallback if file logging fails (permissions etc)
-    print(f"WARNING: Could not set up file logging: {e}")
+except OSError as e:
+    # Fallback if file logging fails (permissions / disk full).
+    # Console-only is acceptable; sys.stderr is the right channel here
+    # since the logger itself isn't usable yet.
+    import sys
+
+    print(f"WARNING: Could not set up file logging: {e}", file=sys.stderr)
 
 # Determine log level: LOG_LEVEL env var > DEBUG_MODE > INFO
 log_level_env = os.getenv("LOG_LEVEL", "").upper().strip()

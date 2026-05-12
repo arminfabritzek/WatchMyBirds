@@ -8,8 +8,6 @@ from __future__ import annotations
 
 from typing import Any
 
-import pytest
-
 from web.services.companion.cleaner import clean_model_text
 from web.services.companion.inference import (
     CompanionInferenceClient,
@@ -80,7 +78,10 @@ def test_chat_pauses_detection_during_inference(tmp_path):
         def generate(self, *, system_prompt, messages, timeout_s):
             seen["paused_during_call"] = dm.paused
             return CompanionInferenceResult(
-                status="ok", text="Hallo Welt.", raw="Hallo Welt.", model_id=self.model_id
+                status="ok",
+                text="Hallo Welt.",
+                raw="Hallo Welt.",
+                model_id=self.model_id,
             )
 
     dm = _DM(paused=False)
@@ -139,7 +140,10 @@ def test_event_records_with_species_in_trigger(tmp_path):
     svc, _dm, _lease, _client, recorder = _service(
         tmp_path=tmp_path,
         result=CompanionInferenceResult(
-            status="ok", text="Speaker C gets it.", raw="Speaker C gets it.", model_id="m"
+            status="ok",
+            text="Speaker C gets it.",
+            raw="Speaker C gets it.",
+            model_id="m",
         ),
     )
     out = svc.event(species="kohlmeise", count=2, rare=False, language="de")
@@ -221,6 +225,7 @@ def test_concurrent_tagger_during_companion_inference_sees_busy(tmp_path):
                 with lease.acquire("aesthetic_tagger", pause_detection=False):
                     held["during"] = True  # would mean overlap is allowed
             except LeaseBusy:
+                # Expected: tagger must NOT acquire while companion holds.
                 pass
             return CompanionInferenceResult(
                 status="ok", text="ok.", raw="ok.", model_id=self.model_id

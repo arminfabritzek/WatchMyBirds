@@ -149,7 +149,7 @@ def test_db_schema_contains_inbox_ingest_events(tmp_path: Path):
     output_dir.mkdir(parents=True)
 
     # Reset schema init flag so we get a fresh schema.
-    import utils.db.connection as db_mod
+    from utils.db import connection as db_mod
 
     db_mod._schema_initialized_paths.clear()
 

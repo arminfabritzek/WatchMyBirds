@@ -7,7 +7,10 @@ import pytest
 from flask import Flask
 
 from core.events import build_bird_events
-from web.blueprints.review import _build_review_event_member, build_review_continuity_batches
+from web.blueprints.review import (
+    _build_review_event_member,
+    build_review_continuity_batches,
+)
 
 
 def _sql_result(*, fetchone=None, fetchall=None):

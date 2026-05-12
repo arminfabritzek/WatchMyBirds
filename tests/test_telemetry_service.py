@@ -26,7 +26,6 @@ sys.path.insert(0, str(REPO_ROOT))
 
 from web.services import telemetry_service as ts  # noqa: E402
 
-
 # ---------------------------------------------------------------------
 # 1) Default OFF — strictest guarantee in the whole feature
 # ---------------------------------------------------------------------

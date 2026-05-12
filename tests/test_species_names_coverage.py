@@ -15,7 +15,6 @@ from pathlib import Path
 
 import pytest
 
-
 _ASSETS = Path(__file__).resolve().parents[1] / "assets" / "common_names_DE.json"
 
 

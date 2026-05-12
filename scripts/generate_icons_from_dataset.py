@@ -92,8 +92,8 @@ if str(_SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS_DIR))
 
 from generate_species_icon_vector import (  # noqa: E402
-    draw_cuckoo,
     draw_corvid,
+    draw_cuckoo,
     draw_finch,
     draw_nuthatch_creeper,
     draw_pigeon,
@@ -364,7 +364,7 @@ def _kmeans_pure(
             break
         r = rng.random() * total_d
         cumulative = 0.0
-        for pt, d in zip(quant, dists):
+        for pt, d in zip(quant, dists, strict=False):
             cumulative += d
             if cumulative >= r:
                 centres.append(pt)
@@ -402,7 +402,7 @@ def _kmeans_pure(
         )
         clusters_final[best].append(idx)
 
-    for ci, idxs in clusters_final.items():
+    for _ci, idxs in clusters_final.items():
         if not idxs:
             continue
         fraction = len(idxs) / total

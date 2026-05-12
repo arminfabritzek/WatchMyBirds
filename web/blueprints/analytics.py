@@ -38,6 +38,7 @@ from utils.db.analytics import (
     fetch_weather_detection_correlation,
 )
 from utils.db.events import calculate_effort, get_events_cached
+from web.security import error_response_simple as _error_response_simple
 from web.services import db_service
 
 logger = get_logger(__name__)
@@ -110,7 +111,8 @@ def analytics_time_of_day():
                 s = int(t_str[6:8])
                 val = h + m / 60.0 + s / 3600.0
                 hours_float.append(val)
-            except Exception:
+            except (ValueError, IndexError):
+                # Malformed HH:MM:SS string; skip this row.
                 pass
 
     if not hours_float:
@@ -186,7 +188,8 @@ def analytics_species_activity():
                 if sp not in species_times:
                     species_times[sp] = []
                 species_times[sp].append(h)
-            except Exception:
+            except (ValueError, IndexError):
+                # Malformed HHMMSS substring; skip this row.
                 pass
 
     series = []
@@ -261,9 +264,8 @@ def analytics_visits_api():
         for v in top_visits:
             v.pop("detection_ids", None)
         return jsonify({"summary": summary, "top_visits": top_visits})
-    except Exception as e:
-        logger.error(f"Visits API error: {e}")
-        return jsonify({"error": str(e)}), 500
+    except Exception as exc:
+        return _error_response_simple("Visits API error", exc)
 
 
 @analytics_bp.route("/api/analytics/event-intelligence", methods=["GET"])
@@ -285,9 +287,8 @@ def analytics_event_intelligence_api():
         finally:
             conn.close()
         return jsonify(data)
-    except Exception as e:
-        logger.error(f"Event intelligence API error: {e}")
-        return jsonify({"error": str(e)}), 500
+    except Exception as exc:
+        return _error_response_simple("Event intelligence API error", exc)
 
 
 @analytics_bp.route("/api/analytics/simulation", methods=["GET"])
@@ -301,9 +302,8 @@ def analytics_simulation_api():
         finally:
             conn.close()
         return jsonify(data)
-    except Exception as e:
-        logger.error(f"Simulation API error: {e}")
-        return jsonify({"error": str(e)}), 500
+    except Exception as exc:
+        return _error_response_simple("Simulation API error", exc)
 
 
 # --- Biology section helpers and endpoints -----------------------------------
@@ -468,9 +468,8 @@ def analytics_diversity_api():
         finally:
             conn.close()
         return jsonify(_build_diversity(events) if events else _empty_diversity())
-    except Exception as e:
-        logger.error(f"Diversity API error: {e}")
-        return jsonify({"error": str(e)}), 500
+    except Exception as exc:
+        return _error_response_simple("Diversity API error", exc)
 
 
 @analytics_bp.route("/api/analytics/species-pca", methods=["GET"])
@@ -485,9 +484,8 @@ def analytics_species_pca_api():
         finally:
             conn.close()
         return jsonify(_build_pca(events))
-    except Exception as e:
-        logger.error(f"Species PCA API error: {e}")
-        return jsonify({"error": str(e)}), 500
+    except Exception as exc:
+        return _error_response_simple("Species PCA API error", exc)
 
 
 @analytics_bp.route("/api/analytics/species-table", methods=["GET"])
@@ -503,9 +501,8 @@ def analytics_species_table_api():
         finally:
             conn.close()
         return jsonify({"rows": _build_species_table(events, effort)})
-    except Exception as e:
-        logger.error(f"Species table API error: {e}")
-        return jsonify({"error": str(e)}), 500
+    except Exception as exc:
+        return _error_response_simple("Species table API error", exc)
 
 
 @analytics_bp.route("/api/analytics/quality-metrics", methods=["GET"])
@@ -518,9 +515,8 @@ def analytics_quality_metrics_api():
         finally:
             conn.close()
         return jsonify(data)
-    except Exception as e:
-        logger.error(f"Quality metrics API error: {e}")
-        return jsonify({"error": str(e)}), 500
+    except Exception as exc:
+        return _error_response_simple("Quality metrics API error", exc)
 
 
 @analytics_bp.route("/analytics", methods=["GET"])
@@ -864,7 +860,8 @@ def analytics_page():
                     if sp not in species_times:
                         species_times[sp] = []
                     species_times[sp].append(h)
-                except Exception:
+                except (ValueError, IndexError):
+                    # Malformed HHMMSS substring; skip this row.
                     pass
 
         for sp, times in species_times.items():

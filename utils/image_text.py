@@ -88,7 +88,7 @@ def _boost_alpha(layer: Image.Image, intensity: float) -> Image.Image:
 @lru_cache(maxsize=128)
 def _resolve_font(
     size: int, bold: bool = False, italic: bool = False
-) -> "ImageFont.FreeTypeFont | ImageFont.ImageFont":
+) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
     """Return an ImageFont at the requested size, bold/italic combination.
 
     Slot picking inside each candidate tuple:

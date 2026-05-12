@@ -67,7 +67,7 @@ def get_cached_species_thumbnail(scientific_name: str) -> str | None:
                 return row[0]
         finally:
             conn.close()
-    except Exception:
+    except Exception:  # noqa: BLE001 — DB unreachable: fall through to remote fetch
         pass
 
     # 2. Fetch from Wikipedia
@@ -127,7 +127,7 @@ def get_cached_species_thumbnail(scientific_name: str) -> str | None:
                 conn.commit()
             finally:
                 conn.close()
-        except Exception:
+        except Exception:  # noqa: BLE001 — cache write is best-effort; next call retries
             pass
 
     return image_url

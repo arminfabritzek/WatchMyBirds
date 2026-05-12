@@ -26,7 +26,7 @@ import logging
 import os
 import threading
 import time
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 
 # Redirect HF cache to a writable location BEFORE huggingface_hub gets
 # imported transitively (which happens inside _check_dependencies_available
@@ -69,13 +69,23 @@ def _should_run(scheduled_hour: int, scheduled_minute: int) -> bool:
 
 
 def _mark_run_today() -> None:
-    """Mark today as 'tagger ran' for the duplicate guard."""
+    """Mark today as 'tagger ran' for the duplicate guard.
+
+    Uses ``datetime.now().date()`` rather than ``date.today()`` so the
+    duplicate guard reads a single clock source — matching ``_should_run``
+    above. The two are functionally identical in steady state, but the
+    single-source form also closes a midnight-boundary race where
+    ``_should_run`` and ``_mark_run_today`` could disagree on "today" if
+    one call fell on either side of midnight.
+    """
     global _last_run_date
     with _lock:
-        _last_run_date = date.today()
+        _last_run_date = datetime.now().date()
 
 
-def _parse_time(time_str: str, *, fallback: tuple[int, int] = (2, 10)) -> tuple[int, int]:
+def _parse_time(
+    time_str: str, *, fallback: tuple[int, int] = (2, 10)
+) -> tuple[int, int]:
     """Parse 'HH:MM' string into (hour, minute). Falls back to fallback."""
     try:
         parts = time_str.strip().split(":")
@@ -83,10 +93,13 @@ def _parse_time(time_str: str, *, fallback: tuple[int, int] = (2, 10)) -> tuple[
         if 0 <= h <= 23 and 0 <= m <= 59:
             return h, m
     except (ValueError, IndexError):
+        # Malformed HH:MM; fall through to the warning + fallback below.
         pass
     logger.warning(
         "Invalid AESTHETIC_TAG_TIME '%s', falling back to %02d:%02d",
-        time_str, fallback[0], fallback[1],
+        time_str,
+        fallback[0],
+        fallback[1],
     )
     return fallback
 
@@ -102,9 +115,7 @@ def _today_midnight_utc_iso() -> str:
     """
     local_midnight = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
     # naive local → aware UTC via timestamp() round-trip (handles DST).
-    return datetime.fromtimestamp(
-        local_midnight.timestamp(), tz=timezone.utc
-    ).isoformat()
+    return datetime.fromtimestamp(local_midnight.timestamp(), tz=UTC).isoformat()
 
 
 _LEASE_HOLDER = "aesthetic_tagger"
@@ -121,6 +132,7 @@ def _apply_cpu_friendliness_env() -> None:
     """
     try:
         from config import get_config
+
         cfg = get_config()
     except Exception:
         return
@@ -213,7 +225,8 @@ def _run_tagger(
     except LeaseBusy as exc:
         logger.info(
             "Aesthetic tagger skipped (%s): compute lease busy with %r.",
-            reason, exc.current_holder,
+            reason,
+            exc.current_holder,
         )
         return 1
 
@@ -226,12 +239,16 @@ def _invoke_tagger(reason, main_with_args, argv: list[str]) -> int:
         else:
             logger.warning(
                 "Aesthetic tagger returned non-zero exit (%s, rc=%d).",
-                reason, rc,
+                reason,
+                rc,
             )
         return rc
     except Exception as exc:
         logger.error(
-            "Aesthetic tagger failed (%s): %s", reason, exc, exc_info=True,
+            "Aesthetic tagger failed (%s): %s",
+            reason,
+            exc,
+            exc_info=True,
         )
         return 1
 
@@ -279,11 +296,10 @@ def run_now(
     """
     try:
         from config import get_config
+
         config = get_config()
     except Exception as exc:
-        logger.warning(
-            "Aesthetic run_now: cannot load config (%s); skipping.", exc
-        )
+        logger.warning("Aesthetic run_now: cannot load config (%s); skipping.", exc)
         return False
 
     if not bool(config.get("AESTHETIC_TAG_ENABLED", True)):
@@ -310,7 +326,9 @@ def run_now(
         per_species_cap = None
 
     if not _run_mutex.acquire(blocking=False):
-        logger.info("Aesthetic run_now (%s): another run in progress; skipping.", reason)
+        logger.info(
+            "Aesthetic run_now (%s): another run in progress; skipping.", reason
+        )
         return False
     try:
         rc = _run_tagger(
@@ -335,8 +353,9 @@ def _check_dependencies_available() -> bool:
     app; they just don't run the tagger.
     """
     try:
-        import torch  # noqa: F401
         import open_clip  # noqa: F401
+        import torch  # noqa: F401
+
         return True
     except ImportError as exc:
         logger.warning(
@@ -361,9 +380,12 @@ def start_aesthetic_tag_scheduler(check_interval: int = 30):
     """
     try:
         from config import get_config
+
         config = get_config()
     except Exception as exc:
-        logger.warning("Aesthetic scheduler: cannot load config (%s); not starting.", exc)
+        logger.warning(
+            "Aesthetic scheduler: cannot load config (%s); not starting.", exc
+        )
         return None
 
     enabled = bool(config.get("AESTHETIC_TAG_ENABLED", True))
@@ -380,7 +402,8 @@ def start_aesthetic_tag_scheduler(check_interval: int = 30):
     def _loop():
         logger.info(
             "Aesthetic tag scheduler started; daily run at %02d:%02d.",
-            scheduled_hour, scheduled_minute,
+            scheduled_hour,
+            scheduled_minute,
         )
         while True:
             try:
@@ -401,7 +424,9 @@ def start_aesthetic_tag_scheduler(check_interval: int = 30):
                     _mark_run_today()
             except Exception as exc:
                 logger.error(
-                    "Aesthetic tag scheduler error: %s", exc, exc_info=True,
+                    "Aesthetic tag scheduler error: %s",
+                    exc,
+                    exc_info=True,
                 )
             time.sleep(check_interval)
 

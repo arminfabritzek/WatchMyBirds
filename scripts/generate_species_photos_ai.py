@@ -31,7 +31,6 @@ import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
 from urllib import parse, request
 
 try:
@@ -54,7 +53,7 @@ class ModelSpec:
     default_steps: int
     default_guidance: float
     resolution: int
-    variant: Optional[str] = None  # "fp16" if HF has a fp16 branch
+    variant: str | None = None  # "fp16" if HF has a fp16 branch
 
 MODELS: dict[str, ModelSpec] = {
     "sd15": ModelSpec(

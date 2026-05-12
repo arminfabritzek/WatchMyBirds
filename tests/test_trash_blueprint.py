@@ -1,6 +1,7 @@
 """Tests for trash blueprint relabel/rate/species-list APIs."""
 
 import json
+import time
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -91,7 +92,9 @@ def test_species_list_uses_locale_no(client):
     )
 
 
-def test_species_list_uses_common_nb_for_extended_species(client, tmp_path, monkeypatch):
+def test_species_list_uses_common_nb_for_extended_species(
+    client, tmp_path, monkeypatch
+):
     assets_dir = tmp_path / "assets"
     assets_dir.mkdir()
 
@@ -125,11 +128,12 @@ def test_species_list_uses_common_nb_for_extended_species(client, tmp_path, monk
 
     mock_conn = MagicMock()
     mock_conn.execute.return_value.fetchall.return_value = []
-    with patch(
-        "web.blueprints.trash.db_service.get_connection", return_value=mock_conn
-    ), patch(
-        "web.blueprints.trash.get_config",
-        return_value={"SPECIES_COMMON_NAME_LOCALE": "NO"},
+    with (
+        patch("web.blueprints.trash.db_service.get_connection", return_value=mock_conn),
+        patch(
+            "web.blueprints.trash.get_config",
+            return_value={"SPECIES_COMMON_NAME_LOCALE": "NO"},
+        ),
     ):
         response = client.get("/api/species-list")
 
@@ -158,15 +162,14 @@ def test_species_list_with_detection_id_includes_predictions_first(client):
     }
     extended = [{"scientific": "Picus_canus", "common": "Grey-headed Woodpecker"}]
 
-    with patch(
-        "web.blueprints.trash.db_service.get_connection", return_value=mock_conn
-    ), patch(
-        "utils.species_names.load_common_names", return_value=names
-    ), patch(
-        "utils.species_names.load_extended_species", return_value=extended
-    ), patch(
-        "config.get_config",
-        return_value={"SPECIES_COMMON_NAME_LOCALE": "DE"},
+    with (
+        patch("web.blueprints.trash.db_service.get_connection", return_value=mock_conn),
+        patch("utils.species_names.load_common_names", return_value=names),
+        patch("utils.species_names.load_extended_species", return_value=extended),
+        patch(
+            "config.get_config",
+            return_value={"SPECIES_COMMON_NAME_LOCALE": "DE"},
+        ),
     ):
         response = client.get("/api/species-list?detection_id=42")
 
@@ -191,19 +194,20 @@ def test_relabel_requires_detection_and_species(client):
 
 def test_relabel_updates_detection_and_classification(client):
     mock_conn = MagicMock()
-    with patch(
-        "web.blueprints.trash.db_service.get_connection", return_value=mock_conn
-    ), patch(
-        "web.blueprints.trash.build_species_picker_entries",
-        return_value=[
-            {
-                "scientific": "False_Positive",
-                "common": "False Positive",
-                "source": "extended",
-                "score": None,
-                "rank": None,
-            }
-        ],
+    with (
+        patch("web.blueprints.trash.db_service.get_connection", return_value=mock_conn),
+        patch(
+            "web.blueprints.trash.build_species_picker_entries",
+            return_value=[
+                {
+                    "scientific": "False_Positive",
+                    "common": "False Positive",
+                    "source": "extended",
+                    "score": None,
+                    "rank": None,
+                }
+            ],
+        ),
     ):
         response = client.post(
             "/api/detections/relabel",
@@ -219,6 +223,47 @@ def test_relabel_updates_detection_and_classification(client):
     assert "UPDATE classifications" not in mock_conn.execute.call_args[0][0]
     mock_conn.commit.assert_called_once()
     mock_conn.close.assert_called_once()
+
+
+def test_relabel_invalidates_best_species_cache(client):
+    """A relabel must clear the Live page's Best-of-Species memo so the next
+    render does not echo the old species (the 5-min TTL would otherwise
+    delay the change well past the user's reload)."""
+    from web import web_interface
+
+    # Seed a fresh-looking cache the way the production renderer does
+    # (web_interface.py:2833); the relabel handler should then reset it.
+    web_interface._best_species_cache["timestamp"] = 9999.0
+    web_interface._best_species_cache["payload"] = {"board": "stale"}
+
+    mock_conn = MagicMock()
+    with (
+        patch("web.blueprints.trash.db_service.get_connection", return_value=mock_conn),
+        patch(
+            "web.blueprints.trash.build_species_picker_entries",
+            return_value=[
+                {
+                    "scientific": "Parus_major",
+                    "common": "Great Tit",
+                    "source": "model",
+                    "score": None,
+                    "rank": None,
+                }
+            ],
+        ),
+    ):
+        response = client.post(
+            "/api/detections/relabel",
+            json={"detection_id": 7, "species": "Parus_major"},
+        )
+
+    assert response.status_code == 200
+    # Match the renderer's own freshness gate (web_interface.py:2813): any
+    # state the cold path would treat as "expired" is acceptable.
+    cache = web_interface._best_species_cache
+    assert cache["payload"] is None
+    age = time.time() - float(cache["timestamp"] or 0.0)
+    assert age >= web_interface._BEST_SPECIES_CACHE_TTL_SECONDS
 
 
 def test_rate_rejects_out_of_range_values(client):

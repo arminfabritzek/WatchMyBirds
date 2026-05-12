@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import os
 
+import config as config_module
 from web.services import aesthetic_tag_scheduler as ats
 
 
@@ -28,7 +29,6 @@ def test_apply_cpu_friendliness_exports_env_from_config(monkeypatch):
             "AESTHETIC_TAGGER_TORCH_THREADS": 1,
         }
 
-    import config as config_module
     monkeypatch.setattr(config_module, "get_config", fake_config)
     ats._apply_cpu_friendliness_env()
     assert os.environ["WMB_AESTHETIC_NICE"] == "12"
@@ -44,7 +44,6 @@ def test_apply_cpu_friendliness_handles_missing_keys(monkeypatch):
     def fake_config():
         return {}
 
-    import config as config_module
     monkeypatch.setattr(config_module, "get_config", fake_config)
     ats._apply_cpu_friendliness_env()
     assert "WMB_AESTHETIC_NICE" not in os.environ
@@ -60,7 +59,6 @@ def test_apply_cpu_friendliness_handles_config_failure(monkeypatch):
     def boom():
         raise RuntimeError("config not ready")
 
-    import config as config_module
     monkeypatch.setattr(config_module, "get_config", boom)
     # Should not raise:
     ats._apply_cpu_friendliness_env()
@@ -69,15 +67,13 @@ def test_apply_cpu_friendliness_handles_config_failure(monkeypatch):
 
 def test_config_defaults_are_conservative():
     """Defaults must not break a fresh install: nice in [0,19], threads in [0, 16]."""
-    from config import DEFAULTS
-    nice = int(DEFAULTS["AESTHETIC_TAGGER_NICE"])
-    threads = int(DEFAULTS["AESTHETIC_TAGGER_TORCH_THREADS"])
+    nice = int(config_module.DEFAULTS["AESTHETIC_TAGGER_NICE"])
+    threads = int(config_module.DEFAULTS["AESTHETIC_TAGGER_TORCH_THREADS"])
     assert 0 <= nice <= 19
     assert 0 <= threads <= 16
 
 
 def test_runtime_keys_include_new_knobs():
     """The Settings UI must be able to flip these live without restart."""
-    from config import RUNTIME_KEYS
-    assert "AESTHETIC_TAGGER_NICE" in RUNTIME_KEYS
-    assert "AESTHETIC_TAGGER_TORCH_THREADS" in RUNTIME_KEYS
+    assert "AESTHETIC_TAGGER_NICE" in config_module.RUNTIME_KEYS
+    assert "AESTHETIC_TAGGER_TORCH_THREADS" in config_module.RUNTIME_KEYS

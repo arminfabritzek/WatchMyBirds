@@ -21,7 +21,6 @@ import re
 import unicodedata
 from dataclasses import dataclass
 
-
 _PATTERNS: list[tuple[str, str]] = [
     # sex / gender / orientation
     ("sexist", r"\b(weiber|tussi|schlampe|hure|nutte|fotze|votze|"

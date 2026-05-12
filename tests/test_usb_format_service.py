@@ -24,7 +24,6 @@ if str(REPO_ROOT) not in sys.path:
 
 from web.services import usb_format_service  # noqa: E402
 
-
 # ----------------------------------------------------------------------
 # Fixtures
 # ----------------------------------------------------------------------

@@ -33,13 +33,14 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
+from core._geom_helpers import bbox_dist as _bbox_dist
+from core._geom_helpers import ts_to_epoch as _ts_to_epoch
 from core.event_intelligence import (
     DEFAULT_EVENT_PROFILE,
     EventGroupingProfile,
     representative_image_budget,
     resolve_event_profile,
 )
-from core.gallery_core import _bbox_dist, _ts_to_epoch
 
 EVENT_GAP_MINUTES_DEFAULT = 30
 """Default independence window in minutes. Documented in the module docstring."""

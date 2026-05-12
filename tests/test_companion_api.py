@@ -7,8 +7,6 @@ from unittest.mock import MagicMock
 import pytest
 from flask import Flask
 
-from web.services.companion.inference import CompanionInferenceResult
-
 
 @pytest.fixture
 def companion_service_double():

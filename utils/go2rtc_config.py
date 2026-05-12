@@ -332,6 +332,7 @@ def _write_yaml_atomic(path: Path, data: dict) -> None:
         try:
             os.unlink(tmp_path)
         except OSError:
+            # tmp_path never got created; nothing to clean up.
             pass
         raise
 
@@ -358,6 +359,7 @@ def _mask_credentials(url: str) -> str:
             if parsed.port:
                 masked_netloc += f":{parsed.port}"
             return urlunparse(parsed._replace(netloc=masked_netloc))
-    except Exception:
+    except ValueError:
+        # Malformed URL; return original (no credentials to mask).
         pass
     return url

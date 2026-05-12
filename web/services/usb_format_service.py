@@ -30,6 +30,7 @@ from pathlib import Path
 from typing import Any
 
 from logging_config import get_logger
+from web.security import safe_log_value as _slv
 
 logger = get_logger(__name__)
 
@@ -90,8 +91,11 @@ def list_usb_block_devices() -> list[dict[str, Any]]:
     try:
         result = subprocess.run(
             [
-                "lsblk", "-J", "-b",
-                "-o", "NAME,SIZE,LABEL,FSTYPE,MODEL,VENDOR,RM,TYPE",
+                "lsblk",
+                "-J",
+                "-b",
+                "-o",
+                "NAME,SIZE,LABEL,FSTYPE,MODEL,VENDOR,RM,TYPE",
             ],
             capture_output=True,
             text=True,
@@ -149,15 +153,17 @@ def list_usb_block_devices() -> list[dict[str, Any]]:
                     if label or fstype:
                         break
 
-        out.append({
-            "device": device,
-            "size_bytes": size_bytes,
-            "model": entry.get("model") or _udev_property(device, "ID_MODEL"),
-            "vendor": entry.get("vendor") or _udev_property(device, "ID_VENDOR"),
-            "current_label": label,
-            "current_fstype": fstype,
-            "is_already_wmb_backup": label == "WMB-BACKUP",
-        })
+        out.append(
+            {
+                "device": device,
+                "size_bytes": size_bytes,
+                "model": entry.get("model") or _udev_property(device, "ID_MODEL"),
+                "vendor": entry.get("vendor") or _udev_property(device, "ID_VENDOR"),
+                "current_label": label,
+                "current_fstype": fstype,
+                "is_already_wmb_backup": label == "WMB-BACKUP",
+            }
+        )
 
     return out
 
@@ -176,7 +182,8 @@ def is_format_supported() -> bool:
     try:
         result = subprocess.run(
             ["systemctl", "--version"],
-            capture_output=True, timeout=3,
+            capture_output=True,
+            timeout=3,
         )
         return result.returncode == 0
     except (subprocess.SubprocessError, OSError):
@@ -214,8 +221,13 @@ def trigger_format(target_device: str, confirm_token: str) -> tuple[bool, str]:
     # restarted mid-format or the operator opened a second browser.
     current = get_format_status()
     active_states = {
-        "starting", "validating", "unmounting", "wiping",
-        "partitioning", "formatting", "mounting",
+        "starting",
+        "validating",
+        "unmounting",
+        "wiping",
+        "partitioning",
+        "formatting",
+        "mounting",
     }
     if current.get("state") in active_states:
         return False, (
@@ -239,10 +251,12 @@ def trigger_format(target_device: str, confirm_token: str) -> tuple[bool, str]:
         try:
             trigger_path.parent.mkdir(parents=True, exist_ok=True)
             trigger_path.write_text(
-                json.dumps({
-                    "target_device": target_device,
-                    "confirm": "FORMAT",
-                })
+                json.dumps(
+                    {
+                        "target_device": target_device,
+                        "confirm": "FORMAT",
+                    }
+                )
             )
         except OSError as exc:
             logger.error("Could not write format trigger file: %s", exc)
@@ -252,7 +266,10 @@ def trigger_format(target_device: str, confirm_token: str) -> tuple[bool, str]:
         try:
             subprocess.run(
                 ["systemctl", "--no-block", "start", SERVICE_UNIT],
-                check=True, capture_output=True, text=True, timeout=10,
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=10,
             )
         except subprocess.CalledProcessError as exc:
             logger.error("systemctl start %s failed: %s", SERVICE_UNIT, exc.stderr)
@@ -268,7 +285,7 @@ def trigger_format(target_device: str, confirm_token: str) -> tuple[bool, str]:
 
         logger.info(
             "Format service triggered: target=%s",
-            target_device,
+            _slv(target_device),
         )
         return True, f"Format started on {target_device}."
     finally:
@@ -313,13 +330,19 @@ def get_format_history(limit: int = 10) -> list[dict[str, Any]]:
         # Sanity floor: a sub-5 s "format" is almost certainly a
         # validation failure that wrote success in error -- skip it
         # so it doesn't poison the regression.
-        if isinstance(size, int) and isinstance(secs, (int, float)) \
-                and size > 0 and secs >= 5:
-            out.append({
-                "ts": entry.get("ts"),
-                "size_bytes": size,
-                "seconds": float(secs),
-            })
+        if (
+            isinstance(size, int)
+            and isinstance(secs, (int, float))
+            and size > 0
+            and secs >= 5
+        ):
+            out.append(
+                {
+                    "ts": entry.get("ts"),
+                    "size_bytes": size,
+                    "seconds": float(secs),
+                }
+            )
     return out
 
 

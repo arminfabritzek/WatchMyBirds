@@ -8,8 +8,6 @@ in ``assets/review_species/``.
 
 from pathlib import Path
 
-import pytest
-
 from web.blueprints.review import (
     SPECIES_COLOUR_SLOTS,
     _build_species_ref_image_map,
@@ -48,8 +46,14 @@ def test_assign_species_colours_is_deterministic_alphabetical():
     }
     assert one == expected
     # Different casing → different sort, but still deterministic.
-    assert three["Pica_pica"] == one["Pica_pica"] - 1 or three["Pica_pica"] != one["Pica_pica"]
-    assert assign_species_colours(["parus_major", "Pica_pica", "Cyanistes_caeruleus"]) == three
+    assert (
+        three["Pica_pica"] == one["Pica_pica"] - 1
+        or three["Pica_pica"] != one["Pica_pica"]
+    )
+    assert (
+        assign_species_colours(["parus_major", "Pica_pica", "Cyanistes_caeruleus"])
+        == three
+    )
 
 
 def test_assign_species_colours_wraps_at_eight_slots():
@@ -69,9 +73,7 @@ def test_assign_species_colours_wraps_at_eight_slots():
 
 def test_assign_species_colours_ignores_blank_inputs():
     """None / empty / whitespace-only entries do not consume a slot."""
-    colours = assign_species_colours(
-        ["Parus_major", None, "", "   ", "Pica_pica"]
-    )
+    colours = assign_species_colours(["Parus_major", None, "", "   ", "Pica_pica"])
     assert colours == {"Parus_major": 0, "Pica_pica": 1}
 
 
@@ -212,14 +214,19 @@ def test_stamp_species_display_on_event_with_members_and_batch():
     assert batch["review_members"][0]["species_colour"] == colour_map["Parus_major"]
     assert batch["anchor_members"][0]["species_colour"] == colour_map["Pica_pica"]
     # Quick-pick entries stamped directly from the scientific name.
-    assert event_payload["quick_species"][0]["species_colour"] == colour_map["Parus_major"]
-    assert event_payload["quick_species"][1]["species_colour"] == colour_map["Cyanistes_caeruleus"]
+    assert (
+        event_payload["quick_species"][0]["species_colour"] == colour_map["Parus_major"]
+    )
+    assert (
+        event_payload["quick_species"][1]["species_colour"]
+        == colour_map["Cyanistes_caeruleus"]
+    )
 
 
 def test_get_species_ref_image_map_caches_filesystem_scan(monkeypatch):
     """The cache must hold across calls; we only hit the filesystem
     once. We test by clearing the cache and counting builder calls."""
-    import web.blueprints.review as review_module
+    from web.blueprints import review as review_module
 
     # Reset the cache.
     review_module._SPECIES_REF_IMAGE_CACHE = None

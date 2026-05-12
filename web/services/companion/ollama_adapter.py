@@ -21,7 +21,6 @@ from urllib.request import Request, urlopen
 from .cleaner import clean_model_text
 from .inference import CompanionInferenceClient, CompanionInferenceResult
 
-
 logger = logging.getLogger(__name__)
 
 

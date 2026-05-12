@@ -39,6 +39,7 @@ from utils.species_names import (
     resolve_common_name,
 )
 from web.blueprints.auth import login_required
+from web.security import error_response as _error_response
 from web.services import db_service, gallery_service
 from web.species_thumbnails import (
     get_species_thumbnail_map,
@@ -66,13 +67,6 @@ _REVIEW_EVENT_FALLBACK_LABELS = {
 
 # Per-species colour and reference-image helpers.
 #
-# The Wong (2011) colour-blind-friendly palette slot count is 8. Colours
-# live as CSS custom properties (--species-colour-0 … --species-colour-7)
-# in assets/design-system.css. The Python side only cares about the index
-# (0..7) and emits it as ``species_colour`` on every review dict so the
-# template can self-colour via ``var(--species-colour-N)``.
-SPECIES_COLOUR_SLOTS = 8
-
 # Filesystem scan cache for assets/review_species/*.webp|*.png. Built once
 # per process (filenames do not change at runtime in the review surface).
 _SPECIES_REF_IMAGE_CACHE: dict[str, str] | None = None
@@ -257,7 +251,8 @@ def _resolve_review_default_species(
 
     return (
         scientific_name,
-        default_entry.get("common") or resolve_common_name(scientific_name, common_names),
+        default_entry.get("common")
+        or resolve_common_name(scientific_name, common_names),
     )
 
 
@@ -342,6 +337,7 @@ def _get_allowed_review_species(
         )
 
     return allowed_species
+
 
 def _fetch_prediction_entries(
     conn, detection_id: int, common_names: dict[str, str]
@@ -529,11 +525,7 @@ def _build_review_modal_detection(
     common_name = (
         str(selected_species_common or "").strip()
         or str(current_species_common or "").strip()
-        or (
-            resolve_common_name(species_key, common_names)
-            if species_key
-            else filename
-        )
+        or (resolve_common_name(species_key, common_names) if species_key else filename)
     )
     if siblings is None:
         siblings = _build_review_modal_siblings(
@@ -656,7 +648,9 @@ def _build_review_item(
         date_folder_str = f"{timestamp[:4]}-{timestamp[4:6]}-{timestamp[6:8]}"
         full_url = f"/uploads/originals/{date_folder_str}/{filename}"
         optimized_filename = filename.rsplit(".", 1)[0] + ".webp"
-        optimized_url = f"/uploads/derivatives/optimized/{date_folder_str}/{optimized_filename}"
+        optimized_url = (
+            f"/uploads/derivatives/optimized/{date_folder_str}/{optimized_filename}"
+        )
 
     inline_siblings: list[dict] = []
     if include_detail and best_detection_id:
@@ -672,7 +666,9 @@ def _build_review_item(
         "filename": filename,
         "source_image_filename": row["source_image_filename"] or filename,
         "timestamp": timestamp,
-        "gallery_date": f"{timestamp[:4]}-{timestamp[4:6]}-{timestamp[6:8]}" if len(timestamp) >= 8 else None,
+        "gallery_date": f"{timestamp[:4]}-{timestamp[4:6]}-{timestamp[6:8]}"
+        if len(timestamp) >= 8
+        else None,
         "formatted_date": format_review_timestamp(timestamp),
         "thumb_url": thumb_url,
         "full_url": full_url,
@@ -693,9 +689,7 @@ def _build_review_item(
         "species_source": row["species_source"],
         "quick_species": quick_species if include_detail else [],
         "default_species": default_species if include_detail else None,
-        "default_species_common": (
-            default_species_common if include_detail else None
-        ),
+        "default_species_common": (default_species_common if include_detail else None),
         "selected_species": selected_species if include_detail else None,
         "selected_species_common": (
             selected_species_common if include_detail else None
@@ -810,7 +804,9 @@ def _fetch_review_event_payloads(
                 untagged_time_range=(untagged_min, untagged_max),
             )
         except Exception:  # pragma: no cover - defensive
-            logger.exception("fetch_review_cluster_context failed; continuing without context")
+            logger.exception(
+                "fetch_review_cluster_context failed; continuing without context"
+            )
             context_rows = []
         for row_dict in context_rows:
             detection_id = int(
@@ -882,7 +878,9 @@ def build_review_continuity_batches(raw_events: list) -> list[dict]:
         joined_actionables = [
             event
             for event in actionables
-            if _events_overlap(event.start_time, event.end_time, window_start, window_end)
+            if _events_overlap(
+                event.start_time, event.end_time, window_start, window_end
+            )
         ]
         if not joined_actionables:
             continue
@@ -900,9 +898,7 @@ def build_review_continuity_batches(raw_events: list) -> list[dict]:
         for joined in joined_anchors:
             seen_anchor_keys.add(joined.event_key)
 
-        anchor_species = {
-            other.species for other in joined_anchors if other.species
-        }
+        anchor_species = {other.species for other in joined_anchors if other.species}
         recommended_species: str | None = None
         if len(anchor_species) == 1:
             recommended_species = next(iter(anchor_species))
@@ -957,9 +953,15 @@ def build_review_continuity_batches(raw_events: list) -> list[dict]:
                     }
                 )
 
-        all_event_starts = [event.start_time for event in joined_anchors + joined_actionables]
-        all_event_ends = [event.end_time for event in joined_anchors + joined_actionables]
-        batch_window_start = min(all_event_starts) if all_event_starts else anchor.start_time
+        all_event_starts = [
+            event.start_time for event in joined_anchors + joined_actionables
+        ]
+        all_event_ends = [
+            event.end_time for event in joined_anchors + joined_actionables
+        ]
+        batch_window_start = (
+            min(all_event_starts) if all_event_starts else anchor.start_time
+        )
         batch_window_end = max(all_event_ends) if all_event_ends else anchor.end_time
 
         batch_key = "review-batch-" + "-".join(
@@ -992,9 +994,7 @@ def _shift_review_window(ts: str, *, minutes: int) -> str:
     return (dt + timedelta(minutes=minutes)).strftime("%Y%m%d_%H%M%S")
 
 
-def _events_overlap(
-    a_start: str, a_end: str, b_start: str, b_end: str
-) -> bool:
+def _events_overlap(a_start: str, a_end: str, b_start: str, b_end: str) -> bool:
     """Two ``YYYYMMDD_HHMMSS`` intervals overlap."""
     if not a_start or not a_end or not b_start or not b_end:
         return False
@@ -1092,7 +1092,9 @@ def _build_review_event(
     )
     bbox_trail = list(raw_event.bbox_trail or [])
     bbox_trail_preview = [
-        point for point in bbox_trail if point.get("trail_role") in {"start", "mid", "end"}
+        point
+        for point in bbox_trail
+        if point.get("trail_role") in {"start", "mid", "end"}
     ] or bbox_trail
 
     # Expose the cover frame's native resolution so trail maps that
@@ -1111,7 +1113,9 @@ def _build_review_event(
             dim_row = None
         if dim_row:
             raw_w = dim_row["frame_width"] if "frame_width" in dim_row.keys() else None
-            raw_h = dim_row["frame_height"] if "frame_height" in dim_row.keys() else None
+            raw_h = (
+                dim_row["frame_height"] if "frame_height" in dim_row.keys() else None
+            )
             try:
                 cover_frame_width = int(raw_w) if raw_w else None
             except (TypeError, ValueError):
@@ -1184,9 +1188,8 @@ def _build_review_event(
         if selected_species
         else default_species_common
     )
-    selected_species_origin = (
-        str(raw_event.species_source or "").strip()
-        or ("default" if selected_species else None)
+    selected_species_origin = str(raw_event.species_source or "").strip() or (
+        "default" if selected_species else None
     )
 
     event_payload["quick_species"] = quick_species
@@ -1397,6 +1400,7 @@ def _stamp_species_display_on_event(
     member (anchor + review), and every quick-pick species so the
     template can read the slot off any payload.
     """
+
     def stamp(payload: dict) -> None:
         key = _resolve_species_display_key(payload)
         if key:
@@ -1613,8 +1617,12 @@ def _load_event_with_continuity_batch(
         "recommended_species": recommended_species,
         "recommended_species_common": recommended_species_common,
         "review_detection_ids": list(matching_batch.get("review_detection_ids") or []),
-        "context_detection_ids": list(matching_batch.get("context_detection_ids") or []),
-        "context_species_summary": dict(matching_batch.get("context_species_summary") or {}),
+        "context_detection_ids": list(
+            matching_batch.get("context_detection_ids") or []
+        ),
+        "context_species_summary": dict(
+            matching_batch.get("context_species_summary") or {}
+        ),
         "anchor_members": anchor_members,
         "review_members": review_members,
         "review_event_keys": review_event_keys,
@@ -1642,16 +1650,16 @@ def _workspace_species_keys_from_raw_events(raw_events) -> set[str]:
         if species:
             species_keys.add(str(species).strip())
         for trail_point in getattr(raw_event, "bbox_trail", None) or []:
-            trail_species = trail_point.get("species") or trail_point.get(
-                "species_key"
-            )
+            trail_species = trail_point.get("species") or trail_point.get("species_key")
             if trail_species:
                 species_keys.add(str(trail_species).strip())
     species_keys.discard("")
     return species_keys
 
 
-def _refresh_review_image_visibility(conn, filename: str, gallery_threshold: float) -> str:
+def _refresh_review_image_visibility(
+    conn, filename: str, gallery_threshold: float
+) -> str:
     active_count = conn.execute(
         """
         SELECT COUNT(*)
@@ -1806,9 +1814,7 @@ def review_page():
             orphan["species_ref_image_url"] = None
         for picker in orphan.get("quick_species") or []:
             pkey = str(picker.get("scientific") or "").strip()
-            picker["species_colour"] = (
-                species_colour_map.get(pkey) if pkey else None
-            )
+            picker["species_colour"] = species_colour_map.get(pkey) if pkey else None
 
     return render_template(
         "orphans.html",
@@ -1890,7 +1896,7 @@ def review_event_panel_fragment(event_key):
         )
 
     if not event:
-        abort(404)
+        return abort(404)
 
     # Stamping already happened inside _load_event_with_continuity_batch
     # using a workspace-scoped colour map built from the full raw_events
@@ -2029,8 +2035,7 @@ def review_decision():
         )
 
     except Exception as e:
-        logger.error(f"Error in review decision: {e}")
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return _error_response("Error in review decision", e)
 
 
 @review_bp.route("/api/review/bbox-review", methods=["POST"])
@@ -2092,8 +2097,7 @@ def update_bbox_review_state():
             }
         )
     except Exception as e:
-        logger.error(f"Error updating bbox review state: {e}")
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return _error_response("Error updating bbox review state", e)
 
 
 @review_bp.route("/api/review/quick-species", methods=["POST"])
@@ -2189,8 +2193,7 @@ def review_quick_species():
             }
         )
     except Exception as e:
-        logger.error(f"Error applying review quick species: {e}")
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return _error_response("Error applying review quick species", e)
 
 
 @review_bp.route("/api/review/approve", methods=["POST"])
@@ -2334,8 +2337,7 @@ def review_approve():
             }
         )
     except Exception as e:
-        logger.error(f"Error approving review item: {e}")
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return _error_response("Error approving review item", e)
 
 
 @review_bp.route("/api/review/event-approve", methods=["POST"])
@@ -2600,7 +2602,9 @@ def review_event_approve():
                 )
 
             touched_filenames = list(
-                dict.fromkeys(row["image_filename"] for row in rows if row["image_filename"])
+                dict.fromkeys(
+                    row["image_filename"] for row in rows if row["image_filename"]
+                )
             )
             review_status_by_filename = {
                 filename: _refresh_review_image_visibility(
@@ -2634,8 +2638,7 @@ def review_event_approve():
             }
         )
     except Exception as e:
-        logger.error(f"Error approving review event: {e}")
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return _error_response("Error approving review event", e)
 
 
 @review_bp.route("/api/review/event-trash", methods=["POST"])
@@ -2809,13 +2812,9 @@ def review_event_trash():
         ]
 
         if touched_filenames and len(trash_filenames) == len(touched_filenames):
-            message = (
-                "Event moved to Trash. Every touched image now has no active detections left."
-            )
+            message = "Event moved to Trash. Every touched image now has no active detections left."
         else:
-            message = (
-                "Event detections rejected. Images with no active detections left moved to Trash; other touched images now follow their remaining active detections."
-            )
+            message = "Event detections rejected. Images with no active detections left moved to Trash; other touched images now follow their remaining active detections."
 
         return jsonify(
             {
@@ -2831,8 +2830,7 @@ def review_event_trash():
             }
         )
     except Exception as e:
-        logger.error(f"Error trashing review event: {e}")
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return _error_response("Error trashing review event", e)
 
 
 @review_bp.route("/api/review/event-resolve", methods=["POST"])
@@ -3130,8 +3128,7 @@ def review_event_resolve():
             }
         )
     except Exception as e:
-        logger.error(f"Error resolving review event: {e}")
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return _error_response("Error resolving review event", e)
 
 
 @review_bp.route("/api/review/analyze/<filename>", methods=["POST"])
@@ -3174,5 +3171,4 @@ def analyze_review_item(filename):
         return jsonify({"status": "error", "message": "Failed to queue analysis"}), 500
 
     except Exception as e:
-        logger.error(f"Error triggering analysis: {e}")
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return _error_response("Error triggering analysis", e)

@@ -165,9 +165,7 @@ def _released_from_id(model_id: str) -> str | None:
     return f"{model_id[:4]}-{model_id[4:6]}-{model_id[6:8]}"
 
 
-def _read_variant_companions(
-    model_dir: str, model_id: str
-) -> dict[str, Any]:
+def _read_variant_companions(model_dir: str, model_id: str) -> dict[str, Any]:
     """Collect lightweight metadata for a single variant from local files.
 
     Reads ``<id>_metrics.json`` (if present) for recall/F1 and
@@ -356,12 +354,14 @@ def _sort_variants_newest_first(
     Variants without a release date land at the bottom so user attention
     goes to dated releases first.
     """
+
     def sort_key(v: dict[str, Any]) -> tuple[int, str, str]:
         released = (v.get("metadata") or {}).get("released") or ""
         # Sort descending by date by inverting — simpler than reverse=True
         # because we still want ascending id as the tiebreaker.
         has_date = 0 if released else 1  # dated entries first
         return (has_date, _invert_date_for_desc(released), v["id"])
+
     return sorted(variants, key=sort_key)
 
 
@@ -576,8 +576,7 @@ def build_detector_registry_payload(detector: Any | None) -> dict[str, Any]:
     if hf_known:
         runtime_active_id = runtime_id or active_on_disk_id
         variants = [
-            v for v in variants
-            if v["id"] in hf_known or v["id"] == runtime_active_id
+            v for v in variants if v["id"] in hf_known or v["id"] == runtime_active_id
         ]
 
     # Post-process: data-driven tags + newest-first sort. Tags are assigned
@@ -613,7 +612,9 @@ def variant_is_known(payload: dict[str, Any], model_id: str) -> bool:
     return False
 
 
-def variant_exists_in_registry(payload: dict[str, Any], model_id: str) -> dict[str, Any] | None:
+def variant_exists_in_registry(
+    payload: dict[str, Any], model_id: str
+) -> dict[str, Any] | None:
     """Return the variant entry when ``model_id`` is listed in the registry,
     regardless of local availability. This is the whitelist gate for the
     install endpoint: only ids declared under ``pinned_models`` (or the
@@ -669,11 +670,7 @@ def _build_classifier_variant_metadata(
                 for key in ("top1_accuracy", "top5_accuracy", "num_classes"):
                     value = metrics.get(key)
                     if isinstance(value, (int, float)):
-                        out[key] = (
-                            float(value)
-                            if key != "num_classes"
-                            else int(value)
-                        )
+                        out[key] = float(value) if key != "num_classes" else int(value)
                 train = metrics.get("train_info")
                 if isinstance(train, dict):
                     trained_at = train.get("trained_at")
@@ -749,6 +746,7 @@ def _build_classifier_variant_metadata(
                     if isinstance(classes_list, list) and classes_list:
                         out["num_classes"] = len(classes_list)
         except ImportError:
+            # PyYAML missing on this build; classifier metadata stays unset.
             pass
         except Exception as exc:
             logger.debug(f"classifier metadata: failed to read {yaml_path}: {exc}")
@@ -881,7 +879,9 @@ def build_classifier_registry_payload(classifier: Any | None) -> dict[str, Any]:
             "is_hf_latest": (mid == hf_latest_id),
             "metadata": _build_classifier_variant_metadata(model_dir, mid),
         }
-        entry["is_available_locally"] = entry["weights_exists"] and entry["classes_exists"]
+        entry["is_available_locally"] = (
+            entry["weights_exists"] and entry["classes_exists"]
+        )
         variants.append(entry)
 
     # Same HF-whitelist filter as the detector payload.
@@ -894,8 +894,7 @@ def build_classifier_registry_payload(classifier: Any | None) -> dict[str, Any]:
     if hf_known:
         runtime_active_id = runtime_id or active_on_disk_id
         variants = [
-            v for v in variants
-            if v["id"] in hf_known or v["id"] == runtime_active_id
+            v for v in variants if v["id"] in hf_known or v["id"] == runtime_active_id
         ]
 
     # Latest first (same sort as detector).

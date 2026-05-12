@@ -73,6 +73,7 @@ def run_vcgencmd(cmd: str) -> str | None:
         if result.returncode == 0:
             return result.stdout.strip()
     except (FileNotFoundError, subprocess.TimeoutExpired):
+        # vcgencmd is RPi-specific; absence/timeout means no data.
         pass
     return None
 
@@ -108,7 +109,9 @@ def get_cpu_temp() -> float | None:
             return temps["cpu_thermal"][0].current
         if "coretemp" in temps:
             return temps["coretemp"][0].current
-    except Exception:
+    except (AttributeError, OSError):
+        # sensors_temperatures missing on macOS/Windows; OSError on
+        # systems without /sys/class/thermal.
         pass
     return None
 
@@ -229,11 +232,13 @@ class SystemMonitor:
             with self._process.oneshot():
                 try:
                     fd_count = self._process.num_fds()
-                except Exception:
+                except (psutil.AccessDenied, AttributeError):
+                    # num_fds is Linux/macOS only; some psutil builds drop it.
                     fd_count = -1
                 thread_count = self._process.num_threads()
                 process_rss_mb = self._process.memory_info().rss / (1024 * 1024)
-        except Exception:
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            # Process vanished or sandboxed; report defaults.
             pass
 
         children_count = 0
@@ -247,7 +252,8 @@ class SystemMonitor:
                 try:
                     child_rss_mb = child.memory_info().rss / (1024 * 1024)
                     children_rss_mb += child_rss_mb
-                except Exception:
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    # Child died between enumeration and inspection.
                     pass
 
                 # Classify ffmpeg children to separate camera/stream process pressure.
@@ -257,9 +263,11 @@ class SystemMonitor:
                     if "ffmpeg" in name or "ffmpeg" in cmd:
                         ffmpeg_count += 1
                         ffmpeg_rss_mb += child_rss_mb
-                except Exception:
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    # Child died or cmdline unreadable; skip classification.
                     pass
-        except Exception:
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            # Cannot enumerate children; default counts remain 0.
             pass
 
         try:

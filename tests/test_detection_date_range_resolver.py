@@ -2,10 +2,10 @@ import sqlite3
 
 from utils.db.detections import (
     fetch_active_detection_ids_in_date_range,
-    fetch_active_detection_selection_in_date_range,
     fetch_active_detection_selection_by_source_type,
-    fetch_trash_candidate_selection_in_date_range,
+    fetch_active_detection_selection_in_date_range,
     fetch_trash_candidate_selection_by_source_type,
+    fetch_trash_candidate_selection_in_date_range,
 )
 
 

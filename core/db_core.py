@@ -18,16 +18,10 @@ from utils.db import (
     fetch_active_detection_ids_in_date_range as _fetch_active_detection_ids_in_date_range,
 )
 from utils.db import (
-    fetch_active_detection_selection_in_date_range as _fetch_active_detection_selection_in_date_range,
-)
-from utils.db import (
     fetch_active_detection_selection_by_source_type as _fetch_active_detection_selection_by_source_type,
 )
 from utils.db import (
-    fetch_trash_candidate_selection_in_date_range as _fetch_trash_candidate_selection_in_date_range,
-)
-from utils.db import (
-    fetch_trash_candidate_selection_by_source_type as _fetch_trash_candidate_selection_by_source_type,
+    fetch_active_detection_selection_in_date_range as _fetch_active_detection_selection_in_date_range,
 )
 from utils.db import (
     fetch_all_detection_times as _fetch_all_detection_times,
@@ -60,25 +54,34 @@ from utils.db import (
     fetch_random_favorites as _fetch_random_favorites,
 )
 from utils.db import (
+    fetch_recent_review_species as _fetch_recent_review_species,
+)
+from utils.db import (
+    fetch_review_cluster_context as _fetch_review_cluster_context,
+)
+from utils.db import (
     fetch_review_queue_count as _fetch_review_queue_count,
 )
 from utils.db import (
     fetch_review_queue_image as _fetch_review_queue_image,
 )
 from utils.db import (
+    fetch_review_queue_images as _fetch_review_queue_images,
+)
+from utils.db import (
     fetch_review_queue_item_by_identity as _fetch_review_queue_item_by_identity,
 )
 from utils.db import (
-    fetch_review_cluster_context as _fetch_review_cluster_context,
-)
-from utils.db import (
-    fetch_review_queue_images as _fetch_review_queue_images,
+    fetch_species_story_board_candidates as _fetch_species_story_board_candidates,
 )
 from utils.db import (
     fetch_species_timestamps as _fetch_species_timestamps,
 )
 from utils.db import (
-    fetch_species_story_board_candidates as _fetch_species_story_board_candidates,
+    fetch_trash_candidate_selection_by_source_type as _fetch_trash_candidate_selection_by_source_type,
+)
+from utils.db import (
+    fetch_trash_candidate_selection_in_date_range as _fetch_trash_candidate_selection_in_date_range,
 )
 from utils.db import (
     fetch_trash_count as _fetch_trash_count,
@@ -103,9 +106,6 @@ from utils.db import (
 )
 from utils.db import (
     update_downloaded_timestamp as _update_downloaded_timestamp,
-)
-from utils.db import (
-    fetch_recent_review_species as _fetch_recent_review_species,
 )
 from utils.db import (
     update_review_status as _update_review_status,

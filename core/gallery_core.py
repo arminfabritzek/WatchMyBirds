@@ -14,7 +14,6 @@ from typing import Any
 import cv2
 
 from config import get_config
-from utils.species_names import canonical_species_key, resolve_common_name
 from utils.db import (
     closing_connection,
     fetch_daily_covers,
@@ -27,6 +26,7 @@ from utils.db import (
 from utils.image_ops import generate_preview_thumbnail as _generate_preview_thumbnail
 from utils.log_safety import safe_log_value as _slv
 from utils.path_manager import get_path_manager
+from utils.species_names import canonical_species_key, resolve_common_name
 from utils.wikipedia import (
     build_species_wikipedia_url as _build_species_wikipedia_url,
 )
@@ -216,54 +216,11 @@ _OBS_MIN_BBOX_IOU = 0.02
 _OBS_MIN_AREA_SIMILARITY = 0.2
 
 
-def _ts_to_epoch(ts: str) -> float:
-    """Convert YYYYMMDD_HHMMSS (or YYYYMMDD_HHMMSS_ffffff) to epoch seconds.
-
-    The images table stores timestamps with optional microsecond suffixes
-    (e.g. ``20260225_084116_427121``).  We only need second-level precision,
-    so we truncate to the first 15 characters before parsing.
-
-    Returns 0.0 on failure.
-    """
-    # Hand-rolled slice parser — `datetime.strptime` is 5× slower than
-    # building the datetime directly from positional fields, and this
-    # function is called ~4 k times per `/` render. Format is fixed
-    # (`YYYYMMDD_HHMMSS`), so the slice positions are safe.
-    from datetime import datetime as _dt
-
-    if not ts or len(ts) < 15:
-        return 0.0
-    try:
-        return _dt(
-            int(ts[0:4]),
-            int(ts[4:6]),
-            int(ts[6:8]),
-            int(ts[9:11]),
-            int(ts[11:13]),
-            int(ts[13:15]),
-        ).timestamp()
-    except (ValueError, TypeError):
-        return 0.0
-
-
-def _bbox_dist(
-    ax: float,
-    ay: float,
-    aw: float,
-    ah: float,
-    bx: float,
-    by: float,
-    bw: float,
-    bh: float,
-) -> float:
-    """Euclidean distance between bbox centres (normalised coords)."""
-    import math
-
-    cx_a = (ax or 0) + (aw or 0) / 2.0
-    cy_a = (ay or 0) + (ah or 0) / 2.0
-    cx_b = (bx or 0) + (bw or 0) / 2.0
-    cy_b = (by or 0) + (bh or 0) / 2.0
-    return math.hypot(cx_a - cx_b, cy_a - cy_b)
+# Shared helpers live in core._geom_helpers to break the
+# gallery_core <-> events import cycle. Re-export under the legacy
+# private names so existing in-file call sites keep working unchanged.
+from core._geom_helpers import bbox_dist as _bbox_dist  # noqa: E402
+from core._geom_helpers import ts_to_epoch as _ts_to_epoch  # noqa: E402
 
 
 def _bbox_iou_local(
@@ -582,7 +539,9 @@ def _story_board_bbox_touches_edge(det: dict, margin: float = 0.01) -> bool:
     )
 
 
-def _story_board_candidate_quality(det: dict) -> tuple[int, int, float, float, float, str, int]:
+def _story_board_candidate_quality(
+    det: dict,
+) -> tuple[int, int, float, float, float, str, int]:
     """Quality key for story-board cover candidates.
 
     Tuple ordering (highest priority first):
@@ -660,10 +619,13 @@ def _build_story_board_candidate_pool(
     # KI picks: gallery_eligible but NOT also a HUMAN favorite — already in
     # `favorites` if both. Going in second so HUMAN choice still wins ties.
     ki_picks = [
-        d for d in ranked
+        d
+        for d in ranked
         if int(d.get("is_gallery_eligible") or 0) and not int(d.get("is_favorite") or 0)
     ]
-    covers = [d for d in ranked if int(d.get("detection_id") or 0) in cover_detection_ids]
+    covers = [
+        d for d in ranked if int(d.get("detection_id") or 0) in cover_detection_ids
+    ]
 
     _append_unique(favorites)
     if len(pool) < limit:
@@ -932,8 +894,7 @@ def get_sibling_detections_batch(image_filenames: list[str]) -> dict[str, list[d
     with closing_connection() as conn:
         grouped_rows = fetch_sibling_detections_batch(conn, image_filenames)
         return {
-            name: [dict(row) for row in rows]
-            for name, rows in grouped_rows.items()
+            name: [dict(row) for row in rows] for name, rows in grouped_rows.items()
         }
 
 

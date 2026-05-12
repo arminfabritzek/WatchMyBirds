@@ -159,7 +159,7 @@ def draw_feet(ctx, x, y, color):
     ctx.set_line_width(4)
     ctx.set_line_cap(cairo.LINE_CAP_ROUND)
     _set_color(ctx, color)
-    for side, sign in [(-1, -1), (1, 1)]:
+    for side, _sign in [(-1, -1), (1, 1)]:
         fx = x + side * 10
         ctx.move_to(fx, y)
         ctx.line_to(fx, y + 20)

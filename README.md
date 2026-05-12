@@ -188,44 +188,18 @@ Full reference: [docs/CONFIGURATION.md](docs/CONFIGURATION.md)
 
 ## Privacy
 
-WatchMyBirds runs entirely on your Raspberry Pi. Nothing about your bird
-activity, images, or detections ever leaves the device.
+WatchMyBirds runs entirely on your device. Nothing about your bird
+activity, images, or detections ever leaves it.
 
-There is **one** piece of optional outbound traffic: an anonymous daily
-heartbeat (off by default) that helps us count active installations. When you
-opt in via **Settings → Privacy**, the app sends one small JSON payload per
-UTC day to `heartbeat-wmb.starmin.de` containing:
+The only optional outbound traffic is an **anonymous daily heartbeat**
+(off by default) that helps count active installations — eight fields,
+no IP, no location, EU-only storage, raw rows deleted within 24 hours.
+You can opt in, opt out, rotate your ID, or firewall-block the endpoint
+at any time.
 
-- a random installation ID (generated locally on first opt-in)
-- the app version
-- the OS family (`linux` / `darwin` / `windows`)
-- the architecture (`aarch64` / `x86_64` / `armv7l`)
-- the CPU count and total RAM rounded to whole GB
-- the Python version and detector variant in use
-
-**Never sent:** IP, country, locale, hostname, MAC, exact RAM bytes, kernel
-version, Pi model string, image data, species names, observation counts,
-camera URLs, or anything else identifying you or your setup.
-
-The data is stored in a Cloudflare D1 database with `jurisdiction=eu`
-(EU-only data residency). **Individual heartbeats are deleted within 24
-hours** — a nightly cron aggregates them into per-day, per-cohort counts
-(no `installation_id`). Source code for both the client
-(`web/services/telemetry_service.py`) and the receiving Worker
-(`infra/telemetry-worker/`) is in this repository.
-
-You can:
-
-- Leave telemetry off (the default — no ID is generated, nothing is sent)
-- Toggle it off later (pings stop instantly; ID stays so you're counted as
-  the same install if you re-enable)
-- Rotate your installation ID (treat next opt-in as a fresh install)
-- Override the endpoint in `settings.yaml` (point it at `/dev/null` or your
-  own self-hosted Worker)
-- Firewall-block `heartbeat-wmb.starmin.de` at the network level
-
-Full text: [docs/PRIVACY.md](docs/PRIVACY.md) (or visit `/privacy` in your
-running install — no login required).
+Full details, including what is sent, what is never sent, where the data
+lives, and how to control it: **[docs/PRIVACY.md](docs/PRIVACY.md)**
+(or visit `/privacy` in your running install).
 
 ---
 

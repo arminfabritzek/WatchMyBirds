@@ -24,7 +24,6 @@ from .prompt import (
 from .recorder import CompanionRecorder
 from .safety import check as safety_check
 
-
 logger = logging.getLogger(__name__)
 
 

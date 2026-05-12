@@ -36,15 +36,6 @@ def get_species_timestamps(species: str) -> list[dict]:
     return analytics_core.get_species_timestamps(species)
 
 
-def get_day_count() -> int:
-    """
-    Get count of days with detections.
-
-    Delegates to core.analytics_core.
-    """
-    return analytics_core.get_day_count()
-
-
 def get_species_summary_cached(force_refresh: bool = False) -> dict[str, Any] | None:
     """
     Get cached species summary.

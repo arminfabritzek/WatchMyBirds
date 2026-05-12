@@ -53,10 +53,16 @@ def validate_new_password(
 ) -> tuple[bool, str, str | None]:
     """Validate and normalize a newly chosen admin password."""
     cleaned = (password or "").strip()
-    confirm_cleaned = (password_confirm or "").strip() if password_confirm is not None else None
+    confirm_cleaned = (
+        (password_confirm or "").strip() if password_confirm is not None else None
+    )
 
     if len(cleaned) < MIN_PASSWORD_LENGTH:
-        return False, "", f"Password must be at least {MIN_PASSWORD_LENGTH} characters long."
+        return (
+            False,
+            "",
+            f"Password must be at least {MIN_PASSWORD_LENGTH} characters long.",
+        )
 
     if cleaned in DEFAULT_PASSWORDS:
         return False, "", "Please choose a password that is not a known default."
@@ -71,17 +77,25 @@ def get_redirect_target(next_param: str | None, default: str = "/gallery") -> st
     """
     Determine the redirect target URL.
 
-    Args:
-        next_param: The 'next' URL parameter or form field.
-        default: Default URL if next_param is invalid/missing.
-
-    Returns:
-        The target URL.
+    Only same-origin relative paths starting with a single ``/`` are
+    accepted. Anything with a scheme, netloc, backslash, or a leading
+    ``//`` (protocol-relative) falls back to ``default`` so an
+    attacker cannot redirect through ``?next=//evil.com/x``.
     """
     if not next_param:
         return default
 
-    # Only allow relative paths (no scheme, no netloc) to prevent open redirect.
+    # Reject backslashes outright: browsers normalise ``\`` to ``/`` in
+    # URLs, but Python's urlparse does not, so a value like
+    # ``"/\\evil.com/x"`` would slip past a naïve netloc check.
+    if "\\" in next_param:
+        return default
+
+    # Must start with exactly one '/'. Two slashes ("//evil.com/x")
+    # are protocol-relative and browsers treat them as a netloc.
+    if not next_param.startswith("/") or next_param.startswith("//"):
+        return default
+
     parsed = urlparse(next_param)
     if parsed.scheme or parsed.netloc:
         return default

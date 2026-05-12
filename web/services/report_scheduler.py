@@ -91,6 +91,7 @@ def _parse_report_time(time_str: str) -> tuple[int, int]:
         if 0 <= h <= 23 and 0 <= m <= 59:
             return h, m
     except (ValueError, IndexError):
+        # Malformed HH:MM; fall through to the warning + fallback below.
         pass
     logger.warning("Invalid TELEGRAM_REPORT_TIME '%s', falling back to 21:00", time_str)
     return 21, 0
@@ -127,6 +128,7 @@ def start_report_scheduler(check_interval: int = 30, detection_manager=None):
         # returns False and we just send the report unchanged.
         try:
             from web.services.aesthetic_tag_scheduler import run_now as tag_now
+
             tag_now(f"pre-telegram bridge ({reason})", today_only=True)
         except Exception as exc:
             # Never let the bridge block the report — log and proceed.
@@ -159,9 +161,7 @@ def start_report_scheduler(check_interval: int = 30, detection_manager=None):
                 mode = str(config.get("TELEGRAM_MODE", "off") or "off").strip().lower()
 
                 if mode == "daily":
-                    time_str = str(
-                        config.get("TELEGRAM_REPORT_TIME", "") or ""
-                    ).strip()
+                    time_str = str(config.get("TELEGRAM_REPORT_TIME", "") or "").strip()
                     if time_str:
                         report_hour, report_minute = _parse_report_time(time_str)
                         if _should_send_daily(report_hour, report_minute):

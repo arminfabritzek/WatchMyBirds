@@ -9,7 +9,6 @@ Covers:
 
 from __future__ import annotations
 
-import json
 import sqlite3
 from pathlib import Path
 
@@ -17,7 +16,6 @@ import pytest
 
 from core.events import _resolve_detection_species
 from utils.species_names import UNKNOWN_SPECIES_KEY, load_common_names
-
 
 NON_BIRD_KEYS = ("squirrel", "cat", "marten_mustelid", "hedgehog")
 REPO_ROOT = Path(__file__).resolve().parents[1]

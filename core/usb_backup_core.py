@@ -136,7 +136,11 @@ def _probe_other_usb_stick() -> tuple[str, str] | None:
     try:
         result = subprocess.run(
             [
-                "lsblk", "-l", "-n", "-o", "NAME,FSTYPE,TYPE",
+                "lsblk",
+                "-l",
+                "-n",
+                "-o",
+                "NAME,FSTYPE,TYPE",
                 "--paths",
             ],
             capture_output=True,
@@ -163,6 +167,7 @@ def _probe_other_usb_stick() -> tuple[str, str] | None:
             if Path(name).resolve() == BACKUP_DEVICE.resolve():
                 continue
         except OSError:
+            # Symlink target gone; treat as a different device.
             pass
         return (name, fstype or "unknown")
     return None
@@ -212,6 +217,7 @@ def _is_mounted(mount_point: Path) -> bool:
     try:
         os.listdir(str(mount_point))
     except OSError:
+        # autofs trigger refused; findmnt below decides the verdict.
         pass
 
     return _findmnt_fstype(mount_point) is not None
@@ -390,8 +396,29 @@ def _resolve_latest_target() -> Path | None:
         if LATEST_LINK.is_symlink():
             return LATEST_LINK.resolve(strict=False)
     except OSError:
+        # Broken symlink or missing parent; treat as no 'latest'.
         pass
     return None
+
+
+def _safe_snapshot_path(name: str) -> Path | None:
+    """Validate ``name`` and return ``SNAPSHOTS_DIR / name`` or ``None``.
+
+    The single choke-point that user-supplied snapshot names must pass
+    through before being joined onto ``SNAPSHOTS_DIR``. Rejects empty
+    strings, separators, parent refs, NUL bytes, and any name whose
+    resolved location escapes ``SNAPSHOTS_DIR``.
+    """
+    if not isinstance(name, str) or not name:
+        return None
+    if "/" in name or "\\" in name or ".." in name or "\x00" in name:
+        return None
+    candidate = SNAPSHOTS_DIR / name
+    try:
+        candidate.resolve(strict=False).relative_to(SNAPSHOTS_DIR.resolve(strict=False))
+    except (OSError, ValueError):
+        return None
+    return candidate
 
 
 def _inspect_snapshot(directory: Path, latest_target: Path | None) -> SnapshotInfo:
@@ -408,11 +435,7 @@ def _inspect_snapshot(directory: Path, latest_target: Path | None) -> SnapshotIn
     manifest = _read_json_safely(directory / "manifest.json") or {}
     sizes = manifest.get("sizes") or {}
 
-    kind_raw = (
-        _read_first_line(directory / "kind")
-        or manifest.get("kind")
-        or "unknown"
-    )
+    kind_raw = _read_first_line(directory / "kind") or manifest.get("kind") or "unknown"
     kind = kind_raw.strip() or "unknown"
 
     return SnapshotInfo(
@@ -422,9 +445,8 @@ def _inspect_snapshot(directory: Path, latest_target: Path | None) -> SnapshotIn
         corrupt=corrupt,
         corrupt_reason=corrupt_reason,
         started_at=manifest.get("started_at"),
-        completed_at=manifest.get("completed_at") or (
-            _read_first_line(directory / "COMPLETED") if completed else None
-        ),
+        completed_at=manifest.get("completed_at")
+        or (_read_first_line(directory / "COMPLETED") if completed else None),
         total_bytes=sizes.get("total_bytes"),
         db_bytes=sizes.get("db_bytes"),
         output_bytes=sizes.get("output_bytes"),
@@ -463,12 +485,8 @@ def list_snapshots(*, limit: int | None = None) -> list[SnapshotInfo]:
 
 def get_snapshot(name: str) -> SnapshotInfo | None:
     """Look up a snapshot by exact directory name."""
-    # Defense-in-depth: guard against path traversal even though Flask
-    # already URL-decodes once.
-    if "/" in name or ".." in name or not name:
-        return None
-    directory = SNAPSHOTS_DIR / name
-    if not directory.is_dir():
+    directory = _safe_snapshot_path(name)
+    if directory is None or not directory.is_dir():
         return None
     return _inspect_snapshot(directory, _resolve_latest_target())
 
@@ -479,16 +497,11 @@ def delete_snapshot(name: str) -> tuple[bool, str]:
     Returns (success, message). Refuses to touch anything outside
     SNAPSHOTS_DIR or anything that doesn't look like a snapshot dir.
     """
-    if "/" in name or ".." in name or not name:
+    directory = _safe_snapshot_path(name)
+    if directory is None:
         return False, "Invalid snapshot name."
-    directory = SNAPSHOTS_DIR / name
     if not directory.is_dir():
         return False, f"Snapshot {name!r} not found."
-    # Sanity: it must live directly under SNAPSHOTS_DIR.
-    try:
-        directory.resolve(strict=True).relative_to(SNAPSHOTS_DIR.resolve(strict=True))
-    except (OSError, ValueError):
-        return False, "Snapshot path is outside the snapshots directory."
 
     try:
         shutil.rmtree(directory)
@@ -508,11 +521,13 @@ def verify_snapshot(name: str) -> dict[str, Any]:
     Returns a structured result. Does NOT mutate the snapshot directory
     (no automatic CORRUPT-flag rewrite — operator decides what to do).
     """
+    directory = _safe_snapshot_path(name)
+    if directory is None:
+        return {"ok": False, "name": name, "error": "Invalid snapshot name."}
     snap = get_snapshot(name)
     if snap is None:
         return {"ok": False, "name": name, "error": "Snapshot not found."}
 
-    directory = SNAPSHOTS_DIR / name
     db_path = directory / "data" / "images.db"
     sha_path = directory / "data" / "images.db.sha256"
 
@@ -589,7 +604,5 @@ def get_backup_summary(*, recent_limit: int = 5) -> dict[str, Any]:
         "most_recent_completed": (
             most_recent_completed.to_dict() if most_recent_completed else None
         ),
-        "warn_almost_full": (
-            stick.free_pct is not None and stick.free_pct < 20.0
-        ),
+        "warn_almost_full": (stick.free_pct is not None and stick.free_pct < 20.0),
     }

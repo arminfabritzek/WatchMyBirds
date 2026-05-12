@@ -8,6 +8,8 @@ from unittest.mock import MagicMock
 import pytest
 from flask import Flask
 
+from utils import model_downloader as md
+
 
 @pytest.fixture
 def model_dir(tmp_path, monkeypatch):
@@ -27,13 +29,20 @@ def model_dir(tmp_path, monkeypatch):
     # thresholds per variant (Tiny: conf=0.15, S: conf=0.30).
     yaml_thresholds = {
         "20260417_yolox_tiny_locator_ep120": (0.15, "tiny"),
-        "20260417_yolox_s_locator_ep120":    (0.30, "s"),
+        "20260417_yolox_s_locator_ep120": (0.30, "s"),
     }
     for mid, (conf, variant) in yaml_thresholds.items():
         (od_dir / f"{mid}_best.onnx").write_bytes(b"fake onnx")
         (od_dir / f"{mid}_labels.json").write_text(
-            json.dumps({"0": "bird", "1": "squirrel", "2": "cat",
-                        "3": "marten_mustelid", "4": "hedgehog"})
+            json.dumps(
+                {
+                    "0": "bird",
+                    "1": "squirrel",
+                    "2": "cat",
+                    "3": "marten_mustelid",
+                    "4": "hedgehog",
+                }
+            )
         )
         (od_dir / f"{mid}_model_config.yaml").write_text(
             "detection:\n"
@@ -50,40 +59,54 @@ def model_dir(tmp_path, monkeypatch):
             "  num_classes: 5\n"
         )
 
-    (od_dir / "latest_models.json").write_text(json.dumps({
-        "latest": "20260417_yolox_tiny_locator_ep120",
-        "project_name": "WatchMyBirds",
-        "weights_path": "object_detection/20260417_yolox_tiny_locator_ep120_best.onnx",
-        "labels_path":  "object_detection/20260417_yolox_tiny_locator_ep120_labels.json",
-        "pinned_models": {
-            "20260417_yolox_tiny_locator_ep120": {
+    (od_dir / "latest_models.json").write_text(
+        json.dumps(
+            {
+                "latest": "20260417_yolox_tiny_locator_ep120",
+                "project_name": "WatchMyBirds",
                 "weights_path": "object_detection/20260417_yolox_tiny_locator_ep120_best.onnx",
-                "labels_path":  "object_detection/20260417_yolox_tiny_locator_ep120_labels.json",
-            },
-            "20260417_yolox_s_locator_ep120": {
-                "weights_path": "object_detection/20260417_yolox_s_locator_ep120_best.onnx",
-                "labels_path":  "object_detection/20260417_yolox_s_locator_ep120_labels.json",
-            },
-            "20260417_yolox_phantom_ep120": {
-                "weights_path": "object_detection/20260417_yolox_phantom_ep120_best.onnx",
-                "labels_path":  "object_detection/20260417_yolox_phantom_ep120_labels.json",
-            },
-        },
-    }))
+                "labels_path": "object_detection/20260417_yolox_tiny_locator_ep120_labels.json",
+                "pinned_models": {
+                    "20260417_yolox_tiny_locator_ep120": {
+                        "weights_path": "object_detection/20260417_yolox_tiny_locator_ep120_best.onnx",
+                        "labels_path": "object_detection/20260417_yolox_tiny_locator_ep120_labels.json",
+                    },
+                    "20260417_yolox_s_locator_ep120": {
+                        "weights_path": "object_detection/20260417_yolox_s_locator_ep120_best.onnx",
+                        "labels_path": "object_detection/20260417_yolox_s_locator_ep120_labels.json",
+                    },
+                    "20260417_yolox_phantom_ep120": {
+                        "weights_path": "object_detection/20260417_yolox_phantom_ep120_best.onnx",
+                        "labels_path": "object_detection/20260417_yolox_phantom_ep120_labels.json",
+                    },
+                },
+            }
+        )
+    )
 
-    (od_dir / "model_metadata.json").write_text(json.dumps({
-        "framework": "yolox",
-        "variant": "tiny",
-        "input_size": [640, 640],
-        "output_format": "yolox_raw",
-        "num_classes": 5,
-        "inference_thresholds": {"confidence": 0.15, "iou_nms": 0.5},
-        "metrics": {"bird_recall": 0.993, "bird_precision": 0.9914,
-                    "anim_to_bird": 0.1429, "empty_fp": 0.0, "f1": 0.9922},
-    }))
+    (od_dir / "model_metadata.json").write_text(
+        json.dumps(
+            {
+                "framework": "yolox",
+                "variant": "tiny",
+                "input_size": [640, 640],
+                "output_format": "yolox_raw",
+                "num_classes": 5,
+                "inference_thresholds": {"confidence": 0.15, "iou_nms": 0.5},
+                "metrics": {
+                    "bird_recall": 0.993,
+                    "bird_precision": 0.9914,
+                    "anim_to_bird": 0.1429,
+                    "empty_fp": 0.0,
+                    "f1": 0.9922,
+                },
+            }
+        )
+    )
 
     # Point MODEL_BASE_PATH to tmp_path so _model_dir() resolves to od_dir.
     import config as config_mod
+
     monkeypatch.setitem(config_mod.get_config(), "MODEL_BASE_PATH", str(tmp_path))
 
     # Clear any pin env vars that might leak from the host shell.
@@ -116,8 +139,11 @@ def app(model_dir):
     fake_detector_model.output_format = "yolox_raw"
     fake_detector_model.input_size = (640, 640)
     fake_detector_model.class_names = {
-        "0": "bird", "1": "squirrel", "2": "cat",
-        "3": "marten_mustelid", "4": "hedgehog",
+        "0": "bird",
+        "1": "squirrel",
+        "2": "cat",
+        "3": "marten_mustelid",
+        "4": "hedgehog",
     }
     fake_detector_model.conf_threshold_default = 0.15
     fake_detector_model.iou_threshold_default = 0.5
@@ -135,8 +161,8 @@ def app(model_dir):
     mock_dm.detection_service = detection_service
     mock_dm.detector_model_id = fake_detector_model.model_id
 
-    from web.blueprints.auth import auth_bp
     from web.blueprints.api_v1 import api_v1 as api_v1_bp
+    from web.blueprints.auth import auth_bp
 
     app.register_blueprint(auth_bp)
     api_v1_bp.detection_manager = mock_dm
@@ -221,7 +247,9 @@ def test_get_requires_auth(app):
 # ---------------------------------------------------------------------------
 
 
-def test_pin_valid_variant_flips_latest_models_and_triggers_reload(client, app, model_dir):
+def test_pin_valid_variant_flips_latest_models_and_triggers_reload(
+    client, app, model_dir
+):
     resp = client.post(
         "/api/v1/models/detector/pin",
         json={"model_id": "20260417_yolox_s_locator_ep120"},
@@ -261,10 +289,14 @@ def test_pin_regenerates_metadata_with_new_variant_thresholds(client, model_dir)
     confidence threshold (0.30) instead of inheriting Tiny's (0.15)."""
 
     # Seed: metadata is Tiny's (conf=0.15)
-    (model_dir / "model_metadata.json").write_text(json.dumps({
-        "variant": "tiny",
-        "inference_thresholds": {"confidence": 0.15, "iou_nms": 0.5},
-    }))
+    (model_dir / "model_metadata.json").write_text(
+        json.dumps(
+            {
+                "variant": "tiny",
+                "inference_thresholds": {"confidence": 0.15, "iou_nms": 0.5},
+            }
+        )
+    )
 
     # Switch to S
     resp = client.post(
@@ -323,7 +355,9 @@ def test_pin_rejects_empty_model_id(client, model_dir):
     assert resp.status_code == 400
     data = resp.get_json()
     assert data["status"] == "error"
-    assert "required" in data["message"].lower() or "non-empty" in data["message"].lower()
+    assert (
+        "required" in data["message"].lower() or "non-empty" in data["message"].lower()
+    )
 
 
 def test_pin_requires_auth(app):
@@ -371,9 +405,7 @@ def _add_int8_qdq_to_fixture(model_dir, variant_id: str) -> None:
     int8 QDQ artefacts, and touch the corresponding ONNX file on disk so
     the primary QDQ candidate counts as 'available'."""
     payload = json.loads((model_dir / "latest_models.json").read_text())
-    primary_rel = (
-        f"object_detection/{variant_id}_best_int8_qdq.onnx"
-    )
+    primary_rel = f"object_detection/{variant_id}_best_int8_qdq.onnx"
     fallbacks_rel = [
         primary_rel,
         f"object_detection/{variant_id}_best_int8_qdq_u8a.onnx",
@@ -434,15 +466,9 @@ def test_precision_switch_writes_active_precision_and_triggers_reload(
     assert updated["active_precision"] == "int8_qdq"  # stamped on top-level
     # for the current default
     pinned = updated.get("pinned_models", {})
-    assert (
-        pinned["20260417_yolox_tiny_locator_ep120"]["active_precision"]
-        == "int8_qdq"
-    )
+    assert pinned["20260417_yolox_tiny_locator_ep120"]["active_precision"] == "int8_qdq"
     # Other variants are untouched.
-    assert (
-        pinned["20260417_yolox_s_locator_ep120"].get("active_precision")
-        is None
-    )
+    assert pinned["20260417_yolox_s_locator_ep120"].get("active_precision") is None
 
     # DetectionService was cleared to force a lazy reload on next cycle.
     ds = app.config["_mock_dm"].detection_service
@@ -451,9 +477,9 @@ def test_precision_switch_writes_active_precision_and_triggers_reload(
 
     # GET reports the switched precision.
     get_resp = client.get("/api/v1/models/detector")
-    tiny = {
-        v["id"]: v for v in get_resp.get_json()["variants"]
-    }["20260417_yolox_tiny_locator_ep120"]
+    tiny = {v["id"]: v for v in get_resp.get_json()["variants"]}[
+        "20260417_yolox_tiny_locator_ep120"
+    ]
     assert tiny["active_precision"] == "int8_qdq"
 
 
@@ -490,10 +516,7 @@ def test_precision_switch_survives_variant_swap(client, model_dir):
     # Tiny's precision is still int8_qdq.
     updated = json.loads((model_dir / "latest_models.json").read_text())
     pinned = updated.get("pinned_models", {})
-    assert (
-        pinned["20260417_yolox_tiny_locator_ep120"]["active_precision"]
-        == "int8_qdq"
-    )
+    assert pinned["20260417_yolox_tiny_locator_ep120"]["active_precision"] == "int8_qdq"
     # And the top-level copy got applied on variant switch back to Tiny
     # (via _apply_pin's key propagation).
     assert updated["active_precision"] == "int8_qdq"
@@ -551,11 +574,13 @@ def test_precision_switch_requires_auth(app):
 
 def test_resolve_precision_returns_none_when_no_registry(tmp_path):
     from utils.model_downloader import resolve_active_precision_artefacts
+
     assert resolve_active_precision_artefacts(str(tmp_path)) is None
 
 
 def test_resolve_precision_returns_fp32_by_default(model_dir):
     from utils.model_downloader import resolve_active_precision_artefacts
+
     info = resolve_active_precision_artefacts(str(model_dir))
     assert info is not None
     assert info["requested_precision"] == "fp32"
@@ -577,9 +602,7 @@ def test_hf_refresh_preserves_active_precision_stamp(model_dir, monkeypatch):
         set_active_precision,
     )
 
-    _add_int8_qdq_to_fixture(
-        model_dir, "20260417_yolox_tiny_locator_ep120"
-    )
+    _add_int8_qdq_to_fixture(model_dir, "20260417_yolox_tiny_locator_ep120")
     set_active_precision(
         str(model_dir),
         "20260417_yolox_tiny_locator_ep120",
@@ -589,9 +612,7 @@ def test_hf_refresh_preserves_active_precision_stamp(model_dir, monkeypatch):
     before = json.loads((model_dir / "latest_models.json").read_text())
     assert before["active_precision"] == "int8_qdq"
     assert (
-        before["pinned_models"]["20260417_yolox_tiny_locator_ep120"][
-            "active_precision"
-        ]
+        before["pinned_models"]["20260417_yolox_tiny_locator_ep120"]["active_precision"]
         == "int8_qdq"
     )
 
@@ -601,32 +622,26 @@ def test_hf_refresh_preserves_active_precision_stamp(model_dir, monkeypatch):
         "latest": "20260417_yolox_tiny_locator_ep120",
         "project_name": "WatchMyBirds",
         "weights_path": (
-            "object_detection/"
-            "20260417_yolox_tiny_locator_ep120_best.onnx"
+            "object_detection/20260417_yolox_tiny_locator_ep120_best.onnx"
         ),
         "labels_path": (
-            "object_detection/"
-            "20260417_yolox_tiny_locator_ep120_labels.json"
+            "object_detection/20260417_yolox_tiny_locator_ep120_labels.json"
         ),
         "pinned_models": {
             "20260417_yolox_tiny_locator_ep120": {
                 "weights_path": (
-                    "object_detection/"
-                    "20260417_yolox_tiny_locator_ep120_best.onnx"
+                    "object_detection/20260417_yolox_tiny_locator_ep120_best.onnx"
                 ),
                 "labels_path": (
-                    "object_detection/"
-                    "20260417_yolox_tiny_locator_ep120_labels.json"
+                    "object_detection/20260417_yolox_tiny_locator_ep120_labels.json"
                 ),
             },
             "20260417_yolox_s_locator_ep120": {
                 "weights_path": (
-                    "object_detection/"
-                    "20260417_yolox_s_locator_ep120_best.onnx"
+                    "object_detection/20260417_yolox_s_locator_ep120_best.onnx"
                 ),
                 "labels_path": (
-                    "object_detection/"
-                    "20260417_yolox_s_locator_ep120_labels.json"
+                    "object_detection/20260417_yolox_s_locator_ep120_labels.json"
                 ),
             },
         },
@@ -644,33 +659,27 @@ def test_hf_refresh_preserves_active_precision_stamp(model_dir, monkeypatch):
     def _fake_get(url, timeout=None):  # noqa: ARG001
         return _FakeResp()
 
-    import utils.model_downloader as md
     monkeypatch.setattr(md.requests, "get", _fake_get)
 
-    result = fetch_latest_json(
-        "https://example.test/object_detection", str(model_dir)
-    )
+    result = fetch_latest_json("https://example.test/object_detection", str(model_dir))
     # Returned payload MUST carry the local precision stamp.
     assert result.get("active_precision") == "int8_qdq"
     assert (
-        result["pinned_models"]["20260417_yolox_tiny_locator_ep120"][
-            "active_precision"
-        ]
+        result["pinned_models"]["20260417_yolox_tiny_locator_ep120"]["active_precision"]
         == "int8_qdq"
     )
     # On-disk file MUST carry it too (next reload loads the right weights).
     after = json.loads((model_dir / "latest_models.json").read_text())
     assert after["active_precision"] == "int8_qdq"
     assert (
-        after["pinned_models"]["20260417_yolox_tiny_locator_ep120"][
-            "active_precision"
-        ]
+        after["pinned_models"]["20260417_yolox_tiny_locator_ep120"]["active_precision"]
         == "int8_qdq"
     )
 
 
 def test_resolve_precision_returns_ordered_qdq_candidates(model_dir):
     from utils.model_downloader import resolve_active_precision_artefacts
+
     _add_int8_qdq_to_fixture(model_dir, "20260417_yolox_tiny_locator_ep120")
     # Simulate the UI switch by stamping the top-level precision flag.
     data = json.loads((model_dir / "latest_models.json").read_text())
@@ -698,12 +707,12 @@ def test_install_downloads_missing_variant_from_hf(client, model_dir, monkeypatc
     def fake_download(url: str, dest: str, *args, **kwargs) -> bool:
         calls.append((url, dest))
         import os as _os
+
         _os.makedirs(_os.path.dirname(dest), exist_ok=True)
         with open(dest, "wb") as f:
             f.write(b"fetched-by-test")
         return True
 
-    import utils.model_downloader as md
     monkeypatch.setattr(md, "_download_file", fake_download)
 
     resp = client.post(
@@ -750,12 +759,12 @@ def test_install_tolerates_missing_yaml_on_hf(client, model_dir, monkeypatch):
     """Older releases may not ship a _model_config.yaml. Install must
     succeed anyway — the pin endpoint already logs a warning and falls
     back to hard-coded defaults in that case."""
-    import utils.model_downloader as md
 
     def fake_download(url: str, dest: str, *args, **kwargs) -> bool:
         if url.endswith(".yaml"):
             return False  # simulate 404 on HF
         import os as _os
+
         _os.makedirs(_os.path.dirname(dest), exist_ok=True)
         with open(dest, "wb") as f:
             f.write(b"fetched-by-test")
@@ -776,9 +785,10 @@ def test_install_tolerates_missing_yaml_on_hf(client, model_dir, monkeypatch):
 def test_install_is_idempotent_for_already_installed_variant(client, monkeypatch):
     """Installing a variant whose files are already local returns success
     without calling the downloader — UI can safely retry."""
-    import utils.model_downloader as md
     monkeypatch.setattr(
-        md, "_download_file", lambda *a, **kw: (_ for _ in ()).throw(AssertionError("should not download"))
+        md,
+        "_download_file",
+        lambda *a, **kw: (_ for _ in ()).throw(AssertionError("should not download")),
     )
     resp = client.post(
         "/api/v1/models/detector/install",
@@ -812,7 +822,6 @@ def test_install_rejects_empty_model_id(client):
 
 def test_install_surfaces_download_failure(client, monkeypatch):
     """When the HF download fails, the endpoint reports 502 + the URL."""
-    import utils.model_downloader as md
     monkeypatch.setattr(md, "_download_file", lambda *a, **kw: False)
 
     resp = client.post(

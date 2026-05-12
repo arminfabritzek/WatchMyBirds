@@ -592,7 +592,7 @@ def render_collector_card(
 
     if segments:
         seg_widths = []
-        for kind, text in segments:
+        for _kind, text in segments:
             tw, _ = measure_text(text, size=sub_text_size, bold=True)
             seg_widths.append(sub_icon_size + sub_icon_gap + tw)
         divider_w = 28  # space + thin vertical bar + space between segments

@@ -9,9 +9,9 @@ import sqlite3
 from typing import Any
 
 from utils.db.detections import (
-    effective_species_sql,
     _top1_confidence_sql,
     _top1_species_sql,
+    effective_species_sql,
 )
 
 

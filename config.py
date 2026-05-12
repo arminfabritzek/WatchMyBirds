@@ -367,7 +367,9 @@ def _load_config():
     if os.getenv("TELEGRAM_MODE") is not None:
         config["TELEGRAM_MODE"] = os.getenv("TELEGRAM_MODE")
     if os.getenv("TELEGRAM_MIN_AESTHETIC_SCORE") is not None:
-        config["TELEGRAM_MIN_AESTHETIC_SCORE"] = os.getenv("TELEGRAM_MIN_AESTHETIC_SCORE")
+        config["TELEGRAM_MIN_AESTHETIC_SCORE"] = os.getenv(
+            "TELEGRAM_MIN_AESTHETIC_SCORE"
+        )
     if os.getenv("AESTHETIC_TAG_ENABLED") is not None:
         config["AESTHETIC_TAG_ENABLED"] = os.getenv("AESTHETIC_TAG_ENABLED")
     if os.getenv("AESTHETIC_TAG_TIME") is not None:
@@ -394,7 +396,8 @@ def _load_config():
             legacy_fps = float(yaml_settings["MAX_FPS_DETECTION"])
             if legacy_fps > 0:
                 config["DETECTION_INTERVAL_SECONDS"] = 1.0 / legacy_fps
-        except Exception:
+        except (TypeError, ValueError):
+            # Legacy YAML key unparseable; ignore and keep default.
             pass
 
     for key, value in yaml_settings.items():
@@ -434,7 +437,8 @@ def _load_config():
             legacy_fps = float(os.getenv("MAX_FPS_DETECTION"))
             if legacy_fps > 0:
                 config["DETECTION_INTERVAL_SECONDS"] = 1.0 / legacy_fps
-        except Exception:
+        except (TypeError, ValueError):
+            # Legacy env var unparseable; ignore and keep default.
             pass
 
     # One-time migration: derive CAMERA_URL from legacy VIDEO_SOURCE when needed.
@@ -682,7 +686,8 @@ def _migrate_camera_url(config: dict) -> None:
             real_url = read_camera_stream_source(go2rtc_path, stream_name)
             if real_url:
                 config["CAMERA_URL"] = real_url
-        except Exception:
+        except (OSError, ImportError, KeyError):
+            # go2rtc.yaml missing/unreadable; CAMERA_URL stays as configured.
             pass
         return
 
@@ -1200,6 +1205,7 @@ def _validate_value(key, value):
         if not cleaned:
             return True, DEFAULTS.get("AESTHETIC_TAG_TIME", "02:10")
         import re
+
         if re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", cleaned):
             return True, cleaned
         return False, None
@@ -1226,7 +1232,8 @@ def _validate_value(key, value):
                     # Basic Geo-Coordinate Validation
                     if -90 <= lat <= 90 and -180 <= lon <= 180:
                         return True, {"latitude": lat, "longitude": lon}
-            except Exception:
+            except (TypeError, ValueError):
+                # Malformed "lat, lon" string; treat as invalid.
                 pass
         elif isinstance(value, dict) and "latitude" in value and "longitude" in value:
             try:
@@ -1234,7 +1241,8 @@ def _validate_value(key, value):
                 lon = float(value["longitude"])
                 if -90 <= lat <= 90 and -180 <= lon <= 180:
                     return True, {"latitude": lat, "longitude": lon}
-            except Exception:
+            except (TypeError, ValueError):
+                # Dict fields not numeric; treat as invalid.
                 pass
         return False, None
 

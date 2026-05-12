@@ -30,7 +30,6 @@ from typing import Any
 from .cleaner import clean_model_text
 from .inference import CompanionInferenceClient, CompanionInferenceResult
 
-
 logger = logging.getLogger(__name__)
 
 # Llama 3.2 chat template literal. The Llama tokenizer adds the

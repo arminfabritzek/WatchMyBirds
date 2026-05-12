@@ -11,8 +11,6 @@ import sys
 import types
 from pathlib import Path
 
-import pytest
-
 from web.services.companion.llama_cpp_adapter import LlamaCppInferenceAdapter
 
 

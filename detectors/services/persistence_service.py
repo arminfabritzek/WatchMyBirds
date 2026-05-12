@@ -143,7 +143,7 @@ class PersistenceService(PersistenceInterface):
         """Best-effort cleanup for interpreter shutdown."""
         try:
             self.close()
-        except Exception:
+        except Exception:  # noqa: BLE001 — __del__ must never raise
             pass
 
     def save_image(

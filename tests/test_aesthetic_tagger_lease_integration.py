@@ -12,7 +12,6 @@ from unittest.mock import patch
 
 from web.services import aesthetic_tag_scheduler as ats
 from web.services.compute_lease_service import (
-    ComputeLeaseService,
     init_compute_lease_service,
     reset_compute_lease_service_for_testing,
 )
@@ -128,8 +127,8 @@ def test_bridge_run_now_skips_while_companion_chat_in_flight(tmp_path, caplog):
     the lease is held by a real CompanionService, not just by a
     direct lease.acquire("companion_inference") in test code.
     """
-    import threading
     import logging
+    import threading
 
     from web.services.companion.inference import (
         CompanionInferenceClient,

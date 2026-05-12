@@ -9,9 +9,9 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 import config
-from utils.db import insert_classification, insert_detection, insert_image
-from utils.db import connection as db_connection
 from utils import path_manager
+from utils.db import connection as db_connection
+from utils.db import insert_classification, insert_detection, insert_image
 from web.web_interface import create_web_interface
 
 

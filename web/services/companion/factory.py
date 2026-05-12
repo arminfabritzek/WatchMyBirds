@@ -18,7 +18,6 @@ from typing import Any
 
 from .inference import CompanionInferenceClient
 
-
 logger = logging.getLogger(__name__)
 
 

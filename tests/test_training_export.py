@@ -99,7 +99,9 @@ class TestOptionAStrictPredicate:
 
     def test_both_signals_set_eligible(self):
         conn = _schema()
-        _seed_detection(conn, detection_id=1, species="Parus_major", bbox_review="correct")
+        _seed_detection(
+            conn, detection_id=1, species="Parus_major", bbox_review="correct"
+        )
         pool = list_species_availability(conn)
         assert len(pool) == 1
         assert pool[0].species == "Parus_major"
@@ -120,7 +122,9 @@ class TestOptionAStrictPredicate:
     def test_bbox_wrong_not_eligible(self):
         """manual_bbox_review='wrong' does not count as a positive sample."""
         conn = _schema()
-        _seed_detection(conn, detection_id=1, species="Parus_major", bbox_review="wrong")
+        _seed_detection(
+            conn, detection_id=1, species="Parus_major", bbox_review="wrong"
+        )
         assert list_species_availability(conn) == []
 
     def test_trash_status_not_eligible(self):
@@ -142,8 +146,12 @@ class TestAlreadyExportedExclusion:
 
     def test_exported_row_is_excluded_from_available(self):
         conn = _schema()
-        _seed_detection(conn, detection_id=1, species="Parus_major", bbox_review="correct")
-        _seed_detection(conn, detection_id=2, species="Parus_major", bbox_review="correct")
+        _seed_detection(
+            conn, detection_id=1, species="Parus_major", bbox_review="correct"
+        )
+        _seed_detection(
+            conn, detection_id=2, species="Parus_major", bbox_review="correct"
+        )
         mark_exported(conn, [1], "batch_x")
 
         pool = list_species_availability(conn)
@@ -157,7 +165,9 @@ class TestAlreadyExportedExclusion:
         """Pending rows are pre-selected via auto-opt-in but not yet
         downloaded — they still count as available for the next batch."""
         conn = _schema()
-        _seed_detection(conn, detection_id=1, species="Parus_major", bbox_review="correct")
+        _seed_detection(
+            conn, detection_id=1, species="Parus_major", bbox_review="correct"
+        )
         mark_pending(conn, [1], "auto_batch")
 
         pool = list_species_availability(conn)
@@ -218,12 +228,18 @@ class TestFavoritesFirstSampling:
         conn = _schema()
         for i in range(10):
             _seed_detection(
-                conn, detection_id=i, species="Parus_major", bbox_review="correct",
+                conn,
+                detection_id=i,
+                species="Parus_major",
+                bbox_review="correct",
                 is_favorite=0,
             )
         for i in range(100, 103):
             _seed_detection(
-                conn, detection_id=i, species="Parus_major", bbox_review="correct",
+                conn,
+                detection_id=i,
+                species="Parus_major",
+                bbox_review="correct",
                 is_favorite=1,
             )
         selection = select_export_batch(
@@ -245,7 +261,10 @@ class TestFavoritesFirstSampling:
         conn = _schema()
         for i in range(10):
             _seed_detection(
-                conn, detection_id=i, species="Parus_major", bbox_review="correct",
+                conn,
+                detection_id=i,
+                species="Parus_major",
+                bbox_review="correct",
                 is_favorite=0,
             )
         selection = select_export_batch(
@@ -265,25 +284,37 @@ class TestFavoritesFirstSampling:
         # 10 non-favorite Parus
         for i in range(10):
             _seed_detection(
-                conn, detection_id=i, species="Parus_major", bbox_review="correct",
+                conn,
+                detection_id=i,
+                species="Parus_major",
+                bbox_review="correct",
                 is_favorite=0,
             )
         # 10 non-favorite Cyanistes
         for i in range(50, 60):
             _seed_detection(
-                conn, detection_id=i, species="Cyanistes_caeruleus",
-                bbox_review="correct", is_favorite=0,
+                conn,
+                detection_id=i,
+                species="Cyanistes_caeruleus",
+                bbox_review="correct",
+                is_favorite=0,
             )
         # 2 Parus favorites, 2 Cyanistes favorites
         for i in range(100, 102):
             _seed_detection(
-                conn, detection_id=i, species="Parus_major",
-                bbox_review="correct", is_favorite=1,
+                conn,
+                detection_id=i,
+                species="Parus_major",
+                bbox_review="correct",
+                is_favorite=1,
             )
         for i in range(200, 202):
             _seed_detection(
-                conn, detection_id=i, species="Cyanistes_caeruleus",
-                bbox_review="correct", is_favorite=1,
+                conn,
+                detection_id=i,
+                species="Cyanistes_caeruleus",
+                bbox_review="correct",
+                is_favorite=1,
             )
         # Per-species cap would pick up to 10+10=20 rows; max_total=6
         # forces a clip. All 4 favorites MUST survive.
@@ -310,8 +341,11 @@ class TestFavoritesFirstSampling:
         conn = _schema()
         for i in range(100, 110):
             _seed_detection(
-                conn, detection_id=i, species="Parus_major",
-                bbox_review="correct", is_favorite=1,
+                conn,
+                detection_id=i,
+                species="Parus_major",
+                bbox_review="correct",
+                is_favorite=1,
             )
         selection = select_export_batch(
             conn,
@@ -330,12 +364,18 @@ class TestFavoritesFirstSampling:
         conn = _schema()
         for i in range(5):
             _seed_detection(
-                conn, detection_id=i, species="Parus_major", bbox_review="correct",
+                conn,
+                detection_id=i,
+                species="Parus_major",
+                bbox_review="correct",
                 is_favorite=0,
             )
         for i in range(100, 102):
             _seed_detection(
-                conn, detection_id=i, species="Parus_major", bbox_review="correct",
+                conn,
+                detection_id=i,
+                species="Parus_major",
+                bbox_review="correct",
                 is_favorite=1,
             )
         selection = select_export_batch(
@@ -375,7 +415,10 @@ class TestSelectionSamplingAndLimits:
             )
         for i in range(50, 100):
             _seed_detection(
-                conn, detection_id=i, species="Cyanistes_caeruleus", bbox_review="correct"
+                conn,
+                detection_id=i,
+                species="Cyanistes_caeruleus",
+                bbox_review="correct",
             )
         selection = select_export_batch(
             conn,
@@ -388,7 +431,9 @@ class TestSelectionSamplingAndLimits:
 
     def test_species_not_in_limits_is_ignored(self):
         conn = _schema()
-        _seed_detection(conn, detection_id=1, species="Parus_major", bbox_review="correct")
+        _seed_detection(
+            conn, detection_id=1, species="Parus_major", bbox_review="correct"
+        )
         _seed_detection(
             conn, detection_id=2, species="Pica_pica", bbox_review="correct"
         )
@@ -409,8 +454,12 @@ class TestSelectionSamplingAndLimits:
         service. This split keeps the service reusable for callers
         that want "dump everything available"."""
         conn = _schema()
-        _seed_detection(conn, detection_id=1, species="Parus_major", bbox_review="correct")
-        _seed_detection(conn, detection_id=2, species="Pica_pica", bbox_review="correct")
+        _seed_detection(
+            conn, detection_id=1, species="Parus_major", bbox_review="correct"
+        )
+        _seed_detection(
+            conn, detection_id=2, species="Pica_pica", bbox_review="correct"
+        )
         selection = select_export_batch(
             conn,
             species_limits={},
@@ -423,8 +472,12 @@ class TestSelectionSamplingAndLimits:
 class TestMarkExported:
     def test_mark_exported_inserts_new_rows(self):
         conn = _schema()
-        _seed_detection(conn, detection_id=1, species="Parus_major", bbox_review="correct")
-        _seed_detection(conn, detection_id=2, species="Parus_major", bbox_review="correct")
+        _seed_detection(
+            conn, detection_id=1, species="Parus_major", bbox_review="correct"
+        )
+        _seed_detection(
+            conn, detection_id=2, species="Parus_major", bbox_review="correct"
+        )
         mark_exported(conn, [1, 2], "batch_1")
         count = conn.execute(
             "SELECT COUNT(*) FROM training_exports WHERE export_status='exported'"
@@ -435,7 +488,9 @@ class TestMarkExported:
         """Auto-opt-in writes 'pending'; a later ZIP flip must promote
         that row to 'exported', not create a duplicate."""
         conn = _schema()
-        _seed_detection(conn, detection_id=1, species="Parus_major", bbox_review="correct")
+        _seed_detection(
+            conn, detection_id=1, species="Parus_major", bbox_review="correct"
+        )
         mark_pending(conn, [1], "auto_batch")
         mark_exported(conn, [1], "later_manual_batch")
 
@@ -477,7 +532,9 @@ class TestAutoOptInHelper:
 
     def test_noop_when_setting_off(self):
         conn = _schema()
-        _seed_detection(conn, detection_id=1, species="Parus_major", bbox_review="correct")
+        _seed_detection(
+            conn, detection_id=1, species="Parus_major", bbox_review="correct"
+        )
         result = auto_opt_in_if_enabled(
             conn, [1], app_config={"TRAINING_EXPORT_AUTO_OPT_IN": False}
         )
@@ -489,14 +546,20 @@ class TestAutoOptInHelper:
         """An absent key must not accidentally activate the feature
         (e.g. on older configs that were migrated without the key)."""
         conn = _schema()
-        _seed_detection(conn, detection_id=1, species="Parus_major", bbox_review="correct")
+        _seed_detection(
+            conn, detection_id=1, species="Parus_major", bbox_review="correct"
+        )
         result = auto_opt_in_if_enabled(conn, [1], app_config={})
         assert result == 0
 
     def test_writes_pending_when_setting_on(self):
         conn = _schema()
-        _seed_detection(conn, detection_id=1, species="Parus_major", bbox_review="correct")
-        _seed_detection(conn, detection_id=2, species="Parus_major", bbox_review="correct")
+        _seed_detection(
+            conn, detection_id=1, species="Parus_major", bbox_review="correct"
+        )
+        _seed_detection(
+            conn, detection_id=2, species="Parus_major", bbox_review="correct"
+        )
         result = auto_opt_in_if_enabled(
             conn, [1, 2], app_config={"TRAINING_EXPORT_AUTO_OPT_IN": True}
         )
@@ -521,7 +584,9 @@ class TestAutoOptInHelper:
         """Different approval flows use different source tags so the
         training_exports table reveals which path created each row."""
         conn = _schema()
-        _seed_detection(conn, detection_id=1, species="Parus_major", bbox_review="correct")
+        _seed_detection(
+            conn, detection_id=1, species="Parus_major", bbox_review="correct"
+        )
         auto_opt_in_if_enabled(
             conn,
             [1],
@@ -536,7 +601,9 @@ class TestAutoOptInHelper:
         auto-opt-in must not downgrade it back to 'pending' (which
         would cause duplicate shipping to the dev)."""
         conn = _schema()
-        _seed_detection(conn, detection_id=1, species="Parus_major", bbox_review="correct")
+        _seed_detection(
+            conn, detection_id=1, species="Parus_major", bbox_review="correct"
+        )
         mark_exported(conn, [1], "old_batch")
 
         auto_opt_in_if_enabled(
@@ -559,7 +626,9 @@ class TestFilterEligibleForPool:
 
     def test_eligible_row_lands_in_eligible_bucket(self):
         conn = _schema()
-        _seed_detection(conn, detection_id=1, species="Parus_major", bbox_review="correct")
+        _seed_detection(
+            conn, detection_id=1, species="Parus_major", bbox_review="correct"
+        )
         result = filter_eligible_for_pool(conn, [1])
         assert result["eligible"] == [1]
         assert result["ineligible"] == []
@@ -574,7 +643,9 @@ class TestFilterEligibleForPool:
 
     def test_row_with_bbox_wrong_is_ineligible(self):
         conn = _schema()
-        _seed_detection(conn, detection_id=1, species="Parus_major", bbox_review="wrong")
+        _seed_detection(
+            conn, detection_id=1, species="Parus_major", bbox_review="wrong"
+        )
         result = filter_eligible_for_pool(conn, [1])
         assert result["eligible"] == []
         assert result["ineligible"] == [1]
@@ -593,7 +664,9 @@ class TestFilterEligibleForPool:
         """Re-adding an already-pending row must not duplicate it.
         It lands in the already_in_pool bucket for UI messaging."""
         conn = _schema()
-        _seed_detection(conn, detection_id=1, species="Parus_major", bbox_review="correct")
+        _seed_detection(
+            conn, detection_id=1, species="Parus_major", bbox_review="correct"
+        )
         mark_pending(conn, [1], "old_auto")
 
         result = filter_eligible_for_pool(conn, [1])
@@ -605,7 +678,9 @@ class TestFilterEligibleForPool:
         detection (which would flip exported back to pending-then-
         exported-again and cost the dev a duplicate sample)."""
         conn = _schema()
-        _seed_detection(conn, detection_id=1, species="Parus_major", bbox_review="correct")
+        _seed_detection(
+            conn, detection_id=1, species="Parus_major", bbox_review="correct"
+        )
         mark_exported(conn, [1], "old_batch")
 
         result = filter_eligible_for_pool(conn, [1])
@@ -626,11 +701,19 @@ class TestFilterEligibleForPool:
         bbox review), and 1 is already in the pool.
         """
         conn = _schema()
-        _seed_detection(conn, detection_id=1, species="Parus_major", bbox_review="correct")
-        _seed_detection(conn, detection_id=2, species="Parus_major", bbox_review="correct")
+        _seed_detection(
+            conn, detection_id=1, species="Parus_major", bbox_review="correct"
+        )
+        _seed_detection(
+            conn, detection_id=2, species="Parus_major", bbox_review="correct"
+        )
         _seed_detection(conn, detection_id=3, species="Parus_major", bbox_review=None)
-        _seed_detection(conn, detection_id=4, species="Parus_major", bbox_review="wrong")
-        _seed_detection(conn, detection_id=5, species="Parus_major", bbox_review="correct")
+        _seed_detection(
+            conn, detection_id=4, species="Parus_major", bbox_review="wrong"
+        )
+        _seed_detection(
+            conn, detection_id=5, species="Parus_major", bbox_review="correct"
+        )
         mark_pending(conn, [5], "prior_auto")
 
         result = filter_eligible_for_pool(conn, [1, 2, 3, 4, 5])
@@ -642,7 +725,9 @@ class TestFilterEligibleForPool:
         """Browser bug or double-click that sends [1,1,1] must not
         produce 3 entries in the eligible bucket."""
         conn = _schema()
-        _seed_detection(conn, detection_id=1, species="Parus_major", bbox_review="correct")
+        _seed_detection(
+            conn, detection_id=1, species="Parus_major", bbox_review="correct"
+        )
         result = filter_eligible_for_pool(conn, [1, 1, 1])
         assert result["eligible"] == [1]
 
@@ -671,9 +756,7 @@ class TestAutoConfirmBboxAndFrameIntegrity:
         the row is eligible."""
         conn = _schema()
         _seed_detection(conn, detection_id=1, species="Parus_major", bbox_review=None)
-        result = filter_eligible_for_pool(
-            conn, [1], auto_confirm_bbox=True
-        )
+        result = filter_eligible_for_pool(conn, [1], auto_confirm_bbox=True)
         assert result["eligible"] == [1]
         assert result["ineligible"] == []
 
@@ -690,10 +773,10 @@ class TestAutoConfirmBboxAndFrameIntegrity:
         """Explicit 'wrong' bbox stays blocked — the caller should
         never flip a prior human 'wrong' call to 'correct'."""
         conn = _schema()
-        _seed_detection(conn, detection_id=1, species="Parus_major", bbox_review="wrong")
-        result = filter_eligible_for_pool(
-            conn, [1], auto_confirm_bbox=True
+        _seed_detection(
+            conn, detection_id=1, species="Parus_major", bbox_review="wrong"
         )
+        result = filter_eligible_for_pool(conn, [1], auto_confirm_bbox=True)
         assert result["eligible"] == []
         assert result["ineligible"] == [1]
 
@@ -704,16 +787,20 @@ class TestAutoConfirmBboxAndFrameIntegrity:
         submitted detection 1 must be rejected too."""
         conn = _schema()
         _seed_detection(
-            conn, detection_id=1, species="Parus_major", bbox_review="correct",
+            conn,
+            detection_id=1,
+            species="Parus_major",
+            bbox_review="correct",
             image_filename="multibox.jpg",
         )
         _seed_detection(
-            conn, detection_id=2, species="Pica_pica", bbox_review=None,
+            conn,
+            detection_id=2,
+            species="Pica_pica",
+            bbox_review=None,
             image_filename="multibox.jpg",
         )
-        result = filter_eligible_for_pool(
-            conn, [1], auto_confirm_bbox=True
-        )
+        result = filter_eligible_for_pool(conn, [1], auto_confirm_bbox=True)
         assert result["eligible"] == []
         assert result["ineligible"] == [1]
 
@@ -722,16 +809,20 @@ class TestAutoConfirmBboxAndFrameIntegrity:
         frame would use a deliberately-bad bbox."""
         conn = _schema()
         _seed_detection(
-            conn, detection_id=1, species="Parus_major", bbox_review="correct",
+            conn,
+            detection_id=1,
+            species="Parus_major",
+            bbox_review="correct",
             image_filename="multibox.jpg",
         )
         _seed_detection(
-            conn, detection_id=2, species="Pica_pica", bbox_review="wrong",
+            conn,
+            detection_id=2,
+            species="Pica_pica",
+            bbox_review="wrong",
             image_filename="multibox.jpg",
         )
-        result = filter_eligible_for_pool(
-            conn, [1], auto_confirm_bbox=True
-        )
+        result = filter_eligible_for_pool(conn, [1], auto_confirm_bbox=True)
         assert result["eligible"] == []
 
     def test_frame_becomes_clean_when_all_blockers_are_submitted(self):
@@ -740,16 +831,20 @@ class TestAutoConfirmBboxAndFrameIntegrity:
         siblings together, and the frame becomes clean."""
         conn = _schema()
         _seed_detection(
-            conn, detection_id=1, species="Parus_major", bbox_review=None,
+            conn,
+            detection_id=1,
+            species="Parus_major",
+            bbox_review=None,
             image_filename="multibox.jpg",
         )
         _seed_detection(
-            conn, detection_id=2, species="Pica_pica", bbox_review=None,
+            conn,
+            detection_id=2,
+            species="Pica_pica",
+            bbox_review=None,
             image_filename="multibox.jpg",
         )
-        result = filter_eligible_for_pool(
-            conn, [1, 2], auto_confirm_bbox=True
-        )
+        result = filter_eligible_for_pool(conn, [1, 2], auto_confirm_bbox=True)
         assert sorted(result["eligible"]) == [1, 2]
 
     def test_frame_blocked_when_sibling_without_species_submitted(self):
@@ -758,16 +853,20 @@ class TestAutoConfirmBboxAndFrameIntegrity:
         frame stays blocked for the clean sibling too."""
         conn = _schema()
         _seed_detection(
-            conn, detection_id=1, species="Parus_major", bbox_review=None,
+            conn,
+            detection_id=1,
+            species="Parus_major",
+            bbox_review=None,
             image_filename="multibox.jpg",
         )
         _seed_detection(
-            conn, detection_id=2, species=None, bbox_review=None,
+            conn,
+            detection_id=2,
+            species=None,
+            bbox_review=None,
             image_filename="multibox.jpg",
         )
-        result = filter_eligible_for_pool(
-            conn, [1, 2], auto_confirm_bbox=True
-        )
+        result = filter_eligible_for_pool(conn, [1, 2], auto_confirm_bbox=True)
         # Detection 2 has no species — can't be promoted. Frame
         # integrity fails, so detection 1 is blocked too.
         assert result["eligible"] == []
@@ -778,12 +877,13 @@ class TestAutoConfirmBboxAndFrameIntegrity:
         auto_confirm_bbox — no siblings to worry about."""
         conn = _schema()
         _seed_detection(
-            conn, detection_id=1, species="Parus_major", bbox_review=None,
+            conn,
+            detection_id=1,
+            species="Parus_major",
+            bbox_review=None,
             image_filename="solo.jpg",
         )
-        result = filter_eligible_for_pool(
-            conn, [1], auto_confirm_bbox=True
-        )
+        result = filter_eligible_for_pool(conn, [1], auto_confirm_bbox=True)
         assert result["eligible"] == [1]
 
 
@@ -839,7 +939,7 @@ def _reset_path_manager_singleton():
     """PathManager is a singleton cached at module level. Tests that
     point it at a fresh tmp_path must reset between tests or the
     second one keeps seeing the first test's tmp dir."""
-    import utils.path_manager as pm_module
+    from utils import path_manager as pm_module
 
     pm_module._instance = None
 
@@ -905,7 +1005,7 @@ class TestZipShapeForMultiDetectionFrames:
     test class locks in the fix so the bug cannot return silently.
     """
 
-    def _build_selection_from_ids(self, ids: list[int]) -> "ExportSelection":
+    def _build_selection_from_ids(self, ids: list[int]) -> ExportSelection:
         from web.services.training_export_service import (
             ExportSelection,
             build_batch_id,
@@ -926,7 +1026,9 @@ class TestZipShapeForMultiDetectionFrames:
             names = zf.namelist()
             manifest = _json.loads(zf.read("manifest.json").decode("utf-8"))
             csv_rows = list(
-                _csv.DictReader(_io.StringIO(zf.read("annotations.csv").decode("utf-8")))
+                _csv.DictReader(
+                    _io.StringIO(zf.read("annotations.csv").decode("utf-8"))
+                )
             )
         return {"names": names, "manifest": manifest, "csv_rows": csv_rows}
 
@@ -953,18 +1055,22 @@ class TestZipShapeForMultiDetectionFrames:
         filename = "20260423_100000_frame.jpg"
         _write_fake_original(tmp_path, filename)
         _seed_detection(
-            conn, detection_id=1, species="Parus_major", bbox_review="correct",
+            conn,
+            detection_id=1,
+            species="Parus_major",
+            bbox_review="correct",
             image_filename=filename,
         )
         _seed_detection(
-            conn, detection_id=2, species="Pica_pica", bbox_review="correct",
+            conn,
+            detection_id=2,
+            species="Pica_pica",
+            bbox_review="correct",
             image_filename=filename,
         )
 
         selection = _build_selection_from_ids([1, 2])
-        buf, _persist = stream_export_zip(
-            conn, selection, output_dir=str(tmp_path)
-        )
+        buf, _persist = stream_export_zip(conn, selection, output_dir=str(tmp_path))
         unpacked = _unpack_zip(buf)
 
         # Exactly ONE image file in the zip (not two).
@@ -997,22 +1103,29 @@ class TestZipShapeForMultiDetectionFrames:
         _write_fake_original(tmp_path, frame_b)
 
         _seed_detection(
-            conn, detection_id=1, species="Parus_major", bbox_review="correct",
+            conn,
+            detection_id=1,
+            species="Parus_major",
+            bbox_review="correct",
             image_filename=frame_a,
         )
         _seed_detection(
-            conn, detection_id=2, species="Pica_pica", bbox_review="correct",
+            conn,
+            detection_id=2,
+            species="Pica_pica",
+            bbox_review="correct",
             image_filename=frame_a,
         )
         _seed_detection(
-            conn, detection_id=3, species="Cyanistes_caeruleus", bbox_review="correct",
+            conn,
+            detection_id=3,
+            species="Cyanistes_caeruleus",
+            bbox_review="correct",
             image_filename=frame_b,
         )
 
         selection = _build_selection_from_ids([1, 2, 3])
-        buf, _persist = stream_export_zip(
-            conn, selection, output_dir=str(tmp_path)
-        )
+        buf, _persist = stream_export_zip(conn, selection, output_dir=str(tmp_path))
         unpacked = _unpack_zip(buf)
 
         image_names = [n for n in unpacked["names"] if n.startswith("images/")]
@@ -1023,7 +1136,8 @@ class TestZipShapeForMultiDetectionFrames:
 
         # Frame A rows share a uuid; frame B row has its own.
         frame_a_uuids = {
-            r["uuid"] for r in unpacked["csv_rows"]
+            r["uuid"]
+            for r in unpacked["csv_rows"]
             if r["species"] in ("Parus_major", "Pica_pica")
         }
         assert len(frame_a_uuids) == 1
@@ -1054,18 +1168,22 @@ class TestFrameIntegrityAtExport:
         filename = "20260423_100000_multi.jpg"
         _write_fake_original(tmp_path, filename)
         _seed_detection(
-            conn, detection_id=1, species="Parus_major", bbox_review="correct",
+            conn,
+            detection_id=1,
+            species="Parus_major",
+            bbox_review="correct",
             image_filename=filename,
         )
         _seed_detection(
-            conn, detection_id=2, species="Columba_palumbus", bbox_review="correct",
+            conn,
+            detection_id=2,
+            species="Columba_palumbus",
+            bbox_review="correct",
             image_filename=filename,
         )
 
         selection = _build_selection_from_ids([1])  # only Parus selected
-        buf, persist = stream_export_zip(
-            conn, selection, output_dir=str(tmp_path)
-        )
+        buf, persist = stream_export_zip(conn, selection, output_dir=str(tmp_path))
         unpacked = _unpack_zip(buf)
 
         # Both species appear in the CSV, sharing the same uuid.
@@ -1089,18 +1207,22 @@ class TestFrameIntegrityAtExport:
         filename = "20260423_100000_ambig.jpg"
         _write_fake_original(tmp_path, filename)
         _seed_detection(
-            conn, detection_id=1, species="Parus_major", bbox_review="correct",
+            conn,
+            detection_id=1,
+            species="Parus_major",
+            bbox_review="correct",
             image_filename=filename,
         )
         _seed_detection(
-            conn, detection_id=2, species="Columba_palumbus", bbox_review=None,
+            conn,
+            detection_id=2,
+            species="Columba_palumbus",
+            bbox_review=None,
             image_filename=filename,
         )
 
         selection = _build_selection_from_ids([1])
-        buf, persist = stream_export_zip(
-            conn, selection, output_dir=str(tmp_path)
-        )
+        buf, persist = stream_export_zip(conn, selection, output_dir=str(tmp_path))
         unpacked = _unpack_zip(buf)
 
         # Nothing shipped.
@@ -1123,18 +1245,22 @@ class TestFrameIntegrityAtExport:
         filename = "20260423_100000_wrongbbox.jpg"
         _write_fake_original(tmp_path, filename)
         _seed_detection(
-            conn, detection_id=1, species="Parus_major", bbox_review="correct",
+            conn,
+            detection_id=1,
+            species="Parus_major",
+            bbox_review="correct",
             image_filename=filename,
         )
         _seed_detection(
-            conn, detection_id=2, species="Pica_pica", bbox_review="wrong",
+            conn,
+            detection_id=2,
+            species="Pica_pica",
+            bbox_review="wrong",
             image_filename=filename,
         )
 
         selection = _build_selection_from_ids([1])
-        buf, persist = stream_export_zip(
-            conn, selection, output_dir=str(tmp_path)
-        )
+        buf, persist = stream_export_zip(conn, selection, output_dir=str(tmp_path))
         unpacked = _unpack_zip(buf)
         assert len(unpacked["csv_rows"]) == 0
         assert persist["dropped_ids"] == [1]
@@ -1151,22 +1277,29 @@ class TestFrameIntegrityAtExport:
         _write_fake_original(tmp_path, frame_b)
 
         _seed_detection(
-            conn, detection_id=1, species="Parus_major", bbox_review="correct",
+            conn,
+            detection_id=1,
+            species="Parus_major",
+            bbox_review="correct",
             image_filename=frame_a,
         )
         _seed_detection(
-            conn, detection_id=2, species="Columba_palumbus", bbox_review="correct",
+            conn,
+            detection_id=2,
+            species="Columba_palumbus",
+            bbox_review="correct",
             image_filename=frame_a,
         )
         _seed_detection(
-            conn, detection_id=3, species="Cyanistes_caeruleus", bbox_review="correct",
+            conn,
+            detection_id=3,
+            species="Cyanistes_caeruleus",
+            bbox_review="correct",
             image_filename=frame_b,
         )
 
         selection = _build_selection_from_ids([1, 3])  # one per frame
-        buf, persist = stream_export_zip(
-            conn, selection, output_dir=str(tmp_path)
-        )
+        buf, persist = stream_export_zip(conn, selection, output_dir=str(tmp_path))
         unpacked = _unpack_zip(buf)
 
         # Frame A: both Parus + Columba ship (Columba pulled in).

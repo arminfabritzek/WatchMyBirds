@@ -53,12 +53,11 @@ def _write_pending_config(ssid: str, password: str, admin_password: str) -> None
         try:
             os.close(fd)
         except OSError:
+            # fd already closed by fdopen context exit; ignore.
             pass
         raise
 
-    fd = os.open(
-        PENDING_PASSWORD_FILE, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600
-    )
+    fd = os.open(PENDING_PASSWORD_FILE, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             handle.write(admin_password)

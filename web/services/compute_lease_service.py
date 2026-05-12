@@ -26,9 +26,9 @@ from __future__ import annotations
 import logging
 import threading
 import time
+from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Iterator, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -56,11 +56,11 @@ class LeaseTimeout(RuntimeError):
 
 @dataclass(frozen=True)
 class LeaseStatus:
-    holder: Optional[str]
-    started_at: Optional[float]
-    reason: Optional[str]
+    holder: str | None
+    started_at: float | None
+    reason: str | None
     pause_detection: bool
-    timeout_s: Optional[float]
+    timeout_s: float | None
     reentry_depth: int
 
 
@@ -70,14 +70,14 @@ class ComputeLeaseService:
     def __init__(self, detection_manager) -> None:
         self._detection_manager = detection_manager
         self._lock = threading.Lock()
-        self._holder: Optional[str] = None
+        self._holder: str | None = None
         self._reentry_depth: int = 0
-        self._started_at: Optional[float] = None
-        self._reason: Optional[str] = None
+        self._started_at: float | None = None
+        self._reason: str | None = None
         self._pause_detection: bool = False
-        self._timeout_s: Optional[float] = None
+        self._timeout_s: float | None = None
         self._paused_before_lease: bool = False
-        self._watchdog: Optional[threading.Timer] = None
+        self._watchdog: threading.Timer | None = None
 
     def status(self) -> LeaseStatus:
         with self._lock:
@@ -96,9 +96,9 @@ class ComputeLeaseService:
         holder: str,
         *,
         pause_detection: bool = False,
-        reason: Optional[str] = None,
-        timeout_s: Optional[float] = None,
-    ) -> Iterator["ComputeLeaseService"]:
+        reason: str | None = None,
+        timeout_s: float | None = None,
+    ) -> Iterator[ComputeLeaseService]:
         """Acquire the lease for `holder`.
 
         Re-entry from the same `holder` is allowed and increments a
@@ -140,13 +140,17 @@ class ComputeLeaseService:
                 logger.info(
                     "compute lease acquired by %r (reason=%s, "
                     "pause_detection=%s, timeout_s=%s)",
-                    holder, reason, pause_detection, timeout_s,
+                    holder,
+                    reason,
+                    pause_detection,
+                    timeout_s,
                 )
             else:
                 self._reentry_depth += 1
                 logger.debug(
                     "compute lease re-entered by %r (depth=%d)",
-                    holder, self._reentry_depth,
+                    holder,
+                    self._reentry_depth,
                 )
 
         try:
@@ -167,7 +171,8 @@ class ComputeLeaseService:
         if self._watchdog is not None:
             try:
                 self._watchdog.cancel()
-            except Exception:
+            except RuntimeError:
+                # Timer already finished or thread state inconsistent.
                 pass
             self._watchdog = None
 
@@ -184,7 +189,8 @@ class ComputeLeaseService:
             logger.warning(
                 "compute lease watchdog fired for holder %r after %.1fs; "
                 "force-releasing so detection can resume",
-                holder, elapsed if elapsed is not None else -1.0,
+                holder,
+                elapsed if elapsed is not None else -1.0,
             )
             self._restore_paused_state_locked()
             self._reset_locked()
@@ -198,16 +204,17 @@ class ComputeLeaseService:
                 # Different holder cleaned up first (should not happen
                 # under normal flow). Log loudly; do not crash.
                 logger.error(
-                    "compute lease release mismatch: held by %r, "
-                    "released by %r",
-                    self._holder, holder,
+                    "compute lease release mismatch: held by %r, released by %r",
+                    self._holder,
+                    holder,
                 )
                 return
             self._reentry_depth -= 1
             if self._reentry_depth > 0:
                 logger.debug(
                     "compute lease re-released by %r (depth=%d)",
-                    holder, self._reentry_depth,
+                    holder,
+                    self._reentry_depth,
                 )
                 return
             elapsed = (
@@ -217,7 +224,8 @@ class ComputeLeaseService:
             )
             logger.info(
                 "compute lease released by %r after %.1fs",
-                holder, elapsed,
+                holder,
+                elapsed,
             )
             self._cancel_watchdog()
             self._restore_paused_state_locked()
@@ -246,7 +254,7 @@ class ComputeLeaseService:
         self._watchdog = None
 
 
-_GLOBAL_SERVICE: Optional[ComputeLeaseService] = None
+_GLOBAL_SERVICE: ComputeLeaseService | None = None
 _GLOBAL_LOCK = threading.Lock()
 
 
@@ -270,7 +278,7 @@ def init_compute_lease_service(detection_manager) -> ComputeLeaseService:
         return _GLOBAL_SERVICE
 
 
-def get_compute_lease_service() -> Optional[ComputeLeaseService]:
+def get_compute_lease_service() -> ComputeLeaseService | None:
     """Return the process-global service, or None if not initialised."""
     with _GLOBAL_LOCK:
         return _GLOBAL_SERVICE

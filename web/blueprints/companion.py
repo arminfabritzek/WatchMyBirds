@@ -19,7 +19,6 @@ from flask import Blueprint, jsonify, request
 from logging_config import get_logger
 from web.blueprints.auth import login_required
 
-
 logger = get_logger(__name__)
 companion_bp = Blueprint("companion_v1", __name__, url_prefix="/api/v1/companion")
 
@@ -69,8 +68,8 @@ def state():
     try:
         return jsonify(svc.state())
     except Exception as exc:
-        logger.error("companion /state error: %s", exc, exc_info=True)
-        return jsonify({"error": "internal", "reason": str(exc)}), 500
+        logger.error("companion /state error [%s]", type(exc).__name__, exc_info=True)
+        return jsonify({"error": "internal", "reason": "state lookup failed"}), 500
 
 
 @companion_bp.route("/recent", methods=["GET"])
@@ -89,8 +88,8 @@ def recent():
             return _bad_request("limit must be in [1, 200]")
         return jsonify({"entries": svc.recent(limit=limit)})
     except Exception as exc:
-        logger.error("companion /recent error: %s", exc, exc_info=True)
-        return jsonify({"error": "internal", "reason": str(exc)}), 500
+        logger.error("companion /recent error [%s]", type(exc).__name__, exc_info=True)
+        return jsonify({"error": "internal", "reason": "recent lookup failed"}), 500
 
 
 @companion_bp.route("/chat", methods=["POST"])
@@ -110,8 +109,8 @@ def chat():
     try:
         result = svc.chat(message=message, language=language, tone=tone)  # type: ignore[arg-type]
     except Exception as exc:
-        logger.error("companion /chat error: %s", exc, exc_info=True)
-        return jsonify({"error": "internal", "reason": str(exc)}), 500
+        logger.error("companion /chat error [%s]", type(exc).__name__, exc_info=True)
+        return jsonify({"error": "internal", "reason": "chat failed"}), 500
     return _format_result(result)
 
 
@@ -141,8 +140,8 @@ def event():
             tone=tone,  # type: ignore[arg-type]
         )
     except Exception as exc:
-        logger.error("companion /event error: %s", exc, exc_info=True)
-        return jsonify({"error": "internal", "reason": str(exc)}), 500
+        logger.error("companion /event error [%s]", type(exc).__name__, exc_info=True)
+        return jsonify({"error": "internal", "reason": "event failed"}), 500
     return _format_result(result)
 
 
@@ -168,8 +167,10 @@ def feedback():
     except ValueError as exc:
         return _bad_request(str(exc))
     except Exception as exc:
-        logger.error("companion /feedback error: %s", exc, exc_info=True)
-        return jsonify({"error": "internal", "reason": str(exc)}), 500
+        logger.error(
+            "companion /feedback error [%s]", type(exc).__name__, exc_info=True
+        )
+        return jsonify({"error": "internal", "reason": "feedback failed"}), 500
     if updated is None:
         return jsonify({"error": "not_found", "reason": "trigger_id unknown"}), 404
     return jsonify({"ok": True, "entry": updated})

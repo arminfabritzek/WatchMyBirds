@@ -391,7 +391,8 @@ class VideoCapture:
                 try:
                     if stream:
                         stream.close()
-                except Exception:
+                except OSError:
+                    # ffmpeg already exited; stream descriptor stale.
                     pass
             self.ffmpeg_process = None
             self.ffmpeg_pid = None
@@ -543,7 +544,8 @@ class VideoCapture:
             # Best-effort cleanup; ignore failure.
             try:
                 tmp_path.unlink(missing_ok=True)
-            except Exception:
+            except OSError:
+                # Already gone or unwritable; nothing we can do.
                 pass
             raise
 
@@ -949,7 +951,9 @@ class VideoCapture:
                                 2,
                                 cv2.LINE_AA,
                             )
-                        except Exception:
+                        except cv2.error:
+                            # putText can fail on unsupported pixel formats;
+                            # the un-stamped frame is still useful.
                             pass
 
                         try:
@@ -958,10 +962,12 @@ class VideoCapture:
                             try:
                                 self.q.get_nowait()
                             except queue.Empty:
+                                # Drained between Full and get; nothing to drop.
                                 pass
                             try:
                                 self.q.put(frame, block=False)
                             except queue.Full:
+                                # Still full after one drop; skip this frame.
                                 pass
                     else:
                         # Frame error (None)
@@ -1542,7 +1548,7 @@ class VideoCapture:
                     ):
                         try:
                             prev(signum, frame)
-                        except Exception:
+                        except Exception:  # noqa: BLE001 — chained handler must not crash shutdown
                             pass
 
                 signal.signal(sig, handler)
@@ -1573,8 +1579,10 @@ class VideoCapture:
 
         def preexec():
             try:
-                os.setsid()  # own process group for targeted signals
-            except Exception:
+                # Own process group for targeted signals.
+                os.setsid()
+            except OSError:
+                # Already a session leader on some shells.
                 pass
             self._set_parent_death_signal()
 

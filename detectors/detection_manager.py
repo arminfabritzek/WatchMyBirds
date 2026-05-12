@@ -22,13 +22,13 @@ from config import get_config
 from detectors.classifier import ImageClassifier
 from detectors.interfaces.classification import DecisionState
 from detectors.motion_detector import MotionDetector
+from detectors.od_classes import is_bird_od_class
 from detectors.services import NotificationService, PersistenceService
 from detectors.services.capability_registry import build_default_registry
 from detectors.services.classification_service import ClassificationService
 from detectors.services.crop_service import CropService
 from detectors.services.decision_policy_service import DecisionPolicyService
 from detectors.services.detection_service import DetectionService
-from detectors.od_classes import is_bird_od_class
 from detectors.services.scoring_pipeline import ScoringResult, compute_detection_signals
 from detectors.services.temporal_decision_service import TemporalDecisionService
 from logging_config import get_logger
@@ -696,14 +696,13 @@ class DetectionManager:
             best_score = 0.0
             best_thumb_path = None
 
-            from detectors.interfaces.persistence import DetectionData
-
             # Resolve the active save threshold once per frame so Filter (A)
             # uses exactly the same value as the detect-loop gate at
             # detector.py:635 (any-above-threshold). Without this, a frame
             # admitted by ONE strong detection would also persist all the
             # weaker companion detections — the root cause of issue #32.
             from config import effective_save_threshold
+            from detectors.interfaces.persistence import DetectionData
 
             detector_obj = getattr(self.detection_service, "_detector", None)
             underlying = (

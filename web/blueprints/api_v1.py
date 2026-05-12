@@ -88,7 +88,8 @@ def _detect_runtime_environment() -> str:
             return "docker"
         if "containerd" in lowered:
             return "containerd"
-    except Exception:
+    except OSError:
+        # /proc/self/cgroup missing (non-Linux); treat as host deploy.
         pass
 
     return "host"
@@ -247,9 +248,8 @@ def get_species_thumbnails():
             common_names=common_names,
             cache_key=None,
         )
-    except Exception as e:
-        logger.error(f"Failed to fetch species thumbnails: {e}")
-        return jsonify({"status": "error", "message": str(e)}), 500
+    except Exception as exc:
+        return _error_response("Failed to fetch species thumbnails", exc)
 
     return jsonify({"status": "success", "thumbnails": mapping})
 
@@ -281,9 +281,8 @@ def detection_pause():
                 "message": "Detection paused",
             }
         )
-    except Exception as e:
-        logger.error(f"Detection pause error: {e}")
-        return jsonify({"status": "error", "message": str(e)}), 500
+    except Exception as exc:
+        return _error_response("Detection pause error", exc)
 
 
 @api_v1.route("/detection/resume", methods=["POST"])
@@ -313,9 +312,8 @@ def detection_resume():
                 "message": "Detection resumed",
             }
         )
-    except Exception as e:
-        logger.error(f"Detection resume error: {e}")
-        return jsonify({"status": "error", "message": str(e)}), 500
+    except Exception as exc:
+        return _error_response("Detection resume error", exc)
 
 
 # =============================================================================
@@ -380,7 +378,11 @@ def _regenerate_metadata_for_variant(model_dir: str, model_id: str) -> str | Non
         )
         return output_path
     except Exception as exc:
-        logger.warning(f"Failed to regenerate model_metadata.json: {exc}")
+        logger.warning(
+            "Failed to regenerate model_metadata.json [%s]",
+            type(exc).__name__,
+            exc_info=True,
+        )
         return None
 
 
@@ -513,13 +515,14 @@ def models_detector_precision():
                 logger.info(
                     "models/detector/precision: model_id=%r precision=%r "
                     "-> live reload triggered",
-                    model_id,
-                    precision,
+                    _safe_log_value(model_id),
+                    _safe_log_value(precision),
                 )
             except Exception as reload_exc:
                 logger.warning(
-                    f"Failed to clear DetectionService for precision reload: "
-                    f"{reload_exc}"
+                    "Failed to clear DetectionService for precision reload [%s]",
+                    type(reload_exc).__name__,
+                    exc_info=True,
                 )
 
         return jsonify(
@@ -635,13 +638,15 @@ def models_detector_pin():
                 reload_triggered = True
                 logger.info(
                     "models/detector/pin: latest=%r effective=%r source=%s -> live reload triggered",
-                    model_id,
-                    effective_id,
-                    effective_source,
+                    _safe_log_value(model_id),
+                    _safe_log_value(effective_id),
+                    _safe_log_value(effective_source),
                 )
             except Exception as reload_exc:
                 logger.warning(
-                    f"Failed to clear DetectionService for live reload: {reload_exc}"
+                    "Failed to clear DetectionService for live reload [%s]",
+                    type(reload_exc).__name__,
+                    exc_info=True,
                 )
 
         return jsonify(
@@ -1195,9 +1200,8 @@ def settings_post():
             dm.update_configuration({"VIDEO_SOURCE": resolved["video_source"]})
 
         return jsonify({"status": "success"})
-    except Exception as e:
-        logger.error(f"Settings update error: {e}")
-        return jsonify({"status": "error", "message": str(e)}), 500
+    except Exception as exc:
+        return _error_response("Settings update error", exc)
 
 
 # =============================================================================
@@ -1319,11 +1323,10 @@ def telemetry_toggle():
             # up to one full check_interval (300s default).
             wake_now()
 
-        logger.info("Telemetry toggle changed to %s by user.", enabled)
+        logger.info("Telemetry toggle changed to %s by user.", _safe_log_value(enabled))
         return jsonify({"status": "success", "enabled": enabled})
-    except Exception as e:
-        logger.error(f"Telemetry toggle error: {e}", exc_info=True)
-        return jsonify({"status": "error", "message": str(e)}), 500
+    except Exception as exc:
+        return _error_response("Telemetry toggle error", exc)
 
 
 @api_v1.route("/settings/telemetry/rotate", methods=["POST"])
@@ -1353,9 +1356,8 @@ def telemetry_rotate():
                 "installation_id_short": new_id[:8],
             }
         )
-    except Exception as e:
-        logger.error(f"Telemetry rotate error: {e}", exc_info=True)
-        return jsonify({"status": "error", "message": str(e)}), 500
+    except Exception as exc:
+        return _error_response("Telemetry rotate error", exc)
 
 
 # =============================================================================
@@ -1428,6 +1430,7 @@ def telegram_send_report():
             # on the scheduled path.
             try:
                 from web.services.aesthetic_tag_scheduler import run_now as tag_now
+
                 tag_now(f"pre-telegram bridge (manual job {jid})", today_only=True)
             except Exception as exc:
                 logger.warning(
@@ -1617,9 +1620,7 @@ def aesthetic_rescore():
                 if jid in _rescore_jobs:
                     _rescore_jobs[jid]["status"] = "error"
                     _rescore_jobs[jid]["message"] = error_msg
-            logger.error(
-                "Aesthetic rescore job %s failed: %s", jid, exc, exc_info=True
-            )
+            logger.error("Aesthetic rescore job %s failed: %s", jid, exc, exc_info=True)
 
     t = threading.Thread(
         target=_run, args=(job_id,), name=f"AestheticRescore-{job_id}", daemon=True
@@ -1727,9 +1728,8 @@ def onvif_discover():
             return jsonify({"status": "success", "cameras": []})
 
         return jsonify({"status": "success", "cameras": cameras})
-    except Exception as e:
-        logger.error(f"ONVIF Discovery error: {e}")
-        return jsonify({"status": "error", "message": str(e)}), 500
+    except Exception as exc:
+        return _error_response("ONVIF Discovery error", exc)
 
 
 @api_v1.route("/onvif/get_stream_uri", methods=["POST"])
@@ -1757,9 +1757,8 @@ def onvif_get_stream_uri():
             return jsonify(
                 {"status": "error", "message": "Could not retrieve URI"}
             ), 404
-    except Exception as e:
-        logger.error(f"ONVIF Stream URI error: {e}")
-        return jsonify({"status": "error", "message": str(e)}), 500
+    except Exception as exc:
+        return _error_response("ONVIF Stream URI error", exc)
 
 
 # =============================================================================
@@ -1777,9 +1776,8 @@ def cameras_list():
     try:
         cameras = onvif_service.get_saved_cameras()
         return jsonify({"status": "success", "cameras": cameras})
-    except Exception as e:
-        logger.error(f"Camera list error: {e}")
-        return jsonify({"status": "error", "message": str(e)}), 500
+    except Exception as exc:
+        return _error_response("Camera list error", exc)
 
 
 @api_v1.route("/cameras", methods=["POST"])
@@ -1805,9 +1803,8 @@ def cameras_add():
         )
 
         return jsonify({"status": "success", "camera": camera})
-    except Exception as e:
-        logger.error(f"Camera add error: {e}")
-        return jsonify({"status": "error", "message": str(e)}), 500
+    except Exception as exc:
+        return _error_response("Camera add error", exc)
 
 
 @api_v1.route("/cameras/<int:camera_id>", methods=["PUT"])
@@ -1828,9 +1825,8 @@ def cameras_update(camera_id: int):
             name=data.get("name"),
         )
         return jsonify({"status": "success"})
-    except Exception as e:
-        logger.error(f"Camera update error: {e}")
-        return jsonify({"status": "error", "message": str(e)}), 500
+    except Exception as exc:
+        return _error_response("Camera update error", exc)
 
 
 @api_v1.route("/cameras/<int:camera_id>", methods=["DELETE"])
@@ -1843,9 +1839,8 @@ def cameras_delete(camera_id: int):
     try:
         onvif_service.delete_camera(camera_id)
         return jsonify({"status": "success"})
-    except Exception as e:
-        logger.error(f"Camera delete error: {e}")
-        return jsonify({"status": "error", "message": str(e)}), 500
+    except Exception as exc:
+        return _error_response("Camera delete error", exc)
 
 
 @api_v1.route("/cameras/<int:camera_id>/test", methods=["POST"])
@@ -1865,9 +1860,8 @@ def cameras_test(camera_id: int):
             return jsonify(
                 {"status": "error", "message": "Camera connection failed"}
             ), 500
-    except Exception as e:
-        logger.error(f"Camera test error: {e}")
-        return jsonify({"status": "error", "message": str(e)}), 500
+    except Exception as exc:
+        return _error_response("Camera test error", exc)
 
 
 @api_v1.route("/cameras/<int:camera_id>/use", methods=["POST"])
@@ -1905,18 +1899,19 @@ def cameras_use(camera_id: int):
 
         logger.info(
             "cameras_use camera_id=%s stream_mode=%s video_source=%s",
-            camera_id,
-            resolved["effective_mode"],
-            resolved["video_source"][:40] if resolved["video_source"] else "(empty)",
+            _safe_log_value(camera_id),
+            _safe_log_value(resolved["effective_mode"]),
+            _safe_log_value(
+                resolved["video_source"][:40] if resolved["video_source"] else "(empty)"
+            ),
         )
 
         dm = api_v1.detection_manager
         dm.update_configuration({"VIDEO_SOURCE": resolved["video_source"]})
 
         return jsonify({"status": "success", "message": "Video source updated"})
-    except Exception as e:
-        logger.error(f"Camera use error: {e}")
-        return jsonify({"status": "error", "message": str(e)}), 500
+    except Exception as exc:
+        return _error_response("Camera use error", exc)
 
 
 # =============================================================================
@@ -2103,9 +2098,8 @@ def weather_now():
                 }
             )
         return jsonify({"status": "success", "weather": weather})
-    except Exception as e:
-        logger.error(f"Weather API error: {e}")
-        return jsonify({"status": "error", "message": str(e)}), 500
+    except Exception as exc:
+        return _error_response("Weather API error", exc)
 
 
 @api_v1.route("/weather/history", methods=["GET"])
@@ -2121,9 +2115,8 @@ def weather_history():
         hours = max(1, min(168, hours))  # Clamp 1h - 7d
         history = get_weather_history(hours=hours)
         return jsonify({"status": "success", "hours": hours, "data": history})
-    except Exception as e:
-        logger.error(f"Weather history API error: {e}")
-        return jsonify({"status": "error", "message": str(e)}), 500
+    except Exception as exc:
+        return _error_response("Weather history API error", exc)
 
 
 # =============================================================================
@@ -2152,9 +2145,8 @@ def system_health():
             status_code = 503
 
         return jsonify(health), status_code
-    except Exception as e:
-        logger.error(f"Health check error: {e}")
-        return jsonify({"status": "error", "message": str(e)}), 500
+    except Exception as exc:
+        return _error_response("Health check error", exc)
 
 
 @api_v1.route("/health/public", methods=["GET"])
@@ -2215,21 +2207,23 @@ def system_stats():
                 "free_gb": round(disk_usage.free / (1024**3), 1),
                 "percent": disk_usage.percent,
             }
-        except Exception:
+        except (OSError, ValueError):
+            # disk_usage path missing or invalid; leave disk=None.
             pass
 
         # Temperature
         temp = None
         try:
-            import subprocess
+            import subprocess as _sp
 
-            result = subprocess.run(
+            result = _sp.run(
                 ["vcgencmd", "measure_temp"], capture_output=True, text=True, timeout=2
             )
             if result.returncode == 0:
                 temp_str = result.stdout.strip()
                 temp = float(temp_str.replace("temp=", "").replace("'C", ""))
-        except Exception:
+        except (OSError, ValueError, ImportError):
+            # vcgencmd missing/timed-out; fall back to psutil sensors.
             try:
                 temps = psutil.sensors_temperatures()
                 if temps:
@@ -2237,7 +2231,8 @@ def system_stats():
                         if entries:
                             temp = entries[0].current
                             break
-            except Exception:
+            except (AttributeError, OSError):
+                # No temperature sensors exposed on this host.
                 pass
 
         response = {"status": "success", "cpu": cpu_percent, "ram": mem.percent}
@@ -2247,8 +2242,8 @@ def system_stats():
             response["disk"] = disk
 
         return jsonify(response)
-    except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
+    except Exception as exc:
+        return _error_response("Error fetching system stats", exc)
 
 
 @api_v1.route("/system/vitals", methods=["GET"])
@@ -2300,9 +2295,8 @@ def system_vitals():
                 "vitals": vitals,
             }
         )
-    except Exception as e:
-        logger.error(f"System vitals error: {e}")
-        return jsonify({"status": "error", "message": str(e)}), 500
+    except Exception as exc:
+        return _error_response("System vitals error", exc)
 
 
 @api_v1.route("/system/diagnostics", methods=["GET"])
@@ -2359,8 +2353,9 @@ def system_diagnostics():
             process_threads = proc.num_threads()
             try:
                 process_fds = proc.num_fds()
-            except Exception:
-                process_fds = -1
+            except (psutil.AccessDenied, AttributeError):
+                # num_fds is POSIX-only; default of -1 already set above.
+                pass
 
         vm = psutil.virtual_memory()
         disk = psutil.disk_usage(str(output_dir))
@@ -2447,9 +2442,8 @@ def system_diagnostics():
                 "commands": commands,
             }
         )
-    except Exception as e:
-        logger.error(f"System diagnostics error: {e}")
-        return jsonify({"status": "error", "message": str(e)}), 500
+    except Exception as exc:
+        return _error_response("System diagnostics error", exc)
 
 
 @api_v1.route("/system/versions", methods=["GET"])
@@ -2482,7 +2476,8 @@ def system_versions():
 
         try:
             kernel = _platform.release()
-        except Exception:
+        except OSError:
+            # platform.release reads /proc; absent on non-Linux.
             pass
 
         try:
@@ -2494,16 +2489,16 @@ def system_versions():
                     if line.startswith("PRETTY_NAME="):
                         os_name = line.split("=", 1)[1].strip().strip('"')
                         break
-        except Exception:
+        except OSError:
+            # /etc/os-release missing or unreadable.
             pass
 
         try:
             import shutil
+            import subprocess as _sp
 
             if shutil.which("rpi-eeprom-update"):
-                import subprocess
-
-                res = subprocess.run(
+                res = _sp.run(
                     ["rpi-eeprom-update"],
                     capture_output=True,
                     text=True,
@@ -2517,7 +2512,8 @@ def system_versions():
                             if len(parts) > 1:
                                 bootloader = parts[1].strip()
                                 break
-        except Exception:
+        except (OSError, ImportError):
+            # rpi-eeprom-update missing or denied; stays "Unknown".
             pass
 
         return jsonify(
@@ -2536,8 +2532,8 @@ def system_versions():
                 "opencv_version": cv2.__version__,
             }
         )
-    except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
+    except Exception as exc:
+        return _error_response("Error fetching system versions", exc)
 
 
 @api_v1.route("/system/shutdown", methods=["POST"])
@@ -2573,9 +2569,8 @@ def system_shutdown():
             ),
             200,
         )
-    except Exception as e:
-        logger.error(f"Error initiating shutdown: {e}")
-        return jsonify({"status": "error", "message": str(e)}), 500
+    except Exception as exc:
+        return _error_response("Error initiating shutdown", exc)
 
 
 @api_v1.route("/system/restart", methods=["POST"])
@@ -2609,9 +2604,8 @@ def system_restart():
             ),
             200,
         )
-    except Exception as e:
-        logger.error(f"Error initiating restart: {e}")
-        return jsonify({"status": "error", "message": str(e)}), 500
+    except Exception as exc:
+        return _error_response("Error initiating restart", exc)
 
 
 @api_v1.route("/public/go2rtc/health", methods=["GET"])
@@ -2651,9 +2645,15 @@ def go2rtc_health_public():
         if detail:
             result["detail"] = detail
         return jsonify(result)
-    except Exception as e:
-        logger.error(f"go2rtc health API error: {e}")
-        return jsonify({"status": "error", "healthy": False, "message": str(e)}), 500
+    except Exception as exc:
+        logger.error("go2rtc health API error [%s]", type(exc).__name__, exc_info=True)
+        return jsonify(
+            {
+                "status": "error",
+                "healthy": False,
+                "message": "go2rtc health check failed",
+            }
+        ), 500
 
 
 @api_v1.route("/public/bbox-heatmap", methods=["GET"])
@@ -2703,9 +2703,8 @@ def system_backup_status():
         from web.services import usb_backup_service
 
         return jsonify({"status": "success", **usb_backup_service.get_status()})
-    except Exception as e:
-        logger.error("Error reading USB backup status: %s", e)
-        return jsonify({"status": "error", "message": str(e)}), 500
+    except Exception as exc:
+        return _error_response("Error reading USB backup status", exc)
 
 
 @api_v1.route("/system/backup/list", methods=["GET"])
@@ -2727,9 +2726,8 @@ def system_backup_list():
         limit = max(1, min(limit, 500))
         snapshots = usb_backup_service.list_snapshots(limit=limit)
         return jsonify({"status": "success", "snapshots": snapshots})
-    except Exception as e:
-        logger.error("Error listing USB backup snapshots: %s", e)
-        return jsonify({"status": "error", "message": str(e)}), 500
+    except Exception as exc:
+        return _error_response("Error listing USB backup snapshots", exc)
 
 
 @api_v1.route("/system/backup/trigger", methods=["POST"])
@@ -2767,9 +2765,8 @@ def system_backup_trigger():
                 409,
             )
         return jsonify({"status": "success", "message": message, "info": info})
-    except Exception as e:
-        logger.error("Error triggering manual USB backup: %s", e)
-        return jsonify({"status": "error", "message": str(e)}), 500
+    except Exception as exc:
+        return _error_response("Error triggering manual USB backup", exc)
 
 
 @api_v1.route("/system/backup/<path:snapshot_name>", methods=["DELETE"])
@@ -2788,9 +2785,14 @@ def system_backup_delete(snapshot_name):
         if not ok:
             return jsonify({"status": "error", "message": message}), 404
         return jsonify({"status": "success", "message": message})
-    except Exception as e:
-        logger.error("Error deleting USB backup snapshot %r: %s", snapshot_name, e)
-        return jsonify({"status": "error", "message": str(e)}), 500
+    except Exception as exc:
+        logger.error(
+            "Error deleting USB backup snapshot %r [%s]",
+            _safe_log_value(snapshot_name),
+            type(exc).__name__,
+            exc_info=True,
+        )
+        return _error_response("Error deleting USB backup snapshot", exc)
 
 
 @api_v1.route("/system/backup/<path:snapshot_name>/verify", methods=["POST"])
@@ -2809,9 +2811,14 @@ def system_backup_verify(snapshot_name):
         if result.get("ok") is False and result.get("error") == "Snapshot not found.":
             return jsonify({"status": "error", **result}), 404
         return jsonify({"status": "success", **result})
-    except Exception as e:
-        logger.error("Error verifying USB backup snapshot %r: %s", snapshot_name, e)
-        return jsonify({"status": "error", "message": str(e)}), 500
+    except Exception as exc:
+        logger.error(
+            "Error verifying USB backup snapshot %r [%s]",
+            _safe_log_value(snapshot_name),
+            type(exc).__name__,
+            exc_info=True,
+        )
+        return _error_response("Error verifying USB backup snapshot", exc)
 
 
 # =============================================================================
@@ -2835,17 +2842,18 @@ def system_backup_format_devices():
         from web.services import usb_format_service
 
         devices = usb_format_service.list_usb_block_devices()
-        return jsonify({
-            "status": "success",
-            "supported": usb_format_service.is_format_supported(),
-            "devices": devices,
-            # Calibration samples for the UI's remaining-time estimate.
-            # Empty list on first run; gets populated by completed formats.
-            "history": usb_format_service.get_format_history(limit=5),
-        })
-    except Exception as e:
-        logger.error("Error listing format candidates: %s", e)
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return jsonify(
+            {
+                "status": "success",
+                "supported": usb_format_service.is_format_supported(),
+                "devices": devices,
+                # Calibration samples for the UI's remaining-time estimate.
+                # Empty list on first run; gets populated by completed formats.
+                "history": usb_format_service.get_format_history(limit=5),
+            }
+        )
+    except Exception as exc:
+        return _error_response("Error listing format candidates", exc)
 
 
 @api_v1.route("/system/backup/format", methods=["POST"])
@@ -2868,9 +2876,8 @@ def system_backup_format():
         if not started:
             return jsonify({"status": "error", "message": message}), 400
         return jsonify({"status": "success", "message": message})
-    except Exception as e:
-        logger.error("Error triggering format: %s", e)
-        return jsonify({"status": "error", "message": str(e)}), 500
+    except Exception as exc:
+        return _error_response("Error triggering format", exc)
 
 
 @api_v1.route("/system/backup/format/status", methods=["GET"])
@@ -2885,9 +2892,8 @@ def system_backup_format_status():
         from web.services import usb_format_service
 
         return jsonify({"status": "success", **usb_format_service.get_format_status()})
-    except Exception as e:
-        logger.error("Error reading format status: %s", e)
-        return jsonify({"status": "error", "message": str(e)}), 500
+    except Exception as exc:
+        return _error_response("Error reading format status", exc)
 
 
 @api_v1.route("/system/backup/format/status", methods=["DELETE"])
@@ -2899,9 +2905,8 @@ def system_backup_format_status_clear():
 
         cleared = usb_format_service.clear_format_status()
         return jsonify({"status": "success" if cleared else "error"})
-    except Exception as e:
-        logger.error("Error clearing format status: %s", e)
-        return jsonify({"status": "error", "message": str(e)}), 500
+    except Exception as exc:
+        return _error_response("Error clearing format status", exc)
 
 
 # =============================================================================
@@ -2941,9 +2946,8 @@ def system_updates_check():
                 "update_supported": is_update_supported(),
             }
         )
-    except Exception as e:
-        logger.error("Error checking for updates: %s", e)
-        return jsonify({"status": "error", "message": str(e)}), 500
+    except Exception as exc:
+        return _error_response("Error checking for updates", exc)
 
 
 @api_v1.route("/system/updates/releases", methods=["GET"])
@@ -2961,9 +2965,8 @@ def system_updates_releases():
         limit = min(int(request.args.get("limit", 10)), 50)
         releases = list_releases(limit=limit)
         return jsonify({"status": "success", "releases": releases})
-    except Exception as e:
-        logger.error("Error fetching releases: %s", e)
-        return jsonify({"status": "error", "message": str(e)}), 500
+    except Exception as exc:
+        return _error_response("Error fetching releases", exc)
 
 
 @api_v1.route("/system/updates/status", methods=["GET"])
@@ -2978,9 +2981,8 @@ def system_updates_status():
         from web.services.update_service import get_update_status
 
         return jsonify({"status": "success", **get_update_status()})
-    except Exception as e:
-        logger.error("Error reading update status: %s", e)
-        return jsonify({"status": "error", "message": str(e)}), 500
+    except Exception as exc:
+        return _error_response("Error reading update status", exc)
 
 
 @api_v1.route("/system/updates/install", methods=["POST"])
@@ -3020,9 +3022,8 @@ def system_updates_install():
         if success:
             return jsonify({"status": "success", "message": message})
         return jsonify({"status": "error", "message": message}), 500
-    except Exception as e:
-        logger.error("Error installing update: %s", e)
-        return jsonify({"status": "error", "message": str(e)}), 500
+    except Exception as exc:
+        return _error_response("Error installing update", exc)
 
 
 # =============================================================================

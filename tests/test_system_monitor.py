@@ -6,7 +6,7 @@ Unit tests for the SystemMonitor class.
 import csv
 import time
 
-import utils.system_monitor as system_monitor_mod
+from utils import system_monitor as system_monitor_mod
 from utils.system_monitor import (
     CSV_HEADERS,
     SystemMonitor,

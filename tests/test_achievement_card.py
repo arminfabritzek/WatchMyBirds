@@ -9,8 +9,8 @@ present, banner text present.
 import numpy as np
 
 from utils.achievement_card import (
-    CARD_SIZE,
     _NEON_PALETTE,
+    CARD_SIZE,
     build_species_colour_map,
     neon_for_species,
     render_achievement_card,

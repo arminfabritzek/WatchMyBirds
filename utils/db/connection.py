@@ -93,7 +93,8 @@ def closing_connection():
         # statistics stay current without a manual maintenance window.
         try:
             conn.execute("PRAGMA optimize;")
-        except Exception:
+        except sqlite3.Error:
+            # Stale conn or partial transaction; close anyway.
             pass
         conn.close()
 
@@ -238,7 +239,9 @@ def _init_schema(conn: sqlite3.Connection) -> None:
     #       is_favorite=0 detections
     #   Backfill of legacy rating_source='auto' rows happens in _backfill_gallery_eligible
     #   (see below). See workflow/plans/2026-05-02_FEATURE_aesthetic-tagger-three-column-split.md.
-    _ensure_column_on_table(conn, "detections", "is_gallery_eligible", "INTEGER DEFAULT 0")
+    _ensure_column_on_table(
+        conn, "detections", "is_gallery_eligible", "INTEGER DEFAULT 0"
+    )
     _backfill_gallery_eligible(conn)
     conn.execute(
         """

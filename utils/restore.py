@@ -229,8 +229,9 @@ def analyze_backup_archive(archive_path: Path) -> dict:
             if magic != b"\x1f\x8b":  # gzip magic
                 result["blockers"].append("Invalid archive format (not gzip)")
                 return result
-    except Exception as e:
-        result["blockers"].append(f"Cannot read archive: {e}")
+    except Exception as exc:
+        logger.warning("Cannot read archive [%s]", type(exc).__name__, exc_info=True)
+        result["blockers"].append("Cannot read archive (see logs)")
         return result
 
     try:
@@ -279,10 +280,13 @@ def analyze_backup_archive(archive_path: Path) -> dict:
                                 result["settings_preview"] = _mask_settings(
                                     settings_data
                                 )
-                        except Exception as e:
-                            result["warnings"].append(
-                                f"Could not parse settings.yaml: {e}"
+                        except Exception as exc:
+                            logger.warning(
+                                "Could not parse settings.yaml [%s]",
+                                type(exc).__name__,
+                                exc_info=True,
                             )
+                            result["warnings"].append("Could not parse settings.yaml")
 
                 elif name == "backup_manifest.json":
                     result["has_manifest"] = True
@@ -291,9 +295,14 @@ def analyze_backup_archive(archive_path: Path) -> dict:
                         if f:
                             content = f.read().decode("utf-8")
                             result["manifest"] = json.loads(content)
-                    except Exception as e:
+                    except Exception as exc:
+                        logger.warning(
+                            "Could not parse backup_manifest.json [%s]",
+                            type(exc).__name__,
+                            exc_info=True,
+                        )
                         result["warnings"].append(
-                            f"Could not parse backup_manifest.json: {e}"
+                            "Could not parse backup_manifest.json"
                         )
 
                 elif name.startswith("originals/"):
@@ -306,10 +315,14 @@ def analyze_backup_archive(archive_path: Path) -> dict:
                     if member.isfile():
                         result["derivatives_count"] += 1
 
-    except tarfile.TarError as e:
-        result["blockers"].append(f"Invalid tar archive: {e}")
-    except Exception as e:
-        result["blockers"].append(f"Error analyzing archive: {e}")
+    except tarfile.TarError as exc:
+        logger.warning("Invalid tar archive [%s]", type(exc).__name__, exc_info=True)
+        result["blockers"].append("Invalid tar archive")
+    except Exception as exc:
+        logger.warning(
+            "Error analyzing archive [%s]", type(exc).__name__, exc_info=True
+        )
+        result["blockers"].append("Error analyzing archive")
 
     return result
 

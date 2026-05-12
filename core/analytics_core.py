@@ -12,7 +12,6 @@ from utils.db import (
     closing_connection,
     fetch_all_detection_times,
     fetch_analytics_summary,
-    fetch_day_count,
     fetch_species_timestamps,
 )
 
@@ -62,17 +61,6 @@ def get_species_timestamps(species: str) -> list[dict]:
     with closing_connection() as conn:
         rows = fetch_species_timestamps(conn, species)
         return [dict(row) for row in rows]
-
-
-def get_day_count() -> int:
-    """
-    Returns the number of days with detections.
-
-    Returns:
-        Count of unique detection days
-    """
-    with closing_connection() as conn:
-        return fetch_day_count(conn)
 
 
 def get_species_summary_cached(force_refresh: bool = False) -> dict[str, Any] | None:

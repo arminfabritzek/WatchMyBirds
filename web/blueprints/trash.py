@@ -17,16 +17,18 @@ import math
 from flask import Blueprint, jsonify, render_template, request
 
 from config import get_config
-from logging_config import get_logger
-from utils.review_metadata import format_review_timestamp
 from core import gallery_core as gallery_service
 from core.species_colours import assign_species_colours as _assign_species_colours
+from logging_config import get_logger
+from utils.review_metadata import format_review_timestamp
 from utils.species_names import (
     UNKNOWN_SPECIES_KEY,
     build_species_picker_entries,
     load_common_names,
 )
 from web.blueprints.auth import login_required
+from web.security import error_response
+from web.security import safe_log_value as _slv
 from web.services import db_service, detections_service
 
 logger = get_logger(__name__)
@@ -150,9 +152,8 @@ def trash_restore():
             conn.close()
 
         return jsonify({"status": "success", "result": {"restored": restored_count}})
-    except Exception as e:
-        logger.error(f"Error restoring trash: {e}")
-        return jsonify({"status": "error", "message": str(e)}), 500
+    except Exception as exc:
+        return error_response("Error restoring trash", exc)
 
 
 @trash_bp.route("/api/trash/purge", methods=["POST"])
@@ -209,9 +210,8 @@ def trash_purge():
                 },
             }
         )
-    except Exception as e:
-        logger.error(f"Error purging trash: {e}")
-        return jsonify({"status": "error", "message": str(e)}), 500
+    except Exception as exc:
+        return error_response("Error purging trash", exc)
 
 
 @trash_bp.route("/api/trash/empty", methods=["POST"])
@@ -256,9 +256,8 @@ def trash_empty():
                 },
             }
         )
-    except Exception as e:
-        logger.error(f"Error emptying trash: {e}")
-        return jsonify({"status": "error", "message": str(e)}), 500
+    except Exception as exc:
+        return error_response("Error emptying trash", exc)
 
 
 @trash_bp.route("/api/detections/reject", methods=["POST"])
@@ -294,9 +293,8 @@ def species_list():
         finally:
             conn.close()
         return jsonify({"status": "success", "species": species})
-    except Exception as e:
-        logger.error(f"Failed to load species list: {e}")
-        return jsonify({"status": "error", "message": str(e)}), 500
+    except Exception as exc:
+        return error_response("Failed to load species list", exc)
 
 
 @trash_bp.route("/api/detections/relabel", methods=["POST"])
@@ -340,11 +338,19 @@ def relabel_detection():
         conn.commit()
 
         gallery_service.invalidate_cache()
-        logger.info(f"Detection {detection_id} relabeled to {new_species}")
+        # Best-of-Species board is memoised separately on a 5-min TTL and
+        # would otherwise echo the old species on the next Live render.
+        from web.web_interface import invalidate_best_species_cache
+
+        invalidate_best_species_cache()
+        logger.info(
+            "Detection %s relabeled to %s",
+            _slv(detection_id),
+            _slv(new_species),
+        )
         return jsonify({"status": "success", "new_species": new_species})
-    except Exception as e:
-        logger.error(f"Error relabeling detection {detection_id}: {e}")
-        return jsonify({"status": "error", "message": str(e)}), 500
+    except Exception as exc:
+        return error_response(f"Error relabeling detection {_slv(detection_id)}", exc)
     finally:
         conn.close()
 
@@ -409,18 +415,15 @@ def rate_detection():
             (rating, detection_id),
         )
         conn.commit()
-        # Invalidate gallery cache so rating-based sorting updates immediately
-        try:
-            from web.web_interface import _cached_images
-
-            _cached_images["images"] = None
-        except Exception:
-            pass
-        logger.info(f"Detection {detection_id} rated {rating}/5 (manual)")
+        gallery_service.invalidate_cache()
+        logger.info(
+            "Detection %s rated %s/5 (manual)",
+            _slv(detection_id),
+            _slv(rating),
+        )
         return jsonify({"status": "success", "rating": rating})
-    except Exception as e:
-        logger.error(f"Error rating detection {detection_id}: {e}")
-        return jsonify({"status": "error", "message": str(e)}), 500
+    except Exception as exc:
+        return error_response(f"Error rating detection {_slv(detection_id)}", exc)
     finally:
         conn.close()
 
@@ -462,19 +465,17 @@ def toggle_favorite():
             (new_state, detection_id),
         )
         conn.commit()
+        gallery_service.invalidate_cache()
 
-        # Invalidate gallery cache
-        try:
-            from web.web_interface import _cached_images
-
-            _cached_images["images"] = None
-        except Exception:
-            pass
-
-        logger.info(f"Detection {detection_id} favorite={'on' if new_state else 'off'}")
+        logger.info(
+            "Detection %s favorite=%s",
+            _slv(detection_id),
+            "on" if new_state else "off",
+        )
         return jsonify({"status": "success", "is_favorite": bool(new_state)})
-    except Exception as e:
-        logger.error(f"Error toggling favorite for detection {detection_id}: {e}")
-        return jsonify({"status": "error", "message": str(e)}), 500
+    except Exception as exc:
+        return error_response(
+            f"Error toggling favorite for detection {_slv(detection_id)}", exc
+        )
     finally:
         conn.close()

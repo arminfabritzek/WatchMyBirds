@@ -16,7 +16,6 @@ import datetime
 import json
 import logging
 import os
-import socket
 import sys
 import tempfile
 from pathlib import Path
@@ -1220,7 +1219,6 @@ def main(**_kwargs):
             today_rows, min_score=gallery_threshold
         )
         obs_stats = obs_summary["summary"]
-        total_events = obs_stats["total_observations"]
         species_counts: dict[str, int] = obs_stats["species_counts"]
 
         common_names = _load_common_names()

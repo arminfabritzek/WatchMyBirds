@@ -36,7 +36,7 @@ import secrets
 import sys
 import tempfile
 import threading
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import requests
@@ -114,6 +114,7 @@ def _write_last_sent_date(output_dir: str, date_str: str) -> None:
         try:
             os.unlink(tmp_path)
         except FileNotFoundError:
+            # tmp_path never got created; nothing to clean up.
             pass
         raise
 
@@ -126,6 +127,7 @@ def wipe_last_sent(output_dir: str) -> None:
     try:
         path.unlink()
     except FileNotFoundError:
+        # Already gone; the rotate-UUID intent is already satisfied.
         pass
 
 
@@ -186,7 +188,8 @@ def _detect_total_ram_gb() -> int:
                     # Format: "MemTotal:  16335152 kB"
                     kb = int(parts[1])
                     return max(0, round(kb / (1024 * 1024)))
-    except Exception:
+    except (OSError, ValueError, IndexError):
+        # /proc/meminfo unavailable (non-Linux) or malformed; try psutil.
         pass
 
     # Non-Linux fallback via psutil if available.
@@ -213,7 +216,8 @@ def _detect_app_version() -> str:
         for candidate in (repo_root / "APP_VERSION", repo_root.parent / "APP_VERSION"):
             if candidate.exists():
                 return candidate.read_text(encoding="utf-8").strip() or "unknown"
-    except Exception:
+    except (OSError, AttributeError):
+        # sys.argv[0] resolution can fail in odd embeddings (e.g. REPL).
         pass
     return "unknown"
 
@@ -257,7 +261,9 @@ def _detect_detector_variant() -> str:
                 return f"{framework}-{variant}"[:64]
             if framework:
                 return framework[:64]
-    except Exception:
+    except (OSError, ValueError, KeyError, ImportError):
+        # model_metadata.json missing/malformed or config not yet loaded;
+        # fall through to the explicit-config path.
         pass
 
     # Path 2: explicit config override (legacy / tests)
@@ -269,7 +275,8 @@ def _detect_detector_variant() -> str:
             v = cfg.get(key)
             if v:
                 return str(v).lower().replace(" ", "-")[:64]
-    except Exception:
+    except (ImportError, AttributeError):
+        # Config not initialised yet (e.g. very early boot).
         pass
 
     return "unknown"
@@ -374,7 +381,7 @@ def build_payload_preview(cfg: dict) -> dict:
 
 
 def _today_utc() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    return datetime.now(UTC).strftime("%Y-%m-%d")
 
 
 def _send_heartbeat(endpoint: str, payload: dict) -> bool:
@@ -475,9 +482,7 @@ def start_telemetry_scheduler(check_interval: int = 300):
                         payload = build_payload(cfg)
                         if _send_heartbeat(endpoint, payload):
                             _write_last_sent_date(output_dir, today)
-                            logger.info(
-                                "Telemetry: heartbeat sent (date=%s).", today
-                            )
+                            logger.info("Telemetry: heartbeat sent (date=%s).", today)
                         # On failure: do NOT mark sent. Next tick retries.
 
             except Exception as e:

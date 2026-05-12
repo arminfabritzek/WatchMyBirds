@@ -81,6 +81,7 @@ class TestWebLayerBoundaries:
         # Pragmatic exceptions: lazy imports where no core wrapper exists
         allowed_exceptions = {
             ("report_scheduler.py", "utils.daily_report"),
+            ("telemetry_service.py", "utils.settings"),
         }
         all_violations = []
 

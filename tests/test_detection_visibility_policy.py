@@ -13,8 +13,8 @@ from utils.db.detections import (
     fetch_gallery_total_species_count,
     fetch_hourly_counts,
     fetch_random_favorites,
-    fetch_species_story_board_candidates,
     fetch_sibling_detections,
+    fetch_species_story_board_candidates,
 )
 
 

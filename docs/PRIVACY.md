@@ -19,6 +19,8 @@ disagree, the code in `web/services/telemetry_service.py` and
 One small JSON payload, once per UTC day, to
 `https://heartbeat-wmb.starmin.de/v1/heartbeat`:
 
+**Schema:**
+
 ```json
 {
   "installation_id":   "(32 random hex chars, generated once when you opt in)",
@@ -29,6 +31,36 @@ One small JSON payload, once per UTC day, to
   "total_ram_gb":      <integer, rounded to whole GB>,
   "python_version":    "3.x.y",
   "detector_variant":  "yolox-tiny-int8 | fasterrcnn | unknown"
+}
+```
+
+**Example** — what a Raspberry Pi 5 (8 GB) actually sends:
+
+```json
+{
+  "installation_id":   "a3f2c81d9b4e47f6a0c1d8e2b5f93a7c",
+  "app_version":       "v0.2.10",
+  "os":                "linux",
+  "arch":              "aarch64",
+  "cpu_count":         4,
+  "total_ram_gb":      8,
+  "python_version":    "3.12.3",
+  "detector_variant":  "yolox-tiny-int8"
+}
+```
+
+…and what an Apple Silicon dev machine (M1, 16 GB) sends:
+
+```json
+{
+  "installation_id":   "a3f2c81d9b4e47f6a0c1d8e2b5f93a7c",
+  "app_version":       "v0.2.10",
+  "os":                "darwin",
+  "arch":              "aarch64",
+  "cpu_count":         8,
+  "total_ram_gb":      16,
+  "python_version":    "3.12.3",
+  "detector_variant":  "fasterrcnn"
 }
 ```
 

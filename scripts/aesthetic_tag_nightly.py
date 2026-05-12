@@ -30,6 +30,7 @@ Design notes:
   job only ever SETS rating_source='auto' on detections that don't already
   have a manual favorite.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -38,7 +39,7 @@ import os
 import sqlite3
 import sys
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 # Redirect HF cache to a writable location BEFORE huggingface_hub gets
@@ -153,8 +154,12 @@ CLIP_PROMPT_NEGATIVE = "a blurry or back-facing photo of a bird showing its back
 # only has to mount one volume.
 _OUTPUT_DIR = Path(os.environ.get("OUTPUT_DIR", "/opt/app/data/output"))
 DB_PATH = Path(os.environ.get("WMB_DB_PATH", str(_OUTPUT_DIR / "images.db")))
-CROPS_ROOT = Path(os.environ.get("WMB_CROPS_ROOT", str(_OUTPUT_DIR / "derivatives" / "thumbs")))
-LOG_PATH = Path(os.environ.get("WMB_AESTHETIC_LOG", str(_OUTPUT_DIR / "logs" / "aesthetic_tag.log")))
+CROPS_ROOT = Path(
+    os.environ.get("WMB_CROPS_ROOT", str(_OUTPUT_DIR / "derivatives" / "thumbs"))
+)
+LOG_PATH = Path(
+    os.environ.get("WMB_AESTHETIC_LOG", str(_OUTPUT_DIR / "logs" / "aesthetic_tag.log"))
+)
 
 
 def setup_logging(verbose: bool) -> None:
@@ -170,6 +175,7 @@ def setup_logging(verbose: bool) -> None:
 
 
 # --- DB helpers ------------------------------------------------------------
+
 
 def fetch_unscored_detections(
     conn: sqlite3.Connection,
@@ -213,7 +219,8 @@ def fetch_unscored_detections(
         params.append(species_filter)
 
     score_filter = (
-        "" if rescore
+        ""
+        if rescore
         else "AND (d.aesthetic_score IS NULL OR d.aesthetic_score_at IS NULL)"
     )
 
@@ -243,7 +250,7 @@ def fetch_unscored_detections(
             AND d.thumbnail_path IS NOT NULL
             AND (d.decision_level IS NULL OR lower(d.decision_level) != 'reject')
             AND c.cls_class_name IS NOT NULL
-            {' '.join(where_clauses)}
+            {" ".join(where_clauses)}
         )
         SELECT detection_id, image_filename, thumbnail_path, created_at,
                species, is_favorite, rating_source, aesthetic_score,
@@ -267,14 +274,14 @@ def fetch_unscored_detections(
           {score_filter}
           AND d.thumbnail_path IS NOT NULL
           AND (d.decision_level IS NULL OR lower(d.decision_level) != 'reject')
-          {' '.join(where_clauses)}
+          {" ".join(where_clauses)}
         ORDER BY d.created_at DESC
         """
         if limit is not None:
             sql += f" LIMIT {int(limit)}"
     cur = conn.execute(sql, params)
     cols = [d[0] for d in cur.description]
-    return [dict(zip(cols, row)) for row in cur.fetchall()]
+    return [dict(zip(cols, row, strict=False)) for row in cur.fetchall()]
 
 
 def write_score(conn: sqlite3.Connection, det_id: int, score: float, ts: str) -> None:
@@ -310,7 +317,9 @@ def apply_auto_favorites(conn: sqlite3.Connection, since: str, dry_run: bool) ->
         if TAG_UNKNOWN_SPECIES:
             species_filter.append("unknown")
         placeholders = ",".join("?" * len(species_filter))
-        species_clause = f"AND COALESCE(c.cls_class_name, 'unknown') IN ({placeholders})"
+        species_clause = (
+            f"AND COALESCE(c.cls_class_name, 'unknown') IN ({placeholders})"
+        )
         species_params: tuple = tuple(species_filter)
     elif not TAG_UNKNOWN_SPECIES:
         species_clause = "AND c.cls_class_name IS NOT NULL"
@@ -355,7 +364,13 @@ def apply_auto_favorites(conn: sqlite3.Connection, since: str, dry_run: bool) ->
     """
     cur = conn.execute(
         sql,
-        (since, MIN_SCORE_FOR_TAG, *species_params, *decision_params, TOP_N_PER_SPECIES_PER_DAY),
+        (
+            since,
+            MIN_SCORE_FOR_TAG,
+            *species_params,
+            *decision_params,
+            TOP_N_PER_SPECIES_PER_DAY,
+        ),
     )
     rows = cur.fetchall()
 
@@ -387,6 +402,7 @@ def apply_auto_favorites(conn: sqlite3.Connection, since: str, dry_run: bool) ->
 
 # --- CLIP scoring ----------------------------------------------------------
 
+
 def load_clip_model(device: str):
     """Lazy import + load. Returns (model, preprocess, text_features).
 
@@ -417,10 +433,12 @@ def load_clip_model(device: str):
     return model, preprocess, text_features
 
 
-def score_image(model, preprocess, text_features, image_path: Path, device: str) -> float:
+def score_image(
+    model, preprocess, text_features, image_path: Path, device: str
+) -> float:
     """Returns probability that the image matches the positive prompt (0..1)."""
-    from PIL import Image
     import torch
+    from PIL import Image
 
     img = Image.open(image_path).convert("RGB")
     image_tensor = preprocess(img).unsqueeze(0).to(device)
@@ -448,15 +466,18 @@ def resolve_crop_path(thumbnail_path: str, image_filename: str) -> Path | None:
 
 # --- Main ------------------------------------------------------------------
 
+
 def pick_device() -> str:
     """Pi 5 is CPU-only. Detect MPS / CUDA for dev hosts."""
     try:
         import torch
+
         if torch.backends.mps.is_available():
             return "mps"
         if torch.cuda.is_available():
             return "cuda"
     except ImportError:
+        # torch is an optional extra; nightly script can still log on CPU.
         pass
     return "cpu"
 
@@ -465,49 +486,60 @@ def main_with_args(argv: list[str] | None = None) -> int:
     """Entry point usable from tests (pass argv list) or CLI (None = sys.argv)."""
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument(
-        "--since", default=None,
+        "--since",
+        default=None,
         help="Earliest created_at (ISO date). Defaults to yesterday 00:00 UTC.",
     )
     p.add_argument(
-        "--limit", type=int, default=None,
+        "--limit",
+        type=int,
+        default=None,
         help="Cap detections processed per run (smoke testing). Mutually "
-             "exclusive with --per-species-cap.",
+        "exclusive with --per-species-cap.",
     )
     p.add_argument(
-        "--per-species-cap", type=int, default=None,
+        "--per-species-cap",
+        type=int,
+        default=None,
         help="Score at most N detections per CLS species, ranked within "
-             "each species by detector score / bbox quality / created_at. "
-             "Used by the pre-Telegram bridge to bound the run while "
-             "keeping a fair sample across species. Mutually exclusive "
-             "with --limit. Excludes CLS-null (unknown) detections.",
+        "each species by detector score / bbox quality / created_at. "
+        "Used by the pre-Telegram bridge to bound the run while "
+        "keeping a fair sample across species. Mutually exclusive "
+        "with --limit. Excludes CLS-null (unknown) detections.",
     )
     p.add_argument(
-        "--dry-run", action="store_true",
+        "--dry-run",
+        action="store_true",
         help="Compute scores but do NOT write to DB.",
     )
     p.add_argument(
-        "--skip-tagging", action="store_true",
+        "--skip-tagging",
+        action="store_true",
         help="Score only; do NOT update is_favorite. Use to backfill aesthetic_score.",
     )
     p.add_argument(
-        "--rescore", action="store_true",
+        "--rescore",
+        action="store_true",
         help="Re-score detections that already have a score. Use after prompt or "
-             "threshold changes — the regular run skips already-scored detections "
-             "for idempotency. Combine with --since to limit scope (e.g. only "
-             "today). Resets is_gallery_eligible for the affected detections "
-             "before re-scoring so the top-N pick is recomputed cleanly.",
+        "threshold changes — the regular run skips already-scored detections "
+        "for idempotency. Combine with --since to limit scope (e.g. only "
+        "today). Resets is_gallery_eligible for the affected detections "
+        "before re-scoring so the top-N pick is recomputed cleanly.",
     )
     p.add_argument(
-        "--species", default=None,
+        "--species",
+        default=None,
         help="Restrict to a single CLS class (e.g. Parus_major). Useful with "
-             "--rescore for targeted fixes.",
+        "--rescore for targeted fixes.",
     )
     p.add_argument(
-        "--throttle-ms", type=int, default=None,
+        "--throttle-ms",
+        type=int,
+        default=None,
         help="Sleep N milliseconds between each CLIP inference. Default 0 "
-             "(no throttling) — bumps to ~100 ms relieve CPU pressure on "
-             "the live detector during pre-Telegram bridge runs. Env "
-             "override: WMB_AESTHETIC_THROTTLE_MS.",
+        "(no throttling) — bumps to ~100 ms relieve CPU pressure on "
+        "the live detector during pre-Telegram bridge runs. Env "
+        "override: WMB_AESTHETIC_THROTTLE_MS.",
     )
     p.add_argument("--verbose", "-v", action="store_true")
     args = p.parse_args(argv)
@@ -565,8 +597,11 @@ def main_with_args(argv: list[str] | None = None) -> int:
     if torch_threads > 0:
         try:
             import torch  # noqa: WPS433 — local so the slim-image fallback path stays import-safe
+
             torch.set_num_threads(torch_threads)
-            log.info(f"Tagger torch thread cap = {torch_threads} (reserves cores for OD)")
+            log.info(
+                f"Tagger torch thread cap = {torch_threads} (reserves cores for OD)"
+            )
         except ImportError:
             # If torch is missing, the dependency check below will skip
             # the whole run anyway.
@@ -576,22 +611,26 @@ def main_with_args(argv: list[str] | None = None) -> int:
 
     if args.since is None:
         # Default: yesterday 00:00 UTC. Catches everything from the prior calendar day.
-        since_dt = (datetime.now(timezone.utc) - timedelta(days=1)).replace(
+        since_dt = (datetime.now(UTC) - timedelta(days=1)).replace(
             hour=0, minute=0, second=0, microsecond=0
         )
         since = since_dt.isoformat()
     else:
         since = args.since
 
-    log.info(f"Aesthetic tagger starting; since={since}, dry_run={args.dry_run}, "
-             f"db={DB_PATH}, crops={CROPS_ROOT}")
+    log.info(
+        f"Aesthetic tagger starting; since={since}, dry_run={args.dry_run}, "
+        f"db={DB_PATH}, crops={CROPS_ROOT}"
+    )
 
     if not DB_PATH.exists():
         log.error(f"DB not found: {DB_PATH}")
         return 2
 
     conn = sqlite3.connect(str(DB_PATH))
-    conn.execute("PRAGMA busy_timeout = 30000")  # 30s, in case detector pipeline holds locks
+    conn.execute(
+        "PRAGMA busy_timeout = 30000"
+    )  # 30s, in case detector pipeline holds locks
 
     try:
         unscored = fetch_unscored_detections(
@@ -633,8 +672,10 @@ def main_with_args(argv: list[str] | None = None) -> int:
                 det_ids,
             )
             conn.commit()
-            log.info(f"Reset is_gallery_eligible for {len(det_ids)} detections "
-                     f"before re-scoring")
+            log.info(
+                f"Reset is_gallery_eligible for {len(det_ids)} detections "
+                f"before re-scoring"
+            )
 
         device = pick_device()
         model, preprocess, text_features = load_clip_model(device)
@@ -648,7 +689,9 @@ def main_with_args(argv: list[str] | None = None) -> int:
             if crop_path is None:
                 skipped_missing += 1
                 if skipped_missing <= 5:
-                    log.warning(f"crop missing for det {det['detection_id']}: {det['thumbnail_path']}")
+                    log.warning(
+                        f"crop missing for det {det['detection_id']}: {det['thumbnail_path']}"
+                    )
                 continue
 
             try:
@@ -658,7 +701,9 @@ def main_with_args(argv: list[str] | None = None) -> int:
                 continue
 
             if not args.dry_run:
-                write_score(conn, det["detection_id"], score, datetime.now(timezone.utc).isoformat())
+                write_score(
+                    conn, det["detection_id"], score, datetime.now(UTC).isoformat()
+                )
                 # Commit every 10 scores instead of 50: keeps each
                 # write-lock window short (~30 ms instead of ~150 ms),
                 # which is friendlier to concurrent readers like the
@@ -670,8 +715,10 @@ def main_with_args(argv: list[str] | None = None) -> int:
             if scored % 25 == 0:
                 elapsed = time.time() - t_start
                 rate = scored / elapsed if elapsed > 0 else 0
-                log.info(f"  [{i}/{len(unscored)}] scored={scored}, missing={skipped_missing}, "
-                         f"rate={rate:.1f} img/s")
+                log.info(
+                    f"  [{i}/{len(unscored)}] scored={scored}, missing={skipped_missing}, "
+                    f"rate={rate:.1f} img/s"
+                )
 
             # Optional throttle: yield CPU between inferences so the
             # live detector pipeline keeps its frame budget. Default
@@ -685,16 +732,22 @@ def main_with_args(argv: list[str] | None = None) -> int:
         if not args.dry_run:
             conn.commit()
 
-        log.info(f"Scored {scored} detections in {time.time() - t_start:.1f}s "
-                 f"(skipped_missing={skipped_missing})")
+        log.info(
+            f"Scored {scored} detections in {time.time() - t_start:.1f}s "
+            f"(skipped_missing={skipped_missing})"
+        )
 
         # Tagging step: only after scores are committed.
         if not args.skip_tagging:
-            tagging_stats = apply_auto_favorites(conn, since=since, dry_run=args.dry_run)
+            tagging_stats = apply_auto_favorites(
+                conn, since=since, dry_run=args.dry_run
+            )
             if not args.dry_run:
                 conn.commit()
-            log.info(f"Marked {tagging_stats['total_tagged']} detections as gallery-eligible "
-                     f"(already eligible from prior run: {tagging_stats['already_eligible']})")
+            log.info(
+                f"Marked {tagging_stats['total_tagged']} detections as gallery-eligible "
+                f"(already eligible from prior run: {tagging_stats['already_eligible']})"
+            )
             for sp, n in tagging_stats["by_species"].items():
                 log.info(f"   {sp}: {n}")
         else:

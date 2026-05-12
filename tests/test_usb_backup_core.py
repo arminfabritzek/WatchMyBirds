@@ -26,7 +26,6 @@ if str(REPO_ROOT) not in sys.path:
 
 from core import usb_backup_core  # noqa: E402
 
-
 # ----------------------------------------------------------------------
 # Fixtures: mimic /mnt/wmb-backup/ in tmp_path
 # ----------------------------------------------------------------------

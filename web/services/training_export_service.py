@@ -370,7 +370,7 @@ def _resolve_frame_integrity(
     pulled_siblings: list[int] = []
     dropped_from_selection: list[int] = []
 
-    for filename, dets in dets_by_frame.items():
+    for _filename, dets in dets_by_frame.items():
         frame_clean = True
         for d in dets:
             species_ok = bool(

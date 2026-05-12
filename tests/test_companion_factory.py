@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import time
-from pathlib import Path
 
 from web.services.companion.factory import (
     build_inference_client,
