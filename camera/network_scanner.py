@@ -313,15 +313,29 @@ class NetworkScanner:
         try:
             cam = self._create_onvif_camera(ip, port, user, password)
             info = cam.devicemgmt.GetDeviceInformation()
+            has_ptz = self._probe_ptz_capability(cam)
             return {
                 "manufacturer": info.Manufacturer,
                 "model": info.Model,
                 "firmware": info.FirmwareVersion,
                 "serial": info.SerialNumber,
+                "has_ptz": has_ptz,
             }
         except Exception as e:
             logger.error(f"GetInfo failed: {e}")
             raise
+
+    @staticmethod
+    def _probe_ptz_capability(cam) -> bool:
+        """Best-effort PTZ-capability check via ONVIF GetCapabilities."""
+        try:
+            caps = cam.devicemgmt.GetCapabilities({"Category": "All"})
+            ptz_caps = getattr(caps, "PTZ", None)
+            xaddr = getattr(ptz_caps, "XAddr", None) if ptz_caps else None
+            return bool(xaddr)
+        except Exception as e:
+            logger.debug("PTZ capability probe failed: %s", e)
+            return False
 
     def get_stream_uri(self, ip, port, user, password, profile_index=0):
         """Get RTSP URI."""

@@ -128,14 +128,20 @@ def get_camera(camera_id: int, include_password: bool = False) -> dict[str, Any]
 
 
 def update_test_result(
-    camera_id: int, success: bool, manufacturer: str = "", model: str = ""
+    camera_id: int,
+    success: bool,
+    manufacturer: str = "",
+    model: str = "",
+    has_ptz: bool | None = None,
 ) -> bool:
     """
     Update test result for a camera.
 
     Delegates to core.onvif_core.
     """
-    return onvif_core.update_test_result(camera_id, success, manufacturer, model)
+    return onvif_core.update_test_result(
+        camera_id, success, manufacturer, model, has_ptz=has_ptz
+    )
 
 
 def test_camera(camera_id: int) -> bool:

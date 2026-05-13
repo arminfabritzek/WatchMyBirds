@@ -132,6 +132,7 @@
                                 aria-hidden="true">{{ orphan.current_species_common[0] }}</span>
                             {% endif %}
                         </div>
+                        {# tile_toolbox emits data-review-viewer-tool="zoom" and data-review-viewer-tool="bbox" for the Review viewer controls. #}
                         {{ tile_toolbox(
                         detection_id=orphan.best_detection_id,
                         filename=orphan.filename,
@@ -142,7 +143,6 @@
                         current_species=orphan.selected_species or orphan.species_key,
                         show_viewer_tools=true,
                         show_boxes=has_bbox,
-                        {# tile_toolbox emits data-review-viewer-tool="zoom" and data-review-viewer-tool="bbox" for the Review viewer controls. #}
                         current_bbox_json={
                             "x": orphan.bbox_x,
                             "y": orphan.bbox_y,

@@ -443,19 +443,25 @@ def test_compute_queue_orphans_handles_invalid_detection_ids():
     assert len(queue_orphans) == 2
 
 
-def test_review_page_renders_workspace_for_orphan_only_state(client):
-    """Regression: orphan-only pages must render the workspace, not the empty state."""
+def test_review_page_renders_workspace_for_detection_orphan_only_state(client):
+    """Detection-orphan-only pages must render the workspace, not the empty state.
+
+    A detection orphan is a real Detection row that is low-score /
+    uncertain / unknown — the operator still needs to act on it
+    (confirm, relabel, trash). It is rendered in the Queue rail when
+    no events exist alongside it.
+    """
     mock_conn = MagicMock()
-    orphan_payload = {
-        "item_kind": "image",
-        "item_id": "img-1",
-        "item_key": "image:img-1",
-        "filename": "orphan-1.jpg",
-        "review_reason": "no_detection",
-        "reason_label": "No detection",
-        "thumb_url": "/thumb/orphan-1.jpg",
-        "current_species_common": "Unknown",
-        "source_image_filename": "orphan-1.jpg",
+    detection_orphan_payload = {
+        "item_kind": "detection",
+        "item_id": "42",
+        "item_key": "detection:42",
+        "filename": "frame-with-detection.jpg",
+        "review_reason": "uncertain",
+        "reason_label": "Uncertain",
+        "thumb_url": "/thumb/frame-with-detection.jpg",
+        "current_species_common": "Kohlmeise",
+        "source_image_filename": "frame-with-detection.jpg",
     }
 
     with (
@@ -468,7 +474,7 @@ def test_review_page_renders_workspace_for_orphan_only_state(client):
             return_value=mock_conn
         )
         mock_db.closing_connection.return_value.__exit__ = MagicMock(return_value=False)
-        mock_load_items.return_value = ([orphan_payload], [])
+        mock_load_items.return_value = ([detection_orphan_payload], [])
         mock_load_events.return_value = ([], [], False, set())
         mock_common_names.return_value = {}
 
@@ -476,7 +482,8 @@ def test_review_page_renders_workspace_for_orphan_only_state(client):
 
     assert response.status_code == 200
     body = response.get_data(as_text=True)
-    # The orphan-only page must render the workspace, not the empty state.
+    # The detection-orphan-only page must render the workspace, not
+    # the empty state.
     assert "Review Queue Empty" not in body
     assert 'id="reviewWorkspace"' in body
     assert 'id="reviewQueueBrowser"' in body
@@ -484,6 +491,71 @@ def test_review_page_renders_workspace_for_orphan_only_state(client):
     assert 'id="reviewEventBrowser"' not in body
     # The default panel type for an orphan-only page is the queue panel.
     assert 'data-panel-type="queue"' in body
+
+
+def test_review_page_strips_image_orphans_from_queue(client):
+    """Image-orphans (frames with no detection at all) must not appear
+    in the Hobby Review queue. They have no bbox, no detection, and
+    nothing for the operator to confirm or correct — the Review desk
+    has no actionable workflow for them.
+
+    They stay in the ``images`` table (the future dual-tier persistence
+    plan will surface them as Layer-1 telemetry), they just do not show
+    up in the Hobby Review UI.
+    """
+    mock_conn = MagicMock()
+    image_orphan_payload = {
+        "item_kind": "image",
+        "item_id": "orphan-img-1.jpg",
+        "item_key": "image:orphan-img-1.jpg",
+        "filename": "orphan-img-1.jpg",
+        "review_reason": "orphan",
+        "reason_label": "No Detection",
+        "thumb_url": "/thumb/orphan-img-1.jpg",
+        "current_species_common": "",
+        "source_image_filename": "orphan-img-1.jpg",
+    }
+
+    with (
+        patch("web.blueprints.review.db_service") as mock_db,
+        patch("web.blueprints.review._load_review_items") as mock_load_items,
+        patch("web.blueprints.review._load_review_events") as mock_load_events,
+        patch("web.blueprints.review.load_common_names") as mock_common_names,
+    ):
+        mock_db.closing_connection.return_value.__enter__ = MagicMock(
+            return_value=mock_conn
+        )
+        mock_db.closing_connection.return_value.__exit__ = MagicMock(return_value=False)
+        mock_load_items.return_value = ([image_orphan_payload], [])
+        mock_load_events.return_value = ([], [], False, set())
+        mock_common_names.return_value = {}
+
+        response = client.get("/admin/review")
+
+    assert response.status_code == 200
+    body = response.get_data(as_text=True)
+    # With only image-orphans loaded, the queue is effectively empty
+    # and the empty-state panel must render.
+    assert "Review Queue Empty" in body
+    # The orphan filename must not leak into the rendered HTML at all.
+    assert "orphan-img-1.jpg" not in body
+
+
+def test_strip_image_orphans_keeps_detection_items():
+    """``_strip_image_orphans`` removes only ``item_kind == 'image'``
+    rows; detection-backed items (the actionable ones) pass through.
+    """
+    from web.blueprints.review import _strip_image_orphans
+
+    orphans = [
+        {"item_kind": "image", "item_id": "img-1.jpg"},
+        {"item_kind": "detection", "item_id": "17"},
+        {"item_kind": "image", "item_id": "img-2.jpg"},
+        {"item_kind": "detection", "item_id": "42"},
+    ]
+    filtered = _strip_image_orphans(orphans)
+
+    assert [item["item_id"] for item in filtered] == ["17", "42"]
 
 
 def test_review_page_hides_queue_rail_while_event_workspace_is_active(client):

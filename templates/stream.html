@@ -15,6 +15,9 @@
             <iframe id="go2rtc-frame" class="stream-embed__frame" src="" allow="autoplay; fullscreen">
             </iframe>
             <img id="video-feed-fallback" class="stream-video stream-embed__fallback" alt="Live Stream" data-fallback-src="/video_feed">
+            {% if can_moderate %}
+            <img id="ptzEditCanvas" class="stream-embed__edit-canvas" alt="Edit overview" hidden>
+            {% endif %}
 
             {# Detection overlay intentionally disabled in public backport build. #}
         </div>
@@ -204,10 +207,63 @@
             })();
         </script>
 
-        {# PTZ Controls (on hover) #}
+        {% if can_moderate %}
+        <div id="ptzBoxOverlay" class="ptz-box-overlay" hidden>
+            <!-- Box buttons get injected here by JS. -->
+        </div>
+        <div id="ptzMinimap" class="ptz-minimap" hidden>
+            <img id="ptzMinimapImg" alt="Home overview" class="ptz-minimap__img">
+            <svg id="ptzMinimapSvg" class="ptz-minimap__svg" preserveAspectRatio="none" viewBox="0 0 100 100"></svg>
+        </div>
+        {% endif %}
 
     </div>
     <div class="stream-actions" aria-label="Stream actions">
+        {% if can_moderate %}
+        <button type="button"
+                class="stream-ptz-pill stream-ptz-pill--toggle"
+                id="streamPtzStatus"
+                data-enabled="false"
+                title="Toggle auto-return"
+                aria-label="Toggle auto-return"
+                aria-pressed="false"
+                hidden>
+            <span class="stream-ptz-pill__dot" aria-hidden="true"></span>
+            <span class="stream-ptz-pill__label">Auto Cam</span>
+            <span class="stream-ptz-pill__value" id="streamPtzStatusValue">off</span>
+        </button>
+        <button type="button"
+                class="stream-ptz-pill stream-ptz-pill--action"
+                id="ptzHomeButton"
+                title="Return camera to overview position"
+                aria-label="Return camera to overview position"
+                hidden>
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" aria-hidden="true">
+                <path d="M3 11.5L12 4l9 7.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+                <path d="M5 10v10h14V10" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+                <path d="M10 20v-5h4v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            <span>Home</span>
+        </button>
+        <button type="button"
+                class="stream-ptz-pill stream-ptz-pill--action"
+                id="ptzSnapshotBtn"
+                title="Fly to overview and freeze a new Mini-Map snapshot"
+                aria-label="Capture overview snapshot"
+                hidden>
+            <span class="spinner-border spinner-border-sm d-none" id="ptzSnapshotSpinner"></span>
+            Save snapshot
+        </button>
+        <button type="button"
+                class="stream-ptz-pill stream-ptz-pill--action"
+                id="ptzEditToggle"
+                title="Show preset overlay boxes"
+                aria-label="Show preset overlay boxes"
+                data-mode="hidden"
+                hidden>
+            Show boxes
+        </button>
+        {% endif %}
         <button
             type="button"
             class="stream-report-action"
@@ -221,6 +277,770 @@
             </svg>
         </button>
     </div>
+
+    {% if can_moderate %}
+    <style>
+        .ptz-box-overlay {
+            position: absolute;
+            inset: 0;
+            pointer-events: none;
+            z-index: 4;
+        }
+        .ptz-box-overlay[hidden] { display: none; }
+        .ptz-box {
+            position: absolute;
+            border: 1.5px solid rgba(255, 255, 255, 0.7);
+            border-radius: 4px;
+            background: transparent;
+            color: rgba(255, 255, 255, 0.92);
+            font-family: inherit;
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
+            pointer-events: auto;
+            transition: border-color 0.15s, background 0.15s;
+            padding: 0;
+        }
+        .ptz-box:hover,
+        .ptz-box:focus-visible {
+            border-color: rgba(255, 200, 60, 0.95);
+            background: rgba(255, 200, 60, 0.12);
+            outline: none;
+        }
+        .ptz-box__label {
+            position: absolute;
+            top: 2px;
+            left: 4px;
+            font-size: 11px;
+            line-height: 1;
+            padding: 2px 5px;
+            background: rgba(0, 0, 0, 0.55);
+            border-radius: 3px;
+        }
+        .ptz-box--edit {
+            border-style: dashed;
+            border-width: 2.5px;
+            border-color: rgba(120, 200, 255, 0.95);
+            background: rgba(120, 200, 255, 0.18);
+            cursor: move;
+            box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.45);
+        }
+        .ptz-box--edit:hover { background: rgba(120, 200, 255, 0.28); }
+        .ptz-box--edit .ptz-box__label {
+            background: rgba(40, 110, 180, 0.95);
+            font-size: 13px;
+            padding: 3px 7px;
+        }
+        .ptz-box__handle {
+            position: absolute;
+            width: 14px;
+            height: 14px;
+            background: rgba(255, 200, 60, 0.95);
+            border: 2px solid #fff;
+            border-radius: 2px;
+            right: -8px;
+            bottom: -8px;
+            cursor: nwse-resize;
+            box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.6);
+        }
+        .stream-embed--ptz-edit { cursor: crosshair; }
+        .stream-embed__edit-canvas {
+            position: absolute;
+            top: 0;
+            left: 50%;
+            transform: translateX(-50%);
+            height: 100%;
+            width: auto;          /* keeps the snapshot's native aspect */
+            max-width: 100%;
+            display: block;
+            background: #000;
+            z-index: 3;
+        }
+        .stream-embed__edit-canvas[hidden] { display: none; }
+        .stream-embed--ptz-edit .stream-embed__frame,
+        .stream-embed--ptz-edit .stream-embed__fallback {
+            visibility: hidden;
+        }
+        /* Black side-bars around the snapshot when it is letterboxed
+           inside the 16:9 stream-embed container. */
+        .stream-embed--ptz-edit::before {
+            content: "";
+            position: absolute;
+            inset: 0;
+            background: #000;
+            z-index: 2;
+        }
+
+        /* Unified pill style for all stream-toolbar PTZ controls
+           (Auto-Cam status, Home, Show boxes, Save snapshot). */
+        .stream-ptz-pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 4px 10px;
+            border: 1px solid var(--color-border, #888);
+            background: var(--color-surface, #fff);
+            color: var(--color-text, #222);
+            border-radius: var(--radius-sm, 6px);
+            font-family: inherit;
+            font-size: 0.85rem;
+            line-height: 1.2;
+            cursor: pointer;
+            transition: background 0.15s, border-color 0.15s;
+        }
+        .stream-ptz-pill[hidden] { display: none; }
+        button.stream-ptz-pill { font-weight: 500; }
+        .stream-ptz-pill:hover:not(:disabled) { background: rgba(0, 0, 0, 0.04); }
+        .stream-ptz-pill:disabled { opacity: 0.6; cursor: progress; }
+        .stream-ptz-pill__label { color: var(--color-text-muted, #777); }
+        .stream-ptz-pill__value {
+            font-family: 'SF Mono', 'Fira Code', monospace;
+            text-transform: capitalize;
+        }
+        /* Active-state visual hint for buttons that flip a mode */
+        .stream-ptz-pill[data-mode="visible"] {
+            border-color: rgba(64, 150, 255, 0.7);
+            color: #1d6ed3;
+        }
+        .stream-ptz-pill[data-mode="edit"] {
+            background: rgba(120, 200, 255, 0.25);
+            border-color: rgba(120, 200, 255, 0.95);
+            color: #0a4480;
+            font-weight: 600;
+        }
+        /* Auto-return on/off toggle with status dot */
+        .stream-ptz-pill__dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--color-border, #999);
+            display: inline-block;
+            flex: 0 0 8px;
+        }
+        .stream-ptz-pill--toggle[data-enabled="true"] {
+            border-color: rgba(40, 170, 90, 0.85);
+            background: rgba(40, 170, 90, 0.10);
+            color: #1c5a36;
+        }
+        .stream-ptz-pill--toggle[data-enabled="true"] .stream-ptz-pill__dot {
+            background: rgba(40, 170, 90, 0.95);
+            box-shadow: 0 0 4px rgba(40, 170, 90, 0.5);
+        }
+        .stream-ptz-pill--toggle[data-enabled="true"][data-returning="true"] {
+            border-color: rgba(255, 165, 40, 0.95);
+            background: rgba(255, 165, 40, 0.12);
+            color: #7a3e00;
+        }
+        .stream-ptz-pill--toggle[data-enabled="true"][data-returning="true"] .stream-ptz-pill__dot {
+            background: rgba(255, 165, 40, 0.95);
+            animation: ptz-pulse 1s infinite ease-in-out;
+        }
+        @keyframes ptz-pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.4; }
+        }
+        .ptz-minimap {
+            position: absolute;
+            left: var(--space-md, 16px);
+            bottom: 60px;
+            width: 22%;
+            min-width: 160px;
+            max-width: 280px;
+            /* No fixed aspect-ratio: container shrinks to the snapshot's
+               native ratio so SVG markers land on the right pixels. */
+            z-index: 5;
+            border: 1.5px solid rgba(255, 255, 255, 0.4);
+            border-radius: 6px;
+            overflow: hidden;
+            box-shadow: 0 3px 12px rgba(0, 0, 0, 0.55);
+            line-height: 0;  /* avoid trailing-baseline gap under the img */
+        }
+        .ptz-minimap[hidden] { display: none; }
+        .ptz-minimap__img { display: block; width: 100%; height: auto; }
+        .ptz-minimap__svg { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+        .ptz-minimap__svg .ptz-marker { pointer-events: auto; }
+    </style>
+
+    <script>
+        (function () {
+            const overlayEl = document.getElementById('ptzBoxOverlay');
+            const statusEl = document.getElementById('streamPtzStatus');
+            const statusValueEl = document.getElementById('streamPtzStatusValue');
+            const editToggleEl = document.getElementById('ptzEditToggle');
+            const homeBtnEl = document.getElementById('ptzHomeButton');
+            const minimapEl = document.getElementById('ptzMinimap');
+            const minimapImgEl = document.getElementById('ptzMinimapImg');
+            const minimapSvgEl = document.getElementById('ptzMinimapSvg');
+            const snapshotBtnEl = document.getElementById('ptzSnapshotBtn');
+            const snapshotSpinnerEl = document.getElementById('ptzSnapshotSpinner');
+            if (!overlayEl || !editToggleEl) return;
+
+            const CSRF = '{{ csrf_token }}';
+            const STATUS_POLL_MS = 15000;
+            const MODE_HIDDEN = 'hidden';
+            const MODE_VISIBLE = 'visible';
+            const MODE_EDIT = 'edit';
+            const MODE_LABELS = {
+                hidden: { text: 'Show boxes', title: 'Show preset overlay boxes' },
+                visible: { text: 'Edit boxes', title: 'Edit preset overlay boxes' },
+                edit: { text: 'Done', title: 'Stop editing' },
+            };
+            let cameraId = null;
+            let presets = [];
+            let mode = MODE_HIDDEN;
+            let overviewPreset = '';
+            let lastPreset = '';
+            let onHome = true;
+            let snapshotUrl = '';
+            let optimisticUntil = 0;       // ignore backend last_preset until this monotonic ms timestamp
+            const OPTIMISTIC_HOLD_MS = 2500;
+            let autoEnabled = false;
+            let returnDeadline = 0;        // performance.now() ms at which the return is due, 0 if no countdown
+            let countdownTimer = null;
+            let lostTimeoutSec = 6;        // refreshed from backend, used to seed countdown after manual goto
+            let manualViewSec = 15;        // refreshed from backend, manual-view deadline after settle
+            let settling = false;          // true while backend is in "settling" state
+            const streamEmbedEl = document.querySelector('.stream-embed');
+            const iframeEl = document.getElementById('go2rtc-frame');
+            const editCanvasEl = document.getElementById('ptzEditCanvas');
+
+            function csrfHeaders(extra) {
+                return Object.assign({ 'X-CSRF-Token': CSRF }, extra || {});
+            }
+
+            function paintStatusPill() {
+                if (!statusEl || !statusValueEl) return;
+                // Pill is visible whenever a PTZ camera is bound, even when
+                // auto-return is off — the operator needs the on/off toggle.
+                if (cameraId === null) {
+                    statusEl.hidden = true;
+                    return;
+                }
+                statusEl.hidden = false;
+                statusEl.dataset.enabled = autoEnabled ? 'true' : 'false';
+                statusEl.setAttribute('aria-pressed', autoEnabled ? 'true' : 'false');
+                if (!autoEnabled) {
+                    statusEl.dataset.returning = 'false';
+                    statusValueEl.textContent = 'off';
+                    return;
+                }
+                if (settling) {
+                    statusEl.dataset.returning = 'true';
+                    statusValueEl.textContent = 'arriving…';
+                    return;
+                }
+                if (returnDeadline > 0) {
+                    const secs = Math.max(0, Math.ceil((returnDeadline - performance.now()) / 1000));
+                    statusEl.dataset.returning = 'true';
+                    statusValueEl.textContent = 'home in ' + secs + 's';
+                } else {
+                    statusEl.dataset.returning = 'false';
+                    statusValueEl.textContent = 'on';
+                }
+            }
+
+            function startCountdownTicker() {
+                if (countdownTimer) return;
+                countdownTimer = window.setInterval(function () {
+                    if (returnDeadline <= 0) {
+                        stopCountdownTicker();
+                        paintStatusPill();
+                        return;
+                    }
+                    if (performance.now() >= returnDeadline) {
+                        // Auto-return has fired locally; reset state and refresh
+                        // from backend on the next poll.
+                        returnDeadline = 0;
+                        lastPreset = overviewPreset;
+                        recomputeHomeState();
+                        applyModeStyles();
+                        renderBoxes();
+                    }
+                    paintStatusPill();
+                }, 500);
+            }
+            function stopCountdownTicker() {
+                if (countdownTimer) {
+                    window.clearInterval(countdownTimer);
+                    countdownTimer = null;
+                }
+            }
+
+            function fetchStatus() {
+                return fetch('/api/v1/ptz/auto/status', { cache: 'no-store' })
+                    .then(function (r) { return r.ok ? r.json() : null; })
+                    .then(function (data) {
+                        const auto = (data && data.auto_ptz) || {};
+                        cameraId = (typeof auto.camera_id === 'number') ? auto.camera_id : null;
+                        // Trust the backend's last_preset only when it is
+                        // non-empty: the controller only fills it when IT
+                        // moved the camera, so a manual goto from this UI
+                        // leaves it blank and we must keep our local value.
+                        const backendPreset = String(auto.last_preset || '');
+                        // Trust backend only after the optimistic-update hold
+                        // window has expired. A user click sets lastPreset
+                        // locally; the next ~2.5 s of polling stay quiet so
+                        // a stale Goto response can't flip the UI back.
+                        if (backendPreset && performance.now() >= optimisticUntil) {
+                            lastPreset = backendPreset;
+                        }
+                        recomputeHomeState();
+                        // Read the persisted operator intent, not the runtime
+                        // controller state — a service that just restarted has
+                        // configured_enabled=true even before the first
+                        // detection frame arrives, so the pill paints "on"
+                        // immediately instead of waiting for a toggle cycle.
+                        autoEnabled = (typeof auto.configured_enabled === 'boolean')
+                            ? auto.configured_enabled
+                            : !!auto.enabled;
+                        settling = auto.state === 'settling';
+                        if (typeof auto.lost_timeout_sec === 'number' && auto.lost_timeout_sec > 0) {
+                            lostTimeoutSec = auto.lost_timeout_sec;
+                        }
+                        if (typeof auto.manual_view_sec === 'number' && auto.manual_view_sec > 0) {
+                            manualViewSec = auto.manual_view_sec;
+                        }
+                        const secsLeft = (typeof auto.seconds_until_return === 'number')
+                            ? auto.seconds_until_return : null;
+                        if (autoEnabled && secsLeft !== null && secsLeft > 0) {
+                            returnDeadline = performance.now() + secsLeft * 1000;
+                            startCountdownTicker();
+                        } else if (settling) {
+                            // Backend will arm the countdown after arrival;
+                            // keep ticker running so the pill repaints.
+                            returnDeadline = 0;
+                            startCountdownTicker();
+                        } else {
+                            returnDeadline = 0;
+                            stopCountdownTicker();
+                        }
+                        paintStatusPill();
+                        editToggleEl.hidden = cameraId === null;
+                        applyModeStyles();
+                        renderBoxes();
+                    })
+                    .catch(function () {
+                        autoEnabled = false;
+                        settling = false;
+                        returnDeadline = 0;
+                        stopCountdownTicker();
+                        paintStatusPill();
+                        editToggleEl.hidden = true;
+                    });
+            }
+
+            function fetchPresets() {
+                if (cameraId === null) { presets = []; overviewPreset = ''; snapshotUrl = ''; return Promise.resolve(); }
+                return fetch('/api/v1/cameras/' + cameraId + '/ptz/presets/metadata?show_all=1', { cache: 'no-store' })
+                    .then(function (r) { return r.ok ? r.json() : { metadata: { presets: [] } }; })
+                    .then(function (data) {
+                        const meta = data.metadata || {};
+                        overviewPreset = String(meta.overview_preset || '');
+                        snapshotUrl = String(meta.overview_snapshot_url || '');
+                        presets = (meta.presets || []).slice(0, 8);
+                        recomputeHomeState();
+                    })
+                    .catch(function () { presets = []; overviewPreset = ''; snapshotUrl = ''; });
+            }
+
+            function clearOverlay() {
+                while (overlayEl.firstChild) overlayEl.removeChild(overlayEl.firstChild);
+            }
+
+            function syncOverlayToCanvas() {
+                if (!overlayEl || !editCanvasEl) return;
+                if (mode !== MODE_EDIT || editCanvasEl.hidden) {
+                    overlayEl.style.left = '';
+                    overlayEl.style.top = '';
+                    overlayEl.style.width = '';
+                    overlayEl.style.height = '';
+                    return;
+                }
+                const parent = streamEmbedEl.getBoundingClientRect();
+                const rect = editCanvasEl.getBoundingClientRect();
+                overlayEl.style.left = (rect.left - parent.left) + 'px';
+                overlayEl.style.top = (rect.top - parent.top) + 'px';
+                overlayEl.style.width = rect.width + 'px';
+                overlayEl.style.height = rect.height + 'px';
+            }
+
+            function applyModeStyles() {
+                const isEdit = mode === MODE_EDIT;
+                if (iframeEl) iframeEl.style.pointerEvents = isEdit ? 'none' : '';
+                if (streamEmbedEl) streamEmbedEl.classList.toggle('stream-embed--ptz-edit', isEdit);
+                if (editCanvasEl) {
+                    if (isEdit && snapshotUrl) {
+                        if (editCanvasEl.dataset.src !== snapshotUrl) {
+                            editCanvasEl.src = snapshotUrl + (snapshotUrl.includes('?') ? '&' : '?') + 'ts=' + Date.now();
+                            editCanvasEl.dataset.src = snapshotUrl;
+                            editCanvasEl.addEventListener('load', syncOverlayToCanvas, { once: true });
+                        }
+                        editCanvasEl.hidden = false;
+                    } else {
+                        editCanvasEl.hidden = true;
+                    }
+                    // Ensure overlay tracks canvas on resize too.
+                    if (isEdit) syncOverlayToCanvas();
+                    else syncOverlayToCanvas(); // resets inline styles
+                }
+                const label = MODE_LABELS[mode];
+                if (label) {
+                    editToggleEl.textContent = label.text;
+                    editToggleEl.title = label.title;
+                    editToggleEl.setAttribute('aria-label', label.title);
+                }
+                editToggleEl.dataset.mode = mode;
+                if (homeBtnEl) {
+                    // "Show boxes" mode always exposes the Home pill as a
+                    // quick-access shortcut. Otherwise the pill only appears
+                    // when the operator needs it (camera off-home).
+                    const showHome = !!overviewPreset
+                        && cameraId !== null
+                        && (mode === MODE_VISIBLE || !onHome)
+                        && mode !== MODE_EDIT;
+                    homeBtnEl.hidden = !showHome;
+                }
+                if (snapshotBtnEl) {
+                    snapshotBtnEl.hidden = !(isEdit && cameraId !== null && !!overviewPreset);
+                }
+                if (minimapEl) {
+                    // Mini-Map appears in "visible" mode whenever a snapshot
+                    // exists, even if no boxes are placed yet — the operator
+                    // can still see the overview and move on to Edit mode.
+                    const showMinimap = mode === MODE_VISIBLE
+                        && !!snapshotUrl
+                        && cameraId !== null;
+                    minimapEl.hidden = !showMinimap;
+                }
+            }
+
+            function hasAnyPresetWithBox() {
+                return presets.some(function (p) {
+                    const m = p.metadata || {};
+                    return !!(m.box_w_pct && m.box_h_pct);
+                });
+            }
+
+            function renderMinimap() {
+                if (!minimapEl || !minimapSvgEl || !minimapImgEl) return;
+                if (minimapEl.hidden) return;
+                if (snapshotUrl && minimapImgEl.dataset.src !== snapshotUrl) {
+                    minimapImgEl.src = snapshotUrl + (snapshotUrl.includes('?') ? '&' : '?') + 'ts=' + Date.now();
+                    minimapImgEl.dataset.src = snapshotUrl;
+                }
+                while (minimapSvgEl.firstChild) minimapSvgEl.removeChild(minimapSvgEl.firstChild);
+                presets.forEach(function (preset, idx) {
+                    if (overviewPreset && preset.token === overviewPreset) return;
+                    const meta = preset.metadata || {};
+                    if (!meta.box_w_pct || !meta.box_h_pct) return;
+                    const w = meta.box_w_pct * 100;
+                    const h = meta.box_h_pct * 100;
+                    const cx = (meta.center_x_pct || 0.5) * 100;
+                    const cy = (meta.center_y_pct || 0.5) * 100;
+                    const x = Math.max(0, cx - w / 2);
+                    const y = Math.max(0, cy - h / 2);
+                    const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+                    g.setAttribute('class', 'ptz-marker');
+                    g.addEventListener('click', function () { gotoPreset(preset.token); });
+                    const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+                    rect.setAttribute('x', String(x));
+                    rect.setAttribute('y', String(y));
+                    rect.setAttribute('width', String(w));
+                    rect.setAttribute('height', String(h));
+                    rect.setAttribute('fill', 'rgba(255,255,255,0.05)');
+                    rect.setAttribute('stroke', 'rgba(255,255,255,0.85)');
+                    rect.setAttribute('stroke-width', '0.7');
+                    rect.style.cursor = 'pointer';
+                    g.appendChild(rect);
+                    const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+                    text.setAttribute('x', String(cx));
+                    text.setAttribute('y', String(cy + 1.6));
+                    text.setAttribute('text-anchor', 'middle');
+                    text.setAttribute('fill', '#fff');
+                    text.setAttribute('font-size', '5');
+                    text.setAttribute('font-weight', '700');
+                    text.setAttribute('paint-order', 'stroke');
+                    text.setAttribute('stroke', 'rgba(0,0,0,0.7)');
+                    text.setAttribute('stroke-width', '0.5');
+                    text.textContent = String(idx + 1);
+                    text.style.pointerEvents = 'none';
+                    g.appendChild(text);
+                    minimapSvgEl.appendChild(g);
+                });
+            }
+
+            function recomputeHomeState() {
+                onHome = !overviewPreset || !lastPreset || lastPreset === overviewPreset;
+            }
+
+            function renderBoxes() {
+                clearOverlay();
+                if (mode === MODE_HIDDEN) {
+                    overlayEl.hidden = true;
+                    renderMinimap();
+                    return;
+                }
+                const isEdit = mode === MODE_EDIT;
+                // In visible mode, the Mini-Map (when present) replaces the
+                // live-stream overlay so the video stays clean. Without a
+                // snapshot the overlay is the fallback. Off-home behaviour
+                // still hides the overlay in favour of the Home button.
+                if (mode === MODE_VISIBLE) {
+                    if (!onHome || (snapshotUrl && hasAnyPresetWithBox())) {
+                        overlayEl.hidden = true;
+                        renderMinimap();
+                        return;
+                    }
+                }
+                if (!presets.length) {
+                    overlayEl.hidden = !isEdit;
+                    renderMinimap();
+                    return;
+                }
+                overlayEl.hidden = false;
+                // Render large boxes first so smaller ones sit on top and stay
+                // clickable when a bigger box visually contains them.
+                const renderOrder = presets
+                    .map(function (p, i) { return { p: p, idx: i }; })
+                    .sort(function (a, b) {
+                        const ma = a.p.metadata || {};
+                        const mb = b.p.metadata || {};
+                        const areaA = (ma.box_w_pct || 0.18) * (ma.box_h_pct || 0.24);
+                        const areaB = (mb.box_w_pct || 0.18) * (mb.box_h_pct || 0.24);
+                        return areaB - areaA;
+                    });
+                renderOrder.forEach(function (entry) {
+                    const preset = entry.p;
+                    const idx = entry.idx;
+                    if (overviewPreset && preset.token === overviewPreset) return;
+                    const meta = preset.metadata || {};
+                    const hasBox = !!(meta.box_w_pct && meta.box_h_pct);
+                    if (!hasBox && !isEdit) return;
+
+                    const w = (meta.box_w_pct || 0.18) * 100;
+                    const h = (meta.box_h_pct || 0.24) * 100;
+                    const cx = (meta.center_x_pct || ((idx + 1) / 9)) * 100;
+                    const cy = (meta.center_y_pct || 0.5) * 100;
+                    const left = Math.max(0, cx - w / 2);
+                    const top = Math.max(0, cy - h / 2);
+
+                    const node = document.createElement(isEdit ? 'div' : 'button');
+                    if (!isEdit) node.type = 'button';
+                    node.className = 'ptz-box' + (isEdit ? ' ptz-box--edit' : '');
+                    node.dataset.token = preset.token;
+                    node.dataset.idx = String(idx);
+                    node.style.left = left + '%';
+                    node.style.top = top + '%';
+                    node.style.width = w + '%';
+                    node.style.height = h + '%';
+                    node.setAttribute('aria-label', 'Preset ' + (idx + 1) + ' (' + preset.token + ')');
+                    node.title = preset.name + ' (' + preset.token + ')';
+
+                    const label = document.createElement('span');
+                    label.className = 'ptz-box__label';
+                    label.textContent = String(idx + 1);
+                    node.appendChild(label);
+
+                    if (!isEdit) {
+                        node.addEventListener('click', function () { gotoPreset(preset.token); });
+                    } else {
+                        attachEditHandlers(node, preset, idx);
+                        const handle = document.createElement('span');
+                        handle.className = 'ptz-box__handle';
+                        node.appendChild(handle);
+                    }
+
+                    overlayEl.appendChild(node);
+                });
+                renderMinimap();
+            }
+
+            function gotoPreset(token) {
+                if (cameraId === null) return;
+                lastPreset = token;
+                optimisticUntil = performance.now() + OPTIMISTIC_HOLD_MS;
+                recomputeHomeState();
+                // Mirror the backend's notify_external_goto behaviour locally:
+                // when auto-return is on and we just sent the camera off the
+                // overview spot, seed the countdown so the operator sees the
+                // timer start immediately instead of waiting for the next poll.
+                if (autoEnabled && overviewPreset && token !== overviewPreset) {
+                    // Optimistic: enter the settle UI immediately. The backend
+                    // settle-worker runs wait_until_idle() and only then arms
+                    // the manual_view_sec countdown, so we stay in "arriving"
+                    // until the next poll picks up the real deadline.
+                    settling = true;
+                    returnDeadline = 0;
+                    startCountdownTicker();
+                } else if (overviewPreset && token === overviewPreset) {
+                    settling = false;
+                    returnDeadline = 0;
+                    stopCountdownTicker();
+                }
+                paintStatusPill();
+                applyModeStyles();
+                renderBoxes();
+                fetch('/api/v1/cameras/' + cameraId + '/ptz/goto', {
+                    method: 'POST',
+                    headers: csrfHeaders({ 'Content-Type': 'application/json' }),
+                    body: JSON.stringify({ preset_token: token })
+                }).catch(function () { /* silent */ });
+            }
+
+            if (homeBtnEl) {
+                homeBtnEl.addEventListener('click', function () {
+                    if (!overviewPreset) return;
+                    gotoPreset(overviewPreset);
+                });
+            }
+
+            if (statusEl) {
+                statusEl.addEventListener('click', function () {
+                    if (cameraId === null) return;
+                    const next = !autoEnabled;
+                    // Optimistic local flip so the operator sees the change
+                    // instantly; the backend confirms or corrects on next poll.
+                    autoEnabled = next;
+                    if (!autoEnabled) {
+                        returnDeadline = 0;
+                        stopCountdownTicker();
+                    }
+                    paintStatusPill();
+                    fetch('/api/v1/cameras/' + cameraId + '/ptz/auto/enabled', {
+                        method: 'PATCH',
+                        headers: csrfHeaders({ 'Content-Type': 'application/json' }),
+                        body: JSON.stringify({ enabled: next }),
+                    })
+                        .then(function (r) { return r.json(); })
+                        .then(function (data) {
+                            if (!data || data.status !== 'success') {
+                                autoEnabled = !next;
+                                paintStatusPill();
+                            }
+                        })
+                        .catch(function () {
+                            autoEnabled = !next;
+                            paintStatusPill();
+                        });
+                });
+            }
+
+            if (snapshotBtnEl) {
+                snapshotBtnEl.addEventListener('click', function () {
+                    if (cameraId === null) return;
+                    snapshotBtnEl.disabled = true;
+                    if (snapshotSpinnerEl) snapshotSpinnerEl.classList.remove('d-none');
+                    fetch('/api/v1/cameras/' + cameraId + '/ptz/capture-overview-snapshot', {
+                        method: 'POST',
+                        headers: csrfHeaders(),
+                    })
+                        .then(function (r) { return r.json().then(function (data) { return { ok: r.ok, data: data }; }); })
+                        .then(function (res) {
+                            if (!res.ok || res.data.status !== 'success') {
+                                throw new Error((res.data && res.data.message) || 'snapshot failed');
+                            }
+                            return fetchPresets().then(function () {
+                                applyModeStyles();
+                                renderBoxes();
+                            });
+                        })
+                        .catch(function (err) {
+                            console.warn('PTZ snapshot capture failed:', err);
+                        })
+                        .finally(function () {
+                            snapshotBtnEl.disabled = false;
+                            if (snapshotSpinnerEl) snapshotSpinnerEl.classList.add('d-none');
+                        });
+                });
+            }
+
+            function attachEditHandlers(node, preset, idx) {
+                let drag = null;
+
+                node.addEventListener('pointerdown', function (ev) {
+                    if (ev.target.classList.contains('ptz-box__handle')) {
+                        drag = { mode: 'resize', startX: ev.clientX, startY: ev.clientY,
+                                 startW: node.offsetWidth, startH: node.offsetHeight };
+                    } else {
+                        drag = { mode: 'move', startX: ev.clientX, startY: ev.clientY,
+                                 startLeft: node.offsetLeft, startTop: node.offsetTop };
+                    }
+                    node.setPointerCapture(ev.pointerId);
+                    ev.preventDefault();
+                });
+                node.addEventListener('pointermove', function (ev) {
+                    if (!drag) return;
+                    const parent = node.parentElement.getBoundingClientRect();
+                    const dx = ev.clientX - drag.startX;
+                    const dy = ev.clientY - drag.startY;
+                    if (drag.mode === 'move') {
+                        const newLeft = Math.max(0, Math.min(parent.width - node.offsetWidth, drag.startLeft + dx));
+                        const newTop = Math.max(0, Math.min(parent.height - node.offsetHeight, drag.startTop + dy));
+                        node.style.left = (newLeft / parent.width * 100) + '%';
+                        node.style.top = (newTop / parent.height * 100) + '%';
+                    } else {
+                        const newW = Math.max(40, Math.min(parent.width - node.offsetLeft, drag.startW + dx));
+                        const newH = Math.max(40, Math.min(parent.height - node.offsetTop, drag.startH + dy));
+                        node.style.width = (newW / parent.width * 100) + '%';
+                        node.style.height = (newH / parent.height * 100) + '%';
+                    }
+                });
+                node.addEventListener('pointerup', function (ev) {
+                    if (!drag) return;
+                    node.releasePointerCapture(ev.pointerId);
+                    drag = null;
+                    const parent = node.parentElement.getBoundingClientRect();
+                    const w_pct = node.offsetWidth / parent.width;
+                    const h_pct = node.offsetHeight / parent.height;
+                    const cx_pct = (node.offsetLeft + node.offsetWidth / 2) / parent.width;
+                    const cy_pct = (node.offsetTop + node.offsetHeight / 2) / parent.height;
+                    persistBox(preset.token, preset.name, {
+                        center_x_pct: cx_pct, center_y_pct: cy_pct,
+                        box_w_pct: w_pct, box_h_pct: h_pct,
+                        label: String(idx + 1),
+                    });
+                });
+            }
+
+            function persistBox(token, name, meta) {
+                fetch('/api/v1/cameras/' + cameraId + '/ptz/presets/' + encodeURIComponent(token) + '/metadata', {
+                    method: 'PUT',
+                    headers: csrfHeaders({ 'Content-Type': 'application/json' }),
+                    body: JSON.stringify(meta)
+                })
+                    .then(function (r) { return r.json(); })
+                    .then(function (data) {
+                        if (data && data.preset && data.preset.metadata) {
+                            const p = presets.find(function (x) { return x.token === token; });
+                            if (p) p.metadata = data.preset.metadata;
+                        }
+                    })
+                    .catch(function () { /* silent */ });
+            }
+
+            editToggleEl.addEventListener('click', function () {
+                if (mode === MODE_HIDDEN) mode = MODE_VISIBLE;
+                else if (mode === MODE_VISIBLE) mode = MODE_EDIT;
+                else mode = MODE_HIDDEN;
+                applyModeStyles();
+                renderBoxes();
+            });
+
+            // Boot: poll status + load presets, then redraw.
+            function refresh() {
+                fetchStatus().then(fetchPresets).then(function () {
+                    applyModeStyles();
+                    renderBoxes();
+                });
+            }
+            refresh();
+            window.setInterval(fetchStatus, STATUS_POLL_MS);
+            window.addEventListener('resize', function () {
+                if (mode === MODE_EDIT) syncOverlayToCanvas();
+            });
+        })();
+    </script>
+    {% endif %}
 
 
     {# Detection overlay intentionally disabled in public backport build. #}

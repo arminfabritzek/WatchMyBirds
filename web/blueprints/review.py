@@ -1705,16 +1705,31 @@ def _refresh_review_image_visibility(
     return REVIEW_STATUS_UNTAGGED
 
 
+def _strip_image_orphans(orphans: list[dict]) -> list[dict]:
+    """Drop ``item_kind == "image"`` rows from the review payload.
+
+    Image-orphans are frames the OD backbone admitted at the frame gate
+    but whose individual detections were all dropped by Filters A / A2
+    in ``detection_manager._processing_loop``. They have no detection
+    row, no bbox, and nothing for the operator to confirm or correct —
+    the Review desk has no actionable workflow for them. They stay in
+    the ``images`` table (the future dual-tier persistence plan will
+    surface them as Layer-1 telemetry), they just do not show up in the
+    Hobby Review UI.
+    """
+    return [orphan for orphan in orphans if orphan.get("item_kind") != "image"]
+
+
 def _compute_queue_orphans(
     orphans: list[dict],
     review_events: list[dict],
 ) -> list[dict]:
     """Filter the orphans list down to items the event rail does not cover.
 
-    Orphan-image rows (``item_kind == "image"``) and any leftovers the
-    event builder could not group still need the Queue rail. Detection
-    orphans that already belong to a rendered event are removed here so
-    the Queue rail and Event rail never duplicate the same detection.
+    Detection orphans that already belong to a rendered event are
+    removed here so the Queue rail and Event rail never duplicate the
+    same detection. Image-orphans were already stripped upstream by
+    ``_strip_image_orphans``.
     """
     event_detection_ids: set[int] = set()
     for event_payload in review_events:
@@ -1785,6 +1800,7 @@ def review_page():
             common_names=common_names,
         )
 
+    orphans = _strip_image_orphans(orphans)
     queue_orphans = _compute_queue_orphans(orphans, review_events)
 
     # Stamp orphans with the same workspace-scoped colour slots already

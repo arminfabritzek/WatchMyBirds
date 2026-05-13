@@ -38,6 +38,7 @@ from web.services import (
     backup_restore_service,
     db_service,
     onvif_service,
+    ptz_service,
 )
 from web.species_thumbnails import get_species_thumbnail_map
 
@@ -1912,6 +1913,289 @@ def cameras_use(camera_id: int):
         return jsonify({"status": "success", "message": "Video source updated"})
     except Exception as exc:
         return _error_response("Camera use error", exc)
+
+
+# =============================================================================
+# PTZ Control
+# =============================================================================
+
+
+@api_v1.route("/cameras/<int:camera_id>/ptz/config", methods=["GET"])
+@login_required
+def camera_ptz_config_get(camera_id: int):
+    """Return stored auto-PTZ config for a saved camera."""
+    try:
+        config_data = ptz_service.get_config(camera_id)
+        if config_data is None:
+            return jsonify({"status": "error", "message": "Camera not found"}), 404
+        return jsonify({"status": "success", "config": config_data})
+    except Exception as exc:
+        return _error_response("PTZ config read error", exc)
+
+
+@api_v1.route("/cameras/<int:camera_id>/ptz/config", methods=["PUT"])
+@login_required
+def camera_ptz_config_put(camera_id: int):
+    """Update stored auto-PTZ config for a saved camera."""
+    try:
+        data = request.get_json() or {}
+        config_data = ptz_service.update_config(camera_id, data)
+        if config_data is None:
+            return jsonify({"status": "error", "message": "Camera not found"}), 404
+        return jsonify({"status": "success", "config": config_data})
+    except Exception as exc:
+        return _error_response("PTZ config update error", exc)
+
+
+@api_v1.route("/cameras/<int:camera_id>/ptz/presets", methods=["GET"])
+@login_required
+def camera_ptz_presets(camera_id: int):
+    """List PTZ presets reported by the camera."""
+    try:
+        presets = ptz_service.list_presets(camera_id)
+        return jsonify({"status": "success", "presets": presets})
+    except Exception as exc:
+        return _error_response("PTZ preset list error", exc)
+
+
+@api_v1.route("/cameras/<int:camera_id>/ptz/goto", methods=["POST"])
+@login_required
+def camera_ptz_goto(camera_id: int):
+    """Move a camera to a preset token."""
+    try:
+        data = request.get_json() or {}
+        preset_token = str(data.get("preset_token") or "").strip()
+        if not preset_token:
+            return jsonify(
+                {"status": "error", "message": "preset_token is required"}
+            ), 400
+        ptz_service.goto_preset(camera_id, preset_token)
+        try:
+            dm = getattr(api_v1, "detection_manager", None)
+            controller = getattr(dm, "auto_ptz_controller", None) if dm else None
+            if controller:
+                controller.notify_external_goto(preset_token)
+        except Exception:
+            logger.exception("Failed to notify Auto-PTZ controller of manual goto")
+        return jsonify({"status": "success"})
+    except Exception as exc:
+        return _error_response("PTZ goto error", exc)
+
+
+@api_v1.route("/cameras/<int:camera_id>/ptz/move", methods=["POST"])
+@login_required
+def camera_ptz_move(camera_id: int):
+    """Send a bounded continuous PTZ move command."""
+    try:
+        data = request.get_json() or {}
+        ptz_service.move(
+            camera_id,
+            pan=float(data.get("pan") or 0.0),
+            tilt=float(data.get("tilt") or 0.0),
+            zoom=float(data.get("zoom") or 0.0),
+            duration_ms=int(data.get("duration_ms") or 250),
+        )
+        return jsonify({"status": "success"})
+    except Exception as exc:
+        return _error_response("PTZ move error", exc)
+
+
+@api_v1.route("/cameras/<int:camera_id>/ptz/stop", methods=["POST"])
+@login_required
+def camera_ptz_stop(camera_id: int):
+    """Stop PTZ movement."""
+    try:
+        ptz_service.stop(camera_id)
+        return jsonify({"status": "success"})
+    except Exception as exc:
+        return _error_response("PTZ stop error", exc)
+
+
+@api_v1.route("/cameras/<int:camera_id>/ptz/presets/metadata", methods=["GET"])
+@login_required
+def camera_ptz_presets_metadata(camera_id: int):
+    """Return PTZ preset list + Mini-Map snapshot URL."""
+    try:
+        config_data = ptz_service.get_config(camera_id)
+        if config_data is None:
+            return jsonify({"status": "error", "message": "Camera not found"}), 404
+        show_all = request.args.get("show_all", "").lower() in ("1", "true", "yes")
+        try:
+            presets = ptz_service.list_presets_with_metadata(
+                camera_id, show_all=show_all
+            )
+        except Exception as exc:
+            logger.warning("PTZ presets list failed: %s", exc)
+            presets = []
+        snapshot_rel = (config_data.get("overview_snapshot_path") or "").strip()
+        snapshot_url = (
+            f"/uploads/{snapshot_rel}"
+            if snapshot_rel.startswith("derivatives/")
+            else ""
+        )
+        return jsonify(
+            {
+                "status": "success",
+                "metadata": {
+                    "overview_preset": config_data.get("overview_preset", ""),
+                    "overview_snapshot_url": snapshot_url,
+                    "presets": presets,
+                },
+            }
+        )
+    except Exception as exc:
+        return _error_response("PTZ metadata read error", exc)
+
+
+@api_v1.route("/cameras/<int:camera_id>/ptz/auto/enabled", methods=["PATCH"])
+@login_required
+def camera_ptz_set_auto_enabled(camera_id: int):
+    """Toggle the auto-PTZ enabled flag without touching other config."""
+    try:
+        data = request.get_json(silent=True) or {}
+        if "enabled" not in data:
+            return jsonify(
+                {"status": "error", "message": "enabled field is required"}
+            ), 400
+        result = ptz_service.set_auto_enabled(camera_id, bool(data.get("enabled")))
+        if result is None:
+            return jsonify({"status": "error", "message": "Camera not found"}), 404
+        return jsonify({"status": "success", "config": result})
+    except Exception as exc:
+        return _error_response("PTZ auto-enable toggle error", exc)
+
+
+@api_v1.route(
+    "/cameras/<int:camera_id>/ptz/capture-overview-snapshot", methods=["POST"]
+)
+@login_required
+def camera_ptz_capture_overview_snapshot(camera_id: int):
+    """Fly to overview, fetch ONVIF snapshot, persist as Mini-Map background."""
+    try:
+        result = ptz_service.capture_overview_snapshot(camera_id)
+        if result is None:
+            return jsonify({"status": "error", "message": "Camera not found"}), 404
+        return jsonify({"status": "success", "snapshot": result})
+    except ValueError as exc:
+        return jsonify({"status": "error", "message": str(exc)}), 400
+    except Exception as exc:
+        return _error_response("PTZ snapshot capture error", exc)
+
+
+@api_v1.route("/cameras/<int:camera_id>/ptz/presets", methods=["POST"])
+@login_required
+def camera_ptz_set_preset(camera_id: int):
+    """SetPreset at the current camera position (optional click metadata)."""
+    try:
+        data = request.get_json(silent=True) or {}
+        name = str(data.get("name") or "").strip()
+        if not name:
+            return jsonify({"status": "error", "message": "name is required"}), 400
+        result = ptz_service.set_preset_at_current_position(
+            camera_id,
+            name,
+            preset_token=(
+                str(data.get("preset_token")).strip()
+                if data.get("preset_token")
+                else None
+            ),
+            center_x_pct=(
+                float(data["center_x_pct"]) if "center_x_pct" in data else None
+            ),
+            center_y_pct=(
+                float(data["center_y_pct"]) if "center_y_pct" in data else None
+            ),
+            box_w_pct=(float(data["box_w_pct"]) if "box_w_pct" in data else None),
+            box_h_pct=(float(data["box_h_pct"]) if "box_h_pct" in data else None),
+            label=(str(data["label"]) if "label" in data else None),
+        )
+        if result is None:
+            return jsonify({"status": "error", "message": "Camera not found"}), 404
+        return jsonify({"status": "success", "preset": result})
+    except Exception as exc:
+        return _error_response("PTZ set preset error", exc)
+
+
+@api_v1.route("/cameras/<int:camera_id>/ptz/presets/<preset_token>", methods=["DELETE"])
+@login_required
+def camera_ptz_remove_preset(camera_id: int, preset_token: str):
+    """RemovePreset on the camera and drop the stored metadata."""
+    try:
+        ok = ptz_service.remove_preset(camera_id, preset_token)
+        if not ok:
+            return jsonify({"status": "error", "message": "Camera not found"}), 404
+        return jsonify({"status": "success"})
+    except Exception as exc:
+        return _error_response("PTZ remove preset error", exc)
+
+
+@api_v1.route(
+    "/cameras/<int:camera_id>/ptz/presets/<preset_token>/metadata",
+    methods=["PUT"],
+)
+@login_required
+def camera_ptz_update_preset_metadata(camera_id: int, preset_token: str):
+    """Update overlay-box metadata for a preset without moving the camera."""
+    try:
+        data = request.get_json(silent=True) or {}
+        result = ptz_service.update_preset_metadata_only(
+            camera_id,
+            preset_token,
+            center_x_pct=(
+                float(data["center_x_pct"]) if "center_x_pct" in data else None
+            ),
+            center_y_pct=(
+                float(data["center_y_pct"]) if "center_y_pct" in data else None
+            ),
+            box_w_pct=(float(data["box_w_pct"]) if "box_w_pct" in data else None),
+            box_h_pct=(float(data["box_h_pct"]) if "box_h_pct" in data else None),
+            label=(str(data["label"]) if "label" in data else None),
+        )
+        if result is None:
+            return jsonify({"status": "error", "message": "Camera not found"}), 404
+        return jsonify({"status": "success", "preset": result})
+    except Exception as exc:
+        return _error_response("PTZ metadata update error", exc)
+
+
+@api_v1.route("/ptz/auto/status", methods=["GET"])
+@login_required
+def ptz_auto_status():
+    """Return runtime auto-PTZ state from the detection manager."""
+    try:
+        dm = api_v1.detection_manager
+        controller = getattr(dm, "auto_ptz_controller", None)
+        if not controller:
+            return jsonify(
+                {
+                    "status": "success",
+                    "auto_ptz": {"enabled": False, "state": "idle"},
+                }
+            )
+        return jsonify({"status": "success", "auto_ptz": controller.status()})
+    except Exception as exc:
+        return _error_response("PTZ status error", exc)
+
+
+@api_v1.route("/ptz/auto/return-overview", methods=["POST"])
+@login_required
+def ptz_auto_return_overview():
+    """Ask the runtime controller to return to the overview preset."""
+    try:
+        dm = api_v1.detection_manager
+        controller = getattr(dm, "auto_ptz_controller", None)
+        if not controller:
+            return jsonify(
+                {"status": "error", "message": "Auto PTZ controller unavailable"}
+            ), 404
+        ok = controller.return_to_overview()
+        if not ok:
+            return jsonify(
+                {"status": "error", "message": "Overview preset is not configured"}
+            ), 400
+        return jsonify({"status": "success"})
+    except Exception as exc:
+        return _error_response("PTZ overview return error", exc)
 
 
 # =============================================================================

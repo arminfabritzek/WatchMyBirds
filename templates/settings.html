@@ -151,6 +151,106 @@
         </div>
     </div>
 </div>
+
+<!-- Auto PTZ Modal -->
+<div class="modal fade wm-modal wm-modal--form" id="ptzConfigModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-centered wm-modal__dialog">
+        <div class="modal-content wm-modal__content">
+            <div class="modal-header wm-modal__header">
+                <div class="wm-modal__title">
+                    <span class="wm-modal__title-text">Auto PTZ</span>
+                    <span class="wm-modal__title-sub" id="ptzConfigSubtitle">Preset and hybrid tracking</span>
+                </div>
+                <button type="button" class="btn-close wm-modal__close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="wm-modal__body">
+                <div class="wm-modal__fields">
+                    <input type="hidden" id="ptzCamId">
+                    <div class="form-check form-switch mb-3">
+                        <input class="form-check-input" type="checkbox" role="switch" id="ptzEnabled">
+                        <label class="form-check-label" for="ptzEnabled">Enable auto PTZ</label>
+                    </div>
+                    <div class="row g-3 mb-3">
+                        <div class="col-md-6">
+                            <label for="ptzMode" class="form-label">Mode</label>
+                            <select class="form-select" id="ptzMode">
+                                <option value="preset">Preset</option>
+                                <option value="hybrid">Hybrid</option>
+                            </select>
+                        </div>
+                        <div class="col-md-6">
+                            <label for="ptzOverviewPreset" class="form-label">Overview preset</label>
+                            <select class="form-select" id="ptzOverviewPreset"></select>
+                        </div>
+                    </div>
+                    <div class="row g-3 mb-3">
+                        <div class="col-md-4">
+                            <label for="ptzLeftPreset" class="form-label">Left zone</label>
+                            <div class="input-group">
+                                <select class="form-select" id="ptzLeftPreset"></select>
+                                <button type="button" class="btn btn-outline-secondary" onclick="testPtzPreset('ptzLeftPreset')" title="Move to the left-zone preset" aria-label="Test left-zone preset">Test</button>
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <label for="ptzCenterPreset" class="form-label">Center zone</label>
+                            <div class="input-group">
+                                <select class="form-select" id="ptzCenterPreset"></select>
+                                <button type="button" class="btn btn-outline-secondary" onclick="testPtzPreset('ptzCenterPreset')" title="Move to the center-zone preset" aria-label="Test center-zone preset">Test</button>
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <label for="ptzRightPreset" class="form-label">Right zone</label>
+                            <div class="input-group">
+                                <select class="form-select" id="ptzRightPreset"></select>
+                                <button type="button" class="btn btn-outline-secondary" onclick="testPtzPreset('ptzRightPreset')" title="Move to the right-zone preset" aria-label="Test right-zone preset">Test</button>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="row g-3 mb-3">
+                        <div class="col-md-4">
+                            <label for="ptzAcquireFrames" class="form-label">Acquire frames</label>
+                            <input type="number" min="1" max="10" class="form-control" id="ptzAcquireFrames">
+                        </div>
+                        <div class="col-md-4">
+                            <label for="ptzLostTimeout" class="form-label">Lost timeout (s)</label>
+                            <input type="number" min="1" max="60" step="0.5" class="form-control" id="ptzLostTimeout">
+                        </div>
+                        <div class="col-md-4">
+                            <label for="ptzCooldown" class="form-label">Cooldown (ms)</label>
+                            <input type="number" min="100" max="10000" step="50" class="form-control" id="ptzCooldown">
+                        </div>
+                    </div>
+                    <div class="row g-3">
+                        <div class="col-md-4">
+                            <label for="ptzDeadband" class="form-label">Deadband</label>
+                            <input type="number" min="0.02" max="0.4" step="0.01" class="form-control" id="ptzDeadband">
+                        </div>
+                        <div class="col-md-4">
+                            <label for="ptzMaxSpeed" class="form-label">Move speed</label>
+                            <input type="number" min="0.05" max="1" step="0.05" class="form-control" id="ptzMaxSpeed">
+                        </div>
+                        <div class="col-md-4">
+                            <label for="ptzMoveDuration" class="form-label">Move duration (ms)</label>
+                            <input type="number" min="50" max="2000" step="50" class="form-control" id="ptzMoveDuration">
+                        </div>
+                    </div>
+                    <div class="alert alert-danger py-2 mt-3 mb-0 d-none" id="ptzConfigError"></div>
+                    <div class="alert alert-success py-2 mt-3 mb-0 d-none" id="ptzConfigSuccess"></div>
+                </div>
+            </div>
+            <div class="wm-modal__action wm-modal__action--form">
+                <div class="wm-modal__actions">
+                    <button type="button" class="btn btn--secondary" onclick="testPtzPreset('ptzOverviewPreset')" title="Move to the overview preset" aria-label="Move to overview preset">Test Overview</button>
+                    <button type="button" class="btn btn--secondary" onclick="returnPtzOverview()" title="Ask auto PTZ to return to overview" aria-label="Return auto PTZ to overview">Return Overview</button>
+                    <button type="button" class="btn btn--primary" onclick="savePtzConfig()" title="Save auto PTZ settings" aria-label="Save auto PTZ settings">
+                        <span id="ptzConfigSpinner" class="spinner-border spinner-border-sm d-none"></span>
+                        Save Auto PTZ
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
 {% endblock %}
 
 {% block scripts %}
@@ -270,6 +370,20 @@
                             : cam.last_test_success === false
                                 ? '<span class="badge bg-danger">✗ Failed</span>'
                                 : '<span class="badge bg-secondary">Not Tested</span>';
+                        const ptzMode = cam.ptz && cam.ptz.mode ? String(cam.ptz.mode) : 'preset';
+                        const ptzBadge = cam.ptz && cam.ptz.enabled
+                            ? `<span class="badge bg-info">PTZ ${ptzMode}</span>`
+                            : cam.has_ptz === true
+                                ? '<span class="badge bg-secondary">PTZ Off</span>'
+                                : cam.has_ptz === false
+                                    ? '<span class="badge bg-secondary">No PTZ</span>'
+                                    : '<span class="badge bg-secondary">PTZ Unknown</span>';
+                        const ptzButtonDisabled = cam.has_ptz === false ? 'disabled' : '';
+                        const ptzButtonTitle = cam.has_ptz === false
+                            ? 'Camera does not support PTZ'
+                            : (cam.has_ptz === undefined || cam.has_ptz === null)
+                                ? 'Run Test first to detect PTZ support'
+                                : 'Configure auto PTZ';
                         const item = document.createElement('div');
                         item.className = 'list-group-item d-flex justify-content-between align-items-center';
                         item.innerHTML = `
@@ -280,12 +394,14 @@
                             </div>
                             <div class="d-flex align-items-center gap-2">
                                 ${statusBadge}
+                                ${ptzBadge}
                                 <div class="btn-group btn-group-sm">
                                     <button type="button" class="btn btn-outline-primary" onclick="testCamera(${cam.id})" title="Test Connection">
                                         <span id="testSpinner${cam.id}" class="spinner-border spinner-border-sm d-none"></span>
                                         🔌 Test
                                     </button>
                                     <button type="button" class="btn btn-outline-success" onclick="useCamera(${cam.id})" title="Activate this camera as video source">📹 Use</button>
+                                    <button type="button" class="btn btn--secondary" onclick="openPtzConfig(${cam.id})" title="${ptzButtonTitle}" aria-label="Configure auto PTZ" ${ptzButtonDisabled}>PTZ</button>
                                     <button type="button" class="btn btn-outline-secondary" onclick="editCamera(${cam.id})" title="Edit camera settings">✏️</button>
                                     <button type="button" class="btn btn-outline-danger" onclick="deleteCamera(${cam.id})" title="Delete camera">🗑️</button>
                                 </div>
@@ -401,6 +517,172 @@
                 else { errorDiv.innerText = data.message || 'Failed to update camera.'; errorDiv.classList.remove('d-none'); }
             })
             .catch(err => { spinner.classList.add('d-none'); errorDiv.innerText = 'Connection error.'; errorDiv.classList.remove('d-none'); });
+    }
+
+    function ptzShowMessage(kind, message) {
+        const errorDiv = document.getElementById('ptzConfigError');
+        const successDiv = document.getElementById('ptzConfigSuccess');
+        errorDiv.classList.add('d-none');
+        successDiv.classList.add('d-none');
+        if (kind === 'error') {
+            errorDiv.innerText = message;
+            errorDiv.classList.remove('d-none');
+        } else if (kind === 'success') {
+            successDiv.innerText = message;
+            successDiv.classList.remove('d-none');
+        }
+    }
+
+    function populatePtzPresetSelect(select, presets, currentValue) {
+        select.innerHTML = '';
+        const empty = document.createElement('option');
+        empty.value = '';
+        empty.textContent = 'Not set';
+        select.appendChild(empty);
+
+        let hasCurrent = !currentValue;
+        presets.forEach(function (preset) {
+            const opt = document.createElement('option');
+            opt.value = preset.token || '';
+            opt.textContent = preset.name ? `${preset.name} (${preset.token})` : preset.token;
+            if (opt.value === currentValue) hasCurrent = true;
+            select.appendChild(opt);
+        });
+
+        if (!hasCurrent && currentValue) {
+            const opt = document.createElement('option');
+            opt.value = currentValue;
+            opt.textContent = currentValue;
+            select.appendChild(opt);
+        }
+        select.value = currentValue || '';
+    }
+
+    function ptzZonePreset(config, name) {
+        const zones = Array.isArray(config.zones) ? config.zones : [];
+        const found = zones.find(function (zone) { return zone.name === name; });
+        return found ? (found.preset || '') : '';
+    }
+
+    function openPtzConfig(camId) {
+        document.getElementById('ptzCamId').value = camId;
+        document.getElementById('ptzConfigSubtitle').textContent = `Camera ${camId + 1}`;
+        ptzShowMessage('', '');
+
+        Promise.all([
+            fetch(`/api/v1/cameras/${camId}/ptz/config`).then(res => res.json()),
+            fetch(`/api/v1/cameras/${camId}/ptz/presets`).then(res => res.json()).catch(function () {
+                return { status: 'error', presets: [] };
+            })
+        ]).then(function (results) {
+            const configData = results[0];
+            const presetsData = results[1];
+            if (configData.status !== 'success') {
+                throw new Error(configData.message || 'Failed to load PTZ config.');
+            }
+
+            const config = configData.config || {};
+            const presets = presetsData.status === 'success' ? (presetsData.presets || []) : [];
+            document.getElementById('ptzEnabled').checked = !!config.enabled;
+            document.getElementById('ptzMode').value = config.mode || 'preset';
+            document.getElementById('ptzAcquireFrames').value = config.acquire_frames || 2;
+            document.getElementById('ptzLostTimeout').value = config.lost_timeout_sec || 6;
+            document.getElementById('ptzCooldown').value = config.command_cooldown_ms || 700;
+            document.getElementById('ptzDeadband').value = config.deadband || 0.12;
+            document.getElementById('ptzMaxSpeed').value = config.max_speed || 0.35;
+            document.getElementById('ptzMoveDuration').value = config.move_duration_ms || 250;
+
+            populatePtzPresetSelect(document.getElementById('ptzOverviewPreset'), presets, config.overview_preset || '');
+            populatePtzPresetSelect(document.getElementById('ptzLeftPreset'), presets, ptzZonePreset(config, 'left'));
+            populatePtzPresetSelect(document.getElementById('ptzCenterPreset'), presets, ptzZonePreset(config, 'center'));
+            populatePtzPresetSelect(document.getElementById('ptzRightPreset'), presets, ptzZonePreset(config, 'right'));
+
+            if (presetsData.status !== 'success') {
+                ptzShowMessage('error', presetsData.message || 'Preset list unavailable. Saved tokens can still be used.');
+            }
+            const modal = new bootstrap.Modal(document.getElementById('ptzConfigModal'));
+            modal.show();
+        }).catch(function (err) {
+            alert('Failed to open PTZ settings: ' + (err.message || err));
+        });
+    }
+
+    function buildPtzConfigPayload() {
+        return {
+            enabled: document.getElementById('ptzEnabled').checked,
+            mode: document.getElementById('ptzMode').value || 'preset',
+            overview_preset: document.getElementById('ptzOverviewPreset').value || '',
+            acquire_frames: parseInt(document.getElementById('ptzAcquireFrames').value, 10) || 2,
+            lost_timeout_sec: parseFloat(document.getElementById('ptzLostTimeout').value) || 6,
+            command_cooldown_ms: parseInt(document.getElementById('ptzCooldown').value, 10) || 700,
+            deadband: parseFloat(document.getElementById('ptzDeadband').value) || 0.12,
+            max_speed: parseFloat(document.getElementById('ptzMaxSpeed').value) || 0.35,
+            move_duration_ms: parseInt(document.getElementById('ptzMoveDuration').value, 10) || 250,
+            zones: [
+                { name: 'left', preset: document.getElementById('ptzLeftPreset').value || '', x_min: 0.0, y_min: 0.0, x_max: 0.33, y_max: 1.0 },
+                { name: 'center', preset: document.getElementById('ptzCenterPreset').value || '', x_min: 0.33, y_min: 0.0, x_max: 0.67, y_max: 1.0 },
+                { name: 'right', preset: document.getElementById('ptzRightPreset').value || '', x_min: 0.67, y_min: 0.0, x_max: 1.0, y_max: 1.0 }
+            ]
+        };
+    }
+
+    function savePtzConfig() {
+        const camId = document.getElementById('ptzCamId').value;
+        const spinner = document.getElementById('ptzConfigSpinner');
+        const payload = buildPtzConfigPayload();
+        spinner.classList.remove('d-none');
+        ptzShowMessage('', '');
+
+        fetch(`/api/v1/cameras/${camId}/ptz/config`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        }).then(res => res.json())
+            .then(function (data) {
+                spinner.classList.add('d-none');
+                if (data.status !== 'success') {
+                    ptzShowMessage('error', data.message || 'Failed to save auto PTZ.');
+                    return;
+                }
+                ptzShowMessage('success', 'Auto PTZ saved.');
+                loadSavedCameras();
+            })
+            .catch(function (err) {
+                spinner.classList.add('d-none');
+                ptzShowMessage('error', 'Save failed: ' + (err.message || err));
+            });
+    }
+
+    function testPtzPreset(selectId) {
+        const camId = document.getElementById('ptzCamId').value;
+        const selectEl = document.getElementById(selectId);
+        const preset = selectEl ? selectEl.value : '';
+        const labelEl = selectEl ? document.querySelector(`label[for="${selectId}"]`) : null;
+        const label = labelEl ? labelEl.textContent.trim() : 'preset';
+        if (!preset) {
+            ptzShowMessage('error', `Pick a ${label.toLowerCase()} first.`);
+            return;
+        }
+        fetch(`/api/v1/cameras/${camId}/ptz/goto`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ preset_token: preset })
+        }).then(res => res.json())
+            .then(function (data) {
+                if (data.status === 'success') ptzShowMessage('success', `${label} sent.`);
+                else ptzShowMessage('error', data.message || 'PTZ command failed.');
+            })
+            .catch(function (err) { ptzShowMessage('error', 'PTZ command failed: ' + (err.message || err)); });
+    }
+
+    function returnPtzOverview() {
+        fetch('/api/v1/ptz/auto/return-overview', { method: 'POST' })
+            .then(res => res.json())
+            .then(function (data) {
+                if (data.status === 'success') ptzShowMessage('success', 'Return command queued.');
+                else ptzShowMessage('error', data.message || 'Return command failed.');
+            })
+            .catch(function (err) { ptzShowMessage('error', 'Return command failed: ' + (err.message || err)); });
     }
 
     function deleteCamera(camId) {

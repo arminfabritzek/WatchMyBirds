@@ -670,11 +670,14 @@ def create_web_interface(detection_manager, system_monitor=None):
         if "_csrf_token" not in session:
             session["_csrf_token"] = secrets.token_hex(32)
 
-        warn = session.get("authenticated") and _auth.is_default_password()
+        is_authenticated = bool(session.get("authenticated"))
+        warn = is_authenticated and _auth.is_default_password()
         return {
             "warn_default_password": warn,
             "setup_password_required": _auth.should_require_password_setup(),
             "csrf_token": session["_csrf_token"],
+            "is_authenticated": is_authenticated,
+            "can_moderate": is_authenticated,
         }
 
     # CSRF validation for state-changing requests
@@ -879,6 +882,20 @@ def create_web_interface(detection_manager, system_monitor=None):
                 max_age=IMAGE_CACHE_SECONDS,
                 private=True,
                 immutable=True,
+            )
+
+        @server.route("/uploads/derivatives/ptz_snapshots/<path:filename>")
+        @login_required
+        def serve_ptz_snapshot(filename):
+            full_path = path_mgr.ptz_snapshots_dir / filename
+            if not full_path.exists():
+                return "Not found", 404
+            return _send_cached_static_file(
+                os.path.dirname(full_path),
+                os.path.basename(full_path),
+                max_age=60,
+                private=True,
+                immutable=False,
             )
 
         def daily_species_summary_route():
@@ -1218,12 +1235,14 @@ def create_web_interface(detection_manager, system_monitor=None):
                 )
 
                 if details:
+                    has_ptz = bool(details.get("has_ptz", False))
                     # Update test result via service
                     onvif_service.update_test_result(
                         camera_id,
                         success=True,
                         manufacturer=details.get("manufacturer", ""),
                         model=details.get("model", ""),
+                        has_ptz=has_ptz,
                     )
                     return jsonify(
                         {
@@ -1232,7 +1251,7 @@ def create_web_interface(detection_manager, system_monitor=None):
                                 "manufacturer": details.get("manufacturer"),
                                 "model": details.get("model"),
                                 "firmware": details.get("firmware"),
-                                "has_ptz": False,
+                                "has_ptz": has_ptz,
                             },
                         }
                     )

@@ -21,6 +21,7 @@ class PathManager:
         self.derivatives_dir = self.base_dir / "derivatives"
         self.thumbs_dir = self.derivatives_dir / "thumbs"
         self.optimized_dir = self.derivatives_dir / "optimized"
+        self.ptz_snapshots_dir = self.derivatives_dir / "ptz_snapshots"
         # Inbox directories (for web upload ingest)
         self.inbox_dir = self.base_dir / "inbox"
         self.inbox_pending_dir = self.inbox_dir / "pending"
@@ -31,6 +32,12 @@ class PathManager:
     # -------------------------------------------------------------------------
     # Inbox Path Methods
     # -------------------------------------------------------------------------
+    def get_ptz_snapshot_path(self, camera_id: int, kind: str = "overview") -> Path:
+        """Absolute path for a PTZ overview snapshot used by the Mini-Map UI."""
+        self.ptz_snapshots_dir.mkdir(parents=True, exist_ok=True)
+        safe_kind = "".join(c for c in kind if c.isalnum() or c in "-_") or "overview"
+        return self.ptz_snapshots_dir / f"cam{int(camera_id)}_{safe_kind}.jpg"
+
     def get_inbox_root_dir(self) -> Path:
         """Returns the inbox root directory."""
         self.inbox_dir.mkdir(parents=True, exist_ok=True)

@@ -18,6 +18,49 @@ logger = logging.getLogger(__name__)
 DEFAULT_CAMERAS_FILE = "output/cameras.yaml"
 
 
+DEFAULT_PTZ_CONFIG: dict = {
+    "enabled": False,
+    "mode": "preset",
+    "profile_index": 0,
+    "overview_preset": "",
+    "overview_snapshot_path": "",
+    "acquire_frames": 2,
+    "lost_timeout_sec": 6.0,
+    "manual_view_sec": 15.0,
+    "settle_max_sec": 8.0,
+    "command_cooldown_ms": 10000,
+    "deadband": 0.12,
+    "max_speed": 0.35,
+    "move_duration_ms": 250,
+    "zones": [
+        {
+            "name": "left",
+            "preset": "",
+            "x_min": 0.0,
+            "y_min": 0.0,
+            "x_max": 0.33,
+            "y_max": 1.0,
+        },
+        {
+            "name": "center",
+            "preset": "",
+            "x_min": 0.33,
+            "y_min": 0.0,
+            "x_max": 0.67,
+            "y_max": 1.0,
+        },
+        {
+            "name": "right",
+            "preset": "",
+            "x_min": 0.67,
+            "y_min": 0.0,
+            "x_max": 1.0,
+            "y_max": 1.0,
+        },
+    ],
+}
+
+
 class CameraStorage:
     """Manages CRUD operations for camera configurations."""
 
@@ -85,6 +128,7 @@ class CameraStorage:
                 "model": cam.get("model", ""),
                 "last_tested": cam.get("last_tested"),
                 "last_test_success": cam.get("last_test_success"),
+                "ptz": self._public_ptz_config(cam.get("ptz")),
             }
             for i, cam in enumerate(cameras)
         ]
@@ -98,6 +142,7 @@ class CameraStorage:
             if not include_password:
                 cam.pop("password", None)
                 cam["has_password"] = bool(cameras[camera_id].get("password"))
+            cam["ptz"] = self._merged_ptz_config(cam.get("ptz"))
             return cam
         return None
 
@@ -179,6 +224,16 @@ class CameraStorage:
 
         return self._save_cameras(cameras)
 
+    def update_ptz_config(self, camera_id: int, ptz_config: dict) -> bool:
+        """Replace the stored auto-PTZ config for a camera."""
+        cameras = self._load_cameras()
+        if camera_id < 0 or camera_id >= len(cameras):
+            return False
+
+        cameras[camera_id]["ptz"] = self._merged_ptz_config(ptz_config)
+        cameras[camera_id]["updated_at"] = datetime.now().isoformat()
+        return self._save_cameras(cameras)
+
     def delete_camera(self, camera_id: int) -> bool:
         """Delete a camera by ID."""
         cameras = self._load_cameras()
@@ -195,6 +250,7 @@ class CameraStorage:
         success: bool,
         manufacturer: str = "",
         model: str = "",
+        has_ptz: bool | None = None,
     ) -> bool:
         """Update test result for a camera."""
         cameras = self._load_cameras()
@@ -208,8 +264,55 @@ class CameraStorage:
             cam["manufacturer"] = manufacturer
         if model:
             cam["model"] = model
+        if has_ptz is not None:
+            cam["has_ptz"] = bool(has_ptz)
 
         return self._save_cameras(cameras)
+
+    def update_overview_snapshot_path(
+        self, camera_id: int, relative_path: str
+    ) -> bool:
+        """Persist the relative path of the PTZ overview snapshot."""
+        cameras = self._load_cameras()
+        if camera_id < 0 or camera_id >= len(cameras):
+            return False
+        cam = cameras[camera_id]
+        ptz = dict(cam.get("ptz") or {})
+        ptz["overview_snapshot_path"] = str(relative_path or "")
+        cam["ptz"] = ptz
+        return self._save_cameras(cameras)
+
+    def update_preset_metadata(
+        self, camera_id: int, preset_token: str, metadata: dict
+    ) -> bool:
+        """Persist per-preset metadata (click position, box, label)."""
+        cameras = self._load_cameras()
+        if camera_id < 0 or camera_id >= len(cameras):
+            return False
+        cam = cameras[camera_id]
+        ptz = dict(cam.get("ptz") or {})
+        bucket = dict(ptz.get("preset_metadata") or {})
+        bucket[str(preset_token)] = {
+            str(k): v for k, v in (metadata or {}).items()
+        }
+        ptz["preset_metadata"] = bucket
+        cam["ptz"] = ptz
+        return self._save_cameras(cameras)
+
+    def delete_preset_metadata(self, camera_id: int, preset_token: str) -> bool:
+        """Remove per-preset metadata; safe no-op if the entry is absent."""
+        cameras = self._load_cameras()
+        if camera_id < 0 or camera_id >= len(cameras):
+            return False
+        cam = cameras[camera_id]
+        ptz = dict(cam.get("ptz") or {})
+        bucket = dict(ptz.get("preset_metadata") or {})
+        if str(preset_token) in bucket:
+            del bucket[str(preset_token)]
+            ptz["preset_metadata"] = bucket
+            cam["ptz"] = ptz
+            return self._save_cameras(cameras)
+        return True
 
     def get_credentials(self, camera_id: int) -> tuple[str, str]:
         """Get stored credentials for a camera."""
@@ -217,6 +320,49 @@ class CameraStorage:
         if cam:
             return cam.get("username", ""), cam.get("password", "")
         return "", ""
+
+    def _merged_ptz_config(self, ptz_config: dict | None) -> dict:
+        """Return PTZ config with defaults filled in and legacy gaps tolerated."""
+        config = DEFAULT_PTZ_CONFIG.copy()
+        config["zones"] = [zone.copy() for zone in DEFAULT_PTZ_CONFIG["zones"]]
+
+        if not isinstance(ptz_config, dict):
+            return config
+
+        for key, value in ptz_config.items():
+            if key == "zones":
+                continue
+            config[key] = value
+
+        raw_zones = ptz_config.get("zones")
+        if isinstance(raw_zones, list) and raw_zones:
+            zones: list[dict] = []
+            for zone in raw_zones:
+                if not isinstance(zone, dict):
+                    continue
+                zones.append(
+                    {
+                        "name": str(zone.get("name") or f"zone_{len(zones) + 1}"),
+                        "preset": str(zone.get("preset") or ""),
+                        "x_min": float(zone.get("x_min", 0.0)),
+                        "y_min": float(zone.get("y_min", 0.0)),
+                        "x_max": float(zone.get("x_max", 1.0)),
+                        "y_max": float(zone.get("y_max", 1.0)),
+                    }
+                )
+            if zones:
+                config["zones"] = zones
+
+        return config
+
+    def _public_ptz_config(self, ptz_config: dict | None) -> dict:
+        config = self._merged_ptz_config(ptz_config)
+        return {
+            "enabled": bool(config.get("enabled")),
+            "mode": config.get("mode", "preset"),
+            "overview_preset": config.get("overview_preset", ""),
+            "zones": config.get("zones", []),
+        }
 
 
 # Singleton instance

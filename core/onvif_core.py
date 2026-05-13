@@ -229,7 +229,11 @@ def get_camera(camera_id: int, include_password: bool = False) -> dict[str, Any]
 
 
 def update_test_result(
-    camera_id: int, success: bool, manufacturer: str = "", model: str = ""
+    camera_id: int,
+    success: bool,
+    manufacturer: str = "",
+    model: str = "",
+    has_ptz: bool | None = None,
 ) -> bool:
     """
     Updates the test result for a camera.
@@ -239,12 +243,16 @@ def update_test_result(
         success: Whether test was successful
         manufacturer: Manufacturer info from test
         model: Model info from test
+        has_ptz: Detected PTZ capability (None leaves the stored value
+            untouched; True/False overwrites it).
 
     Returns:
         True if successful
     """
     storage = get_camera_storage()
-    return storage.update_test_result(camera_id, success, manufacturer, model)
+    return storage.update_test_result(
+        camera_id, success, manufacturer, model, has_ptz=has_ptz
+    )
 
 
 def get_camera_credentials(camera_id: int) -> tuple[str, str]:

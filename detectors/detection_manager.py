@@ -19,6 +19,7 @@ from datetime import datetime
 
 from camera.video_capture import VideoCapture
 from config import get_config
+from core.ptz_tracking_core import AutoPtzController
 from detectors.classifier import ImageClassifier
 from detectors.interfaces.classification import DecisionState
 from detectors.motion_detector import MotionDetector
@@ -189,6 +190,7 @@ class DetectionManager:
         self.decision_policy_service = DecisionPolicyService()
         self.temporal_decision_service = TemporalDecisionService()
         self.capability_registry = build_default_registry()
+        self.auto_ptz_controller = AutoPtzController()
 
         logger.info("DetectionManager V2 initialized (with Services)")
 
@@ -316,6 +318,8 @@ class DetectionManager:
                     self.video_capture.cap.release()
             except Exception as e:
                 logger.error(f"Error releasing video capture: {e}")
+
+        self.auto_ptz_controller.stop()
 
         logger.info("DetectionManager V2 stopped.")
 
@@ -465,6 +469,10 @@ class DetectionManager:
             # Motion detection gate
             if self.config.get("MOTION_DETECTION_ENABLED", True):
                 if not self.motion_detector.detect(raw_frame):
+                    try:
+                        self.auto_ptz_controller.handle_no_detection()
+                    except Exception:
+                        logger.exception("Auto PTZ no-detection update failed")
                     time.sleep(0.1)
                     continue
 
@@ -537,6 +545,20 @@ class DetectionManager:
                     }
                 )
 
+            try:
+                frame_for_ptz = (
+                    original_frame if original_frame is not None else raw_frame
+                )
+                if object_detected:
+                    self.auto_ptz_controller.handle_detections(
+                        frame_shape=frame_for_ptz.shape,
+                        detections=detection_info_list,
+                    )
+                else:
+                    self.auto_ptz_controller.handle_no_detection()
+            except Exception:
+                logger.exception("Auto PTZ update failed")
+
             # Collect timing and log a periodic summary
             self._det_times.append(det_ms)
             now_mono = time.monotonic()
@@ -560,15 +582,25 @@ class DetectionManager:
                         "[DET+CLS] %ds summary: %d frames | "
                         "DET avg %dms (min %dms / max %dms) | "
                         "CLS %d samples avg %dms (min %dms / max %dms)",
-                        window_s, n_det,
-                        det_avg, det_lo, det_hi,
-                        n_cls, cls_avg, cls_lo, cls_hi,
+                        window_s,
+                        n_det,
+                        det_avg,
+                        det_lo,
+                        det_hi,
+                        n_cls,
+                        cls_avg,
+                        cls_lo,
+                        cls_hi,
                     )
                 else:
                     logger.info(
                         "[DET] %ds summary: %d frames | "
                         "avg %dms | min %dms | max %dms | CLS no samples",
-                        window_s, n_det, det_avg, det_lo, det_hi,
+                        window_s,
+                        n_det,
+                        det_avg,
+                        det_lo,
+                        det_hi,
                     )
                 self._det_times.clear()
                 self._cls_times.clear()
@@ -705,9 +737,7 @@ class DetectionManager:
             from detectors.interfaces.persistence import DetectionData
 
             detector_obj = getattr(self.detection_service, "_detector", None)
-            underlying = (
-                getattr(detector_obj, "model", None) if detector_obj else None
-            )
+            underlying = getattr(detector_obj, "model", None) if detector_obj else None
             detector_conf = (
                 getattr(underlying, "conf_threshold_default", None)
                 if underlying is not None
@@ -739,12 +769,8 @@ class DetectionManager:
                 # way there. Flip NON_BIRD_DROP_BELOW_CONFIRM=false to keep
                 # them in the DB as UNCERTAIN (e.g. during a Phase-7
                 # bbox-cluster collection window).
-                if not is_bird and self.config.get(
-                    "NON_BIRD_DROP_BELOW_CONFIRM", True
-                ):
-                    non_bird_floor = self.config.get(
-                        "NON_BIRD_CONFIRM_THRESHOLD", 0.80
-                    )
+                if not is_bird and self.config.get("NON_BIRD_DROP_BELOW_CONFIRM", True):
+                    non_bird_floor = self.config.get("NON_BIRD_CONFIRM_THRESHOLD", 0.80)
                     if od_conf < non_bird_floor:
                         continue
 

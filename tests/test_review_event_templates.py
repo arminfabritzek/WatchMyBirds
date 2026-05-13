@@ -980,3 +980,214 @@ def test_species_reference_image_is_anchored_top_right():
     mobile_height = re.search(r"height:\s*(\d+)px;", mobile_block)
     assert mobile_width and mobile_height
     assert mobile_width.group(1) == mobile_height.group(1)
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Live Jinja2 render of orphan_modal.html
+#
+# These are the only tests in this file that actually render a template
+# rather than asserting on raw source. They guard the orphan-modal
+# panel against regressions like the 2026-05-14 inline `{# ... #}`
+# comment inside the `tile_toolbox(...)` argument list, which Jinja2
+# rejects with `TemplateSyntaxError: invalid syntax for function call
+# expression` only at render time.
+# ─────────────────────────────────────────────────────────────────────
+
+
+def _render_orphan_modal(orphan: dict) -> str:
+    """Render `components/orphan_modal.html` against a real Jinja2 env.
+
+    Mirrors the minimal Jinja setup the Flask app uses in
+    `web/web_interface.py` (FileSystemLoader on `templates/`, plus the
+    `BBOX_REVIEW_*` globals the macro reads).
+    """
+    import jinja2
+
+    from utils.review_metadata import BBOX_REVIEW_CORRECT, BBOX_REVIEW_WRONG
+
+    env = jinja2.Environment(
+        loader=jinja2.FileSystemLoader(str(_project_root() / "templates")),
+        autoescape=jinja2.select_autoescape(["html"]),
+    )
+    env.globals["BBOX_REVIEW_CORRECT"] = BBOX_REVIEW_CORRECT
+    env.globals["BBOX_REVIEW_WRONG"] = BBOX_REVIEW_WRONG
+
+    template = env.from_string(
+        "{% from 'components/orphan_modal.html' import render_orphan_modal %}"
+        "{{ render_orphan_modal(orphan) }}"
+    )
+    return template.render(orphan=orphan)
+
+
+def _orphan_fixture(**overrides) -> dict:
+    """Return a dict shaped like a real orphan payload from
+    ``_build_review_item`` in `web/blueprints/review.py`.
+
+    Defaults model the most common case: an image-backed orphan with
+    no detection at all (the "NO DETECTION" rail item). Override
+    per-test for richer states.
+    """
+    base = {
+        "item_kind": "image",
+        "item_id": "20260514_124135_891059.jpg",
+        "item_key": "image:20260514_124135_891059.jpg",
+        "filename": "20260514_124135_891059.jpg",
+        "source_image_filename": "20260514_124135_891059.jpg",
+        "timestamp": "20260514_124135",
+        "thumb_url": "/api/review-thumb/20260514_124135_891059.jpg",
+        "full_url": "/uploads/originals/2026-05-14/20260514_124135_891059.jpg",
+        "optimized_url": "",
+        "reason_label": "No Detection",
+        "review_reason": "orphan",
+        "max_score": None,
+        "od_confidence_pct": None,
+        "cls_confidence_pct": None,
+        "best_detection_id": None,
+        "active_detection_id": None,
+        "bbox_x": None,
+        "bbox_y": None,
+        "bbox_w": None,
+        "bbox_h": None,
+        "species_key": "",
+        "current_species_common": "",
+        "manual_species_override": None,
+        "manual_species_common": "",
+        "species_source": None,
+        "selected_species": "",
+        "selected_species_common": "",
+        "selected_species_origin": "",
+        "selected_bbox_review": None,
+        "selected_bbox_review_origin": None,
+        "default_species": "",
+        "has_detection": False,
+        "can_approve": False,
+        "quick_species": [],
+        "species_colour": None,
+        "species_colour_key": "",
+        "species_ref_image_url": None,
+        "formatted_date": "14.05.2026 12:41:35",
+        "gallery_date": "2026-05-14",
+    }
+    base.update(overrides)
+    return base
+
+
+def test_orphan_modal_renders_without_detection():
+    """The plain orphan case (no detection at all) must render cleanly.
+
+    Regression: an inline `{# ... #}` comment inside the
+    `tile_toolbox(...)` argument list raised
+    `TemplateSyntaxError: invalid syntax for function call expression`
+    on every GET /api/review/panel/image/<filename> when the rail
+    contained orphan items.
+    """
+    html = _render_orphan_modal(_orphan_fixture())
+
+    # The tile_toolbox macro was reached and emitted its toolbar root.
+    # If the inline-comment bug returns, render raises before this point.
+    assert 'class="wm-toolbox"' in html
+    assert 'role="toolbar"' in html
+    # The Review-surface viewer tools the macro injects from this call
+    # site — both are conditional on `show_viewer_tools=true` which the
+    # orphan_modal hard-codes, so they must be present.
+    assert 'data-review-viewer-tool="zoom"' in html
+
+
+def test_orphan_modal_renders_with_low_confidence_detection():
+    """Detection-backed orphan (low-score / uncertain) renders cleanly.
+
+    Exercises the branch where `has_detection=True` and the bbox is
+    valid, so the bbox-toggle button inside `tile_toolbox` also fires.
+    """
+    html = _render_orphan_modal(
+        _orphan_fixture(
+            item_kind="detection",
+            item_id="42",
+            item_key="detection:42",
+            review_reason="low_score",
+            reason_label="Low Score (62%)",
+            max_score=0.62,
+            od_confidence_pct=62,
+            best_detection_id=42,
+            active_detection_id=42,
+            bbox_x=0.1,
+            bbox_y=0.2,
+            bbox_w=0.3,
+            bbox_h=0.4,
+            species_key="Parus major",
+            current_species_common="Kohlmeise",
+            selected_species="Parus major",
+            selected_species_common="Kohlmeise",
+            selected_species_origin="cls",
+            selected_bbox_review="correct",
+            selected_bbox_review_origin="default",
+            has_detection=True,
+            can_approve=True,
+        )
+    )
+
+    # Tile toolbox emitted and carries the detection id forward.
+    assert 'class="wm-toolbox"' in html
+    assert 'data-review-viewer-tool="zoom"' in html
+    # `show_boxes=has_bbox` is true here, so the bbox toggle is wired
+    # with the detection's id.
+    assert 'data-review-viewer-tool="bbox"' in html
+    assert 'data-detection-id="42"' in html
+
+
+def test_orphan_modal_renders_with_uncertain_detection_and_quick_species():
+    """Uncertain detection with a quick-pick strip renders cleanly.
+
+    Covers the species-strip and receipt-slot branches alongside the
+    tile_toolbox call — all three live on the same template and would
+    fail together if any macro-argument bug returns.
+    """
+    html = _render_orphan_modal(
+        _orphan_fixture(
+            item_kind="detection",
+            item_id="99",
+            item_key="detection:99",
+            review_reason="uncertain",
+            reason_label="Uncertain",
+            max_score=0.55,
+            best_detection_id=99,
+            active_detection_id=99,
+            bbox_x=0.0,
+            bbox_y=0.0,
+            bbox_w=0.5,
+            bbox_h=0.5,
+            species_key="Cyanistes caeruleus",
+            current_species_common="Blaumeise",
+            selected_species="Cyanistes caeruleus",
+            selected_species_common="Blaumeise",
+            selected_species_origin="cls",
+            selected_bbox_review="correct",
+            selected_bbox_review_origin="default",
+            has_detection=True,
+            can_approve=True,
+            quick_species=[
+                {
+                    "scientific": "Cyanistes caeruleus",
+                    "common": "Blaumeise",
+                    "source": "current",
+                    "score_pct": 55,
+                    "thumb_url": "",
+                    "species_colour": 0,
+                },
+                {
+                    "scientific": "Parus major",
+                    "common": "Kohlmeise",
+                    "source": "recent",
+                    "score_pct": None,
+                    "thumb_url": "",
+                    "species_colour": 1,
+                },
+            ],
+        )
+    )
+
+    # Tile toolbox still mounts.
+    assert 'class="wm-toolbox"' in html
+    # Quick-pick strip rendered.
+    assert "review-stage-panel__species-strip" in html
+    assert "Kohlmeise" in html

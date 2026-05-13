@@ -2169,6 +2169,8 @@ code {
     margin: 0.35rem auto 0;
     display: flex;
     justify-content: flex-end;
+    align-items: center;
+    gap: var(--space-sm);
 }
 
 .stream-embed {
@@ -2441,6 +2443,42 @@ code {
     height: 4px;
     cursor: pointer;
     accent-color: var(--color-accent);
+}
+
+.stream-ptz-status {
+    margin-right: auto;
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-xs);
+    padding: var(--space-xs) var(--space-sm);
+    background: rgba(0, 0, 0, 0.72);
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    border-radius: var(--radius-sm);
+    color: white;
+    font-size: var(--font-size-xs);
+    font-family: inherit;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s;
+}
+
+.stream-ptz-status:hover,
+.stream-ptz-status:focus-visible {
+    background: rgba(0, 0, 0, 0.88);
+    border-color: rgba(255, 255, 255, 0.32);
+    outline: none;
+}
+
+.stream-ptz-status[hidden] {
+    display: none;
+}
+
+.stream-ptz-status__label {
+    color: rgba(255, 255, 255, 0.68);
+}
+
+.stream-ptz-status__value {
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    text-transform: capitalize;
 }
 
 /* Landing Status Row */

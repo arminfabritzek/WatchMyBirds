@@ -164,9 +164,11 @@ Measured with a 2560 x 1920 RTSP stream. Times vary with resolution, scene compl
 | | Detection | Classification (per bird) | Full cycle (1 bird) |
 |---|---|---|---|
 | **Raspberry Pi 5** (8 GB) | ~450–500 ms | ~300–400 ms | ~1.5–2.0 s |
-| **Raspberry Pi 4** (4 GB) | ~1.9–2.0 s | ~1.5–1.9 s | ~3.5–5.0 s |
+| **Raspberry Pi 4** (4 GB) | ~3.8–5.3 s | ~5.0–7.0 s | ~10–11 s |
 
-> 💡 Classification time scales linearly with the number of birds in the frame. A scene with 10 birds on an RPi 5 takes ~3–5 s total.
+> 💡 Classification time scales linearly with the number of birds in the frame. A scene with 10 birds on an RPi 5 takes ~3–5 s total — on an RPi 4 the same scene would take well over a minute.
+>
+> ⚠️ RPi 4 numbers are measured per-cycle on a 2560×1920 RTSP stream with the current YOLOX-S detector and the active classifier (observed single-cycle pipelines 9993–11224 ms with 1 bird; DET 3821–5240 ms, CLS 5035–6982 ms per bird). The RPi 4 still works for low-traffic feeders, but for responsive live use the RPi 5 is strongly recommended.
 
 ---
 
