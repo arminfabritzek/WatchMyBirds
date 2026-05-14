@@ -7,7 +7,7 @@ Appears on hover (desktop) or tap (mobile).
 Parameters:
 detection_id (int|None): If set, enables detection-level actions (relabel, reject).
 filename (str|None): Image filename, for review-queue actions.
-surface (str): One of 'gallery', 'species', 'review', 'trash'.
+surface (str): One of 'gallery', 'species', 'review', 'trash', 'detail_modal'.
 is_favorite (bool): Current favorite state.
 is_training_queued (bool): Current training-export pool state.
 can_moderate (bool): Whether destructive actions are available.
@@ -40,12 +40,27 @@ allow_move_to_trash=true,
 allow_review_no_bird=true
 ) %}
 {% set can_open_details = allow_details and (modal_target or details_href) %}
-{% set show_favorite = detection_id and allow_favorite %}
+{# Favorite is meaningless on the Trash surface — a discarded tile cannot be favorited. #}
+{% set show_favorite = detection_id and allow_favorite and surface != 'trash' %}
 {% set show_training_export = detection_id and allow_training_export and surface != 'trash' %}
 {% set show_change_species = detection_id and allow_change_species %}
 {% set show_move_to_trash = detection_id and surface != 'trash' and allow_move_to_trash %}
 {% set show_restore = surface == 'trash' %}
 {% set show_deep_scan = surface == 'review' and review_reason == 'orphan' and filename %}
+{# UI_STANDARD §0b: View Details renders as primary on hobby browse-surfaces.
+   Stream uses surface='gallery'; Subgallery/Species use 'gallery'/'species'.
+   The detail_modal surface is already the detail view — View Details does not
+   apply there. #}
+{% set details_is_primary = can_open_details and surface in ['gallery', 'species'] %}
+{# UI_STANDARD §0b: Restore renders as primary on the Trash surface — it is
+   the single most-reached-for action there. #}
+{% set restore_is_primary = show_restore %}
+{# UI_STANDARD §0b: inside a detail modal the verdict actions are primary —
+   the operator has the image at full size and is here to decide. Favorite is
+   already primary by default rendering; Change Species and Move to Trash are
+   promoted out of the overflow. #}
+{% set change_species_is_primary = show_change_species and surface == 'detail_modal' %}
+{% set move_to_trash_is_primary = show_move_to_trash and surface == 'detail_modal' %}
 
 <div class="wm-toolbox{% if frame_variant == 'bar' %} wm-toolbox--bar{% endif %}" role="toolbar"
     aria-label="Detection actions">
@@ -86,15 +101,73 @@ allow_review_no_bird=true
     </button>
     {% endif %}
 
+    {# ── View Details as primary on hobby browse-surfaces (UI_STANDARD §0b) ── #}
+    {% if details_is_primary %}
+    <button type="button" class="wm-toolbox__btn wm-toolbox__details"
+        data-action="view-details"
+        {% if modal_target %}data-modal-target="{{ modal_target }}" {% endif %}
+        {% if details_href %}data-details-href="{{ details_href }}" {% endif %}
+        aria-label="View details"
+        title="View details">
+        ℹ️
+    </button>
+    {% endif %}
+
+    {# ── Restore as primary on the Trash surface (UI_STANDARD §0b).
+       Jinja's default renders a None value as the literal string "None" inside
+       an attribute, which would defeat the JS `detectionId || filename`
+       trash-id resolution in tile_actions.js. Only emit the attribute when
+       the value is actually present. ── #}
+    {% if restore_is_primary %}
+    <button type="button" class="wm-toolbox__btn wm-toolbox__restore"
+        data-action="restore"
+        {% if detection_id %}data-detection-id="{{ detection_id }}"{% endif %}
+        {% if filename %}data-filename="{{ filename }}"{% endif %}
+        aria-label="Restore from trash"
+        title="Restore">
+        ↩
+    </button>
+    {% endif %}
+
+    {# ── Change Species as primary inside detail modals (UI_STANDARD §0b) ── #}
+    {% if change_species_is_primary %}
+    <button type="button"
+        class="wm-toolbox__btn wm-toolbox__change-species{% if not can_moderate %} wm-toolbox__btn--locked{% endif %}"
+        data-action="change-species" data-detection-id="{{ detection_id }}"
+        data-current-species="{{ current_species or '' }}"
+        {% if not can_moderate %}data-login-required="true" aria-disabled="true"{% endif %}
+        aria-label="Change species"
+        title="{{ 'Login required to change species' if not can_moderate else 'Change species' }}">
+        🏷️
+    </button>
+    {% endif %}
+
+    {# ── Move to Trash as primary inside detail modals (UI_STANDARD §0b) ── #}
+    {% if move_to_trash_is_primary %}
+    <button type="button"
+        class="wm-toolbox__btn wm-toolbox__move-trash{% if not can_moderate %} wm-toolbox__btn--locked{% endif %}"
+        data-action="move-trash" data-detection-id="{{ detection_id }}"
+        {% if not can_moderate %}data-login-required="true" aria-disabled="true"{% endif %}
+        aria-label="Move to trash"
+        title="{{ 'Login required to move to trash' if not can_moderate else 'Move to trash' }}">
+        🗑️
+    </button>
+    {% endif %}
+
     {# ── Tools menu trigger ── #}
-    {% if can_open_details or show_change_species or show_move_to_trash or show_restore or show_deep_scan %}
+    {% if (can_open_details and not details_is_primary)
+        or (show_change_species and not change_species_is_primary)
+        or (show_move_to_trash and not move_to_trash_is_primary)
+        or (show_restore and not restore_is_primary)
+        or show_deep_scan %}
     <div class="wm-toolbox__menu" role="group" aria-label="More actions">
         <button type="button" class="wm-toolbox__btn wm-toolbox__more" data-action="toggle-menu" aria-haspopup="true"
             aria-expanded="false" aria-label="More actions" title="More actions">⋮</button>
 
         <div class="wm-toolbox__dropdown" role="menu" aria-label="Actions">
-            {# Details — opens the detection modal (Top-K, Confidences, Wiki) #}
-            {% if can_open_details %}
+            {# Details — opens the detection modal (Top-K, Confidences, Wiki).
+               Skipped when rendered as a primary button above (UI_STANDARD §0b). #}
+            {% if can_open_details and not details_is_primary %}
             <button type="button" class="wm-toolbox__item" role="menuitem" data-action="view-details"
                 {% if modal_target %}data-modal-target="{{ modal_target }}" {% endif %}
                 {% if details_href %}data-details-href="{{ details_href }}" {% endif %}aria-label="View details">
@@ -102,8 +175,9 @@ allow_review_no_bird=true
             </button>
             {% endif %}
 
-            {# Relabel — only if we have a detection_id #}
-            {% if show_change_species %}
+            {# Relabel — only if we have a detection_id.
+               Skipped when rendered as a primary button above (UI_STANDARD §0b). #}
+            {% if show_change_species and not change_species_is_primary %}
             <button type="button"
                 class="wm-toolbox__item{% if not can_moderate %} wm-toolbox__item--disabled{% endif %}"
                 role="menuitem" data-action="change-species" data-detection-id="{{ detection_id }}"
@@ -114,8 +188,9 @@ allow_review_no_bird=true
             </button>
             {% endif %}
 
-            {# Delete / Reject #}
-            {% if show_move_to_trash %}
+            {# Delete / Reject.
+               Skipped when rendered as a primary button above (UI_STANDARD §0b). #}
+            {% if show_move_to_trash and not move_to_trash_is_primary %}
             <button type="button"
                 class="wm-toolbox__item wm-toolbox__item--danger{% if not can_moderate %} wm-toolbox__item--disabled{% endif %}"
                 role="menuitem" data-action="move-trash" data-detection-id="{{ detection_id }}"
@@ -133,8 +208,9 @@ allow_review_no_bird=true
             </button>
             {% endif %}
 
-            {# Trash-specific: Restore #}
-            {% if show_restore %}
+            {# Trash-specific: Restore.
+               Skipped when rendered as a primary button above (UI_STANDARD §0b). #}
+            {% if show_restore and not restore_is_primary %}
             <button type="button" class="wm-toolbox__item" role="menuitem" data-action="restore"
                 data-detection-id="{{ detection_id }}" data-filename="{{ filename }}" aria-label="Restore from trash">
                 ↩ <span>Restore</span>

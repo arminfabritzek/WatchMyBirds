@@ -75,7 +75,7 @@ nav_index (int|None): Optional index within nav_scope
                     ) }}
                     {{ tile_toolbox(
                     detection_id=det.detection_id,
-                    surface='gallery',
+                    surface='detail_modal',
                     is_favorite=det.is_favorite,
                     can_moderate=can_moderate,
                     current_species=det.species_key or det.manual_species_override or det.cls_class_name or det.od_class_name

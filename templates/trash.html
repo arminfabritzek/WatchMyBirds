@@ -102,15 +102,6 @@
                 <div class="trash-item__info">
                     <div class="trash-item__name">{{ item.common_name }}</div>
                     <div class="trash-item__time">{{ item.formatted_time }}</div>
-                    <div class="trash-item__actions">
-                        {% if item.trash_type == 'detection' %}
-                        <button class="btn btn--sm btn--secondary restore-single" data-id="{{ item.detection_id }}"
-                            data-type="detection">Restore</button>
-                        {% else %}
-                        <button class="btn btn--sm btn--secondary restore-single" data-id="{{ item.filename }}"
-                            data-type="image">Restore</button>
-                        {% endif %}
-                    </div>
                 </div>
                 {{ tile_toolbox(
                 detection_id=item.detection_id if item.trash_type == 'detection' else none,
@@ -218,7 +209,7 @@
 
         document.querySelectorAll('.trash-item').forEach(item => {
             item.addEventListener('click', (e) => {
-                if (e.target.closest('.trash-item__checkbox') || e.target.closest('.restore-single')) return;
+                if (e.target.closest('.trash-item__checkbox') || e.target.closest('.wm-toolbox')) return;
 
                 const checkbox = item.querySelector('.trash-checkbox');
                 checkbox.checked = !checkbox.checked;
@@ -240,6 +231,11 @@
             });
         });
 
+        // Expose to the global tile_actions.js delegator, which probes
+        // `typeof performAction === 'function'` to route the primary ↩
+        // Restore button click from the wm-toolbox into this surface's
+        // existing trash-action pipeline.
+        window.performAction = performAction;
         async function performAction(action, selectedCheckboxes) {
             // Separate detections from images
             const detection_ids = [];
@@ -303,20 +299,6 @@
                     location.reload();
                 }
             } catch (e) { console.error(e); }
-        });
-
-        document.querySelectorAll('.restore-single').forEach(btn => {
-            btn.addEventListener('click', () => {
-                const type = btn.getAttribute('data-type');
-                const id = btn.getAttribute('data-id');
-
-                // Create a fake checkbox-like object for performAction
-                const fakeCheckbox = {
-                    value: id,
-                    getAttribute: (attr) => attr === 'data-type' ? type : id
-                };
-                performAction('restore', [fakeCheckbox]);
-            });
         });
 
         function resetDateRangePreview(message) {

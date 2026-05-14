@@ -34,7 +34,8 @@ or changed in **one place** and instantly apply everywhere.
    Change Species, Move to Trash, Restore, Deep Scan, Mark No Bird, future
    star ratings, Training Export, …). Surfaces may *omit* an action when the route does not
    support it; they may **not** rename it, reorder it, or add a parallel
-   surface-local button for the same action.
+   surface-local button for the same action. See §0b for which actions
+   render as primary vs. inside the overflow on each surface.
 3. **One action vocabulary.** The canonical verbs in §"Detection Action Frame
    Contract" are the only allowed labels. Adding a new image action means
    adding it to the toolbox macro and to this section, never as a one-off in a
@@ -140,6 +141,103 @@ discoverability, not noise.
    macro and in a review decision rail, both surfaces use the same tooltip
    wording. Tooltip copy lives next to the action definition, not in
    per-template forks.
+
+## 0b. Action Priority — Primary + Overflow (binding)
+
+§0 establishes that every image-bearing surface uses the same
+`tile_toolbox` macro with the same canonical action vocabulary. This
+section adds the missing piece: **how many of those actions are
+visible at once, and which ones**. Without this rule the toolbox would
+grow monotonically as new actions land, and the most-used action would
+stop being visually primary.
+
+**The rule:**
+
+1. **At most 3 primary actions per surface.** Two is the typical case;
+   three only when the surface has a genuinely distinct decide-action
+   (Review) or restore-action (Trash, Restore).
+2. **One overflow control.** A single `⋮` button (`wm-toolbox__more`)
+   opens a dropdown (`wm-toolbox__menu`) that holds every action the
+   surface supports but does not promote to primary.
+3. **No nested overflow.** If a surface's overflow grows beyond ~6
+   items, the right answer is to reconsider whether some of those
+   items belong on that surface at all, not to nest the menu.
+4. **New actions land in overflow by default.** A plan that wants to
+   promote an action to primary on some surface MUST update the
+   per-surface map in this section in the same change.
+5. **No action becomes unreachable.** Every action the surface
+   supports is either primary or in the overflow. There is no third
+   bucket.
+6. **Accessibility is part of the contract.** The `⋮` control must be
+   keyboard-operable (Tab to focus, Enter / Space to open, Esc to
+   close, Arrow keys to navigate items) and must announce as a menu
+   to assistive technology. Tap-target size meets the existing
+   convention (visible hit area ≥ 44×44 CSS px or equivalent).
+7. **No persistence of menu state.** The overflow opens, closes, done.
+   No `localStorage` flag, no per-page memory.
+
+**Per-surface action map (binding):**
+
+| Surface                          | Primary (always visible)                 | Overflow                                                                                |
+|----------------------------------|------------------------------------------|-----------------------------------------------------------------------------------------|
+| Stream                           | Favorite, View Details                   | Change Species, Move to Trash, Deep Scan, Mark No Bird, Training Export                 |
+| Gallery                          | Favorite, View Details                   | Change Species, Move to Trash, Deep Scan, Mark No Bird, Training Export                 |
+| Subgallery                       | Favorite, View Details                   | Change Species, Move to Trash, Deep Scan, Mark No Bird, Training Export                 |
+| Species / Species Overview       | Favorite, View Details                   | Change Species, Move to Trash, Mark No Bird, Training Export                            |
+| Review event-level (rail outside tile_toolbox) | Approve Event, Move Event to Trash | — (lives in `review-stage-panel__action` rail, not the toolbox) |
+| Review per-member tile (inside tile_toolbox) | Favorite | View Details, Change Species, Move to Trash, Mark No Bird, Deep Scan |
+| Trash                            | Restore                                  | View Details, Change Species *(if exposed)* — Favorite is intentionally suppressed |
+| Detail modals (`surface='detail_modal'`) | Favorite, Change Species, Move to Trash | Deep Scan, Mark No Bird, Training Export                                                |
+
+**Rules embedded in the table:**
+
+- The order of primary actions in each row is the order they render
+  in (per §0 point 5: bottom-of-image `wm-toolbox` or modal-footer
+  `wm-toolbox--bar`).
+- A surface MAY expose fewer actions than the table lists (omit per
+  §0 point 2), but it MAY NOT promote an action to primary that the
+  table places in overflow, without updating this section.
+- The Review surface splits across two rows on purpose. The
+  event-level decide-verbs (Approve Event, Move Event to Trash) live
+  in the `review-stage-panel__action` rail outside `tile_toolbox`;
+  they are primary by virtue of being in their own rail, not by
+  toolbox-priority rules. The per-member tile toolbox inside the
+  event panel keeps Favorite as its only primary action — every
+  destructive per-member verb (Move to Trash, Mark No Bird) sits in
+  the overflow so the operator's primary action stays on the
+  event-level rail.
+- Detail modals inherit the primary/overflow split shown above, NOT
+  the split of the surface that opened them. A modal opened from
+  Stream and a modal opened from Trash both use the "Detail modals"
+  row.
+- **Detail modals** are addressed by `surface='detail_modal'`
+  (introduced 2026-05-14). The macro promotes Change Species and
+  Move to Trash to primary buttons on this surface in addition to
+  Favorite (which is primary by default rendering across all
+  surfaces that show it). The `frame_variant='bar'` rendering
+  remains available but is not required — the detail-modal split is
+  driven by `surface`, not by frame variant.
+- Inbox, Orphans (top-level), and Restore are listed in `web/` as
+  routes but do not render image tiles with the `tile_toolbox`
+  macro. They are intentionally absent from this table. If a future
+  plan adds toolbox-bearing tiles to one of these surfaces, that
+  plan adds its row here in the same change.
+- **Trash:** Favorite is intentionally suppressed on this surface —
+  a discarded tile cannot meaningfully be favorited. The
+  `restore-single` legacy button under each tile was removed on
+  2026-05-14; the primary `↩` Restore in the toolbox is the only
+  per-tile single-restore path. Bulk-restore via the page-header
+  `Restore` button (Checkbox + multi-select) is a different
+  workflow and remains.
+
+**Audit:** check this table against the codebase after touching any
+image-bearing surface. The table is the source of truth — if a
+template disagrees with it, the template is wrong, unless the same
+commit amends this table.
+
+**Cross-reference:** the toolbox primary+overflow rule (introduced
+2026-05-14) defines the migration sequence and the macro extension
+that implements this contract.
 
 Variants follow the BEM modifier `--` and are always set in addition to the base
 class (for example `wm-modal wm-modal--form`, `wm-tile wm-tile--review`).

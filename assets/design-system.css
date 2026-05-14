@@ -1842,13 +1842,6 @@ code {
     font-weight: 700;
 }
 
-.trash-item__actions {
-    display: flex;
-    justify-content: flex-start;
-    width: 100%;
-    margin-top: 6px;
-}
-
 @media (max-width: 960px) {
     .trash-workbench {
         grid-template-columns: 1fr;
