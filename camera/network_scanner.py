@@ -1,6 +1,7 @@
 import ipaddress
 import logging
 import os
+import re
 import socket
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -14,6 +15,27 @@ from wsdiscovery.discovery import ThreadedWSDiscovery
 from utils.log_safety import safe_log_value as _slv
 
 logger = logging.getLogger(__name__)
+
+# Interface-name patterns we never scan: Docker bridges, container veths,
+# and common VPN tunnel devices. The scanner is only useful on real LAN
+# interfaces where ONVIF cameras might actually live.
+_SKIP_IFACE_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"^docker\d*$"),
+    re.compile(r"^br-[0-9a-f]+$"),
+    re.compile(r"^veth"),
+    re.compile(r"^tun\d*$"),
+    re.compile(r"^tap\d*$"),
+    re.compile(r"^wg\d*$"),
+    re.compile(r"^tailscale"),
+    re.compile(r"^zt"),
+)
+
+# Largest network we will expand into a host-by-host scan. A /22 is 1022
+# hosts; anything larger is an SMB/enterprise range, a Docker bridge, or
+# a misconfigured interface — never a home camera LAN. Without this cap,
+# a single /16 produces ~65k * 6 ports = ~400k ThreadPool tasks resident
+# in RAM, which OOMs small NAS hosts.
+_MAX_SCAN_PREFIX = 22
 
 
 class NetworkScanner:
@@ -29,6 +51,8 @@ class NetworkScanner:
     def __init__(self):
         self._found_devices: dict[str, dict] = {}  # Key: "ip:port"
         self._lock = threading.Lock()
+        self._scan_lock = threading.Lock()
+        self._last_result: list[dict] = []
 
     def _candidate_onvif_ports(self, preferred_port: int | None) -> list[int]:
         """
@@ -94,25 +118,39 @@ class NetworkScanner:
         Args:
             fast: If True, skips the aggressive subnet scan and only does WS-Discovery.
         """
-        self._found_devices = {}
+        # Non-blocking reentrancy guard: a second UI-triggered scan while
+        # the first is still running would double the ThreadPool pressure
+        # and (on host-network NAS deploys) OOM the container.
+        if not self._scan_lock.acquire(blocking=False):
+            logger.info(
+                "Scan already in progress; returning cached result (%d device(s))",
+                len(self._last_result),
+            )
+            return list(self._last_result)
 
-        # 1. Start WS-Discovery in background
-        wsd_thread = threading.Thread(target=self._scan_ws_discovery)
-        wsd_thread.start()
+        try:
+            self._found_devices = {}
 
-        # 2. Start Subnet Scan (if not fast mode)
-        if not fast:
-            self._scan_subnet()
-        else:
-            logger.info("Skipping Subnet Scan (Fast Mode)")
+            # 1. Start WS-Discovery in background
+            wsd_thread = threading.Thread(target=self._scan_ws_discovery)
+            wsd_thread.start()
 
-        # Wait for WSD
-        wsd_thread.join()
+            # 2. Start Subnet Scan (if not fast mode)
+            if not fast:
+                self._scan_subnet()
+            else:
+                logger.info("Skipping Subnet Scan (Fast Mode)")
 
-        # Convert devices to list
-        results = list(self._found_devices.values())
-        logger.info(f"Scan complete. Found {len(results)} devices.")
-        return results
+            # Wait for WSD
+            wsd_thread.join()
+
+            # Convert devices to list
+            results = list(self._found_devices.values())
+            self._last_result = results
+            logger.info(f"Scan complete. Found {len(results)} devices.")
+            return results
+        finally:
+            self._scan_lock.release()
 
     def _scan_ws_discovery(self):
         """Standard ONVIF WS-Discovery."""
@@ -279,25 +317,63 @@ class NetworkScanner:
                     self._found_devices[key]["manufacturer"] = hw
 
     def _get_local_networks(self) -> list[str]:
-        """Returns list of local subnets (e.g. ['192.168.1.0/24'])"""
-        nets = []
-        for adapter in ifaddr.get_adapters():
-            for ip in adapter.ips:
-                if isinstance(ip.ip, str) and isinstance(ip.network_prefix, int):
-                    # IPv4
-                    if ip.ip == "127.0.0.1":
-                        continue
+        """Returns list of local subnets to scan (e.g. ['192.168.1.0/24']).
 
-                    # Calculate network
-                    try:
-                        # naive /24 assumption if prefix missing, but ifaddr gives prefix
-                        # Using ipaddress module
-                        iface = ipaddress.IPv4Interface(f"{ip.ip}/{ip.network_prefix}")
-                        nets.append(str(iface.network))
-                    except (ValueError, TypeError):
-                        # Malformed IP/prefix from ifaddr; skip this interface.
-                        pass
-        return list(set(nets))
+        Filters out Docker bridges, container veths, link-local, and
+        common VPN tunnel interfaces — none of which host ONVIF cameras.
+        Caps at /22 to keep a single scan from expanding into hundreds of
+        thousands of probe tasks. See the module-level docstring on
+        ``_SKIP_IFACE_PATTERNS`` and ``_MAX_SCAN_PREFIX`` for the rationale.
+        """
+        nets: set[str] = set()
+        for adapter in ifaddr.get_adapters():
+            iface_name = getattr(adapter, "nice_name", None) or getattr(
+                adapter, "name", ""
+            )
+            if self._should_skip_interface(iface_name):
+                logger.info(
+                    "skipping interface %s: docker/vpn/container interface",
+                    iface_name,
+                )
+                continue
+
+            for ip in adapter.ips:
+                if not (isinstance(ip.ip, str) and isinstance(ip.network_prefix, int)):
+                    continue
+                if ip.ip == "127.0.0.1":
+                    continue
+
+                try:
+                    iface = ipaddress.IPv4Interface(f"{ip.ip}/{ip.network_prefix}")
+                except (ValueError, TypeError):
+                    continue
+
+                network = iface.network
+                if network.is_link_local:
+                    logger.info(
+                        "skipping subnet %s on %s: link-local",
+                        network,
+                        iface_name,
+                    )
+                    continue
+                if network.prefixlen < _MAX_SCAN_PREFIX:
+                    logger.info(
+                        "skipping subnet %s on %s: too large (prefix /%d < /%d)",
+                        network,
+                        iface_name,
+                        network.prefixlen,
+                        _MAX_SCAN_PREFIX,
+                    )
+                    continue
+
+                nets.add(str(network))
+        return list(nets)
+
+    @staticmethod
+    def _should_skip_interface(name: str) -> bool:
+        if not name:
+            return False
+        return any(pattern.match(name) for pattern in _SKIP_IFACE_PATTERNS)
 
     def _extract_scope(self, scopes, key):
         for scope in scopes:
