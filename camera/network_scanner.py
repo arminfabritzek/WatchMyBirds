@@ -11,10 +11,20 @@ from urllib.parse import urlparse
 import ifaddr
 from onvif import ONVIFCamera
 from wsdiscovery.discovery import ThreadedWSDiscovery
+from zeep.cache import InMemoryCache
+from zeep.transports import Transport
 
 from utils.log_safety import safe_log_value as _slv
 
 logger = logging.getLogger(__name__)
+
+# zeep's default Transport builds a SqliteCache that calls
+# os.makedirs('$XDG_CACHE_HOME/zeep' or '/tmp/.../zeep'). On containers
+# where /tmp/<parent> exists but is owned by root (e.g. fontconfig
+# pre-created during image build), the runtime user can't write there
+# and every ONVIFCamera() raises PermissionError. WSDLs are local files
+# under wsdl_dir, so in-memory caching is sufficient and side-effect-free.
+_ZEEP_TRANSPORT = Transport(cache=InMemoryCache())
 
 # Interface-name patterns we never scan: Docker bridges, container veths,
 # and common VPN tunnel devices. The scanner is only useful on real LAN
@@ -109,8 +119,15 @@ class NetworkScanner:
         """Create ONVIF camera client with explicit WSDL path when available."""
         wsdl_dir = self._resolve_onvif_wsdl_dir()
         if wsdl_dir:
-            return ONVIFCamera(ip, port, user, password, wsdl_dir=wsdl_dir)
-        return ONVIFCamera(ip, port, user, password)
+            return ONVIFCamera(
+                ip,
+                port,
+                user,
+                password,
+                wsdl_dir=wsdl_dir,
+                transport=_ZEEP_TRANSPORT,
+            )
+        return ONVIFCamera(ip, port, user, password, transport=_ZEEP_TRANSPORT)
 
     def scan(self, fast: bool = False) -> list[dict]:
         """

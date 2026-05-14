@@ -17,8 +17,15 @@ from urllib.parse import urlparse, urlunparse
 
 from onvif import ONVIFCamera, ONVIFError
 from wsdiscovery.discovery import ThreadedWSDiscovery
+from zeep.cache import InMemoryCache
+from zeep.transports import Transport
 
 logger = logging.getLogger(__name__)
+
+# See camera/network_scanner.py for the rationale: zeep's default
+# SqliteCache fails on hardened containers where /tmp/<parent> is
+# root-owned. InMemoryCache sidesteps the filesystem entirely.
+_ZEEP_TRANSPORT = Transport(cache=InMemoryCache())
 
 
 class ONVIFDiscovery:
@@ -133,7 +140,9 @@ class ONVIFDiscovery:
             Dict with device info, or None if failed.
         """
         try:
-            camera = ONVIFCamera(ip, port, username, password)
+            camera = ONVIFCamera(
+                ip, port, username, password, transport=_ZEEP_TRANSPORT
+            )
 
             # Get device information
             device_mgmt = camera.devicemgmt
@@ -188,7 +197,9 @@ class ONVIFDiscovery:
             RTSP URI string or None if failed.
         """
         try:
-            camera = ONVIFCamera(ip, port, username, password)
+            camera = ONVIFCamera(
+                ip, port, username, password, transport=_ZEEP_TRANSPORT
+            )
             media_service = camera.create_media_service()
 
             # Get available profiles

@@ -13,10 +13,17 @@ from pathlib import Path
 from typing import Any
 
 from onvif import ONVIFCamera
+from zeep.cache import InMemoryCache
+from zeep.transports import Transport
 
 from utils.log_safety import safe_log_value as _slv
 
 logger = logging.getLogger(__name__)
+
+# See camera/network_scanner.py for the rationale: zeep's default
+# SqliteCache fails on hardened containers where /tmp/<parent> is
+# root-owned. InMemoryCache sidesteps the filesystem entirely.
+_ZEEP_TRANSPORT = Transport(cache=InMemoryCache())
 
 
 @dataclass(frozen=True)
@@ -87,8 +94,15 @@ class PtzClient:
                 self.username,
                 self.password,
                 wsdl_dir=wsdl_dir,
+                transport=_ZEEP_TRANSPORT,
             )
-        return ONVIFCamera(self.ip, self.port, self.username, self.password)
+        return ONVIFCamera(
+            self.ip,
+            self.port,
+            self.username,
+            self.password,
+            transport=_ZEEP_TRANSPORT,
+        )
 
     def _ensure_services(self) -> tuple[Any, str]:
         if self._ptz is not None and self._profile_token:
@@ -126,9 +140,7 @@ class PtzClient:
                 presets.append(PtzPreset(token=str(token), name=str(name or token)))
         return presets
 
-    def set_preset(
-        self, name: str, preset_token: str | None = None
-    ) -> str:
+    def set_preset(self, name: str, preset_token: str | None = None) -> str:
         """Create or overwrite a preset at the current camera position.
 
         Returns the preset token assigned by the camera. If preset_token
