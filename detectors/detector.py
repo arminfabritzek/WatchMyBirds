@@ -4,6 +4,7 @@
 # ------------------------------------------------------------------------------
 import json
 import os
+from typing import Any
 
 import cv2
 import numpy as np
@@ -284,7 +285,9 @@ class ONNXDetectionModel(BaseDetectionModel):
             logger.warning(
                 f"Label JSON file not found at {self.labels_path}. Using default class name."
             )
-        self.class_names = _normalize_class_names(raw_labels) if raw_labels is not None else {}
+        self.class_names = (
+            _normalize_class_names(raw_labels) if raw_labels is not None else {}
+        )
 
         # Verify ONNX shape + class compatibility. YOLOX raw is the only
         # supported layout after the FasterRCNN removal.
@@ -296,6 +299,22 @@ class ONNXDetectionModel(BaseDetectionModel):
         # metadata is absent.
         self.conf_threshold_default = YOLOX_DEFAULT_CONF_THR
         self.iou_threshold_default = YOLOX_DEFAULT_IOU_THR
+        # Per-class confidence thresholds (v2-coco and later). Empty dict
+        # / None ndarray means "use the scalar default for every class" —
+        # byte-identical to pre-per-class behaviour on 5-class models.
+        self.conf_per_class_name: dict[str, float] = {}
+        self.conf_per_class_id: np.ndarray | None = None
+        # Class suppression: classes listed here are dropped pre-NMS,
+        # pre-save, pre-CLS, pre-scoring. Model-owned via YAML
+        # `detection.suppressed_classes`, with `SUPPRESS_OD_CLASSES` in
+        # OUTPUT_DIR/settings.yaml as bridge override. Empty = no
+        # suppression (byte-identical to pre-suppression behaviour).
+        self.suppressed_classes: frozenset[str] = frozenset()
+        self.suppressed_class_ids: frozenset[int] = frozenset()
+        # Min bbox size in input-space pixels. Drops tiny edge-artifact
+        # boxes (v2-coco emits 1.5x1.6px corner detections at conf
+        # 0.4-0.55, v2-coco quirk). Default 8.0 = 1.25% of 640.
+        self.min_bbox_size_px: float = 8.0
         if metadata_path and os.path.exists(metadata_path):
             try:
                 with open(metadata_path) as f:
@@ -307,6 +326,8 @@ class ONNXDetectionModel(BaseDetectionModel):
                 self.iou_threshold_default = float(
                     thresholds.get("iou_nms", self.iou_threshold_default)
                 )
+                self._load_per_class_thresholds(thresholds, metadata_path)
+                self._load_suppression_and_size_filters(thresholds, metadata_path)
                 logger.info(
                     f"Loaded thresholds from {metadata_path}: "
                     f"conf={self.conf_threshold_default}, iou={self.iou_threshold_default}"
@@ -342,6 +363,235 @@ class ONNXDetectionModel(BaseDetectionModel):
                 logger.warning(
                     f"cv2.imread failed to load image at {dummy_path} (File exists, size: {os.path.getsize(dummy_path)} bytes)"
                 )
+
+    def _load_per_class_thresholds(
+        self, thresholds: dict[str, Any], metadata_path: str
+    ) -> None:
+        """Build the per-class threshold ndarray from the metadata block.
+
+        Reads ``inference_thresholds.confidence_per_class`` (dict
+        ``class_name -> float``) and maps it via ``self.class_names``
+        (``class_id_str -> class_name``) into a numpy array indexed by
+        class id, so the post-process filter is a single vectorised
+        ``cls_scores > thr_array[cls_ids]`` op.
+
+        Classes missing from the per-class block fall back to the scalar
+        ``self.conf_threshold_default``. An empty / missing block leaves
+        ``self.conf_per_class_id = None`` so the scalar code path stays
+        byte-identical for 5-class models.
+        """
+        raw = thresholds.get("confidence_per_class") or {}
+        if not isinstance(raw, dict) or not raw:
+            return
+
+        # Filter to numeric values in [0, 1] — the generator already does
+        # this, but the detector is the security boundary for any
+        # hand-edited model_metadata.json on the deploy target.
+        clean: dict[str, float] = {}
+        for name, value in raw.items():
+            try:
+                v = float(value)
+            except (TypeError, ValueError):
+                logger.warning(
+                    "Per-class threshold for %r in %s is not numeric (%r); ignoring.",
+                    name,
+                    metadata_path,
+                    value,
+                )
+                continue
+            if not (0.0 <= v <= 1.0):
+                logger.warning(
+                    "Per-class threshold for %r in %s is %s, outside [0, 1]; ignoring.",
+                    name,
+                    metadata_path,
+                    v,
+                )
+                continue
+            clean[str(name)] = v
+
+        if not clean:
+            return
+
+        n = len(self.class_names)
+        if n == 0:
+            return
+        arr = np.full(n, self.conf_threshold_default, dtype=np.float32)
+        applied: dict[str, float] = {}
+        for idx_str, name in self.class_names.items():
+            v = clean.get(name)
+            if v is None:
+                continue
+            try:
+                arr[int(idx_str)] = v
+            except (ValueError, IndexError):
+                logger.warning(
+                    "class_names key %r could not be mapped to an array index; ignoring.",
+                    idx_str,
+                )
+                continue
+            applied[name] = v
+
+        if not applied:
+            return
+
+        self.conf_per_class_name = applied
+        self.conf_per_class_id = arr
+        logger.info(
+            "Per-class confidence thresholds active: %s (fallback for unlisted: %.3f)",
+            applied,
+            self.conf_threshold_default,
+        )
+
+    def _load_suppression_and_size_filters(
+        self, thresholds: dict[str, Any], metadata_path: str
+    ) -> None:
+        """Load class-suppression set + min-bbox-size filter from metadata.
+
+        Reads ``inference_thresholds.suppressed_classes`` (list[str]) and
+        ``inference_thresholds.min_bbox_size_px`` (float, default 8.0)
+        from the regenerated ``model_metadata.json``. Unions the YAML
+        suppression list with the ``SUPPRESS_OD_CLASSES`` key from
+        ``OUTPUT_DIR/settings.yaml`` so an operator can turn on
+        suppression without waiting for a YAML release.
+        """
+        # YAML-side suppression list
+        raw_yaml = thresholds.get("suppressed_classes") or []
+        if isinstance(raw_yaml, list):
+            yaml_set = {str(x).strip().lower() for x in raw_yaml if isinstance(x, str)}
+        else:
+            logger.warning(
+                "suppressed_classes in %s is not a list (%r); ignoring.",
+                metadata_path,
+                type(raw_yaml).__name__,
+            )
+            yaml_set = set()
+
+        # Settings.yaml override (bridge period until pipeline-dev ships
+        # the YAML block). Both sources union — never subtract from one
+        # via the other; suppression is additive on purpose.
+        settings_set: set[str] = set()
+        try:
+            settings_raw = get_config().get("SUPPRESS_OD_CLASSES") or []
+            if isinstance(settings_raw, list):
+                settings_set = {
+                    str(x).strip().lower()
+                    for x in settings_raw
+                    if isinstance(x, str) and str(x).strip()
+                }
+            elif isinstance(settings_raw, str) and settings_raw.strip():
+                # Tolerate a comma-separated string just in case
+                # someone hand-edits settings.yaml that way.
+                settings_set = {
+                    s.strip().lower() for s in settings_raw.split(",") if s.strip()
+                }
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning(
+                "Failed to read SUPPRESS_OD_CLASSES from config: %s; ignoring.",
+                exc,
+            )
+
+        effective = frozenset(yaml_set | settings_set)
+        if effective:
+            self.suppressed_classes = effective
+            self.suppressed_class_ids = frozenset(
+                int(idx)
+                for idx, name in self.class_names.items()
+                if name.lower() in effective
+            )
+            source = (
+                "yaml+settings"
+                if (yaml_set and settings_set)
+                else ("yaml" if yaml_set else "settings")
+            )
+            logger.info(
+                "Suppressed OD classes active: %s (source: %s)",
+                sorted(self.suppressed_classes),
+                source,
+            )
+
+        # Min bbox size filter
+        raw_min = thresholds.get("min_bbox_size_px")
+        if raw_min is not None:
+            try:
+                v = float(raw_min)
+                if v >= 0:
+                    self.min_bbox_size_px = v
+            except (TypeError, ValueError):
+                logger.warning(
+                    "min_bbox_size_px=%r in %s is not numeric; keeping default %.1f.",
+                    raw_min,
+                    metadata_path,
+                    self.min_bbox_size_px,
+                )
+        if self.min_bbox_size_px > 0:
+            logger.info(
+                "Min bbox size filter: %.1f px (input-space)",
+                self.min_bbox_size_px,
+            )
+
+    def _audit_suppressed(
+        self,
+        boxes_xywh: "np.ndarray",
+        cls_ids: "np.ndarray",
+        cls_scores: "np.ndarray",
+        scale: float,
+        original_width: int,
+        original_height: int,
+    ) -> None:
+        """Append one JSON line per suppressed detection to the audit log.
+
+        Path: ``OUTPUT_DIR/logs/suppressed.jsonl``. The directory is
+        created on first write. Each line is a self-contained JSON
+        object with timestamp, class name, OD confidence, bboxes in
+        both input-space and original-frame coordinates, and frame
+        dimensions. Failure to write is logged but never raised — audit
+        loss must not crash detection.
+        """
+        try:
+            import datetime as _dt
+            import json as _json
+
+            # Re-read OUTPUT_DIR live each call rather than relying on the
+            # module-level `config` dict, which is captured once at import
+            # time. Tests that monkeypatch the singleton via get_config()
+            # need this fresh read; production paths see no difference.
+            output_dir = get_config().get("OUTPUT_DIR") or "."
+            log_dir = os.path.join(output_dir, "logs")
+            os.makedirs(log_dir, exist_ok=True)
+            log_path = os.path.join(log_dir, "suppressed.jsonl")
+            ts = _dt.datetime.now(_dt.UTC).isoformat()
+            with open(log_path, "a", encoding="utf-8") as fh:
+                for i in range(len(boxes_xywh)):
+                    cx, cy, w, h = (float(v) for v in boxes_xywh[i])
+                    x1_in = cx - w / 2.0
+                    y1_in = cy - h / 2.0
+                    x2_in = cx + w / 2.0
+                    y2_in = cy + h / 2.0
+                    x1_o = int(max(0.0, min(original_width, x1_in / scale)))
+                    y1_o = int(max(0.0, min(original_height, y1_in / scale)))
+                    x2_o = int(max(0.0, min(original_width, x2_in / scale)))
+                    y2_o = int(max(0.0, min(original_height, y2_in / scale)))
+                    class_id = int(cls_ids[i])
+                    name = self.class_names.get(str(class_id), str(class_id))
+                    entry = {
+                        "ts": ts,
+                        "class": name,
+                        "class_id": class_id,
+                        "od_confidence": float(cls_scores[i]),
+                        "bbox_xyxy_input": [
+                            round(x1_in, 2),
+                            round(y1_in, 2),
+                            round(x2_in, 2),
+                            round(y2_in, 2),
+                        ],
+                        "bbox_xyxy_orig": [x1_o, y1_o, x2_o, y2_o],
+                        "scale": round(float(scale), 6),
+                        "frame_dims": [int(original_height), int(original_width)],
+                        "reason": "suppressed_classes",
+                    }
+                    fh.write(_json.dumps(entry) + "\n")
+        except Exception as exc:
+            logger.warning("Failed to write suppression audit log: %s", exc)
 
     @staticmethod
     def get_model_input_size(session):
@@ -392,7 +642,71 @@ class ONNXDetectionModel(BaseDetectionModel):
         cls_ids = scores.argmax(axis=1)
         cls_scores = scores.max(axis=1)
 
-        keep = cls_scores > conf_threshold
+        # ---- Filter 1: class suppression (pre per-class threshold) ----
+        # Hard-drop detections whose class is in self.suppressed_class_ids.
+        # Audit-log each dropped detection BEFORE removing it so we keep
+        # a forensic trail (Privacy: this is the only record we keep of
+        # the existence of, e.g., person detections).
+        # IMPORTANT: this runs BEFORE the per-class threshold filter so
+        # even high-confidence detections never reach NMS/save/CLS.
+        #
+        # Audit floor: only emit JSONL entries for detections at or above
+        # the model's scalar conf_threshold_default. Without this, the
+        # argmax stage produces a suppressed entry for *every* anchor
+        # whose top class is suppressed — including 1e-06 noise — and
+        # the audit log blows up to millions of lines per hour. The
+        # drop itself is still unconditional; only the forensic record
+        # is gated on a plausible detection.
+        if self.suppressed_class_ids:
+            suppressed_mask = np.isin(cls_ids, list(self.suppressed_class_ids))
+            if np.any(suppressed_mask):
+                audit_mask = suppressed_mask & (
+                    cls_scores >= self.conf_threshold_default
+                )
+                if np.any(audit_mask):
+                    self._audit_suppressed(
+                        boxes_xywh[audit_mask],
+                        cls_ids[audit_mask],
+                        cls_scores[audit_mask],
+                        scale,
+                        original_width,
+                        original_height,
+                    )
+                keep_mask = ~suppressed_mask
+                boxes_xywh = boxes_xywh[keep_mask]
+                cls_ids = cls_ids[keep_mask]
+                cls_scores = cls_scores[keep_mask]
+                if cls_ids.size == 0:
+                    return []
+
+        # ---- Filter 2: minimum bbox size (input-space pixels) ----
+        # Drops v2-coco's top-left tiny-box edge artifact (1.5x1.6 px
+        # at conf 0.4-0.55). Configurable via `min_bbox_size_px`; 0
+        # disables. No audit log — these are model-internal noise we
+        # do not want to retain a record of.
+        if self.min_bbox_size_px > 0 and cls_ids.size > 0:
+            big_enough = (boxes_xywh[:, 2] >= self.min_bbox_size_px) & (
+                boxes_xywh[:, 3] >= self.min_bbox_size_px
+            )
+            boxes_xywh = boxes_xywh[big_enough]
+            cls_ids = cls_ids[big_enough]
+            cls_scores = cls_scores[big_enough]
+            if cls_ids.size == 0:
+                return []
+
+        # ---- Filter 3: per-class / scalar confidence threshold ----
+        # Applied AFTER argmax (one class chosen per box) and BEFORE
+        # NMS. With conf_per_class_id=None we fall back to the scalar
+        # conf_threshold so 5-class models behave byte-identical to the
+        # pre-per-class code path. The scalar conf_threshold stays the
+        # NMS score_threshold below — that is harmless: NMS only
+        # filters *candidate* boxes, and any box that passed the
+        # per-class keep mask is by definition above its class
+        # threshold and so above the (lower or equal) scalar floor too.
+        if self.conf_per_class_id is not None:
+            keep = cls_scores > self.conf_per_class_id[cls_ids]
+        else:
+            keep = cls_scores > conf_threshold
         if not np.any(keep):
             return []
         boxes_xywh = boxes_xywh[keep]
@@ -424,8 +738,19 @@ class ONNXDetectionModel(BaseDetectionModel):
             ],
             axis=1,
         ).tolist()
+        # NMS score-threshold: when per-class is active, a per-class kept
+        # box might have a score below the scalar conf_threshold (e.g.
+        # person@0.32 when scalar is 0.30 — fine; or person@0.32 when
+        # scalar is set to 0.40 — needs the lower NMS floor so the
+        # per-class filter remains authoritative). Use the floor of all
+        # active class thresholds as the NMS gate so the per-class keep
+        # mask above is never second-guessed.
+        if self.conf_per_class_id is not None:
+            nms_score_threshold = float(self.conf_per_class_id.min())
+        else:
+            nms_score_threshold = conf_threshold
         indices = cv2.dnn.NMSBoxes(
-            nms_xywh, cls_scores.tolist(), conf_threshold, iou_threshold
+            nms_xywh, cls_scores.tolist(), nms_score_threshold, iou_threshold
         )
         if isinstance(indices, tuple) or len(indices) == 0:
             return []

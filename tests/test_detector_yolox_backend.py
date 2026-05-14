@@ -200,6 +200,16 @@ def _make_fake_model():
     model.conf_threshold_default = 0.15
     model.iou_threshold_default = 0.5
     model.output_format = OUTPUT_FORMAT_YOLOX_RAW
+    # Per-class threshold attributes default to "off" — same shape as a
+    # 5-class model with no confidence_per_class block in its metadata.
+    model.conf_per_class_name = {}
+    model.conf_per_class_id = None
+    # Suppression / min-bbox-size filter defaults — no-op for legacy
+    # decode tests. Real loader populates these from
+    # `inference_thresholds.suppressed_classes` and `min_bbox_size_px`.
+    model.suppressed_classes = frozenset()
+    model.suppressed_class_ids = frozenset()
+    model.min_bbox_size_px = 0.0  # disabled in fixture (legacy decode math)
     return model
 
 

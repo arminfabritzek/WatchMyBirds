@@ -9,6 +9,7 @@ duplicated across ``detection_manager._processing_loop`` and
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from detectors.interfaces.classification import DecisionState, compute_unknown_score
@@ -54,6 +55,7 @@ def compute_detection_signals(
     species_key: str,
     od_class_name: str | None = None,
     non_bird_confirm_threshold: float = DEFAULT_NON_BIRD_CONFIRM_THRESHOLD,
+    non_bird_confirm_threshold_fn: Callable[[str], float] | None = None,
 ) -> ScoringResult:
     """
     Compute all detection quality signals in one place.
@@ -98,9 +100,17 @@ def compute_detection_signals(
                              or ``"unknown"``).
         od_class_name:       OD class name from the detector output. When
                              omitted, the bird track runs (legacy behaviour).
-        non_bird_confirm_threshold: Minimum OD confidence for non-bird
-                             CONFIRMED state. Default matches the app-wide
-                             ``SAVE_THRESHOLD``.
+        non_bird_confirm_threshold: Scalar fallback minimum OD confidence
+                             for non-bird CONFIRMED state. Used when
+                             ``non_bird_confirm_threshold_fn`` is None
+                             (5-class models without a per-class block).
+        non_bird_confirm_threshold_fn: Optional resolver
+                             ``(od_class_name) -> float`` that returns
+                             the per-class CONFIRMED floor. When set, it
+                             takes precedence over the scalar. Used by
+                             v2-coco-shaped models where each class has
+                             its own calibrated operating point (person
+                             0.30, marten 0.45, ...).
 
     Returns:
         :class:`ScoringResult` with all computed values ready for persistence.
@@ -121,7 +131,14 @@ def compute_detection_signals(
         score = od_conf
         agreement = od_conf
         unknown_s = 0.0
-        if od_conf >= non_bird_confirm_threshold:
+        # Per-class resolver wins over the scalar default when present.
+        # The fn is expected to be total over class names (callers build
+        # it with the scalar floor as the fallback for unlisted classes).
+        if non_bird_confirm_threshold_fn is not None and od_class_name is not None:
+            floor = float(non_bird_confirm_threshold_fn(od_class_name))
+        else:
+            floor = non_bird_confirm_threshold
+        if od_conf >= floor:
             decision_state: DecisionState | None = DecisionState.CONFIRMED
         else:
             decision_state = DecisionState.UNCERTAIN

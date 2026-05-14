@@ -246,8 +246,17 @@ def _download_file(
     retries: int = 3,
     timeout: int = 60,
     base_dir: str | None = None,
+    force: bool = False,
 ) -> bool:
-    """Download *url* to *dest*. With *base_dir*, refuses dest paths outside it."""
+    """Download *url* to *dest*. With *base_dir*, refuses dest paths outside it.
+
+    Atomic via tmp+rename: a network failure mid-stream leaves the
+    existing *dest* (if any) intact. When ``force=True``, an existing
+    *dest* is overwritten on successful download — used by the pin
+    endpoint so a UI click guarantees a fresh fetch. When ``force=False``
+    (default, cold-start path), an existing *dest* is left untouched and
+    returns True without a network call.
+    """
     if base_dir is not None:
         safe_dest = _safe_model_dir_join(base_dir, os.path.relpath(dest, base_dir))
         if safe_dest is None:
@@ -256,7 +265,7 @@ def _download_file(
             )
             return False
         dest = safe_dest
-    if os.path.exists(dest):
+    if os.path.exists(dest) and not force:
         logger.debug(f"File already exists and will be skipped: {_slv(dest)}")
         return True
     safe_url = _safe_download_url(url)
@@ -266,20 +275,29 @@ def _download_file(
             f"(allowed: {sorted(_allowed_download_hosts())})"
         )
         return False
+    tmp_dest = dest + ".tmp"
     for attempt in range(1, retries + 1):
         try:
             response = requests.get(safe_url, stream=True, timeout=timeout)
             response.raise_for_status()
             os.makedirs(os.path.dirname(dest), exist_ok=True)
-            with open(dest, "wb") as file:
+            with open(tmp_dest, "wb") as file:
                 for chunk in response.iter_content(chunk_size=8192):
                     file.write(chunk)
+            os.replace(tmp_dest, dest)
             logger.info(f"File downloaded: {_slv(dest)}")
             return True
         except requests.RequestException as exc:
             logger.warning(
                 f"Download attempt {attempt}/{retries} for {_slv(safe_url)} failed: {exc}"
             )
+            # Clean up partial tmp file so it doesn't litter the dir;
+            # the original dest (if any) is still intact.
+            try:
+                if os.path.exists(tmp_dest):
+                    os.remove(tmp_dest)
+            except OSError:
+                pass
             if attempt < retries:
                 time.sleep(1)
     logger.error(f"Download failed permanently for {_slv(safe_url)}")
@@ -1097,14 +1115,20 @@ def load_latest_identifier(model_dir: str) -> str:
         return ""
 
 
-def _fetch_companion_files(base_url: str, model_dir: str, model_id: str) -> None:
+def _fetch_companion_files(
+    base_url: str,
+    model_dir: str,
+    model_id: str,
+    *,
+    force_refresh: bool = False,
+) -> None:
     """Best-effort download of the runtime-companion files for a variant.
 
     Besides the weights + labels pair, each HuggingFace release ships a
-    ``_model_config.yaml`` (per-variant conf/iou thresholds) and a
-    ``_metrics.json`` (recall/precision for the AI panel). Both are
-    optional at the HTTP layer — older releases may not have them —
-    but when present they unlock:
+    ``_model_config.yaml`` (per-variant conf/iou thresholds, per-class
+    thresholds, suppressed classes) and a ``_metrics.json`` (recall/
+    precision for the AI panel). Both are optional at the HTTP layer —
+    older releases may not have them — but when present they unlock:
 
     - correct threshold regeneration (``model_metadata.json`` derived
       from YAML) so the detector uses per-variant conf/iou instead
@@ -1115,13 +1139,24 @@ def _fetch_companion_files(base_url: str, model_dir: str, model_id: str) -> None
     After the YAML lands on disk this function also regenerates
     ``<model_dir>/model_metadata.json`` so a cold-start autofetch
     gives the detector the same thresholds a UI-driven pin would.
-    (Regression guard: observed 2026-04-18 on the RPi — Tiny cold-
-    start inherited a stale S model_metadata.json from a previous
-    boot, so Tiny ran with conf=0.30 instead of 0.15.)
 
     The _README.md (release notes) and _best_int8.onnx (quantised
     weights) are intentionally NOT pulled here — README belongs on
     HF, INT8 is a separate deployment mode that needs explicit config.
+
+    Args:
+        base_url: HF base URL for this task (detector or classifier).
+        model_dir: local cache directory.
+        model_id: identifier (used to compose the filename pattern).
+        force_refresh: when True, ignore the local cache and re-fetch
+            companion files even if they already exist. UI-driven pins
+            set this so an operator click guarantees fresh metadata
+            (per-class thresholds, suppressed_classes, etc.). Cold-
+            start autofetch keeps the default ``False`` so reboots
+            don't re-hit HF unnecessarily — local cache is good
+            enough until the next pin click. On network failure with
+            ``force_refresh=True``, the existing local cache stays
+            untouched (atomic write).
     """
     companions = (
         f"{model_id}_model_config.yaml",
@@ -1141,13 +1176,21 @@ def _fetch_companion_files(base_url: str, model_dir: str, model_id: str) -> None
         if local_path is None:
             logger.warning(f"companion {_slv(basename)!r} skipped: unsafe path")
             continue
-        if os.path.exists(local_path):
+        if os.path.exists(local_path) and not force_refresh:
             logger.debug(f"Companion file already present: {_slv(local_path)}")
             continue
         url = f"{base_url}/{basename}"
-        ok = _download_file(url, local_path, base_dir=model_dir)
+        if force_refresh and os.path.exists(local_path):
+            logger.info(
+                "Force-refreshing companion %s from %s (pin-triggered)",
+                _slv(basename),
+                _slv(base_url),
+            )
+        ok = _download_file(url, local_path, base_dir=model_dir, force=force_refresh)
         if not ok:
             # Older release without this companion — expected, not an error.
+            # On force_refresh failure the existing local file stays
+            # intact because _download_file writes atomically via tmp+rename.
             logger.info(
                 "Companion %s not on HF (older release?); continuing without it",
                 _slv(basename),

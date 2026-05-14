@@ -215,7 +215,27 @@ class DetectionManager:
         ``od_class_name`` routes deep-review reanalysis through the same
         non-bird gate as live ingest. Omitting it preserves the legacy
         bird-track-only behaviour for callers that have no class info.
+
+        Builds the same per-class resolver as the live `_processing_loop`
+        so deep-review reanalysis uses the model's per-class floors when
+        a v2-coco-shaped detector is loaded, and falls back to the scalar
+        for 5-class models.
         """
+        detection_service = getattr(self, "detection_service", None)
+        detector_obj = getattr(detection_service, "_detector", None)
+        underlying = getattr(detector_obj, "model", None) if detector_obj else None
+        per_class_map: dict[str, float] = (
+            getattr(underlying, "conf_per_class_name", {}) or {}
+            if underlying is not None
+            else {}
+        )
+        global_non_bird_floor = float(
+            self.config.get("NON_BIRD_CONFIRM_THRESHOLD", 0.80)
+        )
+
+        def non_bird_floor_for(class_name: str) -> float:
+            return float(per_class_map.get(class_name, global_non_bird_floor))
+
         return compute_detection_signals(
             bbox=bbox,
             frame_shape=frame_shape,
@@ -227,9 +247,8 @@ class DetectionManager:
             capability_registry=self.capability_registry,
             species_key=species_key,
             od_class_name=od_class_name,
-            non_bird_confirm_threshold=self.config.get(
-                "NON_BIRD_CONFIRM_THRESHOLD", 0.80
-            ),
+            non_bird_confirm_threshold=global_non_bird_floor,
+            non_bird_confirm_threshold_fn=non_bird_floor_for,
         )
 
     def run_exhaustive_scan(self, frame):
@@ -745,6 +764,27 @@ class DetectionManager:
             )
             save_thr = effective_save_threshold(self.config, detector_conf)
 
+            # Build the per-class non-bird floor resolver once per frame.
+            # Reads the detector's per-class map (v2-coco and later);
+            # falls back to the config scalar NON_BIRD_CONFIRM_THRESHOLD
+            # for any class the model didn't ship a threshold for
+            # (covers 5-class models entirely).
+            per_class_map: dict[str, float] = (
+                getattr(underlying, "conf_per_class_name", {}) or {}
+                if underlying is not None
+                else {}
+            )
+            global_non_bird_floor = float(
+                self.config.get("NON_BIRD_CONFIRM_THRESHOLD", 0.80)
+            )
+
+            def non_bird_floor_for(
+                class_name: str,
+                _map: dict[str, float] = per_class_map,
+                _floor: float = global_non_bird_floor,
+            ) -> float:
+                return float(_map.get(class_name, _floor))
+
             for idx, det in enumerate(detection_info_list, start=1):
                 x1, y1, x2, y2 = det["x1"], det["y1"], det["x2"], det["y2"]
                 od_conf = det["confidence"]
@@ -770,8 +810,7 @@ class DetectionManager:
                 # them in the DB as UNCERTAIN (e.g. during a Phase-7
                 # bbox-cluster collection window).
                 if not is_bird and self.config.get("NON_BIRD_DROP_BELOW_CONFIRM", True):
-                    non_bird_floor = self.config.get("NON_BIRD_CONFIRM_THRESHOLD", 0.80)
-                    if od_conf < non_bird_floor:
+                    if od_conf < non_bird_floor_for(od_class_name):
                         continue
 
                 # Filter (B): sliding-window burst cap. When too many
@@ -833,9 +872,8 @@ class DetectionManager:
                     capability_registry=self.capability_registry,
                     species_key=species_key,
                     od_class_name=od_class_name,
-                    non_bird_confirm_threshold=self.config.get(
-                        "NON_BIRD_CONFIRM_THRESHOLD", 0.80
-                    ),
+                    non_bird_confirm_threshold=global_non_bird_floor,
+                    non_bird_confirm_threshold_fn=non_bird_floor_for,
                 )
                 score = signals.score
                 agreement = signals.agreement_score

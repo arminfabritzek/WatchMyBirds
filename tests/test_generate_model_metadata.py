@@ -90,7 +90,14 @@ def test_tiny_config_produces_expected_metadata():
     assert md["input_normalize"] is False
     assert md["output_format"] == "yolox_raw"
     assert md["num_classes"] == 5
-    assert md["inference_thresholds"] == {"confidence": 0.15, "iou_nms": 0.5}
+    assert md["classes"] == ["bird", "squirrel", "cat", "marten_mustelid", "hedgehog"]
+    assert md["inference_thresholds"] == {
+        "confidence": 0.15,
+        "iou_nms": 0.5,
+        "confidence_per_class": {},
+        "suppressed_classes": [],
+        "min_bbox_size_px": 8.0,
+    }
     assert md["generated_from"] == "tiny.yaml"
     assert md["metrics"]["bird_recall"] == 0.993
     assert md["metrics"]["anim_to_bird"] == 0.1429

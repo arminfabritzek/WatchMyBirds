@@ -79,6 +79,17 @@ DEFAULTS = {
     # to False to keep them as UNCERTAIN rows for Phase-7 static-bbox cluster
     # analysis. Has no effect on bird detections.
     "NON_BIRD_DROP_BELOW_CONFIRM": True,
+    # OD class-suppression list (bridge override). When non-empty, the
+    # detector drops detections of these classes BEFORE the per-class
+    # threshold filter, before NMS, before save / crop / CLS / scoring.
+    # Dropped detections are audited to OUTPUT_DIR/logs/suppressed.jsonl
+    # one JSON line per detection. The detector loader unions this with
+    # the model's `detection.suppressed_classes` YAML block (when
+    # present) — both sources are additive, never subtractive. Use this
+    # key as the operator-facing knob when you need to suppress a class
+    # without waiting for a new HF model release. Empty list = no
+    # suppression (byte-identical to pre-suppression behaviour).
+    "SUPPRESS_OD_CLASSES": [],
     # Burst-cap (Filter B): max detections persisted within
     # BURST_WINDOW_SECONDS. Protects the review queue from being flooded by
     # flocks of common species (issue #32). Set MAX_DETECTIONS_PER_BURST to

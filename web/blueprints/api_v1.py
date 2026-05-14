@@ -322,12 +322,21 @@ def detection_resume():
 # =============================================================================
 
 
-def _regenerate_metadata_for_variant(model_dir: str, model_id: str) -> str | None:
+def _regenerate_metadata_for_variant(
+    model_dir: str, model_id: str, *, refresh_companions: bool = False
+) -> str | None:
     """Rewrite ``<model_dir>/model_metadata.json`` for the given variant.
 
     Reads ``<model_id>_model_config.yaml`` from *model_dir* (if present)
     and feeds it through the shared generator so the active detector
     picks up the right thresholds on reload.
+
+    When ``refresh_companions=True``, first force-refreshes the YAML +
+    metrics from HF so an operator pin click guarantees fresh metadata
+    (per-class thresholds, suppressed_classes, etc.) — the local cache
+    is overwritten only on a successful download. This is the UI path.
+    Cold-start callers keep ``refresh_companions=False`` so reboots
+    don't re-hit HF on every restart.
 
     Returns the absolute metadata path on success, or ``None`` when the
     variant's YAML is not present (the detector then falls back to its
@@ -336,7 +345,22 @@ def _regenerate_metadata_for_variant(model_dir: str, model_id: str) -> str | Non
     """
     import os
 
-    from utils.model_downloader import _safe_model_dir_join
+    from detectors.detector import HF_BASE_URL
+    from utils.model_downloader import _fetch_companion_files, _safe_model_dir_join
+
+    if refresh_companions:
+        try:
+            _fetch_companion_files(HF_BASE_URL, model_dir, model_id, force_refresh=True)
+        except Exception as exc:
+            # Force-refresh is best-effort: HF outage, network issue,
+            # or older release without the YAML — log and fall through
+            # to the existing local cache.
+            logger.warning(
+                "Force-refresh of companion files for %s failed: %s; "
+                "falling back to local cache.",
+                _safe_log_value(model_id),
+                exc,
+            )
 
     yaml_basename = os.path.basename(f"{model_id}_model_config.yaml")
     yaml_path = _safe_model_dir_join(model_dir, yaml_basename)
@@ -619,7 +643,16 @@ def models_detector_pin():
         # reload. Without this, a switch to a variant with different
         # thresholds (e.g. S's conf=0.30 vs Tiny's 0.15) would run the
         # new ONNX with the previous variant's thresholds.
-        metadata_path = _regenerate_metadata_for_variant(model_dir, model_id)
+        #
+        # ``refresh_companions=True``: a UI-driven pin click means the
+        # operator wants the freshest possible metadata. We force-refresh
+        # the YAML + metrics from HF so model-owned changes
+        # (per-class thresholds, suppressed_classes, ...) land instantly
+        # without ssh access. Fail-soft: on network error the local
+        # cache stays untouched.
+        metadata_path = _regenerate_metadata_for_variant(
+            model_dir, model_id, refresh_companions=True
+        )
 
         # The env-var pin (systemd) still wins; tell the UI so it can
         # explain why the click looked like it worked but didn't flip
