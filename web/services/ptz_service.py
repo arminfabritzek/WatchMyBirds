@@ -104,3 +104,34 @@ def update_preset_metadata_only(
 
 def remove_preset(camera_id: int, preset_token: str) -> bool:
     return ptz_core.remove_preset(camera_id, preset_token)
+
+
+# ---------------------------------------------------------------------------
+# Grid-mode setup wizard
+# ---------------------------------------------------------------------------
+
+
+def set_grid_shape(camera_id: int, rows: int, cols: int) -> dict[str, Any] | None:
+    return ptz_core.set_grid_shape(camera_id, rows, cols)
+
+
+def set_grid_cell_at_current_position(
+    camera_id: int, row: int, col: int
+) -> dict[str, Any] | None:
+    return ptz_core.set_grid_cell_at_current_position(camera_id, row, col)
+
+
+def link_grid_cell_to_existing_preset(
+    camera_id: int, row: int, col: int, preset_token: str
+) -> dict[str, Any] | None:
+    return ptz_core.link_grid_cell_to_existing_preset(
+        camera_id, row, col, preset_token
+    )
+
+
+def clear_grid_cell(camera_id: int, row: int, col: int) -> bool:
+    return ptz_core.clear_grid_cell(camera_id, row, col)
+
+
+def get_grid_state(camera_id: int) -> dict[str, Any] | None:
+    return ptz_core.get_grid_state(camera_id)

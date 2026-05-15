@@ -38,6 +38,19 @@ class PathManager:
         safe_kind = "".join(c for c in kind if c.isalnum() or c in "-_") or "overview"
         return self.ptz_snapshots_dir / f"cam{int(camera_id)}_{safe_kind}.jpg"
 
+    def get_ptz_capabilities_path(self, camera_id: int) -> Path:
+        """Absolute path for a cam's persisted capability-probe cache.
+
+        Stores merged declared (GetServiceCapabilities + GetNodes) and
+        empirical (recorded by the standalone probe tool or, later, the
+        in-UI probe) capability data. The file is a hint for the
+        Settings UI's tri-state pills; the source of truth is whatever
+        the probe tool wrote last.
+        """
+        capabilities_dir = self.base_dir / "ptz_capabilities"
+        capabilities_dir.mkdir(parents=True, exist_ok=True)
+        return capabilities_dir / f"cam{int(camera_id)}.yaml"
+
     def get_inbox_root_dir(self) -> Path:
         """Returns the inbox root directory."""
         self.inbox_dir.mkdir(parents=True, exist_ok=True)

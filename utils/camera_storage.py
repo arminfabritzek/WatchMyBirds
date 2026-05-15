@@ -32,6 +32,53 @@ DEFAULT_PTZ_CONFIG: dict = {
     "deadband": 0.12,
     "max_speed": 0.35,
     "move_duration_ms": 250,
+    # Grid-mode additions (mode == "grid"). Operator picks shape once
+    # via setup wizard; runtime uses grid_cells map and the grid-mode
+    # cooldown, which is shorter than the preset-mode cooldown because
+    # adjacent-cell switching is the normal flow (see plan
+    # 2026-05-15_PTZ_grid-zoom-mode). The hysteresis margin prevents
+    # flap when a bird sits on a cell boundary.
+    "grid_shape": [3, 3],
+    "grid_cells": {},  # {"r{row}_c{col}": "<onvif_preset_token>"}
+    "grid_command_cooldown_ms": 4000,
+    "grid_hysteresis_margin": 0.05,
+    "grid_acquire_frames": 1,
+    # Follow-mode additions (mode == "follow"). Detection-driven
+    # continuous pan/tilt centres the bbox; continuous zoom-in/out
+    # keeps the bbox area near `follow_zoom_target_pct` of the frame.
+    # No presets are used for the active tracking — only the overview
+    # preset on lost-timeout return. Designed for cams where the probe
+    # confirmed continuous_works + continuous_zoom.
+    "follow_zoom_target_pct": 0.18,
+    "follow_zoom_deadband_pct": 0.05,
+    "follow_zoom_speed": 0.3,
+    # Lens-protection knob for follow-mode. The controller has no
+    # absolute zoom feedback on most cheap PTZ cams (GetStatus returns
+    # 0.0), so we cap the total *time* spent driving zoom-in since the
+    # last return-to-overview. Once the budget is spent, further
+    # zoom-in commands are suppressed (zoom-out and pan/tilt still
+    # fire). Reset happens every time the controller goes back to
+    # the overview preset. 0.0 = disabled (legacy behaviour).
+    "follow_zoom_max_burst_sec": 0.0,
+    # Manual-joystick burst multipliers (operator-facing, stream-page).
+    # Cheap PTZ cams often ignore ContinuousMove velocity and emit one
+    # firmware-internal step per call regardless of speed. When pan/tilt
+    # steps are too small but zoom steps are too big, we can't equalise
+    # by scaling speed — we have to fire pan/tilt N times per heartbeat
+    # while keeping zoom at 1. The joystick frontend reads these values
+    # and emits that many /ptz/move calls back-to-back per hold-tick.
+    # 1.0 = legacy single-call behaviour, the default for fresh installs.
+    "manual_pan_tilt_burst": 1,
+    "manual_zoom_burst": 1,
+    # Manual-joystick / Auto-PTZ move-duration multiplier.
+    # Cheap PTZ cams that ignore ContinuousMove velocity AND throttle
+    # back-to-back calls (= burst multiplier doesn't help) sometimes
+    # honour a single longer ContinuousMove instead. A multiplier of
+    # 2.0 extends move_duration_ms from 300 ms → 600 ms per call.
+    # Independent from manual_pan_tilt_burst — operator can drive
+    # both at the same time, the effective movement per move-command
+    # is `burst × (duration × multiplier)`. 1.0 = legacy behaviour.
+    "manual_move_duration_multiplier": 1.0,
     "zones": [
         {
             "name": "left",
@@ -313,6 +360,58 @@ class CameraStorage:
             cam["ptz"] = ptz
             return self._save_cameras(cameras)
         return True
+
+    def set_grid_cell(self, camera_id: int, cell_key: str, preset_token: str) -> bool:
+        """Map a grid cell key ('r{row}_c{col}') to an ONVIF preset token.
+
+        The cell_key string is the canonical form used by the grid-mode
+        routing path in `core.ptz_tracking_core._handle_detections_grid`.
+        Stored under `ptz.grid_cells` so the controller reads it on the
+        next normalize_ptz_config() refresh.
+        """
+        cameras = self._load_cameras()
+        if camera_id < 0 or camera_id >= len(cameras):
+            return False
+        cam = cameras[camera_id]
+        ptz = dict(cam.get("ptz") or {})
+        bucket = dict(ptz.get("grid_cells") or {})
+        bucket[str(cell_key)] = str(preset_token)
+        ptz["grid_cells"] = bucket
+        cam["ptz"] = ptz
+        return self._save_cameras(cameras)
+
+    def delete_grid_cell(self, camera_id: int, cell_key: str) -> bool:
+        """Unmap a grid cell; safe no-op if the entry is absent."""
+        cameras = self._load_cameras()
+        if camera_id < 0 or camera_id >= len(cameras):
+            return False
+        cam = cameras[camera_id]
+        ptz = dict(cam.get("ptz") or {})
+        bucket = dict(ptz.get("grid_cells") or {})
+        if str(cell_key) in bucket:
+            del bucket[str(cell_key)]
+            ptz["grid_cells"] = bucket
+            cam["ptz"] = ptz
+            return self._save_cameras(cameras)
+        return True
+
+    def set_grid_shape(self, camera_id: int, rows: int, cols: int) -> bool:
+        """Persist the operator's chosen grid shape (rows × cols).
+
+        Validated against `core.ptz_grid.ALLOWED_GRID_SHAPES` upstream
+        in the service layer; this method just writes what it's given.
+        Clearing all grid_cells when the shape changes is a service-
+        layer concern, not done here — there are legitimate reasons to
+        switch shape and re-use overlapping cells (e.g. 2x3 → 3x3).
+        """
+        cameras = self._load_cameras()
+        if camera_id < 0 or camera_id >= len(cameras):
+            return False
+        cam = cameras[camera_id]
+        ptz = dict(cam.get("ptz") or {})
+        ptz["grid_shape"] = [int(rows), int(cols)]
+        cam["ptz"] = ptz
+        return self._save_cameras(cameras)
 
     def get_credentials(self, camera_id: int) -> tuple[str, str]:
         """Get stored credentials for a camera."""

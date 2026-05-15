@@ -176,6 +176,8 @@
                             <select class="form-select" id="ptzMode">
                                 <option value="preset">Preset</option>
                                 <option value="hybrid">Hybrid</option>
+                                <option value="grid">Grid (zoom-cells)</option>
+                                <option value="follow">Follow (continuous + zoom)</option>
                             </select>
                         </div>
                         <div class="col-md-6">
@@ -232,6 +234,122 @@
                         <div class="col-md-4">
                             <label for="ptzMoveDuration" class="form-label">Move duration (ms)</label>
                             <input type="number" min="50" max="2000" step="50" class="form-control" id="ptzMoveDuration">
+                        </div>
+                    </div>
+                    <div class="row g-3 mt-1">
+                        <div class="col-12">
+                            <div class="border rounded p-2" style="background: rgba(0,0,0,0.02);">
+                                <strong class="small d-block mb-2">Step-size compensation for cheap PTZ cams</strong>
+                                <div class="small text-muted mb-2">
+                                    Two independent knobs for cams that ignore ContinuousMove velocity. <strong>Burst</strong> fires N calls per move — works when the cam honours every call. <strong>Move duration</strong> lengthens a single call — works when the cam throttles back-to-back calls but honours one longer move. They combine multiplicatively. Applies to BOTH the stream-page joystick AND Auto-PTZ follow-mode corrections.
+                                </div>
+                                <div class="alert alert-danger small mb-2 p-2" role="note">
+                                    <strong>Heads up:</strong> some PTZ cams have a fixed firmware step size for pan/tilt that <em>no software setting</em> can override — speed, burst, and duration are all ignored by the motor controller. If you raise these knobs and the on-screen movement doesn't change, your cam is one of them. Zoom usually has a separate motor that does respond. The only fix in that case is a different camera.
+                                </div>
+                                <div class="row g-2">
+                                    <div class="col-md-4">
+                                        <label for="ptzManualPanTiltBurst" class="form-label">Pan/tilt burst (×)</label>
+                                        <input type="number" min="1" max="6" step="1" class="form-control" id="ptzManualPanTiltBurst" title="How many ContinuousMove calls to fire per logical pan/tilt move (joystick hold-tick or follow-mode correction). 1 = legacy single-call, 2–3 = compensate for cams with small per-step pan/tilt motion.">
+                                    </div>
+                                    <div class="col-md-4">
+                                        <label for="ptzManualZoomBurst" class="form-label">Zoom burst (×)</label>
+                                        <input type="number" min="1" max="6" step="1" class="form-control" id="ptzManualZoomBurst" title="Same idea for zoom. Most cheap cams already step too far on zoom, so leave at 1 unless your cam is the opposite case.">
+                                    </div>
+                                    <div class="col-md-4">
+                                        <label for="ptzManualMoveDurationMultiplier" class="form-label">Move duration (×)</label>
+                                        <input type="number" min="0.5" max="5.0" step="0.1" class="form-control" id="ptzManualMoveDurationMultiplier" title="Multiplies the per-call move duration. Try this when burst alone doesn't help — some cams throttle back-to-back calls but honour one longer ContinuousMove. 1.0 = legacy. Combines with burst: 3 bursts × 2× duration = 3 × 600 ms calls.">
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="row g-3 mt-1 d-none" id="ptzGridConfig">
+                        <div class="col-12">
+                            <div class="border rounded p-2" style="background: rgba(0,0,0,0.02);">
+                                <div class="d-flex align-items-center justify-content-between mb-2">
+                                    <strong class="small">Grid shape</strong>
+                                    <span class="small text-muted" id="ptzGridStateSummary">—</span>
+                                </div>
+                                <div class="btn-group btn-group-sm w-100 mb-2" role="group" aria-label="Grid shape">
+                                    <input type="radio" class="btn-check" name="ptzGridShape" id="ptzGridShape2x2" value="2x2">
+                                    <label class="btn btn-outline-secondary" for="ptzGridShape2x2">2×2</label>
+                                    <input type="radio" class="btn-check" name="ptzGridShape" id="ptzGridShape2x3" value="2x3">
+                                    <label class="btn btn-outline-secondary" for="ptzGridShape2x3">2×3</label>
+                                    <input type="radio" class="btn-check" name="ptzGridShape" id="ptzGridShape3x3" value="3x3" checked>
+                                    <label class="btn btn-outline-secondary" for="ptzGridShape3x3">3×3</label>
+                                    <input type="radio" class="btn-check" name="ptzGridShape" id="ptzGridShape3x4" value="3x4">
+                                    <label class="btn btn-outline-secondary" for="ptzGridShape3x4">3×4</label>
+                                </div>
+                                <div class="d-flex align-items-center justify-content-between gap-2">
+                                    <span class="small text-muted">Place each cell's preset on the Stream page.</span>
+                                    <a class="btn btn-sm btn--primary" id="ptzGridOpenWizard" href="/?ptz_grid_setup=0">Open Setup Wizard</a>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="row g-3 mt-1 d-none" id="ptzFollowConfig">
+                        <div class="col-12">
+                            <div class="border rounded p-2" style="background: rgba(0,0,0,0.02);">
+                                <strong class="small d-block mb-2">Follow mode — continuous pan/tilt + zoom</strong>
+                                <div class="small text-muted mb-2">
+                                    No presets needed for tracking — the camera continuously steers the bird toward the centre and adjusts zoom so the bird fills the target fraction of the frame. The overview preset is only used to return after the lost-timeout.
+                                    Requires the empirical probe to report <em>continuous_works</em>; zoom is automatic when <em>continuous_zoom</em> is also declared.
+                                </div>
+                                <div class="row g-2">
+                                    <div class="col-md-4">
+                                        <label for="ptzFollowZoomTarget" class="form-label">Zoom target (% of frame)</label>
+                                        <input type="number" min="0.02" max="0.80" step="0.01" class="form-control" id="ptzFollowZoomTarget" title="Fraction of the frame area the bbox should fill. Larger = closer zoom.">
+                                    </div>
+                                    <div class="col-md-4">
+                                        <label for="ptzFollowZoomDeadband" class="form-label">Zoom deadband (%)</label>
+                                        <input type="number" min="0" max="0.5" step="0.01" class="form-control" id="ptzFollowZoomDeadband" title="Don't fire zoom moves while the bbox area is within ±deadband of the target.">
+                                    </div>
+                                    <div class="col-md-4">
+                                        <label for="ptzFollowZoomSpeed" class="form-label">Zoom speed</label>
+                                        <input type="number" min="0.05" max="1" step="0.05" class="form-control" id="ptzFollowZoomSpeed" title="Continuous-zoom magnitude (0..1). Pan/tilt speed reuses the Move speed field above.">
+                                    </div>
+                                </div>
+                                <div class="row g-2 mt-1">
+                                    <div class="col-md-4">
+                                        <label for="ptzFollowZoomMaxBurst" class="form-label">Near-focus zoom budget (s)</label>
+                                        <input type="number" min="0" max="30" step="0.1" class="form-control" id="ptzFollowZoomMaxBurst" title="Total seconds of zoom-in allowed since the last return-to-overview. Use this to keep the lens within its near-focus distance. 0 = unlimited (legacy).">
+                                        <div class="form-text small">
+                                            Bounds how far in the controller drives the lens for close subjects (e.g. a feeder &lt;1&nbsp;m away). Find your value via the guided probe → near-focus step, or experiment: raise until the framing looks tight, lower if frames go blurry. 0 disables the cap.
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="border rounded p-2 mt-3" style="background: rgba(0,0,0,0.02);">
+                        <div class="d-flex align-items-center justify-content-between mb-2">
+                            <strong class="small">Camera capabilities</strong>
+                            <button type="button" class="btn btn-sm btn-outline-secondary" id="ptzCapRefreshBtn" onclick="refreshPtzCapabilities()" title="Re-probe the camera's declared ONVIF capabilities" aria-label="Re-probe camera capabilities">
+                                <span id="ptzCapSpinner" class="spinner-border spinner-border-sm d-none"></span>
+                                Re-probe
+                            </button>
+                        </div>
+                        <div class="small text-muted mb-2">
+                            <strong>✓ green</strong> = declared and empirically works ·
+                            <strong class="text-danger">⚠ red</strong> = declared but probe says broken ·
+                            <strong class="text-warning">? yellow</strong> = declared, never empirically probed ·
+                            <strong>⊘ light gray</strong> = probe ran but this step not rated yet ·
+                            <strong>✗ dark gray</strong> = not declared.
+                        </div>
+                        <div id="ptzCapPills" class="d-flex flex-wrap gap-1">
+                            <span class="badge bg-secondary">Loading…</span>
+                        </div>
+                        <div id="ptzCapMeta" class="small text-muted mt-2"></div>
+                        <div class="d-flex align-items-center justify-content-between mt-2 gap-2">
+                            <span class="small text-muted">
+                                To upgrade <strong class="text-warning">yellow ?</strong> pills to green/red, run the guided empirical probe.
+                            </span>
+                            <a class="btn btn-sm btn--primary" id="ptzEmpiricalProbeOpenWizard" href="#" title="Walk the camera through every move type with operator confirmation. Pauses Auto-PTZ for the duration." aria-label="Start guided empirical probe">
+                                Start guided probe →
+                            </a>
+                        </div>
+                        <div class="small text-muted mt-1">
+                            Power users: <code>python -m scripts.ptz_probe --camera-id &lt;id&gt;</code> from the WMB repo (see <code>scripts/ptz_probe/README.md</code>).
                         </div>
                     </div>
                     <div class="alert alert-danger py-2 mt-3 mb-0 d-none" id="ptzConfigError"></div>
@@ -396,14 +514,14 @@
                                 ${statusBadge}
                                 ${ptzBadge}
                                 <div class="btn-group btn-group-sm">
-                                    <button type="button" class="btn btn-outline-primary" onclick="testCamera(${cam.id})" title="Test Connection">
+                                    <button type="button" class="btn btn-outline-secondary" onclick="testCamera(${cam.id})" title="Test Connection">
                                         <span id="testSpinner${cam.id}" class="spinner-border spinner-border-sm d-none"></span>
-                                        🔌 Test
+                                        Test
                                     </button>
-                                    <button type="button" class="btn btn-outline-success" onclick="useCamera(${cam.id})" title="Activate this camera as video source">📹 Use</button>
-                                    <button type="button" class="btn btn--secondary" onclick="openPtzConfig(${cam.id})" title="${ptzButtonTitle}" aria-label="Configure auto PTZ" ${ptzButtonDisabled}>PTZ</button>
-                                    <button type="button" class="btn btn-outline-secondary" onclick="editCamera(${cam.id})" title="Edit camera settings">✏️</button>
-                                    <button type="button" class="btn btn-outline-danger" onclick="deleteCamera(${cam.id})" title="Delete camera">🗑️</button>
+                                    <button type="button" class="btn btn-outline-secondary" onclick="useCamera(${cam.id})" title="Activate this camera as video source">Activate</button>
+                                    <button type="button" class="btn btn-outline-secondary" onclick="openPtzConfig(${cam.id})" title="${ptzButtonTitle}" aria-label="Configure auto PTZ" ${ptzButtonDisabled}>PTZ</button>
+                                    <button type="button" class="btn btn-outline-secondary" onclick="editCamera(${cam.id})" title="Edit camera settings" aria-label="Edit camera">Edit</button>
+                                    <button type="button" class="btn btn-outline-secondary" onclick="deleteCamera(${cam.id})" title="Delete camera" aria-label="Delete camera">Delete</button>
                                 </div>
                             </div>`;
                         container.appendChild(item);
@@ -564,6 +682,12 @@
         return found ? (found.preset || '') : '';
     }
 
+    // Holds the full config returned by GET /ptz/config so that
+    // savePtzConfig can preserve fields the form does not surface
+    // (preset_metadata, grid_cells). Without this, the PUT round-trip
+    // wipes anything not echoed by the form.
+    let _ptzConfigPristine = {};
+
     function openPtzConfig(camId) {
         document.getElementById('ptzCamId').value = camId;
         document.getElementById('ptzConfigSubtitle').textContent = `Camera ${camId + 1}`;
@@ -582,6 +706,7 @@
             }
 
             const config = configData.config || {};
+            _ptzConfigPristine = config;
             const presets = presetsData.status === 'success' ? (presetsData.presets || []) : [];
             document.getElementById('ptzEnabled').checked = !!config.enabled;
             document.getElementById('ptzMode').value = config.mode || 'preset';
@@ -591,6 +716,20 @@
             document.getElementById('ptzDeadband').value = config.deadband || 0.12;
             document.getElementById('ptzMaxSpeed').value = config.max_speed || 0.35;
             document.getElementById('ptzMoveDuration').value = config.move_duration_ms || 250;
+            document.getElementById('ptzFollowZoomTarget').value =
+                config.follow_zoom_target_pct != null ? config.follow_zoom_target_pct : 0.18;
+            document.getElementById('ptzFollowZoomDeadband').value =
+                config.follow_zoom_deadband_pct != null ? config.follow_zoom_deadband_pct : 0.05;
+            document.getElementById('ptzFollowZoomSpeed').value =
+                config.follow_zoom_speed != null ? config.follow_zoom_speed : 0.3;
+            document.getElementById('ptzFollowZoomMaxBurst').value =
+                config.follow_zoom_max_burst_sec != null ? config.follow_zoom_max_burst_sec : 0;
+            document.getElementById('ptzManualPanTiltBurst').value =
+                config.manual_pan_tilt_burst != null ? config.manual_pan_tilt_burst : 1;
+            document.getElementById('ptzManualZoomBurst').value =
+                config.manual_zoom_burst != null ? config.manual_zoom_burst : 1;
+            document.getElementById('ptzManualMoveDurationMultiplier').value =
+                config.manual_move_duration_multiplier != null ? config.manual_move_duration_multiplier : 1.0;
 
             populatePtzPresetSelect(document.getElementById('ptzOverviewPreset'), presets, config.overview_preset || '');
             populatePtzPresetSelect(document.getElementById('ptzLeftPreset'), presets, ptzZonePreset(config, 'left'));
@@ -600,6 +739,27 @@
             if (presetsData.status !== 'success') {
                 ptzShowMessage('error', presetsData.message || 'Preset list unavailable. Saved tokens can still be used.');
             }
+
+            // Hydrate the grid-mode controls. Even when the current mode is
+            // preset/hybrid we pre-fill so the operator can flip the mode
+            // dropdown and immediately see the saved shape selection.
+            const shape = Array.isArray(config.grid_shape) ? config.grid_shape : [3, 3];
+            const shapeKey = `${shape[0]}x${shape[1]}`;
+            const shapeRadio = document.getElementById(`ptzGridShape${shapeKey}`)
+                || document.getElementById('ptzGridShape3x3');
+            if (shapeRadio) shapeRadio.checked = true;
+            ptzSyncGridConfigVisibility();
+            ptzRefreshGridStateSummary(camId);
+            const wizardLink = document.getElementById('ptzGridOpenWizard');
+            if (wizardLink) wizardLink.href = `/?ptz_grid_setup=${camId}`;
+
+            const probeWizardLink = document.getElementById('ptzEmpiricalProbeOpenWizard');
+            if (probeWizardLink) probeWizardLink.href = `/?ptz_probe=${camId}`;
+
+            // Capability pills load lazily — the modal opens immediately, the
+            // fetch resolves into the pills container.
+            loadPtzCapabilities(camId, false);
+
             const modal = new bootstrap.Modal(document.getElementById('ptzConfigModal'));
             modal.show();
         }).catch(function (err) {
@@ -607,7 +767,213 @@
         });
     }
 
+    // --- PTZ capability pills (Slice 4-C of capability-probe plan) ---
+    // Tri-state rendering: declared-only (yellow) until an empirical
+    // probe-run confirms whether the cam's claim is real:
+    //
+    //   green ✓   — declared AND empirical works
+    //   red ⚠     — declared but empirical broken (the camera lies)
+    //   yellow ?  — declared, never empirically probed yet
+    //   gray ✗    — not declared by the camera
+    //
+    // Empirical data is auto-imported from the standalone probe at
+    // agent_handoff/lab/experiments/ptz_probe/ via cam IP match. Until
+    // the in-UI probe ships (see roadmap entry), the operator must run
+    // the standalone probe to upgrade pills from yellow to green/red.
+    //
+    // SECURITY NOTE: rendering uses createElement+textContent throughout —
+    // ONVIF errors and IPs from the cam are untrusted content, so we never
+    // build HTML strings from them.
+    function ptzPillState(declared, empiricalKey, empirical) {
+        // Tri-state empirical: true/false/null. null means the wizard
+        // ran but the operator did not rate any step of this kind —
+        // that's "not tested", distinct from "tested and broken".
+        // The whole point of the tri-state refactor: untested cases
+        // must NOT masquerade as confirmed-broken.
+        if (!declared) return {cls: 'bg-secondary', icon: '✗', tip: 'not declared'};
+        if (empirical && empiricalKey in empirical) {
+            const v = empirical[empiricalKey];
+            if (v === true) {
+                return {cls: 'bg-success', icon: '✓', tip: 'declared and empirically works'};
+            }
+            if (v === false) {
+                return {cls: 'bg-danger', icon: '⚠', tip: 'declared by camera, but the empirical probe shows it does NOT actually work'};
+            }
+            // v === null (or undefined-after-pass-through) — operator
+            // ran the wizard but did not rate any step of this kind.
+            return {
+                cls: 'bg-light text-dark border',
+                icon: '⊘',
+                tip: 'probe ran but this step was not rated — open the wizard and rate it to confirm',
+            };
+        }
+        return {cls: 'bg-warning text-dark', icon: '?', tip: 'declared by camera, but never empirically probed — run the probe to confirm'};
+    }
+
+    function ptzMakePill(label, declared, empiricalKey, empirical) {
+        const state = ptzPillState(declared, empiricalKey, empirical);
+        const span = document.createElement('span');
+        span.className = 'badge ' + state.cls;
+        span.title = state.tip;
+        span.textContent = state.icon + ' ' + label;
+        return span;
+    }
+
+    function ptzMakeDeclaredOnlyPill(label, declared) {
+        // For capabilities the lab probe doesn't currently test
+        // (home, position, presets) — declared-only is honest.
+        const span = document.createElement('span');
+        span.className = declared ? 'badge bg-success' : 'badge bg-secondary';
+        span.title = declared ? 'declared by camera (not empirically tested)' : 'not declared';
+        span.textContent = (declared ? '✓ ' : '✗ ') + label;
+        return span;
+    }
+
+    function renderPtzCapabilities(data) {
+        const pills = document.getElementById('ptzCapPills');
+        const meta = document.getElementById('ptzCapMeta');
+        if (!pills || !meta) return;
+
+        const declared = data.declared || {};
+        const empirical = data.empirical || null;
+
+        pills.replaceChildren();
+        // continuous_works maps to BOTH pan-tilt and zoom in the lab tool.
+        pills.appendChild(ptzMakePill('continuous PT', !!declared.continuous_pan_tilt, 'continuous_works', empirical));
+        pills.appendChild(ptzMakePill('continuous Z', !!declared.continuous_zoom, 'continuous_works', empirical));
+        pills.appendChild(ptzMakePill('relative PT', !!declared.relative_pan_tilt, 'relative_works', empirical));
+        pills.appendChild(ptzMakePill('relative Z', !!declared.relative_zoom, 'relative_works', empirical));
+        pills.appendChild(ptzMakePill('absolute PT', !!declared.absolute_pan_tilt, 'absolute_works', empirical));
+        pills.appendChild(ptzMakePill('absolute Z', !!declared.absolute_zoom, 'absolute_works', empirical));
+        pills.appendChild(ptzMakeDeclaredOnlyPill('home', !!declared.home_position));
+        pills.appendChild(ptzMakePill('MoveStatus', !!declared.move_status, 'movestatus_transitions', empirical));
+        pills.appendChild(ptzMakeDeclaredOnlyPill('position', !!declared.status_position));
+
+        const presetsPill = document.createElement('span');
+        presetsPill.className = 'badge bg-info text-dark';
+        presetsPill.title = 'Maximum presets reported by GetNodes';
+        presetsPill.textContent = (declared.max_presets || 0) + ' presets';
+        pills.appendChild(presetsPill);
+
+        if (data.error) {
+            const errPill = document.createElement('span');
+            errPill.className = 'badge bg-warning text-dark';
+            errPill.title = String(data.error || '');
+            errPill.textContent = 'probe error';
+            pills.appendChild(errPill);
+        }
+
+        // Meta line: declared-probe timestamp + empirical status + recommended strategy.
+        const probedAt = data.probed_at ? new Date(data.probed_at * 1000).toLocaleTimeString() : '?';
+        const cacheNote = data.from_cache ? ' (cached)' : '';
+        let metaText = `Declared: ${probedAt}${cacheNote} · ${data.ip || ''}`;
+        if (empirical) {
+            const strategy = empirical.recommended_strategy || 'unknown';
+            const ts = empirical.report_timestamp || '?';
+            metaText += ` · Empirical: ${ts} → ${strategy}`;
+        } else {
+            metaText += ' · Empirical: never probed (yellow pills = unverified)';
+        }
+        meta.textContent = metaText;
+    }
+
+    function loadPtzCapabilities(camId, forceRefresh) {
+        const pills = document.getElementById('ptzCapPills');
+        const spinner = document.getElementById('ptzCapSpinner');
+        const btn = document.getElementById('ptzCapRefreshBtn');
+        if (pills) {
+            pills.replaceChildren();
+            const loading = document.createElement('span');
+            loading.className = 'badge bg-secondary';
+            loading.textContent = 'Loading…';
+            pills.appendChild(loading);
+        }
+        if (spinner) spinner.classList.remove('d-none');
+        if (btn) btn.disabled = true;
+
+        const url = `/api/v1/cameras/${camId}/ptz/capabilities${forceRefresh ? '?refresh=1' : ''}`;
+        fetch(url)
+            .then(res => res.json())
+            .then(payload => {
+                if (payload.status !== 'success' || !payload.data) {
+                    throw new Error(payload.message || 'Capability probe failed.');
+                }
+                renderPtzCapabilities(payload.data);
+            })
+            .catch(err => {
+                if (pills) {
+                    pills.replaceChildren();
+                    const failPill = document.createElement('span');
+                    failPill.className = 'badge bg-danger';
+                    failPill.title = String(err && err.message ? err.message : err);
+                    failPill.textContent = 'probe failed';
+                    pills.appendChild(failPill);
+                }
+            })
+            .finally(() => {
+                if (spinner) spinner.classList.add('d-none');
+                if (btn) btn.disabled = false;
+            });
+    }
+
+    function refreshPtzCapabilities() {
+        const camId = document.getElementById('ptzCamId').value;
+        if (!camId) return;
+        loadPtzCapabilities(camId, true);
+    }
+
+    function ptzSyncGridConfigVisibility() {
+        const mode = (document.getElementById('ptzMode').value || 'preset').toLowerCase();
+        const gridBlock = document.getElementById('ptzGridConfig');
+        const followBlock = document.getElementById('ptzFollowConfig');
+        if (gridBlock) {
+            gridBlock.classList.toggle('d-none', mode !== 'grid');
+        }
+        if (followBlock) {
+            followBlock.classList.toggle('d-none', mode !== 'follow');
+        }
+    }
+
+    function ptzRefreshGridStateSummary(camId) {
+        const summaryEl = document.getElementById('ptzGridStateSummary');
+        if (!summaryEl) return;
+        summaryEl.textContent = 'loading…';
+        fetch(`/api/v1/cameras/${camId}/ptz/grid/state`).then(function (r) {
+            return r.json();
+        }).then(function (data) {
+            if (!data || data.status !== 'success' || !data.grid) {
+                summaryEl.textContent = '—';
+                return;
+            }
+            const g = data.grid;
+            const label = `${g.total_set}/${g.total_required} cells set`;
+            summaryEl.textContent = label;
+        }).catch(function () {
+            summaryEl.textContent = '—';
+        });
+    }
+
+    function ptzGetSelectedGridShape() {
+        const checked = document.querySelector('input[name="ptzGridShape"]:checked');
+        if (!checked) return [3, 3];
+        const parts = String(checked.value).split('x').map(function (s) { return parseInt(s, 10); });
+        if (parts.length === 2 && parts.every(function (n) { return Number.isFinite(n); })) {
+            return parts;
+        }
+        return [3, 3];
+    }
+
     function buildPtzConfigPayload() {
+        const shape = ptzGetSelectedGridShape();
+        // Preserve fields the form does not surface — without this the
+        // PUT plates preset_metadata (operator-placed overlay boxes)
+        // and grid_cells (operator-saved grid presets) on every save.
+        const preservedPresetMetadata = _ptzConfigPristine && _ptzConfigPristine.preset_metadata
+            ? _ptzConfigPristine.preset_metadata
+            : {};
+        const preservedGridCells = _ptzConfigPristine && _ptzConfigPristine.grid_cells
+            ? _ptzConfigPristine.grid_cells
+            : {};
         return {
             enabled: document.getElementById('ptzEnabled').checked,
             mode: document.getElementById('ptzMode').value || 'preset',
@@ -618,6 +984,28 @@
             deadband: parseFloat(document.getElementById('ptzDeadband').value) || 0.12,
             max_speed: parseFloat(document.getElementById('ptzMaxSpeed').value) || 0.35,
             move_duration_ms: parseInt(document.getElementById('ptzMoveDuration').value, 10) || 250,
+            follow_zoom_target_pct: parseFloat(document.getElementById('ptzFollowZoomTarget').value) || 0.18,
+            follow_zoom_deadband_pct: parseFloat(document.getElementById('ptzFollowZoomDeadband').value) || 0.05,
+            follow_zoom_speed: parseFloat(document.getElementById('ptzFollowZoomSpeed').value) || 0.3,
+            follow_zoom_max_burst_sec: (() => {
+                const raw = parseFloat(document.getElementById('ptzFollowZoomMaxBurst').value);
+                return Number.isFinite(raw) && raw >= 0 ? raw : 0;
+            })(),
+            manual_pan_tilt_burst: (() => {
+                const raw = parseInt(document.getElementById('ptzManualPanTiltBurst').value, 10);
+                return Number.isFinite(raw) && raw >= 1 && raw <= 6 ? raw : 1;
+            })(),
+            manual_zoom_burst: (() => {
+                const raw = parseInt(document.getElementById('ptzManualZoomBurst').value, 10);
+                return Number.isFinite(raw) && raw >= 1 && raw <= 6 ? raw : 1;
+            })(),
+            manual_move_duration_multiplier: (() => {
+                const raw = parseFloat(document.getElementById('ptzManualMoveDurationMultiplier').value);
+                return Number.isFinite(raw) && raw >= 0.5 && raw <= 5.0 ? raw : 1.0;
+            })(),
+            grid_shape: shape,
+            grid_cells: preservedGridCells,
+            preset_metadata: preservedPresetMetadata,
             zones: [
                 { name: 'left', preset: document.getElementById('ptzLeftPreset').value || '', x_min: 0.0, y_min: 0.0, x_max: 0.33, y_max: 1.0 },
                 { name: 'center', preset: document.getElementById('ptzCenterPreset').value || '', x_min: 0.33, y_min: 0.0, x_max: 0.67, y_max: 1.0 },
@@ -791,7 +1179,12 @@
         modal.show();
     }
 
-    document.addEventListener('DOMContentLoaded', function () { loadSavedCameras(); });
+    document.addEventListener('DOMContentLoaded', function () {
+        loadSavedCameras();
+        // Toggle the grid-config block when the mode dropdown changes.
+        const modeEl = document.getElementById('ptzMode');
+        if (modeEl) modeEl.addEventListener('change', ptzSyncGridConfigVisibility);
+    });
 
     function setCameraUrl(value) {
         if (!value || value.trim() === '') { alert('Please enter a valid camera URL'); return; }

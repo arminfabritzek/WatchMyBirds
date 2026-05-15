@@ -215,67 +215,144 @@
             <img id="ptzMinimapImg" alt="Home overview" class="ptz-minimap__img">
             <svg id="ptzMinimapSvg" class="ptz-minimap__svg" preserveAspectRatio="none" viewBox="0 0 100 100"></svg>
         </div>
+        <div id="ptzGridWizardOverlay" class="ptz-grid-wizard" hidden aria-label="Grid setup wizard">
+            <div class="ptz-grid-wizard__cells" id="ptzGridWizardCells"></div>
+        </div>
         {% endif %}
 
     </div>
+    {% if can_moderate %}
+    <!-- Grid Setup Wizard panel: sits in normal document flow between
+         the stream and the action bar so it can never get clipped by an
+         ancestor's overflow:hidden or stacking context. Toggled hidden
+         by JS when the wizard is not active. -->
+    <div id="ptzGridWizardPanel" class="ptz-grid-wizard-panel" hidden role="dialog" aria-label="Grid setup wizard">
+        <div class="ptz-grid-wizard-panel__status">
+            <span class="ptz-grid-wizard-panel__title" id="ptzGridWizardTitle">Grid setup — pick a cell</span>
+            <span class="ptz-grid-wizard-panel__hint" id="ptzGridWizardHint">Click a cell, aim with the joystick, then Save.</span>
+        </div>
+        <div class="ptz-grid-wizard-panel__actions">
+            <!--
+                Two ways to map a cell:
+                  1. Aim with joystick + click "Save current view" — creates
+                     a fresh ONVIF preset slot and links it.
+                  2. Pick an existing preset from the dropdown + click "Link"
+                     — reuses the operator's earlier presets (1–7, 8, etc.).
+                     Multiple cells can link to the same preset; routing
+                     treats duplicates as a feature.
+            -->
+            <button type="button" class="ptz-grid-wizard-btn ptz-grid-wizard-btn--primary" id="ptzGridWizardSave" disabled title="Save the camera's current pan/tilt/zoom as a new preset for this cell">Save current view</button>
+            <span class="ptz-grid-wizard-panel__sep" aria-hidden="true">or</span>
+            <select class="ptz-grid-wizard-select" id="ptzGridWizardPresetSelect" disabled aria-label="Link to existing preset">
+                <option value="">— pick a preset —</option>
+            </select>
+            <button type="button" class="ptz-grid-wizard-btn" id="ptzGridWizardLink" disabled title="Link this cell to the selected existing preset">Link</button>
+            <button type="button" class="ptz-grid-wizard-btn ptz-grid-wizard-btn--danger" id="ptzGridWizardClear" disabled>Clear</button>
+            <button type="button" class="ptz-grid-wizard-btn" id="ptzGridWizardHide" title="Hide grid lines so you can interact with the stream">Hide grid</button>
+            <button type="button" class="ptz-grid-wizard-btn" id="ptzGridWizardExit">Done</button>
+        </div>
+    </div>
+    {% endif %}
     <div class="stream-actions" aria-label="Stream actions">
         {% if can_moderate %}
-        <button type="button"
-                class="stream-ptz-pill stream-ptz-pill--toggle"
-                id="streamPtzStatus"
-                data-enabled="false"
-                title="Toggle auto-return"
-                aria-label="Toggle auto-return"
-                aria-pressed="false"
-                hidden>
-            <span class="stream-ptz-pill__dot" aria-hidden="true"></span>
-            <span class="stream-ptz-pill__label">Auto Cam</span>
-            <span class="stream-ptz-pill__value" id="streamPtzStatusValue">off</span>
-        </button>
-        <button type="button"
-                class="stream-ptz-pill stream-ptz-pill--action"
-                id="ptzHomeButton"
-                title="Return camera to overview position"
-                aria-label="Return camera to overview position"
-                hidden>
-            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" aria-hidden="true">
-                <path d="M3 11.5L12 4l9 7.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
-                <path d="M5 10v10h14V10" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
-                <path d="M10 20v-5h4v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
-            </svg>
-            <span>Home</span>
-        </button>
-        <button type="button"
-                class="stream-ptz-pill stream-ptz-pill--action"
-                id="ptzSnapshotBtn"
-                title="Fly to overview and freeze a new Mini-Map snapshot"
-                aria-label="Capture overview snapshot"
-                hidden>
-            <span class="spinner-border spinner-border-sm d-none" id="ptzSnapshotSpinner"></span>
-            Save snapshot
-        </button>
-        <button type="button"
-                class="stream-ptz-pill stream-ptz-pill--action"
-                id="ptzEditToggle"
-                title="Show preset overlay boxes"
-                aria-label="Show preset overlay boxes"
-                data-mode="hidden"
-                hidden>
-            Show boxes
-        </button>
+        <!--
+            PTZ controls are always rendered (no `hidden` default). When no
+            PTZ camera is bound the buttons go to a disabled state so the
+            operator can see what's available; the runtime status poll then
+            unfreezes them once a camera is detected. Set ?ptz_debug=1 in
+            the URL to force every PTZ surface visible regardless of state.
+
+            Layout: three pill-grouped clusters mirroring the D-pad's
+            container styling — toggles cluster, joystick cluster, and
+            (down below in the action bar) the report-sender cluster.
+            The separate Home pill was retired in favour of the D-pad's
+            center ⌂ button.
+        -->
+        <div id="ptzExternalPauseBanner"
+             class="alert alert-warning py-1 px-2 mb-2 small d-none"
+             role="status"
+             aria-live="polite">
+            <strong>⚠ Auto-PTZ paused</strong> — <span id="ptzExternalPauseReason">external control</span>.
+            Detection-driven moves are suppressed until released.
+        </div>
+        <div class="stream-ptz-group" aria-label="Auto PTZ controls">
+            <button type="button"
+                    class="stream-ptz-pill stream-ptz-pill--toggle"
+                    id="streamPtzStatus"
+                    data-enabled="false"
+                    title="Toggle auto-return"
+                    aria-label="Toggle auto-return"
+                    aria-pressed="false"
+                    disabled>
+                <span class="stream-ptz-pill__dot" aria-hidden="true"></span>
+                <span class="stream-ptz-pill__label">Auto Cam</span>
+                <span class="stream-ptz-pill__value" id="streamPtzStatusValue">…</span>
+            </button>
+            <button type="button"
+                    class="stream-ptz-pill stream-ptz-pill--action"
+                    id="ptzSnapshotBtn"
+                    title="Fly to overview and freeze a new Mini-Map snapshot (available in Edit mode)"
+                    aria-label="Capture overview snapshot"
+                    disabled>
+                <span class="spinner-border spinner-border-sm d-none" id="ptzSnapshotSpinner"></span>
+                Save snapshot
+            </button>
+            <button type="button"
+                    class="stream-ptz-pill stream-ptz-pill--action"
+                    id="ptzEditToggle"
+                    title="Show preset overlay boxes"
+                    aria-label="Show preset overlay boxes"
+                    data-mode="hidden"
+                    disabled>
+                Show boxes
+            </button>
+        </div>
+        <!-- Legacy Home button retained but hidden — replaced by the
+             D-pad's center ⌂. Kept around so existing JS handlers
+             (gotoPreset(overviewPreset)) continue to attach without
+             requiring a wider refactor. style="display:none" enforces
+             invisibility regardless of CSS cascade (the [hidden] attr
+             alone was being overridden by inline-flex defaults in some
+             browsers, leaving a 1-2px stub visible). -->
+        <button type="button" id="ptzHomeButton" hidden aria-hidden="true" style="display:none"></button>
+        <!--
+            D-pad layout: 3×3 grid for pan/tilt + Home center, with a
+            separate 1×2 zoom column on the right. Tilt direction signs
+            are flipped relative to the ONVIF spec to match this
+            camera's inverted Y axis (▲ sends tilt=+1, ▼ sends tilt=-1).
+        -->
+        <div class="stream-ptz-dpad" id="ptzJoystick" role="group" aria-label="Manual PTZ control">
+            <div class="stream-ptz-dpad__cross">
+                <span class="stream-ptz-dpad__spacer"></span>
+                <button type="button" class="stream-ptz-joybtn" data-axis="tilt" data-dir="1" title="Tilt up" aria-label="Tilt up">▲</button>
+                <span class="stream-ptz-dpad__spacer"></span>
+                <button type="button" class="stream-ptz-joybtn" data-axis="pan" data-dir="-1" title="Pan left" aria-label="Pan left">◀</button>
+                <button type="button" class="stream-ptz-joybtn stream-ptz-joybtn--home" id="ptzDpadHome" title="Return camera to overview position" aria-label="Return to overview">⌂</button>
+                <button type="button" class="stream-ptz-joybtn" data-axis="pan" data-dir="1" title="Pan right" aria-label="Pan right">▶</button>
+                <span class="stream-ptz-dpad__spacer"></span>
+                <button type="button" class="stream-ptz-joybtn" data-axis="tilt" data-dir="-1" title="Tilt down" aria-label="Tilt down">▼</button>
+                <span class="stream-ptz-dpad__spacer"></span>
+            </div>
+            <div class="stream-ptz-dpad__zoom">
+                <button type="button" class="stream-ptz-joybtn" data-axis="zoom" data-dir="1" title="Zoom in" aria-label="Zoom in">+</button>
+                <button type="button" class="stream-ptz-joybtn" data-axis="zoom" data-dir="-1" title="Zoom out" aria-label="Zoom out">−</button>
+            </div>
+        </div>
         {% endif %}
-        <button
-            type="button"
-            class="stream-report-action"
-            id="streamSendReportButton"
-            title="Send evening report to Telegram"
-            aria-label="Send evening report to Telegram"
-        >
-            <svg class="stream-report-action__icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                <path d="M21.5 3.5L10.8 14.2" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
-                <path d="M21.5 3.5L14.7 20.5L10.8 14.2L4.5 10.3L21.5 3.5Z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/>
-            </svg>
-        </button>
+        <div class="stream-ptz-group stream-ptz-group--report" aria-label="Reporting">
+            <button
+                type="button"
+                class="stream-report-action"
+                id="streamSendReportButton"
+                title="Send evening report to Telegram"
+                aria-label="Send evening report to Telegram"
+            >
+                <svg class="stream-report-action__icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                    <path d="M21.5 3.5L10.8 14.2" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+                    <path d="M21.5 3.5L14.7 20.5L10.8 14.2L4.5 10.3L21.5 3.5Z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/>
+                </svg>
+            </button>
+        </div>
     </div>
 
     {% if can_moderate %}
@@ -347,11 +424,10 @@
         .stream-embed__edit-canvas {
             position: absolute;
             top: 0;
-            left: 50%;
-            transform: translateX(-50%);
+            left: 0;
             height: 100%;
-            width: auto;          /* keeps the snapshot's native aspect */
-            max-width: 100%;
+            width: 100%;
+            object-fit: fill;
             display: block;
             background: #000;
             z-index: 3;
@@ -371,8 +447,25 @@
             z-index: 2;
         }
 
+        /* Grouped pill container — visual sibling to the D-pad and the
+           wizard panel. Wraps related controls in a single rounded
+           background so the stream toolbar reads as 2-3 clusters
+           instead of N freestanding buttons. */
+        .stream-ptz-group {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 4px 8px;
+            border-radius: 12px;
+            background: rgba(0, 0, 0, 0.04);
+            border: 1px solid rgba(0, 0, 0, 0.08);
+        }
+        .stream-ptz-group--report { padding: 4px; }
+
         /* Unified pill style for all stream-toolbar PTZ controls
-           (Auto-Cam status, Home, Show boxes, Save snapshot). */
+           (Auto-Cam status, Show boxes, Save snapshot). Inside a
+           group the per-button border is suppressed since the group
+           provides the visual frame. */
         .stream-ptz-pill {
             display: inline-flex;
             align-items: center;
@@ -392,10 +485,37 @@
         button.stream-ptz-pill { font-weight: 500; }
         .stream-ptz-pill:hover:not(:disabled) { background: rgba(0, 0, 0, 0.04); }
         .stream-ptz-pill:disabled { opacity: 0.6; cursor: progress; }
+        /* When inside a group container, drop the per-button border
+           so the group's outer border carries the framing. */
+        .stream-ptz-group .stream-ptz-pill {
+            border-color: transparent;
+            background: rgba(255, 255, 255, 0.85);
+        }
+        .stream-ptz-group .stream-ptz-pill:hover:not(:disabled) {
+            background: rgba(255, 255, 255, 1);
+        }
         .stream-ptz-pill__label { color: var(--color-text-muted, #777); }
         .stream-ptz-pill__value {
             font-family: 'SF Mono', 'Fira Code', monospace;
             text-transform: capitalize;
+            /* Reserve enough width for the longest runtime value
+               ("home in 12s") so the pill never resizes as the
+               countdown ticks. Anchored in ch units so it scales
+               with the font. */
+            min-width: 8ch;
+            text-align: left;
+        }
+        /* Action pills cycle their label text ("Show boxes" /
+           "Edit boxes" / "Done", or "Save snapshot" with/without
+           a spinner). Reserve the widest label's footprint so the
+           pill keeps the same hit-area and its neighbours don't
+           slide as the operator clicks through modes. justify-content
+           is centered so the shorter text ("Done") stays visually
+           anchored. */
+        .stream-ptz-pill--action {
+            min-width: 7.5rem;
+            justify-content: center;
+            text-align: center;
         }
         /* Active-state visual hint for buttons that flip a mode */
         .stream-ptz-pill[data-mode="visible"] {
@@ -438,6 +558,202 @@
         @keyframes ptz-pulse {
             0%, 100% { opacity: 1; }
             50% { opacity: 0.4; }
+        }
+        .ptz-grid-wizard {
+            position: absolute;
+            inset: 0;
+            /* Overlay itself is click-through; only the per-cell label
+               chip catches clicks. The rest of each cell is transparent
+               to the iframe so the operator can still click Start /
+               interact with the live stream while the wizard is open. */
+            pointer-events: none;
+            z-index: 6;
+        }
+        .ptz-grid-wizard[hidden] { display: none; }
+        .ptz-grid-wizard__cells {
+            position: absolute;
+            inset: 0;
+            display: grid;
+            gap: 0;
+        }
+        .ptz-grid-cell {
+            position: relative;
+            border: 1.5px dashed rgba(255, 255, 255, 0.60);
+            background: transparent;
+            color: rgba(255, 255, 255, 0.95);
+            font-family: inherit;
+            font-size: 12px;
+            font-weight: 600;
+            pointer-events: none;  /* cell body is click-through */
+            transition: border-color 0.1s ease;
+            display: flex;
+            align-items: flex-start;
+            justify-content: flex-start;
+            padding: 4px 6px;
+        }
+        .ptz-grid-cell[data-state="set"] {
+            border-color: rgba(60, 180, 100, 0.85);
+            border-style: solid;
+        }
+        .ptz-grid-cell[data-state="active"] {
+            border-color: rgba(80, 170, 255, 1.0);
+            border-width: 2.5px;
+            border-style: solid;
+        }
+        .ptz-grid-cell__label {
+            background: rgba(0, 0, 0, 0.65);
+            padding: 3px 7px;
+            border-radius: 3px;
+            line-height: 1.3;
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+            pointer-events: auto;  /* the label chip is the only clickable region */
+            user-select: none;
+            -webkit-user-select: none;
+        }
+        .ptz-grid-cell__label:hover { background: rgba(0, 0, 0, 0.85); }
+        .ptz-grid-cell[data-state="active"] .ptz-grid-cell__label {
+            background: rgba(40, 110, 200, 0.95);
+        }
+        .ptz-grid-wizard-panel {
+            /* Lives in document flow between the stream and the action
+               bar. No absolute/fixed positioning so it can never get
+               clipped by overflow:hidden or hidden behind a stacking
+               context. Toggled visible via [hidden] attribute. */
+            margin: 8px auto 0;
+            max-width: 100%;
+            background: rgba(20, 20, 25, 0.97);
+            color: #fff;
+            border-radius: 10px;
+            padding: 10px 14px;
+            box-shadow: 0 6px 22px rgba(0, 0, 0, 0.45);
+            display: flex;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 10px;
+            font-size: 13px;
+            border: 1px solid rgba(120, 200, 255, 0.55);
+        }
+        .ptz-grid-wizard-panel[hidden] { display: none; }
+        .ptz-grid-wizard-panel__status {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+            flex: 1;
+        }
+        .ptz-grid-wizard-panel__title { font-weight: 600; }
+        .ptz-grid-wizard-panel__hint {
+            font-size: 11px;
+            color: rgba(255, 255, 255, 0.65);
+        }
+        .ptz-grid-wizard-panel__actions {
+            display: flex;
+            gap: 6px;
+        }
+        .ptz-grid-wizard-btn {
+            padding: 5px 10px;
+            border-radius: 4px;
+            border: 1px solid rgba(255, 255, 255, 0.25);
+            background: rgba(255, 255, 255, 0.08);
+            color: #fff;
+            font-size: 12px;
+            font-weight: 500;
+            cursor: pointer;
+        }
+        .ptz-grid-wizard-btn:hover:not(:disabled) { background: rgba(255, 255, 255, 0.18); }
+        .ptz-grid-wizard-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+        .ptz-grid-wizard-btn--primary {
+            background: rgba(60, 140, 220, 0.85);
+            border-color: rgba(60, 140, 220, 1.0);
+        }
+        .ptz-grid-wizard-btn--primary:hover:not(:disabled) { background: rgba(80, 160, 240, 0.95); }
+        .ptz-grid-wizard-btn--danger {
+            background: rgba(200, 70, 70, 0.85);
+            border-color: rgba(200, 70, 70, 1.0);
+        }
+        .ptz-grid-wizard-panel__sep {
+            font-size: 11px;
+            color: rgba(255, 255, 255, 0.55);
+            padding: 0 2px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        .ptz-grid-wizard-select {
+            padding: 5px 8px;
+            border-radius: 4px;
+            border: 1px solid rgba(255, 255, 255, 0.25);
+            background: rgba(255, 255, 255, 0.08);
+            color: #fff;
+            font-size: 12px;
+            font-family: inherit;
+            cursor: pointer;
+            max-width: 180px;
+        }
+        .ptz-grid-wizard-select option {
+            background: #1e1e23;
+            color: #fff;
+        }
+        .ptz-grid-wizard-select:disabled { opacity: 0.4; cursor: not-allowed; }
+        .stream-ptz-dpad {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 4px 8px;
+            border-radius: 12px;
+            background: rgba(0, 0, 0, 0.04);
+            border: 1px solid rgba(0, 0, 0, 0.08);
+        }
+        .stream-ptz-dpad[hidden] { display: none; }
+        .stream-ptz-dpad__cross {
+            display: grid;
+            grid-template-columns: repeat(3, 30px);
+            grid-template-rows: repeat(3, 30px);
+            gap: 2px;
+        }
+        .stream-ptz-dpad__zoom {
+            display: grid;
+            grid-template-rows: repeat(2, 30px);
+            grid-template-columns: 30px;
+            gap: 2px;
+        }
+        .stream-ptz-dpad__spacer { display: block; }
+        .stream-ptz-joybtn--home {
+            background: rgba(120, 200, 255, 0.20);
+            border-color: rgba(60, 140, 220, 0.45);
+            font-size: 16px;
+        }
+        .stream-ptz-joybtn--home:hover:not(:disabled) {
+            background: rgba(120, 200, 255, 0.35);
+        }
+        .stream-ptz-joybtn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 30px;
+            height: 30px;
+            border-radius: 6px;
+            border: 1px solid rgba(0, 0, 0, 0.15);
+            background: rgba(255, 255, 255, 0.85);
+            color: var(--color-text, #222);
+            font-size: 14px;
+            font-weight: 600;
+            line-height: 1;
+            cursor: pointer;
+            user-select: none;
+            -webkit-user-select: none;
+            touch-action: none;  /* prevent scroll/zoom from stealing pointerdown */
+            transition: background 0.05s ease;
+        }
+        .stream-ptz-joybtn:hover:not(:disabled) { background: rgba(255, 255, 255, 1); }
+        .stream-ptz-joybtn:active,
+        .stream-ptz-joybtn[data-pressed="true"] {
+            background: rgba(120, 200, 255, 0.45);
+            border-color: rgba(60, 140, 220, 0.7);
+        }
+        .stream-ptz-joybtn:disabled { opacity: 0.45; cursor: not-allowed; }
+        @media (prefers-reduced-motion: reduce) {
+            .stream-ptz-joybtn { transition: none; }
         }
         .ptz-minimap {
             position: absolute;
@@ -503,20 +819,111 @@
             const streamEmbedEl = document.querySelector('.stream-embed');
             const iframeEl = document.getElementById('go2rtc-frame');
             const editCanvasEl = document.getElementById('ptzEditCanvas');
+            const fallbackVideoEl = document.getElementById('video-feed-fallback');
+            let cameraAspectDims = null;
+            const aspectProbeFailedAtByKey = new Map();
+            const aspectProbeInFlightKeys = new Set();
+            const aspectProbeSuccessKeys = new Set();
+
+            function readNaturalDims(el) {
+                if (!el || el.naturalWidth <= 0 || el.naturalHeight <= 0) {
+                    return null;
+                }
+                return { width: el.naturalWidth, height: el.naturalHeight };
+            }
+
+            function setCameraAspectDims(width, height) {
+                const w = Number(width);
+                const h = Number(height);
+                if (!Number.isFinite(w) || !Number.isFinite(h) || w <= 0 || h <= 0) {
+                    return;
+                }
+                const prev = cameraAspectDims;
+                cameraAspectDims = { width: w, height: h };
+                const prevAspect = prev ? prev.width / prev.height : 0;
+                const nextAspect = w / h;
+                if (!prev || Math.abs(prevAspect - nextAspect) > 0.0005) {
+                    syncOverlayToCanvas();
+                    syncWizardOverlayToVideo();
+                }
+            }
+
+            function getCameraAspectDims() {
+                return cameraAspectDims
+                    || readNaturalDims(fallbackVideoEl)
+                    || readNaturalDims(editCanvasEl)
+                    || { width: 16, height: 9 };
+            }
+
+            function withAspectProbeCacheBust(src) {
+                const url = new URL(src, window.location.origin);
+                url.searchParams.set('aspect_probe', String(Date.now()));
+                return url.toString();
+            }
+
+            function probeCameraAspect(src, key) {
+                if (!src) return;
+                const now = Date.now();
+                if (aspectProbeSuccessKeys.has(key)) return;
+                if (aspectProbeInFlightKeys.has(key)) return;
+                const failedAt = aspectProbeFailedAtByKey.get(key) || 0;
+                if (failedAt && now - failedAt < 10000) {
+                    return;
+                }
+                aspectProbeFailedAtByKey.delete(key);
+                aspectProbeInFlightKeys.add(key);
+                const probe = new Image();
+                probe.onload = function () {
+                    aspectProbeInFlightKeys.delete(key);
+                    aspectProbeSuccessKeys.add(key);
+                    setCameraAspectDims(probe.naturalWidth, probe.naturalHeight);
+                };
+                probe.onerror = function () {
+                    aspectProbeInFlightKeys.delete(key);
+                    aspectProbeFailedAtByKey.set(key, Date.now());
+                };
+                probe.src = withAspectProbeCacheBust(src);
+            }
+
+            function probeLiveFrameAspect() {
+                probeCameraAspect('/api/snapshot', 'live-frame:' + (cameraId ?? 'none'));
+            }
+
+            if (fallbackVideoEl) {
+                fallbackVideoEl.addEventListener('load', function () {
+                    const dims = readNaturalDims(fallbackVideoEl);
+                    if (dims) setCameraAspectDims(dims.width, dims.height);
+                });
+            }
 
             function csrfHeaders(extra) {
                 return Object.assign({ 'X-CSRF-Token': CSRF }, extra || {});
             }
 
+            // Debug flag: ?ptz_debug=1 in the URL keeps every PTZ surface
+            // visible and clickable regardless of camera state, so the
+            // operator can inspect each control individually.
+            const PTZ_DEBUG = (function () {
+                try {
+                    return new URLSearchParams(window.location.search).get('ptz_debug') === '1';
+                } catch (_) { return false; }
+            })();
+
             function paintStatusPill() {
                 if (!statusEl || !statusValueEl) return;
-                // Pill is visible whenever a PTZ camera is bound, even when
-                // auto-return is off — the operator needs the on/off toggle.
-                if (cameraId === null) {
-                    statusEl.hidden = true;
+                // Pill stays visible at all times; we toggle `disabled`
+                // instead of `hidden` so the operator can see the surface
+                // even before/without a PTZ camera being bound.
+                statusEl.hidden = false;
+                if (cameraId === null && !PTZ_DEBUG) {
+                    statusEl.disabled = true;
+                    statusEl.dataset.enabled = 'false';
+                    statusEl.dataset.returning = 'false';
+                    statusEl.setAttribute('aria-pressed', 'false');
+                    statusValueEl.textContent = 'no cam';
                     return;
                 }
-                statusEl.hidden = false;
+                statusEl.disabled = false;
                 statusEl.dataset.enabled = autoEnabled ? 'true' : 'false';
                 statusEl.setAttribute('aria-pressed', autoEnabled ? 'true' : 'false');
                 if (!autoEnabled) {
@@ -566,11 +973,34 @@
                 }
             }
 
+            // Shown when an external owner (probe wizard, firmware
+            // update, ...) holds the AutoPtzController. Surfaces the
+            // status outside the wizard modal so a second browser tab
+            // doesn't think Auto-PTZ has silently failed. The lastReason
+            // cache skips the DOM writes when nothing changed — the
+            // fetchStatus polling tick is the hot path here.
+            let _lastPauseReason = null;
+            function paintExternalPauseBanner(reason) {
+                const trimmed = String(reason || '').trim();
+                if (trimmed === _lastPauseReason) return;
+                const banner = document.getElementById('ptzExternalPauseBanner');
+                const reasonEl = document.getElementById('ptzExternalPauseReason');
+                if (!banner || !reasonEl) return;
+                _lastPauseReason = trimmed;
+                if (trimmed) {
+                    reasonEl.textContent = trimmed;
+                    banner.classList.remove('d-none');
+                } else {
+                    banner.classList.add('d-none');
+                }
+            }
+
             function fetchStatus() {
                 return fetch('/api/v1/ptz/auto/status', { cache: 'no-store' })
                     .then(function (r) { return r.ok ? r.json() : null; })
                     .then(function (data) {
                         const auto = (data && data.auto_ptz) || {};
+                        paintExternalPauseBanner(auto.external_pause_reason);
                         cameraId = (typeof auto.camera_id === 'number') ? auto.camera_id : null;
                         // Trust the backend's last_preset only when it is
                         // non-empty: the controller only fills it when IT
@@ -615,7 +1045,10 @@
                             stopCountdownTicker();
                         }
                         paintStatusPill();
-                        editToggleEl.hidden = cameraId === null;
+                        // applyModeStyles owns the editToggle disabled
+                        // state — it knows about cameraId + snapshotUrl
+                        // + presets together, which is the right view
+                        // for "is there anything for Show boxes to do".
                         applyModeStyles();
                         renderBoxes();
                     })
@@ -625,7 +1058,10 @@
                         returnDeadline = 0;
                         stopCountdownTicker();
                         paintStatusPill();
-                        editToggleEl.hidden = true;
+                        applyModeStyles();
+                        // Clear the pause banner on fetch failure so a
+                        // network blip doesn't leave a stale banner shown.
+                        paintExternalPauseBanner('');
                     });
             }
 
@@ -637,8 +1073,38 @@
                         const meta = data.metadata || {};
                         overviewPreset = String(meta.overview_preset || '');
                         snapshotUrl = String(meta.overview_snapshot_url || '');
+                        const streamFrameWidth = Number(meta.stream_frame_width || 0);
+                        const streamFrameHeight = Number(meta.stream_frame_height || 0);
+                        if (streamFrameWidth > 0 && streamFrameHeight > 0) {
+                            setCameraAspectDims(streamFrameWidth, streamFrameHeight);
+                        }
                         presets = (meta.presets || []).slice(0, 8);
                         recomputeHomeState();
+                        // Preload the overview snapshot so getVideoRect()
+                        // can read the camera's true aspect ratio even
+                        // outside Edit mode. The img stays hidden; we
+                        // only want naturalWidth/Height populated for
+                        // overlay letterbox math.
+                        //
+                        // Uses a dedicated dataset marker
+                        // (prefetchedAspect) so applyModeStyles can still
+                        // see "first-time-this-Edit-session" and force a
+                        // cache-busted reload when the operator opens
+                        // Edit mode.
+                        if (editCanvasEl && snapshotUrl
+                            && editCanvasEl.dataset.prefetchedAspect !== snapshotUrl
+                            && !editCanvasEl.src) {
+                            editCanvasEl.dataset.prefetchedAspect = snapshotUrl;
+                            editCanvasEl.addEventListener('load', function () {
+                                syncOverlayToCanvas();
+                                syncWizardOverlayToVideo();
+                            }, { once: true });
+                            editCanvasEl.src = snapshotUrl;
+                        }
+                        if (snapshotUrl) {
+                            probeCameraAspect(snapshotUrl, 'overview:' + snapshotUrl);
+                        }
+                        probeLiveFrameAspect();
                     })
                     .catch(function () { presets = []; overviewPreset = ''; snapshotUrl = ''; });
             }
@@ -647,21 +1113,76 @@
                 while (overlayEl.firstChild) overlayEl.removeChild(overlayEl.firstChild);
             }
 
-            function syncOverlayToCanvas() {
-                if (!overlayEl || !editCanvasEl) return;
-                if (mode !== MODE_EDIT || editCanvasEl.hidden) {
-                    overlayEl.style.left = '';
-                    overlayEl.style.top = '';
-                    overlayEl.style.width = '';
-                    overlayEl.style.height = '';
+            // Compute the pixel rectangle of the actual video content
+            // inside the stream-embed container, after letterboxing.
+            //
+            // The container is laid out 16:9 (or whatever the iframe
+            // negotiates). When the real video aspect differs, the
+            // video is centered with black bars. Overlays — preset
+            // boxes, grid wizard cells — must clamp to this rectangle
+            // and NOT to the full container, or operator-placed
+            // coordinates land on the bars instead of on actual pixels.
+            //
+            // Source of truth for the aspect is the camera frame, not the
+            // browser rectangle: current-frame probe, MJPEG natural size,
+            // overview snapshot, then 16:9 as a last-ditch fallback.
+            function getVideoRect() {
+                if (!streamEmbedEl) return null;
+                const cw = streamEmbedEl.clientWidth;
+                const ch = streamEmbedEl.clientHeight;
+                if (cw <= 0 || ch <= 0) return null;
+
+                const dims = getCameraAspectDims();
+                const nw = dims.width;
+                const nh = dims.height;
+
+                const containerAspect = cw / ch;
+                const videoAspect = nw / nh;
+                let w, h;
+                if (videoAspect > containerAspect) {
+                    // Letterboxed top/bottom (video is wider than container).
+                    w = cw;
+                    h = cw / videoAspect;
+                } else {
+                    // Pillarboxed left/right (video is taller than container).
+                    h = ch;
+                    w = ch * videoAspect;
+                }
+                const left = (cw - w) / 2;
+                const top = (ch - h) / 2;
+                return { left: left, top: top, width: w, height: h };
+            }
+
+            // Position any overlay element to the video rectangle.
+            // Called for both ptzBoxOverlay (preset boxes) and the
+            // grid-wizard overlay so they share the same letterbox math.
+            function applyVideoRectToOverlay(el) {
+                if (!el) return;
+                const rect = getVideoRect();
+                if (!rect) {
+                    el.style.left = '';
+                    el.style.top = '';
+                    el.style.width = '';
+                    el.style.height = '';
                     return;
                 }
-                const parent = streamEmbedEl.getBoundingClientRect();
-                const rect = editCanvasEl.getBoundingClientRect();
-                overlayEl.style.left = (rect.left - parent.left) + 'px';
-                overlayEl.style.top = (rect.top - parent.top) + 'px';
-                overlayEl.style.width = rect.width + 'px';
-                overlayEl.style.height = rect.height + 'px';
+                el.style.left = rect.left + 'px';
+                el.style.top = rect.top + 'px';
+                el.style.width = rect.width + 'px';
+                el.style.height = rect.height + 'px';
+            }
+
+            function syncOverlayToCanvas() {
+                if (!overlayEl) return;
+                if (mode === MODE_EDIT && editCanvasEl && !editCanvasEl.hidden) {
+                    applyVideoRectToOverlay(editCanvasEl);
+                    applyVideoRectToOverlay(overlayEl);
+                    return;
+                }
+                // Visible mode (no canvas snapshot): clamp to the live
+                // video letterbox so operator-placed preset boxes stay
+                // anchored to actual pixels, not to the black bars.
+                applyVideoRectToOverlay(overlayEl);
             }
 
             function applyModeStyles() {
@@ -683,25 +1204,55 @@
                     if (isEdit) syncOverlayToCanvas();
                     else syncOverlayToCanvas(); // resets inline styles
                 }
+                // Always-visible policy: the toggle stays in the toolbar
+                // so its slot never collapses. It's only clickable when
+                // there is actually something for it to reveal — a
+                // bound camera AND either a snapshot (Mini-Map) or at
+                // least one placed box. Without that, clicking just
+                // cycles mode-state with no visible effect, which is
+                // the UX bug we're fixing here. The tooltip carries the
+                // reason so the disabled state is self-explanatory.
+                const hasSomethingToShow = !!snapshotUrl || hasAnyPresetWithBox();
+                const editAvailable = (cameraId !== null)
+                    && (mode === MODE_EDIT || hasSomethingToShow);
+                editToggleEl.disabled = !editAvailable && !PTZ_DEBUG;
                 const label = MODE_LABELS[mode];
                 if (label) {
                     editToggleEl.textContent = label.text;
-                    editToggleEl.title = label.title;
-                    editToggleEl.setAttribute('aria-label', label.title);
+                    let title = label.title;
+                    if (!editAvailable && !PTZ_DEBUG) {
+                        title = (cameraId === null)
+                            ? 'No PTZ camera bound'
+                            : 'Capture an overview snapshot or place a box first';
+                    }
+                    editToggleEl.title = title;
+                    editToggleEl.setAttribute('aria-label', title);
                 }
                 editToggleEl.dataset.mode = mode;
                 if (homeBtnEl) {
-                    // "Show boxes" mode always exposes the Home pill as a
-                    // quick-access shortcut. Otherwise the pill only appears
-                    // when the operator needs it (camera off-home).
-                    const showHome = !!overviewPreset
+                    // Always-visible policy: the Home pill stays in the
+                    // toolbar at all times. It's `disabled` when there's
+                    // no overview preset / no camera / camera is already
+                    // at home — the operator can still see where the
+                    // shortcut lives. ?ptz_debug=1 force-enables.
+                    homeBtnEl.hidden = false;
+                    const enableHome = (
+                        !!overviewPreset
                         && cameraId !== null
                         && (mode === MODE_VISIBLE || !onHome)
-                        && mode !== MODE_EDIT;
-                    homeBtnEl.hidden = !showHome;
+                        && mode !== MODE_EDIT
+                    );
+                    homeBtnEl.disabled = !enableHome && !PTZ_DEBUG;
                 }
                 if (snapshotBtnEl) {
-                    snapshotBtnEl.hidden = !(isEdit && cameraId !== null && !!overviewPreset);
+                    // Always-visible policy: the pill stays in the toolbar so
+                    // its slot never collapses (no neighboring buttons
+                    // sliding left). It only becomes clickable while the
+                    // operator is in Edit mode with a bound camera and a
+                    // configured overview preset.
+                    snapshotBtnEl.hidden = false;
+                    const canSnapshot = isEdit && cameraId !== null && !!overviewPreset;
+                    snapshotBtnEl.disabled = !canSnapshot && !PTZ_DEBUG;
                 }
                 if (minimapEl) {
                     // Mini-Map appears in "visible" mode whenever a snapshot
@@ -781,16 +1332,19 @@
                     return;
                 }
                 const isEdit = mode === MODE_EDIT;
-                // In visible mode, the Mini-Map (when present) replaces the
-                // live-stream overlay so the video stays clean. Without a
-                // snapshot the overlay is the fallback. Off-home behaviour
-                // still hides the overlay in favour of the Home button.
-                if (mode === MODE_VISIBLE) {
-                    if (!onHome || (snapshotUrl && hasAnyPresetWithBox())) {
-                        overlayEl.hidden = true;
-                        renderMinimap();
-                        return;
-                    }
+                // In visible mode the Mini-Map replaces the live-stream
+                // overlay when it has real content to draw — both a
+                // snapshot AND at least one placed box. Otherwise we
+                // keep the live overlay so the operator always sees
+                // SOMETHING when toggled into visible mode. The old
+                // !onHome trigger was removed: it hid the overlay
+                // whenever the operator clicked a box, which made
+                // boxes vanish with no replacement when no snapshot
+                // existed.
+                if (mode === MODE_VISIBLE && snapshotUrl && hasAnyPresetWithBox()) {
+                    overlayEl.hidden = true;
+                    renderMinimap();
+                    return;
                 }
                 if (!presets.length) {
                     overlayEl.hidden = !isEdit;
@@ -1026,6 +1580,554 @@
                 renderBoxes();
             });
 
+            // ---- Manual joystick (⬆⬇⬅➡🔍+🔍−) -----------------------------
+            //
+            // Choreography:
+            //   pointerdown   → start a heartbeat timer that POSTs /ptz/move
+            //                   every HEARTBEAT_MS with duration_ms slightly
+            //                   longer than the heartbeat (so each move
+            //                   overlaps the next, no on/off stutter).
+            //   pointer{up,leave,cancel} / visibilitychange / blur → stop.
+            //
+            // Dead-man-switch:
+            //   The /ptz/move command on the backend uses ContinuousMove +
+            //   time.sleep(duration_ms) + Stop. If the heartbeat dies for
+            //   any reason (frontend crashes, network blip, tab hidden),
+            //   the camera self-stops within MOVE_DURATION_MS. The explicit
+            //   /ptz/stop on release is the fast path; the auto-stop is the
+            //   backstop.
+            const joystickEl = document.getElementById('ptzJoystick');
+            if (joystickEl) {
+                const JOY_SPEED = 0.5;          // ONVIF velocity magnitude
+                const ZOOM_SPEED = 0.6;         // zoom usually wants more punch
+                const MOVE_DURATION_MS = 300;   // backend auto-stop after this
+                // Spacing between calls INSIDE one burst-tick. Must be
+                // ≥ MOVE_DURATION_MS or call K+1's ContinuousMove starts
+                // before call K's Stop completes, swallowing the step.
+                const INTRA_BURST_SPACING_MS = 320;
+                // Spacing BETWEEN consecutive burst-ticks. Deliberately
+                // shorter than INTRA_BURST so the next tick's move
+                // overlaps the previous tick's auto-stop window — same
+                // trick as the original setInterval(180ms) heartbeat
+                // that produced fluid motion at burst=1. Without this
+                // override, burst=1 would be a hard regression (320 ms
+                // between calls instead of 180 ms = noticeably slower).
+                const INTER_BURST_SPACING_MS = 180;
+                // Per-axis burst multipliers. Default 1/1 = legacy
+                // single-call behaviour. Overridden per-camera from
+                // ptz.manual_pan_tilt_burst / ptz.manual_zoom_burst
+                // (see ptz_step_asymmetry probe for the why).
+                let panTiltBurst = 1;
+                let zoomBurst = 1;
+                // Per-move duration multiplier. Lengthens each
+                // ContinuousMove instead of (or in addition to)
+                // firing more calls. Useful for cams that throttle
+                // back-to-back calls but honour a single long move.
+                let moveDurationMultiplier = 1.0;
+                // Pan/tilt/zoom buttons (hold-to-move). Excludes the
+                // Home button which is single-click and reuses the
+                // existing ptzHomeButton's gotoPreset(overview) path.
+                const joyBtns = joystickEl.querySelectorAll('.stream-ptz-joybtn[data-axis]');
+                const dpadHomeBtn = document.getElementById('ptzDpadHome');
+                let activeBtn = null;
+                let activePointerId = null;
+                // Single token for the in-flight burst chain. Bumped on
+                // every release; any pending setTimeout sees the bump
+                // and bails before issuing its /ptz/move, so the cam
+                // doesn't keep schlenkern after the operator let go.
+                let burstToken = 0;
+
+                function sendMove(axis, dir) {
+                    if (cameraId === null) return;
+                    // Backend clamps duration_ms to [50, 500] so any
+                    // multiplier above ~1.6 saturates there. That's
+                    // by design — the API caps the dead-man-switch.
+                    // For longer hold-times the operator should also
+                    // raise the burst count.
+                    const dur = Math.round(MOVE_DURATION_MS * moveDurationMultiplier);
+                    const body = { pan: 0, tilt: 0, zoom: 0, duration_ms: dur };
+                    if (axis === 'pan')  body.pan  = dir * JOY_SPEED;
+                    if (axis === 'tilt') body.tilt = dir * JOY_SPEED;
+                    if (axis === 'zoom') body.zoom = dir * ZOOM_SPEED;
+                    fetch('/api/v1/cameras/' + cameraId + '/ptz/move', {
+                        method: 'POST',
+                        headers: csrfHeaders({ 'Content-Type': 'application/json' }),
+                        body: JSON.stringify(body),
+                    }).catch(function () { /* silent — next heartbeat retries */ });
+                }
+
+                function sendStop() {
+                    if (cameraId === null) return;
+                    fetch('/api/v1/cameras/' + cameraId + '/ptz/stop', {
+                        method: 'POST',
+                        headers: csrfHeaders(),
+                    }).catch(function () { /* silent */ });
+                }
+
+                // Recursive burst-tick scheduler. One tick = N back-to-
+                // back /ptz/move calls (N depends on axis), then loops
+                // itself for the next tick. Replaces the old setInterval
+                // because a fixed interval cannot honour per-axis bursts
+                // whose total duration varies with N.
+                function scheduleBurstTick(axis, dir, token) {
+                    if (token !== burstToken) return;     // released — bail
+                    if (cameraId === null) return;
+                    const count = axis === 'zoom' ? zoomBurst : panTiltBurst;
+                    let i = 0;
+                    function fireOne() {
+                        if (token !== burstToken) return; // released mid-burst
+                        sendMove(axis, dir);
+                        i += 1;
+                        if (i < count) {
+                            // More calls in this burst still to come —
+                            // wait for the previous move's Stop to land.
+                            window.setTimeout(fireOne, INTRA_BURST_SPACING_MS);
+                        } else {
+                            // Burst done; chain to the next one with the
+                            // overlapping-heartbeat spacing so motion
+                            // stays fluid (matches the pre-burst behaviour
+                            // at count=1).
+                            window.setTimeout(function () {
+                                scheduleBurstTick(axis, dir, token);
+                            }, INTER_BURST_SPACING_MS);
+                        }
+                    }
+                    fireOne();
+                }
+
+                function startHold(btn, pointerId) {
+                    if (activeBtn) stopHold();
+                    activeBtn = btn;
+                    activePointerId = pointerId;
+                    btn.setAttribute('data-pressed', 'true');
+                    const axis = btn.dataset.axis;
+                    const dir = parseInt(btn.dataset.dir, 10);
+                    burstToken += 1;
+                    scheduleBurstTick(axis, dir, burstToken);
+                }
+
+                function stopHold() {
+                    // Bump the token first — any setTimeout still in
+                    // flight sees the mismatch and skips its sendMove.
+                    burstToken += 1;
+                    if (activeBtn) {
+                        activeBtn.removeAttribute('data-pressed');
+                        activeBtn = null;
+                    }
+                    activePointerId = null;
+                    sendStop();
+                }
+
+                function loadJoyBurstConfig() {
+                    if (cameraId === null) return;
+                    fetch('/api/v1/cameras/' + cameraId + '/ptz/config', { cache: 'no-store' })
+                        .then(function (r) { return r.ok ? r.json() : null; })
+                        .then(function (data) {
+                            const cfg = (data && data.config) || {};
+                            const pt = parseInt(cfg.manual_pan_tilt_burst, 10);
+                            const zm = parseInt(cfg.manual_zoom_burst, 10);
+                            const dm = parseFloat(cfg.manual_move_duration_multiplier);
+                            panTiltBurst = (Number.isFinite(pt) && pt >= 1 && pt <= 6) ? pt : 1;
+                            zoomBurst    = (Number.isFinite(zm) && zm >= 1 && zm <= 6) ? zm : 1;
+                            moveDurationMultiplier = (Number.isFinite(dm) && dm >= 0.5 && dm <= 5.0) ? dm : 1.0;
+                        })
+                        .catch(function () { /* keep defaults */ });
+                }
+
+                joyBtns.forEach(function (btn) {
+                    btn.addEventListener('pointerdown', function (event) {
+                        event.preventDefault();
+                        // Capture so pointermove off the button still goes here
+                        // — pointerup on a captured target is reliable across
+                        // mouse + touch + pen.
+                        try { btn.setPointerCapture(event.pointerId); } catch (e) { /* ignore */ }
+                        startHold(btn, event.pointerId);
+                    });
+                    ['pointerup', 'pointercancel', 'pointerleave'].forEach(function (evt) {
+                        btn.addEventListener(evt, function (event) {
+                            if (activePointerId !== null && event.pointerId !== activePointerId) return;
+                            stopHold();
+                        });
+                    });
+                    // Belt-and-suspenders: contextmenu on long-press (touch)
+                    // would otherwise pop the OS menu and steal the release.
+                    btn.addEventListener('contextmenu', function (event) {
+                        event.preventDefault();
+                    });
+                });
+
+                // Dead-man-switch backstops: any time the page loses focus or
+                // is hidden, kill the heartbeat — the backend's per-move
+                // auto-stop catches the rest within MOVE_DURATION_MS.
+                document.addEventListener('visibilitychange', function () {
+                    if (document.hidden && activeBtn) stopHold();
+                });
+                window.addEventListener('blur', function () {
+                    if (activeBtn) stopHold();
+                });
+
+                // Always-visible policy: the joystick stays mounted, the
+                // individual buttons are `disabled` when no camera is
+                // bound. ?ptz_debug=1 forces them clickable so the
+                // operator can test the choreography even before a
+                // camera registers. Polling every STATUS_POLL_MS in case
+                // a camera comes online mid-session.
+                //
+                // Burst config is fetched once per camera-id change to
+                // avoid hammering the config endpoint every STATUS_POLL_MS.
+                let lastBurstCamId = null;
+                function syncJoystickState() {
+                    joystickEl.hidden = false;
+                    const dis = (cameraId === null) && !PTZ_DEBUG;
+                    joyBtns.forEach(function (btn) { btn.disabled = dis; });
+                    if (dpadHomeBtn) {
+                        dpadHomeBtn.disabled = dis || !overviewPreset;
+                    }
+                    if (cameraId !== null && cameraId !== lastBurstCamId) {
+                        lastBurstCamId = cameraId;
+                        loadJoyBurstConfig();
+                    }
+                }
+                syncJoystickState();
+                window.setInterval(syncJoystickState, STATUS_POLL_MS);
+
+                if (dpadHomeBtn) {
+                    dpadHomeBtn.addEventListener('click', function () {
+                        if (!overviewPreset) return;
+                        gotoPreset(overviewPreset);
+                    });
+                }
+            }
+
+            // ---- Grid Setup Wizard ----------------------------------------
+            //
+            // Triggered by URL ?ptz_grid_setup=<camId>. Renders an N×M cell
+            // overlay over the live video, each cell clickable. Operator
+            // picks a cell, aims with the joystick, hits Save — the
+            // current camera position is saved as that cell's preset.
+            const wizardOverlayEl = document.getElementById('ptzGridWizardOverlay');
+            const wizardCellsEl = document.getElementById('ptzGridWizardCells');
+            const wizardPanelEl = document.getElementById('ptzGridWizardPanel');
+            const wizardTitleEl = document.getElementById('ptzGridWizardTitle');
+            const wizardHintEl = document.getElementById('ptzGridWizardHint');
+            const wizardSaveBtn = document.getElementById('ptzGridWizardSave');
+            const wizardClearBtn = document.getElementById('ptzGridWizardClear');
+            const wizardExitBtn = document.getElementById('ptzGridWizardExit');
+            const wizardPresetSelect = document.getElementById('ptzGridWizardPresetSelect');
+            const wizardLinkBtn = document.getElementById('ptzGridWizardLink');
+
+            let wizardActive = false;
+            let wizardCamId = null;
+            let wizardShape = [3, 3];
+            let wizardCells = {};   // {"r0_c0": "PresetToken", ...}
+            let wizardSelected = null;  // [row, col] or null
+            let wizardSaving = false;
+            let wizardPresetList = [];  // [{token, name}, ...] from ONVIF
+
+            function getWizardCamIdFromUrl() {
+                const params = new URLSearchParams(window.location.search);
+                const raw = params.get('ptz_grid_setup');
+                if (raw === null) return null;
+                const id = parseInt(raw, 10);
+                return Number.isFinite(id) && id >= 0 ? id : null;
+            }
+
+            function renderWizardCells() {
+                if (!wizardCellsEl) return;
+                const [rows, cols] = wizardShape;
+                wizardCellsEl.style.gridTemplateRows = `repeat(${rows}, 1fr)`;
+                wizardCellsEl.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
+                // Clear via DOM API — no innerHTML, no XSS surface.
+                while (wizardCellsEl.firstChild) {
+                    wizardCellsEl.removeChild(wizardCellsEl.firstChild);
+                }
+                for (let r = 0; r < rows; r++) {
+                    for (let c = 0; c < cols; c++) {
+                        const cellKey = `r${r}_c${c}`;
+                        const isSet = Object.prototype.hasOwnProperty.call(wizardCells, cellKey);
+                        const isActive = wizardSelected && wizardSelected[0] === r && wizardSelected[1] === c;
+                        const cell = document.createElement('div');
+                        cell.className = 'ptz-grid-cell';
+                        if (isActive) cell.setAttribute('data-state', 'active');
+                        else if (isSet) cell.setAttribute('data-state', 'set');
+                        const label = document.createElement('span');
+                        label.className = 'ptz-grid-cell__label';
+                        label.textContent = `${r},${c}${isSet ? ' ✓' : ''}${isActive ? ' ◀' : ''}`;
+                        label.title = `Select cell (${r}, ${c}) — aim with the joystick, then Save`;
+                        // The label chip is the only clickable region of
+                        // the cell; the cell body is pointer-events:none
+                        // so iframe clicks (e.g. Start Stream) still work.
+                        label.addEventListener('click', function (ev) {
+                            ev.stopPropagation();
+                            wizardSelectCell(r, c);
+                        });
+                        cell.appendChild(label);
+                        cell.dataset.row = String(r);
+                        cell.dataset.col = String(c);
+                        wizardCellsEl.appendChild(cell);
+                    }
+                }
+            }
+
+            function updateWizardPanel() {
+                if (!wizardPanelEl) return;
+                const total = wizardShape[0] * wizardShape[1];
+                const set = Object.keys(wizardCells).length;
+                const hasPresets = wizardPresetList.length > 0;
+                const selectedToken = wizardPresetSelect
+                    ? String(wizardPresetSelect.value || '')
+                    : '';
+                if (wizardSelected) {
+                    const [r, c] = wizardSelected;
+                    const cellKey = `r${r}_c${c}`;
+                    const isSet = Object.prototype.hasOwnProperty.call(wizardCells, cellKey);
+                    const linkedToken = isSet ? wizardCells[cellKey] : '';
+                    wizardTitleEl.textContent = `Cell (${r}, ${c}) — ${isSet ? 'linked to ' + linkedToken : 'empty'} — ${set}/${total} done`;
+                    wizardHintEl.textContent = isSet
+                        ? 'Aim + Save to overwrite, OR pick a preset and Link. Clear removes the mapping.'
+                        : 'Aim with the joystick + Save, OR pick a preset and Link.';
+                    wizardSaveBtn.disabled = wizardSaving;
+                    wizardClearBtn.disabled = !isSet || wizardSaving;
+                    if (wizardPresetSelect) wizardPresetSelect.disabled = !hasPresets || wizardSaving;
+                    if (wizardLinkBtn) wizardLinkBtn.disabled = !selectedToken || wizardSaving;
+                } else {
+                    wizardTitleEl.textContent = `Grid setup — pick a cell — ${set}/${total} done`;
+                    wizardHintEl.textContent = 'Click a cell, then either aim + Save or pick a preset + Link.';
+                    wizardSaveBtn.disabled = true;
+                    wizardClearBtn.disabled = true;
+                    if (wizardPresetSelect) wizardPresetSelect.disabled = true;
+                    if (wizardLinkBtn) wizardLinkBtn.disabled = true;
+                }
+            }
+
+            function wizardLoadPresetList() {
+                if (!wizardPresetSelect || wizardCamId === null) {
+                    return Promise.resolve();
+                }
+                return fetch(`/api/v1/cameras/${wizardCamId}/ptz/presets`)
+                    .then(function (r) { return r.ok ? r.json() : { presets: [] }; })
+                    .then(function (data) {
+                        wizardPresetList = (data.status === 'success' && Array.isArray(data.presets))
+                            ? data.presets
+                            : [];
+                        // Clear previous options (except the placeholder).
+                        while (wizardPresetSelect.firstChild) {
+                            wizardPresetSelect.removeChild(wizardPresetSelect.firstChild);
+                        }
+                        const placeholder = document.createElement('option');
+                        placeholder.value = '';
+                        placeholder.textContent = wizardPresetList.length
+                            ? '— pick a preset —'
+                            : '— no presets —';
+                        wizardPresetSelect.appendChild(placeholder);
+                        wizardPresetList.forEach(function (p) {
+                            const opt = document.createElement('option');
+                            opt.value = String(p.token || '');
+                            const name = String(p.name || p.token || '');
+                            opt.textContent = name === p.token ? name : `${name} (${p.token})`;
+                            wizardPresetSelect.appendChild(opt);
+                        });
+                    })
+                    .catch(function () { wizardPresetList = []; });
+            }
+
+            function wizardLinkSelectedPreset() {
+                if (!wizardSelected || wizardCamId === null || wizardSaving) return;
+                const token = wizardPresetSelect ? String(wizardPresetSelect.value || '') : '';
+                if (!token) return;
+                const [r, c] = wizardSelected;
+                wizardSaving = true;
+                updateWizardPanel();
+                fetch(`/api/v1/cameras/${wizardCamId}/ptz/grid/cells/${r}/${c}`, {
+                    method: 'PUT',
+                    headers: csrfHeaders({ 'Content-Type': 'application/json' }),
+                    body: JSON.stringify({ preset_token: token }),
+                })
+                    .then(function (r) { return r.json(); })
+                    .then(function (data) {
+                        if (!data || data.status !== 'success') {
+                            wizardHintEl.textContent = `Link failed: ${(data && data.message) || 'unknown error'}`;
+                            return;
+                        }
+                        wizardCells[`r${r}_c${c}`] = token;
+                        // Auto-advance like Save does — keeps the flow snappy
+                        // when the operator is mapping many cells in a row.
+                        const next = findNextEmptyCell(r, c);
+                        wizardSelected = next;
+                        renderWizardCells();
+                        updateWizardPanel();
+                    })
+                    .catch(function (err) {
+                        wizardHintEl.textContent = `Link error: ${(err && err.message) || err}`;
+                    })
+                    .finally(function () {
+                        wizardSaving = false;
+                        updateWizardPanel();
+                    });
+            }
+
+            function wizardSelectCell(r, c) {
+                wizardSelected = [r, c];
+                renderWizardCells();
+                updateWizardPanel();
+            }
+
+            function wizardLoadState() {
+                if (wizardCamId === null) return Promise.resolve();
+                return fetch(`/api/v1/cameras/${wizardCamId}/ptz/grid/state`)
+                    .then(function (r) { return r.json(); })
+                    .then(function (data) {
+                        if (!data || data.status !== 'success' || !data.grid) return;
+                        const g = data.grid;
+                        wizardShape = [g.rows, g.cols];
+                        wizardCells = g.cells || {};
+                        renderWizardCells();
+                        updateWizardPanel();
+                    })
+                    .catch(function () { /* silent — keep prior state */ });
+            }
+
+            function wizardSaveCell() {
+                if (!wizardSelected || wizardCamId === null || wizardSaving) return;
+                const [r, c] = wizardSelected;
+                wizardSaving = true;
+                updateWizardPanel();
+                fetch(`/api/v1/cameras/${wizardCamId}/ptz/grid/cells/${r}/${c}`, {
+                    method: 'PUT',
+                    headers: csrfHeaders({ 'Content-Type': 'application/json' }),
+                })
+                    .then(function (r) { return r.json(); })
+                    .then(function (data) {
+                        if (!data || data.status !== 'success') {
+                            wizardHintEl.textContent = `Save failed: ${(data && data.message) || 'unknown error'}`;
+                            return;
+                        }
+                        wizardCells[`r${r}_c${c}`] = (data.cell && data.cell.preset_token) || '';
+                        if (data.cell && data.cell.mode_auto_set) {
+                            wizardHintEl.textContent = 'Auto-PTZ mode switched to Grid.';
+                        }
+                        // Auto-advance: pick the next empty cell, if any.
+                        const next = findNextEmptyCell(r, c);
+                        wizardSelected = next;
+                        renderWizardCells();
+                        updateWizardPanel();
+                    })
+                    .catch(function (err) {
+                        wizardHintEl.textContent = `Save error: ${(err && err.message) || err}`;
+                    })
+                    .finally(function () {
+                        wizardSaving = false;
+                        updateWizardPanel();
+                    });
+            }
+
+            function wizardClearCell() {
+                if (!wizardSelected || wizardCamId === null || wizardSaving) return;
+                const [r, c] = wizardSelected;
+                wizardSaving = true;
+                updateWizardPanel();
+                fetch(`/api/v1/cameras/${wizardCamId}/ptz/grid/cells/${r}/${c}`, {
+                    method: 'DELETE',
+                    headers: csrfHeaders(),
+                })
+                    .then(function (r) { return r.json(); })
+                    .then(function (data) {
+                        if (!data || data.status !== 'success') {
+                            wizardHintEl.textContent = `Clear failed: ${(data && data.message) || 'unknown error'}`;
+                            return;
+                        }
+                        delete wizardCells[`r${r}_c${c}`];
+                        renderWizardCells();
+                        updateWizardPanel();
+                    })
+                    .catch(function (err) {
+                        wizardHintEl.textContent = `Clear error: ${(err && err.message) || err}`;
+                    })
+                    .finally(function () {
+                        wizardSaving = false;
+                        updateWizardPanel();
+                    });
+            }
+
+            function findNextEmptyCell(curR, curC) {
+                const [rows, cols] = wizardShape;
+                // Scan row-major starting after the current cell.
+                for (let i = 1; i <= rows * cols; i++) {
+                    const idx = (curR * cols + curC + i) % (rows * cols);
+                    const r = Math.floor(idx / cols);
+                    const c = idx % cols;
+                    if (!Object.prototype.hasOwnProperty.call(wizardCells, `r${r}_c${c}`)) {
+                        return [r, c];
+                    }
+                }
+                return null;  // grid full
+            }
+
+            function syncWizardOverlayToVideo() {
+                if (!wizardOverlayEl || wizardOverlayEl.hidden) return;
+                applyVideoRectToOverlay(wizardOverlayEl);
+            }
+
+            function startWizard(camId) {
+                wizardCamId = camId;
+                wizardActive = true;
+                if (wizardOverlayEl) wizardOverlayEl.hidden = false;
+                if (wizardPanelEl) {
+                    // Panel lives in document flow between stream and
+                    // action bar — just unhide it. No DOM moves, no
+                    // stacking-context games.
+                    wizardPanelEl.hidden = false;
+                }
+                syncWizardOverlayToVideo();
+                // Kick off preset-list load in parallel with state load
+                // so the dropdown is populated by the time the operator
+                // clicks a cell.
+                wizardLoadPresetList();
+                wizardLoadState().then(function () {
+                    if (!wizardSelected) {
+                        wizardSelected = findNextEmptyCell(0, -1);
+                        renderWizardCells();
+                        updateWizardPanel();
+                    }
+                });
+            }
+
+            function exitWizard() {
+                wizardActive = false;
+                if (wizardOverlayEl) wizardOverlayEl.hidden = true;
+                if (wizardPanelEl) wizardPanelEl.hidden = true;
+                // Strip the URL param so a refresh doesn't reopen the wizard.
+                const url = new URL(window.location.href);
+                url.searchParams.delete('ptz_grid_setup');
+                window.history.replaceState({}, '', url.toString());
+            }
+
+            function toggleGridOverlay() {
+                if (!wizardOverlayEl) return;
+                const willHide = !wizardOverlayEl.hidden;
+                wizardOverlayEl.hidden = willHide;
+                if (!willHide) syncWizardOverlayToVideo();
+                const hideBtn = document.getElementById('ptzGridWizardHide');
+                if (hideBtn) hideBtn.textContent = willHide ? 'Show grid' : 'Hide grid';
+            }
+
+            if (wizardSaveBtn) wizardSaveBtn.addEventListener('click', wizardSaveCell);
+            if (wizardClearBtn) wizardClearBtn.addEventListener('click', wizardClearCell);
+            if (wizardExitBtn) wizardExitBtn.addEventListener('click', exitWizard);
+            if (wizardLinkBtn) wizardLinkBtn.addEventListener('click', wizardLinkSelectedPreset);
+            if (wizardPresetSelect) {
+                // Update Link button enabled-state on every select change.
+                wizardPresetSelect.addEventListener('change', updateWizardPanel);
+            }
+            const wizardHideBtn = document.getElementById('ptzGridWizardHide');
+            if (wizardHideBtn) wizardHideBtn.addEventListener('click', toggleGridOverlay);
+
+            // Auto-launch when ?ptz_grid_setup=<id> is in the URL.
+            const wizardUrlCamId = getWizardCamIdFromUrl();
+            if (wizardUrlCamId !== null) {
+                window.setTimeout(function () { startWizard(wizardUrlCamId); }, 50);
+            }
+
             // Boot: poll status + load presets, then redraw.
             function refresh() {
                 fetchStatus().then(fetchPresets).then(function () {
@@ -1036,8 +2138,18 @@
             refresh();
             window.setInterval(fetchStatus, STATUS_POLL_MS);
             window.addEventListener('resize', function () {
-                if (mode === MODE_EDIT) syncOverlayToCanvas();
+                // Both overlays must reflow to the new video rectangle —
+                // the preset-box overlay always, the wizard overlay only
+                // when it's active. Cheap calls, fire both.
+                syncOverlayToCanvas();
+                syncWizardOverlayToVideo();
             });
+            // Letterbox dimensions are unknown until the iframe layout
+            // settles; reflow once shortly after boot.
+            window.setTimeout(function () {
+                syncOverlayToCanvas();
+                syncWizardOverlayToVideo();
+            }, 250);
         })();
     </script>
     {% endif %}
@@ -1070,12 +2182,11 @@
     {% endif %}
 
     {# ── Unified: Today's Visitors / Species Fallback ──────── #}
-    <section class="section" id="last24hSummarySection"
-        style="max-width: 1280px; margin-left: auto; margin-right: auto;">
+    <section class="section section--stream-width" id="last24hSummarySection">
 
         {# ── Shared species board macro ──────── #}
         {% macro render_species_board(board, modal_group, title, title_href=none, all_href=none, all_label=none, extra_style='') %}
-        <div class="quiet-preview best-species-board" style="max-width: none;{{ ' ' ~ extra_style if extra_style }}">
+        <div class="quiet-preview best-species-board"{% if extra_style %} style="{{ extra_style }}"{% endif %}>
             <div class="quiet-preview__head">
                 <h3 class="quiet-preview__title">
                     {% if title == "Today's Visitors" and today_iso is defined %}
@@ -1195,7 +2306,7 @@
             all_label='View Day'
         ) }}
         {% else %}
-        <div class="quiet-preview best-species-board" style="max-width: none;">
+        <div class="quiet-preview best-species-board">
             <div class="quiet-preview__head">
                 <h3 class="quiet-preview__title">Today's Visitors</h3>
             </div>
@@ -1237,6 +2348,11 @@
     {{ render_modal(det, 'stream-best', show_nav=false) }}
     {% endfor %}
     {% endif %}
+    {# PTZ empirical probe wizard — activated by ?ptz_probe=<camId> URL param.
+       Modal lives in stream.html so the operator can keep the live preview
+       visible alongside the wizard cards (see Slice 3 of
+       2026-05-18_PTZ_probe-ui-integration). #}
+    {% include "_ptz_empirical_probe_modal.html" %}
     {% endblock %}
 
     {% block scripts %}

@@ -38,6 +38,8 @@ from web.services import (
     backup_restore_service,
     db_service,
     onvif_service,
+    ptz_capabilities_service,
+    ptz_empirical_probe_service,
     ptz_service,
 )
 from web.species_thumbnails import get_species_thumbnail_map
@@ -960,12 +962,46 @@ def models_classifier_pin():
         model_dir = _classifier_model_dir()
         latest_path = set_latest_model_id(model_dir, model_id)
 
+        # Force-refresh the classifier companion files from HF so a UI
+        # pin click guarantees the freshest decision-config YAML and
+        # metrics on disk. Without this, a model-side change shipped
+        # by the model-dev (e.g. new per_species_thresholds, retuned
+        # gallery/review thresholds) would never land — the local
+        # cache check in ``_fetch_companion_files`` skips download
+        # when the file exists, regardless of staleness.
+        #
+        # Mirrors the detector pin's ``refresh_companions=True`` path
+        # (see ``_regenerate_metadata_for_variant`` and
+        # ``models_detector_pin``). Fail-soft: HF outage / network
+        # error logs a warning and leaves the local cache untouched
+        # — the lazy reload below still uses whatever YAML is on
+        # disk, so a bad refresh never bricks the pin click.
+        try:
+            from detectors.classifier import HF_BASE_URL as _CLS_HF_BASE_URL
+            from utils.model_downloader import _fetch_companion_files
+
+            _fetch_companion_files(
+                _CLS_HF_BASE_URL,
+                model_dir,
+                model_id,
+                force_refresh=True,
+            )
+        except Exception as refresh_exc:
+            logger.warning(
+                "Force-refresh of classifier companion files for %s failed: "
+                "%s; falling back to local cache.",
+                _safe_log_value(model_id),
+                refresh_exc,
+            )
+
         env_pin = _resolve_pin_for_cache_dir(model_dir)
         effective_id = env_pin or model_id
         effective_source = "env_var_pin" if env_pin else "latest_models"
 
         # Classifier lazy-loads via ImageClassifier._ensure_initialized.
-        # Clearing the instance forces a fresh load on the next classify().
+        # Clearing the instance forces a fresh load on the next classify(),
+        # at which point ``load_cls_decision_config`` re-reads the YAML
+        # we just refreshed above and picks up the new thresholds.
         reload_triggered = False
         if classifier is not None:
             try:
@@ -974,6 +1010,11 @@ def models_classifier_pin():
                 classifier.model_path = None
                 classifier.class_path = None
                 classifier.model_id = ""
+                # Drop the cached decision_config too — otherwise the
+                # in-memory copy of the old YAML's thresholds survives
+                # the pin and the new YAML on disk is only consulted
+                # on the next process restart.
+                classifier.decision_config = None
                 dm.classifier_model_id = ""
                 reload_triggered = True
                 logger.info(
@@ -2021,13 +2062,28 @@ def camera_ptz_move(camera_id: int):
     """Send a bounded continuous PTZ move command."""
     try:
         data = request.get_json() or {}
+        # Range-clamp at the route boundary in addition to the camera-
+        # client's own clamp. Belt-and-suspenders: bad input never reaches
+        # ONVIF, and the duration cap protects the dead-man-switch from
+        # being weaponised into an extended-hold by a buggy frontend.
+        pan = max(-1.0, min(1.0, float(data.get("pan") or 0.0)))
+        tilt = max(-1.0, min(1.0, float(data.get("tilt") or 0.0)))
+        zoom = max(-1.0, min(1.0, float(data.get("zoom") or 0.0)))
+        duration_ms = max(50, min(500, int(data.get("duration_ms") or 250)))
         ptz_service.move(
             camera_id,
-            pan=float(data.get("pan") or 0.0),
-            tilt=float(data.get("tilt") or 0.0),
-            zoom=float(data.get("zoom") or 0.0),
-            duration_ms=int(data.get("duration_ms") or 250),
+            pan=pan,
+            tilt=tilt,
+            zoom=zoom,
+            duration_ms=duration_ms,
         )
+        try:
+            dm = getattr(api_v1, "detection_manager", None)
+            controller = getattr(dm, "auto_ptz_controller", None) if dm else None
+            if controller:
+                controller.notify_manual_drive()
+        except Exception:
+            logger.exception("Failed to notify Auto-PTZ controller of manual drive")
         return jsonify({"status": "success"})
     except Exception as exc:
         return _error_response("PTZ move error", exc)
@@ -2042,6 +2098,269 @@ def camera_ptz_stop(camera_id: int):
         return jsonify({"status": "success"})
     except Exception as exc:
         return _error_response("PTZ stop error", exc)
+
+
+@api_v1.route("/cameras/<int:camera_id>/ptz/capabilities", methods=["GET"])
+@login_required
+def camera_ptz_capabilities(camera_id: int):
+    """Return declared ONVIF PTZ capabilities for a saved camera.
+
+    Read-only probe (GetServiceCapabilities + GetNodes) — no
+    movement is issued. Result cached 60s per cam in core; pass
+    ``?refresh=1`` to bypass the cache after firmware/network
+    changes.
+
+    See Slice 4-C of 2026-05-17_PTZ_capability-probe-and-integration
+    and the operator-facing probe tool at
+    ``agent_handoff/lab/experiments/ptz_probe/`` for the empirical
+    counterpart (which IS allowed to move the cam).
+    """
+    refresh = request.args.get("refresh", "").lower() in ("1", "true", "yes")
+    try:
+        data = ptz_capabilities_service.probe_capabilities(
+            camera_id, force_refresh=refresh
+        )
+        return jsonify({"status": "success", "data": data})
+    except ValueError as exc:
+        return jsonify({"status": "error", "message": str(exc)}), 404
+    except Exception as exc:
+        return _error_response("PTZ capabilities probe error", exc)
+
+
+# ---------------------------------------------------------------------------
+# Empirical PTZ probe wizard (active plan 2026-05-18_PTZ_probe-ui-integration)
+#
+# Operator-attended walkthrough that drives the cam through every move
+# type and records what works. Five routes form a state machine:
+#   start    → create/resume the session, return first step
+#   status   → poll current step + progress
+#   execute  → fire the ONVIF move for the current step
+#   feedback → record y/n/skip for the current step + advance
+#   abort    → emergency stop + clear session
+# ---------------------------------------------------------------------------
+
+
+@api_v1.route(
+    "/cameras/<int:camera_id>/ptz/empirical-probe/start", methods=["POST"]
+)
+@login_required
+def camera_ptz_empirical_probe_start(camera_id: int):
+    """Start (or resume) the empirical-probe wizard for this camera.
+
+    Body (all optional):
+      ``probe_slot``: preset token the wizard's preset block writes to
+        via SetPreset (1–32 on the operator's firmware). Empty/missing
+        → preset block degrades to overview-goto verification only.
+    """
+    body = request.get_json(silent=True) or {}
+    probe_slot_raw = body.get("probe_slot")
+    probe_slot = str(probe_slot_raw).strip() if probe_slot_raw is not None else ""
+    # Slot range guard — the operator's firmware declares 32 preset
+    # slots. Reject anything outside that range early so the wizard
+    # doesn't fail SetPreset mid-walkthrough.
+    if probe_slot:
+        try:
+            slot_int = int(probe_slot)
+        except (TypeError, ValueError):
+            return jsonify({
+                "status": "error",
+                "message": f"probe_slot must be an integer 1–32 (got {probe_slot!r})",
+            }), 400
+        if not (1 <= slot_int <= 32):
+            return jsonify({
+                "status": "error",
+                "message": f"probe_slot {slot_int} out of range 1–32",
+            }), 400
+        probe_slot = str(slot_int)
+    try:
+        data = ptz_empirical_probe_service.start_session(
+            camera_id, probe_slot=probe_slot or None
+        )
+        return jsonify({"status": "success", "data": data})
+    except ValueError as exc:
+        # Common case: no overview preset configured. The wizard UI
+        # surfaces this message verbatim so the operator knows to set
+        # the preset first.
+        return jsonify({"status": "error", "message": str(exc)}), 400
+    except Exception as exc:
+        return _error_response("PTZ empirical probe start error", exc)
+
+
+@api_v1.route(
+    "/cameras/<int:camera_id>/ptz/empirical-probe/status", methods=["GET"]
+)
+@login_required
+def camera_ptz_empirical_probe_status(camera_id: int):
+    """Return the current session metadata + current step.
+
+    Returns 404 + ``{status: "idle"}`` when no probe is in flight —
+    the UI uses this to decide whether to render the resume prompt.
+    """
+    data = ptz_empirical_probe_service.session_status(camera_id)
+    if data is None:
+        return jsonify({"status": "idle", "message": "No probe in flight"}), 404
+    return jsonify({"status": "success", "data": data})
+
+
+@api_v1.route(
+    "/cameras/<int:camera_id>/ptz/empirical-probe/execute", methods=["POST"]
+)
+@login_required
+def camera_ptz_empirical_probe_execute(camera_id: int):
+    """Fire the ONVIF move for a specific step by step_id (free-form).
+
+    Body shape: ``{"step_id": "c_pan_right_slow"}``. Returns the step
+    metadata + onvif_error (empty on success). The operator watches
+    the live stream behind the wizard and rates via /feedback.
+    """
+    from core.ptz_empirical_probe import ExecuteInFlightError
+    body = request.get_json(silent=True) or {}
+    step_id = str(body.get("step_id") or "").strip()
+    if not step_id:
+        return jsonify({
+            "status": "error",
+            "message": "step_id is required (free-form execute API)",
+        }), 400
+    try:
+        data = ptz_empirical_probe_service.execute_step(camera_id, step_id)
+        return jsonify({"status": "success", "data": data})
+    except ExecuteInFlightError as exc:
+        return jsonify({"status": "busy", "message": str(exc)}), 409
+    except ValueError as exc:
+        return jsonify({"status": "error", "message": str(exc)}), 400
+    except Exception as exc:
+        return _error_response("PTZ empirical probe execute error", exc)
+
+
+@api_v1.route(
+    "/cameras/<int:camera_id>/ptz/empirical-probe/feedback", methods=["POST"]
+)
+@login_required
+def camera_ptz_empirical_probe_feedback(camera_id: int):
+    """Record the operator's verdict for a specific step (free-form).
+
+    Body shape: ``{"step_id": "...", "result": "yes"|"no"|"skip", "comment": "..."}``.
+    Returns ``{step_id, feedback, verdict_count, total_steps}``. No
+    auto-finalize — operator triggers finalize explicitly.
+    """
+    body = request.get_json(silent=True) or {}
+    step_id = str(body.get("step_id") or "").strip()
+    if not step_id:
+        return jsonify({
+            "status": "error",
+            "message": "step_id is required (free-form feedback API)",
+        }), 400
+    feedback = str(body.get("result") or "").strip().lower()
+    if feedback not in {"yes", "no", "skip"}:
+        return (
+            jsonify(
+                {
+                    "status": "error",
+                    "message": (
+                        "result must be one of 'yes', 'no', 'skip' — got "
+                        f"{_safe_log_value(body.get('result'))!r}"
+                    ),
+                }
+            ),
+            400,
+        )
+    comment = str(body.get("comment") or "")
+    from core.ptz_empirical_probe import ExecuteInFlightError
+    try:
+        data = ptz_empirical_probe_service.record_feedback(
+            camera_id, step_id=step_id, feedback=feedback, comment=comment
+        )
+        return jsonify({"status": "success", "data": data})
+    except ExecuteInFlightError as exc:
+        return jsonify({"status": "busy", "message": str(exc)}), 409
+    except ValueError as exc:
+        return jsonify({"status": "error", "message": str(exc)}), 400
+    except Exception as exc:
+        return _error_response("PTZ empirical probe feedback error", exc)
+
+
+@api_v1.route(
+    "/cameras/<int:camera_id>/ptz/empirical-probe/finalize", methods=["POST"]
+)
+@login_required
+def camera_ptz_empirical_probe_finalize(camera_id: int):
+    """Operator-triggered finalize: write the empirical YAML and end
+    the session. Returns ``{cache_path, cache_error, verdict_count,
+    total_steps}``."""
+    try:
+        data = ptz_empirical_probe_service.finalize_session(camera_id)
+        return jsonify({"status": "success", "data": data})
+    except ValueError as exc:
+        return jsonify({"status": "error", "message": str(exc)}), 400
+    except Exception as exc:
+        return _error_response("PTZ empirical probe finalize error", exc)
+
+
+@api_v1.route(
+    "/cameras/<int:camera_id>/ptz/empirical-probe/apply-budget",
+    methods=["POST"],
+)
+@login_required
+def camera_ptz_empirical_probe_apply_budget(camera_id: int):
+    """Apply the most recently probed follow_zoom_max_burst_sec value
+    to the camera's live PTZ config.
+
+    Source of truth is the cache YAML at
+    ``OUTPUT_DIR/ptz_capabilities/cam<id>.yaml``. Returns
+    ``{applied: bool, value: float | null, reason: str}``. When
+    ``applied=false`` the wizard surfaces ``reason`` in the button's
+    tooltip — typically "near-focus step not yet rated".
+    """
+    try:
+        data = ptz_empirical_probe_service.apply_near_focus_budget(camera_id)
+        return jsonify({"status": "success", "data": data})
+    except Exception as exc:
+        return _error_response("PTZ near-focus budget apply error", exc)
+
+
+@api_v1.route(
+    "/cameras/<int:camera_id>/ptz/empirical-probe/abort", methods=["POST"]
+)
+@login_required
+def camera_ptz_empirical_probe_abort(camera_id: int):
+    """Emergency-stop the cam, clear the session, resume Auto-PTZ.
+
+    Returns ``{aborted: bool}`` — False means there was no session to
+    abort (idempotent). Safe to call from the wizard's close button,
+    a timeout, or a backend cleanup.
+    """
+    try:
+        aborted = ptz_empirical_probe_service.abort_session(camera_id)
+        return jsonify({"status": "success", "data": {"aborted": aborted}})
+    except Exception as exc:
+        return _error_response("PTZ empirical probe abort error", exc)
+
+
+def _current_stream_frame_size() -> dict[str, int] | None:
+    """Return the active camera frame size when the detection loop knows it."""
+    dm = getattr(api_v1, "detection_manager", None)
+    if not dm:
+        return None
+
+    try:
+        frame = dm.get_display_frame()
+        if frame is not None:
+            height, width = frame.shape[:2]
+            if width > 0 and height > 0:
+                return {"width": int(width), "height": int(height)}
+    except Exception:
+        logger.debug("Unable to read current display frame size", exc_info=True)
+
+    try:
+        video_capture = getattr(dm, "video_capture", None)
+        if not video_capture:
+            return None
+        width, height = video_capture.resolution
+        if width and height and int(width) > 0 and int(height) > 0:
+            return {"width": int(width), "height": int(height)}
+    except Exception:
+        logger.debug("Unable to read video capture frame size", exc_info=True)
+    return None
 
 
 @api_v1.route("/cameras/<int:camera_id>/ptz/presets/metadata", methods=["GET"])
@@ -2066,12 +2385,19 @@ def camera_ptz_presets_metadata(camera_id: int):
             if snapshot_rel.startswith("derivatives/")
             else ""
         )
+        stream_frame_size = _current_stream_frame_size()
         return jsonify(
             {
                 "status": "success",
                 "metadata": {
                     "overview_preset": config_data.get("overview_preset", ""),
                     "overview_snapshot_url": snapshot_url,
+                    "stream_frame_width": (
+                        stream_frame_size["width"] if stream_frame_size else None
+                    ),
+                    "stream_frame_height": (
+                        stream_frame_size["height"] if stream_frame_size else None
+                    ),
                     "presets": presets,
                 },
             }
@@ -2189,6 +2515,94 @@ def camera_ptz_update_preset_metadata(camera_id: int, preset_token: str):
         return jsonify({"status": "success", "preset": result})
     except Exception as exc:
         return _error_response("PTZ metadata update error", exc)
+
+
+@api_v1.route("/cameras/<int:camera_id>/ptz/grid/state", methods=["GET"])
+@login_required
+def camera_ptz_grid_state(camera_id: int):
+    """Return current grid config: shape, mapped cells, missing cells."""
+    try:
+        result = ptz_service.get_grid_state(camera_id)
+        if result is None:
+            return jsonify({"status": "error", "message": "Camera not found"}), 404
+        return jsonify({"status": "success", "grid": result})
+    except Exception as exc:
+        return _error_response("PTZ grid state error", exc)
+
+
+@api_v1.route("/cameras/<int:camera_id>/ptz/grid/shape", methods=["PUT"])
+@login_required
+def camera_ptz_grid_shape(camera_id: int):
+    """Set grid shape (rows × cols). Allowed: 2×2, 2×3, 3×3, 3×4."""
+    try:
+        data = request.get_json(silent=True) or {}
+        if "rows" not in data or "cols" not in data:
+            return jsonify(
+                {"status": "error", "message": "rows and cols are required"}
+            ), 400
+        result = ptz_service.set_grid_shape(
+            camera_id, int(data["rows"]), int(data["cols"])
+        )
+        if result is None:
+            return jsonify({"status": "error", "message": "Camera not found"}), 404
+        return jsonify({"status": "success", "shape": result})
+    except ValueError as exc:
+        return jsonify({"status": "error", "message": str(exc)}), 400
+    except Exception as exc:
+        return _error_response("PTZ grid shape error", exc)
+
+
+@api_v1.route(
+    "/cameras/<int:camera_id>/ptz/grid/cells/<int:row>/<int:col>",
+    methods=["PUT"],
+)
+@login_required
+def camera_ptz_grid_cell_set(camera_id: int, row: int, col: int):
+    """Map a grid cell to a preset.
+
+    Two modes via JSON body:
+    - Empty body / no preset_token: save the camera's current position
+      as a fresh ONVIF preset (creates a new slot) and map this cell
+      to it. The legacy "aim with joystick, then save" path.
+    - {"preset_token": "PresetNNN"}: link this cell to an existing
+      preset (one of the operator's old 1–7 zones, the overview, the
+      re-focus slot, etc.) without moving the camera. Multiple cells
+      can point at the same token.
+    """
+    try:
+        data = request.get_json(silent=True) or {}
+        token = str(data.get("preset_token") or "").strip()
+        if token:
+            result = ptz_service.link_grid_cell_to_existing_preset(
+                camera_id, row, col, token
+            )
+        else:
+            result = ptz_service.set_grid_cell_at_current_position(
+                camera_id, row, col
+            )
+        if result is None:
+            return jsonify({"status": "error", "message": "Camera not found"}), 404
+        return jsonify({"status": "success", "cell": result})
+    except ValueError as exc:
+        return jsonify({"status": "error", "message": str(exc)}), 400
+    except Exception as exc:
+        return _error_response("PTZ grid cell set error", exc)
+
+
+@api_v1.route(
+    "/cameras/<int:camera_id>/ptz/grid/cells/<int:row>/<int:col>",
+    methods=["DELETE"],
+)
+@login_required
+def camera_ptz_grid_cell_clear(camera_id: int, row: int, col: int):
+    """Remove a grid cell mapping. ONVIF preset slot stays intact."""
+    try:
+        ok = ptz_service.clear_grid_cell(camera_id, row, col)
+        if not ok:
+            return jsonify({"status": "error", "message": "Camera not found"}), 404
+        return jsonify({"status": "success"})
+    except Exception as exc:
+        return _error_response("PTZ grid cell clear error", exc)
 
 
 @api_v1.route("/ptz/auto/status", methods=["GET"])

@@ -1,0 +1,9 @@
+# Per-run reports: contain cam serial numbers and operator notes —
+# never check these into the public repo. WMB's canonical cache
+# lives at OUTPUT_DIR/ptz_capabilities/ and is also outside the repo.
+ptz_probe_report_*.yaml
+ptz_probe_report_*.json
+ptz_probe_report_*.log
+
+# Last-used connection settings (no password, but IP-specific)
+.ptz_probe_settings.json

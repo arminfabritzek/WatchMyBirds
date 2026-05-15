@@ -660,3 +660,124 @@ class TestApiV1SystemVitals:
 
         # Cleanup
         api_v1.system_monitor = None
+
+
+class TestApiV1PtzManualMove:
+    """Test /api/v1/cameras/<id>/ptz/move (manual joystick endpoint)."""
+
+    def test_move_clamps_out_of_range_axes(self, client):
+        """Out-of-range pan/tilt/zoom values are clamped to [-1, 1]."""
+        from web.blueprints import api_v1 as api_v1_module
+
+        with patch.object(api_v1_module, "ptz_service") as mock_ptz:
+            response = client.post(
+                "/api/v1/cameras/0/ptz/move",
+                json={"pan": 5.0, "tilt": -3.7, "zoom": 99.0, "duration_ms": 250},
+            )
+            assert response.status_code == 200
+            mock_ptz.move.assert_called_once()
+            call_kwargs = mock_ptz.move.call_args.kwargs
+            assert call_kwargs["pan"] == 1.0
+            assert call_kwargs["tilt"] == -1.0
+            assert call_kwargs["zoom"] == 1.0
+
+    def test_move_clamps_duration_to_max(self, client):
+        """Duration > 500ms is capped — dead-man-switch cannot be weaponised."""
+        from web.blueprints import api_v1 as api_v1_module
+
+        with patch.object(api_v1_module, "ptz_service") as mock_ptz:
+            response = client.post(
+                "/api/v1/cameras/0/ptz/move",
+                json={"pan": 0.5, "duration_ms": 60000},
+            )
+            assert response.status_code == 200
+            assert mock_ptz.move.call_args.kwargs["duration_ms"] == 500
+
+    def test_move_clamps_duration_to_min(self, client):
+        """Duration < 50ms is bumped up to 50ms (camera-client floor)."""
+        from web.blueprints import api_v1 as api_v1_module
+
+        with patch.object(api_v1_module, "ptz_service") as mock_ptz:
+            response = client.post(
+                "/api/v1/cameras/0/ptz/move",
+                json={"pan": 0.3, "duration_ms": 5},
+            )
+            assert response.status_code == 200
+            assert mock_ptz.move.call_args.kwargs["duration_ms"] == 50
+
+    def test_move_notifies_controller_of_manual_drive(self, client):
+        """Every manual move pings notify_manual_drive on the controller."""
+        from web.blueprints import api_v1 as api_v1_module
+        from web.blueprints.api_v1 import api_v1 as blueprint
+
+        mock_controller = MagicMock()
+        # The route reads getattr(api_v1, "detection_manager") where
+        # api_v1 is the Blueprint, not the module. The app fixture
+        # already attached a MagicMock to the blueprint; we just swap
+        # its auto_ptz_controller attribute.
+        blueprint.detection_manager.auto_ptz_controller = mock_controller
+
+        with patch.object(api_v1_module, "ptz_service"):
+            response = client.post(
+                "/api/v1/cameras/0/ptz/move",
+                json={"pan": 0.3, "tilt": 0.0, "zoom": 0.0, "duration_ms": 250},
+            )
+        assert response.status_code == 200
+        mock_controller.notify_manual_drive.assert_called_once()
+
+    def test_move_succeeds_without_controller(self, client):
+        """Missing auto_ptz_controller does not break the move endpoint."""
+        from web.blueprints import api_v1 as api_v1_module
+        from web.blueprints.api_v1 import api_v1 as blueprint
+
+        blueprint.detection_manager.auto_ptz_controller = None
+
+        with patch.object(api_v1_module, "ptz_service") as mock_ptz:
+            response = client.post(
+                "/api/v1/cameras/0/ptz/move",
+                json={"pan": 0.3},
+            )
+        assert response.status_code == 200
+        mock_ptz.move.assert_called_once()
+
+    def test_move_requires_authentication(self, app):
+        """Unauthenticated POST to /ptz/move is rejected by @login_required."""
+        with app.test_client() as unauth_client:
+            response = unauth_client.post(
+                "/api/v1/cameras/0/ptz/move",
+                json={"pan": 0.3},
+            )
+        # @login_required redirects (302) or returns 401, never 200.
+        assert response.status_code != 200
+
+    def test_stop_endpoint_callable(self, client):
+        """Stop endpoint succeeds and forwards to ptz_service.stop."""
+        from web.blueprints import api_v1 as api_v1_module
+
+        with patch.object(api_v1_module, "ptz_service") as mock_ptz:
+            response = client.post("/api/v1/cameras/0/ptz/stop")
+        assert response.status_code == 200
+        mock_ptz.stop.assert_called_once_with(0)
+
+    def test_preset_metadata_includes_current_frame_size(self, client):
+        """Preset metadata exposes camera frame size for PTZ overlays."""
+        from web.blueprints import api_v1 as api_v1_module
+        from web.blueprints.api_v1 import api_v1 as blueprint
+
+        frame = MagicMock()
+        frame.shape = (720, 1280, 3)
+        blueprint.detection_manager.get_display_frame.return_value = frame
+
+        with patch.object(api_v1_module, "ptz_service") as mock_ptz:
+            mock_ptz.get_config.return_value = {
+                "overview_preset": "home",
+                "overview_snapshot_path": "",
+            }
+            mock_ptz.list_presets_with_metadata.return_value = []
+
+            response = client.get("/api/v1/cameras/0/ptz/presets/metadata")
+
+        assert response.status_code == 200
+        metadata = response.get_json()["metadata"]
+        assert metadata["stream_frame_width"] == 1280
+        assert metadata["stream_frame_height"] == 720

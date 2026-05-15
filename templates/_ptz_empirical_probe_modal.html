@@ -1,0 +1,813 @@
+{# PTZ Empirical Probe Wizard
+
+    Bootstrap modal-xl with two-column layout. Operator drives the
+    camera through every move type and rates each as worked/broken/skip.
+    Result is written to OUTPUT_DIR/ptz_capabilities/cam<id>.yaml,
+    which the Settings UI reads to render tri-state capability pills.
+
+    Activated by ?ptz_probe=<camId> in the stream-page URL. While open,
+    Auto-PTZ is paused (controller side; UI banner from Slice 4).
+
+    Slice 3 of 2026-05-18_PTZ_probe-ui-integration.
+#}
+<div class="modal fade wm-modal wm-modal--form" id="ptzProbeModal" tabindex="-1" data-bs-backdrop="static" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-centered wm-modal__dialog">
+        <div class="modal-content wm-modal__content">
+            <div class="modal-header wm-modal__header">
+                <div class="wm-modal__title">
+                    <span class="wm-modal__title-text">Empirical PTZ probe</span>
+                    <span class="wm-modal__title-sub" id="ptzProbeSubtitle">Camera <span id="ptzProbeCamLabel">?</span></span>
+                </div>
+                <button type="button" class="btn-close wm-modal__close" id="ptzProbeCloseBtn" title="Abort the probe and resume Auto-PTZ" aria-label="Close probe wizard"></button>
+            </div>
+            <div class="wm-modal__body">
+                <div id="ptzProbePreflight" class="border rounded p-3 mb-3" style="background: rgba(0,0,0,0.03);">
+                    <strong class="d-block mb-2">Before we start — pick a preset slot for the SetPreset / GotoPreset tests.</strong>
+                    <div class="small text-muted mb-2">
+                        The wizard will overwrite this slot when it tests <code>SetPreset</code>. Pick an empty slot, or leave blank to skip the SetPreset test (the wizard will still verify <code>GotoPreset</code> against your overview preset).
+                    </div>
+                    <div class="d-flex flex-wrap gap-2 align-items-center">
+                        <label for="ptzProbeSlotInput" class="form-label mb-0 small">Probe slot (1–32):</label>
+                        <input type="number" min="1" max="32" step="1" class="form-control form-control-sm" id="ptzProbeSlotInput" style="width: 6rem;" placeholder="e.g. 20" inputmode="numeric">
+                        <span class="small text-muted" id="ptzProbeSlotHint">Existing presets:</span>
+                        <span class="small" id="ptzProbeSlotPresetList">loading…</span>
+                    </div>
+                    <div class="alert alert-warning py-2 small mt-2 d-none" id="ptzProbeSlotError"></div>
+                    <div class="d-flex gap-2 mt-3">
+                        <button type="button" class="btn btn--primary" id="ptzProbeStartBtn">
+                            Start probe
+                        </button>
+                        <button type="button" class="btn btn--secondary" id="ptzProbeStartSkipSlotBtn" title="Start without writing any SetPreset — only verifies overview goto">
+                            Start without SetPreset
+                        </button>
+                    </div>
+                </div>
+                <div id="ptzProbeMain" class="d-none">
+                    <div class="d-flex align-items-center justify-content-between mb-2">
+                        <strong><span id="ptzProbeDoneCount">0</span> of <span id="ptzProbeStepTotal">?</span> tests rated</strong>
+                        <button type="button" class="btn btn--primary btn-sm" id="ptzProbeFinishBtn" title="Write the empirical YAML and end the session. You can finish even with unrated tests — they're recorded as 'not tested'.">
+                            Finish probe
+                        </button>
+                    </div>
+                    <div class="progress mb-3" style="height: 6px;" role="progressbar" aria-label="Probe progress">
+                        <div class="progress-bar" id="ptzProbeProgressBar" style="width: 0%;"></div>
+                    </div>
+                    <div class="small text-muted mb-3">
+                        Each test can be run independently and re-run as often as you like. The camera's behaviour is captured in the empirical YAML; tests you leave alone are recorded as <em>not tested</em>.
+                    </div>
+                    <div class="alert alert-warning py-2 small d-none" id="ptzProbeGlobalError"></div>
+                    <div id="ptzProbeCaseList" class="d-flex flex-column gap-2"></div>
+                </div>
+                <div class="alert alert-danger py-2 mb-0 d-none" id="ptzProbeFatalError"></div>
+            </div>
+            <div class="wm-modal__action wm-modal__action--form">
+                <div class="wm-modal__actions">
+                    <button type="button" class="btn btn-danger" id="ptzProbeEmergencyStopBtn" title="Stop camera motion immediately. Keeps the wizard open so you can still rate the (likely failed) step. Use Abort to end the session." aria-label="Halt motion">
+                        ⚠ Halt motion (keep rating)
+                    </button>
+                    <button type="button" class="btn btn--secondary" id="ptzProbeAbortBtn" title="Abort the probe, resume Auto-PTZ, discard partial results">
+                        Abort probe
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+{# Success modal — shown when the wizard finishes the last step. #}
+<div class="modal fade wm-modal" id="ptzProbeDoneModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered wm-modal__dialog">
+        <div class="modal-content wm-modal__content">
+            <div class="modal-header wm-modal__header">
+                <div class="wm-modal__title">
+                    <span class="wm-modal__title-text">Empirical probe complete</span>
+                </div>
+                <button type="button" class="btn-close wm-modal__close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="wm-modal__body">
+                <div class="alert alert-warning py-2 d-none" id="ptzProbeDoneWarning" role="alert">
+                    <strong>⚠ Capability cache could NOT be written.</strong>
+                    The wizard completed, but the pills in Settings will stay yellow until this is fixed.
+                    <div class="small mt-1" id="ptzProbeDoneWarningDetail"></div>
+                    <div class="small mt-1 text-muted">
+                        Most common cause: the data directory (e.g. <code>/opt/app/data/ptz_capabilities/</code>) is not writable by the app process. Check ownership and retry the probe.
+                    </div>
+                </div>
+                <p id="ptzProbeDoneSuccessLine">The empirical capability cache has been written. Auto-PTZ has resumed.</p>
+                <p class="small text-muted" id="ptzProbeDoneCachePath">—</p>
+                <div id="ptzProbeDoneNearFocusBlock" class="border rounded p-2 my-2 d-none" style="background: rgba(0,0,0,0.02);">
+                    <div class="d-flex align-items-center justify-content-between gap-2 mb-1">
+                        <strong class="small">Near-focus zoom budget discovered</strong>
+                        <span class="badge bg-light text-dark border" id="ptzProbeDoneNearFocusValue">—</span>
+                    </div>
+                    <div class="small text-muted mb-2">
+                        Apply this value to <code>cameras.yaml</code> now so follow-mode auto-PTZ stops zooming in once the lens reaches your declared near-focus limit. You can also adjust it later in Settings → Auto-PTZ.
+                    </div>
+                    <button type="button" class="btn btn-sm btn-primary" id="ptzProbeApplyBudgetBtn">
+                        Apply budget to camera config
+                    </button>
+                    <span class="small ms-2" id="ptzProbeApplyBudgetStatus" aria-live="polite"></span>
+                </div>
+                <p>Open <strong>Settings → Auto-PTZ</strong> to see the updated tri-state capability pills.</p>
+            </div>
+            <div class="wm-modal__action">
+                <div class="wm-modal__actions">
+                    <a class="btn btn--primary" href="/settings">Open Settings</a>
+                    <button type="button" class="btn btn--secondary" data-bs-dismiss="modal">Stay on stream page</button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    (function () {
+        'use strict';
+        // ----------------------------------------------------------
+        // PTZ Empirical Probe Wizard controller
+        //
+        // Activated when the URL has ?ptz_probe=<camId>. Drives the
+        // backend state machine via POST/GET on the
+        // /api/v1/cameras/<id>/ptz/empirical-probe/* routes.
+        //
+        // Security: all UI rendering of cam-supplied content (step
+        // descriptions, ONVIF error messages) uses textContent — no
+        // innerHTML against untrusted data. Same pattern as the
+        // capability pills.
+        // ----------------------------------------------------------
+
+        const PROBE_QS_KEY = 'ptz_probe';
+        let camId = null;
+        // Latest sessionData payload from the backend. Re-renders are
+        // driven off this single source of truth so refresh and
+        // partial-update paths can't drift.
+        let _sessionData = null;
+
+        function $(id) { return document.getElementById(id); }
+
+        function getProbeCamIdFromUrl() {
+            const params = new URLSearchParams(window.location.search);
+            const raw = params.get(PROBE_QS_KEY);
+            if (raw === null) return null;
+            const n = parseInt(raw, 10);
+            return Number.isFinite(n) ? n : null;
+        }
+
+        function showFatalError(msg) {
+            const el = $('ptzProbeFatalError');
+            if (!el) return;
+            el.textContent = String(msg || 'Probe failed.');
+            el.classList.remove('d-none');
+        }
+
+        function showGlobalError(msg) {
+            const el = $('ptzProbeGlobalError');
+            if (!el) return;
+            el.textContent = String(msg || '');
+            el.classList.toggle('d-none', !msg);
+        }
+
+        // Map a feedback string to a badge class + label.
+        function badgeForFeedback(fb) {
+            if (fb === 'yes')  return { cls: 'badge bg-success', label: '✓ Worked' };
+            if (fb === 'no')   return { cls: 'badge bg-danger',  label: '✗ Broken' };
+            if (fb === 'skip') return { cls: 'badge bg-secondary', label: 'Skip' };
+            return { cls: 'badge bg-light text-dark border', label: 'not tested' };
+        }
+
+        // Build a single test-row in the flat list. Re-created on every
+        // re-render so the verdict badge and button states stay in sync
+        // with the backend's session.results state.
+        function buildCaseRow(c, result) {
+            const r = result || {};
+            const fb = r.feedback === 'pending' ? '' : (r.feedback || '');
+            const badge = badgeForFeedback(fb);
+
+            const row = document.createElement('div');
+            row.className = 'border rounded p-2';
+            row.dataset.stepId = c.id;
+            row.style.background = 'rgba(0,0,0,0.02)';
+
+            // Header: kind badge + description + verdict badge.
+            const head = document.createElement('div');
+            head.className = 'd-flex align-items-start justify-content-between gap-2 mb-1';
+            const left = document.createElement('div');
+            left.className = 'flex-grow-1';
+            const kindBadge = document.createElement('span');
+            kindBadge.className = 'badge bg-info text-dark me-2';
+            kindBadge.textContent = c.kind || '';
+            const desc = document.createElement('strong');
+            desc.className = 'small';
+            desc.textContent = c.description || c.id;
+            left.appendChild(kindBadge);
+            left.appendChild(desc);
+            const verdictBadge = document.createElement('span');
+            verdictBadge.className = badge.cls + ' align-self-start';
+            verdictBadge.textContent = badge.label;
+            head.appendChild(left);
+            head.appendChild(verdictBadge);
+            row.appendChild(head);
+
+            // What-to-look-for + purpose (collapsible-feel just-text).
+            if (c.expectation) {
+                const exp = document.createElement('div');
+                exp.className = 'small mb-1';
+                const strong = document.createElement('strong');
+                strong.textContent = 'What to look for: ';
+                exp.appendChild(strong);
+                exp.appendChild(document.createTextNode(c.expectation));
+                row.appendChild(exp);
+            }
+            if (c.purpose) {
+                const p = document.createElement('div');
+                p.className = 'small text-muted mb-2';
+                p.textContent = c.purpose;
+                row.appendChild(p);
+            }
+
+            // ONVIF error (only if last execute returned one).
+            if (r.onvif_error) {
+                const err = document.createElement('div');
+                err.className = 'alert alert-warning py-1 px-2 small mb-2';
+                err.textContent = 'ONVIF error: ' + r.onvif_error;
+                row.appendChild(err);
+            }
+
+            // Buttons + optional comment.
+            const actions = document.createElement('div');
+            actions.className = 'd-flex flex-wrap gap-2 align-items-center';
+
+            if (c.kind === 'near_focus') {
+                // Near-focus discovery: operator clicks "Zoom in more"
+                // repeatedly (each click = one zoom-in burst), then
+                // terminates with STOP (just got blurry → yes) or DONE
+                // (happy with the framing, no blur seen → skip). The
+                // burst count chip shows progress. We reuse runStep /
+                // rateStep so the existing serialisation + 409 retry
+                // machinery applies unchanged.
+                const samples = Array.isArray(r.poll_samples) ? r.poll_samples : [];
+                const bursts = samples.length;
+                const elapsed = samples.reduce(
+                    (acc, s) => acc + (Number(s.burst_sec) || 0), 0
+                );
+                const chip = document.createElement('span');
+                chip.className = 'badge bg-light text-dark border me-2';
+                chip.textContent = bursts === 0
+                    ? 'no bursts yet'
+                    : `${bursts} burst${bursts === 1 ? '' : 's'} • ${elapsed.toFixed(2)}s`;
+
+                const moreBtn = document.createElement('button');
+                moreBtn.type = 'button';
+                moreBtn.className = 'btn btn-sm btn-primary';
+                moreBtn.textContent = bursts === 0 ? '🔍 Zoom in once' : '🔍 Zoom in more';
+                moreBtn.dataset.action = 'run';
+
+                const stopBtn = document.createElement('button');
+                stopBtn.type = 'button';
+                stopBtn.className = 'btn btn-sm btn-danger';
+                stopBtn.textContent = 'STOP — blurry';
+                stopBtn.dataset.action = 'yes';
+                stopBtn.disabled = bursts === 0;
+                stopBtn.title = bursts === 0
+                    ? 'Press "Zoom in once" first before stopping.'
+                    : 'Records elapsed-zoom-in time minus the last burst as your budget.';
+
+                const doneBtn = document.createElement('button');
+                doneBtn.type = 'button';
+                doneBtn.className = 'btn btn-sm btn-success';
+                doneBtn.textContent = 'Done — keep this zoom';
+                doneBtn.dataset.action = 'skip';
+                doneBtn.disabled = bursts === 0;
+                doneBtn.title = bursts === 0
+                    ? 'Press "Zoom in once" first.'
+                    : 'No blur seen — records the full elapsed time as your budget.';
+
+                actions.appendChild(chip);
+                actions.appendChild(moreBtn);
+                actions.appendChild(stopBtn);
+                actions.appendChild(doneBtn);
+                row.appendChild(actions);
+                return row;
+            }
+
+            const runBtn = document.createElement('button');
+            runBtn.type = 'button';
+            runBtn.className = 'btn btn-sm btn-secondary';
+            runBtn.textContent = r.executed_at ? 'Re-run test' : 'Run test';
+            runBtn.dataset.action = 'run';
+            const yesBtn = document.createElement('button');
+            yesBtn.type = 'button';
+            yesBtn.className = 'btn btn-sm btn-success';
+            yesBtn.textContent = '✓ Worked';
+            yesBtn.dataset.action = 'yes';
+            const noBtn = document.createElement('button');
+            noBtn.type = 'button';
+            noBtn.className = 'btn btn-sm btn-danger';
+            noBtn.textContent = '✗ Broken';
+            noBtn.dataset.action = 'no';
+            const skipBtn = document.createElement('button');
+            skipBtn.type = 'button';
+            skipBtn.className = 'btn btn-sm btn-outline-secondary';
+            skipBtn.textContent = 'Skip';
+            skipBtn.dataset.action = 'skip';
+            actions.appendChild(runBtn);
+            actions.appendChild(yesBtn);
+            actions.appendChild(noBtn);
+            actions.appendChild(skipBtn);
+            row.appendChild(actions);
+
+            return row;
+        }
+
+        function renderCaseList() {
+            if (!_sessionData) return;
+            const list = $('ptzProbeCaseList');
+            if (!list) return;
+            list.replaceChildren();
+            const cases = _sessionData.cases || [];
+            const results = _sessionData.results || {};
+            for (const c of cases) {
+                list.appendChild(buildCaseRow(c, results[c.id]));
+            }
+            // Header counters.
+            const total = _sessionData.total_steps || cases.length;
+            const done = _sessionData.verdict_count || 0;
+            $('ptzProbeStepTotal').textContent = String(total);
+            $('ptzProbeDoneCount').textContent = String(done);
+            const pct = total > 0 ? Math.round((done / total) * 100) : 0;
+            $('ptzProbeProgressBar').style.width = pct + '%';
+        }
+
+        async function api(method, path, body) {
+            const opts = { method, headers: {} };
+            if (body !== undefined) {
+                opts.headers['Content-Type'] = 'application/json';
+                opts.body = JSON.stringify(body);
+            }
+            const resp = await fetch(path, opts);
+            const json = await resp.json().catch(() => ({}));
+            // 409 = execute-in-flight; callers retry with a short delay.
+            // 404 = idle-status (no session). All other non-OK statuses
+            // raise so the caller's catch path surfaces them.
+            if (!resp.ok && resp.status !== 404 && resp.status !== 409) {
+                const msg = (json && json.message) ? json.message
+                    : ('HTTP ' + resp.status);
+                throw new Error(msg);
+            }
+            return { ok: resp.ok, status: resp.status, body: json };
+        }
+
+        async function apiRetryWhileBusy(method, path, body, opts) {
+            // Retries on 409 with linear backoff. Used when a /feedback
+            // arrives while the multi-goto (or any long-running step)
+            // is still executing on the backend. `onBusy` fires once on
+            // the first 409 so the caller can show a "still running" hint.
+            const maxRetries = (opts && opts.maxRetries) || 30;
+            const delayMs = (opts && opts.delayMs) || 500;
+            const onBusy = opts && opts.onBusy;
+            let calledOnBusy = false;
+            for (let i = 0; i < maxRetries; i++) {
+                const r = await api(method, path, body);
+                if (r.status !== 409) return r;
+                if (onBusy && !calledOnBusy) {
+                    try { onBusy(); } catch (_e) {}
+                    calledOnBusy = true;
+                }
+                await new Promise(resolve => setTimeout(resolve, delayMs));
+            }
+            // Return a synthetic 409 result so the caller can decide
+            // whether to surface "still busy" or treat as a hard error.
+            return { ok: false, status: 409, body: {} };
+        }
+
+        async function startSession(probeSlot) {
+            const body = {};
+            const slotStr = String(probeSlot || '').trim();
+            if (slotStr) body.probe_slot = slotStr;
+            try {
+                const r = await api('POST',
+                    `/api/v1/cameras/${camId}/ptz/empirical-probe/start`,
+                    Object.keys(body).length ? body : undefined);
+                if (!r.ok) throw new Error(r.body.message || 'Start failed');
+                _sessionData = r.body.data;
+                $('ptzProbeCamLabel').textContent = String(_sessionData.camera_id);
+                renderCaseList();
+                // Pre-flight done → show the main wizard surface.
+                const preflight = $('ptzProbePreflight');
+                const main = $('ptzProbeMain');
+                if (preflight) preflight.classList.add('d-none');
+                if (main) main.classList.remove('d-none');
+            } catch (err) {
+                // Show pre-flight error inline (operator likely needs to
+                // pick a different slot) rather than dropping to the
+                // generic fatal-error alert which lives outside the modal.
+                const slotErr = $('ptzProbeSlotError');
+                if (slotErr) {
+                    slotErr.textContent = String(err.message || err);
+                    slotErr.classList.remove('d-none');
+                } else {
+                    showFatalError(err.message || err);
+                }
+            }
+        }
+
+        async function refreshSession() {
+            try {
+                const r = await api('GET',
+                    `/api/v1/cameras/${camId}/ptz/empirical-probe/status`);
+                if (r.ok && r.body.data) {
+                    _sessionData = r.body.data;
+                    renderCaseList();
+                }
+            } catch (_e) {
+                // Best-effort refresh; the next mutation will resync.
+            }
+        }
+
+        async function loadPresetListForPreflight() {
+            const listEl = $('ptzProbeSlotPresetList');
+            if (!listEl) return;
+            try {
+                // Use /presets/metadata (not /presets) so cheap PTZ
+                // cams that report all 256 slot stubs don't drown the
+                // operator in fake "existing presets". The metadata
+                // endpoint filters down to operator-configured slots
+                // only (preset_metadata + overview_preset + grid_cells).
+                const resp = await fetch(
+                    `/api/v1/cameras/${camId}/ptz/presets/metadata`
+                );
+                const json = await resp.json();
+                const presets = (json && json.presets) || [];
+                // textContent — preset names come from ONVIF, untrusted.
+                if (presets.length === 0) {
+                    listEl.textContent = '(none configured in Settings yet)';
+                    return;
+                }
+                const tokens = presets.map(function (p) {
+                    return String(p.token || '').trim();
+                }).filter(Boolean);
+                listEl.textContent = tokens.join(', ');
+            } catch (_e) {
+                listEl.textContent = '(failed to load)';
+            }
+        }
+
+        function validateProbeSlot(raw) {
+            const slotErr = $('ptzProbeSlotError');
+            if (slotErr) { slotErr.textContent = ''; slotErr.classList.add('d-none'); }
+            const trimmed = String(raw || '').trim();
+            if (!trimmed) return { ok: true, slot: '' };
+            const n = Number(trimmed);
+            if (!Number.isInteger(n) || n < 1 || n > 32) {
+                if (slotErr) {
+                    slotErr.textContent = 'Slot must be an integer 1–32.';
+                    slotErr.classList.remove('d-none');
+                }
+                return { ok: false, slot: '' };
+            }
+            return { ok: true, slot: String(n) };
+        }
+
+        // Per-row in-flight set so the operator can fire one test while
+        // an earlier one is still running on the cam (rare — backend
+        // serialises via _executing — but we shouldn't lock the UI just
+        // because the click is queued).
+        const _runsInFlight = new Set();
+
+        function setRowBusy(stepId, busy) {
+            const row = document.querySelector(
+                `#ptzProbeCaseList [data-step-id="${cssEscape(stepId)}"]`
+            );
+            if (!row) return;
+            row.querySelectorAll('button').forEach(b => {
+                b.disabled = !!busy;
+            });
+            row.classList.toggle('opacity-50', !!busy);
+        }
+
+        function cssEscape(s) {
+            // Minimal escape for the data-step-id attribute selector.
+            // Step IDs are stable backend constants (snake_case), so we
+            // only have to defend against unexpected characters.
+            return String(s).replace(/[^a-zA-Z0-9_-]/g, '\\$&');
+        }
+
+        async function runStep(stepId) {
+            if (_runsInFlight.has(stepId)) return;
+            _runsInFlight.add(stepId);
+            setRowBusy(stepId, true);
+            showGlobalError('');
+            try {
+                const r = await api('POST',
+                    `/api/v1/cameras/${camId}/ptz/empirical-probe/execute`,
+                    { step_id: stepId });
+                if (r.status === 409) {
+                    showGlobalError('Another test is still running on the camera — try again when it finishes.');
+                    return;
+                }
+                if (!r.ok) throw new Error(r.body.message || 'Execute failed');
+                // execute_step writes a pending StepResult; refresh so
+                // the row picks up any onvif_error to display.
+                await refreshSession();
+            } catch (err) {
+                showGlobalError(String(err.message || err));
+            } finally {
+                _runsInFlight.delete(stepId);
+                setRowBusy(stepId, false);
+            }
+        }
+
+        async function rateStep(stepId, verdict) {
+            // Re-rate confirm: if there's already a non-pending verdict
+            // for this step, ask before overwriting.
+            const existing = _sessionData
+                && _sessionData.results
+                && _sessionData.results[stepId];
+            if (existing && existing.feedback && existing.feedback !== 'pending') {
+                const ok = confirm(
+                    `This test already has a verdict (${existing.feedback}). ` +
+                    `Replace it with "${verdict}"?`
+                );
+                if (!ok) return;
+            }
+
+            setRowBusy(stepId, true);
+            showGlobalError('');
+            try {
+                const r = await apiRetryWhileBusy('POST',
+                    `/api/v1/cameras/${camId}/ptz/empirical-probe/feedback`,
+                    { step_id: stepId, result: verdict, comment: '' },
+                    {
+                        maxRetries: 30, delayMs: 500,
+                        onBusy: () => showGlobalError(
+                            'Camera is still running the previous move — your verdict will be recorded once it finishes.'
+                        ),
+                    });
+                if (r.status === 409) {
+                    showGlobalError(
+                        'Previous test is taking too long — try ⚠ Halt motion, then retry.'
+                    );
+                    return;
+                }
+                if (!r.ok) throw new Error(r.body.message || 'Feedback failed');
+                // Local optimistic update so the badge changes instantly
+                // even before the refresh round-trip completes.
+                if (_sessionData && _sessionData.results) {
+                    _sessionData.results[stepId] = Object.assign(
+                        {}, _sessionData.results[stepId] || {},
+                        { feedback: verdict }
+                    );
+                }
+                renderCaseList();
+                // Then resync verdict_count from the server.
+                await refreshSession();
+            } catch (err) {
+                showGlobalError(String(err.message || err));
+            } finally {
+                setRowBusy(stepId, false);
+            }
+        }
+
+        async function finishSession() {
+            const verdictCount = (_sessionData && _sessionData.verdict_count) || 0;
+            const total = (_sessionData && _sessionData.total_steps) || 0;
+            if (verdictCount < total) {
+                const ok = confirm(
+                    `Only ${verdictCount} of ${total} tests have been rated. ` +
+                    `Finish anyway? Un-rated tests are recorded as "not tested".`
+                );
+                if (!ok) return;
+            }
+            try {
+                const r = await api('POST',
+                    `/api/v1/cameras/${camId}/ptz/empirical-probe/finalize`);
+                if (!r.ok) throw new Error(r.body.message || 'Finalize failed');
+                onSessionDone(r.body.data.cache_path, r.body.data.cache_error);
+            } catch (err) {
+                showGlobalError(String(err.message || err));
+            }
+        }
+
+        function onSessionDone(cachePath, cacheError) {
+            _wizardActive = false;
+            window.removeEventListener('beforeunload', _beforeUnloadAbort);
+            const probeModalEl = $('ptzProbeModal');
+            if (probeModalEl) {
+                const inst = bootstrap.Modal.getInstance(probeModalEl);
+                if (inst) inst.hide();
+            }
+            const warn = $('ptzProbeDoneWarning');
+            const warnDetail = $('ptzProbeDoneWarningDetail');
+            const successLine = $('ptzProbeDoneSuccessLine');
+            const cp = $('ptzProbeDoneCachePath');
+            const errStr = String(cacheError || '').trim();
+            if (errStr) {
+                // Cache write failed: surface the error verbatim so the
+                // operator can act (most often a permissions issue on
+                // the data dir). Use textContent — error message is
+                // string-formatted from server-side exception text.
+                if (warn) warn.classList.remove('d-none');
+                if (warnDetail) warnDetail.textContent = 'Error: ' + errStr;
+                if (successLine) successLine.classList.add('d-none');
+                if (cp) cp.textContent = '';
+            } else {
+                if (warn) warn.classList.add('d-none');
+                if (warnDetail) warnDetail.textContent = '';
+                if (successLine) successLine.classList.remove('d-none');
+                if (cp) cp.textContent = cachePath
+                    ? ('Empirical cache: ' + cachePath)
+                    : 'Empirical cache written.';
+            }
+            // Near-focus block: only surface when the just-finished
+            // session actually rated the near_focus step. We read the
+            // session's pre-finalize results we still have in
+            // _sessionData (results stay populated until we tear them
+            // down below) rather than refetching the cache YAML — the
+            // wizard already knows whether the step has a yes/skip
+            // verdict on it.
+            const nfBlock = $('ptzProbeDoneNearFocusBlock');
+            const nfValue = $('ptzProbeDoneNearFocusValue');
+            const applyStatus = $('ptzProbeApplyBudgetStatus');
+            if (nfBlock && nfValue) {
+                const results = (_sessionData && _sessionData.results) || {};
+                const nf = results['nf_zoom_budget'];
+                let budgetSec = null;
+                if (nf && Array.isArray(nf.poll_samples) && nf.poll_samples.length > 0) {
+                    const bursts = nf.poll_samples.map(s => Number(s.burst_sec) || 0);
+                    if (nf.feedback === 'yes' && bursts.length >= 1) {
+                        budgetSec = bursts.slice(0, -1).reduce((a, b) => a + b, 0);
+                    } else if (nf.feedback === 'skip') {
+                        budgetSec = bursts.reduce((a, b) => a + b, 0);
+                    }
+                }
+                if (budgetSec !== null) {
+                    nfBlock.classList.remove('d-none');
+                    nfValue.textContent = `${budgetSec.toFixed(2)} s`;
+                    if (applyStatus) applyStatus.textContent = '';
+                } else {
+                    nfBlock.classList.add('d-none');
+                }
+            }
+            const doneEl = $('ptzProbeDoneModal');
+            if (doneEl) {
+                const doneModal = new bootstrap.Modal(doneEl);
+                doneModal.show();
+            }
+            // Clean up URL so reloading doesn't re-open the wizard.
+            const url = new URL(window.location);
+            url.searchParams.delete(PROBE_QS_KEY);
+            window.history.replaceState({}, '', url);
+        }
+
+        async function abortSession(reason) {
+            try {
+                await api('POST',
+                    `/api/v1/cameras/${camId}/ptz/empirical-probe/abort`);
+            } catch (_e) {
+                // Abort is best-effort — backend already cleared.
+            }
+            _wizardActive = false;
+            window.removeEventListener('beforeunload', _beforeUnloadAbort);
+            const probeModalEl = $('ptzProbeModal');
+            if (probeModalEl) {
+                const inst = bootstrap.Modal.getInstance(probeModalEl);
+                if (inst) inst.hide();
+            }
+            const url = new URL(window.location);
+            url.searchParams.delete(PROBE_QS_KEY);
+            window.history.replaceState({}, '', url);
+        }
+
+        async function emergencyStopOnly() {
+            // Just stop motion — don't abort the session, so the operator
+            // can continue rating the (presumably failed) step.
+            try {
+                await fetch(`/api/v1/cameras/${camId}/ptz/stop`, { method: 'POST' });
+            } catch (_e) {}
+        }
+
+        function wireButtons() {
+            $('ptzProbeStartBtn').addEventListener('click', () => {
+                const v = validateProbeSlot($('ptzProbeSlotInput').value);
+                if (!v.ok) return;
+                startSession(v.slot);
+            });
+            $('ptzProbeStartSkipSlotBtn').addEventListener('click', () => {
+                $('ptzProbeSlotInput').value = '';
+                startSession('');
+            });
+            $('ptzProbeFinishBtn').addEventListener('click', finishSession);
+            // Event delegation on the flat case list — buttons are
+            // re-created on every renderCaseList() so per-button listeners
+            // would leak.
+            $('ptzProbeCaseList').addEventListener('click', (ev) => {
+                const btn = ev.target.closest('button[data-action]');
+                if (!btn) return;
+                const row = btn.closest('[data-step-id]');
+                if (!row) return;
+                const stepId = row.dataset.stepId;
+                const action = btn.dataset.action;
+                if (action === 'run') {
+                    runStep(stepId);
+                } else if (action === 'yes' || action === 'no' || action === 'skip') {
+                    rateStep(stepId, action);
+                }
+            });
+            $('ptzProbeAbortBtn').addEventListener('click', () => {
+                if (confirm('Abort the probe? Auto-PTZ will resume; partial results are written to disk.')) {
+                    abortSession('operator-abort');
+                }
+            });
+            $('ptzProbeCloseBtn').addEventListener('click', () => {
+                if (confirm('Close the probe wizard? Auto-PTZ will resume; partial results are written to disk.')) {
+                    abortSession('operator-close');
+                }
+            });
+            $('ptzProbeEmergencyStopBtn').addEventListener('click', emergencyStopOnly);
+            const applyBtn = $('ptzProbeApplyBudgetBtn');
+            if (applyBtn) {
+                applyBtn.addEventListener('click', applyNearFocusBudget);
+            }
+        }
+
+        async function applyNearFocusBudget() {
+            const btn = $('ptzProbeApplyBudgetBtn');
+            const statusEl = $('ptzProbeApplyBudgetStatus');
+            if (statusEl) statusEl.textContent = 'Applying…';
+            if (btn) btn.disabled = true;
+            try {
+                const r = await api('POST',
+                    `/api/v1/cameras/${camId}/ptz/empirical-probe/apply-budget`);
+                if (!r.ok) throw new Error(r.body.message || 'Apply failed');
+                const data = r.body.data || {};
+                if (data.applied) {
+                    if (statusEl) {
+                        statusEl.textContent =
+                            `✓ Applied ${Number(data.value).toFixed(2)} s to camera config.`;
+                        statusEl.className = 'small ms-2 text-success';
+                    }
+                } else {
+                    if (statusEl) {
+                        statusEl.textContent =
+                            data.reason || 'Could not apply.';
+                        statusEl.className = 'small ms-2 text-warning';
+                    }
+                    if (btn) btn.disabled = false;
+                }
+            } catch (err) {
+                if (statusEl) {
+                    statusEl.textContent =
+                        'Error: ' + String(err.message || err);
+                    statusEl.className = 'small ms-2 text-danger';
+                }
+                if (btn) btn.disabled = false;
+            }
+        }
+
+        // Tab-close insurance: if the operator closes the browser tab
+        // mid-probe, sendBeacon fires an /abort so the backend doesn't
+        // leave Auto-PTZ paused until app restart. The _wizardActive
+        // gate skips the beacon after a normal Abort/Done so we don't
+        // POST against a no-session backend on every later tab-close.
+        let _wizardActive = false;
+        function _beforeUnloadAbort() {
+            if (!_wizardActive || camId === null) return;
+            try {
+                if (navigator.sendBeacon) {
+                    navigator.sendBeacon(
+                        `/api/v1/cameras/${camId}/ptz/empirical-probe/abort`
+                    );
+                }
+            } catch (_e) {}
+        }
+
+        function openWizard() {
+            wireButtons();
+            _wizardActive = true;
+            window.addEventListener('beforeunload', _beforeUnloadAbort);
+            // Reset pre-flight visibility (the picker is the entry point;
+            // a fresh open should always re-show it).
+            const preflight = $('ptzProbePreflight');
+            const main = $('ptzProbeMain');
+            if (preflight) preflight.classList.remove('d-none');
+            if (main) main.classList.add('d-none');
+            const slotErr = $('ptzProbeSlotError');
+            if (slotErr) { slotErr.textContent = ''; slotErr.classList.add('d-none'); }
+            loadPresetListForPreflight();
+            const modalEl = $('ptzProbeModal');
+            if (!modalEl) return;
+            const modal = new bootstrap.Modal(modalEl);
+            modal.show();
+        }
+
+        // Auto-launch when ?ptz_probe=<id> is in the URL.
+        document.addEventListener('DOMContentLoaded', function () {
+            const urlCamId = getProbeCamIdFromUrl();
+            if (urlCamId === null) return;
+            camId = urlCamId;
+            // Small delay so the page's own boot scripts finish first
+            // (matches the grid-setup-wizard pattern).
+            window.setTimeout(openWizard, 50);
+        });
+    })();
+</script>
