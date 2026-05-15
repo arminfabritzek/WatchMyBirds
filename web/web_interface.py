@@ -169,6 +169,34 @@ def create_web_interface(detection_manager, system_monitor=None):
         response.headers["Cache-Control"] = cache_control
         return response
 
+    def _send_contained_upload(
+        root: os.PathLike,
+        relative: str,
+        *,
+        max_age: int,
+        private: bool = True,
+        immutable: bool = False,
+    ):
+        # Reject any user-supplied path whose realpath escapes the upload root,
+        # then hand the rooted directory + relative path to send_from_directory
+        # so werkzeug's safe_join runs against the correct boundary.
+        root_path = Path(root).resolve()
+        try:
+            candidate = (root_path / relative).resolve()
+            candidate.relative_to(root_path)
+        except (ValueError, OSError):
+            return "Not found", 404
+        if not candidate.is_file():
+            return "Not found", 404
+        rel = candidate.relative_to(root_path).as_posix()
+        return _send_cached_static_file(
+            root_path,
+            rel,
+            max_age=max_age,
+            private=private,
+            immutable=immutable,
+        )
+
     def _get_species_key_local(det: dict | None) -> str:
         if not det:
             return UNKNOWN_SPECIES_KEY
@@ -820,12 +848,9 @@ def create_web_interface(detection_manager, system_monitor=None):
         @server.route("/uploads/originals/<path:filename>")
         def serve_original(filename):
             # filename typically includes date folder e.g. "20240120/file.jpg"
-            full_path = path_mgr.originals_dir / filename
-            if not full_path.exists():
-                return "Not found", 404
-            return _send_cached_static_file(
-                os.path.dirname(full_path),
-                os.path.basename(full_path),
+            return _send_contained_upload(
+                path_mgr.originals_dir,
+                filename,
                 max_age=IMAGE_CACHE_SECONDS,
                 private=True,
                 immutable=True,
@@ -846,19 +871,18 @@ def create_web_interface(detection_manager, system_monitor=None):
                     preview_name = re.sub(
                         r"_crop_\d+\.webp$", "_preview.webp", filename
                     )
-                    preview_path = path_mgr.thumbs_dir / preview_name
-                    if preview_name != filename and preview_path.exists():
-                        return _send_cached_static_file(
-                            os.path.dirname(preview_path),
-                            os.path.basename(preview_path),
+                    if preview_name != filename:
+                        return _send_contained_upload(
+                            path_mgr.thumbs_dir,
+                            preview_name,
                             max_age=IMAGE_CACHE_SECONDS,
                             private=True,
                             immutable=True,
                         )
                     return "Not found and could not regenerate", 404
-            return _send_cached_static_file(
-                os.path.dirname(full_path),
-                os.path.basename(full_path),
+            return _send_contained_upload(
+                path_mgr.thumbs_dir,
+                filename,
                 max_age=IMAGE_CACHE_SECONDS,
                 private=True,
                 immutable=True,
@@ -876,9 +900,9 @@ def create_web_interface(detection_manager, system_monitor=None):
                         return "Regeneration failed", 500
                 else:
                     return "Not found and could not regenerate", 404
-            return _send_cached_static_file(
-                os.path.dirname(full_path),
-                os.path.basename(full_path),
+            return _send_contained_upload(
+                path_mgr.optimized_dir,
+                filename,
                 max_age=IMAGE_CACHE_SECONDS,
                 private=True,
                 immutable=True,
@@ -887,12 +911,9 @@ def create_web_interface(detection_manager, system_monitor=None):
         @server.route("/uploads/derivatives/ptz_snapshots/<path:filename>")
         @login_required
         def serve_ptz_snapshot(filename):
-            full_path = path_mgr.ptz_snapshots_dir / filename
-            if not full_path.exists():
-                return "Not found", 404
-            return _send_cached_static_file(
-                os.path.dirname(full_path),
-                os.path.basename(full_path),
+            return _send_contained_upload(
+                path_mgr.ptz_snapshots_dir,
+                filename,
                 max_age=60,
                 private=True,
                 immutable=False,
