@@ -292,6 +292,28 @@ def _init_schema(conn: sqlite3.Connection) -> None:
         conn, "images", "deep_scan_attempt_count", "INTEGER DEFAULT 0"
     )
 
+    # PTZ context per frame (additive, NULL on legacy and non-PTZ rows).
+    # Forward-compatible schema: the three coordinate slots (pan/tilt/zoom)
+    # and ptz_position_at stay NULL in v1 and are reserved for v2, when
+    # ONVIF GetStatus / AbsoluteMove data is wired in. Used by the gallery
+    # ranker to prefer preset-targeted thumbnails over overview shots
+    # (the camera is physically closer to the bird at preset rest).
+    _ensure_column_on_table(conn, "images", "ptz_origin", "TEXT")
+    _ensure_column_on_table(conn, "images", "ptz_preset_token", "TEXT")
+    _ensure_column_on_table(conn, "images", "ptz_zone", "TEXT")
+    _ensure_column_on_table(conn, "images", "ptz_state", "TEXT")
+    _ensure_column_on_table(conn, "images", "ptz_camera_id", "INTEGER")
+    _ensure_column_on_table(conn, "images", "ptz_pan", "REAL")
+    _ensure_column_on_table(conn, "images", "ptz_tilt", "REAL")
+    _ensure_column_on_table(conn, "images", "ptz_zoom", "REAL")
+    _ensure_column_on_table(conn, "images", "ptz_position_at", "TEXT")
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_images_ptz_origin
+        ON images(ptz_origin) WHERE ptz_origin IS NOT NULL;
+        """
+    )
+
     # 1. Ensure Default Source Exists
     default_source_id = get_or_create_default_source(conn)
     # 2. Backfill existing images

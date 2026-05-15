@@ -386,3 +386,155 @@ def test_status_reports_configured_disabled_when_camera_enabled_false():
     assert status["configured_enabled"] is False
     assert status["enabled"] is False
     assert status["camera_id"] == 0
+
+
+# ---------------------------------------------------------------------------
+# snapshot_for_image_persistence — PTZ context for image rows
+# ---------------------------------------------------------------------------
+
+
+def test_snapshot_idle_returns_origin_none():
+    controller = AutoPtzController(
+        camera_provider=lambda: _camera(),
+        command_runner=lambda c: None,
+        clock=FakeClock(),
+        worker_enabled=False,
+    )
+
+    snap = controller.snapshot_for_image_persistence()
+
+    assert snap["ptz_origin"] == "none"
+    assert snap["ptz_state"] == "idle"
+    assert snap["ptz_preset_token"] is None
+    assert snap["ptz_zone"] is None
+    assert snap["ptz_camera_id"] == 0
+    assert snap["ptz_pan"] is None
+    assert snap["ptz_tilt"] is None
+    assert snap["ptz_zoom"] is None
+    assert snap["ptz_position_at"] is None
+
+
+def test_snapshot_tracking_returns_origin_preset_with_token_and_zone():
+    clock = FakeClock()
+    commands: list = []
+    controller = AutoPtzController(
+        camera_provider=lambda: _camera(mode="preset", acquire_frames=1),
+        command_runner=commands.append,
+        clock=clock,
+        worker_enabled=False,
+    )
+
+    controller.handle_detections(
+        frame_shape=(100, 100, 3), detections=[_detection(0, 20)]
+    )
+    # _maybe_goto_zone transitions to "tracking" on the first acceptable frame
+    # when acquire_frames == 1.
+    snap = controller.snapshot_for_image_persistence()
+
+    assert snap["ptz_origin"] == "preset"
+    assert snap["ptz_state"] == "tracking"
+    assert snap["ptz_preset_token"] == "left_token"
+    assert snap["ptz_zone"] == "left"
+    assert snap["ptz_camera_id"] == 0
+
+
+def test_snapshot_overview_returns_origin_overview():
+    controller = AutoPtzController(
+        camera_provider=lambda: _camera(),
+        command_runner=lambda c: None,
+        clock=FakeClock(),
+        worker_enabled=False,
+    )
+    # Force the controller into "overview" state directly — equivalent to
+    # the camera resting on the overview preset after a return cycle.
+    controller._update_status(state="overview")
+
+    snap = controller.snapshot_for_image_persistence()
+
+    assert snap["ptz_origin"] == "overview"
+    assert snap["ptz_state"] == "overview"
+
+
+def test_snapshot_returning_treated_as_overview():
+    controller = AutoPtzController(
+        camera_provider=lambda: _camera(),
+        command_runner=lambda c: None,
+        clock=FakeClock(),
+        worker_enabled=False,
+    )
+    controller._update_status(state="returning")
+
+    snap = controller.snapshot_for_image_persistence()
+
+    # Mid-fly back to overview is semantically "overview", not preset:
+    # the frame is no longer a close-up, the camera is heading wide.
+    assert snap["ptz_origin"] == "overview"
+
+
+def test_snapshot_lost_grace_treated_as_preset():
+    controller = AutoPtzController(
+        camera_provider=lambda: _camera(),
+        command_runner=lambda c: None,
+        clock=FakeClock(),
+        worker_enabled=False,
+    )
+    # lost_grace means the bird just left but the camera is still at the
+    # zone preset, waiting lost_timeout_sec before returning to overview.
+    # Frames captured here are still close-ups.
+    controller._update_status(state="lost_grace")
+
+    snap = controller.snapshot_for_image_persistence()
+
+    assert snap["ptz_origin"] == "preset"
+
+
+def test_snapshot_settling_treated_as_preset():
+    controller = AutoPtzController(
+        camera_provider=lambda: _camera(),
+        command_runner=lambda c: None,
+        clock=FakeClock(),
+        worker_enabled=False,
+    )
+    # settling = camera is mid-fly toward a zone preset triggered by an
+    # external goto. Treat as preset so frames captured during the fly-in
+    # are not undercounted in gallery bias.
+    controller._update_status(state="settling")
+
+    snap = controller.snapshot_for_image_persistence()
+
+    assert snap["ptz_origin"] == "preset"
+
+
+def test_snapshot_with_no_camera_returns_none_camera_id():
+    controller = AutoPtzController(
+        camera_provider=lambda: None,
+        command_runner=lambda c: None,
+        clock=FakeClock(),
+        worker_enabled=False,
+    )
+
+    snap = controller.snapshot_for_image_persistence()
+
+    assert snap["ptz_origin"] == "none"
+    assert snap["ptz_camera_id"] is None
+
+
+def test_empty_ptz_snapshot_has_full_column_keyset():
+    from core.ptz_tracking_core import empty_ptz_snapshot
+
+    snap = empty_ptz_snapshot()
+
+    expected_keys = {
+        "ptz_origin",
+        "ptz_preset_token",
+        "ptz_zone",
+        "ptz_state",
+        "ptz_camera_id",
+        "ptz_pan",
+        "ptz_tilt",
+        "ptz_zoom",
+        "ptz_position_at",
+    }
+    assert set(snap.keys()) == expected_keys
+    # Empty snapshot is all-NULL: maps to "we do not know" in the DB.
+    assert all(v is None for v in snap.values())

@@ -570,6 +570,7 @@ def fetch_species_story_board_candidates(
             d.bbox_quality,
             d.unknown_score,
             d.decision_reasons,
+            i.ptz_origin,
             CASE
                 WHEN COALESCE(d.bbox_w, 0) <= 0 OR COALESCE(d.bbox_h, 0) <= 0 THEN 0
                 WHEN COALESCE(d.bbox_x, 0) <= 0.01 THEN 0
@@ -646,6 +647,11 @@ def fetch_species_story_board_candidates(
                 PARTITION BY e.species_key
                 ORDER BY
                     COALESCE(e.is_favorite, 0) DESC,
+                    CASE e.ptz_origin
+                        WHEN 'preset' THEN 1
+                        WHEN 'manual_drive' THEN 1
+                        ELSE 0
+                    END DESC,
                     COALESCE(e.is_gallery_eligible, 0) DESC,
                     e.is_interior DESC,
                     COALESCE(e.aesthetic_score, -1) DESC,
@@ -687,6 +693,7 @@ def fetch_species_story_board_candidates(
         rf.bbox_quality,
         rf.unknown_score,
         rf.decision_reasons,
+        rf.ptz_origin,
         (
             SELECT COUNT(*)
             FROM detections d2
@@ -869,11 +876,21 @@ def fetch_daily_covers(
             d.thumbnail_path,
             ROW_NUMBER() OVER (
                 PARTITION BY (substr(d.image_filename, 1, 4) || '-' || substr(d.image_filename, 5, 2) || '-' || substr(d.image_filename, 7, 2))
-                -- Cover ranking: manual rating wins first, then nightly aesthetic
-                -- score from scripts/aesthetic_tag_nightly.py (NULL on legacy /
-                -- non-taggable species → ranked behind anything scored), then
-                -- fall back to detector confidence so legacy data still ranks.
+                -- Cover ranking, highest priority first:
+                --   1. manual rating
+                --   2. PTZ preset bias — frames captured while the camera was
+                --      driven to a non-overview preset are physically closer
+                --      to the bird. Auto and manual drives rank equally; legacy
+                --      NULL rows sort behind anything tagged. See plan
+                --      2026-05-15_PTZ_image-context-for-gallery-bias.
+                --   3. nightly aesthetic score from scripts/aesthetic_tag_nightly.py
+                --   4. detector confidence (legacy fallback)
                 ORDER BY COALESCE(d.rating, 0) DESC,
+                         CASE i.ptz_origin
+                             WHEN 'preset' THEN 1
+                             WHEN 'manual_drive' THEN 1
+                             ELSE 0
+                         END DESC,
                          COALESCE(d.aesthetic_score, -1) DESC,
                          d.score DESC
             ) as rn

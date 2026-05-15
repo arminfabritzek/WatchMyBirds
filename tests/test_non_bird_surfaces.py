@@ -87,6 +87,14 @@ def _make_minimal_schema(conn: sqlite3.Connection) -> None:
     """Create just enough schema for _fetch_species_best_photos to run."""
     conn.execute(
         """
+        CREATE TABLE images (
+            filename TEXT PRIMARY KEY,
+            ptz_origin TEXT
+        )
+        """
+    )
+    conn.execute(
+        """
         CREATE TABLE detections (
             detection_id INTEGER PRIMARY KEY AUTOINCREMENT,
             image_filename TEXT NOT NULL,

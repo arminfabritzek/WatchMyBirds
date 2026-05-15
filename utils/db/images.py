@@ -19,8 +19,17 @@ def insert_image(conn: sqlite3.Connection, row: dict[str, Any]) -> None:
             detector_model_id,
             classifier_model_id,
             source_id,
-            content_hash
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?);
+            content_hash,
+            ptz_origin,
+            ptz_preset_token,
+            ptz_zone,
+            ptz_state,
+            ptz_camera_id,
+            ptz_pan,
+            ptz_tilt,
+            ptz_zoom,
+            ptz_position_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
         """,
         (
             row.get("filename"),
@@ -31,6 +40,15 @@ def insert_image(conn: sqlite3.Connection, row: dict[str, Any]) -> None:
             row.get("classifier_model_id", ""),
             row.get("source_id"),
             row.get("content_hash"),
+            row.get("ptz_origin"),
+            row.get("ptz_preset_token"),
+            row.get("ptz_zone"),
+            row.get("ptz_state"),
+            row.get("ptz_camera_id"),
+            row.get("ptz_pan"),
+            row.get("ptz_tilt"),
+            row.get("ptz_zoom"),
+            row.get("ptz_position_at"),
         ),
     )
     conn.commit()

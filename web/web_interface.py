@@ -59,16 +59,16 @@ from web.services import (
 )
 
 # In-Memory Caches
-# Best-of-Species board cache: profiling shows
-# `build_species_story_board(all_detections)` costs ~3.5 s per `/` render
-# (alone half of the 8 s wall time). The board is an all-time aggregate
-# whose top-12 species cannot meaningfully change sub-minute, so a short
-# TTL eliminates the cost on subsequent renders without staleness that
-# matters for the user. 5 min keeps the board fresh enough that a newly
-# rated detection appears within one tab refresh and a 5-min wait.
-# Stored as ``{"timestamp": float, "board": dict, "preview": list,
-# "modal_dets": list}``; readers check ``time.time() - timestamp < TTL``.
-_BEST_SPECIES_CACHE_TTL_SECONDS = 5 * 60
+# Best-of-Species pools cache: the SQL window-function query costs ~3.5 s.
+# Cache the **bounded pool of candidates** per species, then pick the primary
+# cover and rotating story frames fresh on every render via
+# ``_choose_story_board_frames``. This matches the rotation semantics of
+# Today's Visitors and the species-detail page (random.choice across the
+# favorite/KI/score-ranked pool) without paying the SQL cost on every hit.
+# TTL stays short so newly favorited/rated detections show up within one
+# refresh after the cache lapses.
+# Stored as ``{"timestamp": float, "pools": dict, "modal_dets": list}``.
+_BEST_SPECIES_CACHE_TTL_SECONDS = 30
 _best_species_cache: dict = {"timestamp": 0.0, "payload": None}
 
 
@@ -329,21 +329,11 @@ def create_web_interface(detection_manager, system_monitor=None):
             or (by + bh) >= (1.0 - margin)
         )
 
-    def _cover_quality_tuple(det: dict) -> tuple[int, float]:
-        """
-        Quality key for species cover and summary selection.
-        Priority: HUMAN favorite or KI gallery-pick (peers), then score.
-        """
-        priority = (
-            1
-            if (
-                int(det.get("is_favorite") or 0)
-                or int(det.get("is_gallery_eligible") or 0)
-            )
-            else 0
-        )
-        score = float(det.get("score") or 0.0)
-        return (priority, score)
+    # Quality key thin wrapper — single source of truth in core.gallery_core
+    # so Best-of-Species, Today's Visitors, Species tab and subgallery all
+    # share one ranking DNA. See plan 2026-05-15_PTZ_image-context-for-
+    # gallery-bias.
+    from core.gallery_core import cover_quality_tuple as _cover_quality_tuple  # noqa: E501
 
     def _is_favorite(det: dict) -> bool:
         """True when a detection is marked as ❤️ favorite (HUMAN gold-label)."""
@@ -352,6 +342,7 @@ def create_web_interface(detection_manager, system_monitor=None):
     def _is_gallery_eligible(det: dict) -> bool:
         """True when the aesthetic tagger marked the detection as a gallery pick."""
         return bool(int(det.get("is_gallery_eligible") or 0))
+
 
     def _build_detection_view_dict(
         det: dict,
@@ -417,39 +408,16 @@ def create_web_interface(detection_manager, system_monitor=None):
             return "Unknown"
 
     def _pick_cover_for_group(candidates: list[dict], **_kwargs) -> dict | None:
+        """Thin wrapper around ``core.gallery_core.pick_cover_for_group``.
+
+        The shared picker is the single source of truth — see plan
+        2026-05-15_PTZ_image-context-for-gallery-bias. Legacy ``**_kwargs``
+        absorbs the ``seed_key``/``date_iso`` arguments older callers still
+        pass; both are unused under the current rotation semantics.
         """
-        Pick one cover candidate.
-        Priority:
-        1) If HUMAN favorites exist → random.choice() among them ("sieh mal mein
-           Lieblingsbild" — model picks must not hijack a human signal)
-        2) Else if KI gallery-eligible picks exist → random.choice() among them
-        3) Prefer non-edge images
-        4) Otherwise pick single best by score
-        """
-        if not candidates:
-            return None
+        from core.gallery_core import pick_cover_for_group
 
-        # 1. HUMAN favorites win over everything else
-        fav_pool = [d for d in candidates if _is_favorite(d)]
-        if fav_pool:
-            return random.choice(fav_pool)
-
-        # 2. KI picks fill in when no human signal
-        ki_pool = [d for d in candidates if _is_gallery_eligible(d)]
-        if ki_pool:
-            return random.choice(ki_pool)
-
-        # 3. Prefer non-edge images for the fallback
-        interior = [d for d in candidates if not _bbox_touches_edge(d)]
-        pool = interior if interior else candidates
-
-        # 4. Fallback: best by score
-        ranked = sorted(
-            pool,
-            key=lambda d: float(d.get("score") or 0.0),
-            reverse=True,
-        )
-        return ranked[0] if ranked else None
+        return pick_cover_for_group(candidates)
 
     def get_captured_detections():
         """
@@ -543,13 +511,19 @@ def create_web_interface(detection_manager, system_monitor=None):
                     frame["species_colour"] = slot
         return enriched_board
 
-    def _build_best_species_story_board(
+    def _fetch_best_species_pools(
         *,
         total_limit: int = 12,
-        featured_count: int = 3,
-        frames_per_species: int = 3,
-    ) -> tuple[dict[str, list[dict]], list[dict]]:
-        """Build the all-time homepage board from a bounded SQL row set."""
+        frames_per_species: int = 20,
+    ) -> tuple[list[dict], list[dict]]:
+        """Load the bounded SQL pool of candidate frames per species.
+
+        Returns ``(species_pools, modal_rows)``. Each pool is a dict with
+        species-level metadata plus ``"candidates"`` — the full SQL-ranked
+        list of up to ``frames_per_species`` detections, which the render
+        path will then pass through ``_choose_story_board_frames`` to pick
+        a fresh primary cover and story frames per render.
+        """
         with db_service.closing_connection() as conn:
             rows = db_service.fetch_species_story_board_candidates(
                 conn,
@@ -558,15 +532,15 @@ def create_web_interface(detection_manager, system_monitor=None):
                 excluded_species={UNKNOWN_SPECIES_KEY},
             )
 
-        items_by_species: dict[str, dict] = {}
+        pools_by_species: dict[str, dict] = {}
         ordered_species: list[str] = []
         modal_rows_by_id: dict[int, dict] = {}
 
         for row in rows:
             det = dict(row)
             species_key = det.get("species_key") or UNKNOWN_SPECIES_KEY
-            if species_key not in items_by_species:
-                items_by_species[species_key] = {
+            if species_key not in pools_by_species:
+                pools_by_species[species_key] = {
                     "species_key": species_key,
                     "visit_count": int(det.get("visit_count") or 0),
                     "last_seen_timestamp": det.get("last_seen_timestamp") or "",
@@ -574,26 +548,58 @@ def create_web_interface(detection_manager, system_monitor=None):
                     "is_favorite_available": bool(
                         int(det.get("is_favorite_available") or 0)
                     ),
-                    "primary_detection": det,
-                    "story_detections": [],
+                    "candidates": [],
                 }
                 ordered_species.append(species_key)
 
-            item = items_by_species[species_key]
-            item["story_detections"].append(det)
-            if int(det.get("frame_rank") or 0) == 1:
-                item["primary_detection"] = det
+            pools_by_species[species_key]["candidates"].append(det)
 
             det_id = int(det.get("detection_id") or 0)
             if det_id > 0:
                 modal_rows_by_id.setdefault(det_id, det)
 
-        board_items = [items_by_species[species] for species in ordered_species]
-        board = {
+        species_pools = [pools_by_species[species] for species in ordered_species]
+        return species_pools, list(modal_rows_by_id.values())
+
+    def _render_best_species_board(
+        species_pools: list[dict],
+        *,
+        total_limit: int = 12,
+        featured_count: int = 3,
+        frame_count: int = 3,
+    ) -> dict[str, list[dict]]:
+        """Pick the primary cover and story frames per species, freshly per render.
+
+        Uses ``_choose_story_board_frames`` (same picker as Today's Visitors and
+        the species-detail page) so rotation semantics match the rest of the app:
+        random.choice() across the favorite pool, then KI pool, then ranked
+        fallback.
+        """
+        from core.gallery_core import _choose_story_board_frames
+
+        rng = random.Random()
+        board_items: list[dict] = []
+        for pool in species_pools:
+            candidates = pool.get("candidates") or []
+            primary, frames = _choose_story_board_frames(
+                candidates, rng=rng, frame_count=frame_count
+            )
+            board_items.append(
+                {
+                    "species_key": pool["species_key"],
+                    "visit_count": pool["visit_count"],
+                    "last_seen_timestamp": pool["last_seen_timestamp"],
+                    "best_cover_score": pool["best_cover_score"],
+                    "is_favorite_available": pool["is_favorite_available"],
+                    "primary_detection": primary or (candidates[0] if candidates else None),
+                    "story_detections": frames,
+                }
+            )
+
+        return {
             "featured": board_items[:featured_count],
             "grid": board_items[featured_count:total_limit],
         }
-        return board, list(modal_rows_by_id.values())
 
     def get_captured_detections_by_date():
         """
@@ -750,6 +756,11 @@ def create_web_interface(detection_manager, system_monitor=None):
     from web.blueprints.trash import trash_bp
 
     server.register_blueprint(trash_bp)
+
+    # Register Unclear Blueprint (classifier-rejected detections surface)
+    from web.blueprints.unclear import unclear_bp
+
+    server.register_blueprint(unclear_bp)
 
     # Register Review Blueprint
     from web.blueprints.review import review_bp
@@ -2870,40 +2881,51 @@ def create_web_interface(detection_manager, system_monitor=None):
             logger.error(f"Error fetching archive preview: {e}")
 
         # 5b. Best Species Story Board
-        # Cache the bounded SQL result. The cold path now returns only the
-        # board rows instead of hydrating every all-time detection into Python.
+        # Cache the **SQL pools** (the expensive part) but re-render the board
+        # on every request so the primary cover rotates per refresh, matching
+        # Today's Visitors and the species-detail page.
         best_species_board = {"featured": [], "grid": []}
         best_species_preview = []
         best_species_modal_dets = []
         cache_payload = _best_species_cache.get("payload")
         cache_age = time.time() - float(_best_species_cache.get("timestamp") or 0.0)
+        species_pools: list[dict] | None = None
         if cache_payload is not None and cache_age < _BEST_SPECIES_CACHE_TTL_SECONDS:
-            best_species_board = cache_payload["board"]
-            best_species_preview = cache_payload["preview"]
+            species_pools = cache_payload["pools"]
             best_species_modal_dets = cache_payload["modal_dets"]
         else:
             try:
-                raw_best_board, raw_best_modal_rows = _build_best_species_story_board(
+                raw_pools, raw_modal_rows = _fetch_best_species_pools(
+                    total_limit=12,
+                    frames_per_species=20,
+                )
+                species_pools = raw_pools
+                best_species_modal_dets = [
+                    _build_modal_detection(raw) for raw in raw_modal_rows
+                ]
+                _best_species_cache["timestamp"] = time.time()
+                _best_species_cache["payload"] = {
+                    "pools": species_pools,
+                    "modal_dets": best_species_modal_dets,
+                }
+            except Exception as e:
+                logger.error(f"Error fetching best species board: {e}")
+
+        # Re-pick covers per render — rotates the primary thumbnail each refresh.
+        if species_pools:
+            try:
+                raw_best_board = _render_best_species_board(
+                    species_pools,
                     total_limit=12,
                     featured_count=3,
-                    frames_per_species=3,
+                    frame_count=3,
                 )
                 best_species_board = _enrich_species_board(raw_best_board)
                 best_species_preview = best_species_board.get(
                     "featured", []
                 ) + best_species_board.get("grid", [])
-
-                for raw in raw_best_modal_rows:
-                    best_species_modal_dets.append(_build_modal_detection(raw))
-
-                _best_species_cache["timestamp"] = time.time()
-                _best_species_cache["payload"] = {
-                    "board": best_species_board,
-                    "preview": best_species_preview,
-                    "modal_dets": best_species_modal_dets,
-                }
             except Exception as e:
-                logger.error(f"Error fetching best species board: {e}")
+                logger.error(f"Error rendering best species board: {e}")
 
         # 6. Landing Status Row
         landing_status = {

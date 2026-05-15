@@ -539,30 +539,156 @@ def _story_board_bbox_touches_edge(det: dict, margin: float = 0.01) -> bool:
     )
 
 
+def is_favorite(det: dict) -> bool:
+    """True when a detection is marked as ❤️ favorite (HUMAN gold-label)."""
+    return bool(int(det.get("is_favorite") or 0))
+
+
+def is_gallery_eligible(det: dict) -> bool:
+    """True when the aesthetic tagger marked the detection as a gallery pick."""
+    return bool(int(det.get("is_gallery_eligible") or 0))
+
+
+def is_ptz_preset(det: dict) -> bool:
+    """True when the frame was captured under PTZ preset or manual-drive context.
+
+    Both ``preset`` (Auto-Cam goto) and ``manual_drive`` (operator joystick)
+    indicate the camera was aimed close-up at the bird, so the frame is
+    physically tighter than an overview/idle frame. ``None`` (legacy /
+    non-PTZ cameras) and ``"overview"`` (idle park position) return False.
+    Mirrors the SQL ``CASE ptz_origin`` arm used in fetch_daily_covers and
+    fetch_species_story_board_candidates.
+    """
+    return det.get("ptz_origin") in ("preset", "manual_drive")
+
+
+def cover_quality_tuple(
+    det: dict,
+) -> tuple[int, int, int, int, float, float, float, str, int]:
+    """Quality key for species cover and summary selection.
+
+    Identical DNA to ``_story_board_candidate_quality`` — both must stay in
+    sync. Used by the Today's-Visitors-Summary row, Species tab, and the
+    subgallery's Species-of-Day. Highest priority first:
+        is_favorite           HUMAN gold-label.
+        ptz_preset            PTZ-driven frames (preset or manual_drive) are
+                              physically closer to the bird — plan
+                              2026-05-15_PTZ_image-context-for-gallery-bias.
+        is_gallery_eligible   KI auto-pick from aesthetic_tag_nightly.py.
+        is_interior           bbox not touching the frame edge.
+        aesthetic_score       CLIP facing-camera probability; -1.0 when
+                              missing so legacy / non-taggable rows sink.
+        score                 detector confidence (legacy fallback).
+        bbox_quality          geometric heuristic from BBoxQualityService.
+        ts                    recency.
+        det_id                stable id so the sort is deterministic.
+    """
+    fav = 1 if is_favorite(det) else 0
+    ptz = 1 if is_ptz_preset(det) else 0
+    ki = 1 if is_gallery_eligible(det) else 0
+    interior = 0 if _story_board_bbox_touches_edge(det) else 1
+    raw_aesthetic = det.get("aesthetic_score")
+    aesthetic_score = float(raw_aesthetic) if raw_aesthetic is not None else -1.0
+    score = float(det.get("score") or 0.0)
+    bbox_quality = float(det.get("bbox_quality") or 0.0)
+    ts = det.get("image_timestamp", "") or ""
+    det_id = int(det.get("detection_id") or 0)
+    return (
+        fav,
+        ptz,
+        ki,
+        interior,
+        aesthetic_score,
+        score,
+        bbox_quality,
+        ts,
+        det_id,
+    )
+
+
+def pick_cover_for_group(
+    candidates: list[dict], rng: random.Random | None = None
+) -> dict | None:
+    """Pick one cover candidate for a species group.
+
+    Priority (highest first):
+        1. HUMAN favorites → random.choice() among them. The "sieh mal mein
+           Lieblingsbild" surface must not be hijacked by automation.
+        2. PTZ preset / manual_drive frames ∩ KI gallery-eligible →
+           random.choice(). Preset-targeted frames are physically closer to
+           the bird (plan 2026-05-15_PTZ_image-context-for-gallery-bias);
+           when the aesthetic tagger also approved the same frame, that is
+           the strongest non-human signal available.
+        3. PTZ preset / manual_drive frames (any aesthetic state) →
+           random.choice(). A close-up beats a generic auto-pick.
+        4. KI gallery-eligible picks → random.choice().
+        5. Prefer non-edge images, then fall back to best by score.
+
+    ``rng`` is injectable for deterministic tests; defaults to module random.
+    """
+    if not candidates:
+        return None
+
+    if rng is None:
+        rng = random.Random()
+
+    fav_pool = [d for d in candidates if is_favorite(d)]
+    if fav_pool:
+        return rng.choice(fav_pool)
+
+    ptz_pool = [d for d in candidates if is_ptz_preset(d)]
+    ki_pool = [d for d in candidates if is_gallery_eligible(d)]
+
+    ptz_ki_pool = [d for d in ptz_pool if is_gallery_eligible(d)]
+    if ptz_ki_pool:
+        return rng.choice(ptz_ki_pool)
+
+    if ptz_pool:
+        return rng.choice(ptz_pool)
+
+    if ki_pool:
+        return rng.choice(ki_pool)
+
+    interior = [d for d in candidates if not _story_board_bbox_touches_edge(d)]
+    pool = interior if interior else candidates
+    ranked = sorted(
+        pool, key=lambda d: float(d.get("score") or 0.0), reverse=True
+    )
+    return ranked[0] if ranked else None
+
+
 def _story_board_candidate_quality(
     det: dict,
-) -> tuple[int, int, float, float, float, str, int]:
+) -> tuple[int, int, int, int, float, float, float, str, int]:
     """Quality key for story-board cover candidates.
 
     Tuple ordering (highest priority first):
-        priority        max(is_favorite, is_gallery_eligible) — HUMAN-favorited
-                        and model-picked rows sort equally above the rest. The
-                        UI tells them apart via the KI-badge; ranking treats
-                        them as peers.
-        is_interior     bbox not touching the frame edge
+        is_favorite     HUMAN gold-label. Wins over everything else so the
+                        "sieh mal mein Lieblingsbild" surface cannot be
+                        hijacked by automation.
+        ptz_preset      1 if the frame was captured while the camera was
+                        driven to a non-overview preset (close-up shot);
+                        0 for overview rest, manual rest, or non-PTZ
+                        cameras. Sits above is_gallery_eligible so a
+                        physically-closer preset shot beats a pure
+                        aesthetic-tagger pick. See plan
+                        2026-05-15_PTZ_image-context-for-gallery-bias.
+        is_gallery_eligible KI auto-pick from aesthetic_tag_nightly.py.
+        is_interior     bbox not touching the frame edge.
         aesthetic_score CLIP "facing camera" probability from
-                        scripts/aesthetic_tag_nightly.py; 0.0 when missing
+                        scripts/aesthetic_tag_nightly.py; -1.0 when missing
                         so legacy / non-taggable detections sort by `score`
-                        downstream instead of being penalised globally
-        score           detector OD confidence (legacy primary tiebreaker)
-        bbox_quality    geometric heuristic from BBoxQualityService
-        ts              recency
-        det_id          stable id so the sort is deterministic
+                        downstream instead of being penalised globally.
+        score           detector OD confidence (legacy primary tiebreaker).
+        bbox_quality    geometric heuristic from BBoxQualityService.
+        ts              recency.
+        det_id          stable id so the sort is deterministic.
     """
     is_favorite = 1 if int(det.get("is_favorite") or 0) else 0
     is_gallery_eligible = 1 if int(det.get("is_gallery_eligible") or 0) else 0
-    priority = 1 if (is_favorite or is_gallery_eligible) else 0
     is_interior = 0 if _story_board_bbox_touches_edge(det) else 1
+    ptz_origin = det.get("ptz_origin")
+    ptz_preset = 1 if ptz_origin in ("preset", "manual_drive") else 0
     # NULL aesthetic_score → -1.0 mirrors the SQL `COALESCE(.., -1)` fallback
     # in fetch_daily_covers / _fetch_species_best_photos. Legacy and
     # non-taggable detections sink behind anything actually scored.
@@ -572,7 +698,17 @@ def _story_board_candidate_quality(
     bbox_quality = float(det.get("bbox_quality") or 0.0)
     ts = det.get("image_timestamp", "") or ""
     det_id = int(det.get("detection_id") or 0)
-    return (priority, is_interior, aesthetic_score, score, bbox_quality, ts, det_id)
+    return (
+        is_favorite,
+        ptz_preset,
+        is_gallery_eligible,
+        is_interior,
+        aesthetic_score,
+        score,
+        bbox_quality,
+        ts,
+        det_id,
+    )
 
 
 def _rank_story_board_candidates(candidates: list[dict]) -> list[dict]:

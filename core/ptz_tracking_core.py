@@ -617,3 +617,70 @@ class AutoPtzController:
             self._last_error = error
             if target_center is not None:
                 self._last_target_center = target_center
+
+    def snapshot_for_image_persistence(self) -> dict[str, Any]:
+        """Return the PTZ context to record on a captured frame.
+
+        Frame-level (not detection-level): every detection in the same
+        frame shares this state. Reads under `_lock`. Returns column-
+        ready keys for `insert_image`. v2 absolute-coordinate slots
+        stay None until `GetStatus` is wired in.
+
+        State mapping:
+          tracking / acquiring / settling / lost_grace → 'preset'
+              (camera is at, or flying to, a non-overview zone preset;
+              the frame is a close-up regardless of mid-fly motion)
+          overview / returning → 'overview'
+              (camera is at, or flying to, the overview preset;
+              the frame is wide-view)
+          idle → 'none'
+              (auto-PTZ off or no active camera; we cannot claim the
+              camera is at overview because the operator may have left
+              it on a manual preset — we just don't know)
+        """
+        with self._lock:
+            state = self._state
+            last_preset = self._last_preset
+            last_zone = self._last_zone
+
+        if state in ("tracking", "acquiring", "settling", "lost_grace"):
+            origin = "preset"
+        elif state in ("overview", "returning"):
+            origin = "overview"
+        else:
+            origin = "none"
+
+        camera = self._camera_provider()
+        camera_id = int(camera["id"]) if camera and "id" in camera else None
+
+        return {
+            "ptz_origin": origin,
+            "ptz_preset_token": last_preset or None,
+            "ptz_zone": last_zone or None,
+            "ptz_state": state,
+            "ptz_camera_id": camera_id,
+            "ptz_pan": None,
+            "ptz_tilt": None,
+            "ptz_zoom": None,
+            "ptz_position_at": None,
+        }
+
+
+def empty_ptz_snapshot() -> dict[str, Any]:
+    """PTZ snapshot to record when no controller is available.
+
+    Same key set as `AutoPtzController.snapshot_for_image_persistence`
+    so callers can hand the dict straight to `insert_image` without a
+    None-check on every key.
+    """
+    return {
+        "ptz_origin": None,
+        "ptz_preset_token": None,
+        "ptz_zone": None,
+        "ptz_state": None,
+        "ptz_camera_id": None,
+        "ptz_pan": None,
+        "ptz_tilt": None,
+        "ptz_zoom": None,
+        "ptz_position_at": None,
+    }

@@ -183,14 +183,19 @@ class DetectionManager:
         # Backoff
         self.initialization_retry_count = 0
 
-        # Service layer components
+        # Service layer components.
+        # Order matters: auto_ptz_controller is constructed first so the
+        # PersistenceService can hold a reference and record frame-time
+        # PTZ state on each saved image (see images.ptz_* columns).
+        self.auto_ptz_controller = AutoPtzController()
         self.notification_service = NotificationService(common_names=self.common_names)
-        self.persistence_service = PersistenceService()
+        self.persistence_service = PersistenceService(
+            ptz_controller=self.auto_ptz_controller
+        )
         self.crop_service = CropService()
         self.decision_policy_service = DecisionPolicyService()
         self.temporal_decision_service = TemporalDecisionService()
         self.capability_registry = build_default_registry()
-        self.auto_ptz_controller = AutoPtzController()
 
         logger.info("DetectionManager V2 initialized (with Services)")
 

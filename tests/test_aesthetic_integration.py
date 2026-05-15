@@ -145,7 +145,8 @@ def _build_minimal_db() -> sqlite3.Connection:
         timestamp TEXT,
         review_status TEXT DEFAULT 'untagged',
         downloaded_timestamp TEXT,
-        source_id INTEGER
+        source_id INTEGER,
+        ptz_origin TEXT
     );
     CREATE TABLE detections (
         detection_id INTEGER PRIMARY KEY AUTOINCREMENT,

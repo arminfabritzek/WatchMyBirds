@@ -264,6 +264,16 @@ def _fetch_species_best_photos(conn, date_iso: str) -> list[dict]:
     # the best you've got?").
     config = get_config()
 
+    # The PTZ preset bias ("preset" or future "manual_drive" → 1, else 0)
+    # is reused in every best-photo ORDER BY below. Inlined as a SQL
+    # fragment so the six correlated subqueries stay readable.
+    ptz_bias_sql = (
+        "CASE e2.ptz_origin "
+        "WHEN 'preset' THEN 1 "
+        "WHEN 'manual_drive' THEN 1 "
+        "ELSE 0 END DESC"
+    )
+
     query = f"""
         WITH effective AS (
             SELECT
@@ -276,8 +286,10 @@ def _fetch_species_best_photos(conn, date_iso: str) -> list[dict]:
                 d.bbox_y,
                 d.bbox_w,
                 d.bbox_h,
+                i.ptz_origin,
                 {effective_species_sql("d")} AS species
             FROM detections d
+            LEFT JOIN images i ON i.filename = d.image_filename
             WHERE d.image_filename LIKE ? || '%'
               AND d.status = 'active'
               AND lower(COALESCE(d.decision_state, '')) = 'confirmed'
@@ -286,28 +298,32 @@ def _fetch_species_best_photos(conn, date_iso: str) -> list[dict]:
                   OR lower(d.decision_level) != 'reject'
               )
         )
-        -- "Best photo" ranking: prefer the nightly aesthetic_score from
-        -- scripts/aesthetic_tag_nightly.py, then detector confidence, then
-        -- bbox-quality heuristic. NULL aesthetic_score (legacy / non-taggable
-        -- species) sinks behind anything scored via the COALESCE(..., -1).
+        -- "Best photo" ranking, highest priority first:
+        --   1. PTZ preset bias — preset-targeted frames are physically
+        --      closer to the bird (see plan 2026-05-15_PTZ_image-context-
+        --      for-gallery-bias). Legacy NULL rows sort behind anything tagged.
+        --   2. nightly aesthetic_score from scripts/aesthetic_tag_nightly.py
+        --      (NULL on legacy / non-taggable species → ranked behind scored)
+        --   3. detector confidence
+        --   4. bbox-quality heuristic
         SELECT
             species,
             COUNT(detection_id) AS count,
             (SELECT image_filename FROM effective e2
              WHERE e2.species = effective.species
-             ORDER BY COALESCE(e2.aesthetic_score, -1) DESC, e2.score DESC, e2.bbox_quality DESC LIMIT 1) AS best_image_filename,
+             ORDER BY {ptz_bias_sql}, COALESCE(e2.aesthetic_score, -1) DESC, e2.score DESC, e2.bbox_quality DESC LIMIT 1) AS best_image_filename,
             (SELECT bbox_x FROM effective e2
              WHERE e2.species = effective.species
-             ORDER BY COALESCE(e2.aesthetic_score, -1) DESC, e2.score DESC, e2.bbox_quality DESC LIMIT 1) AS best_bbox_x,
+             ORDER BY {ptz_bias_sql}, COALESCE(e2.aesthetic_score, -1) DESC, e2.score DESC, e2.bbox_quality DESC LIMIT 1) AS best_bbox_x,
             (SELECT bbox_y FROM effective e2
              WHERE e2.species = effective.species
-             ORDER BY COALESCE(e2.aesthetic_score, -1) DESC, e2.score DESC, e2.bbox_quality DESC LIMIT 1) AS best_bbox_y,
+             ORDER BY {ptz_bias_sql}, COALESCE(e2.aesthetic_score, -1) DESC, e2.score DESC, e2.bbox_quality DESC LIMIT 1) AS best_bbox_y,
             (SELECT bbox_w FROM effective e2
              WHERE e2.species = effective.species
-             ORDER BY COALESCE(e2.aesthetic_score, -1) DESC, e2.score DESC, e2.bbox_quality DESC LIMIT 1) AS best_bbox_w,
+             ORDER BY {ptz_bias_sql}, COALESCE(e2.aesthetic_score, -1) DESC, e2.score DESC, e2.bbox_quality DESC LIMIT 1) AS best_bbox_w,
             (SELECT bbox_h FROM effective e2
              WHERE e2.species = effective.species
-             ORDER BY COALESCE(e2.aesthetic_score, -1) DESC, e2.score DESC, e2.bbox_quality DESC LIMIT 1) AS best_bbox_h,
+             ORDER BY {ptz_bias_sql}, COALESCE(e2.aesthetic_score, -1) DESC, e2.score DESC, e2.bbox_quality DESC LIMIT 1) AS best_bbox_h,
             MAX(score) AS best_score
         FROM effective
         WHERE species != '{UNKNOWN_SPECIES_KEY}'

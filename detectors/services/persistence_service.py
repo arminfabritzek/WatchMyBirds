@@ -8,10 +8,12 @@ Extracts persistence logic from DetectionManager for independent operation.
 import os
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 import cv2
 
 from config import get_config
+from core.ptz_tracking_core import empty_ptz_snapshot
 from detectors.interfaces.persistence import (
     DetectionData,
     DetectionPersistenceResult,
@@ -116,18 +118,28 @@ class PersistenceService(PersistenceInterface):
     - Persists detection and classification records to database
     """
 
-    def __init__(self, output_dir: str | None = None):
+    def __init__(
+        self,
+        output_dir: str | None = None,
+        ptz_controller: Any | None = None,
+    ):
         """
         Initialize the persistence service.
 
         Args:
             output_dir: Base output directory. Uses config if not provided.
+            ptz_controller: Optional AutoPtzController instance. When set,
+                `save_image` records the controller's frame-time state on
+                the new images row (preset token, zone, state). When None,
+                PTZ columns stay NULL — correct for non-PTZ deployments,
+                ingest pipelines, and unit tests.
         """
         self._config = get_config()
         self._output_dir = output_dir or self._config["OUTPUT_DIR"]
         self._path_mgr = get_path_manager(self._output_dir)
         self._db_conn = get_connection()
         self._crop_service = CropService()
+        self._ptz_controller = ptz_controller
 
     def close(self) -> None:
         """Close owned resources."""
@@ -210,6 +222,20 @@ class PersistenceService(PersistenceInterface):
                 [int(cv2.IMWRITE_WEBP_QUALITY), 80],
             )
 
+            # Capture PTZ context for this frame. Snapshot is taken just
+            # before insert so the controller's state at write-time is
+            # what we record. Staleness window is at most one tick of
+            # the auto-PTZ worker, which does not change ptz_origin
+            # semantics for thumbnail-bias purposes.
+            if self._ptz_controller is not None:
+                try:
+                    ptz_snapshot = self._ptz_controller.snapshot_for_image_persistence()
+                except Exception as exc:  # noqa: BLE001 — never block image save on PTZ
+                    logger.warning(f"PTZ snapshot failed, recording NULL: {exc}")
+                    ptz_snapshot = empty_ptz_snapshot()
+            else:
+                ptz_snapshot = empty_ptz_snapshot()
+
             # Insert database record
             insert_image(
                 self._db_conn,
@@ -222,6 +248,7 @@ class PersistenceService(PersistenceInterface):
                     "classifier_model_id": classifier_model_id,
                     "source_id": source_id,
                     "content_hash": None,
+                    **ptz_snapshot,
                 },
             )
 
