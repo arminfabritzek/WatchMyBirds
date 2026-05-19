@@ -295,7 +295,7 @@ def _fetch_species_best_photos(conn, date_iso: str) -> list[dict]:
               AND lower(COALESCE(d.decision_state, '')) = 'confirmed'
               AND (
                   d.decision_level IS NULL
-                  OR lower(d.decision_level) != 'reject'
+                  OR lower(d.decision_level) NOT IN ('reject', 'species_review')
               )
         )
         -- "Best photo" ranking, highest priority first:

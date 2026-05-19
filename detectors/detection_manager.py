@@ -188,6 +188,15 @@ class DetectionManager:
         # PersistenceService can hold a reference and record frame-time
         # PTZ state on each saved image (see images.ptz_* columns).
         self.auto_ptz_controller = AutoPtzController()
+        # Register with the empirical-probe wizard backend so the wizard
+        # can pause/resume Auto-PTZ for the duration of operator-attended
+        # probe runs. Lazy import to keep detection_manager free of any
+        # web-layer dependencies (H-02).
+        try:
+            from core.ptz_empirical_probe import register_auto_ptz_controller
+            register_auto_ptz_controller(self.auto_ptz_controller)
+        except Exception:  # noqa: BLE001 — wizard registration is optional
+            logger.debug("Empirical-probe wizard registration skipped")
         self.notification_service = NotificationService(common_names=self.common_names)
         self.persistence_service = PersistenceService(
             ptz_controller=self.auto_ptz_controller
@@ -239,7 +248,13 @@ class DetectionManager:
         )
 
         def non_bird_floor_for(class_name: str) -> float:
-            return float(per_class_map.get(class_name, global_non_bird_floor))
+            # See non_bird_floor_for() in run() for the rationale:
+            # global NON_BIRD_CONFIRM_THRESHOLD is the minimum; per-class
+            # entries from the detector YAML may only RAISE it.
+            per_class = per_class_map.get(class_name)
+            if per_class is None:
+                return global_non_bird_floor
+            return max(float(per_class), global_non_bird_floor)
 
         return compute_detection_signals(
             bbox=bbox,
@@ -574,9 +589,15 @@ class DetectionManager:
                     original_frame if original_frame is not None else raw_frame
                 )
                 if object_detected:
+                    # Pass the same save-threshold the gallery uses so the
+                    # cam doesn't chase phantom detections between the
+                    # detection floor and the save floor (leaves, shadows,
+                    # low-confidence false positives). Detections under
+                    # save_thr fall through to handle_no_detection().
                     self.auto_ptz_controller.handle_detections(
                         frame_shape=frame_for_ptz.shape,
                         detections=detection_info_list,
+                        min_confidence=float(save_thr or 0.0),
                     )
                 else:
                     self.auto_ptz_controller.handle_no_detection()
@@ -725,27 +746,23 @@ class DetectionManager:
 
             cls_start = time.time()
 
-            # --- Use PersistenceService for image saving ---
-            try:
-                img_result = self.persistence_service.save_image(
-                    frame=original_frame,
-                    capture_time=capture_time,
-                    detector_model_id=self.detector_model_id,
-                    classifier_model_id=self.classifier_model_id,
-                    source_id=self.current_source_id,
-                    location_config=self.location_config,
-                    exif_gps_enabled=self.exif_gps_enabled,
-                )
-
-                if not img_result.success:
-                    logger.error("Failed to save image")
-                    continue
-
-                base_filename = img_result.base_filename
-
-            except Exception as e:
-                logger.error(f"PersistenceService.save_image error: {e}")
-                continue
+            # --- Defer image save until we know the frame has a keeper ---
+            #
+            # A1a (plan 2026-05-19): if every detection in this frame ends
+            # up at ``decision_level='reject'``, we do NOT write the
+            # original/optimized image or an images-row. We only log a
+            # metadata audit per reject detection. This keeps disk and DB
+            # from filling up with static-background FPs (tree-branch,
+            # fat-ball) that the OD classifies as bird but the classifier
+            # rejects.
+            #
+            # We pre-compute the filename stamp that ``save_image`` would
+            # have generated, so detection rows / crop files / reject-
+            # audit rows can all reference the same frame identity even
+            # when no image file exists on disk.
+            timestamp_stamp = capture_time.strftime("%Y%m%d_%H%M%S_%f")
+            base_filename = f"{timestamp_stamp}.jpg"
+            img_result = None  # filled lazily on first keeper detection
 
             # --- Process each detection ---
             best_species = None
@@ -788,7 +805,26 @@ class DetectionManager:
                 _map: dict[str, float] = per_class_map,
                 _floor: float = global_non_bird_floor,
             ) -> float:
-                return float(_map.get(class_name, _floor))
+                # The global ``NON_BIRD_CONFIRM_THRESHOLD`` is the
+                # *minimum* floor — non-bird classes never run through
+                # the bird classifier's sanity check, so we want at
+                # least bird-track-equivalent confidence before
+                # persisting. Per-class entries from the detector YAML
+                # may RAISE the floor (e.g. squirrel 0.70 → 0.80;
+                # cat 0.75 → 0.80) but must NOT lower it (e.g.
+                # hedgehog 0.30 must NOT mean "persist all hedgehogs
+                # above 0.30" — that would defeat
+                # NON_BIRD_DROP_BELOW_CONFIRM).
+                #
+                # Previously this read ``_map.get(class_name, _floor)``
+                # which silently dropped the global floor whenever the
+                # detector shipped a per-class threshold below it —
+                # letting static-background FPs of low-confidence
+                # non-bird classes flood the gallery.
+                per_class = _map.get(class_name)
+                if per_class is None:
+                    return _floor
+                return max(float(per_class), _floor)
 
             for idx, det in enumerate(detection_info_list, start=1):
                 x1, y1, x2, y2 = det["x1"], det["y1"], det["x2"], det["y2"]
@@ -919,6 +955,112 @@ class DetectionManager:
                     if cls_result is not None
                     else None,
                 )
+
+                # A1a routing — reject detections do NOT write image/
+                # crop/detection rows. They land in ``reject_audit`` as
+                # metadata only. Everything else (species/species_review/
+                # genus/None for non-bird) goes through the regular
+                # persistence path, lazy-initialising the image save on
+                # the first keeper.
+                detection_level = (
+                    getattr(cls_result, "decision_level", None)
+                    if cls_result is not None
+                    else None
+                )
+                if (
+                    detection_level is not None
+                    and str(detection_level).lower() == "reject"
+                ):
+                    try:
+                        h, w = original_frame.shape[:2]
+                        # Normalise bbox to 0..1 so audit rows are
+                        # resolution-agnostic and cluster-queryable
+                        # regardless of the source stream size.
+                        norm_x = max(0.0, min(1.0, x1 / w))
+                        norm_y = max(0.0, min(1.0, y1 / h))
+                        norm_w = max(0.0, min(1.0, (x2 - x1) / w))
+                        norm_h = max(0.0, min(1.0, (y2 - y1) / h))
+                        from utils.db import insert_reject_audit
+
+                        # Top-1 prob — when the classifier ran, its
+                        # top_k_confidences[0] IS the top-1 softmax. For
+                        # non-bird (no cls) and classifier failures
+                        # (cls_result is None) leave it NULL.
+                        top1 = None
+                        if cls_result is not None:
+                            tk = getattr(cls_result, "top_k_confidences", None)
+                            if tk:
+                                top1 = float(tk[0])
+
+                        # Best-effort: never let an audit failure block
+                        # the detection pipeline. The audit row is for
+                        # cluster diagnostics, not for correctness.
+                        insert_reject_audit(
+                            self.persistence_service._db_conn,
+                            {
+                                "frame_timestamp": timestamp_stamp,
+                                "frame_width": w,
+                                "frame_height": h,
+                                "bbox_x": norm_x,
+                                "bbox_y": norm_y,
+                                "bbox_w": norm_w,
+                                "bbox_h": norm_h,
+                                "od_class_name": od_class_name,
+                                "od_confidence": float(od_conf),
+                                "raw_species_name": getattr(
+                                    cls_result, "raw_species_name", None
+                                )
+                                if cls_result is not None
+                                else None,
+                                "top1_prob": top1,
+                                "decision_state": str(smoothed_state)
+                                if smoothed_state is not None
+                                else None,
+                                "decision_reasons": signals.decision_reasons_json,
+                                "detector_model_id": self.detector_model_id,
+                                "classifier_model_id": self.classifier_model_id,
+                            },
+                        )
+                    except Exception as audit_exc:
+                        logger.warning(
+                            f"reject_audit insert failed for {timestamp_stamp}: "
+                            f"{audit_exc}"
+                        )
+                    # Still bump the session counter so the operational
+                    # dashboard counts reject as a real decision event,
+                    # not just silent loss.
+                    if smoothed_state and smoothed_state in self.decision_state_counts:
+                        self.decision_state_counts[smoothed_state] += 1
+                    continue
+
+                # First keeper of this frame triggers the lazy image
+                # save. Subsequent keepers reuse the same base_filename.
+                if img_result is None:
+                    try:
+                        img_result = self.persistence_service.save_image(
+                            frame=original_frame,
+                            capture_time=capture_time,
+                            detector_model_id=self.detector_model_id,
+                            classifier_model_id=self.classifier_model_id,
+                            source_id=self.current_source_id,
+                            location_config=self.location_config,
+                            exif_gps_enabled=self.exif_gps_enabled,
+                        )
+                    except Exception as e:
+                        logger.error(f"PersistenceService.save_image error: {e}")
+                        img_result = None
+
+                    if img_result is None or not img_result.success:
+                        logger.error(
+                            f"Failed to save image for keeper frame {timestamp_stamp}"
+                        )
+                        # Without an images row we cannot persist this
+                        # detection's FK either — skip the rest of the
+                        # frame.
+                        break
+                    # PathManager generates ``<stamp>.jpg``; keep our
+                    # pre-computed stamp in sync with the persisted file.
+                    base_filename = img_result.base_filename
 
                 try:
                     det_result = self.persistence_service.save_detection(

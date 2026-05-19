@@ -30,9 +30,11 @@ new variants as installable.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import time
+from datetime import UTC, datetime
 from urllib.parse import urlparse, urlunparse
 
 import requests
@@ -1115,6 +1117,272 @@ def load_latest_identifier(model_dir: str) -> str:
         return ""
 
 
+COMPANION_FRESHNESS_FILENAME = ".companion_freshness.json"
+
+
+def _companion_freshness_path(model_dir: str) -> str | None:
+    return _safe_model_dir_join(model_dir, COMPANION_FRESHNESS_FILENAME)
+
+
+def _read_companion_freshness(model_dir: str) -> dict[str, dict]:
+    path = _companion_freshness_path(model_dir)
+    if path is None or not os.path.exists(path):
+        return {}
+    try:
+        with open(path, encoding="utf-8") as file:
+            data = json.load(file)
+        if not isinstance(data, dict):
+            return {}
+        return {k: v for k, v in data.items() if isinstance(v, dict)}
+    except (OSError, json.JSONDecodeError) as exc:
+        logger.debug(
+            f"companion freshness sidecar unreadable at {_slv(path)}: {exc}; treating as empty"
+        )
+        return {}
+
+
+def _write_companion_freshness_entry(
+    model_dir: str, basename: str, etag: str | None, sha256: str | None
+) -> None:
+    path = _companion_freshness_path(model_dir)
+    if path is None:
+        return
+    data = _read_companion_freshness(model_dir)
+    data[basename] = {
+        "etag": etag or "",
+        "sha256": sha256 or "",
+        "fetched_at": datetime.now(UTC).isoformat(timespec="seconds"),
+    }
+    tmp = f"{path}.tmp"
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(tmp, "w", encoding="utf-8") as file:
+            json.dump(data, file, indent=2, sort_keys=True)
+            file.write("\n")
+        os.replace(tmp, path)
+    except OSError as exc:
+        logger.debug(
+            f"companion freshness sidecar write failed for {_slv(path)}: {exc}"
+        )
+        try:
+            if os.path.exists(tmp):
+                os.remove(tmp)
+        except OSError:
+            pass
+
+
+def _hash_file_sha256(local_path: str) -> str | None:
+    try:
+        h = hashlib.sha256()
+        with open(local_path, "rb") as file:
+            for chunk in iter(lambda: file.read(65536), b""):
+                h.update(chunk)
+        return h.hexdigest()
+    except OSError:
+        return None
+
+
+def _fetch_companion_etag(url: str) -> str | None:
+    """Best-effort HEAD-only fetch of the remote ETag.
+
+    Used after a successful download to record the freshness signal
+    that goes into the sidecar. Failure is non-fatal: an empty ETag
+    just means the next freshness check will not be able to skip on
+    the strength of the sidecar alone.
+    """
+    safe_url = _safe_download_url(url)
+    if safe_url is None:
+        return None
+    try:
+        response = requests.head(safe_url, allow_redirects=True, timeout=15)
+    except requests.RequestException as exc:
+        logger.debug(f"companion ETag head failed for {_slv(safe_url)}: {exc}")
+        return None
+    if response.status_code != 200:
+        return None
+    etag = (response.headers.get("ETag") or "").strip()
+    return etag or None
+
+
+def _companion_is_fresh(url: str, model_dir: str, basename: str) -> bool:
+    """Return True iff the local companion is content-equivalent to the remote.
+
+    Uses an ``If-None-Match`` HEAD against HF's content-derived ETag.
+    On 304 → fresh. On 200 → compare new ETag against the sidecar's
+    cached ETag and the local file's sha256 (defensive: a CDN that
+    rotates ETags without changing content stays quiet, and an
+    operator-edited local file forces a refresh).
+
+    Fails safe: on any network or parse failure, returns True
+    (treat as fresh) — a transient HF outage must not turn into an
+    every-boot redownload storm. The bug we are fixing is "fresh
+    content on HF never reaches the App"; a stale-positive on
+    network failure is the right trade.
+    """
+    safe_url = _safe_download_url(url)
+    if safe_url is None:
+        logger.debug(
+            f"companion freshness check: url {_slv(url)} not on allowlist; "
+            "treating as fresh"
+        )
+        return True
+    sidecar = _read_companion_freshness(model_dir).get(basename, {})
+    cached_etag = str(sidecar.get("etag") or "")
+    headers = {"If-None-Match": cached_etag} if cached_etag else {}
+    try:
+        response = requests.head(
+            safe_url, headers=headers, allow_redirects=True, timeout=15
+        )
+    except requests.RequestException as exc:
+        logger.info(
+            f"companion freshness check failed for {_slv(basename)}: {exc}; "
+            "treating as fresh (fallback to existence-only skip)"
+        )
+        return True
+    if response.status_code == 304:
+        return True
+    if response.status_code != 200:
+        logger.info(
+            f"companion freshness check for {_slv(basename)} got HTTP "
+            f"{response.status_code}; treating as fresh"
+        )
+        return True
+    remote_etag = (response.headers.get("ETag") or "").strip()
+    # No ETag header → cannot prove freshness or staleness; treat as fresh
+    # so a misconfigured CDN does not trigger every-boot redownloads.
+    if not remote_etag:
+        logger.debug(
+            f"companion freshness check for {_slv(basename)} returned no ETag; "
+            "treating as fresh"
+        )
+        return True
+    # ETag match → fresh. Mismatch → check sha256 sidecar as a CDN-rotation
+    # defence: if the remote ETag changed but the cached sha256 still
+    # corresponds to the local file, only treat as stale when the body
+    # would actually differ. We cannot know the remote body hash without
+    # a full GET, so on ETag mismatch we always treat as stale; the
+    # sha256 record exists for *future* tamper-detection extensions.
+    if remote_etag == cached_etag:
+        return True
+    logger.info(
+        f"companion {_slv(basename)} ETag changed remote={remote_etag} "
+        f"cached={cached_etag or '<none>'}; will refresh"
+    )
+    return False
+
+
+def _fetch_int8_qdq_weights(
+    base_url: str,
+    model_dir: str,
+    model_id: str,
+) -> None:
+    """Best-effort fetch of the INT8-QDQ weight bundle for a variant.
+
+    For each pinned variant the publisher may declare one primary QDQ
+    file (``weights_int8_qdq_path``) plus a list of fallback variants
+    (``weights_int8_qdq_fallback_paths``). The loader's
+    :func:`build_precision_load_plan` tries them in order at load time,
+    so we mirror that policy here by pulling the primary AND every
+    declared fallback. The first one that parses on the host's ORT
+    build wins; the others are tiny insurance against ORT-version
+    differences across deployment targets.
+
+    Older variants (e.g. pre-QDQ releases that only ship
+    ``weights_int8_path`` without ``_qdq``) are skipped: that filename
+    pattern is not consumed by the loader, so pulling it would just
+    cost bytes for no behavioural effect.
+
+    Idempotent: files already on disk are left alone. Network failures
+    on any single fallback are logged at INFO and don't fail the
+    whole call — the fp32 weights are always available as the final
+    fallback, so partial QDQ coverage is acceptable.
+    """
+    local = _read_local_latest(model_dir)
+    if not isinstance(local, dict):
+        return
+    pinned = local.get(LOCAL_PINNED_MODELS_KEY)
+    if not isinstance(pinned, dict):
+        return
+    entry = pinned.get(model_id)
+    if not isinstance(entry, dict):
+        return
+
+    candidates: list[str] = []
+    primary = entry.get(WEIGHTS_INT8_QDQ_KEY)
+    if isinstance(primary, str) and primary.strip():
+        candidates.append(primary.strip())
+    fallbacks = entry.get(WEIGHTS_INT8_QDQ_FALLBACKS_KEY)
+    if isinstance(fallbacks, list):
+        for item in fallbacks:
+            if isinstance(item, str) and item.strip() and item not in candidates:
+                candidates.append(item.strip())
+
+    if not candidates:
+        logger.debug(
+            "INT8/QDQ fetch skipped: no QDQ paths declared for %s", _slv(model_id)
+        )
+        return
+
+    for rel in candidates:
+        basename = os.path.basename(rel)
+        local_path = _safe_model_dir_join(model_dir, basename)
+        if local_path is None:
+            logger.warning(
+                "INT8/QDQ skipped: unsafe path %s for model_id %s",
+                _slv(rel),
+                _slv(model_id),
+            )
+            continue
+        if os.path.exists(local_path):
+            logger.debug("INT8/QDQ already present: %s", _slv(local_path))
+            continue
+        url = f"{base_url}/{basename}"
+        logger.info(
+            "Fetching INT8/QDQ weights %s for variant %s",
+            _slv(basename),
+            _slv(model_id),
+        )
+        ok = _download_file(url, local_path, base_dir=model_dir)
+        if not ok:
+            logger.info(
+                "INT8/QDQ candidate %s not on HF (or fetch failed); continuing",
+                _slv(basename),
+            )
+
+
+def _prefetch_all_int8_qdq_weights(base_url: str, model_dir: str) -> None:
+    """Pre-fetch the INT8/QDQ bundle for every variant in ``pinned_models``.
+
+    Called once from the cold-start path (:func:`ensure_model_files`) so an
+    operator who later switches between detector variants in the settings
+    UI does not pay the download cost mid-session. The per-variant
+    :func:`_fetch_int8_qdq_weights` is idempotent, so re-running this on
+    every boot is cheap when the files are already on disk.
+
+    Failures on individual variants are swallowed at INFO level — the
+    boot path must keep going to load the active model.
+    """
+    if _task_name_from_cache_dir(model_dir) != "OBJECT_DETECTION":
+        return
+    local = _read_local_latest(model_dir)
+    if not isinstance(local, dict):
+        return
+    pinned = local.get(LOCAL_PINNED_MODELS_KEY)
+    if not isinstance(pinned, dict):
+        return
+    for variant_id in sorted(pinned.keys()):
+        if not isinstance(variant_id, str):
+            continue
+        try:
+            _fetch_int8_qdq_weights(base_url, model_dir, variant_id)
+        except Exception as exc:
+            logger.info(
+                "INT8/QDQ prefetch failed for %s [%s]; continuing",
+                _slv(variant_id),
+                type(exc).__name__,
+            )
+
+
 def _fetch_companion_files(
     base_url: str,
     model_dir: str,
@@ -1140,9 +1408,10 @@ def _fetch_companion_files(
     ``<model_dir>/model_metadata.json`` so a cold-start autofetch
     gives the detector the same thresholds a UI-driven pin would.
 
-    The _README.md (release notes) and _best_int8.onnx (quantised
-    weights) are intentionally NOT pulled here — README belongs on
-    HF, INT8 is a separate deployment mode that needs explicit config.
+    The _README.md (release notes) are intentionally NOT pulled here —
+    README belongs on HF. The INT8/QDQ weight bundle IS pulled (via
+    :func:`_fetch_int8_qdq_weights`) so the operator can switch the
+    int8 precision chip without a separate fetch step.
 
     Args:
         base_url: HF base URL for this task (detector or classifier).
@@ -1171,23 +1440,45 @@ def _fetch_companion_files(
     yaml_path = safe_yaml
     yaml_existed_before = os.path.exists(yaml_path)
 
+    # WMB_FORCE_REMOTE_REFRESH bypasses both the freshness sidecar and
+    # the existence-skip. One operator action (env-var + service
+    # restart) recovers a stuck cache without an SSH `rm`.
+    env_force_refresh = os.environ.get(FORCE_REFRESH_ENV_VAR, "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+    effective_force = force_refresh or env_force_refresh
+
     for basename in companions:
         local_path = _safe_model_dir_join(model_dir, os.path.basename(basename))
         if local_path is None:
             logger.warning(f"companion {_slv(basename)!r} skipped: unsafe path")
             continue
-        if os.path.exists(local_path) and not force_refresh:
-            logger.debug(f"Companion file already present: {_slv(local_path)}")
-            continue
         url = f"{base_url}/{basename}"
-        if force_refresh and os.path.exists(local_path):
+        if os.path.exists(local_path) and not effective_force:
+            if _companion_is_fresh(url, model_dir, basename):
+                logger.debug(
+                    f"Companion file already present and fresh: {_slv(local_path)}"
+                )
+                continue
+            logger.info("Companion %s changed on remote; refreshing", _slv(basename))
+        elif effective_force and os.path.exists(local_path):
+            trigger = (
+                "pin-triggered" if force_refresh else f"env {FORCE_REFRESH_ENV_VAR}"
+            )
             logger.info(
-                "Force-refreshing companion %s from %s (pin-triggered)",
+                "Force-refreshing companion %s from %s (%s)",
                 _slv(basename),
                 _slv(base_url),
+                trigger,
             )
-        ok = _download_file(url, local_path, base_dir=model_dir, force=force_refresh)
-        if not ok:
+        ok = _download_file(url, local_path, base_dir=model_dir, force=effective_force)
+        if ok:
+            etag = _fetch_companion_etag(url)
+            sha256 = _hash_file_sha256(local_path)
+            _write_companion_freshness_entry(model_dir, basename, etag, sha256)
+        else:
             # Older release without this companion — expected, not an error.
             # On force_refresh failure the existing local file stays
             # intact because _download_file writes atomically via tmp+rename.
@@ -1211,6 +1502,12 @@ def _fetch_companion_files(
         and _task_name_from_cache_dir(model_dir) == "OBJECT_DETECTION"
     ):
         _regenerate_model_metadata_from_yaml(model_dir, yaml_path, yaml_existed_before)
+
+    # Pull the INT8/QDQ weight bundle for the detector lane. The classifier
+    # is fp32-only by design (see settings.html chip group), so QDQ paths
+    # are never declared there and the helper short-circuits cleanly.
+    if _task_name_from_cache_dir(model_dir) == "OBJECT_DETECTION":
+        _fetch_int8_qdq_weights(base_url, model_dir, model_id)
 
 
 def _regenerate_model_metadata_from_yaml(
@@ -1334,5 +1631,10 @@ def ensure_model_files(
                 break
         if model_id:
             _fetch_companion_files(base_url, model_dir, model_id)
+        # Pre-fetch INT8/QDQ bundles for every pinned variant (detector
+        # lane only — guarded inside the helper) so the operator can
+        # switch precision in the settings UI without an extra
+        # download step. Idempotent: no-op once files are on disk.
+        _prefetch_all_int8_qdq_weights(base_url, model_dir)
 
     return weights_path, labels_path

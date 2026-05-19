@@ -72,6 +72,11 @@ from utils.db.images import (
 # Inbox ingest audit log
 from utils.db.inbox_ingest_events import insert_inbox_ingest_event
 
+# Reject-audit log (metadata-only, no image/crop/detection row)
+from utils.db.reject_audit import (
+    insert_reject_audit,
+)
+
 # Review Queue Operations
 from utils.db.review_queue import (
     delete_no_bird_images,
@@ -92,6 +97,14 @@ from utils.db.review_queue import (
 from utils.db.trash import (
     fetch_trash_count,
     fetch_trash_items,
+)
+
+# Unclear bucket operations (classifier-rejected, smoother-confirmed detections)
+from utils.db.unclear import (
+    confirm_unclear_detections,
+    fetch_unclear_days,
+    fetch_unclear_detection_ids_for_day,
+    fetch_unclear_total,
 )
 
 __all__ = [
@@ -138,6 +151,13 @@ __all__ = [
     # Trash
     "fetch_trash_items",
     "fetch_trash_count",
+    # Unclear bucket
+    "confirm_unclear_detections",
+    "fetch_unclear_days",
+    "fetch_unclear_detection_ids_for_day",
+    "fetch_unclear_total",
+    # Reject-audit log
+    "insert_reject_audit",
     # Analytics
     "fetch_all_time_daily_counts",
     "fetch_all_detection_times",

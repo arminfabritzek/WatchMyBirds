@@ -34,13 +34,17 @@ def _gallery_visibility_sql(det_alias: str = "d", image_alias: str = "i") -> str
        the review queue instead.
 
     2. **Classifier decision-level gate**: exclude
-       ``decision_level = 'reject'`` — when the classifier's
-       top-1 confidence was below its calibrated species threshold
-       AND the genus fallback did not accept either, the row has
-       an empty ``cls_class_name``. Showing those in the gallery
-       produces "Unknown species" cards with no CLS confidence,
-       which is worse than hiding them. They remain in the review
-       queue where the operator can confirm or re-label.
+       ``decision_level IN ('reject', 'species_review')``.
+
+       - ``reject`` — top-1 below the (legacy or per-class) species
+         threshold AND genus fallback declined. Empty cls_class_name,
+         "Unknown species" cards — hidden.
+       - ``species_review`` — between Review and Gallery thresholds in
+         the two-stage gate. These have a top-1 suggestion but the
+         model is not confident enough for an auto-Gallery slot; they
+         live in the Unclear surface where the operator confirms or
+         discards. Manual confirmation flips ``decision_level`` to
+         ``species`` so they re-enter the gallery.
 
        ``decision_level IS NULL`` is explicitly allowed so:
        - Historical rows saved before the decision-level column
@@ -62,7 +66,7 @@ def _gallery_visibility_sql(det_alias: str = "d", image_alias: str = "i") -> str
         AND lower(COALESCE({det_alias}.decision_state, '')) = 'confirmed'
         AND (
             {det_alias}.decision_level IS NULL
-            OR lower({det_alias}.decision_level) != 'reject'
+            OR lower({det_alias}.decision_level) NOT IN ('reject', 'species_review')
         )
     """
 
@@ -361,7 +365,8 @@ def fetch_detections_for_gallery(
             d.decision_state,
             d.bbox_quality,
             d.unknown_score,
-            d.decision_reasons
+            d.decision_reasons,
+            i.ptz_origin
     """
 
     if limit is not None:

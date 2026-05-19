@@ -443,6 +443,52 @@ def _init_schema(conn: sqlite3.Connection) -> None:
         );
     """)
 
+    # Reject-audit log: metadata-only record of detections the classifier
+    # routed to ``decision_level='reject'`` (top-1 below review threshold,
+    # no genus rescue). The detection itself is not persisted — no image,
+    # no crop, no detections row, no images row when the frame had only
+    # rejects (A1a from 2026-05-19). This keeps the FP-cluster signal
+    # (bbox position + raw_species_name + counts) auditable without
+    # filling disk and the Unclear-tab with non-bird crops from static
+    # background objects (e.g. tree-branch FPs).
+    #
+    # No FK to images/detections: by design, the parent rows don't exist
+    # for reject-only frames. The frame is identified by its filename
+    # stamp (``frame_timestamp`` = ``YYYYMMDD_HHMMSS_ffffff``) so the
+    # operator can cross-reference logs even though no file was written.
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS reject_audit (
+            audit_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            frame_timestamp TEXT NOT NULL,
+            frame_width INTEGER,
+            frame_height INTEGER,
+            bbox_x REAL,
+            bbox_y REAL,
+            bbox_w REAL,
+            bbox_h REAL,
+            od_class_name TEXT,
+            od_confidence REAL,
+            raw_species_name TEXT,
+            top1_prob REAL,
+            decision_state TEXT,
+            decision_reasons TEXT,
+            detector_model_id TEXT,
+            classifier_model_id TEXT
+        );
+    """)
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_reject_audit_created_at ON reject_audit(created_at DESC);"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_reject_audit_raw_species ON reject_audit(raw_species_name);"
+    )
+    # Composite bbox index supports the static-FP cluster detection
+    # query ("which bbox positions cluster across reject rows?").
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_reject_audit_bbox ON reject_audit(bbox_x, bbox_y);"
+    )
+
     conn.commit()
 
 

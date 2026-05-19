@@ -376,3 +376,122 @@ def test_a1_default_is_drop_on():
     assert _apply_pre_persist_gate({}, "marten_mustelid", 0.50) is False
     # And keeps bird at the same low conf.
     assert _apply_pre_persist_gate({}, "bird", 0.50) is True
+
+
+# ---------------------------------------------------------------------------
+# A2 — Per-class non-bird floor is a MINIMUM, not a replacement
+# ---------------------------------------------------------------------------
+#
+# Bug: a detector that ships ``confidence_threshold_per_class.<class>``
+# below the global ``NON_BIRD_CONFIRM_THRESHOLD`` used to bypass the
+# global floor entirely — ``per_class_map.get(name, global_floor)``
+# returned the per-class value verbatim. Static-background FPs of any
+# such class then flooded persistence at OD-conf well below the
+# project's confirm bar. Fix: ``max(per_class, global_floor)`` so
+# per-class entries can only RAISE the floor, never lower it.
+
+
+def _build_mgr_with_per_class_map(per_class_map: dict[str, float], cfg: dict):
+    """Construct a DetectionManager attaching a fake underlying detector
+    that exposes ``conf_per_class_name`` like the real v2-coco detector
+    does (read in detection_manager.py:792-796 and 241-244).
+    """
+    mgr = _build_detection_manager_fixture()
+    mgr.config = {**mgr.config, **cfg}
+    fake_underlying = MagicMock()
+    fake_underlying.conf_per_class_name = per_class_map
+    fake_detector_wrapper = MagicMock()
+    fake_detector_wrapper.model = fake_underlying
+    fake_detection_service = MagicMock()
+    fake_detection_service._detector = fake_detector_wrapper
+    mgr.detection_service = fake_detection_service
+    return mgr
+
+
+def _resolve_floor_via_delegate(mgr, class_name: str) -> float:
+    """Force the delegate to compute the floor for one class.
+
+    ``compute_detection_signals`` builds the resolver internally and
+    passes it to the scoring helper. We hijack the helper to capture
+    the resolved floor instead of running the real scoring.
+    """
+    import detectors.detection_manager as dm_mod
+
+    captured: dict[str, float] = {}
+
+    def fake_compute_signals(**kwargs):
+        fn = kwargs["non_bird_confirm_threshold_fn"]
+        captured["floor"] = fn(class_name)
+        # Return a minimal signals object so the delegate doesn't crash;
+        # we only care about the captured floor.
+        return MagicMock(decision_state=DecisionState.UNCERTAIN)
+
+    # ``detection_manager.py`` imports compute_detection_signals at
+    # module top — we patch the name in THAT namespace, not in the
+    # source module, because Python binds at import time.
+    original = dm_mod.compute_detection_signals
+    dm_mod.compute_detection_signals = fake_compute_signals
+    try:
+        mgr.compute_detection_signals(
+            bbox=(0, 0, 10, 10),
+            frame_shape=(480, 640, 3),
+            od_conf=0.5,
+            cls_conf=0.0,
+            top_k_confidences=None,
+            species_key=class_name,
+            od_class_name=class_name,
+        )
+    finally:
+        dm_mod.compute_detection_signals = original
+    return captured["floor"]
+
+
+def test_per_class_floor_below_global_is_lifted_to_global():
+    """hedgehog OD-threshold 0.30 + global floor 0.80 → effective 0.80.
+
+    THIS is the bug fix: previously this returned 0.30 and let every
+    hedgehog above 0.30 reach the gallery. Now the global floor wins
+    when it is higher.
+    """
+    mgr = _build_mgr_with_per_class_map(
+        per_class_map={"hedgehog": 0.30, "bird": 0.30},
+        cfg={"NON_BIRD_CONFIRM_THRESHOLD": 0.80},
+    )
+    assert _resolve_floor_via_delegate(mgr, "hedgehog") == 0.80
+
+
+def test_per_class_floor_above_global_wins():
+    """cat OD-threshold 0.75 + global floor 0.80 → effective 0.80.
+
+    Edge case at parity: cat YAML default in v2-coco is 0.75, just
+    below the global. The global still wins.
+    """
+    mgr = _build_mgr_with_per_class_map(
+        per_class_map={"cat": 0.75},
+        cfg={"NON_BIRD_CONFIRM_THRESHOLD": 0.80},
+    )
+    assert _resolve_floor_via_delegate(mgr, "cat") == 0.80
+
+
+def test_per_class_floor_strictly_above_global_is_preserved():
+    """A future detector shipping squirrel=0.90 must NOT be relaxed to 0.80.
+
+    Per-class entries are allowed to be STRICTER than the global floor;
+    they just can't be more permissive. Pins the semantics so a later
+    refactor doesn't accidentally clamp DOWN to the global.
+    """
+    mgr = _build_mgr_with_per_class_map(
+        per_class_map={"squirrel": 0.90},
+        cfg={"NON_BIRD_CONFIRM_THRESHOLD": 0.80},
+    )
+    assert _resolve_floor_via_delegate(mgr, "squirrel") == 0.90
+
+
+def test_class_not_in_per_class_map_uses_global_floor():
+    """5-class models (no v2-coco per-class block) get the global floor."""
+    mgr = _build_mgr_with_per_class_map(
+        per_class_map={},  # legacy 5-class detector ships no per-class map
+        cfg={"NON_BIRD_CONFIRM_THRESHOLD": 0.80},
+    )
+    assert _resolve_floor_via_delegate(mgr, "hedgehog") == 0.80
+    assert _resolve_floor_via_delegate(mgr, "marten_mustelid") == 0.80

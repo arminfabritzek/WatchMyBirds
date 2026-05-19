@@ -15,6 +15,9 @@ from utils.db import (
     closing_connection as _closing_connection,
 )
 from utils.db import (
+    confirm_unclear_detections as _confirm_unclear_detections,
+)
+from utils.db import (
     fetch_active_detection_ids_in_date_range as _fetch_active_detection_ids_in_date_range,
 )
 from utils.db import (
@@ -88,6 +91,15 @@ from utils.db import (
 )
 from utils.db import (
     fetch_trash_items as _fetch_trash_items,
+)
+from utils.db import (
+    fetch_unclear_days as _fetch_unclear_days,
+)
+from utils.db import (
+    fetch_unclear_detection_ids_for_day as _fetch_unclear_detection_ids_for_day,
+)
+from utils.db import (
+    fetch_unclear_total as _fetch_unclear_total,
 )
 from utils.db import (
     get_connection as _get_connection,
@@ -326,6 +338,31 @@ def fetch_recent_review_species(
     return _fetch_recent_review_species(
         conn, limit=limit, lookback_days=lookback_days
     )
+
+
+# --- Unclear Bucket Operations ---
+#
+# The Unclear bucket holds detections where the temporal smoother
+# accepted the bird event but the classifier rejected the species
+# label. They are otherwise invisible to Gallery / Review / Trash.
+
+
+def fetch_unclear_days(conn, sample_limit: int = 9) -> list[dict]:
+    return _fetch_unclear_days(conn, sample_limit=sample_limit)
+
+
+def fetch_unclear_total(conn) -> int:
+    return _fetch_unclear_total(conn)
+
+
+def fetch_unclear_detection_ids_for_day(conn, day: str) -> list[int]:
+    return _fetch_unclear_detection_ids_for_day(conn, day)
+
+
+def confirm_unclear_detections(
+    conn, detection_ids: list[int], source: str = "manual_bulk_confirm"
+) -> int:
+    return _confirm_unclear_detections(conn, detection_ids, source=source)
 
 
 # --- 24h Rolling Window Operations ---

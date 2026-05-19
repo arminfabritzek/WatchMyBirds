@@ -1,0 +1,296 @@
+{% extends 'base.html' %}
+
+{% block title %}Unclear - WatchMyBirds{% endblock %}
+
+{% block content %}
+{# Page Control Bar - Unified Design #}
+<nav class="page-control-bar" role="navigation" aria-label="Unclear controls">
+    <div class="page-control-bar__left">
+        <span class="page-control-bar__title">Unclear</span>
+        <span class="page-control-bar__badge">{{ total_count }}</span>
+    </div>
+    <div class="page-control-bar__meta">
+        <span>Classifier-rejected detections, grouped by day. Confirm to send into Gallery,
+            discard to send into Trash.</span>
+    </div>
+    <div class="page-control-bar__right">
+        <a href="/gallery" class="btn btn--secondary">← Gallery</a>
+    </div>
+</nav>
+
+{% if days %}
+<section class="unclear-days" aria-label="Unclear days">
+    {% for day in days %}
+    <article class="unclear-day" data-day="{{ day.day }}">
+        <header class="unclear-day__header">
+            <div class="unclear-day__title-row">
+                <h2 class="unclear-day__title">{{ day.day }}</h2>
+                <span class="unclear-day__badge">{{ day.total_count }} detections</span>
+            </div>
+            <ul class="unclear-day__species">
+                {% for entry in day.species_breakdown %}
+                <li class="unclear-day__species-item">
+                    <span class="unclear-day__species-name">{{ entry.common_name }}</span>
+                    <span class="unclear-day__species-count">× {{ entry.count }}</span>
+                </li>
+                {% endfor %}
+            </ul>
+        </header>
+
+        <div class="unclear-day__samples">
+            {% for sample in day.samples %}
+            <figure class="unclear-sample">
+                <img src="{{ sample.display_path }}" alt="{{ sample.common_name }}"
+                    class="unclear-sample__image" loading="lazy"
+                    onerror="this.src='/assets/placeholder.svg'; this.onerror=null;">
+                <figcaption class="unclear-sample__caption">{{ sample.common_name }}</figcaption>
+            </figure>
+            {% endfor %}
+            {% if day.total_count > day.samples|length %}
+            <div class="unclear-sample unclear-sample--more">
+                + {{ day.total_count - day.samples|length }} more
+            </div>
+            {% endif %}
+        </div>
+
+        <footer class="unclear-day__actions">
+            <button type="button" class="btn btn--primary unclear-day__confirm-btn"
+                data-day="{{ day.day }}" data-count="{{ day.total_count }}">
+                ✓ Confirm Day → Gallery
+            </button>
+            <button type="button" class="btn btn--danger unclear-day__discard-btn"
+                data-day="{{ day.day }}" data-count="{{ day.total_count }}">
+                ✗ Discard Day → Trash
+            </button>
+        </footer>
+    </article>
+    {% endfor %}
+</section>
+{% else %}
+<div class="empty-state">
+    <div class="empty-state__icon">🪶</div>
+    <p>No unclear detections.</p>
+    <a href="/gallery" class="btn btn--primary mt-md">Back to Gallery</a>
+</div>
+{% endif %}
+
+<style>
+    /* Unclear page — purpose-specific styles. Inline so the page is
+       self-contained. Uses the project's --color-* design tokens so
+       the page tracks the light/dark theme automatically (no
+       hardcoded colours). */
+
+    .unclear-days {
+        display: flex;
+        flex-direction: column;
+        gap: 1.5rem;
+        padding: 1rem;
+        max-width: 1200px;
+        margin: 0 auto;
+        color: var(--color-text);
+    }
+
+    .unclear-day {
+        background: var(--color-surface);
+        color: var(--color-text);
+        border: 1px solid var(--color-border);
+        border-radius: 0.75rem;
+        padding: 1.25rem;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+    }
+
+    .unclear-day__header {
+        display: flex;
+        flex-direction: column;
+        gap: 0.75rem;
+        margin-bottom: 1rem;
+    }
+
+    .unclear-day__title-row {
+        display: flex;
+        align-items: baseline;
+        gap: 1rem;
+    }
+
+    .unclear-day__title {
+        margin: 0;
+        font-size: 1.25rem;
+        font-weight: 600;
+        color: var(--color-text);
+    }
+
+    .unclear-day__badge {
+        padding: 0.125rem 0.5rem;
+        background: var(--color-surface-3);
+        color: var(--color-text);
+        border-radius: 999px;
+        font-size: 0.875rem;
+        font-variant-numeric: tabular-nums;
+    }
+
+    .unclear-day__species {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem 1.25rem;
+        font-size: 0.875rem;
+        color: var(--color-text-muted);
+    }
+
+    .unclear-day__species-item {
+        white-space: nowrap;
+    }
+
+    .unclear-day__species-count {
+        color: var(--color-text-subtle);
+        margin-left: 0.25rem;
+        font-variant-numeric: tabular-nums;
+    }
+
+    .unclear-day__samples {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+        gap: 0.5rem;
+        margin-bottom: 1rem;
+    }
+
+    .unclear-sample {
+        margin: 0;
+        position: relative;
+        aspect-ratio: 1 / 1;
+        overflow: hidden;
+        border-radius: 0.375rem;
+        background: var(--color-surface-2);
+        border: 1px solid var(--color-border-light);
+    }
+
+    .unclear-sample__image {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        display: block;
+    }
+
+    .unclear-sample__caption {
+        position: absolute;
+        inset: auto 0 0 0;
+        padding: 0.25rem 0.5rem;
+        font-size: 0.75rem;
+        color: #fff;
+        background: linear-gradient(transparent, rgba(0, 0, 0, 0.75));
+        text-align: center;
+    }
+
+    .unclear-sample--more {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 0.875rem;
+        font-style: italic;
+        color: var(--color-text-muted);
+        background: var(--color-surface-2);
+        border: 1px dashed var(--color-border);
+    }
+
+    .unclear-day__actions {
+        display: flex;
+        gap: 0.75rem;
+        flex-wrap: wrap;
+    }
+
+    .unclear-day__actions .btn {
+        flex: 1 1 auto;
+        min-width: 180px;
+    }
+
+    .unclear-day--busy {
+        opacity: 0.5;
+        pointer-events: none;
+    }
+</style>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    (function () {
+        async function postJson(url, body) {
+            const response = await fetch(url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body || {}),
+            });
+            const data = await response.json().catch(function () { return {}; });
+            if (!response.ok || data.status !== 'success') {
+                throw new Error(data.message || data.error || 'Request failed');
+            }
+            return data;
+        }
+
+        function setBusy(card, busy) {
+            if (!card) return;
+            card.classList.toggle('unclear-day--busy', !!busy);
+            card.querySelectorAll('button').forEach(function (btn) {
+                btn.disabled = !!busy;
+            });
+        }
+
+        function handleAction(action, btn) {
+            const card = btn.closest('.unclear-day');
+            const day = btn.dataset.day;
+            const count = parseInt(btn.dataset.count, 10) || 0;
+            const verb = action === 'confirm' ? 'Confirm' : 'Discard';
+            const dest = action === 'confirm' ? 'Gallery' : 'Trash';
+            const prompt =
+                verb + ' all ' + count + ' detections from ' + day +
+                ' and move them to ' + dest + '?';
+            if (!confirm(prompt)) return;
+
+            const url = action === 'confirm'
+                ? '/api/unclear/confirm-day'
+                : '/api/unclear/discard-day';
+            setBusy(card, true);
+            postJson(url, { day: day })
+                .then(function (data) {
+                    const n = data.confirmed != null ? data.confirmed : data.discarded;
+                    if (window.wmToast) {
+                        window.wmToast(
+                            verb + 'ed ' + n + ' detection(s) for ' + day,
+                            'success',
+                            2500
+                        );
+                    }
+                    // Card complete — fade out and remove
+                    if (card) {
+                        card.style.transition = 'opacity 0.4s ease';
+                        card.style.opacity = '0';
+                        setTimeout(function () {
+                            card.remove();
+                            // If no days left, reload to show empty state
+                            if (!document.querySelector('.unclear-day')) {
+                                window.location.reload();
+                            }
+                        }, 400);
+                    }
+                })
+                .catch(function (err) {
+                    setBusy(card, false);
+                    alert(verb + ' failed: ' + err.message);
+                });
+        }
+
+        document.addEventListener('click', function (e) {
+            const confirmBtn = e.target.closest('.unclear-day__confirm-btn');
+            if (confirmBtn) {
+                handleAction('confirm', confirmBtn);
+                return;
+            }
+            const discardBtn = e.target.closest('.unclear-day__discard-btn');
+            if (discardBtn) {
+                handleAction('discard', discardBtn);
+            }
+        });
+    })();
+</script>
+{% endblock %}

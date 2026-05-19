@@ -248,7 +248,7 @@ def fetch_unscored_detections(
             AND d.created_at >= ?
             {score_filter}
             AND d.thumbnail_path IS NOT NULL
-            AND (d.decision_level IS NULL OR lower(d.decision_level) != 'reject')
+            AND (d.decision_level IS NULL OR lower(d.decision_level) NOT IN ('reject', 'species_review'))
             AND c.cls_class_name IS NOT NULL
             {" ".join(where_clauses)}
         )
@@ -273,7 +273,7 @@ def fetch_unscored_detections(
           AND d.created_at >= ?
           {score_filter}
           AND d.thumbnail_path IS NOT NULL
-          AND (d.decision_level IS NULL OR lower(d.decision_level) != 'reject')
+          AND (d.decision_level IS NULL OR lower(d.decision_level) NOT IN ('reject', 'species_review'))
           {" ".join(where_clauses)}
         ORDER BY d.created_at DESC
         """
@@ -355,7 +355,7 @@ def apply_auto_favorites(conn: sqlite3.Connection, since: str, dry_run: bool) ->
         AND d.created_at >= ?
         AND d.aesthetic_score IS NOT NULL
         AND d.aesthetic_score >= ?
-        AND (d.decision_level IS NULL OR lower(d.decision_level) != 'reject')
+        AND (d.decision_level IS NULL OR lower(d.decision_level) NOT IN ('reject', 'species_review'))
         {species_clause}
         {decision_clause}
     )

@@ -34,7 +34,8 @@ def _build_conn() -> sqlite3.Connection:
             timestamp TEXT NOT NULL,
             source_id INTEGER,
             review_status TEXT DEFAULT 'untagged',
-            downloaded_timestamp TEXT
+            downloaded_timestamp TEXT,
+            ptz_origin TEXT
         );
 
         CREATE TABLE detections (
