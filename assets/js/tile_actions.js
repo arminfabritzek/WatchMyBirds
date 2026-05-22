@@ -70,6 +70,59 @@
         }
     }
 
+    /* =========================================
+       No-Bird Frame — surface-agnostic fallback
+       Used on Gallery / Subgallery / Species / Detection-Modal surfaces
+       where review_workspace.js (and its singleAction) is not loaded.
+       ========================================= */
+
+    async function noBirdFrame(filename, triggerEl) {
+        const NO_BIRD_KEY = 'noBirdConfirmed';
+        if (localStorage.getItem(NO_BIRD_KEY) !== 'true') {
+            const confirmed = confirm(
+                "Mark this entire frame as 'no bird'?\n\n" +
+                'ALL detections on this image will be flagged as false-positives ' +
+                'and feed into the next Pipeline-Dev training batch.\n\n' +
+                '(This confirmation appears only once per session.)'
+            );
+            if (!confirmed) return;
+            localStorage.setItem(NO_BIRD_KEY, 'true');
+        }
+
+        try {
+            const response = await fetch('/api/review/decision', {
+                method: 'POST',
+                credentials: 'same-origin',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ filenames: [filename], action: 'no_bird' })
+            });
+            const data = await response.json().catch(function () { return {}; });
+            if (!response.ok || data.status !== 'success') {
+                throw new Error(data.message || ('HTTP ' + response.status));
+            }
+
+            // Fade out the nearest tile in-place
+            const tile = triggerEl && triggerEl.closest('.wm-tile');
+            if (tile) {
+                tile.style.transition = 'opacity 0.3s, transform 0.3s';
+                tile.style.opacity = '0';
+                tile.style.transform = 'scale(0.95)';
+                setTimeout(function () { tile.remove(); }, 320);
+            }
+
+            if (window.wmToast) {
+                window.wmToast('Frame marked as no-bird', 'success', 2800);
+            }
+        } catch (error) {
+            console.error('[tile-actions] no-bird error:', error);
+            if (window.wmToast) {
+                window.wmToast('Failed to mark frame: ' + (error.message || String(error)), 'error', 5000);
+            } else {
+                alert('Failed to mark frame: ' + (error.message || String(error)));
+            }
+        }
+    }
+
     async function addDetectionToTrainingExport(detectionId, btn) {
         const currentSpecies = btn ? (btn.getAttribute('data-current-species') || '').trim() : '';
         try {
@@ -220,8 +273,15 @@
                 break;
 
             case 'review-no-bird':
-                if (typeof singleAction === 'function' && filename) {
-                    singleAction(filename, 'no_bird');
+                if (filename) {
+                    if (typeof singleAction === 'function') {
+                        // Review-Queue surface: delegate to review_workspace.js (handles nav advance)
+                        singleAction(filename, 'no_bird');
+                    } else {
+                        // Browse surfaces (Gallery, Subgallery, Species, Detection-Modal):
+                        // use the surface-agnostic fallback defined in this file
+                        noBirdFrame(filename, actionEl);
+                    }
                 }
                 break;
 

@@ -6,7 +6,7 @@ Appears on hover (desktop) or tap (mobile).
 
 Parameters:
 detection_id (int|None): If set, enables detection-level actions (relabel, reject).
-filename (str|None): Image filename, for review-queue actions.
+filename (str|None): Image filename, required for the no-bird and deep-scan actions.
 surface (str): One of 'gallery', 'species', 'review', 'trash', 'detail_modal'.
 is_favorite (bool): Current favorite state.
 is_training_queued (bool): Current training-export pool state.
@@ -16,6 +16,10 @@ modal_target (str|None): CSS selector for the detail modal (e.g. '#modal-species
 details_href (str|None): Fallback navigation target for details when no modal exists.
 current_species (str|None): Current species key for relabel/change-species flows.
 frame_variant (str): 'overlay' for tiles, 'bar' for modal/action-footers.
+allow_review_no_bird (bool): Frame-level no-bird action — available on browse surfaces
+    and Review-Queue. Flags ALL detections on the image as false-positives and feeds
+    the next Pipeline-Dev training batch. Not shown on Trash surface or when filename
+    is absent.
 #}
 {% macro tile_toolbox(
 detection_id=none,
@@ -155,11 +159,13 @@ allow_review_no_bird=true
     {% endif %}
 
     {# ── Tools menu trigger ── #}
+    {% set show_no_bird = surface in ('review', 'gallery', 'species', 'detail_modal') and filename and allow_review_no_bird %}
     {% if (can_open_details and not details_is_primary)
         or (show_change_species and not change_species_is_primary)
         or (show_move_to_trash and not move_to_trash_is_primary)
         or (show_restore and not restore_is_primary)
-        or show_deep_scan %}
+        or show_deep_scan
+        or show_no_bird %}
     <div class="wm-toolbox__menu" role="group" aria-label="More actions">
         <button type="button" class="wm-toolbox__btn wm-toolbox__more" data-action="toggle-menu" aria-haspopup="true"
             aria-expanded="false" aria-label="More actions" title="More actions">⋮</button>
@@ -217,8 +223,9 @@ allow_review_no_bird=true
             </button>
             {% endif %}
 
-            {# Review-specific: image-backed no-bird state still lives on the image #}
-            {% if surface == 'review' and filename and allow_review_no_bird %}
+            {# Frame-level no-bird action — available on browse surfaces and Review-Queue.
+               Not shown on Trash (a discarded tile has nothing to mark). #}
+            {% if show_no_bird %}
             <button type="button" class="wm-toolbox__item wm-toolbox__item--danger" role="menuitem"
                 data-action="review-no-bird" data-filename="{{ filename }}" aria-label="Mark as no bird">
                 ✗ <span>Mark No Bird</span>

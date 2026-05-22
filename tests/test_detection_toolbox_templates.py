@@ -363,3 +363,59 @@ def test_review_modal_uses_quick_review_layout():
     assert "show_viewer_tools=false" in toolbox
     assert "show_boxes=false" in toolbox
     assert "current_bbox_json='{}'" in toolbox
+
+
+def test_no_bird_action_renders_on_browse_and_review_surfaces():
+    """Mark No Bird must be available on all non-trash surfaces when filename is present."""
+    toolbox = _read("templates/partials/tile_toolbox.html")
+
+    # Gate covers browse surfaces as well as Review-Queue
+    assert "surface in ('review', 'gallery', 'species', 'detail_modal')" in toolbox
+    # Action attribute and filename binding are present
+    assert 'data-action="review-no-bird"' in toolbox
+    assert 'data-filename="{{ filename }}"' in toolbox
+    # allow_review_no_bird parameter still guards the button
+    assert "allow_review_no_bird" in toolbox
+    # Trash surface is explicitly excluded (not in the allowed tuple)
+    assert "'trash'" not in toolbox.split("surface in ('review', 'gallery', 'species', 'detail_modal')")[1].split("endif")[0]
+
+
+def test_no_bird_action_not_on_trash_surface():
+    """Trash tiles must never show the no-bird button.
+
+    Asserts that the surface-gate literal for the no-bird action does
+    NOT contain 'trash'. A future widening of the gate must consciously
+    rewrite this assertion.
+    """
+    toolbox = _read("templates/partials/tile_toolbox.html")
+    gate = "surface in ('review', 'gallery', 'species', 'detail_modal')"
+    assert gate in toolbox, "no-bird gate literal moved or changed shape"
+    assert "'trash'" not in gate
+
+
+def test_no_bird_js_fallback_is_surface_agnostic():
+    """tile_actions.js must contain the noBirdFrame fallback for non-review surfaces."""
+    js = _read("assets/js/tile_actions.js")
+
+    assert "async function noBirdFrame(" in js
+    assert "'/api/review/decision'" in js
+    assert "'no_bird'" in js
+    assert "localStorage.getItem('noBirdConfirmed')" in js or "localStorage.getItem(NO_BIRD_KEY)" in js
+    assert "localStorage.setItem" in js
+    # Confirmation message must mention the frame-wide effect
+    assert "ALL detections on this image" in js
+    # Tile fade-out on success
+    assert "closest('.wm-tile')" in js
+    assert "tile.style.opacity = '0'" in js
+    # Delegates to singleAction when on Review-Queue surface, falls back otherwise
+    assert "typeof singleAction === 'function'" in js
+    assert "noBirdFrame(filename, actionEl)" in js
+
+
+def test_no_bird_review_surface_regression():
+    """Review-Queue still triggers singleAction (existing path must not regress)."""
+    js = _read("assets/js/tile_actions.js")
+
+    assert "case 'review-no-bird':" in js
+    # singleAction delegate is still present
+    assert "singleAction(filename, 'no_bird')" in js
