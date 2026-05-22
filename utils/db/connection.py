@@ -427,6 +427,47 @@ def _init_schema(conn: sqlite3.Connection) -> None:
         "CREATE INDEX IF NOT EXISTS idx_rescan_proposals_status ON rescan_proposals(status);"
     )
 
+    # User-groundtruth export batches — book-keeping for the consolidated
+    # export added by plan 2026-05-22_FEATURE_user-groundtruth-export-for-pipeline-dev.
+    # Each row records one export run: which time window it covered,
+    # how many rows per bucket, when it was built. ``until_at`` becomes
+    # the next batch's natural ``since_at`` so consecutive batches
+    # don't double-count user actions.
+    #
+    # Distinct from the older ``training_exports`` table: that one
+    # tracks per-detection state (pending/exported), this one tracks
+    # per-batch state (manifest of what was shipped). Both can coexist;
+    # the new export pipeline does not write into training_exports.
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS export_batches (
+            batch_id TEXT PRIMARY KEY,
+            built_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            since_at TEXT,
+            until_at TEXT NOT NULL,
+            hard_negatives_count INTEGER NOT NULL DEFAULT 0,
+            confirmed_positives_count INTEGER NOT NULL DEFAULT 0,
+            species_relabels_count INTEGER NOT NULL DEFAULT 0,
+            favorites_count INTEGER NOT NULL DEFAULT 0,
+            frame_integrity_dropped_count INTEGER NOT NULL DEFAULT 0,
+            exporter_version TEXT NOT NULL,
+            wmb_app_version TEXT,
+            notes TEXT
+        );
+    """)
+    # Additive migrations for pre-existing DBs (the CREATE TABLE above
+    # is no-op once the table exists; ALTER adds the new columns).
+    _ensure_column_on_table(
+        conn, "export_batches", "favorites_count",
+        "INTEGER NOT NULL DEFAULT 0",
+    )
+    _ensure_column_on_table(
+        conn, "export_batches", "frame_integrity_dropped_count",
+        "INTEGER NOT NULL DEFAULT 0",
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_export_batches_built_at ON export_batches(built_at DESC);"
+    )
+
     # Seen-species log for the "new species only" Telegram mode. One row per
     # species the operator has ever been notified about (by species_key, the
     # same Latin / OD-class identifier the rest of the stack uses). The mode

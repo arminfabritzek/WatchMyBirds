@@ -807,6 +807,21 @@ def create_web_interface(detection_manager, system_monitor=None):
     )
     server.register_blueprint(training_export_bp)
 
+    # Register User-Groundtruth Export Blueprint (Pipeline-Dev feedback loop).
+    # Plan: 2026-05-22_FEATURE_user-groundtruth-export-for-pipeline-dev.
+    # Distinct from training_export: this one is whole-window driven
+    # (everything user-labeled since the last batch), the older one
+    # is per-detection approve-driven. They coexist.
+    from web.blueprints.user_groundtruth_export import (
+        init_user_groundtruth_export_bp,
+        user_groundtruth_export_bp,
+    )
+    init_user_groundtruth_export_bp(
+        output_dir=output_dir,
+        app_version=str(_build_meta.get("app_version") or ""),
+    )
+    server.register_blueprint(user_groundtruth_export_bp)
+
     # Register Compute Lease + Companion (v1 backend-only).
     # See docs/COMPANION_V1.md. Lease is initialised even when the
     # Companion is disabled so the aesthetic tagger can also use it.
@@ -3651,13 +3666,23 @@ def create_web_interface(detection_manager, system_monitor=None):
     @server.after_request
     def log_request(response):
         if not request.path.startswith(_LOG_SKIP_PREFIXES):
-            security_logger.info(
+            authenticated = session.get("authenticated")
+            # Authenticated 2xx GETs are normal browsing — DEBUG. Everything
+            # else (writes, errors, redirects, anonymous access) stays INFO
+            # so the audit trail keeps its forensic value.
+            is_routine_get = (
+                authenticated
+                and request.method == "GET"
+                and 200 <= response.status_code < 300
+            )
+            log_fn = security_logger.debug if is_routine_get else security_logger.info
+            log_fn(
                 "%s %s %s ip=%s user=%s",
                 _slv(request.method),
                 _slv(request.path),
                 response.status_code,
                 _slv(request.remote_addr),
-                "authenticated" if session.get("authenticated") else "anonymous",
+                "authenticated" if authenticated else "anonymous",
             )
         return response
 

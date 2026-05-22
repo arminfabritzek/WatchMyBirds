@@ -1,0 +1,291 @@
+{% extends 'base.html' %}
+
+{% block title %}User-Groundtruth Export - WatchMyBirds{% endblock %}
+
+{% block content %}
+<div class="page__header">
+    <h1 class="page__title">User-Groundtruth Export for Pipeline-Dev</h1>
+    <div class="page__actions">
+        <a href="/admin/export" class="btn btn--secondary">Older per-species export</a>
+    </div>
+</div>
+
+<div class="card mb-lg">
+    <div class="card__body">
+        <div style="display: flex; flex-direction: column; gap: var(--space-sm);">
+            <div><strong>What gets exported?</strong></div>
+            <div>
+                Every explicit user interaction since the last batch — bundled
+                into three buckets for Pipeline-Dev:
+            </div>
+            <ul style="margin: var(--space-xs) 0 0 var(--space-lg);">
+                <li><strong>Hard-negatives</strong> — frames you marked "no bird"
+                    in moderation. Verified false-positive crops.</li>
+                <li><strong>Confirmed positives</strong> — species you
+                    explicitly confirmed via Review-Queue, the Unclear
+                    "Confirm Day" action, or a bulk-relabel. Pipeline
+                    predictions you never touched are <em>not</em> in
+                    this bucket.</li>
+                <li><strong>Species re-labels</strong> — corrections where you
+                    overrode the classifier's species pick.</li>
+                <li><strong>Favorites</strong> — detections you heart-clicked
+                    in the gallery. The HUMAN gold-label, treated as
+                    highest-confidence training anchor.</li>
+            </ul>
+            <div class="text-muted" style="margin-top: var(--space-xs);">
+                Trash deletions and auto-tagged star ratings are
+                <em>deliberately</em> excluded — they are ambiguous signals.
+                Frames with mixed-status sibling detections are dropped
+                from positive buckets to preserve training-correctness.
+                Plan: <code>2026-05-22_FEATURE_user-groundtruth-export-for-pipeline-dev</code>.
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="card mb-lg">
+    <div class="card__header">
+        <h3 class="card__title">Pending batch</h3>
+    </div>
+    <div class="card__body" id="pendingPanel">
+        <div class="text-center p-xl" id="pendingLoading">
+            <span class="animate-spin" style="font-size: 2rem; display: inline-block;">⟳</span>
+            <div class="text-muted mt-md">Loading pending counts…</div>
+        </div>
+    </div>
+</div>
+
+<div class="card mb-lg">
+    <div class="card__header">
+        <h3 class="card__title">Last batch shipped</h3>
+    </div>
+    <div class="card__body" id="lastBatchPanel">
+        <div class="text-muted">—</div>
+    </div>
+</div>
+
+<div class="card mb-lg">
+    <div class="card__header">
+        <h3 class="card__title">Optional notes</h3>
+    </div>
+    <div class="card__body">
+        <div class="settings-field">
+            <label for="batchNotes" class="settings-field__label">
+                Free-text notes (saved with the batch row)
+            </label>
+            <input type="text" id="batchNotes" class="form-control"
+                style="max-width: 480px;"
+                placeholder="e.g. weekly batch W21, post-Cyanistes-fix run"
+                maxlength="240">
+            <div class="settings-field__help">
+                Stored in <code>export_batches.notes</code> so future you can
+                tell two adjacent batches apart.
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="card mb-lg">
+    <div class="card__body" style="display: flex; gap: var(--space-md); align-items: center;">
+        <button type="button" id="buildBtn" class="btn btn--primary" disabled>
+            Build &amp; download ZIP
+        </button>
+        <span id="buildStatus" class="text-muted"></span>
+    </div>
+</div>
+
+<script>
+(function () {
+    const pendingPanel = document.getElementById('pendingPanel');
+    const lastBatchPanel = document.getElementById('lastBatchPanel');
+    const btn = document.getElementById('buildBtn');
+    const statusEl = document.getElementById('buildStatus');
+    const notesInput = document.getElementById('batchNotes');
+
+    function fmt(n) {
+        return new Intl.NumberFormat().format(n);
+    }
+
+    function fmtTs(iso) {
+        if (!iso) return '—';
+        try {
+            const d = new Date(iso);
+            return d.toLocaleString();
+        } catch (e) {
+            return iso;
+        }
+    }
+
+    function setText(el, text, className) {
+        el.replaceChildren();
+        const span = document.createElement('span');
+        if (className) span.className = className;
+        span.textContent = text;
+        el.appendChild(span);
+    }
+
+    function renderPending(data) {
+        pendingPanel.replaceChildren();
+
+        const sinceLine = document.createElement('div');
+        sinceLine.className = 'text-muted';
+        sinceLine.style.marginBottom = 'var(--space-sm)';
+        sinceLine.textContent = data.since
+            ? 'Since: ' + fmtTs(data.since)
+            : 'Since: (all history — this would be the first batch)';
+        pendingPanel.appendChild(sinceLine);
+
+        const grid = document.createElement('div');
+        grid.style.display = 'grid';
+        grid.style.gridTemplateColumns = 'repeat(auto-fit, minmax(180px, 1fr))';
+        grid.style.gap = 'var(--space-md)';
+
+        const buckets = [
+            ['hard_negatives', 'Hard-negatives'],
+            ['confirmed_positives', 'Confirmed positives'],
+            ['species_relabels', 'Species re-labels'],
+            ['favorites', 'Favorites (gold)'],
+        ];
+
+        buckets.forEach(([key, label]) => {
+            const tile = document.createElement('div');
+            tile.style.padding = 'var(--space-md)';
+            tile.style.border = '1px solid var(--color-border)';
+            tile.style.borderRadius = 'var(--radius-md)';
+
+            const labelEl = document.createElement('div');
+            labelEl.className = 'text-muted';
+            labelEl.style.fontSize = '0.875rem';
+            labelEl.textContent = label;
+            tile.appendChild(labelEl);
+
+            const countEl = document.createElement('div');
+            countEl.style.fontSize = '1.75rem';
+            countEl.style.fontWeight = '600';
+            countEl.style.marginTop = 'var(--space-xs)';
+            countEl.textContent = fmt(data.pending[key] || 0);
+            tile.appendChild(countEl);
+
+            grid.appendChild(tile);
+        });
+        pendingPanel.appendChild(grid);
+
+        const total = document.createElement('div');
+        total.style.marginTop = 'var(--space-md)';
+        total.textContent = 'Total: ' + fmt(data.total_pending) + ' rows';
+        pendingPanel.appendChild(total);
+
+        // Enable build even on empty batches — the operator may want to
+        // advance the time window deliberately.
+        btn.disabled = false;
+    }
+
+    function renderLastBatch(last) {
+        lastBatchPanel.replaceChildren();
+        if (!last) {
+            const muted = document.createElement('div');
+            muted.className = 'text-muted';
+            muted.textContent = 'No batches built yet. Build the first one above.';
+            lastBatchPanel.appendChild(muted);
+            return;
+        }
+        const lines = [
+            ['Batch ID', last.batch_id],
+            ['Built at', fmtTs(last.built_at)],
+            ['Window ended at', fmtTs(last.until_at)],
+            ['Hard-negatives', fmt(last.counts.hard_negatives)],
+            ['Confirmed positives', fmt(last.counts.confirmed_positives)],
+            ['Species re-labels', fmt(last.counts.species_relabels)],
+            ['Favorites (gold)', fmt(last.counts.favorites || 0)],
+        ];
+        const dl = document.createElement('dl');
+        dl.style.display = 'grid';
+        dl.style.gridTemplateColumns = 'max-content 1fr';
+        dl.style.gap = 'var(--space-xs) var(--space-md)';
+        dl.style.margin = '0';
+        lines.forEach(([k, v]) => {
+            const dt = document.createElement('dt');
+            dt.className = 'text-muted';
+            dt.style.fontWeight = '500';
+            dt.textContent = k;
+            const dd = document.createElement('dd');
+            dd.style.margin = '0';
+            dd.style.fontFamily = 'var(--font-mono)';
+            dd.textContent = v;
+            dl.appendChild(dt);
+            dl.appendChild(dd);
+        });
+        lastBatchPanel.appendChild(dl);
+    }
+
+    async function loadPreview() {
+        try {
+            const r = await fetch('/api/groundtruth-export/preview', {
+                credentials: 'same-origin',
+            });
+            if (!r.ok) throw new Error('HTTP ' + r.status);
+            const data = await r.json();
+            renderPending(data);
+            renderLastBatch(data.last_batch);
+        } catch (err) {
+            pendingPanel.replaceChildren();
+            const errEl = document.createElement('div');
+            errEl.className = 'text-danger';
+            errEl.textContent = 'Failed to load preview: ' + err.message;
+            pendingPanel.appendChild(errEl);
+            btn.disabled = true;
+        }
+    }
+
+    function parseFilename(contentDisposition) {
+        if (!contentDisposition) return null;
+        const match = contentDisposition.match(/filename="?([^"]+)"?/);
+        return match ? match[1] : null;
+    }
+
+    async function buildBatch() {
+        btn.disabled = true;
+        setText(statusEl, 'Building batch…', 'text-muted');
+
+        const notes = notesInput.value.trim();
+        const body = notes ? JSON.stringify({notes}) : '{}';
+
+        try {
+            const r = await fetch('/api/groundtruth-export/build', {
+                method: 'POST',
+                credentials: 'same-origin',
+                headers: {'Content-Type': 'application/json'},
+                body,
+            });
+            if (!r.ok) {
+                const text = await r.text();
+                throw new Error('HTTP ' + r.status + ': ' + text.slice(0, 200));
+            }
+            // Server sends Content-Disposition: attachment, so we trigger
+            // the download manually via blob URL — works even when fetch
+            // is used instead of a direct anchor click.
+            const blob = await r.blob();
+            const filename = parseFilename(r.headers.get('Content-Disposition'))
+                || 'user_groundtruth.zip';
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            URL.revokeObjectURL(url);
+            setText(statusEl, 'Downloaded ' + filename, 'text-success');
+            // Refresh counts so the operator sees the new "since" baseline.
+            loadPreview();
+        } catch (err) {
+            setText(statusEl, 'Build failed: ' + err.message, 'text-danger');
+            btn.disabled = false;
+        }
+    }
+
+    btn.addEventListener('click', buildBatch);
+    loadPreview();
+})();
+</script>
+{% endblock %}
