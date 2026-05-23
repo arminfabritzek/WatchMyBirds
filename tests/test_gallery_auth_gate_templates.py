@@ -30,14 +30,18 @@ class TestModalDetectionInfoGuard:
         content = _read_template("components/modal_detection_info.html")
         assert "can_moderate=false" in content
 
-    def test_relabel_delete_wrapped_in_can_moderate(self):
+    def test_no_per_card_action_buttons(self):
+        """2026-05-23 redesign: per-card Change-Species/Trash buttons are
+        removed. The header action group (modal_action_bar.html) now hosts
+        these verbs and acts on the active detection (selected via canvas-
+        click or sibling-card body click). TestModalActionBarGuard below
+        verifies the header guard. This test guarantees we do not silently
+        re-introduce un-guarded per-card action buttons in the sibling
+        strip."""
         content = _read_template("components/modal_detection_info.html")
-        # Every relabelDetection and deleteDetection call must be preceded
-        # by a {% if can_moderate %} guard somewhere before it.
-        assert content.count("{% if can_moderate %}") >= 2, (
-            "Expected at least 2 can_moderate guards "
-            "(one for multi-detection, one for single-detection)"
-        )
+        assert 'data-action="change-species"' not in content
+        assert 'data-action="move-trash"' not in content
+        assert 'sibling-card__action' not in content
 
 
 class TestModalActionBarGuard:

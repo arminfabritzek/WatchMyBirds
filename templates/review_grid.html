@@ -1,0 +1,118 @@
+{% extends 'base.html' %}
+
+{#
+  Review Grid (2026-05-23 redesign — plan
+  2026-05-23_UI_review-grid-redesign).
+
+  Slice 1 scaffolding: filter card + empty event stack container +
+  sticky bulk-action footer with stubbed handlers. Slice 2 fills the
+  stack with real event cards; Slice 3 wires the bulk footer to real
+  actions; Slice 4 adds continuity-batch cards; Slice 5 retires the
+  ?layout=grid query gate.
+
+  Reachable via /admin/review?layout=grid while under construction.
+#}
+
+{% block title %}Review Desk · WatchMyBirds{% endblock %}
+
+{% block content %}
+{# 2026-05-23 evening — batch_action_footer retired here. Card-header
+   Approve / Relabel / No Bird / Trash now operate in Smart-Mode (respect
+   per-card checkbox selection if any, fall back to event-wide otherwise).
+   Cross-event bulk action is no longer reachable from this page;
+   per-card workflow is the only path. Decision recorded in plan
+   2026-05-23_UI_review-grid-redesign Slice 8. #}
+{% from 'components/review_grid_card.html' import render_review_grid_card %}
+
+<nav class="page-control-bar review-desk-bar" role="navigation"
+     aria-label="Review workspace controls">
+    <div class="page-control-bar__left">
+        <span class="page-control-bar__title">Review Desk</span>
+        <span class="page-control-bar__badge" id="review-visible-count">{{ review_events|length if review_events else 0 }}</span>
+    </div>
+    <div class="page-control-bar__meta">
+        <span id="review-grid-meta">{{ review_events|length }} event{{ 's' if review_events|length != 1 }}</span>
+    </div>
+    <div class="page-control-bar__right">
+        {% include 'partials/thumb_view_toggle.html' %}
+        <button type="button"
+                class="btn btn--secondary review-grid__bbox-toggle"
+                id="reviewGridBboxToggle"
+                title="Show or hide bounding boxes on tiles"
+                aria-pressed="false">⬚ Boxes</button>
+        <div class="review-grid__size-control" role="group" aria-label="Tile size">
+            <button type="button"
+                    class="btn btn--secondary btn--sm review-grid__size-btn"
+                    data-review-grid-size-action="shrink"
+                    title="Smaller tiles (more per row)"
+                    aria-label="Smaller tiles">−</button>
+            {# Default to crop-mode range (120-320, 256px source).
+               JS reassigns min/max/value on load and on every
+               crop/full mode swap (Hotfix 8). #}
+            <input type="range"
+                   id="review-grid-size-slider"
+                   class="review-grid__size-slider"
+                   min="120" max="320" step="40" value="240"
+                   title="Drag to resize tiles (Apple Photos style)"
+                   aria-label="Tile size in pixels">
+            <button type="button"
+                    class="btn btn--secondary btn--sm review-grid__size-btn"
+                    data-review-grid-size-action="grow"
+                    title="Larger tiles (fewer per row)"
+                    aria-label="Larger tiles">+</button>
+        </div>
+        <a href="/" class="btn btn--secondary" title="Back to live stream">← Stream</a>
+    </div>
+</nav>
+
+<section class="review-grid">
+
+    {# Stack container. One review-grid__card per event; Slice 4 will
+       add the batch variant for events that participate in a
+       continuity batch. #}
+    <div class="review-grid__stack" data-review-grid-stack
+         data-default-tile-size="4">
+        {% if review_events %}
+            {# Track which batch keys we have already seen so only the
+               first event of each continuity batch renders the batch-
+               strip header (Apply Species + Approve Batch). Subsequent
+               sibling events stay normal cards visually but still
+               carry the batch data-attributes for client-side picks. #}
+            {% set _seen_batch_keys = namespace(value=[]) %}
+            {% set _prev_batch_key = namespace(value=none) %}
+            {% for event in review_events %}
+                {% set _bkey = event.continuity_batch_key if (event.continuity_batch_key is defined and event.continuity_batch_key) else none %}
+                {% set _is_lead = false %}
+                {% if _bkey and _bkey not in _seen_batch_keys.value %}
+                    {% set _is_lead = true %}
+                    {% set _ = _seen_batch_keys.value.append(_bkey) %}
+                {% endif %}
+                {# Inter-event separator. Rendered before every card except
+                   the first, and suppressed between siblings of the same
+                   continuity batch (the batch-strip already visually
+                   unifies them — a divider there would fight the group). #}
+                {% if not loop.first and not (_bkey and _bkey == _prev_batch_key.value) %}
+                <hr class="review-grid__event-separator" aria-hidden="true">
+                {% endif %}
+                {{ render_review_grid_card(event, default_size=4, is_batch_lead=_is_lead) }}
+                {% set _prev_batch_key.value = _bkey %}
+            {% endfor %}
+        {% else %}
+        <div class="alert alert-success review-grid__placeholder">
+            <h4>Inbox zero.</h4>
+            <p>No events currently need review.</p>
+        </div>
+        {% endif %}
+    </div>
+
+</section>
+
+{% endblock %}
+
+{% block scripts %}
+<script src="/assets/js/gallery_utils.js?v=20260523-bboxgeom"></script>
+<script src="/assets/js/tile_actions.js?v=2"></script>
+<script src="/assets/js/species_picker.js?v=1"></script>
+<script src="/assets/js/batch_actions.js?v=1"></script>
+<script src="/assets/js/review_grid.js?v=20260525-trash-fix"></script>
+{% endblock %}

@@ -84,8 +84,9 @@ def _build_mgr_fixture():
     mgr.detection_service = MagicMock()
     mgr.detection_service._detector = fake_detector_wrapper
 
-    # Burst gate stubbed open
+    # Burst gates stubbed open (Filter B + Filter B2)
     mgr._burst_admit = MagicMock(return_value=True)
+    mgr._same_bird_burst_admit = MagicMock(return_value=True)
 
     # State the production loop touches but the routing logic doesn't
     # care about. Stubbed to keep _processing_loop from raising on

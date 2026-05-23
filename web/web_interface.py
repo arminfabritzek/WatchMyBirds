@@ -383,6 +383,13 @@ def create_web_interface(detection_manager, system_monitor=None):
             "rating_source": det.get("rating_source", "auto"),
             "is_favorite": _is_favorite(det),
             "is_gallery_eligible": _is_gallery_eligible(det),
+            # Parent-image filename — needed by tile_toolbox so the
+            # frame-level "Mark No Bird" action can POST to /api/review/decision.
+            # Fall back to ``original_name`` for legacy upstream rows that use
+            # that key in this codebase.
+            "image_filename": (
+                det.get("image_filename") or det.get("original_name") or ""
+            ),
         }
         if include_decision_state:
             payload["decision_state"] = det.get("decision_state")
@@ -756,11 +763,6 @@ def create_web_interface(detection_manager, system_monitor=None):
     from web.blueprints.trash import trash_bp
 
     server.register_blueprint(trash_bp)
-
-    # Register Unclear Blueprint (classifier-rejected detections surface)
-    from web.blueprints.unclear import unclear_bp
-
-    server.register_blueprint(unclear_bp)
 
     # Register Review Blueprint
     from web.blueprints.review import review_bp

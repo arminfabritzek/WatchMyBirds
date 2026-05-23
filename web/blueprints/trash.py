@@ -13,6 +13,7 @@ Handles all trash-related routes:
 """
 
 import math
+from datetime import UTC, datetime
 
 from flask import Blueprint, jsonify, render_template, request
 
@@ -329,7 +330,8 @@ def relabel_detection():
             SET manual_species_override = ?,
                 species_source = 'manual',
                 species_updated_at = datetime('now'),
-                decision_state = 'confirmed'
+                decision_state = 'confirmed',
+                decision_level = 'species'
             WHERE detection_id = ?
               AND COALESCE(status, 'active') = 'active'
             """,
@@ -459,10 +461,16 @@ def toggle_favorite():
         # mistake a HUMAN heart-click for a stale auto-tag on the next app
         # start. is_favorite is the gold-label column and the backfill must
         # leave HUMAN rows alone.
+        action_at = datetime.now(UTC).isoformat()
         conn.execute(
-            "UPDATE detections SET is_favorite = ?, rating_source = 'manual' "
-            "WHERE detection_id = ?",
-            (new_state, detection_id),
+            """
+            UPDATE detections
+            SET is_favorite = ?,
+                rating_source = 'manual',
+                species_updated_at = ?
+            WHERE detection_id = ?
+            """,
+            (new_state, action_at, detection_id),
         )
         conn.commit()
         gallery_service.invalidate_cache()

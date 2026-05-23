@@ -133,6 +133,10 @@ class ClsDecisionConfig:
     # ``global_fallback`` entries fall back to ``genus_threshold``
     # (the legacy global ``detection.genus_fallback_threshold``).
     per_genus: dict[str, PerGenusThreshold] = None  # type: ignore[assignment]
+    # Non-bird drop set (cls_v20 and later). Class names whose top-1
+    # prediction must be dropped pre-threshold, pre-genus-fallback,
+    # pre-DB-persist. Empty set = legacy bird-only classifier.
+    non_bird_classes: frozenset[str] = frozenset()
 
     def __post_init__(self):
         # frozen dataclass mutation trick: object.__setattr__ via the
@@ -281,6 +285,14 @@ def load_cls_decision_config(
     review_threshold = _parse_optional_float(detection.get("review_threshold"))
     per_species = _load_per_species_thresholds(raw, yaml_path)
     per_genus = _load_per_genus_thresholds(raw, yaml_path)
+    non_bird_classes = _load_non_bird_classes(raw, yaml_path)
+
+    if non_bird_classes:
+        logger.info(
+            "cls config: %d non-bird class(es) configured for drop: %s",
+            len(non_bird_classes),
+            ", ".join(sorted(non_bird_classes)),
+        )
 
     two_stage_note = ""
     if gallery_threshold is not None:
@@ -330,6 +342,7 @@ def load_cls_decision_config(
         review_threshold=review_threshold,
         per_species=per_species,
         per_genus=per_genus,
+        non_bird_classes=non_bird_classes,
     )
 
 
@@ -422,6 +435,40 @@ def _load_per_species_thresholds(
                 int(known_field_fps),
             )
     return out
+
+
+def _load_non_bird_classes(raw: dict, yaml_path: str) -> frozenset[str]:
+    """Read top-level ``non_bird_classes`` from the YAML.
+
+    Cls_v20 and later ship a list of class names that, when predicted
+    top-1, must be dropped pre-threshold and pre-genus-fallback. This
+    is the App's contract for the model bundle's non-bird gate.
+
+    Returns an empty frozenset when the field is missing, empty, or
+    malformed — older bundles and bird-only classifiers behave
+    byte-identical to before this change.
+    """
+    raw_section = raw.get("non_bird_classes")
+    if raw_section is None:
+        return frozenset()
+    if not isinstance(raw_section, list):
+        logger.warning(
+            "non_bird_classes in %s is not a list (%r); ignoring.",
+            yaml_path,
+            type(raw_section).__name__,
+        )
+        return frozenset()
+    out: set[str] = set()
+    for entry in raw_section:
+        if not isinstance(entry, str) or not entry.strip():
+            logger.warning(
+                "non_bird_classes entry %r in %s is not a non-empty string; dropped.",
+                entry,
+                yaml_path,
+            )
+            continue
+        out.add(entry.strip())
+    return frozenset(out)
 
 
 def _load_per_genus_thresholds(
@@ -594,6 +641,18 @@ def decide_label(
             "label": top1_species,
             "prob": top1_prob,
             "level": "species",
+            "raw_species": top1_species,
+        }
+
+    # Non-bird drop (cls_v20 and later). Runs BEFORE any threshold or
+    # genus-fallback logic: a top-1 in non_bird_classes is by contract
+    # a substrate / not-a-bird prediction and must not reach Gallery,
+    # Review, or DB persistence under any species label.
+    if top1_species in config.non_bird_classes:
+        return {
+            "label": "",
+            "prob": top1_prob,
+            "level": "reject",
             "raw_species": top1_species,
         }
 

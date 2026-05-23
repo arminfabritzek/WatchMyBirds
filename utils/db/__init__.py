@@ -99,14 +99,6 @@ from utils.db.trash import (
     fetch_trash_items,
 )
 
-# Unclear bucket operations (classifier-rejected, smoother-confirmed detections)
-from utils.db.unclear import (
-    confirm_unclear_detections,
-    fetch_unclear_days,
-    fetch_unclear_detection_ids_for_day,
-    fetch_unclear_total,
-)
-
 __all__ = [
     # Connection
     "DB_FILENAME",
@@ -151,11 +143,6 @@ __all__ = [
     # Trash
     "fetch_trash_items",
     "fetch_trash_count",
-    # Unclear bucket
-    "confirm_unclear_detections",
-    "fetch_unclear_days",
-    "fetch_unclear_detection_ids_for_day",
-    "fetch_unclear_total",
     # Reject-audit log
     "insert_reject_audit",
     # Analytics

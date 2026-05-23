@@ -200,6 +200,10 @@ def test_review_approve_confirms_after_manual_species_and_bbox(client):
     mock_db.update_review_status.assert_called_once_with(
         mock_conn, ["review-item.jpg"], "confirmed_bird"
     )
+    executed_sql = "\n".join(
+        str(call.args[0]) for call in mock_conn.execute.call_args_list
+    )
+    assert "decision_level = 'species'" in executed_sql
     mock_invalidate.assert_called_once()
 
 
@@ -274,6 +278,80 @@ def test_quick_species_entries_include_server_resolved_thumb_urls():
 
     assert quick_species[0]["scientific"] == "Sitta_europaea"
     assert quick_species[0]["thumb_url"] == "/uploads/derivatives/optimized/2026-04-02/nuthatch.webp"
+
+
+def test_quick_species_filters_non_bird_from_every_source():
+    """Regression: ``non_bird`` must not appear as a clickable card
+    regardless of which source surfaces it (cls top-k, current species
+    of a previously mis-relabeled detection, or recent-days
+    aggregate).
+
+    Before this fix, all three sources could land ``non_bird`` in the
+    picker. Clicking it triggered ``POST /api/review/quick-species`` →
+    HTTP 400 ``"unknown species"`` because the validator correctly
+    rejected the synthetic class.
+    """
+    from web.blueprints.review import _build_review_quick_species
+
+    picker_entries = [
+        {"scientific": "Parus_major", "common": "Kohlmeise",
+         "source": "prediction", "score": 0.82},
+        {"scientific": "non_bird", "common": "non bird",
+         "source": "prediction", "score": 0.08},
+    ]
+    recent_species = [
+        {"scientific": "non_bird", "common": "non bird"},
+        {"scientific": "Cyanistes_caeruleus", "common": "Blaumeise"},
+    ]
+
+    def fake_is_known(key, locale="DE"):
+        return key in {"Parus_major", "Cyanistes_caeruleus"}
+
+    with patch("web.blueprints.review.resolve_species_thumbnail_url",
+               return_value=""), \
+         patch("web.blueprints.review.is_known_species",
+               side_effect=fake_is_known):
+        quick_species = _build_review_quick_species(
+            current_species="non_bird",
+            picker_entries=picker_entries,
+            recent_species=recent_species,
+            common_names={"Parus_major": "Kohlmeise",
+                          "Cyanistes_caeruleus": "Blaumeise"},
+        )
+
+    scientifics = [entry["scientific"] for entry in quick_species]
+    assert "non_bird" not in scientifics
+    assert "Parus_major" in scientifics
+    assert "Cyanistes_caeruleus" in scientifics
+
+
+def test_load_recent_review_species_filters_non_bird():
+    """The ``fetch_recent_review_species`` aggregate sums
+    ``effective_species_sql`` which coalesces ``manual_species_override``
+    first. A single prior accidental relabel to ``non_bird`` would
+    otherwise pollute the "Recent days" pill for 7 days.
+    """
+    from web.blueprints.review import _load_recent_review_species
+
+    fake_rows = [
+        {"species_key": "Parus_major", "hit_count": 12, "last_seen": "20260522_120000"},
+        {"species_key": "non_bird", "hit_count": 1, "last_seen": "20260522_210000"},
+        {"species_key": "Cyanistes_caeruleus", "hit_count": 5, "last_seen": "20260522_110000"},
+    ]
+
+    def fake_is_known(key, locale="DE"):
+        return key in {"Parus_major", "Cyanistes_caeruleus"}
+
+    with patch("web.blueprints.review.db_service.fetch_recent_review_species",
+               return_value=fake_rows), \
+         patch("web.blueprints.review.is_known_species", side_effect=fake_is_known):
+        recent = _load_recent_review_species(
+            conn=MagicMock(),
+            common_names={"Parus_major": "Kohlmeise",
+                          "Cyanistes_caeruleus": "Blaumeise"},
+        )
+
+    assert [r["scientific"] for r in recent] == ["Parus_major", "Cyanistes_caeruleus"]
 
 
 def test_stamp_species_display_adds_ref_image_urls_to_event_quick_species():
@@ -364,6 +442,10 @@ def test_review_event_approve_confirms_event_and_recomputes_gallery_visibility(c
     mock_db.update_review_status.assert_called_once_with(
         mock_conn, ["review-item.jpg"], "confirmed_bird"
     )
+    executed_sql = "\n".join(
+        str(call.args[0]) for call in mock_conn.execute.call_args_list
+    )
+    assert "decision_level = 'species'" in executed_sql
     mock_invalidate.assert_called_once()
 
 
@@ -484,13 +566,20 @@ def test_review_page_renders_workspace_for_detection_orphan_only_state(client):
     body = response.get_data(as_text=True)
     # The detection-orphan-only page must render the workspace, not
     # the empty state.
+    #
+    # 2026-05-23 redesign (plan 2026-05-23_UI_review-grid-redesign):
+    # /admin/review now defaults to the new Review Grid layout
+    # (templates/review_grid.html). The legacy Stage-Panel hooks
+    # (`#reviewWorkspace`, `#reviewQueueBrowser`, `data-panel-type`)
+    # live only in templates/orphans.html, reachable via
+    # ?layout=legacy. The new grid renders `.review-grid__stack`
+    # regardless of whether there are events. Slice 8 (2026-05-23
+    # evening) retired the sticky bulk-action footer — card-header
+    # Smart-Mode replaces it for the per-card workflow.
     assert "Review Queue Empty" not in body
-    assert 'id="reviewWorkspace"' in body
-    assert 'id="reviewQueueBrowser"' in body
-    # Event rail must NOT be present (no events).
-    assert 'id="reviewEventBrowser"' not in body
-    # The default panel type for an orphan-only page is the queue panel.
-    assert 'data-panel-type="queue"' in body
+    assert 'class="review-grid' in body
+    assert 'data-review-grid-stack' in body
+    assert 'id="reviewGridBatchFooter"' not in body  # Slice 8: footer retired
 
 
 def test_review_page_strips_image_orphans_from_queue(client):
@@ -535,8 +624,11 @@ def test_review_page_strips_image_orphans_from_queue(client):
     assert response.status_code == 200
     body = response.get_data(as_text=True)
     # With only image-orphans loaded, the queue is effectively empty
-    # and the empty-state panel must render.
-    assert "Review Queue Empty" in body
+    # and the empty-state placeholder must render. 2026-05-23
+    # redesign uses "Inbox zero." (review_grid.html); the legacy
+    # "Review Queue Empty" wording lives in orphans.html behind
+    # ?layout=legacy.
+    assert "Inbox zero." in body
     # The orphan filename must not leak into the rendered HTML at all.
     assert "orphan-img-1.jpg" not in body
 
@@ -605,10 +697,13 @@ def test_review_page_hides_queue_rail_while_event_workspace_is_active(client):
 
     assert response.status_code == 200
     body = response.get_data(as_text=True)
-    assert 'id="reviewWorkspace"' in body
-    assert 'id="reviewEventBrowser"' in body
-    assert 'id="reviewQueueBrowser"' not in body
-    assert 'data-panel-type="event"' in body
+    # 2026-05-23 redesign: new Review Grid is default. Legacy hooks
+    # (`#reviewWorkspace`, `#reviewEventBrowser`, `data-panel-type`)
+    # are reachable via ?layout=legacy. The new grid renders one
+    # `.review-grid__card` per event.
+    assert 'class="review-grid' in body
+    assert 'data-review-grid-card' in body
+    assert 'data-event-key="bird-event-' in body or 'data-event-key=' in body
 
 
 def test_review_event_approve_keeps_images_hidden_when_open_detections_remain(client):
@@ -1311,6 +1406,10 @@ def test_review_event_resolve_commits_keep_and_trash_in_one_call(client):
     )
     mock_db.set_manual_bbox_review.assert_called_once_with(mock_conn, 17, "correct")
     mock_db.reject_detections.assert_called_once_with(mock_conn, [18])
+    executed_sql = "\n".join(
+        str(call.args[0]) for call in mock_conn.execute.call_args_list
+    )
+    assert "decision_level = 'species'" in executed_sql
     mock_invalidate.assert_called_once()
 
 

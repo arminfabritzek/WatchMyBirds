@@ -1,0 +1,321 @@
+{#
+  Review Grid Card — one BirdEvent rendered as a self-contained card.
+
+  Plan: 2026-05-23_UI_review-grid-redesign, Slice 2.
+
+  Inputs (macro args):
+    event        — event payload from _build_review_event (review.py)
+    default_size — initial tiles-per-row for this card
+
+  Composition:
+    - Header row: species · start/end window · count · Approve · Trash · stepper
+    - Grid body: one wm-tile per member, sized by --card-tile-cols
+    - Hidden detection-modal markup per member (UI_STANDARD §0 point 4)
+
+  Toolbox + Image-Viewer use the shared macros (UI_STANDARD §0).
+  Species colour token (§6d) is set on the species pill via
+  data-species-colour + inline --cell-species-colour.
+
+  Slice 3 wires multi-select + bulk actions onto the tile checkboxes.
+  Slice 4 spins off a --batch variant for continuity batches.
+#}
+{% from "components/modal_image_viewer.html" import render_image_viewer %}
+{% from "components/detection_modal.html" import render_modal %}
+{% from "partials/tile_toolbox.html" import tile_toolbox %}
+
+{% macro render_review_grid_card(event, default_size=4, is_batch_lead=false) %}
+{% set is_ineligible = event.eligibility != 'event_eligible' %}
+{% set has_species = (event.candidate_species or event.selected_species) %}
+{% set can_approve = has_species %}
+{% set is_batch = event.continuity_batch_key is defined and event.continuity_batch_key %}
+{% set batch_recommended = event.continuity_batch_recommended_species if is_batch else none %}
+{% set approve_blocked_reason = '' %}
+{% if not has_species %}
+    {% set approve_blocked_reason = 'Pick a species before approving' %}
+{% elif event.fallback_reason == 'bbox_jump' %}
+    {% set approve_blocked_reason = 'Movement spans too much for blind event approval — select the frames you checked, then approve' %}
+{% elif is_ineligible %}
+    {% set approve_blocked_reason = 'Multi-bird or ambiguous frame — pick species per tile and use Approve Selected' %}
+{% endif %}
+
+{% set _review_members = event.members | rejectattr('context_only') | list %}
+{% set _context_members = event.members | selectattr('context_only') | list %}
+{% set display_members = _review_members + _context_members %}
+{% set _window_parts = (event.window_time or '').split(' - ') %}
+{% set _window_start = _window_parts[0] if _window_parts|length > 0 else '' %}
+{% set _window_end = _window_parts[1] if _window_parts|length > 1 else _window_start %}
+
+<article class="review-grid__card{% if is_batch %} review-grid__card--batch{% endif %} wm-viewer-scope{% if event.species_colour is not none %} review-grid__card--has-species{% endif %}"
+         data-review-grid-card
+         data-event-key="{{ event.event_key }}"
+         data-actionable-detection-ids="{{ _review_members | map(attribute='best_detection_id') | select | join(',') }}"
+         data-species="{{ event.selected_species or event.candidate_species or '' }}"
+         data-event-eligible="{% if not is_ineligible %}1{% else %}0{% endif %}"
+         data-fallback-reason="{{ event.fallback_reason or '' }}"
+         data-approve-blocked-reason="{{ approve_blocked_reason }}"
+         {% if event.species_colour is not none %}
+         data-species-colour="{{ event.species_colour }}"
+         {% endif %}
+         {% if is_batch %}
+         data-continuity-batch-key="{{ event.continuity_batch_key }}"
+         data-batch-recommended-species="{{ batch_recommended or '' }}"
+         data-batch-review-detection-ids="{{ event.continuity_batch_review_detection_ids | join(',') }}"
+         data-batch-is-lead="{% if is_batch_lead %}1{% else %}0{% endif %}"
+         {% endif %}
+         data-zoom-pref-key="wmb_review_zoom_pref"
+         data-bbox-pref-key="wmb_review_bbox_pref"
+         style="--card-tile-cols: {{ default_size }};{% if event.species_colour is not none %} --cell-species-colour: var(--species-colour-{{ event.species_colour }});{% endif %}">
+
+    <header class="review-grid__card-header">
+        <div class="review-grid__card-identity">
+            {# 2026-05-23 Slice 7 — Species name is the dominant identity
+               anchor. The meta line (date · time · count) drops to a
+               muted sub-line. The Operator reads the Species name first,
+               not the timestamp. #}
+            <div class="review-grid__card-species-row">
+                <span class="review-grid__card-species"
+                      {% if event.species_colour is not none %}
+                      data-species-colour="{{ event.species_colour }}"
+                      {% endif %}>
+                    {{ event.candidate_species_common or event.selected_species_common or 'Unknown species' }}
+                </span>
+                {% if is_ineligible and event.fallback_label %}
+                <span class="review-grid__card-badge review-grid__card-badge--warn"
+                      title="{{ event.fallback_label }}">⚠ {{ event.fallback_label }}</span>
+                {% endif %}
+            </div>
+            {% if _window_start or _window_end %}
+            <div class="review-grid__card-window"
+                 aria-label="Event window from {{ _window_start or 'unknown start' }} to {{ _window_end or _window_start or 'unknown end' }}">
+                <span class="review-grid__card-window-chip review-grid__card-window-chip--start">
+                    <span class="review-grid__card-window-label">Start</span>
+                    <span class="review-grid__card-window-value">{{ _window_start }}</span>
+                </span>
+                <span class="review-grid__card-window-divider" aria-hidden="true">to</span>
+                <span class="review-grid__card-window-chip review-grid__card-window-chip--end">
+                    <span class="review-grid__card-window-label">End</span>
+                    <span class="review-grid__card-window-value">{{ _window_end or _window_start }}</span>
+                </span>
+            </div>
+            {% endif %}
+            <div class="review-grid__card-meta">
+                <span class="review-grid__card-date">{{ event.window_date }}</span>
+                <span class="review-grid__card-sep" aria-hidden="true">·</span>
+                <span class="review-grid__card-count">{{ event.photo_count }} frame{{ 's' if event.photo_count != 1 }}</span>
+                <span class="review-grid__card-selected"
+                      data-review-grid-card-selected
+                      hidden
+                      aria-live="polite">· 0 selected</span>
+            </div>
+        </div>
+
+        {# 2026-05-23 evening — Smart-Mode action group.
+           Every button carries a `data-scope-label-event` / `data-scope-
+           label-selection` pair plus matching tooltip text. The JS
+           handler getCardScopeIds() flips between the two based on
+           whether any tile checkbox in the card is checked. The
+           Mark No Bird button uses an outline+warning style to stay
+           visually distinct from the filled-red Trash button — they
+           are semantically different (training signal vs. housekeeping)
+           per the 2026-05-23 "Event-Delete ≠ Hard-Negative" decision
+           recorded in memory + UI_STANDARD §6bb. #}
+        <div class="review-grid__card-actions">
+            <button type="button"
+                    class="btn btn--secondary btn--sm review-grid__card-invert"
+                    data-review-grid-action="invert_selection"
+                    data-event-key="{{ event.event_key }}"
+                    {% if _review_members | length == 0 %}disabled title="No actionable frames to invert"{% else %}title="Invert the selected frames in this event"{% endif %}
+                    aria-label="Invert event frame selection">Invert</button>
+            <button type="button"
+                    class="btn btn--success btn--sm review-grid__card-approve"
+                    data-review-grid-action="approve_event"
+                    data-event-key="{{ event.event_key }}"
+                    data-scope-label-event="✓ Approve"
+                    data-scope-label-selection="✓ Approve ({N})"
+                    data-scope-tip-event="Approve every actionable frame in this event"
+                    data-scope-tip-selection="Approve the {N} selected frame(s) in this event"
+                    {% if not can_approve %}disabled title="{{ approve_blocked_reason }}"{% else %}title="Approve every actionable frame in this event"{% endif %}
+                    aria-label="Approve event">✓ Approve</button>
+            <button type="button"
+                    class="btn btn--outline-primary btn--sm review-grid__card-relabel"
+                    data-review-grid-action="relabel_event"
+                    data-event-key="{{ event.event_key }}"
+                    data-current-species="{{ event.selected_species or event.candidate_species or '' }}"
+                    data-scope-label-event="🏷️ Relabel"
+                    data-scope-label-selection="🏷️ Relabel ({N})"
+                    data-scope-tip-event="Change the species for every actionable frame in this event"
+                    data-scope-tip-selection="Change the species for the {N} selected frame(s)"
+                    {% if _review_members | length == 0 %}disabled title="No actionable frames to relabel"{% else %}title="Change the species for every actionable frame in this event"{% endif %}
+                    aria-label="Change event species">🏷️ Relabel</button>
+            <button type="button"
+                    class="btn btn--outline-warning btn--sm review-grid__card-no-bird"
+                    data-review-grid-action="no_bird_event"
+                    data-event-key="{{ event.event_key }}"
+                    data-scope-label-event="✗ No Bird"
+                    data-scope-label-selection="✗ No Bird ({N})"
+                    data-scope-tip-event="Mark every image in this event as No Bird — training signal for the detector (distinct from Trash housekeeping)"
+                    data-scope-tip-selection="Mark the {N} selected image(s) as No Bird — training signal (distinct from Trash)"
+                    {% if _review_members | length == 0 %}disabled title="No actionable frames to mark"{% else %}title="Mark every image in this event as No Bird — training signal for the detector (distinct from Trash housekeeping)"{% endif %}
+                    aria-label="Mark event as No Bird">✗ No Bird</button>
+            <button type="button"
+                    class="btn btn--danger btn--sm review-grid__card-trash"
+                    data-review-grid-action="trash_event"
+                    data-event-key="{{ event.event_key }}"
+                    data-scope-label-event="🗑 Trash"
+                    data-scope-label-selection="🗑 Trash ({N})"
+                    data-scope-tip-event="Move every actionable frame in this event to Trash (housekeeping — distinct from Mark No Bird training signal)"
+                    data-scope-tip-selection="Move the {N} selected frame(s) to Trash (housekeeping — distinct from Mark No Bird training signal)"
+                    title="Move every actionable frame in this event to Trash (housekeeping — distinct from Mark No Bird training signal)"
+                    aria-label="Move event to Trash">🗑 Trash</button>
+        </div>
+    </header>
+
+    {% if is_batch and is_batch_lead %}
+    <div class="review-grid__batch-strip" data-review-grid-batch-strip>
+        <span class="review-grid__batch-strip-label">
+            <span class="review-grid__batch-strip-icon" aria-hidden="true">⛓</span>
+            Continuity batch · {{ event.continuity_batch_key }}
+        </span>
+        {% if batch_recommended %}
+        <button type="button"
+                class="btn btn--outline-primary btn--sm"
+                data-review-grid-action="apply_batch_species"
+                data-batch-key="{{ event.continuity_batch_key }}"
+                data-batch-recommended-species="{{ batch_recommended }}"
+                title="Relabel every review frame in this batch to the anchor species ({{ batch_recommended | replace('_', ' ') }})"
+                aria-label="Apply species to all batch frames">
+            🏷️ Apply <em>{{ batch_recommended | replace('_', ' ') }}</em> to all frames
+        </button>
+        {% else %}
+        <span class="review-grid__batch-strip-hint"
+              title="Anchors disagree on species; pick a species per event before approving">
+            Anchors disagree — pick species per event
+        </span>
+        {% endif %}
+        <button type="button"
+                class="btn btn--success btn--sm"
+                data-review-grid-action="approve_batch"
+                data-batch-key="{{ event.continuity_batch_key }}"
+                {% if not batch_recommended %}disabled title="Approve unlocks once every event in the batch shares the same species"{% else %}title="Approve every actionable frame across this batch in one shot (UI_STANDARD §6c rule 7: POST without event_key)"{% endif %}
+                aria-label="Approve batch">
+            ✓ Approve Batch
+        </button>
+    </div>
+    {% endif %}
+
+    <div class="review-grid__card-tiles" data-review-grid-tiles>
+        {% for member in display_members %}
+        {# Modal target must match render_modal's id pattern
+           "modal-{group_id}-{detection_id}". Card uses group_id =
+           "review-{event_key}", so the full selector is
+           "#modal-review-{event_key}-{detection_id}". #}
+        {% set member_modal_target = '#modal-review-' ~ event.event_key ~ '-' ~ member.best_detection_id if member.best_detection_id and not member.context_only else none %}
+
+        {# Apple-Photos-style tile: just the image, a tiny timestamp,
+           a hidden checkbox for selection, and the hover toolbox.
+           No bbox overlay on the tile (lightbox shows it big), no
+           species-reference circle (lightbox shows it), no species
+           name caption (card header already says it). #}
+        <div class="wm-tile wm-toolbox-host review-grid__tile{% if member.context_only %} review-grid__tile--context{% endif %}"
+             data-detection-id="{{ member.best_detection_id }}"
+             data-image-filename="{{ member.filename }}"
+             data-event-key="{{ event.event_key }}"
+             {% if member.context_only %}data-context-only="1"{% endif %}>
+
+            {# Selection checkbox. Context-only (Gallery anchor) cells
+               stay read-only. #}
+            {% if not member.context_only and member.best_detection_id %}
+            <div class="wm-tile__select review-grid__tile-select">
+                <input type="checkbox"
+                       class="form-check-input wm-tile__checkbox review-grid__tile-checkbox"
+                       value="{{ member.best_detection_id }}"
+                       data-detection-id="{{ member.best_detection_id }}"
+                       data-event-key="{{ event.event_key }}"
+                       aria-label="Select frame for batch actions">
+            </div>
+            {% endif %}
+
+            <div class="review-grid__tile-media">
+                {# Apple-Photos click pattern:
+                     single-click  → toggle selection
+                     shift+click   → range-select from last clicked
+                     double-click  → open big in lightbox modal
+                   Hotfix 5 (2026-05-23): explicit data-tile-image
+                   hook so the JS handler in review_grid.js only fires
+                   on the image itself, never on the toolbox or
+                   checkbox. The modal target stays available so the
+                   double-click handler can fire data-bs-target.
+
+                   Use optimized_url (mid-res webp) as the src so
+                   tiles stay sharp when the slider grows them to
+                   500-1200px. thumb_url is too small for that. #}
+                <div class="review-grid__tile-button"
+                     data-tile-image
+                     {% if member_modal_target %}data-modal-target="{{ member_modal_target }}"{% endif %}
+                     {% if not member.context_only and member.best_detection_id %}data-detection-id="{{ member.best_detection_id }}"{% endif %}
+                     title="Click to select · double-click to open">
+
+                {# Crop vs. Full toggle (partials/thumb_view_toggle.html).
+                   data-thumb-src = pre-generated bbox crop (~400px,
+                   derivatives/thumbs/_crop_1.webp), data-full-src =
+                   full-frame optimized webp (~1280px). Default to the
+                   crop since the operator triages "is there a bird?";
+                   the toggle in the page header swaps every tile. #}
+                <img class="review-grid__tile-image"
+                     src="{{ member.crop_url or member.thumb_url or member.optimized_url }}"
+                     data-thumb-src="{{ member.crop_url or member.thumb_url }}"
+                     data-full-src="{{ member.optimized_url or member.full_url or member.thumb_url }}"
+                     {% if member.bbox_w and member.bbox_h %}
+                     data-bbox-x="{{ member.bbox_x }}"
+                     data-bbox-y="{{ member.bbox_y }}"
+                     data-bbox-w="{{ member.bbox_w }}"
+                     data-bbox-h="{{ member.bbox_h }}"
+                     {% if member.species_colour is not none %}data-bbox-species-colour="{{ member.species_colour }}"{% endif %}
+                     {% endif %}
+                     alt="{{ member.candidate_species_common or member.current_species_common or member.filename }}"
+                     loading="lazy"
+                     decoding="async">
+
+                {# BBox overlay canvas — only meaningful in Full mode
+                   (the crop already centres on the bird). The JS layer
+                   draws into this when both the global Bboxes toggle is
+                   on and the current view mode is 'full'. #}
+                <canvas class="review-grid__tile-bbox-canvas" aria-hidden="true"></canvas>
+
+                </div>
+
+                <span class="review-grid__tile-time">{{ member.formatted_time or member.formatted_date }}</span>
+                {% if member.context_only %}
+                <span class="review-grid__tile-badge review-grid__tile-badge--anchor"
+                      title="Already in Gallery — shown for context only">In Gallery</span>
+                {% endif %}
+
+                {{ tile_toolbox(
+                    detection_id=member.best_detection_id,
+                    filename=member.filename if not member.context_only else none,
+                    surface='review',
+                    is_favorite=member.is_favorite | default(false),
+                    can_moderate=true,
+                    review_reason=member.review_reason if not member.context_only else none,
+                    modal_target=member_modal_target if not member.context_only else none,
+                    current_species=member.candidate_species or member.current_species or none,
+                    allow_change_species=not member.context_only,
+                    allow_move_to_trash=not member.context_only,
+                    allow_review_no_bird=not member.context_only,
+                    frame_variant='overlay'
+                ) }}
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+</article>
+
+{# Detection-modal markup per actionable member — emitted once per
+   event card. UI_STANDARD §0 point 4 + §0c (companion bboxes auto-
+   render via render_image_viewer's siblings payload). #}
+{% for member in _review_members %}
+    {% if member.modal_detection and member.best_detection_id %}
+    {{ render_modal(member.modal_detection, 'review-' ~ event.event_key) }}
+    {% endif %}
+{% endfor %}
+{% endmacro %}

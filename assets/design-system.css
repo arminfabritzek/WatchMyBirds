@@ -759,6 +759,19 @@ code {
     box-shadow: var(--shadow-md);
 }
 
+.btn--outline-warning {
+    background-color: transparent;
+    border-color: var(--color-warning);
+    color: var(--color-warning);
+}
+
+.btn--outline-warning:hover:not(:disabled) {
+    background-color: var(--color-warning);
+    color: white;
+    transform: translateY(-1px);
+    box-shadow: var(--shadow-md);
+}
+
 .btn--outline-danger {
     background-color: transparent;
     border-color: var(--color-danger);
@@ -5029,11 +5042,27 @@ body {
     flex-wrap: wrap;
 }
 
+/* 2026-05-23 redesign: header-action variant. Drops the footer chrome
+   (no gradient, no top-border, tighter padding) so the action group sits
+   cleanly to the right of the title inside .wm-modal__header. */
+.modal-action-bar--in-header {
+    padding: 0;
+    background: none;
+    border-top: none;
+    gap: 6px;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+}
+
 .modal-action-bar__group {
     display: flex;
     align-items: center;
     gap: 8px;
     flex-wrap: wrap;
+}
+
+.modal-action-bar--in-header .modal-action-bar__group {
+    gap: 6px;
 }
 
 .modal-action-bar .btn,
@@ -5128,18 +5157,23 @@ body {
    ═══════════════════════════════════════════════════════════════════════════ */
 
 .wm-modal__dialog {
-    max-width: 1000px;
+    /* 2026-05-23 redesign: lift the 1000px cap. Modal scales with viewport
+       up to a generous ceiling so the image is bigger than the source tile
+       on any display from 13" laptop to 5K. */
+    max-width: min(1600px, calc(100vw - 4rem));
 }
 
 .wm-modal__content {
     border-radius: var(--radius-xl);
     overflow: hidden;
+    max-height: calc(100vh - 2rem);
 }
 
 .wm-modal__header {
     display: flex;
     justify-content: space-between;
     align-items: center;
+    gap: var(--space-md);
     padding: var(--space-sm) var(--space-md);
     border-bottom: 1px solid var(--color-border-light);
 }
@@ -5148,21 +5182,44 @@ body {
     display: flex;
     flex-direction: column;
     gap: 2px;
+    flex: 1 1 auto;
+    min-width: 0;
 }
 
 .wm-modal__title-text {
     font-size: var(--font-size-lg);
     font-weight: 600;
     color: var(--color-text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .wm-modal__title-sub {
     font-size: var(--font-size-sm);
     color: var(--color-text-muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.wm-modal__title-conf {
+    font-variant-numeric: tabular-nums;
 }
 
 .wm-modal__close {
     flex-shrink: 0;
+}
+
+/* 2026-05-23 redesign: header-action slot. Holds the consolidated
+   action group (Zoom / Boxes / Download / Day / Trash / Prev / Next /
+   Maximize / Close) inside .wm-modal__header. Title gets flex: 1 above
+   so a long species name truncates with ellipsis instead of pushing
+   the buttons off-screen. */
+.wm-modal__header-actions {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
 }
 
 .wm-modal__body {
@@ -5177,6 +5234,35 @@ body {
 
 .wm-modal__image--solo {
     margin-bottom: 0;
+}
+
+/* 2026-05-23 redesign: in the detail modal the image should consume the
+   available viewport height. The global .wm-image-viewer__img cap of 65vh
+   stays the default for non-modal surfaces (Stream, Gallery tiles); the
+   modal raises it. The reserved header/padding budget lives in
+   --wm-modal-chrome so Slice 5 (maximize) can tune it without touching
+   the image rule. */
+.wm-modal__body {
+    --wm-modal-chrome: 10rem;
+}
+
+/* 2026-05-23 evening — Slice 1 modal-image sizing, corrected.
+   The original Slice 1 added `display: flex; justify-content: center`
+   to .wm-modal__image .wm-image-viewer AND `object-fit: contain` to
+   the inner <img>. That combination broke bbox overlays appwide:
+     - flex+center could shrink the <img> while the canvas overlay
+       (position:absolute; top:0; left:0) stayed bound to the flex
+       container, drifting away from the actual image rect.
+     - object-fit:contain could letterbox the image inside the <img>
+       element, again leaving the canvas drawing on the strip and
+       not on the rendered image.
+   Reverted both. The image now sizes naturally via `max-height`
+   alone — the <img> element shrinks/grows to match its rendered
+   bitmap, so the absolutely-positioned canvas always overlaps the
+   image exactly. The viewport-cap (Slice 1's actual goal) is kept
+   via max-height. */
+.wm-modal__image .wm-image-viewer__img {
+    max-height: calc(100vh - var(--wm-modal-chrome));
 }
 
 .wm-modal__image .wm-toolbox {
@@ -5194,11 +5280,109 @@ body {
     text-align: left;
 }
 
+/* RETIRED 2026-05-23 — header action group replaces this footer row.
+   Class kept for one release in case any external override consumes it. */
 .wm-modal__action {
     border-top: 1px solid var(--color-border-light);
 }
 
-/* Mobile: scrollable modal content */
+/* 2026-05-23 redesign: slim sibling-strip below the image on multi-bird
+   frames only. Per-card action buttons (Change Species, Trash) are gone;
+   the header action group now acts on the active detection (set via
+   canvas-click or sibling-card-click → wmb:active-detection-change). */
+.wm-modal__sibling-strip {
+    margin-top: var(--space-sm);
+    padding-top: var(--space-sm);
+    border-top: 1px solid var(--color-border-light);
+}
+
+.wm-modal__sibling-strip .sibling-cards {
+    flex-wrap: nowrap !important;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    padding-bottom: 4px;
+}
+
+.wm-modal__sibling-strip .sibling-card {
+    flex: 0 0 auto;
+}
+
+/* Active companion gets a clear visual mark; the canvas + sibling-strip
+   both react to wmb:active-detection-change in gallery_utils.js. */
+.wm-modal__sibling-strip .sibling-card[data-is-current="true"] {
+    border-color: var(--color-accent, #c97c2a);
+    box-shadow: 0 0 0 2px rgba(201, 124, 42, 0.18);
+}
+
+/* 2026-05-23 redesign: maximized variant. Toggled via the ⛶ button in
+   the header action group (toggleModalMaximize in gallery_utils.js).
+   Dialog fills the viewport, header chrome shrinks to icons + title-only,
+   subtitle and sibling-strip hide so the image gets the entire stage. */
+.wm-modal.wm-modal--maximized .wm-modal__dialog {
+    max-width: 100vw;
+    width: 100vw;
+    margin: 0;
+    height: 100vh;
+    max-height: 100vh;
+}
+
+.wm-modal.wm-modal--maximized .wm-modal__content {
+    max-height: 100vh;
+    height: 100vh;
+    border-radius: 0;
+}
+
+.wm-modal.wm-modal--maximized .wm-modal__body {
+    --wm-modal-chrome: 4rem;
+    padding: var(--space-xs);
+    flex: 1 1 auto;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+}
+
+.wm-modal.wm-modal--maximized .wm-modal__image .wm-image-viewer__img {
+    max-height: calc(100vh - var(--wm-modal-chrome));
+    max-width: 100%;
+}
+
+.wm-modal.wm-modal--maximized .wm-modal__title-sub {
+    display: none;
+}
+
+.wm-modal.wm-modal--maximized .wm-modal__sibling-strip {
+    display: none;
+}
+
+.wm-modal.wm-modal--maximized .wm-modal__header {
+    padding: var(--space-xs) var(--space-sm);
+    border-bottom: none;
+    background: rgba(0, 0, 0, 0.04);
+}
+
+.wm-modal.wm-modal--maximized .wm-modal__maximize-btn {
+    background: var(--color-accent, #c97c2a);
+    color: #fff;
+    border-color: var(--color-accent, #c97c2a);
+}
+
+/* Mobile: header collapses to action overflow under ~900px;
+   below 480px the dialog goes edge-to-edge. */
+@media (max-width: 900px) {
+    .wm-modal__header {
+        flex-wrap: wrap;
+    }
+
+    .wm-modal__header-actions {
+        flex-basis: 100%;
+    }
+
+    .modal-action-bar--in-header {
+        justify-content: flex-start;
+    }
+}
+
 @media (max-width: 480px) {
     .wm-modal__dialog {
         margin: 0.5rem;
@@ -5207,7 +5391,7 @@ body {
 
     .wm-modal__body {
         padding: var(--space-sm);
-        max-height: 60vh;
+        max-height: 70vh;
         overflow-y: auto;
         -webkit-overflow-scrolling: touch;
     }
@@ -10007,4 +10191,640 @@ code {
 
 .analytics-bio-table__row--hover {
     background: var(--color-primary-light);
+}
+
+/* REVIEW GRID — 2026-05-23 redesign
+   ============================================================
+   Plan: 2026-05-23_UI_review-grid-redesign.
+   Vertical event-card stack with per-card tile-size stepper.
+   Replaces the rail-+-center-stage-+-decision-rail composition
+   from `review-stage-panel__*` for the default Review Desk view.
+
+   Slice 1: shell only (filter card, empty stack, sticky bulk
+   footer). Slices 2-4 add cards + tiles + batch variant + wiring.
+   Slice 5 retires the ?layout=grid gate and rewrites
+   docs/UI_STANDARD.md §6/§6b/§6c. */
+
+.review-grid {
+    max-width: 1600px;
+    margin: 0 auto;
+    padding: 16px 16px 96px;
+}
+
+.review-grid__stack {
+    display: flex;
+    flex-direction: column;
+    gap: clamp(28px, 3vw, 44px);
+}
+
+.review-grid__placeholder {
+    text-align: center;
+    padding: 32px 16px;
+}
+
+/* Inter-event separator (2026-05-23 evening — small UX feat).
+   A thick, soft, fade-in/fade-out bar that gives the Operator a strong
+   visual "next event starts here" beat between cards in the stack.
+   Rendered between events by review_grid.html, suppressed inside a
+   continuity batch (the batch-strip already groups those). The stack's
+   own gap supplies the breathing room; this element is the bar itself.
+   Token-driven (var(--color-border)) so it tracks light/dark themes. */
+.review-grid__event-separator {
+    /* override the browser/bootstrap <hr> baseline so this looks
+       deliberate, not like a default rule */
+    border: 0;
+    margin: 0;
+    height: 6px;
+    width: 100%;
+    background: linear-gradient(
+        90deg,
+        transparent 0%,
+        color-mix(in srgb, var(--color-border) 70%, transparent) 12%,
+        color-mix(in srgb, var(--color-text-muted, var(--color-border)) 55%, transparent) 50%,
+        color-mix(in srgb, var(--color-border) 70%, transparent) 88%,
+        transparent 100%
+    );
+    border-radius: 999px;
+    opacity: 0.85;
+}
+
+/* .review-grid__batch-footer — RETIRED 2026-05-23 evening (Slice 8).
+   The sticky bulk-action footer is gone; card-header Smart-Mode
+   (Approve / Relabel / No Bird / Trash respect per-card selection)
+   replaces it for the per-card workflow. Cross-event bulk action
+   is no longer reachable from /admin/review. */
+
+/* Review Grid — Card layout (Slice 2)
+   ============================================================ */
+
+.review-grid__card {
+    position: relative;
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-color: color-mix(
+        in srgb,
+        var(--cell-species-colour, var(--color-border)) 34%,
+        var(--color-border)
+    );
+    border-radius: 12px;
+    padding: 12px 16px 20px 22px;
+    /* Hard black frame around every event card (HUMAN request
+       2026-05-23 evening). Sits OUTSIDE the existing species-tinted
+       border so the §6d species-colour anchor stays visible, while the
+       Operator gets an unmistakable "this is one event" boundary.
+       Uses outline (not border) to avoid shifting layout and to keep
+       the existing border-color logic untouched. */
+    outline: 2px solid #000;
+    outline-offset: 0;
+    box-shadow:
+        0 10px 26px rgba(26, 38, 45, 0.10),
+        0 1px 2px rgba(0, 0, 0, 0.06);
+    /* 2026-05-23 Slice 7 — species-coloured vertical rail on the left
+       edge anchors each card as a distinct block. The Operator's eye
+       reads a colour change as a block change without having to parse
+       the header text. Cards with no species (eligibility != event_eligible
+       before relabel, unknown species) fall back to a neutral border
+       colour so the rail is always visible even without a species. */
+    --review-card-rail-width: 6px;
+}
+
+.review-grid__card::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    width: var(--review-card-rail-width);
+    background: var(--cell-species-colour, var(--color-border));
+    border-top-left-radius: 12px;
+    border-bottom-left-radius: 12px;
+}
+
+.review-grid__card--has-species::before {
+    /* Slightly stronger anchor when we actually have a species token. */
+    box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.05);
+}
+
+.review-grid__card::after {
+    content: "";
+    position: absolute;
+    right: 16px;
+    bottom: 0;
+    left: 22px;
+    height: 4px;
+    border-bottom-right-radius: 12px;
+    background: linear-gradient(
+        to right,
+        var(--cell-species-colour, var(--color-border)),
+        color-mix(in srgb, var(--cell-species-colour, var(--color-border)) 18%, transparent)
+    );
+    opacity: 0.95;
+    pointer-events: none;
+}
+
+.review-grid__card-header {
+    /* 2026-05-23 evening — Slice 9: sticky header per event.
+       The header sticks to the top of the viewport (just below the
+       fixed app-bar) while the rest of its card scrolls past. When
+       the next card's header reaches the same top offset, it pushes
+       the previous one out — iOS section-header pattern. This lets
+       the operator act on the current event no matter how far they
+       have scrolled inside it. */
+    position: sticky;
+    top: 112px; /* matches .app-bar height; if app-bar height changes,
+                   update both this rule and .app-bar in one pass */
+    z-index: 20; /* above tile-bbox canvases (z-index 3-4), below
+                    bootstrap modal (z-index 1100) and app-bar (1000) */
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin: -12px -16px 12px -22px;
+    padding: 12px 16px 10px 22px;
+    border-bottom: 1px solid color-mix(
+        in srgb,
+        var(--cell-species-colour, var(--color-border)) 28%,
+        var(--color-border)
+    );
+    /* Solid base + species-tint gradient on top. The base is the
+       card-surface colour so sticky-scroll doesn't bleed tiles
+       through the header. Slice 7's species-coloured tint sits over
+       the base. */
+    background:
+        linear-gradient(
+            to right,
+            color-mix(in srgb, var(--cell-species-colour, var(--color-border)) 14%, transparent),
+            color-mix(in srgb, var(--cell-species-colour, var(--color-border)) 4%, transparent) 60%,
+            transparent
+        ),
+        var(--color-surface);
+    border-top-right-radius: 12px;
+    /* When the header is stuck (scrolled past its in-flow position),
+       add a subtle shadow so it visually lifts above the tiles below.
+       :stuck pseudo-class is still draft; the box-shadow on a non-
+       transparent background reads as "above" without the pseudo. */
+    box-shadow: 0 2px 4px -2px rgba(0, 0, 0, 0.08);
+}
+
+.review-grid__card-identity {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+}
+
+.review-grid__card-species-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.review-grid__card-meta {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+    font-size: 0.85rem;
+    color: var(--color-text-muted);
+}
+
+.review-grid__card-window {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+    margin-top: 4px;
+}
+
+.review-grid__card-window-chip {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 6px;
+    padding: 4px 9px;
+    border: 1px solid color-mix(
+        in srgb,
+        var(--cell-species-colour, var(--color-border)) 36%,
+        var(--color-border)
+    );
+    border-radius: 7px;
+    background: color-mix(
+        in srgb,
+        var(--cell-species-colour, var(--color-surface-2)) 11%,
+        var(--color-surface)
+    );
+    color: var(--color-text);
+    font-variant-numeric: tabular-nums;
+    box-shadow: 0 1px 0 rgba(255, 255, 255, 0.34) inset;
+}
+
+.review-grid__card-window-chip--end {
+    border-color: color-mix(
+        in srgb,
+        var(--cell-species-colour, var(--color-primary, #53676b)) 54%,
+        var(--color-border)
+    );
+    background: color-mix(
+        in srgb,
+        var(--cell-species-colour, var(--color-primary, #53676b)) 17%,
+        var(--color-surface)
+    );
+}
+
+.review-grid__card-window-label {
+    font-size: 0.68rem;
+    font-weight: 800;
+    line-height: 1;
+    text-transform: uppercase;
+    color: var(--color-text-muted);
+}
+
+.review-grid__card-window-value {
+    font-size: 0.98rem;
+    font-weight: 800;
+    line-height: 1.15;
+    color: var(--color-text);
+}
+
+.review-grid__card-window-divider {
+    font-size: 0.75rem;
+    font-weight: 700;
+    color: var(--color-text-muted);
+}
+
+.review-grid__card-date,
+.review-grid__card-time,
+.review-grid__card-count,
+.review-grid__card-window-value {
+    font-variant-numeric: tabular-nums;
+}
+
+.review-grid__card-species {
+    font-size: 1.15rem;
+    font-weight: 700;
+    color: var(--color-text);
+    line-height: 1.2;
+}
+
+.review-grid__card-species[data-species-colour] {
+    /* Species accent: a coloured underline anchored to the species
+       name, slightly thicker than the legacy 2px so it carries the
+       new larger font size. Token-driven per §6d so dark scope
+       inherits via --species-colour-N redefinition. */
+    border-bottom: 3px solid var(--cell-species-colour, var(--color-text-muted));
+    padding-bottom: 2px;
+}
+
+.review-grid__card-sep {
+    color: var(--color-text-muted);
+    opacity: 0.6;
+}
+
+.review-grid__card-badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: 0.8rem;
+    font-weight: 600;
+}
+
+.review-grid__card-badge--warn {
+    background: rgba(255, 178, 0, 0.18);
+    color: #a45e00;
+}
+
+.review-grid__card-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+/* Global tile-size slider (Apple Photos pattern, Hotfix 4 2026-05-23).
+   Single control in the page header; all cards reflow as the slider
+   moves. The CSS variable lives on .review-grid root and drives the
+   minmax() in every card's tile grid. */
+.review-grid {
+    /* Default tile size; the slider rewrites this inline. */
+    --review-tile-size: 280px;
+}
+
+.review-grid__size-control {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin-right: 8px;
+}
+
+.review-grid__size-slider {
+    width: 200px;
+    accent-color: var(--color-primary, #53676b);
+    cursor: pointer;
+}
+
+.review-grid__size-btn {
+    min-width: 32px;
+    padding: 2px 8px;
+    font-weight: 700;
+    line-height: 1;
+}
+
+/* Card tile grid — auto-fill so the layout reflows to fit the
+   current --review-tile-size. minmax(N, 1fr) means tiles stretch
+   to fill leftover space rather than leaving a gap on the right. */
+.review-grid__card-tiles {
+    /* 2026-05-23 evening — Tile size is locked to the slider value,
+       independent of frame count. A 1-frame event and a 50-frame
+       event both render tiles at exactly --review-tile-size. The
+       Operator's slider controls tile size predictably; left-over
+       horizontal space sits to the right as natural whitespace
+       (semantically correct — a 1-frame event genuinely has less
+       content). Prior auto-fit + 1fr stretched the single tile to
+       fill the card width, which broke size consistency across
+       cards and surprised the Operator.
+
+       max-content keeps the column from collapsing below the tile's
+       intrinsic size if any tile content (image aspect ratio) is
+       larger than --review-tile-size. */
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(var(--review-tile-size, 320px), max-content));
+    justify-content: start;
+    gap: 8px;
+}
+
+/* Apple-Photos-style tile: just the image, a tiny timestamp, and
+   the hover toolbox. No bbox overlay, no species-ref circle, no
+   species name — those live in the lightbox modal.
+
+   .review-grid__tile is the click+host element; the inner media
+   block holds the <img>. Hover effect: a soft brightness lift, no
+   scale (scale fights the grid layout). */
+.review-grid__tile {
+    position: relative;
+    overflow: hidden;
+    border-radius: 8px;
+    background: var(--color-surface-2);
+    isolation: isolate;
+    /* 2026-05-23 Slice 7 — Species-coloured frame around every tile
+       so the operator can read the species identity right at the
+       image, not only in the card header. The colour is inherited
+       from .review-grid__card[style="--cell-species-colour: ..."].
+       Cards without a species token (unknown / multi-bird ambig)
+       fall back to the regular surface border. */
+    border: 2px solid var(--cell-species-colour, transparent);
+    box-sizing: border-box;
+}
+
+.review-grid__tile--context {
+    opacity: 0.65;
+    border-style: dashed;
+    border-color: var(--color-border);
+}
+
+.review-grid__tile-select {
+    position: absolute;
+    top: 6px;
+    left: 6px;
+    z-index: 4;
+    background: rgba(255, 255, 255, 0.85);
+    border-radius: 4px;
+    padding: 2px;
+    line-height: 0;
+    /* Stay visible always on touch devices — hover gates are unreliable. */
+    opacity: 1;
+}
+
+.review-grid__tile-checkbox {
+    margin: 0;
+    cursor: pointer;
+}
+
+.review-grid__tile-media {
+    position: relative;
+    aspect-ratio: 4 / 3;
+    overflow: hidden;
+}
+
+.review-grid__tile-button {
+    /* Click-target wrapping the image. No visible chrome — the
+       image itself is the affordance, with cursor: zoom-in. */
+    display: block;
+    width: 100%;
+    height: 100%;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    cursor: zoom-in;
+}
+
+.review-grid__tile-image {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+    transition: transform 180ms ease, filter 180ms ease;
+}
+
+.review-grid__tile:hover .review-grid__tile-image {
+    /* Apple Photos hover: a subtle brightness lift signals
+       interactivity without making the image jump. */
+    filter: brightness(1.05);
+}
+
+.review-grid__tile-time {
+    position: absolute;
+    bottom: 6px;
+    left: 6px;
+    z-index: 3;
+    background: rgba(0, 0, 0, 0.55);
+    color: #fff;
+    padding: 2px 6px;
+    font-size: 0.75rem;
+    border-radius: 4px;
+    font-variant-numeric: tabular-nums;
+    pointer-events: none;
+}
+
+.review-grid__tile-badge {
+    position: absolute;
+    top: 6px;
+    right: 6px;
+    z-index: 3;
+    background: rgba(0, 0, 0, 0.55);
+    color: #fff;
+    padding: 2px 8px;
+    font-size: 0.72rem;
+    border-radius: 10px;
+    font-weight: 600;
+    pointer-events: none;
+}
+
+.review-grid__tile-badge--anchor {
+    background: rgba(60, 130, 90, 0.85);
+}
+
+/* Review Grid — Continuity batch strip (Slice 4)
+   ============================================================ */
+
+.review-grid__card--batch {
+    /* Subtle accent on the card edge so the operator can see at a
+       glance that this card is part of a continuity batch. Token-
+       driven so dark scope inherits via --color-primary. */
+    border-left: 4px solid var(--color-primary, #53676b);
+}
+
+.review-grid__batch-strip {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    padding: 8px 10px;
+    margin: -6px 0 10px;
+    background: var(--color-surface-2);
+    border-radius: 8px;
+    font-size: 0.88rem;
+}
+
+.review-grid__batch-strip-label {
+    font-weight: 600;
+    color: var(--color-text);
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.review-grid__batch-strip-icon {
+    opacity: 0.75;
+}
+
+.review-grid__batch-strip-hint {
+    color: var(--color-text-muted);
+    font-style: italic;
+}
+
+/* Review Grid — always-visible tile toolbox (Hotfix 3a)
+   ============================================================
+   The default `.wm-toolbox` hides until hover/focus. Hover-only
+   reveals are fragile on the Review Grid: touch devices have no
+   hover, fast scrolling never triggers it, and the per-tile
+   verdict (Trash, Mark No Bird, Change Species) is the highest-
+   frequency Review action. Make the toolbox always visible on
+   `.review-grid__tile` and slightly more compact so it never
+   obscures more than ~20% of the image at any tile size.
+*/
+.review-grid__tile .wm-toolbox {
+    opacity: 1;
+    transform: none;
+    pointer-events: auto;
+    bottom: 6px;
+    right: 6px;
+    padding: 4px;
+    gap: 4px;
+    /* Slightly muted background so the always-on chrome doesn't
+       shout louder than the bird image. */
+    background: linear-gradient(180deg, rgba(61, 55, 45, 0.72), rgba(34, 30, 24, 0.78));
+}
+
+.review-grid__tile .wm-toolbox__btn {
+    width: 28px;
+    height: 28px;
+    min-width: 28px;
+    font-size: 0.95rem;
+}
+
+/* Hotfix 4: when tiles are below ~180px the always-on toolbox
+   would cover most of the bird image. Fall back to hover-reveal
+   under that threshold. Anything ≥180px keeps the toolbox visible.
+   The threshold is enforced via container queries so it tracks the
+   per-tile rendered size, not the slider value directly. */
+@supports (container-type: inline-size) {
+    .review-grid__card-tiles {
+        container-type: inline-size;
+    }
+}
+
+.review-grid {
+    /* Default: always-visible toolbox at slider sizes ≥ 180px. */
+}
+
+.review-grid[style*="--review-tile-size: 120px"] .review-grid__tile .wm-toolbox,
+.review-grid[style*="--review-tile-size: 140px"] .review-grid__tile .wm-toolbox,
+.review-grid[style*="--review-tile-size: 160px"] .review-grid__tile .wm-toolbox {
+    opacity: 0;
+    pointer-events: none;
+}
+
+.review-grid[style*="--review-tile-size: 120px"] .review-grid__tile:hover .wm-toolbox,
+.review-grid[style*="--review-tile-size: 140px"] .review-grid__tile:hover .wm-toolbox,
+.review-grid[style*="--review-tile-size: 160px"] .review-grid__tile:hover .wm-toolbox,
+.review-grid[style*="--review-tile-size: 120px"] .review-grid__tile:focus-within .wm-toolbox,
+.review-grid[style*="--review-tile-size: 140px"] .review-grid__tile:focus-within .wm-toolbox,
+.review-grid[style*="--review-tile-size: 160px"] .review-grid__tile:focus-within .wm-toolbox {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+/* Review Grid — selection visual feedback (Hotfix 3c)
+   ============================================================
+   Checked tiles get a token-driven accent ring + tinted overlay
+   so the operator can see at a glance which frames are in the
+   current bulk-selection. The footer carries the global count;
+   each card surfaces its own count when any tile is checked.
+*/
+.review-grid__tile.is-selected {
+    outline: 3px solid var(--color-primary, #53676b);
+    outline-offset: -3px;
+}
+
+.review-grid__tile.is-selected::after {
+    /* Tinted overlay: enough to mark "this is selected" without
+       making the bird image hard to read. */
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: var(--color-primary, #53676b);
+    opacity: 0.12;
+    pointer-events: none;
+    z-index: 2;
+}
+
+.review-grid__card-selected {
+    /* Tucked into the meta block; only visible while a selection
+       exists on this specific card. */
+    display: inline-block;
+    margin-left: 4px;
+    padding: 2px 8px;
+    font-size: 0.78rem;
+    font-weight: 600;
+    background: var(--color-primary, #53676b);
+    color: #fff;
+    border-radius: 10px;
+    font-variant-numeric: tabular-nums;
+}
+
+.review-grid__card.has-selection {
+    /* Subtle whole-card cue so the operator can spot which cards
+       contribute to the footer count when the page is long. */
+    box-shadow: 0 0 0 2px var(--color-primary, #53676b);
+}
+
+/* Review Grid — bbox overlay canvas (Hotfix 7).
+   Sits over the tile image; JS sizes it to match img.client*. */
+.review-grid__tile-bbox-canvas {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    z-index: 2;
+    display: none;  /* JS toggles via inline style.display */
+}
+
+.review-grid__bbox-toggle {
+    margin-right: 6px;
+}
+
+.review-grid__bbox-toggle.active {
+    background: var(--color-primary, #53676b);
+    color: #fff;
+    border-color: var(--color-primary, #53676b);
 }

@@ -1,4 +1,5 @@
 import sqlite3
+from datetime import datetime
 
 from utils.db.detections import set_manual_bbox_review
 from utils.db.review_queue import (
@@ -6,6 +7,7 @@ from utils.db.review_queue import (
     fetch_review_cluster_context,
     fetch_review_queue_count,
     fetch_review_queue_images,
+    update_review_status,
 )
 
 
@@ -17,7 +19,8 @@ def _make_conn() -> sqlite3.Connection:
         CREATE TABLE images (
             filename TEXT PRIMARY KEY,
             timestamp TEXT,
-            review_status TEXT
+            review_status TEXT,
+            review_updated_at TEXT
         );
 
         CREATE TABLE detections (
@@ -54,6 +57,29 @@ def _make_conn() -> sqlite3.Connection:
         """
     )
     return conn
+
+
+def test_update_review_status_stamps_utc_action_time():
+    conn = _make_conn()
+    try:
+        conn.execute(
+            "INSERT INTO images (filename, timestamp, review_status) VALUES (?, ?, ?)",
+            ("fp.jpg", "20260523_214156", "untagged"),
+        )
+
+        updated = update_review_status(conn, ["fp.jpg"], "no_bird")
+
+        assert updated == 1
+        row = conn.execute(
+            "SELECT review_status, review_updated_at FROM images WHERE filename = ?",
+            ("fp.jpg",),
+        ).fetchone()
+        assert row["review_status"] == "no_bird"
+        stamped = datetime.fromisoformat(row["review_updated_at"])
+        assert stamped.tzinfo is not None
+        assert stamped.utcoffset().total_seconds() == 0
+    finally:
+        conn.close()
 
 
 def test_review_queue_uses_score_threshold_no_dead_zone():
@@ -455,5 +481,102 @@ def test_recent_review_species_returns_recent_frequent_species():
         rows = fetch_recent_review_species(conn, limit=8, lookback_days=3650)
         species = [row["species_key"] for row in rows]
         assert species[:2] == ["Parus_major", "Erithacus_rubecula"]
+    finally:
+        conn.close()
+
+
+def _make_conn_with_decision_level() -> sqlite3.Connection:
+    """Schema variant that includes the live ``decision_level`` column.
+
+    The base ``_make_conn`` fixture omits it because most tests pre-date
+    that column. Tests that exercise the ex-Unclear routing (where
+    Smoother=confirmed but Classifier=reject) need it present.
+    """
+    conn = _make_conn()
+    conn.execute("ALTER TABLE detections ADD COLUMN decision_level TEXT")
+    conn.commit()
+    return conn
+
+
+def test_review_queue_admits_classifier_rejected_confirmed_detections():
+    """Ex-Unclear: Smoother says confirmed, Classifier rejected the label.
+
+    These detections used to live on a separate /unclear surface. Per
+    P-01 (Single User-Decision-Point) they now route to Review.
+    """
+    conn = _make_conn_with_decision_level()
+    try:
+        conn.execute(
+            "INSERT INTO images (filename, timestamp, review_status) VALUES (?, ?, ?)",
+            ("ex_unclear.jpg", "20260525_120000", "untagged"),
+        )
+        conn.execute(
+            """
+            INSERT INTO detections (
+                image_filename, od_confidence, score, od_model_id,
+                decision_state, decision_level
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            ("ex_unclear.jpg", 0.85, 0.95, "yolo", "confirmed", "reject"),
+        )
+        conn.commit()
+
+        rows = fetch_review_queue_images(conn, gallery_threshold=0.7)
+        reasons = {row["filename"]: row["review_reason"] for row in rows}
+        assert reasons.get("ex_unclear.jpg") == "classifier_reject"
+
+        count = fetch_review_queue_count(conn, gallery_threshold=0.7)
+        assert count == 1
+    finally:
+        conn.close()
+
+
+def test_review_queue_admits_species_review_confirmed_detections():
+    """Two-stage gate "soft reject" (species_review) also routes to Review."""
+    conn = _make_conn_with_decision_level()
+    try:
+        conn.execute(
+            "INSERT INTO images (filename, timestamp, review_status) VALUES (?, ?, ?)",
+            ("soft.jpg", "20260525_120001", "untagged"),
+        )
+        conn.execute(
+            """
+            INSERT INTO detections (
+                image_filename, od_confidence, score, od_model_id,
+                decision_state, decision_level
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            ("soft.jpg", 0.85, 0.95, "yolo", "confirmed", "species_review"),
+        )
+        conn.commit()
+
+        rows = fetch_review_queue_images(conn, gallery_threshold=0.7)
+        reasons = {row["filename"]: row["review_reason"] for row in rows}
+        assert reasons.get("soft.jpg") == "classifier_species_review"
+    finally:
+        conn.close()
+
+
+def test_review_queue_does_not_admit_gallery_eligible_confirmed_detections():
+    """Smoother=confirmed AND Classifier=species (label landed) stays out of Review."""
+    conn = _make_conn_with_decision_level()
+    try:
+        conn.execute(
+            "INSERT INTO images (filename, timestamp, review_status) VALUES (?, ?, ?)",
+            ("gallery.jpg", "20260525_120002", "untagged"),
+        )
+        conn.execute(
+            """
+            INSERT INTO detections (
+                image_filename, od_confidence, score, od_model_id,
+                decision_state, decision_level
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            ("gallery.jpg", 0.85, 0.95, "yolo", "confirmed", "species"),
+        )
+        conn.commit()
+
+        rows = fetch_review_queue_images(conn, gallery_threshold=0.7)
+        assert "gallery.jpg" not in [row["filename"] for row in rows]
     finally:
         conn.close()

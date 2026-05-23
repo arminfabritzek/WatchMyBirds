@@ -14,6 +14,9 @@ def test_tile_toolbox_supports_details_href():
 
     assert "details_href=none" in content
     assert "allow_favorite=true" in content
+    # `allow_training_export=true` macro parameter intentionally kept so
+    # caller templates don't break; the button it gated was removed
+    # 2026-05-24 (HUMAN decision — one-click ground-truth poisoning risk).
     assert "allow_training_export=true" in content
     assert "allow_details=true" in content
     assert "allow_change_species=true" in content
@@ -22,8 +25,14 @@ def test_tile_toolbox_supports_details_href():
     assert "modal_target or details_href" in content
     assert "allow_details and (modal_target or details_href)" in content
     assert "data-details-href" in content
-    assert 'data-action="training-export"' in content
-    assert "Confirm and add to training export" in content
+    # The training-export button (data-action="training-export" with the
+    # "Confirm and add to training export" tooltip) was removed from the
+    # toolbox 2026-05-24. The deliberate replacement is the
+    # /admin/groundtruth-export surface. The JS dispatch in
+    # tile_actions.js stays for now; a later cleanup removes the whole
+    # old training-export backend at once.
+    assert 'data-action="training-export"' not in content
+    assert "Confirm and add to training export" not in content
 
 
 def test_subgallery_cover_and_filmstrip_use_toolbox():
@@ -102,7 +111,13 @@ def test_modal_action_bar_data_actions_are_dispatched():
     action_bar = _read("templates/components/modal_action_bar.html")
     js = _read("assets/js/tile_actions.js")
 
-    assert 'class="modal-action-bar"' in action_bar
+    # 2026-05-23 redesign: the bar gained an in_header variant
+    # (class="modal-action-bar modal-action-bar--in-header"), so the
+    # historical exact-match assertion would only catch the legacy
+    # footer-rendered form. Match the class as a prefix and verify the
+    # in-header variant lives on the same element.
+    assert 'class="modal-action-bar' in action_bar
+    assert 'modal-action-bar--in-header' in action_bar
     assert 'data-action="move-trash"' in action_bar
     assert "actionEl.closest('.modal-action-bar')" in js
 
@@ -119,14 +134,16 @@ def test_tile_actions_dispatch_training_export_flag():
 def test_detection_info_hides_decision_badges_after_manual_species_review():
     content = _read("templates/components/modal_detection_info.html")
 
+    # 2026-05-23 redesign: the single-detection branch is gone (the header
+    # subtitle in detection_modal.html now carries species + confidence +
+    # AI-status for the entry-point detection). Only the multi-bird
+    # sibling-strip branch remains; the manual-species-review guard still
+    # has to suppress decision badges per sibling when human approval has
+    # landed.
     assert "sib_has_manual_species_review = (sib.species_source == 'manual') and sib.manual_species_override" in content
     assert "sib_has_manual_review_approval = sib_has_manual_species_review and (sib.review_status == 'confirmed_bird')" in content
     assert "{% if sib_has_manual_review_approval %}" in content
     assert "{% elif sib.decision_state and not sib_has_manual_review_approval %}" in content
-    assert "det_has_manual_species_review = (det.species_source == 'manual') and det.manual_species_override" in content
-    assert "det_has_manual_review_approval = det_has_manual_species_review and (det.review_status == 'confirmed_bird')" in content
-    assert "{% if det_has_manual_review_approval %}" in content
-    assert "{% elif det.decision_state and not det_has_manual_review_approval %}" in content
     assert "🤖 KI bestaetigt" in content
     assert "🤖 KI unsicher" in content
     assert "🤖 KI unbekannt" in content
@@ -292,7 +309,7 @@ def test_review_modal_uses_quick_review_layout():
     assert "Current · CLS {{ species.score_pct }}%" in content
     assert "CLS {{ species.score_pct }}%" in content
     assert "/assets/js/species_picker.js" in review_page
-    assert "/assets/js/tile_actions.js?v=1" in review_page
+    assert "/assets/js/tile_actions.js?v=" in review_page
     assert 'id="reviewActivePanel"' in review_page
     assert 'onclick="selectReviewItem(' not in review_page
     assert "action === 'select_species'" in review_js
@@ -402,8 +419,17 @@ def test_no_bird_js_fallback_is_surface_agnostic():
     assert "'no_bird'" in js
     assert "localStorage.getItem('noBirdConfirmed')" in js or "localStorage.getItem(NO_BIRD_KEY)" in js
     assert "localStorage.setItem" in js
-    # Confirmation message must mention the frame-wide effect
-    assert "ALL detections on this image" in js
+    # Confirmation flow must surface the frame-wide effect in plain
+    # language (multi-detection count or generic "all detections").
+    # Tolerates both the modal-with-full-frame UX and the legacy
+    # confirm() fallback path used by old browsers.
+    assert (
+        "ALL will be flagged as false-positives" in js
+        or "All detections on this frame" in js
+    )
+    # Modal must include a full-frame preview to prevent the UX trap
+    # where the operator confirms based on the cropped tile view.
+    assert "data-full-src" in js
     # Tile fade-out on success
     assert "closest('.wm-tile')" in js
     assert "tile.style.opacity = '0'" in js

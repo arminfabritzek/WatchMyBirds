@@ -1,8 +1,20 @@
 {#
 Modal Action Bar Component
 
-Compact single-row footer using Design System buttons (pill style).
-Matches the visual style of page header actions (Edit, ← Gallery).
+Compact single-row action group using Design System buttons (pill style).
+2026-05-23 redesign: now renders into the modal HEADER right slot (default
+via in_header=true from detection_modal.html). The legacy footer-rendered
+form is kept for orphan_modal.html and any other consumer that opts out
+via in_header=false.
+
+Args:
+  in_header (bool): When true, renders as a slim header-action group
+                    (no footer chrome, no top-border). When false, renders
+                    as the legacy footer bar.
+  show_maximize (bool): When true, includes the ⛶ Maximize toggle.
+  show_close (bool): When true, includes the ✕ Close button at the end.
+                     For the legacy footer variant this is always true
+                     (kept for backward compatibility).
 #}
 {% macro render_action_bar(
 detection_id,
@@ -16,24 +28,29 @@ show_download=true,
 gallery_date=none,
 is_favorite=false,
 can_moderate=false,
-current_species=none
+current_species=none,
+in_header=false,
+show_maximize=false,
+show_close=true
 ) %}
-<div class="modal-action-bar">
+<div class="modal-action-bar{% if in_header %} modal-action-bar--in-header{% endif %}">
     {# Left: Viewer actions #}
     <div class="modal-action-bar__group">
         <button type="button" class="btn btn--secondary btn--sm smart-zoom-toggle" onclick="toggleSmartZoom(this)"
-            title="Toggle between bird close-up and full image">⌕ Zoom</button>
+            title="Toggle between bird close-up and full image" aria-label="Toggle smart zoom">⌕ Zoom</button>
         {% if show_bbox_toggle %}
         <button type="button" class="btn btn--secondary btn--sm bbox-toggle" onclick="toggleBboxOverlay(this)"
             data-detection-id="{{ detection_id }}" data-siblings='{{ (siblings | default([])) | tojson }}'
-            data-current-bbox='{{ (bbox | default({})) | tojson }}'>□ Boxes</button>
+            data-current-bbox='{{ (bbox | default({})) | tojson }}'
+            title="Toggle bounding box overlay" aria-label="Toggle bounding box overlay">□ Boxes</button>
         {% endif %}
         {% if show_download and original_url %}
-        <a href="{{ original_url }}" download class="btn btn--secondary btn--sm">↓ Download</a>
+        <a href="{{ original_url }}" download class="btn btn--secondary btn--sm"
+            title="Download original image" aria-label="Download original image">↓ Download</a>
         {% endif %}
         {% if gallery_date %}
         <a href="/gallery/{{ gallery_date }}?focus={{ detection_id }}#detection-{{ detection_id }}"
-            class="btn btn--secondary btn--sm" title="Go to Day">📅 Day</a>
+            class="btn btn--secondary btn--sm" title="Open this day in Gallery" aria-label="Open this day in Gallery">📅 Day</a>
         {% endif %}
         {% if show_trash and can_moderate %}
         <button type="button"
@@ -41,19 +58,30 @@ current_species=none
             data-action="move-trash"
             data-detection-id="{{ detection_id }}"
             data-current-species="{{ current_species or '' }}"
-            title="Move to Trash">🗑 Trash</button>
+            title="Move to Trash" aria-label="Move to Trash">🗑 Trash</button>
         {% endif %}
     </div>
 
-    {# Right: Navigation + Close #}
+    {# Right: Navigation + Maximize + Close #}
     <div class="modal-action-bar__group">
         {% if show_nav %}
         <button type="button" class="btn btn--secondary btn--sm prev-btn"
-            onclick="navigateModal(this, 'prev')">← Prev</button>
+            onclick="navigateModal(this, 'prev')"
+            title="Previous detection" aria-label="Previous detection">← Prev</button>
         <button type="button" class="btn btn--secondary btn--sm next-btn"
-            onclick="navigateModal(this, 'next')">→ Next</button>
+            onclick="navigateModal(this, 'next')"
+            title="Next detection" aria-label="Next detection">→ Next</button>
         {% endif %}
-        <button type="button" class="btn btn--primary btn--sm" data-bs-dismiss="modal">✕ Close</button>
+        {% if show_maximize %}
+        <button type="button" class="btn btn--secondary btn--sm wm-modal__maximize-btn"
+            onclick="toggleModalMaximize(this)"
+            title="Maximize image (toggle)" aria-label="Maximize image"
+            data-maximize-label-on="⛶" data-maximize-label-off="⛶">⛶</button>
+        {% endif %}
+        {% if show_close %}
+        <button type="button" class="btn btn--primary btn--sm" data-bs-dismiss="modal"
+            title="Close" aria-label="Close">✕ Close</button>
+        {% endif %}
     </div>
 </div>
 

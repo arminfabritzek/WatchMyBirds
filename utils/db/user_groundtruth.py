@@ -16,7 +16,7 @@ The four buckets — and what makes a row qualify:
    ``no_bird`` image is a verified false-positive crop.
 
 2. **Confirmed Positives** (``fetch_confirmed_positives``):
-   - ``lower(detections.decision_level) = 'species'``
+   - ``lower(detections.decision_level) IN ('species', 'species_review')``
    - ``detections.status = 'active'``
    - ``images.review_status`` IS NULL or != ``'no_bird'`` (defense
      against frames the user later rejected wholesale)
@@ -26,7 +26,7 @@ The four buckets — and what makes a row qualify:
      or any other manual write site) OR ``manual_species_override``
      is non-empty (user picked a species via the picker).
    Source: species labels the user explicitly authored. The earlier
-   filter — "decision_level=species AND user did not contradict" —
+   filter — "species-level decision AND user did not contradict" —
    was a **bug**: 95% of `decision_level=species` rows are pure
    pipeline output (``species_source='model_top1'``) and would
    feed the model its own predictions back as ground-truth
@@ -61,8 +61,9 @@ Explicitly NOT included (deliberately):
 - Star ratings (``rating > 0``) — 98% are ``rating_source='auto'`` from
   the aesthetic tagger, not a user statement. Favorites are the
   separate explicit channel.
-- ``species_review`` / ``reject`` decision_levels — these are
-  *pipeline* uncertainty, not user statements.
+- bare ``species_review`` / ``reject`` decision_levels — these are
+  *pipeline* uncertainty, not user statements unless paired with an
+  explicit manual species action.
 
 Every row carries enough provenance for Pipeline-Dev to gate by model
 version, time range, and originating user action.
@@ -127,7 +128,8 @@ def fetch_confirmed_positives(
     """Return detections the user explicitly confirmed as a species.
 
     A row qualifies if **all** of these hold:
-    - ``decision_level='species'`` (pipeline reached species-level)
+    - ``decision_level`` is ``species`` or ``species_review``
+      (pipeline reached a species-level candidate)
     - ``status='active'`` (not in trash)
     - parent image is not flagged ``no_bird``
     - the user has *explicitly* acted on the row's species — either
@@ -276,13 +278,19 @@ def _time_window_clause(
     (half-open intervals compose cleanly across consecutive batches:
     today's ``until`` is tomorrow's ``since``).
     """
+    # User-action timestamps have existed in two formats in the live DB:
+    # old review paths used local naive strings, newer species/favorite
+    # paths use UTC ISO strings with an offset. SQLite's 'utc' modifier
+    # converts local naive timestamps to UTC while leaving offset-aware
+    # values unchanged, so the export window stays honest across both.
+    normalized = f"julianday({column}, 'utc')"
     parts: list[str] = []
     params: list[Any] = []
     if since is not None:
-        parts.append(f" AND {column} >= ?")
+        parts.append(f" AND {normalized} >= julianday(?, 'utc')")
         params.append(since)
     if until is not None:
-        parts.append(f" AND {column} < ?")
+        parts.append(f" AND {normalized} < julianday(?, 'utc')")
         params.append(until)
     return "".join(parts), params
 
@@ -292,6 +300,7 @@ def _build_hard_negatives_query(
     until: str | None,
 ) -> tuple[str, list[Any]]:
     window, params = _time_window_clause("i.review_updated_at", since, until)
+    exclusions = _active_export_exclusion_clause()
     sql = f"""
         SELECT
             d.detection_id,
@@ -308,6 +317,7 @@ def _build_hard_negatives_query(
         JOIN images i ON i.filename = d.image_filename
         WHERE d.status = 'active'
           AND i.review_status = 'no_bird'
+          {exclusions}
           {window}
         ORDER BY i.review_updated_at DESC, d.detection_id DESC
     """
@@ -319,6 +329,7 @@ def _build_confirmed_positives_query(
     until: str | None,
 ) -> tuple[str, list[Any]]:
     window, params = _time_window_clause("d.species_updated_at", since, until)
+    exclusions = _active_export_exclusion_clause()
     # Explicit-user-action gate: either species_source is 'manual'
     # (any manual write site stamps that — confirm_unclear_detections,
     # bulk-relabel, review-queue edit) OR manual_species_override is
@@ -346,7 +357,7 @@ def _build_confirmed_positives_query(
         FROM detections d
         JOIN images i ON i.filename = d.image_filename
         WHERE d.status = 'active'
-          AND lower(COALESCE(d.decision_level, '')) = 'species'
+          AND lower(COALESCE(d.decision_level, '')) IN ('species', 'species_review')
           AND (i.review_status IS NULL OR i.review_status != 'no_bird')
           AND (
               lower(COALESCE(d.species_source, '')) = 'manual'
@@ -355,6 +366,7 @@ def _build_confirmed_positives_query(
                   AND d.manual_species_override != ''
               )
           )
+          {exclusions}
           {window}
         ORDER BY d.species_updated_at DESC, d.detection_id DESC
     """
@@ -366,6 +378,7 @@ def _build_species_relabels_query(
     until: str | None,
 ) -> tuple[str, list[Any]]:
     window, params = _time_window_clause("d.species_updated_at", since, until)
+    exclusions = _active_export_exclusion_clause()
     sql = f"""
         SELECT
             d.detection_id,
@@ -386,6 +399,7 @@ def _build_species_relabels_query(
           AND d.manual_species_override IS NOT NULL
           AND d.manual_species_override != ''
           AND d.manual_species_override != COALESCE(d.raw_species_name, '')
+          {exclusions}
           {window}
         ORDER BY d.species_updated_at DESC, d.detection_id DESC
     """
@@ -404,6 +418,7 @@ def _build_favorites_query(
     # comparison semantics (which is the conservative default —
     # an unwindowed favorites query has since=None and gets every fav).
     window, params = _time_window_clause("d.species_updated_at", since, until)
+    exclusions = _active_export_exclusion_clause()
     sql = f"""
         SELECT
             d.detection_id,
@@ -425,10 +440,31 @@ def _build_favorites_query(
         WHERE d.status = 'active'
           AND d.is_favorite = 1
           AND d.rating_source = 'manual'
+          {exclusions}
           {window}
         ORDER BY d.species_updated_at DESC, d.detection_id DESC
     """
     return sql, params
+
+
+def _active_export_exclusion_clause() -> str:
+    return """
+          AND NOT EXISTS (
+              SELECT 1
+              FROM groundtruth_export_exclusions gte
+              WHERE gte.released_at IS NULL
+                AND (
+                    (
+                        gte.scope = 'image'
+                        AND gte.image_filename = d.image_filename
+                    )
+                    OR (
+                        gte.scope = 'detection'
+                        AND gte.detection_id = d.detection_id
+                    )
+                )
+          )
+    """
 
 
 def _count_with(

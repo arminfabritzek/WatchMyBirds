@@ -277,6 +277,17 @@ def build_species_picker_entries(
             scientific = row["cls_class_name"]
             if not scientific or scientific in seen:
                 continue
+            # Skip synthetic classifier classes (cls_v20+ ships a
+            # ``non_bird`` class that can land in top-k for kept bird
+            # detections). They are model-internal and not selectable
+            # as a species identity — the dedicated "Mark No Bird"
+            # action handles that signal at the frame level.
+            if (
+                scientific not in model_names
+                and scientific not in extended_lookup
+                and scientific not in _NON_BIRD_OD_SPECIES
+            ):
+                continue
             common = (
                 model_names.get(scientific)
                 or extended_lookup.get(scientific)

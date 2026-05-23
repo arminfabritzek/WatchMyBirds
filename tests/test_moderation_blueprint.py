@@ -373,6 +373,37 @@ class TestBulkRelabel:
         )
         mock_gallery.invalidate_cache.assert_called_once()
 
+    @patch("web.blueprints.moderation.gallery_service")
+    @patch("web.blueprints.moderation.db_service")
+    @patch(
+        "web.blueprints.moderation.build_species_picker_entries",
+        return_value=[
+            {"scientific": "Parus_major", "common": "Great Tit",
+             "source": "model", "score": None, "rank": None}
+        ],
+    )
+    def test_relabel_flips_decision_level_to_species(
+        self, _mock_species_entries, mock_db, _mock_gallery, client
+    ):
+        """Regression: bulk-relabel must flip decision_level to 'species'
+        so the rows re-enter /species and gallery."""
+        mock_conn = MagicMock()
+        mock_db.closing_connection.return_value.__enter__ = MagicMock(
+            return_value=mock_conn
+        )
+        mock_db.closing_connection.return_value.__exit__ = MagicMock(return_value=False)
+
+        resp = client.post(
+            "/api/moderation/bulk/relabel",
+            json={"detection_ids": [1, 2, 3], "species": "Parus_major"},
+        )
+        assert resp.status_code == 200
+        executed_sql = " ".join(
+            str(call.args[0]) for call in mock_conn.execute.call_args_list
+        )
+        assert "decision_state = 'confirmed'" in executed_sql
+        assert "decision_level = 'species'" in executed_sql
+
 
 # ---------------------------------------------------------------------------
 # bulk/reject
@@ -404,6 +435,25 @@ class TestBulkReject:
         data = resp.get_json()
         assert data["rejected_detections"] == 3
         mock_db.reject_detections.assert_called_once_with(mock_conn, [5, 6, 7])
+
+    @patch("web.blueprints.moderation.gallery_service")
+    @patch("web.blueprints.moderation.db_service")
+    def test_reject_accepts_legacy_ids_alias(self, mock_db, mock_gallery, client):
+        mock_conn = MagicMock()
+        mock_db.closing_connection.return_value.__enter__ = MagicMock(
+            return_value=mock_conn
+        )
+        mock_db.closing_connection.return_value.__exit__ = MagicMock(return_value=False)
+
+        resp = client.post(
+            "/api/moderation/bulk/reject",
+            json={"ids": [8, 9]},
+        )
+
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert data["rejected_detections"] == 2
+        mock_db.reject_detections.assert_called_once_with(mock_conn, [8, 9])
 
     @patch("web.blueprints.moderation.gallery_service")
     @patch("web.blueprints.moderation.db_service")

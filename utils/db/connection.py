@@ -468,6 +468,31 @@ def _init_schema(conn: sqlite3.Connection) -> None:
         "CREATE INDEX IF NOT EXISTS idx_export_batches_built_at ON export_batches(built_at DESC);"
     )
 
+    # Operator-reviewed export quarantine. This is deliberately
+    # non-destructive: it does not delete images or detections, it only
+    # prevents known-unsafe frames/detections from entering the
+    # user-groundtruth export.
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS groundtruth_export_exclusions (
+            exclusion_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            scope TEXT NOT NULL CHECK(scope IN ('image', 'detection')),
+            image_filename TEXT NOT NULL,
+            detection_id INTEGER,
+            reason TEXT,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            created_by TEXT NOT NULL DEFAULT 'dry_run',
+            released_at TEXT
+        );
+    """)
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_groundtruth_export_exclusions_image "
+        "ON groundtruth_export_exclusions(image_filename, released_at);"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_groundtruth_export_exclusions_detection "
+        "ON groundtruth_export_exclusions(detection_id, released_at);"
+    )
+
     # Seen-species log for the "new species only" Telegram mode. One row per
     # species the operator has ever been notified about (by species_key, the
     # same Latin / OD-class identifier the rest of the stack uses). The mode

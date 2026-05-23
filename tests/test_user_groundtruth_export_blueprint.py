@@ -79,6 +79,16 @@ def _make_seeded_db(tmp_path: Path) -> Path:
             wmb_app_version TEXT,
             notes TEXT
         );
+        CREATE TABLE groundtruth_export_exclusions (
+            exclusion_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            scope TEXT NOT NULL,
+            image_filename TEXT NOT NULL,
+            detection_id INTEGER,
+            reason TEXT,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            created_by TEXT NOT NULL DEFAULT 'dry_run',
+            released_at TEXT
+        );
         """
     )
     # One row per bucket
@@ -92,9 +102,7 @@ def _make_seeded_db(tmp_path: Path) -> Path:
         "VALUES ('20260522_100000_hn.jpg', 0.1, 0.1, 0.2, 0.2, 1920, 1080, "
         "'species_review', 'Parus_major')"
     )
-    conn.execute(
-        "INSERT INTO images (filename) VALUES ('20260522_110000_cp.jpg')"
-    )
+    conn.execute("INSERT INTO images (filename) VALUES ('20260522_110000_cp.jpg')")
     # CP requires explicit user action — species_source='manual'
     conn.execute(
         "INSERT INTO detections (image_filename, bbox_x, bbox_y, bbox_w, bbox_h, "
@@ -103,9 +111,7 @@ def _make_seeded_db(tmp_path: Path) -> Path:
         "VALUES ('20260522_110000_cp.jpg', 0.2, 0.2, 0.1, 0.1, 1920, 1080, "
         "'species', 'Cyanistes_caeruleus', 'manual', '2026-05-22T11:00:00Z')"
     )
-    conn.execute(
-        "INSERT INTO images (filename) VALUES ('20260522_120000_rl.jpg')"
-    )
+    conn.execute("INSERT INTO images (filename) VALUES ('20260522_120000_rl.jpg')")
     # Relabel: manual_species_override is the user-action gate
     conn.execute(
         "INSERT INTO detections (image_filename, bbox_x, bbox_y, bbox_w, bbox_h, "
@@ -125,9 +131,11 @@ def _make_originals(tmp_path: Path) -> Path:
     base = tmp_path / "originals"
     date_dir = base / "2026-05-22"
     date_dir.mkdir(parents=True)
-    for fn in ("20260522_100000_hn.jpg",
-               "20260522_110000_cp.jpg",
-               "20260522_120000_rl.jpg"):
+    for fn in (
+        "20260522_100000_hn.jpg",
+        "20260522_110000_cp.jpg",
+        "20260522_120000_rl.jpg",
+    ):
         (date_dir / fn).write_bytes(b"FAKEJPGBYTES")
     return base
 
@@ -147,7 +155,8 @@ def app_and_db(tmp_path):
     # Templates: the blueprint renders user_groundtruth_export.html
     # which extends base.html. For HTTP-contract tests we mock out
     # the render to avoid pulling the full template hierarchy.
-    app = Flask(__name__)
+    template_dir = Path(__file__).resolve().parent.parent / "templates"
+    app = Flask(__name__, template_folder=str(template_dir))
     app.config["TESTING"] = True
     app.secret_key = "test-secret-key"
 
@@ -218,6 +227,53 @@ def test_page_requires_auth(unauth_client):
     assert r.status_code in (302, 401, 403)
 
 
+def test_dry_run_page_requires_auth(unauth_client):
+    r = unauth_client.get("/admin/groundtruth-export/dry-run")
+    assert r.status_code in (302, 401, 403)
+
+
+def test_appbar_export_link_points_to_groundtruth_export():
+    content = (
+        Path(__file__).resolve().parent.parent
+        / "templates"
+        / "partials"
+        / "appbar.html"
+    ).read_text(encoding="utf-8")
+
+    assert 'href="/admin/groundtruth-export"' in content
+    assert "Export user-reviewed groundtruth for Pipeline-Dev" in content
+    assert "current_path in ['/admin/groundtruth-export', '/admin/export']" in content
+
+
+def test_legacy_training_export_links_to_new_groundtruth_export():
+    content = (
+        Path(__file__).resolve().parent.parent / "templates" / "training_export.html"
+    ).read_text(encoding="utf-8")
+
+    assert 'href="/admin/groundtruth-export"' in content
+    assert "New groundtruth export" in content
+
+
+def test_legacy_review_export_button_points_to_groundtruth_export():
+    content = (
+        Path(__file__).resolve().parent.parent / "templates" / "orphans.html"
+    ).read_text(encoding="utf-8")
+
+    assert 'href="/admin/groundtruth-export"' in content
+    assert "Export user-reviewed groundtruth for Pipeline-Dev" in content
+
+
+def test_groundtruth_export_page_links_to_dry_run():
+    content = (
+        Path(__file__).resolve().parent.parent
+        / "templates"
+        / "user_groundtruth_export.html"
+    ).read_text(encoding="utf-8")
+
+    assert 'href="/admin/groundtruth-export/dry-run"' in content
+    assert "Review dry-run HTML" in content
+
+
 # ---------------------------------------------------------------------------
 # Preview endpoint
 # ---------------------------------------------------------------------------
@@ -251,12 +307,17 @@ def test_preview_reflects_recorded_batches(client, app_and_db):
     # through the service so we don't depend on the build endpoint
     # for this test.
     from utils.path_manager import PathManager
+
     pm = PathManager(output_dir)
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     fixed_now = datetime(2026, 5, 23, 0, 0, 0, tzinfo=UTC)
-    batch = build_batch(conn, path_resolver=pm.get_original_path,
-                        wmb_app_version="0.46.0-test", now=fixed_now)
+    batch = build_batch(
+        conn,
+        path_resolver=pm.get_original_path,
+        wmb_app_version="0.46.0-test",
+        now=fixed_now,
+    )
     record_batch_exported(conn, batch, notes="seeded")
     conn.close()
 
@@ -273,13 +334,201 @@ def test_preview_reflects_recorded_batches(client, app_and_db):
 
 def test_preview_accepts_since_override(client):
     """The ``since`` query param overrides the default last-batch `until`."""
-    r = client.get(
-        "/api/groundtruth-export/preview?since=2099-01-01T00:00:00Z"
-    )
+    r = client.get("/api/groundtruth-export/preview?since=2099-01-01T00:00:00Z")
     data = r.get_json()
     # Future `since` → nothing is pending
     assert data["since"] == "2099-01-01T00:00:00Z"
     assert data["total_pending"] == 0
+
+
+# ---------------------------------------------------------------------------
+# Dry-run page
+# ---------------------------------------------------------------------------
+
+
+def test_dry_run_page_renders_exact_batch_without_recording(client, app_and_db):
+    _, db_path, _ = app_and_db
+
+    r = client.get("/admin/groundtruth-export/dry-run")
+
+    assert r.status_code == 200
+    body = r.get_data(as_text=True)
+    assert "Groundtruth Export Dry-run" in body
+    assert 'data-dryrun-tab="confirmed_positives"' in body
+    assert 'data-dryrun-tab="species_relabels"' in body
+    assert 'data-dryrun-tab="favorites"' in body
+    assert 'data-dryrun-tab="hard_negatives"' in body
+    assert "Confirmed positives (2)" in body
+    assert "Species re-labels (1)" in body
+    assert "Favorites (0)" in body
+    assert "FPs / Kein Vogel (1)" in body
+    assert "Kein Vogel (Training Hard-negatives)" in body
+    assert "Confirmed positives" in body
+    assert "Species re-labels" in body
+    assert 'id="dryRunTileSize"' in body
+    assert "wmbDryRunTileSize" in body
+    assert "dryrun-crop" in body
+    assert "dryrun-avatar" in body
+    assert "/assets/review_species/Cyanistes_caeruleus.webp" in body
+    assert "dryrun-avatar--no_bird" in body
+    assert "dryrun-bbox" in body
+    assert "Exclude from export" in body
+    assert "Move to WMB Trash" in body
+    assert 'data-trash-export-image="20260522_110000_cp.jpg"' in body
+    assert "20260522_100000_hn.jpg" in body
+    assert "20260522_110000_cp.jpg" in body
+    assert "20260522_120000_rl.jpg" in body
+    assert "Build this dry-run ZIP" in body
+    assert "const frozenUntil =" in body
+
+    conn = sqlite3.connect(db_path)
+    n_batches = conn.execute("SELECT COUNT(*) FROM export_batches").fetchone()[0]
+    conn.close()
+    assert n_batches == 0
+
+
+def test_dry_run_page_renders_frame_integrity_drop_as_visual_tab(client, app_and_db):
+    _, db_path, output_dir = app_and_db
+    filename = "20260522_130000_mixed.jpg"
+    original = Path(output_dir) / "originals" / "2026-05-22" / filename
+    original.write_bytes(b"FAKEJPGBYTES")
+
+    conn = sqlite3.connect(db_path)
+    conn.execute("INSERT INTO images (filename) VALUES (?)", (filename,))
+    conn.execute(
+        "INSERT INTO detections (image_filename, bbox_x, bbox_y, bbox_w, bbox_h, "
+        "frame_width, frame_height, decision_level, raw_species_name, "
+        "species_source, species_updated_at) "
+        "VALUES (?, 0.1, 0.1, 0.2, 0.2, 1920, 1080, "
+        "'species', 'Parus_major', 'manual', '2026-05-22T13:00:00Z')",
+        (filename,),
+    )
+    conn.execute(
+        "INSERT INTO detections (image_filename, bbox_x, bbox_y, bbox_w, bbox_h, "
+        "frame_width, frame_height, decision_level, raw_species_name) "
+        "VALUES (?, 0.5, 0.5, 0.2, 0.2, 1920, 1080, "
+        "'species_review', 'Cyanistes_caeruleus')",
+        (filename,),
+    )
+    conn.commit()
+    conn.close()
+
+    r = client.get("/admin/groundtruth-export/dry-run")
+
+    assert r.status_code == 200
+    body = r.get_data(as_text=True)
+    assert 'data-dryrun-tab="frame_integrity_dropped"' in body
+    assert "Needs cleanup (1)" in body
+    assert "Needs cleanup (not exported)" in body
+    assert "dryrun-bbox--positive" in body
+    assert "dryrun-bbox--missing" in body
+    assert f'data-exclude-image="{filename}"' in body
+    assert f'data-trash-export-image="{filename}"' in body
+    assert "missing image on disk" not in body
+
+
+def test_dry_run_exclude_image_quarantines_frame(client, app_and_db):
+    _, db_path, _ = app_and_db
+
+    r = client.post(
+        "/api/groundtruth-export/exclusions",
+        json={
+            "scope": "image",
+            "image_filename": "20260522_110000_cp.jpg",
+            "reason": "bad dry-run row",
+        },
+    )
+
+    assert r.status_code == 200
+    data = r.get_json()
+    assert data["status"] == "ok"
+    assert data["inserted"] is True
+
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    rows = conn.execute(
+        "SELECT scope, image_filename, reason, released_at "
+        "FROM groundtruth_export_exclusions"
+    ).fetchall()
+    conn.close()
+    assert [dict(r) for r in rows] == [
+        {
+            "scope": "image",
+            "image_filename": "20260522_110000_cp.jpg",
+            "reason": "bad dry-run row",
+            "released_at": None,
+        }
+    ]
+
+    body = client.get("/admin/groundtruth-export/dry-run").get_data(as_text=True)
+    assert "20260522_110000_cp.jpg" not in body
+
+
+def test_dry_run_trash_image_moves_to_wmb_trash_and_excludes(client, app_and_db):
+    _, db_path, _ = app_and_db
+
+    r = client.post(
+        "/api/groundtruth-export/trash-image",
+        json={
+            "image_filename": "20260522_110000_cp.jpg",
+            "reason": "bad WMB row",
+        },
+    )
+
+    assert r.status_code == 200
+    data = r.get_json()
+    assert data["status"] == "ok"
+    assert data["updated_images"] == 1
+    assert data["active_detections"] == 1
+    assert data["excluded"] is True
+
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    image = conn.execute(
+        "SELECT review_status, review_updated_at FROM images WHERE filename = ?",
+        ("20260522_110000_cp.jpg",),
+    ).fetchone()
+    detection = conn.execute(
+        "SELECT status FROM detections WHERE image_filename = ?",
+        ("20260522_110000_cp.jpg",),
+    ).fetchone()
+    exclusion = conn.execute(
+        "SELECT scope, reason, released_at FROM groundtruth_export_exclusions "
+        "WHERE image_filename = ?",
+        ("20260522_110000_cp.jpg",),
+    ).fetchone()
+    conn.close()
+
+    assert image["review_status"] == "no_bird"
+    assert image["review_updated_at"]
+    assert detection["status"] == "active"
+    assert dict(exclusion) == {
+        "scope": "image",
+        "reason": "bad WMB row",
+        "released_at": None,
+    }
+
+    body = client.get("/admin/groundtruth-export/dry-run").get_data(as_text=True)
+    assert "20260522_110000_cp.jpg" not in body
+
+
+def test_dry_run_trash_image_requires_valid_filename(client):
+    r = client.post(
+        "/api/groundtruth-export/trash-image",
+        json={"image_filename": "../bad.jpg"},
+    )
+
+    assert r.status_code == 400
+    assert r.get_json()["message"] == "invalid image filename"
+
+
+def test_dry_run_page_respects_since_override(client):
+    r = client.get("/admin/groundtruth-export/dry-run?since=2099-01-01T00:00:00Z")
+
+    assert r.status_code == 200
+    body = r.get_data(as_text=True)
+    assert "No rows would be exported for this window." in body
+    assert "2099-01-01T00:00:00Z" in body
 
 
 # ---------------------------------------------------------------------------
@@ -294,7 +543,7 @@ def test_build_returns_zip_with_correct_mimetype(client):
     cd = r.headers.get("Content-Disposition", "")
     assert "attachment" in cd
     assert "user_groundtruth_" in cd
-    assert cd.endswith(".zip\"") or cd.endswith(".zip")
+    assert cd.endswith('.zip"') or cd.endswith(".zip")
 
 
 def test_build_zip_contains_expected_files(client):
@@ -302,6 +551,7 @@ def test_build_zip_contains_expected_files(client):
     assert r.status_code == 200
     # Verify ZIP structure round-trip
     import io
+
     buf = io.BytesIO(r.data)
     with zipfile.ZipFile(buf) as zf:
         names = set(zf.namelist())
@@ -355,6 +605,7 @@ def test_build_with_empty_window_still_returns_valid_zip(client):
     )
     assert r.status_code == 200
     import io
+
     buf = io.BytesIO(r.data)
     with zipfile.ZipFile(buf) as zf:
         meta = json.loads(zf.read("batch_metadata.json"))
@@ -374,17 +625,14 @@ def test_build_advances_window_on_subsequent_call(client, app_and_db):
     r1 = client.post("/api/groundtruth-export/build", json={})
     assert r1.status_code == 200
     import io
-    meta1 = json.loads(
-        zipfile.ZipFile(io.BytesIO(r1.data)).read("batch_metadata.json")
-    )
+
+    meta1 = json.loads(zipfile.ZipFile(io.BytesIO(r1.data)).read("batch_metadata.json"))
     assert meta1["counts"]["confirmed_positives"] == 2
 
     # Build 2 (no new data) — should pick up `since` from build 1
     r2 = client.post("/api/groundtruth-export/build", json={})
     assert r2.status_code == 200
-    meta2 = json.loads(
-        zipfile.ZipFile(io.BytesIO(r2.data)).read("batch_metadata.json")
-    )
+    meta2 = json.loads(zipfile.ZipFile(io.BytesIO(r2.data)).read("batch_metadata.json"))
     # No double-count: total is zero now
     assert meta2["counts"]["confirmed_positives"] == 0
     assert meta2["counts"]["hard_negatives"] == 0
@@ -400,6 +648,7 @@ def test_build_handles_missing_image_files_gracefully(client, app_and_db, tmp_pa
     r = client.post("/api/groundtruth-export/build", json={})
     assert r.status_code == 200
     import io
+
     with zipfile.ZipFile(io.BytesIO(r.data)) as zf:
         meta = json.loads(zf.read("batch_metadata.json"))
         names = set(zf.namelist())

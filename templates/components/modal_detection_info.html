@@ -28,17 +28,29 @@ can_moderate (bool): Whether to show moderation controls (relabel/delete)
 {% endif %}
 {% endmacro %}
 
+{#
+2026-05-23 redesign: macro reduced to multi-bird sibling-selector strip.
+ - Single-detection branch returns nothing — the header subtitle already
+   carries the species + confidence + AI-status text.
+ - Multi-bird branch keeps the .sibling-card DOM (data-* hooks are read
+   by gallery_utils.js for hover-preview + active-detection-switch) but
+   drops the per-card Change-Species and Trash buttons. Those verbs now
+   live in the header action group, which acts on the *active*
+   detection (set via canvas-click or sibling-card body click). The
+   active card is marked via data-is-current="true" by the JS handler.
+#}
 {% macro render_detection_info(det, siblings=none, sibling_count=1, can_moderate=false) %}
-<div class="detection-info small text-muted mt-2 text-center">
-    {% if sibling_count and sibling_count > 1 and siblings %}
-    {# Multiple detections on same image #}
+{% if sibling_count and sibling_count > 1 and siblings %}
+<div class="detection-info small text-muted text-center">
     <div class="sibling-cards"
         style="display: flex; flex-wrap: wrap; justify-content: center; gap: 0.5rem; max-width: 100%;">
         {% for sib in siblings %}
         <div class="sibling-card" data-detection-id="{{ sib.detection_id }}" tabindex="-1"
             data-bbox-x="{{ sib.bbox_x }}" data-bbox-y="{{ sib.bbox_y }}" data-bbox-w="{{ sib.bbox_w }}"
             data-bbox-h="{{ sib.bbox_h }}" data-bbox-name="{{ sib.common_name }}"
-            data-current-species="{{ sib.species_key or sib.cls_class_name or sib.od_class_name }}" style="
+            data-current-species="{{ sib.species_key or sib.cls_class_name or sib.od_class_name }}"
+            {% if sib.detection_id == det.detection_id %}data-is-current="true"{% endif %}
+            style="
                 position: relative;
                 min-width: 160px;
                 max-width: 200px;
@@ -77,86 +89,10 @@ can_moderate (bool): Whether to show moderation controls (relabel/delete)
                 {% endif %}
             </div>
             {% endif %}
-            {% if can_moderate %}
-            <button type="button"
-                data-action="change-species"
-                data-detection-id="{{ sib.detection_id }}"
-                data-current-species="{{ sib.species_key or sib.cls_class_name or sib.od_class_name }}"
-                title="Change Species"
-                class="sibling-card__action sibling-card__action--relabel">🏷️</button>
-            <button type="button"
-                data-action="move-trash"
-                data-detection-id="{{ sib.detection_id }}"
-                title="Move to Trash"
-                class="sibling-card__action sibling-card__action--delete">🗑</button>
-            {% endif %}
             <div style="clear: both;"></div>
         </div>
         {% endfor %}
     </div>
-    {% else %}
-    {# Single detection - same card style as multi-detection #}
-    <div class="sibling-cards"
-        style="display: flex; flex-wrap: wrap; justify-content: center; gap: 0.5rem; max-width: 100%;">
-        <div class="sibling-card" data-detection-id="{{ det.detection_id }}" tabindex="-1"
-            data-bbox-x="{{ det.bbox_x }}" data-bbox-y="{{ det.bbox_y }}" data-bbox-w="{{ det.bbox_w }}"
-            data-bbox-h="{{ det.bbox_h }}" data-bbox-name="{{ det.common_name }}"
-            data-current-species="{{ det.species_key or det.cls_class_name or det.od_class_name }}" style="
-                position: relative;
-                min-width: 160px;
-                max-width: 200px;
-                padding: 0.5rem;
-                border: 1px solid var(--color-border, #dee2e6);
-                border-radius: 0.375rem;
-                text-align: left;
-                cursor: pointer;
-                transition: background 0.15s, border-color 0.15s;
-             ">
-            {% if det.display_path %}
-            <img src="{{ det.display_path }}" alt="{{ det.common_name }}"
-                style="width: 36px; height: 36px; object-fit: cover; border-radius: 4px; float: left; margin-right: 8px;">
-            {% endif %}
-            <div style="font-weight: 600; font-size: 0.8rem;">{{ det.common_name }}</div>
-            <div style="font-size: 0.7rem; color: var(--color-text-muted, #6c757d);">
-                {{ "%.0f"|format(det.od_confidence * 100) }}%
-                {% if det.cls_class_name %} / {{ "%.0f"|format(det.cls_confidence * 100) }}%{% endif %}
-            </div>
-            {% set det_has_manual_species_review = (det.species_source == 'manual') and det.manual_species_override %}
-            {% set det_has_manual_review_approval = det_has_manual_species_review and (det.review_status == 'confirmed_bird') %}
-            {% if det_has_manual_review_approval %}
-            <div style="font-size: 0.6rem; margin-top: 2px;">
-                <span style="color: var(--color-success, #22c55e);" title="Confirmed by a human reviewer">🧑👍 manuell bestaetigt</span>
-            </div>
-            {% elif det.decision_state and not det_has_manual_review_approval %}
-            <div style="font-size: 0.6rem; margin-top: 2px;">
-                {% if det.decision_state == 'confirmed' %}
-                <span style="color: var(--color-success, #22c55e);" title="Automatic AI/policy assessment">🤖 KI bestaetigt</span>
-                {% elif det.decision_state == 'uncertain' %}
-                <span style="color: var(--color-warning, #eab308);" title="Automatic AI/policy assessment">🤖 KI unsicher</span>
-                {% elif det.decision_state == 'unknown' %}
-                <span style="color: var(--color-info, #3b82f6);" title="Automatic AI/policy assessment">🤖 KI unbekannt</span>
-                {% elif det.decision_state == 'rejected' %}
-                <span style="color: var(--color-danger, #ef4444);" title="Automatic AI/policy assessment">🤖 KI abgelehnt</span>
-                {% endif %}
-            </div>
-            {% endif %}
-            {% if can_moderate %}
-            <button type="button"
-                data-action="change-species"
-                data-detection-id="{{ det.detection_id }}"
-                data-current-species="{{ det.species_key or det.cls_class_name or det.od_class_name }}"
-                title="Change Species"
-                class="sibling-card__action sibling-card__action--relabel">🏷️</button>
-            <button type="button"
-                data-action="move-trash"
-                data-detection-id="{{ det.detection_id }}"
-                title="Move to Trash"
-                class="sibling-card__action sibling-card__action--delete">🗑</button>
-            {% endif %}
-            <div style="clear: both;"></div>
-        </div>
-    </div>
-    {% endif %}
-
 </div>
+{% endif %}
 {% endmacro %}

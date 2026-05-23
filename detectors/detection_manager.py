@@ -128,6 +128,21 @@ class DetectionManager:
         self._burst_skipped_total = 0
         self._burst_skipped_last_log = time.monotonic()
 
+        # Same-bird burst suppression (Filter B2): rolling list of
+        # recently-admitted (timestamp, bbox, species_key) tuples. A new
+        # detection that overlaps a recent admission by IoU > threshold
+        # AND shares the species_key is skipped. Window and IoU thresh
+        # are read live from self.config so Web-UI changes take effect
+        # immediately. species_key is the OD class name for non-birds
+        # and the CLS top-1 species name for birds — set to "" when CLS
+        # has not yet run, in which case any overlapping recent entry
+        # (regardless of species) blocks the admission.
+        self._recent_admissions: deque[tuple[float, tuple[int, int, int, int], str]] = (
+            deque()
+        )
+        self._same_bird_skipped_total = 0
+        self._same_bird_skipped_last_log = time.monotonic()
+
         # Pending species buffer (for notifications)
         self.pending_species = {}
         self.pending_species_lock = threading.Lock()
@@ -294,6 +309,10 @@ class DetectionManager:
         # event to lazy-load the classifier. Non-blocking: failures are
         # logged but do not abort startup (guarded by its own thread).
         self._refresh_hf_registries_async()
+        try:
+            self.auto_ptz_controller.return_to_overview(allow_disabled=True)
+        except Exception as exc:  # noqa: BLE001 — PTZ failures must not block startup
+            logger.warning("PTZ return-to-overview at boot failed: %s", exc)
         logger.info("DetectionManager V2 started.")
 
     def _refresh_hf_registries_async(self) -> None:
@@ -667,6 +686,102 @@ class DetectionManager:
                 pass
             self.processing_queue.put_nowait(job)
 
+    @staticmethod
+    def _bbox_iou(
+        a: tuple[int, int, int, int],
+        b: tuple[int, int, int, int],
+    ) -> float:
+        """Compute IoU between two (x1, y1, x2, y2) bboxes.
+
+        Returns 0.0 for non-overlapping or zero-area boxes. Pure stdlib
+        so the method is testable without numpy stubs.
+        """
+        ax1, ay1, ax2, ay2 = a
+        bx1, by1, bx2, by2 = b
+        ix1 = max(ax1, bx1)
+        iy1 = max(ay1, by1)
+        ix2 = min(ax2, bx2)
+        iy2 = min(ay2, by2)
+        iw = max(0, ix2 - ix1)
+        ih = max(0, iy2 - iy1)
+        inter = iw * ih
+        if inter <= 0:
+            return 0.0
+        area_a = max(0, ax2 - ax1) * max(0, ay2 - ay1)
+        area_b = max(0, bx2 - bx1) * max(0, by2 - by1)
+        union = area_a + area_b - inter
+        if union <= 0:
+            return 0.0
+        return inter / union
+
+    def _same_bird_burst_admit(
+        self,
+        bbox: tuple[int, int, int, int],
+        species_key: str,
+    ) -> bool:
+        """Per-bbox burst-suppression gate (Filter B2).
+
+        Returns True when no recent admission overlaps this bbox by
+        IoU > SAME_BIRD_BURST_IOU within SAME_BIRD_BURST_WINDOW_SECONDS,
+        AND records the new admission.
+
+        Returns False (skip persistence) when an overlapping same-species
+        admission was made recently. species_key="" matches any species
+        in the recent window — used when CLS has not yet decided what
+        species this is.
+
+        Reads window + IoU thresholds live from self.config so Web-UI
+        changes apply on the next detection cycle. Disabled when
+        SAME_BIRD_BURST_WINDOW_SECONDS <= 0.
+        """
+        try:
+            window_seconds = float(
+                self.config.get("SAME_BIRD_BURST_WINDOW_SECONDS", 15.0)
+            )
+        except (TypeError, ValueError):
+            window_seconds = 15.0
+        if window_seconds <= 0:
+            return True
+        try:
+            iou_thr = float(self.config.get("SAME_BIRD_BURST_IOU", 0.6))
+        except (TypeError, ValueError):
+            iou_thr = 0.6
+
+        now = time.monotonic()
+        cutoff = now - window_seconds
+        # Trim expired entries from the left. Deque is sorted by
+        # admission time so a single while-loop suffices.
+        while self._recent_admissions and self._recent_admissions[0][0] < cutoff:
+            self._recent_admissions.popleft()
+
+        # Check overlap against every still-recent admission.
+        for _ts, recent_bbox, recent_species in self._recent_admissions:
+            if self._bbox_iou(bbox, recent_bbox) < iou_thr:
+                continue
+            # Empty species_key means "block on any species match" —
+            # the caller doesn't yet know what species this is, so any
+            # overlapping recent admission gates it.
+            if not species_key or not recent_species:
+                pass
+            elif species_key != recent_species:
+                continue
+            self._same_bird_skipped_total += 1
+            if now - self._same_bird_skipped_last_log >= 30.0:
+                logger.info(
+                    "[SAME-BIRD] skipped %d duplicate detections in last %ds "
+                    "(iou_thr=%.2f, window=%.0fs)",
+                    self._same_bird_skipped_total,
+                    int(now - self._same_bird_skipped_last_log),
+                    iou_thr,
+                    window_seconds,
+                )
+                self._same_bird_skipped_total = 0
+                self._same_bird_skipped_last_log = now
+            return False
+
+        self._recent_admissions.append((now, bbox, species_key))
+        return True
+
     def _burst_admit(self) -> bool:
         """Sliding-window burst-cap gate (Filter B).
 
@@ -858,6 +973,23 @@ class DetectionManager:
                 # detections fire in a short window (e.g. sparrow flock),
                 # stop persisting until the burst subsides.
                 if not self._burst_admit():
+                    continue
+
+                # Filter (B2): same-bird burst suppression. Skip
+                # persisting when a near-identical bbox + species was
+                # already admitted in the last few seconds — the
+                # "bird sits 30s at feeder, detected every 2s, all 15
+                # frames flood the review queue" pattern. species_key
+                # is set to the OD class name for non-birds (CLS does
+                # not run) and left "" for birds at this point (CLS
+                # has not run yet); the empty key gates on bbox-overlap
+                # alone, which is the right semantics: same bbox in a
+                # short window is the same bird regardless of how CLS
+                # may flip-flop between Parus/Cyanistes per frame.
+                species_key_for_burst = "" if is_bird else od_class_name
+                if not self._same_bird_burst_admit(
+                    bbox_tuple, species_key_for_burst
+                ):
                     continue
 
                 # Create crop for classification via CropService
@@ -1128,7 +1260,7 @@ class DetectionManager:
             # detect-loop reads it on its 15s-tick so the summary line
             # carries both DET and CLS aggregates.
             self._cls_times.append(cls_duration_ms)
-            logger.info(
+            logger.debug(
                 f"[DET+CLS] pipeline={detection_time_ms + cls_duration_ms}ms "
                 f"(DET={detection_time_ms}ms, CLS={cls_duration_ms}ms) | "
                 f"Objects={len(detection_info_list)} | "

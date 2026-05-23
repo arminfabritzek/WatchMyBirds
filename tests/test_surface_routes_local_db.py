@@ -214,11 +214,30 @@ def test_local_sqlite_review_routes_render_real_continuity_batch(seeded_client):
     review_response = client.get("/admin/review")
     assert review_response.status_code == 200
     review_body = review_response.get_data(as_text=True)
-    assert 'id="reviewEventBrowser"' in review_body
+    # 2026-05-23 redesign: new Review Grid is the default. The legacy
+    # `#reviewEventBrowser` rail lives behind ?layout=legacy. The grid
+    # renders one `[data-review-grid-card]` per event with its own
+    # `data-event-key`.
+    assert 'data-review-grid-card' in review_body
     event_keys = re.findall(r'data-event-key="([^"]+)"', review_body)
-    assert len(event_keys) == 2
+    # Each grid card stamps `data-event-key` on the article root, on
+    # every member tile, and (when a batch is present) on the
+    # batch-strip CTAs — so the count is event-card-count × constant,
+    # not == 2. Assert "every event from the fixture has at least one
+    # marker".
+    distinct_keys = sorted(set(event_keys))
+    assert len(distinct_keys) == 2
+    # Regression guard for the 2026-05-23 hotfix: the page renderer
+    # must request include_detail=True from _load_review_events so
+    # event.members is populated. Without this, the cards would
+    # render with empty grids (header only, no tiles). At least one
+    # `review-grid__tile` must exist in the rendered HTML.
+    assert 'review-grid__tile' in review_body, (
+        "Review Grid rendered card headers but no member tiles — "
+        "the review_page() loader is probably back to include_detail=False."
+    )
 
-    panel_response = client.get(f"/api/review/event-panel/{event_keys[0]}")
+    panel_response = client.get(f"/api/review/event-panel/{distinct_keys[0]}")
     assert panel_response.status_code == 200
     panel_body = panel_response.get_data(as_text=True)
     assert "data-review-batch-panel" in panel_body

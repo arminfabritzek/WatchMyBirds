@@ -96,6 +96,14 @@ DEFAULTS = {
     # 0 to disable.
     "MAX_DETECTIONS_PER_BURST": 100,
     "BURST_WINDOW_SECONDS": 60.0,
+    # Same-bird burst suppression (Filter B2): skip persisting a detection
+    # when a near-identical bbox + species was already admitted in the last
+    # SAME_BIRD_BURST_WINDOW_SECONDS. Targets the "bird sits 30s at feeder,
+    # gets detected every 2s, all 15 frames land in DB" pattern that
+    # floods the review queue with same-bird-different-frame duplicates.
+    # Disable by setting SAME_BIRD_BURST_WINDOW_SECONDS to 0.
+    "SAME_BIRD_BURST_IOU": 0.6,
+    "SAME_BIRD_BURST_WINDOW_SECONDS": 15.0,
     "DETECTION_INTERVAL_SECONDS": 2.0,
     "MODEL_BASE_PATH": "./data/models",
     "BBOX_QUALITY_THRESHOLD": 0.40,

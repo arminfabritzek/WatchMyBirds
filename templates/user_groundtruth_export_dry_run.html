@@ -1,0 +1,752 @@
+{% extends 'base.html' %}
+
+{% block title %}Groundtruth Export Dry-run - WatchMyBirds{% endblock %}
+
+{% block head %}
+<style>
+.dryrun-summary {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: var(--space-md);
+    margin: var(--space-lg) 0;
+}
+.dryrun-summary__item,
+.dryrun-section {
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    background: var(--color-surface);
+}
+.dryrun-summary__item {
+    padding: var(--space-md);
+}
+.dryrun-summary__label {
+    color: var(--color-text-muted);
+    font-size: 0.875rem;
+}
+.dryrun-summary__value {
+    font-size: 1.6rem;
+    font-weight: 700;
+    margin-top: var(--space-xs);
+}
+.dryrun-section {
+    margin-bottom: var(--space-lg);
+    overflow: hidden;
+}
+.dryrun-section__header {
+    display: flex;
+    justify-content: space-between;
+    gap: var(--space-md);
+    align-items: flex-start;
+    padding: var(--space-md);
+    border-bottom: 1px solid var(--color-border);
+}
+.dryrun-section__title {
+    margin: 0;
+    font-size: 1.05rem;
+}
+.dryrun-section__desc {
+    color: var(--color-text-muted);
+    margin-top: var(--space-xs);
+    display: none;
+}
+.dryrun-list {
+    --dryrun-card-min: 760px;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, var(--dryrun-card-min)), 1fr));
+    gap: var(--space-md);
+    padding: var(--space-md);
+    background: var(--color-bg);
+}
+.dryrun-row {
+    display: flex;
+    flex-direction: column;
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    overflow: hidden;
+    min-width: 0;
+    container-type: inline-size;
+}
+.dryrun-row__compare {
+    display: grid;
+    grid-template-columns: minmax(0, 1.25fr) minmax(210px, 0.72fr) minmax(150px, 0.32fr);
+    gap: var(--space-xs);
+    padding: var(--space-xs);
+    background: #101315;
+}
+.dryrun-row__compare--dropped {
+    grid-template-columns: minmax(0, 1.4fr) minmax(260px, 0.6fr);
+}
+.dryrun-row__thumb {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    background: var(--color-surface-muted);
+}
+.dryrun-row__body {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-sm);
+    align-items: center;
+    justify-content: space-between;
+    min-width: 0;
+    padding: var(--space-xs) var(--space-md) var(--space-md);
+}
+.dryrun-row__details {
+    margin-top: 0;
+}
+.dryrun-row__details summary {
+    cursor: pointer;
+    color: var(--color-text-muted);
+    font-size: 0.84rem;
+}
+.dryrun-row__meta {
+    color: var(--color-text-muted);
+    font-size: 0.8rem;
+    margin-top: 0.2rem;
+    overflow-wrap: anywhere;
+}
+.dryrun-row__meta code {
+    white-space: normal;
+}
+.dryrun-row__actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-xs);
+    justify-content: flex-end;
+}
+.dryrun-row__exclude,
+.dryrun-row__trash {
+    font-size: 0.82rem;
+    padding: 0.28rem 0.55rem;
+}
+.dryrun-badge {
+    display: inline-block;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    padding: 0.1rem 0.45rem;
+    font-size: 0.8rem;
+    color: var(--color-text-muted);
+}
+.dryrun-badge--warn {
+    border-color: #d97706;
+    color: #92400e;
+}
+.dryrun-empty {
+    padding: var(--space-lg);
+    color: var(--color-text-muted);
+}
+.dryrun-build {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-md);
+    align-items: center;
+    margin-bottom: var(--space-lg);
+}
+.dryrun-sizebar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-sm) var(--space-md);
+    align-items: center;
+    margin: 0 0 var(--space-lg);
+}
+.dryrun-sizebar label,
+.dryrun-sizebar output {
+    color: var(--color-text-muted);
+    font-size: 0.88rem;
+}
+.dryrun-sizebar input[type="range"] {
+    width: min(420px, 100%);
+}
+.dryrun-tabs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-sm);
+    margin: 0 0 var(--space-lg);
+    border-bottom: 1px solid var(--color-border);
+}
+.dryrun-tab {
+    border: 1px solid var(--color-border);
+    border-bottom: 0;
+    border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+    background: var(--color-surface);
+    color: var(--color-text);
+    cursor: pointer;
+    font: inherit;
+    font-weight: 700;
+    padding: 0.6rem 0.9rem;
+}
+.dryrun-tab:hover,
+.dryrun-tab:focus {
+    border-color: var(--color-primary);
+    outline: none;
+}
+.dryrun-tab.is-active {
+    background: var(--color-primary);
+    border-color: var(--color-primary);
+    color: var(--color-surface);
+}
+.dryrun-panel {
+    display: none;
+}
+.dryrun-panel.is-active {
+    display: block;
+}
+.dryrun-row__media {
+    display: block;
+    position: relative;
+    width: 100%;
+    overflow: hidden;
+    background: #101315;
+    border-radius: var(--radius-sm);
+}
+.dryrun-row__media .dryrun-row__thumb {
+    height: 100%;
+    object-fit: contain;
+}
+.dryrun-crop {
+    display: block;
+    position: relative;
+    overflow: hidden;
+    background-color: #101315;
+    background-repeat: no-repeat;
+    border-radius: var(--radius-sm);
+}
+.dryrun-avatar {
+    display: grid;
+    place-items: center;
+    position: relative;
+    min-height: 100%;
+    overflow: hidden;
+    border-radius: var(--radius-sm);
+    background: var(--color-surface);
+}
+.dryrun-avatar__image {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+.dryrun-avatar__fallback,
+.dryrun-avatar__no-bird {
+    display: grid;
+    place-items: center;
+    width: min(100%, 180px);
+    aspect-ratio: 1 / 1;
+    border-radius: 50%;
+    background: var(--color-surface-2);
+    color: var(--color-text-muted);
+}
+.dryrun-avatar__fallback {
+    font-size: 3rem;
+    font-weight: 800;
+}
+.dryrun-avatar__no-bird::before {
+    content: "";
+    width: 70%;
+    aspect-ratio: 1 / 1;
+    border: 8px solid var(--color-text-muted);
+    border-radius: 50%;
+    background:
+        linear-gradient(
+            135deg,
+            transparent 0 44%,
+            var(--color-text-muted) 45% 55%,
+            transparent 56% 100%
+        );
+}
+.dryrun-bbox {
+    position: absolute;
+    border: 3px solid #facc15;
+    box-shadow:
+        0 0 0 1px rgba(0, 0, 0, 0.95),
+        0 0 0 9999px rgba(0, 0, 0, 0.1);
+    pointer-events: none;
+}
+.dryrun-bbox--crop {
+    border-width: 4px;
+}
+.dryrun-bbox--positive {
+    border-color: #22c55e;
+}
+.dryrun-bbox--missing {
+    border-color: #ef4444;
+}
+.dryrun-sibling-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: var(--space-xs);
+}
+.dryrun-crop--sibling {
+    min-height: 148px;
+    outline: 2px solid transparent;
+}
+.dryrun-crop--positive {
+    outline-color: #22c55e;
+}
+.dryrun-crop--missing {
+    outline-color: #ef4444;
+}
+@container (max-width: 680px) {
+    .dryrun-row__compare {
+        grid-template-columns: 1fr;
+    }
+    .dryrun-avatar {
+        min-height: 180px;
+    }
+}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="page__header">
+    <div>
+        <h1 class="page__title">Groundtruth Export Dry-run</h1>
+        <div class="text-muted">
+            Exact export contents. Nothing has been recorded yet.
+        </div>
+    </div>
+    <div class="page__actions">
+        <a href="/admin/groundtruth-export" class="btn btn--secondary">Back to export</a>
+    </div>
+</div>
+
+<div class="dryrun-summary">
+    <div class="dryrun-summary__item">
+        <div class="dryrun-summary__label">Total rows</div>
+        <div class="dryrun-summary__value">{{ batch.total_rows }}</div>
+    </div>
+    <div class="dryrun-summary__item">
+        <div class="dryrun-summary__label">Distinct image files</div>
+        <div class="dryrun-summary__value">{{ distinct_image_count }}</div>
+    </div>
+    <div class="dryrun-summary__item">
+        <div class="dryrun-summary__label">Since</div>
+        <div class="dryrun-row__meta">{{ batch.since or 'all history' }}</div>
+    </div>
+    <div class="dryrun-summary__item">
+        <div class="dryrun-summary__label">Until</div>
+        <div class="dryrun-row__meta">{{ batch.until }}</div>
+    </div>
+</div>
+
+{% if missing_images %}
+<div class="alert alert-warning">
+    {{ missing_images | length }} image file{{ 's' if missing_images | length != 1 }} referenced by this dry-run
+    {{ 'are' if missing_images | length != 1 else 'is' }} missing on disk. The manifest rows remain visible below,
+    but the ZIP cannot include those image bytes.
+</div>
+{% endif %}
+
+{% if batch.frame_integrity_dropped %}
+<div class="alert alert-warning">
+    {{ batch.frame_integrity_dropped | length }} positive frame{{ 's' if batch.frame_integrity_dropped | length != 1 }}
+    {{ 'are' if batch.frame_integrity_dropped | length != 1 else 'is' }} blocked and will not be exported.
+    Review {{ 'them' if batch.frame_integrity_dropped | length != 1 else 'it' }} in the Needs cleanup tab.
+</div>
+{% endif %}
+
+<div class="dryrun-build">
+    <button type="button" id="buildDryRunBtn" class="btn btn--primary">
+        Build this dry-run ZIP
+    </button>
+    <input type="text" id="dryRunNotes" class="form-control"
+           style="max-width: 420px;"
+           placeholder="Optional batch notes"
+           maxlength="240">
+    <span id="dryRunBuildStatus" class="text-muted"></span>
+</div>
+
+<div class="dryrun-sizebar">
+    <label for="dryRunTileSize">Image size</label>
+    <input type="range" id="dryRunTileSize" min="420" max="1320" step="40" value="760">
+    <output id="dryRunTileSizeValue" for="dryRunTileSize">760 px</output>
+</div>
+
+{% if not has_dryrun_rows %}
+<div class="dryrun-section">
+    <div class="dryrun-empty">No rows would be exported for this window.</div>
+</div>
+{% endif %}
+
+{% if has_dryrun_rows %}
+<div class="dryrun-tabs" role="tablist" aria-label="Export dry-run categories">
+    {% for group in tab_groups %}
+    <button type="button"
+            id="dryrun-tab-{{ group.key }}"
+            class="dryrun-tab{% if loop.first %} is-active{% endif %}"
+            role="tab"
+            aria-controls="dryrun-panel-{{ group.key }}"
+            aria-selected="{{ 'true' if loop.first else 'false' }}"
+            data-dryrun-tab="{{ group.key }}">
+        {{ group.label }} ({{ group.rows | length }})
+    </button>
+    {% endfor %}
+</div>
+
+{% for group in tab_groups %}
+<section class="dryrun-section dryrun-panel{% if loop.first %} is-active{% endif %}"
+         id="dryrun-panel-{{ group.key }}"
+         role="tabpanel"
+         aria-labelledby="dryrun-tab-{{ group.key }}"
+         data-dryrun-panel="{{ group.key }}">
+    <header class="dryrun-section__header">
+        <div>
+            <h2 class="dryrun-section__title">{{ group.title }}</h2>
+        </div>
+        <span class="dryrun-badge">{{ group.rows | length }} row{{ 's' if group.rows | length != 1 }}</span>
+    </header>
+
+    {% if group.rows %}
+    <div class="dryrun-list">
+        {% for row in group.rows %}
+        {% if group.kind == 'frame_integrity_dropped' %}
+        <article class="dryrun-row dryrun-row--dropped" data-image-filename="{{ row.image_filename }}">
+            <div class="dryrun-row__compare dryrun-row__compare--dropped">
+                <a class="dryrun-row__media"
+                   href="{{ row.original_url }}"
+                   target="_blank"
+                   rel="noopener noreferrer"
+                   style="aspect-ratio: {{ row.frame_width or 4 }} / {{ row.frame_height or 3 }};">
+                    <img class="dryrun-row__thumb"
+                         src="{{ row.original_url }}"
+                         alt="{{ row.display_label }}">
+                    {% for sibling in row.active_siblings %}
+                    {% if sibling.bbox_style %}
+                    <span class="dryrun-bbox {{ 'dryrun-bbox--positive' if sibling.is_positive_signal else 'dryrun-bbox--missing' }}"
+                          aria-hidden="true"
+                          style="{{ sibling.bbox_style }}"></span>
+                    {% endif %}
+                    {% endfor %}
+                </a>
+                <div class="dryrun-sibling-grid">
+                    {% for sibling in row.active_siblings %}
+                    {% if sibling.crop_bg_size %}
+                    <a class="dryrun-crop dryrun-crop--sibling {{ 'dryrun-crop--positive' if sibling.is_positive_signal else 'dryrun-crop--missing' }}"
+                       href="{{ row.original_url }}"
+                       target="_blank"
+                       rel="noopener noreferrer"
+                       aria-label="Open source image"
+                       style="aspect-ratio: {{ sibling.frame_width or 4 }} / {{ sibling.frame_height or 3 }};
+                              background-image: url('{{ row.original_url }}');
+                              background-size: {{ sibling.crop_bg_size }};
+                              background-position: {{ sibling.crop_bg_position }};">
+                        <span class="dryrun-bbox dryrun-bbox--crop {{ 'dryrun-bbox--positive' if sibling.is_positive_signal else 'dryrun-bbox--missing' }}"
+                              aria-hidden="true"
+                              style="{{ sibling.crop_bbox_style }}"></span>
+                    </a>
+                    {% endif %}
+                    {% endfor %}
+                </div>
+            </div>
+            <div class="dryrun-row__body">
+                {% if not row.image_exists %}
+                <div class="dryrun-row__meta">
+                    <span class="dryrun-badge dryrun-badge--warn">missing image on disk</span>
+                </div>
+                {% endif %}
+                <details class="dryrun-row__details">
+                    <summary>Details</summary>
+                    <div class="dryrun-row__meta">
+                        File: <code>{{ row.image_filename }}</code>
+                    </div>
+                    <div class="dryrun-row__meta">
+                        {{ row.reason }}
+                    </div>
+                    <div class="dryrun-row__meta">
+                        Positive ids: {{ row.dropped_detection_ids | join(', ') }}
+                    </div>
+                    <div class="dryrun-row__meta">
+                        Missing ids: {{ row.missing_detection_ids | join(', ') }}
+                    </div>
+                </details>
+                <div class="dryrun-row__actions">
+                    <button type="button"
+                            class="btn btn--secondary dryrun-row__exclude"
+                            title="Skip this image in future exports"
+                            data-exclude-image="{{ row.image_filename }}">
+                        Exclude from export
+                    </button>
+                    <button type="button"
+                            class="btn btn--danger dryrun-row__trash"
+                            title="Move this image to WatchMyBirds Trash"
+                            data-trash-export-image="{{ row.image_filename }}">
+                        Move to WMB Trash
+                    </button>
+                </div>
+            </div>
+        </article>
+        {% else %}
+        <article class="dryrun-row" data-image-filename="{{ row.image_filename }}">
+            <div class="dryrun-row__compare">
+                <a class="dryrun-row__media"
+                   href="{{ row.original_url }}"
+                   target="_blank"
+                   rel="noopener noreferrer"
+                   style="aspect-ratio: {{ row.frame_width or 4 }} / {{ row.frame_height or 3 }};">
+                    <img class="dryrun-row__thumb"
+                         src="{{ row.original_url }}"
+                         alt="{{ row.display_label }}">
+                    {% if row.bbox_style %}
+                    <span class="dryrun-bbox"
+                          aria-hidden="true"
+                          style="{{ row.bbox_style }}"></span>
+                    {% endif %}
+                </a>
+                {% if row.crop_bg_size %}
+                <a class="dryrun-crop"
+                   href="{{ row.original_url }}"
+                   target="_blank"
+                   rel="noopener noreferrer"
+                   aria-label="Open source image"
+                   style="aspect-ratio: {{ row.frame_width or 4 }} / {{ row.frame_height or 3 }};
+                          background-image: url('{{ row.original_url }}');
+                          background-size: {{ row.crop_bg_size }};
+                          background-position: {{ row.crop_bg_position }};">
+                    <span class="dryrun-bbox dryrun-bbox--crop"
+                          aria-hidden="true"
+                          style="{{ row.crop_bbox_style }}"></span>
+                </a>
+                {% endif %}
+                <div class="dryrun-avatar dryrun-avatar--{{ row.avatar_kind }}"
+                     aria-label="{{ row.display_label }}">
+                    {% if row.avatar_url %}
+                    <img class="dryrun-avatar__image"
+                         src="{{ row.avatar_url }}"
+                         alt="{{ row.display_label }}">
+                    {% elif row.avatar_kind == 'no_bird' %}
+                    <span class="dryrun-avatar__no-bird" aria-hidden="true"></span>
+                    {% else %}
+                    <span class="dryrun-avatar__fallback" aria-hidden="true">{{ row.avatar_initial }}</span>
+                    {% endif %}
+                </div>
+            </div>
+            <div class="dryrun-row__body">
+                {% if not row.image_exists %}
+                <div class="dryrun-row__meta">
+                    <span class="dryrun-badge dryrun-badge--warn">missing image on disk</span>
+                </div>
+                {% endif %}
+                <details class="dryrun-row__details">
+                    <summary>Details</summary>
+                    <div class="dryrun-row__meta">
+                        #{{ row.detection_id }} · {{ row.display_label }}
+                    </div>
+                    <div class="dryrun-row__meta">
+                        Category: {{ row.export_category }}
+                    </div>
+                    <div class="dryrun-row__meta">
+                        File: <code>{{ row.image_filename }}</code>
+                    </div>
+                    <div class="dryrun-row__meta">
+                        ZIP: <code>{{ row.image_path_in_zip }}</code>
+                    </div>
+                    <div class="dryrun-row__meta">
+                        Action: {{ row.user_action_at or 'unknown' }}
+                    </div>
+                    <div class="dryrun-row__meta">
+                        BBox: {{ row.bbox_text }} · Frame:
+                        {{ row.frame_width or '?' }} x {{ row.frame_height or '?' }}
+                    </div>
+                </details>
+                <div class="dryrun-row__actions">
+                    <button type="button"
+                            class="btn btn--secondary dryrun-row__exclude"
+                            title="Skip this image in future exports"
+                            data-exclude-image="{{ row.image_filename }}">
+                        Exclude from export
+                    </button>
+                    {% if group.key != 'hard_negatives' %}
+                    <button type="button"
+                            class="btn btn--danger dryrun-row__trash"
+                            title="Move this image to WatchMyBirds Trash"
+                            data-trash-export-image="{{ row.image_filename }}">
+                        Move to WMB Trash
+                    </button>
+                    {% endif %}
+                </div>
+            </div>
+        </article>
+        {% endif %}
+        {% endfor %}
+    </div>
+    {% else %}
+    <div class="dryrun-empty">No rows in this category.</div>
+    {% endif %}
+</section>
+{% endfor %}
+{% endif %}
+
+<script>
+(function () {
+    const tabs = Array.from(document.querySelectorAll('[data-dryrun-tab]'));
+    const panels = Array.from(document.querySelectorAll('[data-dryrun-panel]'));
+    const lists = Array.from(document.querySelectorAll('.dryrun-list'));
+    const tileSizeEl = document.getElementById('dryRunTileSize');
+    const tileSizeValueEl = document.getElementById('dryRunTileSizeValue');
+    const excludeButtons = Array.from(document.querySelectorAll('[data-exclude-image]'));
+    const trashButtons = Array.from(document.querySelectorAll('[data-trash-export-image]'));
+    const btn = document.getElementById('buildDryRunBtn');
+    const statusEl = document.getElementById('dryRunBuildStatus');
+    const notesEl = document.getElementById('dryRunNotes');
+    const frozenSince = {{ batch.since | tojson }};
+    const frozenUntil = {{ batch.until | tojson }};
+
+    function clampTileSize(value) {
+        const n = Number(value);
+        const min = Number(tileSizeEl.min);
+        const max = Number(tileSizeEl.max);
+        if (!Number.isFinite(n)) return Number(tileSizeEl.value);
+        return Math.max(min, Math.min(max, n));
+    }
+
+    function setTileSize(value, persist) {
+        const size = clampTileSize(value);
+        tileSizeEl.value = String(size);
+        tileSizeValueEl.textContent = size + ' px';
+        lists.forEach((list) => {
+            list.style.setProperty('--dryrun-card-min', size + 'px');
+        });
+        if (persist) {
+            window.localStorage.setItem('wmbDryRunTileSize', String(size));
+        }
+    }
+
+    setTileSize(window.localStorage.getItem('wmbDryRunTileSize') || tileSizeEl.value, false);
+    tileSizeEl.addEventListener('input', () => setTileSize(tileSizeEl.value, true));
+
+    excludeButtons.forEach((excludeBtn) => {
+        excludeBtn.addEventListener('click', async () => {
+            const imageFilename = excludeBtn.dataset.excludeImage;
+            const ok = window.confirm(
+                'Exclude this whole image from user-groundtruth export? ' +
+                'The image and detections stay in WatchMyBirds.'
+            );
+            if (!ok) return;
+
+            excludeBtn.disabled = true;
+                excludeBtn.textContent = 'Excluding...';
+            try {
+                const r = await fetch('/api/groundtruth-export/exclusions', {
+                    method: 'POST',
+                    credentials: 'same-origin',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        scope: 'image',
+                        image_filename: imageFilename,
+                        reason: 'dry-run excluded by operator',
+                    }),
+                });
+                if (!r.ok) {
+                    const text = await r.text();
+                    throw new Error('HTTP ' + r.status + ': ' + text.slice(0, 200));
+                }
+                window.location.reload();
+            } catch (err) {
+                excludeBtn.disabled = false;
+                excludeBtn.textContent = 'Exclude from export';
+                setStatus('Exclude failed: ' + err.message, 'text-danger');
+            }
+        });
+    });
+
+    trashButtons.forEach((trashBtn) => {
+        trashBtn.addEventListener('click', async () => {
+            const imageFilename = trashBtn.dataset.trashExportImage;
+            const ok = window.confirm(
+                'Move this image to WatchMyBirds Trash and exclude it from user-groundtruth export? ' +
+                'The original file stays recoverable until Trash is purged.'
+            );
+            if (!ok) return;
+
+            trashBtn.disabled = true;
+            trashBtn.textContent = 'Moving...';
+            try {
+                const r = await fetch('/api/groundtruth-export/trash-image', {
+                    method: 'POST',
+                    credentials: 'same-origin',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        image_filename: imageFilename,
+                        reason: 'dry-run moved to WMB Trash by operator',
+                    }),
+                });
+                if (!r.ok) {
+                    const text = await r.text();
+                    throw new Error('HTTP ' + r.status + ': ' + text.slice(0, 200));
+                }
+                window.location.reload();
+            } catch (err) {
+                trashBtn.disabled = false;
+                trashBtn.textContent = 'Move to WMB Trash';
+                setStatus('Move to Trash failed: ' + err.message, 'text-danger');
+            }
+        });
+    });
+
+    tabs.forEach((tab) => {
+        tab.addEventListener('click', () => {
+            const key = tab.dataset.dryrunTab;
+            tabs.forEach((item) => {
+                const active = item === tab;
+                item.classList.toggle('is-active', active);
+                item.setAttribute('aria-selected', active ? 'true' : 'false');
+            });
+            panels.forEach((panel) => {
+                panel.classList.toggle('is-active', panel.dataset.dryrunPanel === key);
+            });
+        });
+    });
+
+    function setStatus(text, className) {
+        statusEl.textContent = text;
+        statusEl.className = className || 'text-muted';
+    }
+
+    function parseFilename(contentDisposition) {
+        if (!contentDisposition) return null;
+        const match = contentDisposition.match(/filename="?([^"]+)"?/);
+        return match ? match[1] : null;
+    }
+
+    async function buildDryRun() {
+        btn.disabled = true;
+        setStatus('Building reviewed batch...', 'text-muted');
+        const payload = {since: frozenSince, until: frozenUntil};
+        const notes = notesEl.value.trim();
+        if (notes) payload.notes = notes;
+
+        try {
+            const r = await fetch('/api/groundtruth-export/build', {
+                method: 'POST',
+                credentials: 'same-origin',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(payload),
+            });
+            if (!r.ok) {
+                const text = await r.text();
+                throw new Error('HTTP ' + r.status + ': ' + text.slice(0, 200));
+            }
+            const blob = await r.blob();
+            const filename = parseFilename(r.headers.get('Content-Disposition'))
+                || 'user_groundtruth.zip';
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            URL.revokeObjectURL(url);
+            setStatus('Built ' + filename, 'text-success');
+        } catch (err) {
+            setStatus('Build failed: ' + err.message, 'text-danger');
+            btn.disabled = false;
+        }
+    }
+
+    btn.addEventListener('click', buildDryRun);
+})();
+</script>
+{% endblock %}

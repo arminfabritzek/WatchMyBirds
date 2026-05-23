@@ -33,6 +33,16 @@ train_selected_id=none,
 train_selected_label='Confirm & Add to Training',
 train_selected_class='btn btn--outline-primary',
 train_selected_title='Confirms bounding boxes as correct on the selected tiles and queues them for the next training export. Frames with any unreviewed or rejected sibling bbox are skipped.',
+no_bird_selected_onclick=none,
+no_bird_selected_id=none,
+no_bird_selected_label='Mark No Bird Selected',
+no_bird_selected_class='btn btn--outline-danger',
+no_bird_selected_title='Flag selected images as No Bird (training-export signal). Distinct from event-trash which is housekeeping only.',
+approve_selected_onclick=none,
+approve_selected_id=none,
+approve_selected_label='Approve Selected',
+approve_selected_class='btn btn--success',
+approve_selected_title='Approve selected frames per event. One Approve call per distinct event_key.',
 download_onclick=none,
 download_label=none,
 download_class='btn btn--success',
@@ -73,6 +83,18 @@ cancel_class='btn btn--secondary'
     <button type="button" class="{{ train_selected_class }}"{% if train_selected_id %} id="{{ train_selected_id }}"{% endif %}
         onclick="{{ train_selected_onclick }}" title="{{ train_selected_title }}">🎯 {{
         train_selected_label }}</button>
+    {% endif %}
+
+    {% if no_bird_selected_onclick %}
+    <button type="button" class="{{ no_bird_selected_class }}"{% if no_bird_selected_id %} id="{{ no_bird_selected_id }}"{% endif %}
+        onclick="{{ no_bird_selected_onclick }}" title="{{ no_bird_selected_title }}">✗ {{
+        no_bird_selected_label }}</button>
+    {% endif %}
+
+    {% if approve_selected_onclick %}
+    <button type="button" class="{{ approve_selected_class }}"{% if approve_selected_id %} id="{{ approve_selected_id }}"{% endif %}
+        onclick="{{ approve_selected_onclick }}" title="{{ approve_selected_title }}">✓ {{
+        approve_selected_label }}</button>
     {% endif %}
 
     {% if download_onclick and download_label %}

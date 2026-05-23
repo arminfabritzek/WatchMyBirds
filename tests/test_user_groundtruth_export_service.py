@@ -19,7 +19,9 @@ fake image bytes so the streaming path actually opens files.
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
+import time
 import zipfile
 from datetime import UTC, datetime
 from pathlib import Path
@@ -30,6 +32,7 @@ from web.services.user_groundtruth_export_service import (
     EXPORTER_VERSION,
     build_batch,
     build_batch_id,
+    exclude_image_from_export,
     last_batch_until,
     preview_counts,
     record_batch_exported,
@@ -84,6 +87,16 @@ def _make_conn() -> sqlite3.Connection:
             wmb_app_version TEXT,
             notes TEXT
         );
+        CREATE TABLE groundtruth_export_exclusions (
+            exclusion_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            scope TEXT NOT NULL,
+            image_filename TEXT NOT NULL,
+            detection_id INTEGER,
+            reason TEXT,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            created_by TEXT NOT NULL DEFAULT 'dry_run',
+            released_at TEXT
+        );
         """
     )
     return conn
@@ -98,7 +111,8 @@ def _add_image(conn, filename, review_status=None, review_updated_at=None):
 
 
 def _add_detection(
-    conn, *,
+    conn,
+    *,
     image_filename,
     decision_level=None,
     raw_species_name=None,
@@ -134,14 +148,21 @@ def _add_detection(
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
-            image_filename, status,
+            image_filename,
+            status,
             *bbox,
-            od_confidence, od_class_name,
-            detector_model_version, classifier_model_version,
+            od_confidence,
+            od_class_name,
+            detector_model_version,
+            classifier_model_version,
             *frame_wh,
-            decision_level, raw_species_name,
-            manual_species_override, species_source, species_updated_at,
-            is_favorite, rating_source,
+            decision_level,
+            raw_species_name,
+            manual_species_override,
+            species_source,
+            species_updated_at,
+            is_favorite,
+            rating_source,
         ),
     )
     new_id = cur.lastrowid
@@ -196,8 +217,9 @@ def test_build_batch_id_distinct_in_same_week():
 def test_build_batch_empty_db(tmp_image_dir):
     resolver, _ = tmp_image_dir
     conn = _make_conn()
-    batch = build_batch(conn, path_resolver=resolver,
-                        now=datetime(2026, 5, 22, 23, 59, 59, tzinfo=UTC))
+    batch = build_batch(
+        conn, path_resolver=resolver, now=datetime(2026, 5, 22, 23, 59, 59, tzinfo=UTC)
+    )
     assert batch.is_empty
     assert batch.total_rows == 0
     assert batch.counts == {
@@ -214,31 +236,44 @@ def test_build_batch_picks_up_all_three_buckets(tmp_image_dir):
     conn = _make_conn()
 
     # HN
-    _add_image(conn, "20260522_100000_hn.jpg", review_status="no_bird",
-               review_updated_at="2026-05-22T10:00:00Z")
+    _add_image(
+        conn,
+        "20260522_100000_hn.jpg",
+        review_status="no_bird",
+        review_updated_at="2026-05-22T10:00:00Z",
+    )
     _add_detection(conn, image_filename="20260522_100000_hn.jpg")
     write("20260522_100000_hn.jpg")
 
     # CP
     _add_image(conn, "20260522_110000_cp.jpg")
-    _add_detection(conn, image_filename="20260522_110000_cp.jpg",
-                   decision_level="species",
-                   raw_species_name="Parus_major",
-                   species_updated_at="2026-05-22T11:00:00Z")
+    _add_detection(
+        conn,
+        image_filename="20260522_110000_cp.jpg",
+        decision_level="species",
+        raw_species_name="Parus_major",
+        species_updated_at="2026-05-22T11:00:00Z",
+    )
     write("20260522_110000_cp.jpg")
 
     # RL
     _add_image(conn, "20260522_120000_rl.jpg")
-    _add_detection(conn, image_filename="20260522_120000_rl.jpg",
-                   decision_level="species",
-                   raw_species_name="Parus_major",
-                   manual_species_override="Cyanistes_caeruleus",
-                   species_updated_at="2026-05-22T12:00:00Z")
+    _add_detection(
+        conn,
+        image_filename="20260522_120000_rl.jpg",
+        decision_level="species",
+        raw_species_name="Parus_major",
+        manual_species_override="Cyanistes_caeruleus",
+        species_updated_at="2026-05-22T12:00:00Z",
+    )
     write("20260522_120000_rl.jpg")
 
-    batch = build_batch(conn, path_resolver=resolver,
-                        wmb_app_version="0.42.1",
-                        now=datetime(2026, 5, 22, 13, 0, 0, tzinfo=UTC))
+    batch = build_batch(
+        conn,
+        path_resolver=resolver,
+        wmb_app_version="0.42.1",
+        now=datetime(2026, 5, 22, 13, 0, 0, tzinfo=UTC),
+    )
 
     assert batch.counts == {
         "hard_negatives": 1,
@@ -255,20 +290,27 @@ def test_build_batch_caches_image_paths_across_buckets(tmp_image_dir):
     resolver, write = tmp_image_dir
     conn = _make_conn()
     _add_image(conn, "20260522_120000_dual.jpg")
-    _add_detection(conn, image_filename="20260522_120000_dual.jpg",
-                   decision_level="species",
-                   raw_species_name="Parus_major",
-                   manual_species_override="Cyanistes_caeruleus",
-                   species_updated_at="2026-05-22T12:00:00Z")
+    _add_detection(
+        conn,
+        image_filename="20260522_120000_dual.jpg",
+        decision_level="species",
+        raw_species_name="Parus_major",
+        manual_species_override="Cyanistes_caeruleus",
+        species_updated_at="2026-05-22T12:00:00Z",
+    )
     write("20260522_120000_dual.jpg")
 
     calls: list[str] = []
+
     def counting_resolver(fn):
         calls.append(fn)
         return resolver(fn)
 
-    build_batch(conn, path_resolver=counting_resolver,
-                now=datetime(2026, 5, 22, 23, 59, 59, tzinfo=UTC))
+    build_batch(
+        conn,
+        path_resolver=counting_resolver,
+        now=datetime(2026, 5, 22, 23, 59, 59, tzinfo=UTC),
+    )
     # Exactly one resolver call per unique filename — the dual-bucket
     # row must not trigger two lookups.
     assert calls == ["20260522_120000_dual.jpg"]
@@ -282,13 +324,18 @@ def test_build_batch_caches_image_paths_across_buckets(tmp_image_dir):
 def test_stream_batch_zip_has_all_required_files(tmp_image_dir):
     resolver, write = tmp_image_dir
     conn = _make_conn()
-    _add_image(conn, "20260522_100000_x.jpg", review_status="no_bird",
-               review_updated_at="2026-05-22T10:00:00Z")
+    _add_image(
+        conn,
+        "20260522_100000_x.jpg",
+        review_status="no_bird",
+        review_updated_at="2026-05-22T10:00:00Z",
+    )
     _add_detection(conn, image_filename="20260522_100000_x.jpg")
     write("20260522_100000_x.jpg")
 
-    batch = build_batch(conn, path_resolver=resolver,
-                        now=datetime(2026, 5, 22, 23, 59, 59, tzinfo=UTC))
+    batch = build_batch(
+        conn, path_resolver=resolver, now=datetime(2026, 5, 22, 23, 59, 59, tzinfo=UTC)
+    )
     buf = stream_batch_zip(batch)
     with zipfile.ZipFile(buf) as zf:
         names = set(zf.namelist())
@@ -308,8 +355,9 @@ def test_stream_batch_zip_empty_batch_still_valid_structure(tmp_image_dir):
     get a sensible empty ZIP rather than an exception."""
     resolver, _ = tmp_image_dir
     conn = _make_conn()
-    batch = build_batch(conn, path_resolver=resolver,
-                        now=datetime(2026, 5, 22, 23, 59, 59, tzinfo=UTC))
+    batch = build_batch(
+        conn, path_resolver=resolver, now=datetime(2026, 5, 22, 23, 59, 59, tzinfo=UTC)
+    )
     buf = stream_batch_zip(batch)
     with zipfile.ZipFile(buf) as zf:
         # Manifests exist but are empty
@@ -323,13 +371,18 @@ def test_stream_batch_zip_empty_batch_still_valid_structure(tmp_image_dir):
 def test_stream_batch_zip_skips_images_when_disabled(tmp_image_dir):
     resolver, write = tmp_image_dir
     conn = _make_conn()
-    _add_image(conn, "20260522_100000_x.jpg", review_status="no_bird",
-               review_updated_at="2026-05-22T10:00:00Z")
+    _add_image(
+        conn,
+        "20260522_100000_x.jpg",
+        review_status="no_bird",
+        review_updated_at="2026-05-22T10:00:00Z",
+    )
     _add_detection(conn, image_filename="20260522_100000_x.jpg")
     write("20260522_100000_x.jpg")
 
-    batch = build_batch(conn, path_resolver=resolver,
-                        now=datetime(2026, 5, 22, 23, 59, 59, tzinfo=UTC))
+    batch = build_batch(
+        conn, path_resolver=resolver, now=datetime(2026, 5, 22, 23, 59, 59, tzinfo=UTC)
+    )
     buf = stream_batch_zip(batch, include_images=False)
     with zipfile.ZipFile(buf) as zf:
         names = zf.namelist()
@@ -344,13 +397,17 @@ def test_stream_batch_zip_missing_image_recorded_in_metadata(tmp_image_dir):
     export must not crash AND must surface the issue in metadata."""
     resolver, _ = tmp_image_dir  # NB: not calling write() — file missing
     conn = _make_conn()
-    _add_image(conn, "20260522_100000_missing.jpg",
-               review_status="no_bird",
-               review_updated_at="2026-05-22T10:00:00Z")
+    _add_image(
+        conn,
+        "20260522_100000_missing.jpg",
+        review_status="no_bird",
+        review_updated_at="2026-05-22T10:00:00Z",
+    )
     _add_detection(conn, image_filename="20260522_100000_missing.jpg")
 
-    batch = build_batch(conn, path_resolver=resolver,
-                        now=datetime(2026, 5, 22, 23, 59, 59, tzinfo=UTC))
+    batch = build_batch(
+        conn, path_resolver=resolver, now=datetime(2026, 5, 22, 23, 59, 59, tzinfo=UTC)
+    )
     buf = stream_batch_zip(batch)
     with zipfile.ZipFile(buf) as zf:
         meta = json.loads(zf.read("batch_metadata.json"))
@@ -367,22 +424,29 @@ def test_coco_has_species_categories_from_positives_and_relabels(tmp_image_dir):
     conn = _make_conn()
     # CP with one species
     _add_image(conn, "20260522_110000_cp.jpg")
-    _add_detection(conn, image_filename="20260522_110000_cp.jpg",
-                   decision_level="species",
-                   raw_species_name="Parus_major",
-                   species_updated_at="2026-05-22T11:00:00Z")
+    _add_detection(
+        conn,
+        image_filename="20260522_110000_cp.jpg",
+        decision_level="species",
+        raw_species_name="Parus_major",
+        species_updated_at="2026-05-22T11:00:00Z",
+    )
     write("20260522_110000_cp.jpg")
     # RL with corrected species
     _add_image(conn, "20260522_120000_rl.jpg")
-    _add_detection(conn, image_filename="20260522_120000_rl.jpg",
-                   decision_level="species_review",
-                   raw_species_name="Parus_major",
-                   manual_species_override="Erithacus_rubecula",
-                   species_updated_at="2026-05-22T12:00:00Z")
+    _add_detection(
+        conn,
+        image_filename="20260522_120000_rl.jpg",
+        decision_level="species_review",
+        raw_species_name="Parus_major",
+        manual_species_override="Erithacus_rubecula",
+        species_updated_at="2026-05-22T12:00:00Z",
+    )
     write("20260522_120000_rl.jpg")
 
-    batch = build_batch(conn, path_resolver=resolver,
-                        now=datetime(2026, 5, 22, 23, 59, 59, tzinfo=UTC))
+    batch = build_batch(
+        conn, path_resolver=resolver, now=datetime(2026, 5, 22, 23, 59, 59, tzinfo=UTC)
+    )
     buf = stream_batch_zip(batch)
     with zipfile.ZipFile(buf) as zf:
         coco = json.loads(zf.read("coco_annotations.json"))
@@ -406,8 +470,9 @@ def test_coco_annotation_bbox_is_pixels_not_normalized(tmp_image_dir):
     )
     write("20260522_110000_x.jpg")
 
-    batch = build_batch(conn, path_resolver=resolver,
-                        now=datetime(2026, 5, 22, 23, 59, 59, tzinfo=UTC))
+    batch = build_batch(
+        conn, path_resolver=resolver, now=datetime(2026, 5, 22, 23, 59, 59, tzinfo=UTC)
+    )
     buf = stream_batch_zip(batch)
     with zipfile.ZipFile(buf) as zf:
         coco = json.loads(zf.read("coco_annotations.json"))
@@ -424,15 +489,23 @@ def test_coco_hard_negative_appears_as_image_with_zero_annotations(tmp_image_dir
     way to express 'this frame has no objects of the target classes'."""
     resolver, write = tmp_image_dir
     conn = _make_conn()
-    _add_image(conn, "20260522_100000_hn.jpg", review_status="no_bird",
-               review_updated_at="2026-05-22T10:00:00Z")
-    _add_detection(conn, image_filename="20260522_100000_hn.jpg",
-                   decision_level="species_review",
-                   raw_species_name="Parus_major")
+    _add_image(
+        conn,
+        "20260522_100000_hn.jpg",
+        review_status="no_bird",
+        review_updated_at="2026-05-22T10:00:00Z",
+    )
+    _add_detection(
+        conn,
+        image_filename="20260522_100000_hn.jpg",
+        decision_level="species_review",
+        raw_species_name="Parus_major",
+    )
     write("20260522_100000_hn.jpg")
 
-    batch = build_batch(conn, path_resolver=resolver,
-                        now=datetime(2026, 5, 22, 23, 59, 59, tzinfo=UTC))
+    batch = build_batch(
+        conn, path_resolver=resolver, now=datetime(2026, 5, 22, 23, 59, 59, tzinfo=UTC)
+    )
     buf = stream_batch_zip(batch)
     with zipfile.ZipFile(buf) as zf:
         coco = json.loads(zf.read("coco_annotations.json"))
@@ -450,17 +523,23 @@ def test_coco_image_ids_match_annotation_image_ids(tmp_image_dir):
     and assert every annotation points at an existing image."""
     resolver, write = tmp_image_dir
     conn = _make_conn()
-    for i, sp in enumerate(("Parus_major", "Cyanistes_caeruleus", "Erithacus_rubecula")):
+    for i, sp in enumerate(
+        ("Parus_major", "Cyanistes_caeruleus", "Erithacus_rubecula")
+    ):
         fn = f"2026052{i}_120000_cp.jpg"
         _add_image(conn, fn)
-        _add_detection(conn, image_filename=fn,
-                       decision_level="species",
-                       raw_species_name=sp,
-                       species_updated_at=f"2026-05-2{i}T12:00:00Z")
+        _add_detection(
+            conn,
+            image_filename=fn,
+            decision_level="species",
+            raw_species_name=sp,
+            species_updated_at=f"2026-05-2{i}T12:00:00Z",
+        )
         write(fn)
 
-    batch = build_batch(conn, path_resolver=resolver,
-                        now=datetime(2026, 5, 22, 23, 59, 59, tzinfo=UTC))
+    batch = build_batch(
+        conn, path_resolver=resolver, now=datetime(2026, 5, 22, 23, 59, 59, tzinfo=UTC)
+    )
     buf = stream_batch_zip(batch)
     with zipfile.ZipFile(buf) as zf:
         coco = json.loads(zf.read("coco_annotations.json"))
@@ -479,16 +558,24 @@ def test_coco_image_ids_match_annotation_image_ids(tmp_image_dir):
 def test_manifest_jsonl_has_required_provenance_fields(tmp_image_dir):
     resolver, write = tmp_image_dir
     conn = _make_conn()
-    _add_image(conn, "20260522_100000_hn.jpg", review_status="no_bird",
-               review_updated_at="2026-05-22T10:00:00Z")
-    _add_detection(conn, image_filename="20260522_100000_hn.jpg",
-                   od_confidence=0.687,
-                   detector_model_version="yolox_v11",
-                   classifier_model_version="cls_20260522")
+    _add_image(
+        conn,
+        "20260522_100000_hn.jpg",
+        review_status="no_bird",
+        review_updated_at="2026-05-22T10:00:00Z",
+    )
+    _add_detection(
+        conn,
+        image_filename="20260522_100000_hn.jpg",
+        od_confidence=0.687,
+        detector_model_version="yolox_v11",
+        classifier_model_version="cls_20260522",
+    )
     write("20260522_100000_hn.jpg")
 
-    batch = build_batch(conn, path_resolver=resolver,
-                        now=datetime(2026, 5, 22, 23, 59, 59, tzinfo=UTC))
+    batch = build_batch(
+        conn, path_resolver=resolver, now=datetime(2026, 5, 22, 23, 59, 59, tzinfo=UTC)
+    )
     buf = stream_batch_zip(batch)
     with zipfile.ZipFile(buf) as zf:
         line = zf.read("manifests/hard_negatives.jsonl").decode().strip()
@@ -507,15 +594,19 @@ def test_manifest_relabel_carries_both_species(tmp_image_dir):
     resolver, write = tmp_image_dir
     conn = _make_conn()
     _add_image(conn, "20260522_120000_rl.jpg")
-    _add_detection(conn, image_filename="20260522_120000_rl.jpg",
-                   raw_species_name="Parus_major",
-                   manual_species_override="Cyanistes_caeruleus",
-                   species_source="manual_relabel",
-                   species_updated_at="2026-05-22T12:00:00Z")
+    _add_detection(
+        conn,
+        image_filename="20260522_120000_rl.jpg",
+        raw_species_name="Parus_major",
+        manual_species_override="Cyanistes_caeruleus",
+        species_source="manual_relabel",
+        species_updated_at="2026-05-22T12:00:00Z",
+    )
     write("20260522_120000_rl.jpg")
 
-    batch = build_batch(conn, path_resolver=resolver,
-                        now=datetime(2026, 5, 22, 23, 59, 59, tzinfo=UTC))
+    batch = build_batch(
+        conn, path_resolver=resolver, now=datetime(2026, 5, 22, 23, 59, 59, tzinfo=UTC)
+    )
     buf = stream_batch_zip(batch)
     with zipfile.ZipFile(buf) as zf:
         line = zf.read("manifests/species_relabels.jsonl").decode().strip()
@@ -538,10 +629,13 @@ def test_two_builds_with_identical_inputs_produce_identical_payloads(tmp_image_d
     resolver, write = tmp_image_dir
     conn = _make_conn()
     _add_image(conn, "20260522_110000_x.jpg")
-    _add_detection(conn, image_filename="20260522_110000_x.jpg",
-                   decision_level="species",
-                   raw_species_name="Parus_major",
-                   species_updated_at="2026-05-22T11:00:00Z")
+    _add_detection(
+        conn,
+        image_filename="20260522_110000_x.jpg",
+        decision_level="species",
+        raw_species_name="Parus_major",
+        species_updated_at="2026-05-22T11:00:00Z",
+    )
     write("20260522_110000_x.jpg")
 
     fixed_now = datetime(2026, 5, 22, 20, 0, 0, tzinfo=UTC)
@@ -554,8 +648,9 @@ def test_two_builds_with_identical_inputs_produce_identical_payloads(tmp_image_d
     buf2 = stream_batch_zip(b2, include_images=False)
     with zipfile.ZipFile(buf1) as zf1, zipfile.ZipFile(buf2) as zf2:
         assert zf1.read("coco_annotations.json") == zf2.read("coco_annotations.json")
-        assert zf1.read("manifests/confirmed_positives.jsonl") == \
-            zf2.read("manifests/confirmed_positives.jsonl")
+        assert zf1.read("manifests/confirmed_positives.jsonl") == zf2.read(
+            "manifests/confirmed_positives.jsonl"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -566,9 +661,12 @@ def test_two_builds_with_identical_inputs_produce_identical_payloads(tmp_image_d
 def test_record_batch_exported_writes_row(tmp_image_dir):
     resolver, _ = tmp_image_dir
     conn = _make_conn()
-    batch = build_batch(conn, path_resolver=resolver,
-                        wmb_app_version="0.99.0",
-                        now=datetime(2026, 5, 22, 20, 0, 0, tzinfo=UTC))
+    batch = build_batch(
+        conn,
+        path_resolver=resolver,
+        wmb_app_version="0.99.0",
+        now=datetime(2026, 5, 22, 20, 0, 0, tzinfo=UTC),
+    )
     record_batch_exported(conn, batch, notes="test run")
     rows = conn.execute(
         "SELECT batch_id, until_at, exporter_version, wmb_app_version, notes "
@@ -584,8 +682,9 @@ def test_record_batch_exported_writes_row(tmp_image_dir):
 def test_record_batch_exported_is_idempotent(tmp_image_dir):
     resolver, _ = tmp_image_dir
     conn = _make_conn()
-    batch = build_batch(conn, path_resolver=resolver,
-                        now=datetime(2026, 5, 22, 23, 59, 59, tzinfo=UTC))
+    batch = build_batch(
+        conn, path_resolver=resolver, now=datetime(2026, 5, 22, 23, 59, 59, tzinfo=UTC)
+    )
     record_batch_exported(conn, batch)
     record_batch_exported(conn, batch)  # second call same batch_id
     n = conn.execute("SELECT COUNT(*) FROM export_batches").fetchone()[0]
@@ -595,11 +694,13 @@ def test_record_batch_exported_is_idempotent(tmp_image_dir):
 def test_last_batch_until_returns_most_recent(tmp_image_dir):
     resolver, _ = tmp_image_dir
     conn = _make_conn()
-    b1 = build_batch(conn, path_resolver=resolver,
-                     now=datetime(2026, 5, 15, 23, 59, 59, tzinfo=UTC))
+    b1 = build_batch(
+        conn, path_resolver=resolver, now=datetime(2026, 5, 15, 23, 59, 59, tzinfo=UTC)
+    )
     record_batch_exported(conn, b1)
-    b2 = build_batch(conn, path_resolver=resolver,
-                     now=datetime(2026, 5, 22, 23, 59, 59, tzinfo=UTC))
+    b2 = build_batch(
+        conn, path_resolver=resolver, now=datetime(2026, 5, 22, 23, 59, 59, tzinfo=UTC)
+    )
     record_batch_exported(conn, b2)
 
     last = last_batch_until(conn)
@@ -619,29 +720,45 @@ def test_chained_batches_dont_double_count(tmp_image_dir):
     conn = _make_conn()
 
     # First HN at T0
-    _add_image(conn, "20260520_100000_a.jpg", review_status="no_bird",
-               review_updated_at="2026-05-20T10:00:00Z")
+    _add_image(
+        conn,
+        "20260520_100000_a.jpg",
+        review_status="no_bird",
+        review_updated_at="2026-05-20T10:00:00Z",
+    )
     _add_detection(conn, image_filename="20260520_100000_a.jpg")
     write("20260520_100000_a.jpg")
 
     # Build batch 1 with until=T1
     t1 = "2026-05-21T00:00:00+00:00"
-    b1 = build_batch(conn, path_resolver=resolver,
-                     since=None, until=t1,
-                     now=datetime(2026, 5, 21, 23, 59, 59, tzinfo=UTC))
+    b1 = build_batch(
+        conn,
+        path_resolver=resolver,
+        since=None,
+        until=t1,
+        now=datetime(2026, 5, 21, 23, 59, 59, tzinfo=UTC),
+    )
     record_batch_exported(conn, b1)
     assert b1.counts["hard_negatives"] == 1
 
     # Second HN at T2 (between T1 and now)
-    _add_image(conn, "20260521_100000_b.jpg", review_status="no_bird",
-               review_updated_at="2026-05-21T10:00:00Z")
+    _add_image(
+        conn,
+        "20260521_100000_b.jpg",
+        review_status="no_bird",
+        review_updated_at="2026-05-21T10:00:00Z",
+    )
     _add_detection(conn, image_filename="20260521_100000_b.jpg")
     write("20260521_100000_b.jpg")
 
     # Build batch 2: since = b1.until
-    b2 = build_batch(conn, path_resolver=resolver,
-                     since=b1.until, until=None,
-                     now=datetime(2026, 5, 22, 23, 59, 59, tzinfo=UTC))
+    b2 = build_batch(
+        conn,
+        path_resolver=resolver,
+        since=b1.until,
+        until=None,
+        now=datetime(2026, 5, 22, 23, 59, 59, tzinfo=UTC),
+    )
     assert b2.counts["hard_negatives"] == 1  # only the new one
     # And the old one is NOT in this batch
     hn_filenames = {r["image_filename"] for r in b2.hard_negatives}
@@ -657,19 +774,108 @@ def test_chained_batches_dont_double_count(tmp_image_dir):
 def test_preview_counts_matches_what_build_would_produce(tmp_image_dir):
     resolver, write = tmp_image_dir
     conn = _make_conn()
-    _add_image(conn, "20260522_100000_hn.jpg", review_status="no_bird",
-               review_updated_at="2026-05-22T10:00:00Z")
+    _add_image(
+        conn,
+        "20260522_100000_hn.jpg",
+        review_status="no_bird",
+        review_updated_at="2026-05-22T10:00:00Z",
+    )
     _add_detection(conn, image_filename="20260522_100000_hn.jpg")
     _add_image(conn, "20260522_110000_cp.jpg")
-    _add_detection(conn, image_filename="20260522_110000_cp.jpg",
-                   decision_level="species",
-                   raw_species_name="Parus_major",
-                   species_updated_at="2026-05-22T11:00:00Z")
+    _add_detection(
+        conn,
+        image_filename="20260522_110000_cp.jpg",
+        decision_level="species",
+        raw_species_name="Parus_major",
+        species_updated_at="2026-05-22T11:00:00Z",
+    )
 
     preview = preview_counts(conn)
-    batch = build_batch(conn, path_resolver=resolver,
-                        now=datetime(2026, 5, 22, 23, 0, 0, tzinfo=UTC))
+    batch = build_batch(
+        conn, path_resolver=resolver, now=datetime(2026, 5, 22, 23, 0, 0, tzinfo=UTC)
+    )
     assert preview == batch.counts
+
+
+def test_exclude_image_from_export_removes_frame_from_batch(tmp_image_dir):
+    resolver, write = tmp_image_dir
+    conn = _make_conn()
+    _add_image(conn, "20260522_100000_cp.jpg")
+    _add_detection(
+        conn,
+        image_filename="20260522_100000_cp.jpg",
+        decision_level="species",
+        raw_species_name="Parus_major",
+        species_updated_at="2026-05-22T10:00:00Z",
+    )
+    write("20260522_100000_cp.jpg")
+
+    inserted = exclude_image_from_export(
+        conn,
+        image_filename="20260522_100000_cp.jpg",
+        reason="bad dry-run row",
+        now=datetime(2026, 5, 22, 10, 5, tzinfo=UTC),
+    )
+    inserted_again = exclude_image_from_export(
+        conn,
+        image_filename="20260522_100000_cp.jpg",
+        reason="bad dry-run row",
+        now=datetime(2026, 5, 22, 10, 6, tzinfo=UTC),
+    )
+    batch = build_batch(conn, path_resolver=resolver)
+
+    assert inserted is True
+    assert inserted_again is False
+    assert batch.counts["confirmed_positives"] == 0
+    assert (
+        conn.execute(
+            "SELECT COUNT(*) FROM groundtruth_export_exclusions "
+            "WHERE image_filename = ? AND released_at IS NULL",
+            ("20260522_100000_cp.jpg",),
+        ).fetchone()[0]
+        == 1
+    )
+
+
+def test_build_batch_handles_local_naive_no_bird_timestamps(tmp_image_dir, monkeypatch):
+    """Review no-bird writes used local naive timestamps for a while.
+
+    The export builder uses a UTC ``until`` by default, so the time
+    window must normalize both sides before comparing. Otherwise a
+    Berlin-local ``21:41`` action is lexicographically after a
+    same-instant-ish UTC ``19:45`` build cutoff and preview/build
+    disagree.
+    """
+    resolver, write = tmp_image_dir
+    previous_tz = os.environ.get("TZ")
+    monkeypatch.setenv("TZ", "Europe/Berlin")
+    if hasattr(time, "tzset"):
+        time.tzset()
+    try:
+        conn = _make_conn()
+        _add_image(
+            conn,
+            "20260523_214156_hn.jpg",
+            review_status="no_bird",
+            review_updated_at="2026-05-23T21:41:56.329955",
+        )
+        _add_detection(conn, image_filename="20260523_214156_hn.jpg")
+        write("20260523_214156_hn.jpg")
+
+        batch = build_batch(
+            conn,
+            path_resolver=resolver,
+            now=datetime(2026, 5, 23, 19, 45, 0, tzinfo=UTC),
+        )
+    finally:
+        if previous_tz is None:
+            monkeypatch.delenv("TZ", raising=False)
+        else:
+            monkeypatch.setenv("TZ", previous_tz)
+        if hasattr(time, "tzset"):
+            time.tzset()
+
+    assert batch.counts["hard_negatives"] == 1
 
 
 # ---------------------------------------------------------------------------
@@ -681,16 +887,20 @@ def test_favorites_appear_in_batch_and_zip(tmp_image_dir):
     resolver, write = tmp_image_dir
     conn = _make_conn()
     _add_image(conn, "20260522_120000_fav.jpg")
-    _add_detection(conn, image_filename="20260522_120000_fav.jpg",
-                   decision_level="species",
-                   raw_species_name="Erithacus_rubecula",
-                   is_favorite=1,
-                   rating_source="manual",
-                   species_updated_at="2026-05-22T12:00:00Z")
+    _add_detection(
+        conn,
+        image_filename="20260522_120000_fav.jpg",
+        decision_level="species",
+        raw_species_name="Erithacus_rubecula",
+        is_favorite=1,
+        rating_source="manual",
+        species_updated_at="2026-05-22T12:00:00Z",
+    )
     write("20260522_120000_fav.jpg")
 
-    batch = build_batch(conn, path_resolver=resolver,
-                        now=datetime(2026, 5, 22, 23, 59, 59, tzinfo=UTC))
+    batch = build_batch(
+        conn, path_resolver=resolver, now=datetime(2026, 5, 22, 23, 59, 59, tzinfo=UTC)
+    )
     assert batch.counts["favorites"] == 1
     assert batch.counts["confirmed_positives"] == 1  # same row is both
 
@@ -720,16 +930,20 @@ def test_favorites_with_auto_rating_source_excluded(tmp_image_dir):
     resolver, write = tmp_image_dir
     conn = _make_conn()
     _add_image(conn, "20260522_120000_x.jpg")
-    _add_detection(conn, image_filename="20260522_120000_x.jpg",
-                   decision_level="species",
-                   raw_species_name="Parus_major",
-                   is_favorite=1,
-                   rating_source="auto",  # legacy backfill
-                   species_updated_at="2026-05-22T12:00:00Z")
+    _add_detection(
+        conn,
+        image_filename="20260522_120000_x.jpg",
+        decision_level="species",
+        raw_species_name="Parus_major",
+        is_favorite=1,
+        rating_source="auto",  # legacy backfill
+        species_updated_at="2026-05-22T12:00:00Z",
+    )
     write("20260522_120000_x.jpg")
 
-    batch = build_batch(conn, path_resolver=resolver,
-                        now=datetime(2026, 5, 22, 23, 59, 59, tzinfo=UTC))
+    batch = build_batch(
+        conn, path_resolver=resolver, now=datetime(2026, 5, 22, 23, 59, 59, tzinfo=UTC)
+    )
     assert batch.counts["favorites"] == 0
 
 
@@ -747,20 +961,27 @@ def test_frame_integrity_drops_frame_with_unconfirmed_sibling(tmp_image_dir):
     conn = _make_conn()
     _add_image(conn, "20260522_130000_mixed.jpg")
     # Confirmed sibling
-    _add_detection(conn, image_filename="20260522_130000_mixed.jpg",
-                   decision_level="species",
-                   raw_species_name="Parus_major",
-                   species_updated_at="2026-05-22T13:00:00Z",
-                   bbox=(0.1, 0.1, 0.2, 0.2))
+    confirmed_id = _add_detection(
+        conn,
+        image_filename="20260522_130000_mixed.jpg",
+        decision_level="species",
+        raw_species_name="Parus_major",
+        species_updated_at="2026-05-22T13:00:00Z",
+        bbox=(0.1, 0.1, 0.2, 0.2),
+    )
     # Unconfirmed sibling (species_review — pipeline uncertain, no user touch)
-    _add_detection(conn, image_filename="20260522_130000_mixed.jpg",
-                   decision_level="species_review",
-                   raw_species_name="Cyanistes_caeruleus",
-                   bbox=(0.5, 0.5, 0.2, 0.2))
+    missing_id = _add_detection(
+        conn,
+        image_filename="20260522_130000_mixed.jpg",
+        decision_level="species_review",
+        raw_species_name="Cyanistes_caeruleus",
+        bbox=(0.5, 0.5, 0.2, 0.2),
+    )
     write("20260522_130000_mixed.jpg")
 
-    batch = build_batch(conn, path_resolver=resolver,
-                        now=datetime(2026, 5, 22, 23, 59, 59, tzinfo=UTC))
+    batch = build_batch(
+        conn, path_resolver=resolver, now=datetime(2026, 5, 22, 23, 59, 59, tzinfo=UTC)
+    )
 
     # The confirmed-positive count drops to 0 because the only frame
     # with a CP signal has a mixed-status sibling.
@@ -770,6 +991,16 @@ def test_frame_integrity_drops_frame_with_unconfirmed_sibling(tmp_image_dir):
     drop = batch.frame_integrity_dropped[0]
     assert drop["image_filename"] == "20260522_130000_mixed.jpg"
     assert "unconfirmed" in drop["reason"]
+    assert drop["dropped_detection_ids"] == [confirmed_id]
+    assert drop["missing_detection_ids"] == [missing_id]
+    assert len(drop["active_siblings"]) == 2
+    sibling_by_id = {
+        sibling["detection_id"]: sibling for sibling in drop["active_siblings"]
+    }
+    assert sibling_by_id[confirmed_id]["is_positive_signal"] is True
+    assert sibling_by_id[confirmed_id]["positive_buckets"] == ["confirmed_positives"]
+    assert sibling_by_id[missing_id]["is_positive_signal"] is False
+    assert sibling_by_id[missing_id]["bbox_x"] == 0.5
 
 
 def test_frame_integrity_keeps_frame_when_all_siblings_confirmed(tmp_image_dir):
@@ -778,20 +1009,27 @@ def test_frame_integrity_keeps_frame_when_all_siblings_confirmed(tmp_image_dir):
     resolver, write = tmp_image_dir
     conn = _make_conn()
     _add_image(conn, "20260522_130000_clean.jpg")
-    _add_detection(conn, image_filename="20260522_130000_clean.jpg",
-                   decision_level="species",
-                   raw_species_name="Parus_major",
-                   species_updated_at="2026-05-22T13:00:00Z",
-                   bbox=(0.1, 0.1, 0.2, 0.2))
-    _add_detection(conn, image_filename="20260522_130000_clean.jpg",
-                   decision_level="species",
-                   raw_species_name="Cyanistes_caeruleus",
-                   species_updated_at="2026-05-22T13:00:01Z",
-                   bbox=(0.5, 0.5, 0.2, 0.2))
+    _add_detection(
+        conn,
+        image_filename="20260522_130000_clean.jpg",
+        decision_level="species",
+        raw_species_name="Parus_major",
+        species_updated_at="2026-05-22T13:00:00Z",
+        bbox=(0.1, 0.1, 0.2, 0.2),
+    )
+    _add_detection(
+        conn,
+        image_filename="20260522_130000_clean.jpg",
+        decision_level="species",
+        raw_species_name="Cyanistes_caeruleus",
+        species_updated_at="2026-05-22T13:00:01Z",
+        bbox=(0.5, 0.5, 0.2, 0.2),
+    )
     write("20260522_130000_clean.jpg")
 
-    batch = build_batch(conn, path_resolver=resolver,
-                        now=datetime(2026, 5, 22, 23, 59, 59, tzinfo=UTC))
+    batch = build_batch(
+        conn, path_resolver=resolver, now=datetime(2026, 5, 22, 23, 59, 59, tzinfo=UTC)
+    )
 
     assert batch.counts["confirmed_positives"] == 2
     assert batch.frame_integrity_dropped == []
@@ -805,24 +1043,31 @@ def test_frame_integrity_mixed_sources_count_as_confirmed(tmp_image_dir):
     conn = _make_conn()
     _add_image(conn, "20260522_130000_mixsrc.jpg")
     # Sibling 1: confirmed_positive
-    _add_detection(conn, image_filename="20260522_130000_mixsrc.jpg",
-                   decision_level="species",
-                   raw_species_name="Parus_major",
-                   species_updated_at="2026-05-22T13:00:00Z",
-                   bbox=(0.1, 0.1, 0.2, 0.2))
+    _add_detection(
+        conn,
+        image_filename="20260522_130000_mixsrc.jpg",
+        decision_level="species",
+        raw_species_name="Parus_major",
+        species_updated_at="2026-05-22T13:00:00Z",
+        bbox=(0.1, 0.1, 0.2, 0.2),
+    )
     # Sibling 2: species relabel (user explicitly corrected)
-    _add_detection(conn, image_filename="20260522_130000_mixsrc.jpg",
-                   decision_level="species_review",
-                   raw_species_name="Parus_major",
-                   manual_species_override="Cyanistes_caeruleus",
-                   species_updated_at="2026-05-22T13:00:01Z",
-                   bbox=(0.5, 0.5, 0.2, 0.2))
+    _add_detection(
+        conn,
+        image_filename="20260522_130000_mixsrc.jpg",
+        decision_level="species_review",
+        raw_species_name="Parus_major",
+        manual_species_override="Cyanistes_caeruleus",
+        species_updated_at="2026-05-22T13:00:01Z",
+        bbox=(0.5, 0.5, 0.2, 0.2),
+    )
     write("20260522_130000_mixsrc.jpg")
 
-    batch = build_batch(conn, path_resolver=resolver,
-                        now=datetime(2026, 5, 22, 23, 59, 59, tzinfo=UTC))
+    batch = build_batch(
+        conn, path_resolver=resolver, now=datetime(2026, 5, 22, 23, 59, 59, tzinfo=UTC)
+    )
 
-    assert batch.counts["confirmed_positives"] == 1
+    assert batch.counts["confirmed_positives"] == 2
     assert batch.counts["species_relabels"] == 1
     assert batch.frame_integrity_dropped == []
 
@@ -832,21 +1077,31 @@ def test_frame_integrity_does_not_touch_hard_negatives(tmp_image_dir):
     definition, no integrity check needed even with multi-box frames."""
     resolver, write = tmp_image_dir
     conn = _make_conn()
-    _add_image(conn, "20260522_130000_hn.jpg",
-               review_status="no_bird",
-               review_updated_at="2026-05-22T13:00:00Z")
-    _add_detection(conn, image_filename="20260522_130000_hn.jpg",
-                   decision_level="species_review",
-                   raw_species_name="Parus_major",
-                   bbox=(0.1, 0.1, 0.2, 0.2))
-    _add_detection(conn, image_filename="20260522_130000_hn.jpg",
-                   decision_level="reject",
-                   raw_species_name="Cyanistes_caeruleus",
-                   bbox=(0.5, 0.5, 0.2, 0.2))
+    _add_image(
+        conn,
+        "20260522_130000_hn.jpg",
+        review_status="no_bird",
+        review_updated_at="2026-05-22T13:00:00Z",
+    )
+    _add_detection(
+        conn,
+        image_filename="20260522_130000_hn.jpg",
+        decision_level="species_review",
+        raw_species_name="Parus_major",
+        bbox=(0.1, 0.1, 0.2, 0.2),
+    )
+    _add_detection(
+        conn,
+        image_filename="20260522_130000_hn.jpg",
+        decision_level="reject",
+        raw_species_name="Cyanistes_caeruleus",
+        bbox=(0.5, 0.5, 0.2, 0.2),
+    )
     write("20260522_130000_hn.jpg")
 
-    batch = build_batch(conn, path_resolver=resolver,
-                        now=datetime(2026, 5, 22, 23, 59, 59, tzinfo=UTC))
+    batch = build_batch(
+        conn, path_resolver=resolver, now=datetime(2026, 5, 22, 23, 59, 59, tzinfo=UTC)
+    )
 
     # Both boxes flow through as HN — no integrity drop.
     assert batch.counts["hard_negatives"] == 2
@@ -859,26 +1114,35 @@ def test_frame_integrity_audit_appears_in_metadata(tmp_image_dir):
     resolver, write = tmp_image_dir
     conn = _make_conn()
     _add_image(conn, "20260522_130000_mixed.jpg")
-    _add_detection(conn, image_filename="20260522_130000_mixed.jpg",
-                   decision_level="species",
-                   raw_species_name="Parus_major",
-                   species_updated_at="2026-05-22T13:00:00Z",
-                   bbox=(0.1, 0.1, 0.2, 0.2))
-    _add_detection(conn, image_filename="20260522_130000_mixed.jpg",
-                   decision_level="species_review",
-                   raw_species_name="Cyanistes_caeruleus",
-                   bbox=(0.5, 0.5, 0.2, 0.2))
+    _add_detection(
+        conn,
+        image_filename="20260522_130000_mixed.jpg",
+        decision_level="species",
+        raw_species_name="Parus_major",
+        species_updated_at="2026-05-22T13:00:00Z",
+        bbox=(0.1, 0.1, 0.2, 0.2),
+    )
+    _add_detection(
+        conn,
+        image_filename="20260522_130000_mixed.jpg",
+        decision_level="species_review",
+        raw_species_name="Cyanistes_caeruleus",
+        bbox=(0.5, 0.5, 0.2, 0.2),
+    )
     write("20260522_130000_mixed.jpg")
 
-    batch = build_batch(conn, path_resolver=resolver,
-                        now=datetime(2026, 5, 22, 23, 59, 59, tzinfo=UTC))
+    batch = build_batch(
+        conn, path_resolver=resolver, now=datetime(2026, 5, 22, 23, 59, 59, tzinfo=UTC)
+    )
     buf = stream_batch_zip(batch)
     with zipfile.ZipFile(buf) as zf:
         meta = json.loads(zf.read("batch_metadata.json"))
 
     assert len(meta["frame_integrity_dropped"]) == 1
-    assert meta["frame_integrity_dropped"][0]["image_filename"] == \
-        "20260522_130000_mixed.jpg"
+    assert (
+        meta["frame_integrity_dropped"][0]["image_filename"]
+        == "20260522_130000_mixed.jpg"
+    )
 
 
 def test_frame_integrity_count_recorded_in_export_batches(tmp_image_dir):
@@ -888,19 +1152,26 @@ def test_frame_integrity_count_recorded_in_export_batches(tmp_image_dir):
     resolver, write = tmp_image_dir
     conn = _make_conn()
     _add_image(conn, "20260522_130000_mixed.jpg")
-    _add_detection(conn, image_filename="20260522_130000_mixed.jpg",
-                   decision_level="species",
-                   raw_species_name="Parus_major",
-                   species_updated_at="2026-05-22T13:00:00Z",
-                   bbox=(0.1, 0.1, 0.2, 0.2))
-    _add_detection(conn, image_filename="20260522_130000_mixed.jpg",
-                   decision_level="species_review",
-                   raw_species_name="Cyanistes_caeruleus",
-                   bbox=(0.5, 0.5, 0.2, 0.2))
+    _add_detection(
+        conn,
+        image_filename="20260522_130000_mixed.jpg",
+        decision_level="species",
+        raw_species_name="Parus_major",
+        species_updated_at="2026-05-22T13:00:00Z",
+        bbox=(0.1, 0.1, 0.2, 0.2),
+    )
+    _add_detection(
+        conn,
+        image_filename="20260522_130000_mixed.jpg",
+        decision_level="species_review",
+        raw_species_name="Cyanistes_caeruleus",
+        bbox=(0.5, 0.5, 0.2, 0.2),
+    )
     write("20260522_130000_mixed.jpg")
 
-    batch = build_batch(conn, path_resolver=resolver,
-                        now=datetime(2026, 5, 22, 23, 59, 59, tzinfo=UTC))
+    batch = build_batch(
+        conn, path_resolver=resolver, now=datetime(2026, 5, 22, 23, 59, 59, tzinfo=UTC)
+    )
     record_batch_exported(conn, batch)
 
     row = conn.execute(

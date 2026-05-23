@@ -326,12 +326,39 @@
 <div class="modal fade gallery-modal wm-modal" id="{{ zoom_modal_id }}" tabindex="-1" aria-hidden="true">
     <div class="modal-dialog modal-xl modal-dialog-centered modal-dialog-scrollable modal-fullscreen-md-down wm-modal__dialog">
         <div class="modal-content wm-modal__content">
+            {# 2026-05-23 redesign: two-stockwork orphan-fallback modal, same shape
+               as detection_modal.html — header holds title + action group, body
+               holds only the image (no detection => no sibling strip). #}
             <div class="modal-header wm-modal__header">
                 <div class="wm-modal__title">
                     <span class="wm-modal__title-text"><em>{{ orphan.current_species_common or orphan.source_image_filename }}</em></span>
                     <span class="wm-modal__title-sub">{{ orphan.formatted_date }}{% if orphan.reason_label %} · {{ orphan.reason_label }}{% endif %}</span>
                 </div>
-                <button type="button" class="btn-close wm-modal__close" data-bs-dismiss="modal"></button>
+                <div class="wm-modal__header-actions">
+                    {{ render_action_bar(
+                    detection_id=orphan.best_detection_id or 0,
+                    original_url=orphan.full_url or none,
+                    bbox={
+                        'x': orphan.bbox_x,
+                        'y': orphan.bbox_y,
+                        'w': orphan.bbox_w,
+                        'h': orphan.bbox_h,
+                        'name': orphan.current_species_common or 'Detection',
+                        'id': orphan.best_detection_id or 0
+                    } if has_bbox else none,
+                    siblings=[],
+                    show_nav=false,
+                    show_bbox_toggle=has_bbox,
+                    show_download=orphan.full_url,
+                    gallery_date=orphan.gallery_date,
+                    is_favorite=false,
+                    can_moderate=true,
+                    current_species=orphan.selected_species or orphan.species_key,
+                    in_header=true,
+                    show_maximize=true,
+                    show_close=true
+                    ) }}
+                </div>
             </div>
 
             <div class="wm-modal__body wm-modal__body--review">
@@ -353,29 +380,6 @@
                     current_species=orphan.selected_species or orphan.species_key
                     ) }}
                 </div>
-            </div>
-
-            <div class="wm-modal__action">
-                {{ render_action_bar(
-                detection_id=orphan.best_detection_id or 0,
-                original_url=orphan.full_url or none,
-                bbox={
-                    'x': orphan.bbox_x,
-                    'y': orphan.bbox_y,
-                    'w': orphan.bbox_w,
-                    'h': orphan.bbox_h,
-                    'name': orphan.current_species_common or 'Detection',
-                    'id': orphan.best_detection_id or 0
-                } if has_bbox else none,
-                siblings=[],
-                show_nav=false,
-                show_bbox_toggle=has_bbox,
-                show_download=orphan.full_url,
-                gallery_date=orphan.gallery_date,
-                is_favorite=false,
-                can_moderate=true,
-                current_species=orphan.selected_species or orphan.species_key
-                ) }}
             </div>
         </div>
     </div>

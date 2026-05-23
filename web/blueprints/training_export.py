@@ -75,7 +75,7 @@ def export_page() -> Response:
     """Standalone export page. Linked from the review queue's
     Export-button so the modal can pre-fill species counts without a
     full page reload."""
-    return render_template("training_export.html")
+    return render_template("training_export.html", current_path="/admin/export")
 
 
 @training_export_bp.route("/api/training-export/available", methods=["GET"])
@@ -291,7 +291,9 @@ def add_to_pool() -> Response:
                 UPDATE detections
                 SET manual_species_override = ?,
                     species_source = 'manual',
-                    species_updated_at = ?
+                    species_updated_at = ?,
+                    decision_state = 'confirmed',
+                    decision_level = 'species'
                 WHERE detection_id = ?
                   AND COALESCE(status, 'active') = 'active'
                   AND (

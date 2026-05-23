@@ -48,6 +48,7 @@
             </div>
             {{ tile_toolbox(
             detection_id=det.detection_id,
+            filename=det.image_filename,
             surface='gallery',
             is_favorite=det.is_favorite|default(false),
             can_moderate=can_moderate,
@@ -101,6 +102,7 @@
     </div>
     {{ tile_toolbox(
     detection_id=obs.cover_detection.detection_id,
+    filename=obs.cover_detection.image_filename,
     surface='gallery',
     is_favorite=obs.cover_detection.is_favorite|default(false),
     can_moderate=can_moderate,
@@ -141,6 +143,7 @@
                 </button>
                 {{ tile_toolbox(
                 detection_id=det.detection_id,
+                filename=det.image_filename,
                 surface='gallery',
                 is_favorite=det.is_favorite|default(false),
                 can_moderate=can_moderate,
@@ -250,8 +253,8 @@ nav_index=det.nav_index
 
 {% block scripts %}
 <script src="/assets/js/species_picker.js?v=1"></script>
-<script src="/assets/js/gallery_utils.js?v=test_v3"></script>
-<script src="/assets/js/tile_actions.js?v=1"></script>
+<script src="/assets/js/gallery_utils.js?v=20260523-bboxgeom"></script>
+<script src="/assets/js/tile_actions.js?v=2"></script>
 <script src="/assets/js/batch_actions.js?v=1"></script>
 <script>
     const focusObservationId = {{ focus_observation_id | tojson }};

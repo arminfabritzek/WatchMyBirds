@@ -242,24 +242,3 @@ def fetch_detections_last_24h(
     )
 
 
-# --- Unclear Bucket Operations ---
-
-
-def fetch_unclear_days(conn, sample_limit: int = 9) -> list[dict]:
-    return db_core.fetch_unclear_days(conn, sample_limit=sample_limit)
-
-
-def fetch_unclear_total(conn) -> int:
-    return db_core.fetch_unclear_total(conn)
-
-
-def fetch_unclear_detection_ids_for_day(conn, day: str) -> list[int]:
-    return db_core.fetch_unclear_detection_ids_for_day(conn, day)
-
-
-def confirm_unclear_detections(
-    conn, detection_ids: list[int], source: str = "manual_bulk_confirm"
-) -> int:
-    return db_core.confirm_unclear_detections(
-        conn, detection_ids, source=source
-    )

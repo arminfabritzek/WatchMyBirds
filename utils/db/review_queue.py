@@ -7,7 +7,7 @@ orphan images, review status updates, and queue management.
 
 import sqlite3
 from collections.abc import Iterable
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 from utils.db.detections import (
     UNKNOWN_SPECIES_KEY,
@@ -20,6 +20,46 @@ def _detection_column_sql(
     detection_columns: set[str], column_name: str, fallback_sql: str = "NULL"
 ) -> str:
     return f"d.{column_name}" if column_name in detection_columns else fallback_sql
+
+
+def _ex_unclear_predicate_sql(
+    detection_columns: set[str], det_alias: str = "d"
+) -> str:
+    """Return the WHERE-fragment that admits ex-Unclear detections.
+
+    Returns ``"0"`` (SQL false) when ``decision_level`` is absent — keeps
+    Minimal-schema test fixtures working without forcing them to add the
+    column. The fragment is OR-combined with the main "unresolved"
+    predicate, so returning false simply means the live schema needs
+    the column for the routing to apply.
+    """
+    if "decision_level" not in detection_columns:
+        return "0"
+    return (
+        f"({det_alias}.decision_state = 'confirmed' "
+        f"AND lower(COALESCE({det_alias}.decision_level, '')) "
+        f"IN ('reject', 'species_review'))"
+    )
+
+
+def _ex_unclear_reason_case_sql(
+    detection_columns: set[str], det_alias: str = "d"
+) -> str:
+    """Return the CASE-WHEN branches that label ex-Unclear review reasons.
+
+    Returns ``""`` (no branches) when ``decision_level`` is absent. Caller
+    inserts this into a larger CASE expression.
+    """
+    if "decision_level" not in detection_columns:
+        return ""
+    return (
+        f"WHEN {det_alias}.decision_state = 'confirmed' "
+        f"AND lower(COALESCE({det_alias}.decision_level, '')) = 'reject' "
+        f"THEN 'classifier_reject' "
+        f"WHEN {det_alias}.decision_state = 'confirmed' "
+        f"AND lower(COALESCE({det_alias}.decision_level, '')) = 'species_review' "
+        f"THEN 'classifier_species_review' "
+    )
 
 
 def fetch_orphan_images(conn: sqlite3.Connection) -> list[sqlite3.Row]:
@@ -97,6 +137,11 @@ def fetch_review_queue_images(
     )
     species_source_sql = _detection_column_sql(detection_columns, "species_source")
     manual_bbox_sql = _detection_column_sql(detection_columns, "manual_bbox_review")
+    frame_width_sql = _detection_column_sql(detection_columns, "frame_width")
+    frame_height_sql = _detection_column_sql(detection_columns, "frame_height")
+    ex_unclear_predicate = _ex_unclear_predicate_sql(detection_columns)
+    ex_unclear_predicate_ds = _ex_unclear_predicate_sql(detection_columns, "ds")
+    ex_unclear_reason_case = _ex_unclear_reason_case_sql(detection_columns)
 
     orphan_where = [
         "(i.review_status IS NULL OR i.review_status = 'untagged')",
@@ -107,11 +152,16 @@ def fetch_review_queue_images(
 
     detection_where = [
         "COALESCE(d.status, 'active') = 'active'",
-        "COALESCE(d.decision_state, '') NOT IN ('confirmed', 'rejected')",
         "(i.review_status IS NULL OR i.review_status = 'untagged')",
-        """(
-            COALESCE(d.score, 0.0) < ?
-            OR d.decision_state IN ('uncertain', 'unknown')
+        f"""(
+            (
+                COALESCE(d.decision_state, '') NOT IN ('confirmed', 'rejected')
+                AND (
+                    COALESCE(d.score, 0.0) < ?
+                    OR d.decision_state IN ('uncertain', 'unknown')
+                )
+            )
+            OR {ex_unclear_predicate}
         )""",
         "i.filename IS NOT NULL",
     ]
@@ -163,7 +213,9 @@ def fetch_review_queue_images(
             NULL as manual_bbox_review,
             0 as sibling_detection_count,
             0 as is_favorite,
-            0 as is_gallery_eligible
+            0 as is_gallery_eligible,
+            NULL as frame_width,
+            NULL as frame_height
         FROM images i
         WHERE {orphan_where_sql}
 
@@ -186,6 +238,7 @@ def fetch_review_queue_images(
             CASE
                 WHEN d.decision_state = 'unknown' THEN 'unknown_species'
                 WHEN d.decision_state = 'uncertain' THEN 'uncertain'
+                {ex_unclear_reason_case}
                 ELSE 'low_score'
             END as review_reason,
             d.decision_state,
@@ -218,10 +271,15 @@ def fetch_review_queue_images(
                 FROM detections ds
                 WHERE ds.image_filename = d.image_filename
                   AND COALESCE(ds.status, 'active') = 'active'
-                  AND COALESCE(ds.decision_state, '') NOT IN ('confirmed', 'rejected')
+                  AND (
+                      COALESCE(ds.decision_state, '') NOT IN ('confirmed', 'rejected')
+                      OR {ex_unclear_predicate_ds}
+                  )
             ) as sibling_detection_count,
             COALESCE({is_favorite_sql}, 0) as is_favorite,
-            COALESCE({is_gallery_eligible_sql}, 0) as is_gallery_eligible
+            COALESCE({is_gallery_eligible_sql}, 0) as is_gallery_eligible,
+            {frame_width_sql} as frame_width,
+            {frame_height_sql} as frame_height
         FROM detections d
         JOIN images i ON i.filename = d.image_filename
         WHERE {detection_where_sql}
@@ -271,6 +329,9 @@ def fetch_review_queue_item_by_identity(
     )
     species_source_sql = _detection_column_sql(detection_columns, "species_source")
     manual_bbox_sql = _detection_column_sql(detection_columns, "manual_bbox_review")
+    ex_unclear_predicate = _ex_unclear_predicate_sql(detection_columns)
+    ex_unclear_predicate_ds = _ex_unclear_predicate_sql(detection_columns, "ds")
+    ex_unclear_reason_case = _ex_unclear_reason_case_sql(detection_columns)
 
     if item_kind == "image":
         query = """
@@ -329,6 +390,7 @@ def fetch_review_queue_item_by_identity(
             CASE
                 WHEN d.decision_state = 'unknown' THEN 'unknown_species'
                 WHEN d.decision_state = 'uncertain' THEN 'uncertain'
+                {ex_unclear_reason_case}
                 ELSE 'low_score'
             END as review_reason,
             d.decision_state,
@@ -361,18 +423,26 @@ def fetch_review_queue_item_by_identity(
                 FROM detections ds
                 WHERE ds.image_filename = d.image_filename
                   AND COALESCE(ds.status, 'active') = 'active'
-                  AND COALESCE(ds.decision_state, '') NOT IN ('confirmed', 'rejected')
+                  AND (
+                      COALESCE(ds.decision_state, '') NOT IN ('confirmed', 'rejected')
+                      OR {ex_unclear_predicate_ds}
+                  )
             ) as sibling_detection_count,
             COALESCE({is_favorite_sql}, 0) as is_favorite,
             COALESCE({is_gallery_eligible_sql}, 0) as is_gallery_eligible
         FROM detections d
         JOIN images i ON i.filename = d.image_filename
         WHERE COALESCE(d.status, 'active') = 'active'
-          AND COALESCE(d.decision_state, '') NOT IN ('confirmed', 'rejected')
           AND (i.review_status IS NULL OR i.review_status = 'untagged')
           AND (
-              COALESCE(d.score, 0.0) < ?
-              OR d.decision_state IN ('uncertain', 'unknown')
+              (
+                  COALESCE(d.decision_state, '') NOT IN ('confirmed', 'rejected')
+                  AND (
+                      COALESCE(d.score, 0.0) < ?
+                      OR d.decision_state IN ('uncertain', 'unknown')
+                  )
+              )
+              OR {ex_unclear_predicate}
           )
           AND d.detection_id = ?
         LIMIT 1
@@ -574,7 +644,9 @@ def fetch_review_queue_count(
     Returns count of review items needing review (for badge).
     Same criteria as fetch_review_queue_images.
     """
-    query = """
+    detection_columns = table_columns(conn, "detections")
+    ex_unclear_predicate = _ex_unclear_predicate_sql(detection_columns)
+    query = f"""
     SELECT
         (
             SELECT COUNT(*)
@@ -591,11 +663,16 @@ def fetch_review_queue_count(
             FROM detections d
             JOIN images i ON i.filename = d.image_filename
             WHERE COALESCE(d.status, 'active') = 'active'
-              AND COALESCE(d.decision_state, '') NOT IN ('confirmed', 'rejected')
               AND (i.review_status IS NULL OR i.review_status = 'untagged')
               AND (
-                  COALESCE(d.score, 0.0) < ?
-                  OR d.decision_state IN ('uncertain', 'unknown')
+                  (
+                      COALESCE(d.decision_state, '') NOT IN ('confirmed', 'rejected')
+                      AND (
+                          COALESCE(d.score, 0.0) < ?
+                          OR d.decision_state IN ('uncertain', 'unknown')
+                      )
+                  )
+                  OR {ex_unclear_predicate}
               )
               AND i.filename IS NOT NULL
         ) AS review_count
@@ -683,7 +760,7 @@ def update_review_status(
         raise ValueError(f"Invalid review status: {new_status}")
 
     if updated_at is None:
-        updated_at = datetime.now().isoformat()
+        updated_at = datetime.now(UTC).isoformat()
 
     placeholders = ",".join("?" for _ in names)
     params = [new_status, updated_at] + names

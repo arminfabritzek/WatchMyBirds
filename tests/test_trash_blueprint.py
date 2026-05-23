@@ -2,6 +2,7 @@
 
 import json
 import time
+from datetime import datetime
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -225,6 +226,33 @@ def test_relabel_updates_detection_and_classification(client):
     mock_conn.close.assert_called_once()
 
 
+def test_relabel_flips_decision_level_to_species(client):
+    """Regression: a user-chosen species via the gallery picker must flip
+    decision_level to 'species' so the row re-enters /species and gallery.
+    Pre-fix, 377 rows drifted into species_review-after-confirm because
+    only decision_state was set."""
+    mock_conn = MagicMock()
+    with (
+        patch("web.blueprints.trash.db_service.get_connection", return_value=mock_conn),
+        patch(
+            "web.blueprints.trash.build_species_picker_entries",
+            return_value=[
+                {"scientific": "Turdus_merula", "common": "Amsel",
+                 "source": "model", "score": None, "rank": None}
+            ],
+        ),
+    ):
+        response = client.post(
+            "/api/detections/relabel",
+            json={"detection_id": 42101, "species": "Turdus_merula"},
+        )
+
+    assert response.status_code == 200
+    sql = mock_conn.execute.call_args[0][0]
+    assert "decision_state = 'confirmed'" in sql
+    assert "decision_level = 'species'" in sql
+
+
 def test_relabel_invalidates_best_species_cache(client):
     """A relabel must clear the Live page's Best-of-Species memo so the next
     render does not echo the old species (the 5-min TTL would otherwise
@@ -289,6 +317,34 @@ def test_rate_rejects_zero_rating(client):
     data = response.get_json()
     assert "1-5" in data["error"]
     mock_conn.commit.assert_not_called()
+
+
+def test_favorite_stamps_manual_source_and_action_time(client):
+    mock_conn = MagicMock()
+    select_result = MagicMock()
+    select_result.fetchone.return_value = {"is_favorite": 0}
+    mock_conn.execute.return_value = select_result
+
+    with patch(
+        "web.blueprints.trash.db_service.get_connection", return_value=mock_conn
+    ):
+        response = client.post(
+            "/api/detections/favorite",
+            json={"detection_id": 7},
+        )
+
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data["is_favorite"] is True
+
+    update_sql, update_params = mock_conn.execute.call_args_list[1].args
+    assert "rating_source = 'manual'" in update_sql
+    assert "species_updated_at" in update_sql
+    assert update_params[0] == 1
+    assert update_params[2] == 7
+    action_at = datetime.fromisoformat(update_params[1])
+    assert action_at.tzinfo is not None
+    mock_conn.commit.assert_called_once()
 
 
 # ── Unauthenticated access tests ──

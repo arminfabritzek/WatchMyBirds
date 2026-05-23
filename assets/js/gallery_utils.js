@@ -537,6 +537,127 @@ const BBOX_COLORS = [
     '#A8D8EA', // light blue
 ];
 
+function objectPositionTokenToFraction(token, fallback) {
+    if (!token) return fallback;
+    if (token === 'left' || token === 'top') return 0;
+    if (token === 'center') return 0.5;
+    if (token === 'right' || token === 'bottom') return 1;
+    if (/%$/.test(token)) {
+        const parsed = parseFloat(token);
+        if (Number.isFinite(parsed)) return parsed / 100;
+    }
+    return fallback;
+}
+
+function getObjectPositionFractions(img) {
+    let raw = '50% 50%';
+    try {
+        raw = getComputedStyle(img).objectPosition || raw;
+    } catch (err) {
+        return { x: 0.5, y: 0.5 };
+    }
+
+    const tokens = raw.trim().toLowerCase().split(/\s+/).filter(Boolean);
+    let xToken = null;
+    let yToken = null;
+
+    tokens.forEach(function (token) {
+        if (token === 'left' || token === 'right') {
+            xToken = token;
+        } else if (token === 'top' || token === 'bottom') {
+            yToken = token;
+        } else if (token === 'center') {
+            if (xToken === null) xToken = token;
+            else if (yToken === null) yToken = token;
+        } else if (/%$/.test(token)) {
+            if (xToken === null) xToken = token;
+            else if (yToken === null) yToken = token;
+        }
+    });
+
+    return {
+        x: objectPositionTokenToFraction(xToken, 0.5),
+        y: objectPositionTokenToFraction(yToken, 0.5)
+    };
+}
+
+/**
+ * Return the rendered bitmap rect inside an <img> element.
+ *
+ * Bbox coordinates are frame-fractions. They must be mapped to the
+ * visible bitmap, not blindly to the element box, because Review and
+ * modal surfaces may use object-fit: cover/contain or centered image
+ * layouts.
+ */
+function getWmRenderedImageGeometry(img) {
+    const elementW = img.clientWidth;
+    const elementH = img.clientHeight;
+    const fallback = {
+        elementW,
+        elementH,
+        contentX: 0,
+        contentY: 0,
+        contentW: elementW,
+        contentH: elementH
+    };
+
+    if (elementW <= 0 || elementH <= 0 || !img.naturalWidth || !img.naturalHeight) {
+        return fallback;
+    }
+
+    let objectFit = 'fill';
+    try {
+        objectFit = getComputedStyle(img).objectFit || 'fill';
+    } catch (err) {
+        return fallback;
+    }
+
+    const imageRatio = img.naturalWidth / img.naturalHeight;
+    const elementRatio = elementW / elementH;
+    let contentW = elementW;
+    let contentH = elementH;
+
+    if (objectFit === 'contain' || objectFit === 'scale-down') {
+        if (imageRatio > elementRatio) {
+            contentW = elementW;
+            contentH = elementW / imageRatio;
+        } else {
+            contentH = elementH;
+            contentW = elementH * imageRatio;
+        }
+
+        if (objectFit === 'scale-down'
+                && img.naturalWidth <= contentW
+                && img.naturalHeight <= contentH) {
+            contentW = img.naturalWidth;
+            contentH = img.naturalHeight;
+        }
+    } else if (objectFit === 'cover') {
+        if (imageRatio > elementRatio) {
+            contentH = elementH;
+            contentW = elementH * imageRatio;
+        } else {
+            contentW = elementW;
+            contentH = elementW / imageRatio;
+        }
+    } else if (objectFit === 'none') {
+        contentW = img.naturalWidth;
+        contentH = img.naturalHeight;
+    }
+
+    const position = getObjectPositionFractions(img);
+    return {
+        elementW,
+        elementH,
+        contentX: (elementW - contentW) * position.x,
+        contentY: (elementH - contentH) * position.y,
+        contentW,
+        contentH
+    };
+}
+
+window.getWmRenderedImageGeometry = getWmRenderedImageGeometry;
+
 /**
  * Initialize bbox overlay canvas when image loads
  */
@@ -804,8 +925,9 @@ function drawBoundingBoxes(canvas, img, boxes, currentDetectionId) {
     //    rendered output. Without that division a 12px label would
     //    balloon to 12 * zoomScale on screen and overwhelm the cell.
     // ──────────────────────────────────────────────────────────────
-    const cssW = img.clientWidth;
-    const cssH = img.clientHeight;
+    const geometry = getWmRenderedImageGeometry(img);
+    const cssW = geometry.elementW;
+    const cssH = geometry.elementH;
     if (cssW <= 0 || cssH <= 0) return;
 
     const dpr = Math.max(1, window.devicePixelRatio || 1);
@@ -834,6 +956,8 @@ function drawBoundingBoxes(canvas, img, boxes, currentDetectionId) {
 
     canvas.width = Math.round(cssW * density);
     canvas.height = Math.round(cssH * density);
+    canvas.style.left = (img.offsetLeft || 0) + 'px';
+    canvas.style.top = (img.offsetTop || 0) + 'px';
     canvas.style.width = cssW + 'px';
     canvas.style.height = cssH + 'px';
 
@@ -850,9 +974,10 @@ function drawBoundingBoxes(canvas, img, boxes, currentDetectionId) {
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = 'high';
 
-    // Scale factors (bbox coords are normalized 0-1). Now in CSS px.
-    const scaleX = cssW;
-    const scaleY = cssH;
+    // Scale factors (bbox coords are normalized 0-1). Now in CSS px,
+    // anchored to the rendered bitmap inside the image element.
+    const scaleX = geometry.contentW;
+    const scaleY = geometry.contentH;
 
     // Visual dimensions compensate for Smart Zoom's CSS transform so
     // the label and stroke look the same size on screen regardless
@@ -866,14 +991,29 @@ function drawBoundingBoxes(canvas, img, boxes, currentDetectionId) {
     const strokeCurrent = 3 * inv;
     const strokeOther = 2 * inv;
 
+    // 2026-05-23 redesign: collect CSS-pixel rects keyed by detection id
+    // so the click handler below can hit-test without recomputing. Stored
+    // on the canvas DOM node; replaced on every draw.
+    const hitTestBoxes = [];
+
     boxes.forEach((box, idx) => {
         if (!box.x && !box.y && !box.w && !box.h) return; // Skip empty boxes
 
         // Calculate pixel coordinates
-        const x = box.x * scaleX;
-        const y = box.y * scaleY;
+        const x = geometry.contentX + box.x * scaleX;
+        const y = geometry.contentY + box.y * scaleY;
         const w = box.w * scaleX;
         const h = box.h * scaleY;
+
+        if (box.id !== undefined && box.id !== null) {
+            hitTestBoxes.push({
+                cssX: x, cssY: y, cssW: w, cssH: h,
+                area: w * h,
+                id: box.id,
+                bbox: { x: box.x, y: box.y, w: box.w, h: box.h, name: box.name, id: box.id },
+                isCurrent: !!box.isCurrent
+            });
+        }
 
         // Prefer the species-colour slot when present so every frame of
         // the same species shares one bbox stroke colour.
@@ -917,6 +1057,13 @@ function drawBoundingBoxes(canvas, img, boxes, currentDetectionId) {
             // box. 13/18 ≈ 0.72.
             ctx.fillText(label, x + labelPadX, labelY + labelHeight * (13 / 18));
         }
+    });
+
+    // 2026-05-23 redesign: expose CSS-pixel rects so the canvas click
+    // handler can hit-test against the just-drawn boxes. Sorted by area
+    // ascending so overlapping companions resolve foreground-first.
+    canvas._hitTestBoxes = hitTestBoxes.slice().sort(function (a, b) {
+        return a.area - b.area;
     });
 }
 
@@ -1368,3 +1515,242 @@ document.addEventListener('mouseleave', function (event) {
     const card = event.target.closest('.sibling-card');
     if (card && typeof hideHoverBbox === 'function') hideHoverBbox(card);
 }, true);
+
+/* =========================================
+   Canvas-Click Active-Detection Switch (2026-05-23)
+
+   On multi-bird frames, clicking a companion bbox on the overlay canvas
+   switches it to the active detection: the modal's action buttons
+   (Trash, Boxes, Zoom) and the smart-zoom target retarget the clicked
+   detection. Sibling-strip chips dispatch the same event.
+
+   Absorbed from parked plan
+   2026-04-30_UI_multi-bird-modal-followups Item 1a (click-to-zoom on
+   companion bbox).
+   ========================================= */
+
+function _findHitDetection(canvas, evt) {
+    const boxes = canvas._hitTestBoxes;
+    if (!boxes || boxes.length === 0) return null;
+    const rect = canvas.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return null;
+    const cssX = (evt.clientX - rect.left) * (canvas.clientWidth / rect.width);
+    const cssY = (evt.clientY - rect.top) * (canvas.clientHeight / rect.height);
+    for (let i = 0; i < boxes.length; i++) {
+        const b = boxes[i];
+        if (cssX >= b.cssX && cssX <= b.cssX + b.cssW &&
+            cssY >= b.cssY && cssY <= b.cssY + b.cssH) {
+            return b;
+        }
+    }
+    return null;
+}
+
+// Delegated click handler on bbox overlay canvases. Fires only when the
+// canvas is visible and the modal has more than one detection.
+document.addEventListener('click', function (event) {
+    if (!(event.target instanceof Element)) return;
+    const canvas = event.target.closest('.bbox-overlay');
+    if (!canvas || canvas.style.display === 'none') return;
+
+    const modal = canvas.closest('.gallery-modal');
+    if (!modal) return;
+
+    const container = canvas.closest('.modal-image-viewer');
+    if (!container) return;
+
+    // Single-detection modals: no switch path.
+    let siblings = [];
+    try { siblings = JSON.parse(container.dataset.siblings || '[]'); } catch (e) { /* ignore */ }
+    if (!Array.isArray(siblings) || siblings.length <= 1) return;
+
+    const hit = _findHitDetection(canvas, event);
+    if (!hit) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    // Resolve the matching sibling so we have full metadata (name, species).
+    const sib = siblings.find(function (s) { return s.detection_id === hit.id; });
+    if (!sib) return;
+
+    modal.dispatchEvent(new CustomEvent('wmb:active-detection-change', {
+        detail: {
+            detectionId: hit.id,
+            bbox: hit.bbox,
+            sibling: sib
+        },
+        bubbles: false
+    }));
+});
+
+// Cursor: when the cursor is over a drawn box on a multi-bird overlay,
+// turn it into a pointer so the click affordance is discoverable.
+document.addEventListener('mousemove', function (event) {
+    if (!(event.target instanceof Element)) return;
+    const canvas = event.target.closest('.bbox-overlay');
+    if (!canvas || canvas.style.display === 'none') return;
+
+    const boxes = canvas._hitTestBoxes;
+    if (!boxes || boxes.length <= 1) {
+        if (canvas.style.cursor) canvas.style.cursor = '';
+        return;
+    }
+    const hit = _findHitDetection(canvas, event);
+    canvas.style.cursor = hit && !hit.isCurrent ? 'pointer' : '';
+});
+
+// Central handler for the active-detection switch. Updates the modal's
+// state to point at the new detection and redraws everything that
+// reads it.
+function _handleActiveDetectionChange(modal, detail) {
+    const detectionId = detail.detectionId;
+    const bbox = detail.bbox;
+    const sib = detail.sibling;
+    if (!detectionId || !bbox) return;
+
+    // 1) Update .wm-image-viewer data-bbox-* so smart-zoom + auto-render
+    //    pick up the new target. Keep data-siblings unchanged — the
+    //    population of detections on this frame did not change.
+    const viewer = modal.querySelector('.wm-image-viewer');
+    if (viewer) {
+        viewer.dataset.bboxX = String(bbox.x);
+        viewer.dataset.bboxY = String(bbox.y);
+        viewer.dataset.bboxW = String(bbox.w);
+        viewer.dataset.bboxH = String(bbox.h);
+    }
+
+    // 2) Update bbox-toggle data so a subsequent toggle redraws against
+    //    the new current detection.
+    const bboxToggle = modal.querySelector('.bbox-toggle');
+    if (bboxToggle) {
+        bboxToggle.dataset.detectionId = String(detectionId);
+        try {
+            const cur = JSON.parse(bboxToggle.dataset.currentBbox || '{}');
+            cur.x = bbox.x; cur.y = bbox.y; cur.w = bbox.w; cur.h = bbox.h;
+            cur.id = detectionId; cur.name = sib && sib.common_name ? sib.common_name : (cur.name || 'Detection');
+            bboxToggle.dataset.currentBbox = JSON.stringify(cur);
+        } catch (e) { /* ignore */ }
+    }
+
+    // 3) Header Trash button retargets the active detection.
+    const trashBtn = modal.querySelector('.modal-action-bar [data-action="move-trash"]');
+    if (trashBtn) {
+        trashBtn.dataset.detectionId = String(detectionId);
+        if (sib) {
+            const species = sib.species_key || sib.cls_class_name || sib.od_class_name || '';
+            trashBtn.dataset.currentSpecies = species;
+        }
+    }
+
+    // 4) Redraw the canvas with the new current id so the stroke
+    //    treatment updates.
+    if (bboxToggle) {
+        redrawBboxOverlay(bboxToggle);
+    }
+
+    // 5) If smart-zoom is currently active, re-zoom to the new bbox.
+    if (viewer && viewer.classList.contains('wm-image-viewer--zoomed')) {
+        const img = viewer.querySelector('.bbox-base-image');
+        if (img && typeof applySmartZoom === 'function') {
+            applySmartZoom(viewer, img, bbox.x, bbox.y, bbox.w, bbox.h);
+        }
+    }
+
+    // 6) Mark the active sibling-card in the strip (Slice 3 read it).
+    const cards = modal.querySelectorAll('.sibling-card');
+    cards.forEach(function (card) {
+        const id = parseInt(card.dataset.detectionId, 10);
+        if (id === detectionId) {
+            card.dataset.isCurrent = 'true';
+        } else {
+            delete card.dataset.isCurrent;
+        }
+    });
+}
+
+document.addEventListener('wmb:active-detection-change', function (event) {
+    const modal = event.target.closest ? event.target.closest('.gallery-modal') : null;
+    if (modal && event.detail) _handleActiveDetectionChange(modal, event.detail);
+}, true);
+
+// Click on a sibling-card body (outside the per-card action buttons)
+// dispatches the same switch event so the chip-strip stays in sync
+// with the canvas. The per-card action buttons (Slice 3 removes them)
+// still go through the existing delegated handler above.
+document.addEventListener('click', function (event) {
+    if (!(event.target instanceof Element)) return;
+    if (event.target.closest('[data-action]')) return;
+    const card = event.target.closest('.sibling-card');
+    if (!card) return;
+    const modal = card.closest('.gallery-modal');
+    if (!modal) return;
+
+    const detectionId = parseInt(card.dataset.detectionId, 10);
+    if (!Number.isFinite(detectionId)) return;
+
+    const bbox = {
+        x: parseFloat(card.dataset.bboxX),
+        y: parseFloat(card.dataset.bboxY),
+        w: parseFloat(card.dataset.bboxW),
+        h: parseFloat(card.dataset.bboxH),
+        name: card.dataset.bboxName || 'Detection',
+        id: detectionId
+    };
+    if (!Number.isFinite(bbox.x) || !Number.isFinite(bbox.w) || bbox.w <= 0) return;
+
+    // Resolve sibling metadata from the viewer's data-siblings.
+    let sib = null;
+    const viewer = modal.querySelector('.wm-image-viewer');
+    if (viewer) {
+        try {
+            const sibs = JSON.parse(viewer.dataset.siblings || '[]');
+            sib = sibs.find(function (s) { return s.detection_id === detectionId; }) || null;
+        } catch (e) { /* ignore */ }
+    }
+
+    modal.dispatchEvent(new CustomEvent('wmb:active-detection-change', {
+        detail: { detectionId: detectionId, bbox: bbox, sibling: sib },
+        bubbles: false
+    }));
+});
+
+/* =========================================
+   Maximize-Toggle (2026-05-23 redesign)
+
+   The ⛶ button in the header action group toggles a .wm-modal--maximized
+   modifier on the dialog root. Maximized = dialog fills the viewport
+   edge-to-edge, header subtitle and sibling-strip hide, only the image
+   + toolbox-in-image + small close button remain. State is per-modal-
+   open; the next time the modal opens it starts non-maximized.
+   ========================================= */
+
+function toggleModalMaximize(btn) {
+    if (!btn) return;
+    const modal = btn.closest('.wm-modal');
+    if (!modal) return;
+    const wasMaximized = modal.classList.toggle('wm-modal--maximized');
+    btn.setAttribute('aria-pressed', wasMaximized ? 'true' : 'false');
+    btn.title = wasMaximized ? 'Restore (toggle)' : 'Maximize image (toggle)';
+
+    // Bbox overlay needs a redraw because the image dimensions changed.
+    // Defer one frame so the new layout settles before we re-rasterise.
+    requestAnimationFrame(function () {
+        const activeToggle = modal.querySelector('.bbox-toggle.active');
+        if (activeToggle && typeof redrawBboxOverlay === 'function') {
+            redrawBboxOverlay(activeToggle);
+        }
+    });
+}
+
+// Reset maximize-state on modal close so the next open is non-maximized.
+document.addEventListener('hidden.bs.modal', function (event) {
+    const modal = event.target;
+    if (!modal || !modal.classList || !modal.classList.contains('wm-modal')) return;
+    modal.classList.remove('wm-modal--maximized');
+    const btn = modal.querySelector('.wm-modal__maximize-btn');
+    if (btn) {
+        btn.setAttribute('aria-pressed', 'false');
+        btn.title = 'Maximize image (toggle)';
+    }
+});

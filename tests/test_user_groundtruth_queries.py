@@ -62,6 +62,16 @@ def _make_conn() -> sqlite3.Connection:
             is_favorite INTEGER DEFAULT 0,
             rating_source TEXT DEFAULT 'auto'
         );
+        CREATE TABLE groundtruth_export_exclusions (
+            exclusion_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            scope TEXT NOT NULL,
+            image_filename TEXT NOT NULL,
+            detection_id INTEGER,
+            reason TEXT,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            created_by TEXT NOT NULL DEFAULT 'dry_run',
+            released_at TEXT
+        );
         """
     )
     return conn
@@ -272,6 +282,23 @@ def test_confirmed_positives_excludes_unclear_levels():
                    raw_species_name="Parus_major")
 
     assert fetch_confirmed_positives(conn) == []
+
+
+def test_confirmed_positives_accepts_manual_species_review_confirmation():
+    """A species_review row becomes a positive once the user explicitly
+    confirms its species."""
+    conn = _make_conn()
+    _add_image(conn, "img.jpg")
+    _add_detection(conn, image_filename="img.jpg",
+                   decision_level="species_review",
+                   raw_species_name="Parus_major",
+                   manual_species_override="Parus_major",
+                   species_source="manual",
+                   species_updated_at="2026-05-22T11:00:00Z")
+
+    rows = fetch_confirmed_positives(conn)
+    assert len(rows) == 1
+    assert rows[0]["species"] == "Parus_major"
 
 
 def test_confirmed_positives_excludes_no_bird_images():
@@ -728,3 +755,51 @@ def test_favorites_can_overlap_with_confirmed_positives():
     fav_ids = {r["detection_id"] for r in fetch_favorites(conn)}
     assert det_id in cp_ids
     assert det_id in fav_ids
+
+
+def test_export_image_exclusions_suppress_all_groundtruth_buckets():
+    conn = _make_conn()
+    _add_image(conn, "excluded_positive.jpg", review_status="confirmed_bird")
+    _add_detection(
+        conn,
+        image_filename="excluded_positive.jpg",
+        decision_level="species",
+        raw_species_name="Parus_major",
+        manual_species_override="Cyanistes_caeruleus",
+        species_source="manual",
+        species_updated_at="2026-05-23T10:00:00Z",
+        is_favorite=1,
+        rating_source="manual",
+    )
+    _add_image(
+        conn,
+        "excluded_hard_negative.jpg",
+        review_status="no_bird",
+        review_updated_at="2026-05-23T10:00:00Z",
+    )
+    _add_detection(
+        conn,
+        image_filename="excluded_hard_negative.jpg",
+        decision_level="species_review",
+        raw_species_name="Parus_major",
+    )
+    conn.executemany(
+        "INSERT INTO groundtruth_export_exclusions "
+        "(scope, image_filename, reason, created_at) VALUES "
+        "('image', ?, 'unsafe dry-run row', '2026-05-23T10:10:00Z')",
+        [
+            ("excluded_positive.jpg",),
+            ("excluded_hard_negative.jpg",),
+        ],
+    )
+
+    assert fetch_confirmed_positives(conn) == []
+    assert fetch_species_relabels(conn) == []
+    assert fetch_favorites(conn) == []
+    assert fetch_hard_negatives(conn) == []
+    assert count_pending_by_bucket(conn) == {
+        "hard_negatives": 0,
+        "confirmed_positives": 0,
+        "species_relabels": 0,
+        "favorites": 0,
+    }

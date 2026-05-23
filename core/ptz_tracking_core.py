@@ -1008,8 +1008,17 @@ class AutoPtzController:
             self._manual_view_until = now + float(view_sec)
             self._state = "lost_grace"
 
-    def return_to_overview(self) -> bool:
+    def return_to_overview(self, *, allow_disabled: bool = False) -> bool:
+        # allow_disabled=True is the boot-time "hardware reset" path: even
+        # when the operator has Auto-Tracking switched off, we still want
+        # the lens parked at the configured overview preset after every
+        # app.service restart. Tracking-loop callers leave the default.
         camera = self._camera_provider()
+        if not camera and allow_disabled:
+            try:
+                camera = ptz_core.find_any_ptz_camera()
+            except Exception:
+                camera = None
         if not camera:
             self._set_idle("No enabled PTZ camera matches the active stream")
             return False

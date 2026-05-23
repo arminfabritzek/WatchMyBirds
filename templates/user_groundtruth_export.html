@@ -86,8 +86,11 @@
 </div>
 
 <div class="card mb-lg">
-    <div class="card__body" style="display: flex; gap: var(--space-md); align-items: center;">
-        <button type="button" id="buildBtn" class="btn btn--primary" disabled>
+    <div class="card__body" style="display: flex; gap: var(--space-md); align-items: center; flex-wrap: wrap;">
+        <a href="/admin/groundtruth-export/dry-run" class="btn btn--primary">
+            Review dry-run HTML
+        </a>
+        <button type="button" id="buildBtn" class="btn btn--secondary" disabled>
             Build &amp; download ZIP
         </button>
         <span id="buildStatus" class="text-muted"></span>

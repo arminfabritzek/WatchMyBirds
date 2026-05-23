@@ -62,9 +62,17 @@ allow_review_no_bird=true
 {# UI_STANDARD §0b: inside a detail modal the verdict actions are primary —
    the operator has the image at full size and is here to decide. Favorite is
    already primary by default rendering; Change Species and Move to Trash are
-   promoted out of the overflow. #}
-{% set change_species_is_primary = show_change_species and surface == 'detail_modal' %}
-{% set move_to_trash_is_primary = show_move_to_trash and surface == 'detail_modal' %}
+   promoted out of the overflow.
+
+   The Review surface (2026-05-23 redesign, plan
+   2026-05-23_UI_review-grid-redesign) also promotes the destructive
+   verdict actions to primary so they are reachable in one click on the
+   busy Review Grid, where hover-only affordances are too fragile (touch
+   devices, fast scanning). UI_STANDARD §0b "Review per-member tile" row
+   gains Move to Trash + Mark No Bird as primary alongside Favorite. #}
+{% set change_species_is_primary = show_change_species and surface in ['detail_modal', 'review'] %}
+{% set move_to_trash_is_primary = show_move_to_trash and surface in ['detail_modal', 'review'] %}
+{% set no_bird_is_primary = surface == 'review' and filename and allow_review_no_bird %}
 
 <div class="wm-toolbox{% if frame_variant == 'bar' %} wm-toolbox--bar{% endif %}" role="toolbar"
     aria-label="Detection actions">
@@ -91,19 +99,14 @@ allow_review_no_bird=true
     </button>
     {% endif %}
 
-    {# ── Training export flag: confirms bbox and queues this detection if eligible ── #}
-    {% if show_training_export %}
-    <button type="button"
-        class="wm-toolbox__btn wm-toolbox__training{% if is_training_queued %} wm-toolbox__training--active wm-toolbox__btn--toggled{% endif %}{% if not can_moderate %} wm-toolbox__btn--locked{% endif %}"
-        data-action="training-export" data-detection-id="{{ detection_id }}"
-        data-current-species="{{ current_species or '' }}"
-        {% if not can_moderate %}data-login-required="true" aria-disabled="true"{% endif %}
-        aria-label="Add to training export"
-        aria-pressed="{{ 'true' if is_training_queued else 'false' }}"
-        title="{{ 'Login required for training export' if not can_moderate else ('Already in training export pool' if is_training_queued else 'Confirm and add to training export') }}">
-        ⚑
-    </button>
-    {% endif %}
+    {# ── Training export flag removed 2026-05-24 (HUMAN decision):
+       a single click in the toolbox could sign a wrong species as
+       ground-truth, poisoning Pipeline-Dev's training data. The
+       new user-groundtruth export at /admin/groundtruth-export is
+       the deliberate replacement surface. The macro parameters
+       `allow_training_export` and `is_training_queued` still exist
+       so callers don't break; a later cleanup will drop them once
+       the entire old training-export backend is removed. #}
 
     {# ── View Details as primary on hobby browse-surfaces (UI_STANDARD §0b) ── #}
     {% if details_is_primary %}
@@ -158,14 +161,34 @@ allow_review_no_bird=true
     </button>
     {% endif %}
 
+    {# ── Mark No Bird as primary on the Review surface (UI_STANDARD §0b,
+         2026-05-23 redesign). Distinct from Move-to-Trash: rejects the
+         image as a training-export hard-negative signal without
+         touching detection status. Memory `Event-Delete ≠ Hard-Negative`
+         pins this distinction. ── #}
+    {% if no_bird_is_primary %}
+    <button type="button"
+        class="wm-toolbox__btn wm-toolbox__no-bird{% if not can_moderate %} wm-toolbox__btn--locked{% endif %}"
+        data-action="review-no-bird" data-filename="{{ filename }}"
+        {% if not can_moderate %}data-login-required="true" aria-disabled="true"{% endif %}
+        aria-label="Mark as no bird"
+        title="{{ 'Login required for Mark No Bird' if not can_moderate else 'Mark this image as No Bird (training-export signal — keeps detection record)' }}">
+        ✗
+    </button>
+    {% endif %}
+
     {# ── Tools menu trigger ── #}
     {% set show_no_bird = surface in ('review', 'gallery', 'species', 'detail_modal') and filename and allow_review_no_bird %}
+    {# Hide the overflow-menu copy of Mark No Bird when it is already
+       rendered as a primary button (Review surface, 2026-05-23
+       redesign). #}
+    {% set show_no_bird_in_overflow = show_no_bird and not no_bird_is_primary %}
     {% if (can_open_details and not details_is_primary)
         or (show_change_species and not change_species_is_primary)
         or (show_move_to_trash and not move_to_trash_is_primary)
         or (show_restore and not restore_is_primary)
         or show_deep_scan
-        or show_no_bird %}
+        or show_no_bird_in_overflow %}
     <div class="wm-toolbox__menu" role="group" aria-label="More actions">
         <button type="button" class="wm-toolbox__btn wm-toolbox__more" data-action="toggle-menu" aria-haspopup="true"
             aria-expanded="false" aria-label="More actions" title="More actions">⋮</button>
@@ -224,8 +247,10 @@ allow_review_no_bird=true
             {% endif %}
 
             {# Frame-level no-bird action — available on browse surfaces and Review-Queue.
-               Not shown on Trash (a discarded tile has nothing to mark). #}
-            {% if show_no_bird %}
+               Not shown on Trash (a discarded tile has nothing to mark).
+               Skipped when rendered as a primary button above
+               (Review surface, UI_STANDARD §0b 2026-05-23 redesign). #}
+            {% if show_no_bird_in_overflow %}
             <button type="button" class="wm-toolbox__item wm-toolbox__item--danger" role="menuitem"
                 data-action="review-no-bird" data-filename="{{ filename }}" aria-label="Mark as no bird">
                 ✗ <span>Mark No Bird</span>

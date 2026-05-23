@@ -206,6 +206,19 @@ def bulk_relabel() -> tuple:
         if not isinstance(relabeled, int):
             relabeled = len(detection_ids)
 
+        placeholders = ",".join("?" for _ in detection_ids)
+        conn.execute(
+            f"""
+            UPDATE detections
+            SET decision_state = 'confirmed',
+                decision_level = 'species'
+            WHERE detection_id IN ({placeholders})
+              AND COALESCE(status, 'active') = 'active'
+            """,
+            list(detection_ids),
+        )
+        conn.commit()
+
     # Invalidate gallery cache
     gallery_service.invalidate_cache()
 
@@ -235,7 +248,7 @@ def bulk_reject() -> tuple:
     Either or both may be provided.
     """
     data = request.get_json() or {}
-    detection_ids = data.get("detection_ids", [])
+    detection_ids = data.get("detection_ids") or data.get("ids", [])
     image_filenames = data.get("image_filenames", [])
 
     if not detection_ids and not image_filenames:
@@ -469,6 +482,16 @@ def apply_rescan_proposal(proposal_id: int) -> tuple:
         if target_id and new_species:
             db_service.apply_species_override(
                 conn, target_id, new_species, "proposal_applied"
+            )
+            conn.execute(
+                """
+                UPDATE detections
+                SET decision_state = 'confirmed',
+                    decision_level = 'species'
+                WHERE detection_id = ?
+                  AND COALESCE(status, 'active') = 'active'
+                """,
+                (target_id,),
             )
 
         # Mark proposal as applied

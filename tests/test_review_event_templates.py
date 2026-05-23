@@ -386,6 +386,134 @@ def test_gallery_utils_js_carries_species_palette_and_responsive_label_helper():
     assert "box.speciesColour" in content
 
 
+def test_bbox_draw_uses_rendered_image_geometry_for_object_fit():
+    """BBox overlays must align with the visible bitmap, not the img box."""
+    gallery_js = _read("assets/js/gallery_utils.js")
+    review_grid_js = _read("assets/js/review_grid.js")
+
+    assert "function getWmRenderedImageGeometry" in gallery_js
+    assert "getComputedStyle(img).objectFit" in gallery_js
+    assert "contentX: (elementW - contentW) * position.x" in gallery_js
+    assert "const geometry = getWmRenderedImageGeometry(img);" in gallery_js
+    assert "geometry.contentX + box.x * scaleX" in gallery_js
+
+    assert "window.getWmRenderedImageGeometry(img)" in review_grid_js
+    assert "geometry.contentX + x * geometry.contentW" in review_grid_js
+
+
+def test_review_grid_card_surfaces_start_end_window():
+    """Grid card headers must make event boundaries scannable."""
+    content = _read("templates/components/review_grid_card.html")
+
+    assert "(event.window_time or '').split(' - ')" in content
+    assert "review-grid__card-window" in content
+    assert "review-grid__card-window-chip--start" in content
+    assert "review-grid__card-window-chip--end" in content
+    assert "review-grid__card-window-label\">Start" in content
+    assert "review-grid__card-window-label\">End" in content
+
+    # The raw range must not stay buried in the muted meta line.
+    assert '<span class="review-grid__card-time">{{ event.window_time }}</span>' not in content
+
+
+def test_review_grid_event_cards_have_stronger_boundaries():
+    """Event cards need a visibly larger break and a bottom end cap."""
+    content = _read("assets/design-system.css")
+
+    stack_start = content.index(".review-grid__stack {")
+    stack_end = content.index("}", stack_start)
+    stack_block = content[stack_start:stack_end]
+
+    assert "gap: clamp(28px, 3vw, 44px);" in stack_block
+    assert ".review-grid__card::after" in content
+    assert "height: 4px;" in content
+    assert ".review-grid__card-window-chip" in content
+    assert ".review-grid__card-window-chip--end" in content
+
+
+def test_review_grid_card_exposes_invert_selection_action():
+    """Operators can select the few true birds, then invert to target FPs."""
+    content = _read("templates/components/review_grid_card.html")
+
+    assert 'data-review-grid-action="invert_selection"' in content
+    assert "review-grid__card-invert" in content
+    assert 'title="Invert the selected frames in this event"' in content
+    assert 'aria-label="Invert event frame selection"' in content
+
+
+def test_review_grid_bbox_jump_allows_selected_approve():
+    """A movement warning blocks blind event approval, not explicit picks."""
+    template = _read("templates/components/review_grid_card.html")
+    script = _read("assets/js/review_grid.js")
+    review_py = _read("web/blueprints/review.py")
+
+    assert "Bird moves far across frames" in review_py
+    assert 'data-event-eligible="' in template
+    assert "data-fallback-reason" in template
+    assert "data-approve-blocked-reason" in template
+    assert "Movement spans too much for blind event approval" in template
+    assert "{% set can_approve = has_species %}" in template
+
+    assert "function updateCardApproveState(card, scope)" in script
+    assert "if (scope.isSelectionScoped)" in script
+    assert "approveBtn.disabled = false;" in script
+    assert "card.dataset.eventEligible !== '1'" in script
+    assert "if (!scope.isSelectionScoped && !eventEligible)" in script
+    assert "if (!scope.isSelectionScoped && eventEligible)" in script
+
+
+def test_review_grid_js_can_invert_card_selection():
+    """Invert selection stays scoped to the current event card."""
+    content = _read("assets/js/review_grid.js")
+
+    assert "function invertCardSelection(card)" in content
+    assert "const checkboxes = tileCheckboxes(card);" in content
+    assert "setTileSelectionState(cb, !cb.checked);" in content
+    assert "syncCardSelectionUi(card);" in content
+    assert "verb === 'invert_selection' && card" in content
+
+
+def test_review_grid_selected_trash_posts_detection_ids_payload():
+    """Selected-frame Trash must match the moderation API contract."""
+    content = _read("assets/js/review_grid.js")
+
+    assert "postJson('/api/moderation/bulk/reject', { detection_ids: scope.ids })" in content
+    assert "postJson('/api/moderation/bulk/reject', { ids: scope.ids })" not in content
+
+
+def test_review_grid_partial_relabel_refreshes_event_shape():
+    """Relabels change event keys/grouping, so the grid must refresh itself."""
+    content = _read("assets/js/review_grid.js")
+
+    assert "function reloadReviewEventsSoon(message, tone)" in content
+    assert "function updateTilesSpeciesMetadata(ids, chosen)" in content
+    assert "updateTilesSpeciesMetadata(scope.ids, chosen);" in content
+    assert "const relabelCoversAllActionable = allIds.length > 0" in content
+    assert "const relabelChangesEventKey = chosen.scientific !== currentSpecies;" in content
+    assert "window.location.reload();" in content
+
+
+def test_review_grid_selected_approve_is_detection_id_scoped():
+    """Selected-frame Approve should survive stale event keys after relabel."""
+    content = _read("assets/js/review_grid.js")
+
+    assert "const payload = {" in content
+    assert "if (!scope.isSelectionScoped && eventEligible)" in content
+    assert "payload.event_key = eventKey;" in content
+    assert "isStaleReviewEventError(err)" in content
+    assert "Review changed — reloading events" in content
+
+
+def test_review_grid_tile_removal_keeps_card_scope_fresh():
+    """After partial Trash/Approve the remaining event actions must not target stale IDs."""
+    content = _read("assets/js/review_grid.js")
+
+    assert "function syncCardActionableState(card)" in content
+    assert "card.dataset.actionableDetectionIds = ids.join(',');" in content
+    assert "tile.dataset.reviewGridRemoving = '1';" in content
+    assert "affectedCards.forEach(syncCardActionableState);" in content
+
+
 def test_review_workspace_js_handles_continuity_batch_actions():
     """Batch apply/undo/approve handlers keep context-only items guarded.
 

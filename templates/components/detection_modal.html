@@ -27,6 +27,9 @@ nav_index (int|None): Optional index within nav_scope
         class="modal-dialog modal-xl modal-dialog-centered modal-dialog-scrollable modal-fullscreen-md-down wm-modal__dialog">
         <div class="modal-content wm-modal__content">
 
+            {# 2026-05-23 redesign: two-stockwork modal. Header holds title (left) +
+               action group (right); body holds only the image. The retired wm-modal__action
+               footer is documented in UI_STANDARD §1.1. #}
             <div class="modal-header wm-modal__header">
                 <div class="wm-modal__title">
                     {# P1-06: Trusted-species rendering — non-confirmed show tentative label #}
@@ -56,10 +59,43 @@ nav_index (int|None): Optional index within nav_scope
                     <span class="wm-modal__title-text" {% if not is_trusted %}style="opacity: 0.65;" {% endif %}><em>{%
                             if not is_trusted %}~ {% endif %}{{ det.common_name }}</em></span>
                     {% endif %}
-                    <span class="wm-modal__title-sub">{{ det.formatted_date }} {{ det.formatted_time }}{% if
-                        title_species %} · <em>{{ title_species | replace('_', ' ') }}</em>{% endif %}{% if review_status_text|trim %} · {{ review_status_text }}{% endif %}</span>
+                    {# 2026-05-23 redesign: subtitle absorbs the OD/CLS confidence numbers (87% / 70%)
+                       and the AI-status badge — these used to live in modal_detection_info.html. #}
+                    {% set _has_cls = det.cls_class_name is defined and det.cls_class_name %}
+                    <span class="wm-modal__title-sub">
+                        {{ det.formatted_date }} {{ det.formatted_time }}{% if title_species %} · <em>{{ title_species | replace('_', ' ') }}</em>{% endif %}
+                        {% if det.od_confidence is defined and det.od_confidence is not none %}
+                        · <span class="wm-modal__title-conf">{{ "%.0f"|format(det.od_confidence * 100) }}%{% if _has_cls and det.cls_confidence is not none %} / {{ "%.0f"|format(det.cls_confidence * 100) }}%{% endif %}</span>
+                        {% endif %}
+                        {% if review_status_text|trim %} · {{ review_status_text }}{% endif %}
+                    </span>
                 </div>
-                <button type="button" class="btn-close wm-modal__close" data-bs-dismiss="modal"></button>
+                <div class="wm-modal__header-actions">
+                    {{ render_action_bar(
+                    detection_id=det.detection_id,
+                    original_url=det.original_path,
+                    bbox={
+                    'x': det.bbox_x,
+                    'y': det.bbox_y,
+                    'w': det.bbox_w,
+                    'h': det.bbox_h,
+                    'name': det.common_name,
+                    'id': det.detection_id
+                    },
+                    siblings=det.siblings,
+                    show_nav=show_nav,
+                    show_bbox_toggle=true,
+                    show_trash=true,
+                    show_download=true,
+                    gallery_date=det.gallery_date,
+                    is_favorite=det.is_favorite,
+                    can_moderate=can_moderate,
+                    current_species=det.species_key or det.manual_species_override or det.cls_class_name or det.od_class_name,
+                    in_header=true,
+                    show_maximize=true,
+                    show_close=true
+                    ) }}
+                </div>
             </div>
 
             <div class="wm-modal__body">
@@ -82,7 +118,11 @@ nav_index (int|None): Optional index within nav_scope
                     current_species=det.species_key or det.manual_species_override or det.cls_class_name or det.od_class_name
                     ) }}
                 </div>
-                <div class="wm-modal__info">
+                {% if det.sibling_count and det.sibling_count > 1 and det.siblings %}
+                {# Multi-bird only: slim sibling-selector strip below the image.
+                   Click switches active detection (Slice 4); per-card action buttons
+                   removed (live in the header action group now). #}
+                <div class="wm-modal__sibling-strip">
                     {{ render_detection_info(
                     det=det,
                     siblings=det.siblings,
@@ -90,30 +130,7 @@ nav_index (int|None): Optional index within nav_scope
                     can_moderate=can_moderate
                     ) }}
                 </div>
-            </div>
-
-            <div class="wm-modal__action">
-                {{ render_action_bar(
-                detection_id=det.detection_id,
-                original_url=det.original_path,
-                bbox={
-                'x': det.bbox_x,
-                'y': det.bbox_y,
-                'w': det.bbox_w,
-                'h': det.bbox_h,
-                'name': det.common_name,
-                'id': det.detection_id
-                },
-                siblings=det.siblings,
-                show_nav=show_nav,
-                show_bbox_toggle=true,
-                show_trash=true,
-                show_download=true,
-                gallery_date=det.gallery_date,
-                is_favorite=det.is_favorite,
-                can_moderate=can_moderate,
-                current_species=det.species_key or det.manual_species_override or det.cls_class_name or det.od_class_name
-                ) }}
+                {% endif %}
             </div>
 
         </div>

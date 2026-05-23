@@ -32,10 +32,10 @@ matches the existing ``training_export_service`` policy (avoids
 training on a partial-box scene) and keeps the COCO file
 self-consistent with the bird-detector's actual frame output.
 
-This service is read-only against the live ``detections``/``images``
-tables. The only write is to the ``export_batches`` book-keeping
-table, performed by ``record_batch_exported`` after a successful
-streaming.
+Batch construction is read-only against the live ``detections``/
+``images`` tables. Operator actions around the dry-run page can write
+export bookkeeping/exclusions and, when explicitly requested, move a
+frame to WMB Trash.
 """
 
 from __future__ import annotations
@@ -177,16 +177,17 @@ def build_batch(
     # are not all user-confirmed. Hard-negatives are exempt by
     # definition (no_bird applies frame-wide).
     cp, rl, fav, dropped = _apply_frame_integrity(
-        conn, confirmed_positives=cp, species_relabels=rl, favorites=fav,
+        conn,
+        confirmed_positives=cp,
+        species_relabels=rl,
+        favorites=fav,
     )
 
     # Build the filename -> Path map for every distinct image referenced
     # across all four buckets. PathManager.get_original_path() is pure,
     # but caching avoids multiple lookups per shared-frame row.
     all_filenames = {
-        r["image_filename"]
-        for bucket in (hn, cp, rl, fav)
-        for r in bucket
+        r["image_filename"] for bucket in (hn, cp, rl, fav) for r in bucket
     }
     image_paths = {fn: path_resolver(fn) for fn in all_filenames}
 
@@ -250,10 +251,13 @@ def _apply_frame_integrity(
     # positive bucket. Used to decide whether every sibling on a
     # frame is "covered".
     positive_pairs: set[tuple[str, int]] = set()
+    positive_buckets_by_pair: dict[tuple[str, int], set[str]] = {}
     positive_frames: set[str] = set()
     for bucket in (confirmed_positives, species_relabels, favorites):
         for r in bucket:
-            positive_pairs.add((r["image_filename"], r["detection_id"]))
+            key = (r["image_filename"], r["detection_id"])
+            positive_pairs.add(key)
+            positive_buckets_by_pair.setdefault(key, set()).add(r["bucket"])
             positive_frames.add(r["image_filename"])
 
     if not positive_frames:
@@ -266,7 +270,15 @@ def _apply_frame_integrity(
     placeholders = ",".join("?" for _ in positive_frames)
     rows = conn.execute(
         f"""
-        SELECT image_filename, detection_id
+        SELECT
+            image_filename,
+            detection_id,
+            bbox_x, bbox_y, bbox_w, bbox_h,
+            frame_width, frame_height,
+            decision_level,
+            raw_species_name,
+            manual_species_override,
+            species_source
         FROM detections
         WHERE status = 'active'
           AND image_filename IN ({placeholders})
@@ -274,7 +286,7 @@ def _apply_frame_integrity(
         list(positive_frames),
     ).fetchall()
 
-    siblings_by_frame: dict[str, set[int]] = {}
+    siblings_by_frame: dict[str, dict[int, dict[str, Any]]] = {}
     for row in rows:
         try:
             fn = row["image_filename"]
@@ -282,29 +294,51 @@ def _apply_frame_integrity(
         except (TypeError, KeyError):
             fn = row[0]
             did = int(row[1])
-        siblings_by_frame.setdefault(fn, set()).add(did)
+        pair = (fn, did)
+        siblings_by_frame.setdefault(fn, {})[did] = {
+            "detection_id": did,
+            "bbox_x": _row_value(row, "bbox_x", 2),
+            "bbox_y": _row_value(row, "bbox_y", 3),
+            "bbox_w": _row_value(row, "bbox_w", 4),
+            "bbox_h": _row_value(row, "bbox_h", 5),
+            "frame_width": _row_value(row, "frame_width", 6),
+            "frame_height": _row_value(row, "frame_height", 7),
+            "decision_level": _row_value(row, "decision_level", 8),
+            "raw_species_name": _row_value(row, "raw_species_name", 9),
+            "manual_species_override": _row_value(row, "manual_species_override", 10),
+            "species_source": _row_value(row, "species_source", 11),
+            "is_positive_signal": pair in positive_pairs,
+            "positive_buckets": sorted(positive_buckets_by_pair.get(pair, set())),
+        }
 
     # Identify frames where at least one sibling is NOT in any
     # positive bucket — those frames must be dropped entirely.
     dropped_frames: set[str] = set()
     dropped_audit: list[dict[str, Any]] = []
-    for fn, sibling_ids in siblings_by_frame.items():
+    for fn, sibling_map in siblings_by_frame.items():
+        sibling_ids = set(sibling_map)
         positive_ids_for_frame = {
             did for (filename, did) in positive_pairs if filename == fn
         }
         missing = sibling_ids - positive_ids_for_frame
         if missing:
             dropped_frames.add(fn)
-            dropped_audit.append({
-                "image_filename": fn,
-                "reason": (
-                    f"frame has {len(sibling_ids)} active detection(s) but "
-                    f"only {len(positive_ids_for_frame)} carry a user-"
-                    f"confirmed signal; {len(missing)} sibling(s) "
-                    f"unconfirmed (ids: {sorted(missing)})"
-                ),
-                "dropped_detection_ids": sorted(positive_ids_for_frame),
-            })
+            dropped_audit.append(
+                {
+                    "image_filename": fn,
+                    "reason": (
+                        f"frame has {len(sibling_ids)} active detection(s) but "
+                        f"only {len(positive_ids_for_frame)} carry a user-"
+                        f"confirmed signal; {len(missing)} sibling(s) "
+                        f"unconfirmed (ids: {sorted(missing)})"
+                    ),
+                    "dropped_detection_ids": sorted(positive_ids_for_frame),
+                    "missing_detection_ids": sorted(missing),
+                    "active_siblings": [
+                        sibling_map[did] for did in sorted(sibling_map)
+                    ],
+                }
+            )
 
     if not dropped_frames:
         return confirmed_positives, species_relabels, favorites, []
@@ -318,6 +352,13 @@ def _apply_frame_integrity(
         _filter(favorites),
         dropped_audit,
     )
+
+
+def _row_value(row: sqlite3.Row, key: str, index: int) -> Any:
+    try:
+        return row[key]
+    except (TypeError, KeyError, IndexError):
+        return row[index]
 
 
 def stream_batch_zip(
@@ -461,6 +502,111 @@ def preview_counts(
     return count_pending_by_bucket(conn, since=since)
 
 
+def ensure_export_exclusion_schema(conn: sqlite3.Connection) -> None:
+    """Create the non-destructive export quarantine table if needed."""
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS groundtruth_export_exclusions (
+            exclusion_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            scope TEXT NOT NULL CHECK(scope IN ('image', 'detection')),
+            image_filename TEXT NOT NULL,
+            detection_id INTEGER,
+            reason TEXT,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            created_by TEXT NOT NULL DEFAULT 'dry_run',
+            released_at TEXT
+        )
+    """)
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_groundtruth_export_exclusions_image "
+        "ON groundtruth_export_exclusions(image_filename, released_at)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_groundtruth_export_exclusions_detection "
+        "ON groundtruth_export_exclusions(detection_id, released_at)"
+    )
+
+
+def exclude_image_from_export(
+    conn: sqlite3.Connection,
+    *,
+    image_filename: str,
+    reason: str = "",
+    now: datetime | None = None,
+) -> bool:
+    """Quarantine a whole frame from future user-groundtruth exports.
+
+    Returns ``True`` when a new active exclusion was inserted, ``False``
+    when the image was already excluded. The source image and detection
+    rows remain untouched.
+    """
+    ensure_export_exclusion_schema(conn)
+    created_at = (now or datetime.now(UTC)).isoformat()
+    cur = conn.execute(
+        """
+        INSERT INTO groundtruth_export_exclusions (
+            scope, image_filename, detection_id, reason, created_at, created_by
+        )
+        SELECT 'image', ?, NULL, ?, ?, 'dry_run'
+        WHERE NOT EXISTS (
+            SELECT 1
+            FROM groundtruth_export_exclusions
+            WHERE scope = 'image'
+              AND image_filename = ?
+              AND released_at IS NULL
+        )
+        """,
+        (image_filename, reason, created_at, image_filename),
+    )
+    return cur.rowcount > 0
+
+
+def move_image_to_wmb_trash_and_exclude(
+    conn: sqlite3.Connection,
+    *,
+    image_filename: str,
+    reason: str = "",
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """Move one source frame to WMB Trash and suppress export rows.
+
+    This is intentionally a reversible Trash move, not a hard delete:
+    the original file can still be restored or purged from the Trash UI.
+    The export exclusion is kept even though ``review_status='no_bird'``
+    would remove positive rows, because active detections on no-bird
+    frames otherwise become hard-negative export candidates.
+    """
+    updated_at = (now or datetime.now(UTC)).isoformat()
+    detection_count = conn.execute(
+        """
+        SELECT COUNT(*)
+        FROM detections
+        WHERE image_filename = ?
+          AND COALESCE(status, 'active') = 'active'
+        """,
+        (image_filename,),
+    ).fetchone()[0]
+    image_cur = conn.execute(
+        """
+        UPDATE images
+        SET review_status = 'no_bird',
+            review_updated_at = ?
+        WHERE filename = ?
+        """,
+        (updated_at, image_filename),
+    )
+    inserted = exclude_image_from_export(
+        conn,
+        image_filename=image_filename,
+        reason=reason,
+        now=now,
+    )
+    return {
+        "updated_images": int(image_cur.rowcount),
+        "active_detections": int(detection_count or 0),
+        "excluded": inserted,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
@@ -490,7 +636,10 @@ def _manifest_line(row: dict[str, Any], batch: Batch) -> str:
         "image_filename": filename,
         "image_path_in_zip": f"images/{_date_folder_from_filename(filename)}/{filename}",
         "bbox_xywh_normalized": [
-            row["bbox_x"], row["bbox_y"], row["bbox_w"], row["bbox_h"],
+            row["bbox_x"],
+            row["bbox_y"],
+            row["bbox_w"],
+            row["bbox_h"],
         ],
         "bbox_xywh_px": _bbox_to_pixels(row),
         "frame_wh": [row["frame_width"], row["frame_height"]],
@@ -596,9 +745,7 @@ def _build_coco(
     sorted_filenames = sorted(
         fn for fn in batch._image_paths.keys() if fn not in missing_images
     )
-    fn_to_img_id: dict[str, int] = {
-        fn: i + 1 for i, fn in enumerate(sorted_filenames)
-    }
+    fn_to_img_id: dict[str, int] = {fn: i + 1 for i, fn in enumerate(sorted_filenames)}
 
     images: list[dict[str, Any]] = []
     # Frame width/height: take from any detection on that frame
@@ -618,12 +765,14 @@ def _build_coco(
 
     for fn, img_id in fn_to_img_id.items():
         fw, fh = fn_to_geometry.get(fn, (None, None))
-        images.append({
-            "id": img_id,
-            "file_name": f"images/{_date_folder_from_filename(fn)}/{fn}",
-            "width": fw,
-            "height": fh,
-        })
+        images.append(
+            {
+                "id": img_id,
+                "file_name": f"images/{_date_folder_from_filename(fn)}/{fn}",
+                "width": fw,
+                "height": fh,
+            }
+        )
 
     # Annotations: one per detection that has both an image and a bbox.
     # Hard-negatives without species → no annotation row (just the
@@ -677,16 +826,18 @@ def _build_coco(
                 seen_detection_ids.add(det_id)
                 continue  # geometry missing, can't supervise
             x, y, w, h = bbox_px
-            annotations.append({
-                "id": ann_id,
-                "image_id": fn_to_img_id[fn],
-                "category_id": species_to_cat_id[label],
-                "bbox": [x, y, w, h],
-                "area": w * h,
-                "iscrowd": 0,
-                "wmb_detection_id": det_id,
-                "wmb_bucket": r["bucket"],
-            })
+            annotations.append(
+                {
+                    "id": ann_id,
+                    "image_id": fn_to_img_id[fn],
+                    "category_id": species_to_cat_id[label],
+                    "bbox": [x, y, w, h],
+                    "area": w * h,
+                    "iscrowd": 0,
+                    "wmb_detection_id": det_id,
+                    "wmb_bucket": r["bucket"],
+                }
+            )
             ann_id += 1
             seen_detection_ids.add(det_id)
 
@@ -732,15 +883,19 @@ def _build_readme(batch: Batch) -> str:
     counts = batch.counts
     dropped_n = len(batch.frame_integrity_dropped)
     integrity_note = (
-        f"- **{dropped_n} frame(s) dropped by frame-integrity** "
-        f"— see `batch_metadata.json::frame_integrity_dropped`. "
-        f"These frames had at least one active sibling detection without "
-        f"a user-confirmed signal, so the WHOLE frame was excluded to "
-        f"avoid teaching the trainer that the unannotated boxes are "
-        f"background."
-    ) if dropped_n else (
-        "- No frames dropped by frame-integrity (all positive frames had "
-        "every sibling user-confirmed)."
+        (
+            f"- **{dropped_n} frame(s) dropped by frame-integrity** "
+            f"— see `batch_metadata.json::frame_integrity_dropped`. "
+            f"These frames had at least one active sibling detection without "
+            f"a user-confirmed signal, so the WHOLE frame was excluded to "
+            f"avoid teaching the trainer that the unannotated boxes are "
+            f"background."
+        )
+        if dropped_n
+        else (
+            "- No frames dropped by frame-integrity (all positive frames had "
+            "every sibling user-confirmed)."
+        )
     )
     return f"""# WatchMyBirds — User-Groundtruth Batch {batch.batch_id}
 

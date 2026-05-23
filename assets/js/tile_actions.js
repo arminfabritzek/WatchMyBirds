@@ -76,18 +76,160 @@
        where review_workspace.js (and its singleAction) is not loaded.
        ========================================= */
 
-    async function noBirdFrame(filename, triggerEl) {
+    /**
+     * Show a confirmation modal that displays the FULL frame (not the
+     * cropped tile) so the operator can see every bird the action will
+     * sweep away. The cropped tile view is the UX trap: the operator
+     * sees a tight bird crop and forgets that the underlying frame may
+     * carry several more detections.
+     *
+     * Returns a Promise that resolves with `true` (confirmed) or
+     * `false` (cancelled). Honors the localStorage 'noBirdConfirmed'
+     * once-per-session flag: when set, returns true without prompting.
+     */
+    function confirmFrameNoBird(filename, triggerEl) {
         const NO_BIRD_KEY = 'noBirdConfirmed';
-        if (localStorage.getItem(NO_BIRD_KEY) !== 'true') {
-            const confirmed = confirm(
-                "Mark this entire frame as 'no bird'?\n\n" +
-                'ALL detections on this image will be flagged as false-positives ' +
-                'and feed into the next Pipeline-Dev training batch.\n\n' +
-                '(This confirmation appears only once per session.)'
-            );
-            if (!confirmed) return;
-            localStorage.setItem(NO_BIRD_KEY, 'true');
+        if (localStorage.getItem(NO_BIRD_KEY) === 'true') {
+            return Promise.resolve(true);
         }
+
+        // Resolve the full-image URL from the nearest tile's <img>.
+        // data-full-src is set by every wm-tile in subgallery / species /
+        // species_overview templates and points at the optimized full
+        // frame (not the crop).
+        const tileNode = triggerEl && triggerEl.closest('.wm-tile');
+        const tileImg = tileNode && tileNode.querySelector('.wm-tile__image');
+        const fullSrc = (tileImg && tileImg.getAttribute('data-full-src'))
+            || (tileImg && tileImg.getAttribute('src'))
+            || '';
+
+        // Count siblings on the same frame so the warning can be honest:
+        // "you are about to flag N detections, not 1". We approximate
+        // via tiles whose data-full-src ends with the same filename stem.
+        let detectionCount = 1;
+        if (filename) {
+            const stem = filename.replace(/\.(jpg|jpeg|png|webp)$/i, '');
+            const allTiles = document.querySelectorAll('.wm-tile__image[data-full-src]');
+            let n = 0;
+            for (let i = 0; i < allTiles.length; i++) {
+                const src = allTiles[i].getAttribute('data-full-src') || '';
+                if (src.indexOf(stem) !== -1) n++;
+            }
+            if (n > 0) detectionCount = n;
+        }
+
+        return new Promise(function (resolve) {
+            const dlg = document.createElement('dialog');
+            dlg.className = 'wm-no-bird-confirm';
+            dlg.style.cssText = [
+                'padding: 0',
+                'border: 1px solid var(--color-border, #444)',
+                'border-radius: 8px',
+                'max-width: min(720px, 95vw)',
+                'max-height: 90vh',
+                'background: var(--color-surface, #1a1a1a)',
+                'color: var(--color-text, #eee)',
+            ].join('; ');
+
+            const body = document.createElement('div');
+            body.style.cssText = 'display: flex; flex-direction: column; gap: 12px; padding: 16px;';
+
+            const heading = document.createElement('h2');
+            heading.textContent = 'Mark this frame as no bird?';
+            heading.style.cssText = 'margin: 0; font-size: 18px; font-weight: 600;';
+            body.appendChild(heading);
+
+            const subline = document.createElement('p');
+            subline.style.cssText = 'margin: 0; color: var(--color-text-muted, #aaa); font-size: 14px;';
+            subline.textContent = detectionCount > 1
+                ? ('This frame carries ' + detectionCount
+                    + ' detections — ALL will be flagged as false-positives.')
+                : 'All detections on this frame will be flagged as false-positives.';
+            body.appendChild(subline);
+
+            // Full-frame preview — the whole point of this dialog. If the
+            // image is not yet cached, the operator sees a placeholder
+            // background until the optimized version downloads.
+            if (fullSrc) {
+                const preview = document.createElement('img');
+                preview.src = fullSrc;
+                preview.alt = 'Full frame preview';
+                preview.style.cssText = [
+                    'width: 100%',
+                    'height: auto',
+                    'max-height: 60vh',
+                    'object-fit: contain',
+                    'background: #000',
+                    'border-radius: 4px',
+                    'display: block',
+                ].join('; ');
+                body.appendChild(preview);
+            }
+
+            const hint = document.createElement('p');
+            hint.style.cssText = 'margin: 0; font-size: 12px; color: var(--color-text-muted, #888);';
+            hint.textContent = 'Feeds into the next Pipeline-Dev training batch as hard-negatives. '
+                + '(This confirmation appears only once per session.)';
+            body.appendChild(hint);
+
+            const actions = document.createElement('div');
+            actions.style.cssText = 'display: flex; gap: 8px; justify-content: flex-end; margin-top: 4px;';
+
+            const cancelBtn = document.createElement('button');
+            cancelBtn.type = 'button';
+            cancelBtn.textContent = 'Cancel';
+            cancelBtn.className = 'btn btn--secondary';
+            cancelBtn.style.cssText = 'padding: 8px 16px; cursor: pointer;';
+            cancelBtn.addEventListener('click', function () {
+                dlg.close('cancel');
+            });
+            actions.appendChild(cancelBtn);
+
+            const confirmBtn = document.createElement('button');
+            confirmBtn.type = 'button';
+            confirmBtn.textContent = 'Yes, mark as no bird';
+            confirmBtn.className = 'btn btn--danger';
+            confirmBtn.style.cssText = 'padding: 8px 16px; cursor: pointer; '
+                + 'background: var(--color-danger, #dc2626); color: white; border: none; border-radius: 4px;';
+            confirmBtn.addEventListener('click', function () {
+                dlg.close('confirm');
+            });
+            actions.appendChild(confirmBtn);
+
+            body.appendChild(actions);
+            dlg.appendChild(body);
+            document.body.appendChild(dlg);
+
+            dlg.addEventListener('close', function () {
+                const ok = dlg.returnValue === 'confirm';
+                if (ok) localStorage.setItem(NO_BIRD_KEY, 'true');
+                dlg.remove();
+                resolve(ok);
+            });
+
+            // Backdrop click cancels — the operator clicking outside the
+            // dialog means "I changed my mind".
+            dlg.addEventListener('click', function (event) {
+                if (event.target === dlg) dlg.close('cancel');
+            });
+
+            if (typeof dlg.showModal === 'function') {
+                dlg.showModal();
+            } else {
+                // Very old browsers: fall back to native confirm() and
+                // remove the unsupported dialog node.
+                dlg.remove();
+                resolve(window.confirm(
+                    'Mark this entire frame as no bird?\n\n'
+                    + 'ALL ' + detectionCount + ' detection(s) will be flagged as false-positives.'
+                ));
+            }
+        });
+    }
+
+    async function noBirdFrame(filename, triggerEl) {
+        const confirmed = await confirmFrameNoBird(filename, triggerEl);
+        if (!confirmed) return;
 
         try {
             const response = await fetch('/api/review/decision', {
