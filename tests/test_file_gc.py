@@ -400,6 +400,141 @@ class TestHardDeleteImages:
 
 
 # ---------------------------------------------------------------------------
+# Tests for hard_delete_detections()
+# ---------------------------------------------------------------------------
+
+
+class TestHardDeleteDetections:
+    """Regression tests for thumbnail reference counting."""
+
+    def test_shared_thumbnail_path_preserved_for_surviving_detection(
+        self, mock_db_connection, temp_output_dir
+    ):
+        """When two detections share a thumbnail_path and only the rejected
+        one is hard-deleted, the surviving detection's thumb file must
+        stay on disk."""
+        from utils.file_gc import hard_delete_detections
+
+        mock_db_connection.execute(
+            "INSERT INTO images (filename, timestamp, review_status) VALUES (?, ?, ?)",
+            ("20260131_150000_shared.jpg", "20260131_150000", "untagged"),
+        )
+        # Surviving (active) detection — references crop_1.webp
+        mock_db_connection.execute(
+            "INSERT INTO detections (detection_id, image_filename, thumbnail_path, status) "
+            "VALUES (?, ?, ?, ?)",
+            (
+                1,
+                "20260131_150000_shared.jpg",
+                "20260131_150000_shared_crop_1.webp",
+                "active",
+            ),
+        )
+        # Rejected detection — same thumbnail_path (legacy / re-import case)
+        mock_db_connection.execute(
+            "INSERT INTO detections (detection_id, image_filename, thumbnail_path, status) "
+            "VALUES (?, ?, ?, ?)",
+            (
+                2,
+                "20260131_150000_shared.jpg",
+                "20260131_150000_shared_crop_1.webp",
+                "rejected",
+            ),
+        )
+        mock_db_connection.commit()
+
+        date_folder = "2026-01-31"
+        stem = "20260131_150000_shared"
+        thumb_file = (
+            temp_output_dir
+            / "derivatives"
+            / "thumbs"
+            / date_folder
+            / f"{stem}_crop_1.webp"
+        )
+        thumb_file.write_text("shared thumb")
+        (temp_output_dir / "originals" / date_folder / f"{stem}.jpg").write_text("orig")
+        (
+            temp_output_dir / "derivatives" / "optimized" / date_folder / f"{stem}.webp"
+        ).write_text("opt")
+
+        mock_pm = MockPathManager(temp_output_dir)
+
+        with (
+            patch("utils.file_gc.get_config") as mock_config,
+            patch("utils.file_gc.get_path_manager") as mock_get_pm,
+        ):
+            mock_config.return_value = {"OUTPUT_DIR": str(temp_output_dir)}
+            mock_get_pm.return_value = mock_pm
+
+            result = hard_delete_detections(
+                mock_db_connection, detection_ids=[2]
+            )
+
+        assert result["purged"] is True
+        # Thumb must survive — detection 1 still references it.
+        assert thumb_file.exists()
+        # Original & optimized also survive (detection 1 still references the image).
+        assert (
+            temp_output_dir / "originals" / date_folder / f"{stem}.jpg"
+        ).exists()
+
+    def test_unshared_thumbnail_deleted(
+        self, mock_db_connection, temp_output_dir
+    ):
+        """When the rejected detection is the sole owner of its thumb file,
+        the file is deleted as before."""
+        from utils.file_gc import hard_delete_detections
+
+        mock_db_connection.execute(
+            "INSERT INTO images (filename, timestamp, review_status) VALUES (?, ?, ?)",
+            ("20260131_160000_solo.jpg", "20260131_160000", "untagged"),
+        )
+        mock_db_connection.execute(
+            "INSERT INTO detections (detection_id, image_filename, thumbnail_path, status) "
+            "VALUES (?, ?, ?, ?)",
+            (
+                10,
+                "20260131_160000_solo.jpg",
+                "20260131_160000_solo_crop_1.webp",
+                "rejected",
+            ),
+        )
+        mock_db_connection.commit()
+
+        date_folder = "2026-01-31"
+        stem = "20260131_160000_solo"
+        thumb_file = (
+            temp_output_dir
+            / "derivatives"
+            / "thumbs"
+            / date_folder
+            / f"{stem}_crop_1.webp"
+        )
+        thumb_file.write_text("solo thumb")
+        (temp_output_dir / "originals" / date_folder / f"{stem}.jpg").write_text("orig")
+        (
+            temp_output_dir / "derivatives" / "optimized" / date_folder / f"{stem}.webp"
+        ).write_text("opt")
+
+        mock_pm = MockPathManager(temp_output_dir)
+
+        with (
+            patch("utils.file_gc.get_config") as mock_config,
+            patch("utils.file_gc.get_path_manager") as mock_get_pm,
+        ):
+            mock_config.return_value = {"OUTPUT_DIR": str(temp_output_dir)}
+            mock_get_pm.return_value = mock_pm
+
+            result = hard_delete_detections(
+                mock_db_connection, detection_ids=[10]
+            )
+
+        assert result["purged"] is True
+        assert not thumb_file.exists()
+
+
+# ---------------------------------------------------------------------------
 # Tests for _safe_delete()
 # ---------------------------------------------------------------------------
 

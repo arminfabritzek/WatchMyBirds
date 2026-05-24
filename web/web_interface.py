@@ -88,6 +88,81 @@ def invalidate_best_species_cache() -> None:
 _ANALYTICS_SUMMARY_CACHE_TTL_SECONDS = 5 * 60
 _analytics_summary_cache: dict = {"timestamp": 0.0, "payload": None}
 
+# LED-ticker dashboard scalars cache. The ticker partial is included on every
+# page via the appbar, so the four scalars it shows (today_visits, species
+# today, total species, busiest hour) must be cheap to compute on routes that
+# don't already build dashboard_stats themselves. Cached per (date,
+# threshold) — the date component forces a miss at midnight so the day's
+# counters reset cleanly. Stream route still computes its own richer
+# dashboard_stats and that takes precedence (context_processor only fills
+# what the route didn't set).
+_TICKER_STATS_CACHE_TTL_SECONDS = 60
+_ticker_stats_cache: dict = {"key": None, "timestamp": 0.0, "payload": None}
+
+
+def _compute_ticker_dashboard_stats() -> dict:
+    """Cheap dashboard scalars for the LED ticker on non-stream routes."""
+    today_iso = datetime.now().strftime("%Y-%m-%d")
+    try:
+        threshold = float(get_config()["GALLERY_DISPLAY_THRESHOLD"])
+    except Exception:
+        threshold = 0.0
+    cache_key = (today_iso, threshold)
+
+    now_ts = time.time()
+    if (
+        _ticker_stats_cache["key"] == cache_key
+        and (now_ts - float(_ticker_stats_cache["timestamp"] or 0.0))
+        < _TICKER_STATS_CACHE_TTL_SECONDS
+        and isinstance(_ticker_stats_cache["payload"], dict)
+    ):
+        return _ticker_stats_cache["payload"]
+
+    stats = {
+        "today_visits": 0,
+        "total_species": 0,
+        "today_busiest_hour": "",
+        "today_species_count": 0,
+    }
+    try:
+        from core import gallery_core as _gc
+        from web.services import db_service as _dbs
+
+        with _dbs.closing_connection() as conn:
+            try:
+                stats["total_species"] = _dbs.fetch_gallery_total_species_count(conn)
+            except Exception:
+                pass
+            try:
+                today_rows = [
+                    dict(row)
+                    for row in _dbs.fetch_detections_for_gallery(
+                        conn, today_iso, order_by="time"
+                    )
+                ]
+                summary = _gc.summarize_observations(today_rows, min_score=threshold)
+                s = summary["summary"]
+                stats["today_visits"] = int(s.get("total_observations", 0) or 0)
+                stats["today_species_count"] = len(s.get("species_counts", {}) or {})
+                hour_buckets: dict[str, int] = {}
+                for det in summary.get("detections", today_rows):
+                    ts = det.get("image_timestamp", "") or ""
+                    if len(ts) >= 11:
+                        hh = ts[9:11]
+                        hour_buckets[hh] = hour_buckets.get(hh, 0) + 1
+                if hour_buckets:
+                    peak = max(hour_buckets.items(), key=lambda kv: kv[1])[0]
+                    stats["today_busiest_hour"] = f"{peak}:00"
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+    _ticker_stats_cache["key"] = cache_key
+    _ticker_stats_cache["timestamp"] = now_ts
+    _ticker_stats_cache["payload"] = stats
+    return stats
+
 
 def create_web_interface(detection_manager, system_monitor=None):
     """
@@ -719,6 +794,13 @@ def create_web_interface(detection_manager, system_monitor=None):
             "csrf_token": session["_csrf_token"],
             "is_authenticated": is_authenticated,
             "can_moderate": is_authenticated,
+            "station_name": str(config.get("STATION_NAME", "")),
+            # Minimal dashboard scalars for the LED-ticker partial on every
+            # page. The stream route still exports its own richer
+            # `dashboard_stats` / `visual_summary`, which take precedence at
+            # render time (Jinja resolves route locals before context_processor
+            # values), so this only fills in routes that don't.
+            "ticker_dashboard_stats": _compute_ticker_dashboard_stats(),
         }
 
     # CSRF validation for state-changing requests
@@ -763,6 +845,11 @@ def create_web_interface(detection_manager, system_monitor=None):
     from web.blueprints.trash import trash_bp
 
     server.register_blueprint(trash_bp)
+
+    # Register Live-Stream Blueprint (SSE feed for the stream-page LED ticker)
+    from web.blueprints.live_stream import live_stream_bp
+
+    server.register_blueprint(live_stream_bp)
 
     # Register Review Blueprint
     from web.blueprints.review import review_bp

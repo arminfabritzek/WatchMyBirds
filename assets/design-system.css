@@ -2162,7 +2162,7 @@ code {
 
 .stream-container {
     position: relative;
-    max-width: 1280px;
+    max-width: var(--content-max-width);
     margin: 0 auto;
     border-radius: var(--radius-xl);
     overflow: hidden;
@@ -2170,8 +2170,18 @@ code {
     background: #000;
 }
 
+/* Section variant that aligns its content with the Live stream's
+   reading frame. Used by the Today's Visitors / Best of Species
+   block under the stream so the boards line up vertically with
+   the video container above. */
+.section--stream-width {
+    max-width: var(--content-max-width);
+    margin-left: auto;
+    margin-right: auto;
+}
+
 .stream-actions {
-    max-width: 1280px;
+    max-width: var(--content-max-width);
     margin: 0.35rem auto 0;
     display: flex;
     justify-content: flex-end;
@@ -2351,9 +2361,45 @@ code {
 }
 
 .stats-row--stream {
-    max-width: 1280px;
+    max-width: var(--content-max-width);
     margin-left: auto;
     margin-right: auto;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   LED TICKER — canvas-based dot-matrix Späti-Laufband under the stream.
+   Sits between the live video and the four-tile stats row. Renders a
+   live SSE feed of detections plus a heartbeat segment (clock + stats)
+   when no recent detections are in the queue.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+.led-ticker {
+    max-width: var(--content-max-width);
+    margin: var(--space-sm) auto;
+    padding: 0;
+    background: var(--color-bg);
+    border: 1px solid var(--color-border-light);
+    border-radius: 0;
+    box-shadow: none;
+    overflow: hidden;
+    line-height: 0; /* canvas line-box would add stray pixels */
+}
+
+.led-ticker__canvas {
+    display: block;
+    width: 100%;
+    /* image-rendering: pixelated keeps the LED grid crisp when the
+       canvas is up-scaled to the on-screen width. */
+    image-rendering: pixelated;
+    image-rendering: -moz-crisp-edges;
+    image-rendering: crisp-edges;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    /* Honor a11y: hide the ticker entirely under reduced-motion since
+       the value is in the scroll. Static-snapshot fallback would just
+       show whatever 1280px window happens to be visible — worse UX. */
+    .led-ticker { display: none; }
 }
 
 /* Timestamp Overlay */
@@ -2489,7 +2535,7 @@ code {
 
 /* Landing Status Row */
 .landing-health {
-    max-width: 1000px;
+    max-width: var(--content-narrow-max-width);
     margin: 0 auto var(--space-xl);
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -2573,7 +2619,7 @@ code {
 
 /* Quiet-day Hero */
 .quiet-hero {
-    max-width: 1000px;
+    max-width: var(--content-narrow-max-width);
     margin: 0 auto;
     padding: var(--space-xl);
     border-radius: var(--radius-xl);
@@ -2625,9 +2671,12 @@ code {
     color: var(--color-text);
 }
 
-/* Quiet-day Recent Preview */
+/* Quiet-day Recent Preview.
+   No max-width here — the only consumer (Live page Today's Visitors)
+   inherits its width from the surrounding section, and .quiet-hero
+   .quiet-preview below overrides padding/border for the hero variant.
+   A historical 1000px default was always cancelled at the call site. */
 .quiet-preview {
-    max-width: 1000px;
     margin: 0 auto;
     padding: var(--space-lg);
     border-radius: var(--radius-xl);
@@ -8431,8 +8480,20 @@ img.review-species-ref {
     max-width: 600px;
 }
 
+/* 2026-05-25 — tall form modals (Auto PTZ) outgrow the viewport on
+   13" laptops, pushing the footer Save button off-screen. Make the
+   content a flex column so only the body scrolls; header + footer
+   stay anchored. Equivalent to Bootstrap's modal-dialog-scrollable
+   but scoped to the form variant so detail-modal sizing is untouched. */
+.wm-modal--form .wm-modal__content {
+    display: flex;
+    flex-direction: column;
+}
+
 .wm-modal--form .wm-modal__body {
     background: var(--color-surface);
+    overflow-y: auto;
+    min-height: 0;
 }
 
 .wm-modal__fields {

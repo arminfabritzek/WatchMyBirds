@@ -1204,6 +1204,37 @@ class DetectionManager:
                         crop_index=idx,
                     )
 
+                    # Push to the live-event bus so the stream-page LED
+                    # ticker can render this detection in real time. Wrapped
+                    # so a bus-side bug never breaks the detector loop.
+                    try:
+                        from utils.live_event_bus import get_bus
+
+                        _species_latin = cls_name or det_data.class_name
+                        _species_common = self.common_names.get(
+                            _species_latin,
+                            _species_latin.replace("_", " "),
+                        )
+                        get_bus().publish(
+                            {
+                                "type": "detection",
+                                "ts": time.time(),
+                                "species_latin": _species_latin,
+                                "species_common": _species_common,
+                                "od_class": det_data.class_name,
+                                "confidence": float(score),
+                                "od_confidence": float(od_conf),
+                                "cls_confidence": float(cls_conf),
+                                "decision_state": (
+                                    smoothed_state.value
+                                    if smoothed_state is not None
+                                    else None
+                                ),
+                            }
+                        )
+                    except Exception as bus_err:
+                        logger.debug("live_event_bus publish failed: %s", bus_err)
+
                     # P1-03: session counter for operational monitoring
                     if smoothed_state and smoothed_state in self.decision_state_counts:
                         self.decision_state_counts[smoothed_state] += 1

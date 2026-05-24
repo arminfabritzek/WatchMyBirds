@@ -63,6 +63,14 @@ for _h in handlers:
 
 logging.basicConfig(level=run_level, handlers=handlers)
 
+# Waitress logs "Task queue depth is N" at WARNING whenever a request
+# briefly queues behind a busy thread. With long-held connections
+# (/video_feed MJPEG, /api/v1/stream/detections/sse SSE on every page)
+# short bursts are normal and not actionable. Suppress unless the
+# operator opted into DEBUG via DEBUG_MODE or LOG_LEVEL=DEBUG.
+if run_level > logging.DEBUG:
+    logging.getLogger("waitress.queue").setLevel(logging.ERROR)
+
 
 def get_logger(name: str) -> logging.Logger:
     """

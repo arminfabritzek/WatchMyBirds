@@ -795,6 +795,38 @@ class AutoPtzController:
                 daemon=True,
             )
             t.start()
+            self._publish_movement_event(
+                kind="preset", estimated_sec=settle_max
+            )
+        elif preset_token:
+            self._publish_movement_event(
+                kind="preset",
+                estimated_sec=float(config.get("settle_max_sec") or 8.0),
+            )
+
+    @staticmethod
+    def _publish_movement_event(kind: str, estimated_sec: float) -> None:
+        """Push a PTZ movement start to the live event bus.
+
+        Drives the LED ticker's signal-LED indicator (red/yellow/blue
+        colored dot+bar in the status zone) so the operator notices a
+        move within ~50 ms of it beginning. No text payload — the
+        existing Auto-PTZ pill already handles textual status. Wrapped
+        so a bus-side bug never breaks PTZ.
+        """
+        try:
+            from utils.live_event_bus import get_bus
+
+            get_bus().publish(
+                {
+                    "type": "ptz_move",
+                    "ts": time.time(),
+                    "kind": kind,
+                    "estimated_sec": float(estimated_sec),
+                }
+            )
+        except Exception:
+            pass
 
     def notify_manual_drive(self) -> None:
         """Record a manual joystick move from the stream-page buttons.
@@ -821,7 +853,13 @@ class AutoPtzController:
 
         now = self._clock()
         view_sec = float(config.get("manual_view_sec") or 15.0)
+        # Edge-detect: only publish a ticker event on the *first* heartbeat
+        # of a manual drive session, not every refresh. Without this guard
+        # the bus would receive ~10 events/sec while a button is held.
+        is_new_drive_session = False
         with self._lock:
+            if self._last_zone != "manual_drive":
+                is_new_drive_session = True
             # Manual drive overrides the lost-detection cooldown — the
             # operator's intent always wins. Without this, a recently
             # triggered auto-return would silently swallow the manual
@@ -849,6 +887,9 @@ class AutoPtzController:
             self._last_preset = ""  # no preset — operator is freely steering
             self._state = "lost_grace"
             self._acquire_count = 0
+
+        if is_new_drive_session:
+            self._publish_movement_event(kind="manual", estimated_sec=view_sec)
 
     # ------------------------------------------------------------------
     # External-pause API
@@ -1163,6 +1204,10 @@ class AutoPtzController:
                 rollback_preset=prev_preset,
                 rollback_zone=prev_zone,
             )
+        )
+        self._publish_movement_event(
+            kind="auto",
+            estimated_sec=float(config.get("settle_max_sec") or 8.0),
         )
         return True
 

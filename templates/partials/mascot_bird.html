@@ -1,0 +1,2600 @@
+{# Appbar mascot bird — canvas-rendered vector songbird with 10 idle
+   animations on a ~3s rotation. Sits as its own row above the LED
+   ticker; full-width container, sprite is left-aligned and roughly
+   60 px tall. Pure presentational element, no app state, no data
+   coupling. Self-contained: own CSS, own JS, no external assets.
+
+   Architecture parallel to led_ticker.html — drop-in include, own
+   canvas, own IIFE scope.
+#}
+
+<aside class="mascot-bird" id="mascotBird" aria-hidden="true">
+    <canvas class="mascot-bird__canvas" id="mascotBirdCanvas"
+            width="172" height="64"></canvas>
+</aside>
+
+<style>
+.mascot-bird {
+    /* The appbar wrapper owns the dark rail. This slot has no inner
+       padding so flying animations can enter from the rail edge. */
+    display: block;
+    padding: 0;
+    line-height: 0;       /* drop inline-baseline gap under canvas */
+}
+.mascot-bird__canvas {
+    display: block;
+    /* Native 172×64 px — DPR scaling handled in JS for sharpness on
+       high-density displays. */
+}
+@media (max-width: 600px) {
+    .mascot-bird {
+        padding: 0;
+    }
+}
+</style>
+
+<script>
+(function () {
+    'use strict';
+
+    var canvas = document.getElementById('mascotBirdCanvas');
+    if (!canvas || !canvas.getContext) { return; }
+    var ctx = canvas.getContext('2d');
+
+    // Logical (CSS) dimensions; backing store is scaled for DPR so
+    // strokes stay crisp on retina/4k panels.
+    var W = canvas.width, H = canvas.height;
+    var dpr = window.devicePixelRatio || 1;
+    canvas.width = W * dpr;
+    canvas.height = H * dpr;
+    canvas.style.width = W + 'px';
+    canvas.style.height = H + 'px';
+    ctx.scale(dpr, dpr);
+
+    // The sprite's resting bounds are closer to 84×80 logical units
+    // than the old 200×110 demo box. Size from a tight rail box so the
+    // mascot claims the appbar slot, while still leaving headroom for
+    // hops and fly-ins.
+    var SCALE = Math.min(W / 160, H / 88);
+    var BASE_X = W * 0.50;             // sprite anchor: horizontally centered
+    var BASE_Y = H * 0.535;            // sit a touch higher so the larger feet fit
+    var HX = 18, HY = -22;             // head sits closer to body — logo-style fused silhouette
+
+    // Logo-inspired palette: cool teal body, dark navy outline, soft mint
+    // belly, neutral grey beak. Kept as named constants so future tweaks
+    // (e.g. dark-mode variant) only touch this block.
+    // Two outline tiers: a heavy "exterior" outline that has to survive
+    // on the dark appbar background, and an "interior" outline used for
+    // details like beak seams that only need to show against the bird's
+    // own light fills. Navy was logo-faithful but invisible at 1.54:1
+    // against #050806; the dark-teal exterior (3:1) reads as a true
+    // contour without going full grey.
+    var COL_OUTLINE = '#2D5A57';       // exterior contour (dark teal, ~3:1 on black)
+    var COL_DETAIL  = '#16324F';       // interior detail navy (pupil, seam)
+    var COL_BODY    = '#A8D5D2';       // teal body fill
+    var COL_BELLY   = '#DCEEEC';       // pale mint belly
+    var COL_WING    = '#7FB8B5';       // slightly darker teal wing for depth
+    var COL_TAIL    = '#5E9B98';       // deeper teal tail
+    var COL_BEAK_HI = '#C8D4DA';       // upper-mandible (lighter blue-grey)
+    var COL_BEAK_LO = '#8A98A1';       // lower-mandible (darker for depth)
+    var COL_BEAK_OL = '#3D4A52';       // beak outline (dark grey, ~3.2:1 on black)
+    var COL_LEG     = '#7FB8B5';       // legs in wing-teal so they show against black
+    var COL_EYE_W   = '#FFFFFF';       // big white sclera (logo signature)
+    var COL_EYE_P   = '#16324F';       // small navy pupil (sits in white, fine)
+
+    var BG_VARIANTS = { none: true, meadow: true, branch: true };
+    var BG_VARIANT = 'branch';
+    var FORCED_ANIM_NAME = '';
+    try {
+        var mascotParams = new URLSearchParams(window.location.search);
+        var urlBg = mascotParams.get('mascot_bg');
+        if (BG_VARIANTS[urlBg]) BG_VARIANT = urlBg;
+        FORCED_ANIM_NAME = mascotParams.get('mascot_anim') || '';
+    } catch (e) {}
+
+    /* ---------- primitive drawing helpers ----------
+       Logo aesthetic uses crisp outlines instead of neon glow. `blob` and
+       `poly` now optionally stroke a dark contour after fill; pass
+       stroke=true (default) for the body parts, stroke=false for soft
+       highlights like the belly that should blend in. */
+    function blob(cx, cy, rx, ry, col, stroke) {
+        ctx.save();
+        ctx.fillStyle = col;
+        ctx.beginPath();
+        ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2);
+        ctx.fill();
+        if (stroke !== false) {
+            ctx.lineWidth = 2.2;
+            ctx.strokeStyle = COL_OUTLINE;
+            ctx.lineJoin = 'round';
+            ctx.stroke();
+        }
+        ctx.restore();
+    }
+    function poly(pts, col, stroke) {
+        ctx.save();
+        ctx.fillStyle = col;
+        ctx.beginPath();
+        ctx.moveTo(pts[0][0], pts[0][1]);
+        for (var i = 1; i < pts.length; i++) {
+            ctx.lineTo(pts[i][0], pts[i][1]);
+        }
+        ctx.closePath();
+        ctx.fill();
+        if (stroke !== false) {
+            ctx.lineWidth = 2.2;
+            ctx.strokeStyle = COL_OUTLINE;
+            ctx.lineJoin = 'round';
+            ctx.stroke();
+        }
+        ctx.restore();
+    }
+
+    function drawFlower(x, bottomY, sway, col) {
+        ctx.save();
+        ctx.translate(x, bottomY);
+        ctx.rotate(sway);
+        ctx.strokeStyle = 'rgba(127, 184, 181, 0.55)';
+        ctx.lineWidth = 1.1;
+        ctx.lineCap = 'round';
+        ctx.beginPath();
+        ctx.moveTo(0, 0);
+        ctx.lineTo(0, -7);
+        ctx.stroke();
+        ctx.fillStyle = col;
+        for (var i = 0; i < 5; i++) {
+            var a = (i / 5) * Math.PI * 2;
+            ctx.beginPath();
+            ctx.ellipse(
+                Math.cos(a) * 2,
+                -9 + Math.sin(a) * 2,
+                1.5,
+                1.0,
+                a,
+                0,
+                Math.PI * 2
+            );
+            ctx.fill();
+        }
+        ctx.fillStyle = '#F4D36A';
+        ctx.beginPath();
+        ctx.arc(0, -9, 0.9, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+    }
+
+    function drawBackground() {
+        if (BG_VARIANT === 'none') return;
+        var t = performance.now() / 1000;
+        if (BG_VARIANT === 'meadow') {
+            ctx.save();
+            ctx.strokeStyle = 'rgba(127, 184, 181, 0.35)';
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(0, 58.5);
+            ctx.lineTo(W, 58.5);
+            ctx.stroke();
+            for (var x = 8; x < W; x += 11) {
+                var blade = 4 + (x % 3);
+                var lean = Math.sin(t * 1.3 + x) * 1.2;
+                ctx.beginPath();
+                ctx.moveTo(x, 60);
+                ctx.quadraticCurveTo(x + lean, 58 - blade * 0.45, x + lean * 1.4, 58 - blade);
+                ctx.stroke();
+            }
+            drawFlower(19, H - 1, Math.sin(t * 1.1) * 0.08, '#DCEEEC');
+            drawFlower(148, H - 1, Math.sin(t * 1.2 + 1.4) * 0.08, '#F4D36A');
+            ctx.restore();
+            return;
+        }
+        if (BG_VARIANT === 'branch') {
+            ctx.save();
+            ctx.strokeStyle = 'rgba(94, 155, 152, 0.58)';
+            ctx.lineWidth = 2.6;
+            ctx.lineCap = 'round';
+            ctx.beginPath();
+            ctx.moveTo(9, 59);
+            ctx.bezierCurveTo(44, 55, 104, 59, 162, 56);
+            ctx.stroke();
+            ctx.strokeStyle = 'rgba(94, 155, 152, 0.36)';
+            ctx.lineWidth = 1.4;
+            ctx.beginPath();
+            ctx.moveTo(126, 57);
+            ctx.quadraticCurveTo(136, 49, 150, 48);
+            ctx.stroke();
+            ctx.fillStyle = 'rgba(168, 213, 210, 0.45)';
+            [[30, 55, -0.4], [138, 49, 0.35], [151, 48, -0.25]].forEach(function (leaf) {
+                ctx.save();
+                ctx.translate(leaf[0], leaf[1]);
+                ctx.rotate(leaf[2] + Math.sin(t * 1.2 + leaf[0]) * 0.05);
+                ctx.beginPath();
+                ctx.ellipse(0, 0, 5, 2.2, 0, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.restore();
+            });
+            drawFlower(21, H - 1, Math.sin(t * 1.1) * 0.06, '#DCEEEC');
+            drawFlower(153, H - 1, Math.sin(t * 1.2 + 1.4) * 0.06, '#F4D36A');
+            ctx.restore();
+            return;
+        }
+    }
+
+    /* ---------- draw the bird from its kinematic state ----------
+       Logo-inspired silhouette: round eggy body, head fused close to
+       body (no long neck), short stubby tail (not the long songbird
+       streamer), big white eye with a small navy pupil dot. No crest. */
+    function draw(s) {
+        ctx.clearRect(0, 0, W, H);
+        drawBackground();
+
+        ctx.save();
+        ctx.translate(BASE_X + s.x * SCALE, BASE_Y + s.y * SCALE);
+        ctx.scale(s.sx * SCALE, s.sy * SCALE);
+        ctx.rotate(s.bodyRot);
+
+        // legs — dark navy, slightly thicker stroke to match logo weight
+        ctx.save();
+        ctx.strokeStyle = COL_LEG;
+        ctx.lineWidth = 2.6;
+        ctx.lineCap = 'round';
+        var legLift = s.legLift || 0;
+        [-7, 7].forEach(function (lx, i) {
+            var lift = (i === 0 ? legLift : -legLift) * 0.4;
+            ctx.beginPath();
+            ctx.moveTo(lx, 22); ctx.lineTo(lx, 40 - lift);
+            ctx.moveTo(lx, 40 - lift); ctx.lineTo(lx - 4, 40 - lift);
+            ctx.moveTo(lx, 40 - lift); ctx.lineTo(lx + 5, 40 - lift);
+            ctx.stroke();
+        });
+        ctx.restore();
+
+        // tail (pivots at body left) — short stub, deeper teal so it
+        // reads as a separate plane behind the body
+        ctx.save();
+        ctx.translate(-22, 2);
+        ctx.rotate(s.tailAngle);
+        poly([[0,-8],[-14,-10],[-18,-2],[-14,6],[-2,6]], COL_TAIL);
+        ctx.restore();
+
+        // body — rounder ellipse (close to circle), no glow, hard outline
+        blob(0, 2, 26, 25, COL_BODY);
+        // belly highlight — softer mint, no outline so it blends in
+        blob(3, 10, 17, 13, COL_BELLY, false);
+
+        // wing (pivots at shoulder) — teardrop pointing back-down, the
+        // logo's signature "tucked wing" shape
+        ctx.save();
+        ctx.translate(-2, -4);
+        ctx.rotate(s.wingAngle);
+        poly([[4,-4],[-14,0],[-18,10],[-2,16],[8,6]], COL_WING);
+        ctx.restore();
+
+        // head — sits high-right, almost touching body, slightly smaller
+        // than body so the silhouette reads as one fused egg shape
+        ctx.save();
+        ctx.translate(HX + s.headX, HY + s.headY);
+        ctx.rotate(s.headRot);
+
+        blob(0, 0, 17, 17, COL_BODY);
+
+        // beak — two-plate "stout cone" with a nostril dot. Upper plate
+        // sits flush on the seam line; lower plate drops at the tip when
+        // beakOpen > 0 (Singing animation). Uses its own thinner black
+        // outline (~1px in body coords) so the contour doesn't swamp
+        // the small beak area at appbar scale — the body's heavier 2.2px
+        // outline would otherwise eat the beak's fill color entirely.
+        var bo = s.beakOpen * 5;
+        // Upper mandible
+        ctx.save();
+        ctx.fillStyle = COL_BEAK_HI;
+        ctx.beginPath();
+        ctx.moveTo(10, -4);
+        ctx.lineTo(25, -0.5);
+        ctx.lineTo(24, 1.2);
+        ctx.lineTo(10, 1.2);
+        ctx.closePath();
+        ctx.fill();
+        ctx.lineWidth = 1.0;
+        ctx.strokeStyle = COL_BEAK_OL;
+        ctx.lineJoin = 'round';
+        ctx.stroke();
+        ctx.restore();
+        // Lower mandible — tip drops by `bo` when the beak opens
+        ctx.save();
+        ctx.fillStyle = COL_BEAK_LO;
+        ctx.beginPath();
+        ctx.moveTo(10, 1.2);
+        ctx.lineTo(24, 1.5 + bo);
+        ctx.lineTo(22, 4 + bo);
+        ctx.lineTo(10, 5);
+        ctx.closePath();
+        ctx.fill();
+        ctx.lineWidth = 1.0;
+        ctx.strokeStyle = COL_BEAK_OL;
+        ctx.lineJoin = 'round';
+        ctx.stroke();
+        ctx.restore();
+        // Nostril dot on the upper mandible — conceptually a hole, so
+        // it stays in outline color rather than a lighter highlight.
+        ctx.save();
+        ctx.fillStyle = COL_BEAK_OL;
+        ctx.beginPath();
+        ctx.arc(13.5, -1.5, 0.7, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+
+        // eye — large white sclera, small navy pupil. This is the
+        // single most logo-identifying detail; keep it generous.
+        var eo = s.eyeOpen;
+        ctx.save();
+        ctx.translate(2, -3);
+        ctx.scale(1, eo);
+        // white sclera with outline
+        ctx.fillStyle = COL_EYE_W;
+        ctx.beginPath();
+        ctx.arc(0, 0, 6.2, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.lineWidth = 1.8;
+        ctx.strokeStyle = COL_OUTLINE;
+        ctx.stroke();
+        // small pupil — only render when the eye is more than half open
+        // (otherwise the blink looks like a floating dot)
+        if (eo > 0.5) {
+            ctx.fillStyle = COL_EYE_P;
+            ctx.beginPath();
+            ctx.arc(1.4, 0.4, 1.9, 0, Math.PI * 2);
+            ctx.fill();
+        }
+        ctx.restore();
+        if (eo < 0.4) {  // blink line in navy
+            ctx.strokeStyle = COL_OUTLINE;
+            ctx.lineWidth = 2;
+            ctx.lineCap = 'round';
+            ctx.beginPath();
+            ctx.moveTo(-3, -3);
+            ctx.lineTo(7, -3);
+            ctx.stroke();
+        }
+
+        ctx.restore();  // head
+        ctx.restore();  // bird
+        // Particles render after draw() in the frame loop (stepParticles),
+        // so they land on top of the bird without a separate call here.
+    }
+
+    /* ---------- default kinematic state ----------
+       The "anchor" pose that every slot starts and ends at. The scheduler
+       crossfades between this and the animation's state for the first/last
+       250ms of every slot, which is what makes transitions jump-free. */
+    function reset() {
+        return {
+            x: 0, y: 0, sx: 1, sy: 1,
+            bodyRot: 0, headRot: 0, headX: 0, headY: 0,
+            beakOpen: 0, eyeOpen: 1, wingAngle: 0.15,
+            tailAngle: 0, legLift: 0
+        };
+    }
+
+    /* ---------- particle system ----------
+       Generalized over Singing-notes, Sweat-drops, Rain-drops, etc.
+       Each particle kind registers an `emit(now, ctx)` that returns
+       a new particle, and a `draw(p, ctx)` that paints it. The kind
+       is referenced by name from an animation spec's `particles` field;
+       the scheduler arms the matching emitter while that slot is active
+       and disarms it on slot exit. Particle state lives in `particles[]`
+       across slot boundaries so visible drops can finish their fall
+       gracefully when the slot changes. */
+    var particles = [];     // {kind, x, y, vx, vy, life, …}
+    var lastEmitAt = {};    // per-kind throttle timestamps
+    var PARTICLE_KINDS = {
+        notes: {
+            // Musical notes for Singing. Sized + positioned in CANVAS
+            // coordinates (not SCALE-multiplied) because the canvas is
+            // only 64px tall — scaling by 0.32 made the previous notes
+            // 5px tall and sent them off-screen within a frame. Now:
+            // spawn near the beak (right side of bird), drift up-right,
+            // stay inside the canvas the whole life. Larger glyphs so
+            // they register on the appbar.
+            intervalMs: 350,
+            emit: function () {
+                return {
+                    kind: 'notes',
+                    x: BASE_X + 22 + Math.random() * 6,
+                    y: BASE_Y - 14 + Math.random() * 4,
+                    vx: 0.35 + Math.random() * 0.25,
+                    vy: -0.45 - Math.random() * 0.15,
+                    life: 1,
+                    decay: 0.016,
+                    ch: Math.random() < 0.5 ? '♪' : '♫',
+                    sz: 14 + Math.random() * 4
+                };
+            },
+            draw: function (p) {
+                // Body teal on light glow — the previous navy glow was
+                // invisible on the dark appbar (1.5:1 contrast). Pale
+                // teal glow gives the glyph a halo that reads as
+                // "singing!" rather than a flat sprite.
+                ctx.fillStyle = COL_BELLY;
+                ctx.shadowColor = COL_BODY;
+                ctx.shadowBlur = 8;
+                ctx.font = '700 ' + p.sz + 'px IBM Plex Mono, ui-monospace, monospace';
+                ctx.fillText(p.ch, p.x, p.y);
+            }
+        },
+        sweat: {
+            // Blue droplets flicking off the head — sideways flick
+            // + gravity, so they arc off and fall. Spawn point is the
+            // top-right of the head (in screen coords). Sized in CANVAS
+            // coordinates (not SCALE-multiplied) so they're large enough
+            // to read on the appbar — the previous SCALE-multiplied radius
+            // collapsed to ~0.6 canvas px and was effectively invisible.
+            intervalMs: 260,
+            emit: function () {
+                return {
+                    kind: 'sweat',
+                    x: BASE_X + 22 + (Math.random() * 6 - 3),
+                    y: BASE_Y - 22,
+                    vx: 0.7 + Math.random() * 0.5,
+                    vy: -0.4 - Math.random() * 0.3,
+                    gravity: 0.06,
+                    life: 1,
+                    decay: 0.016,
+                    r: 3.4 + Math.random() * 1.2
+                };
+            },
+            draw: function (p) {
+                // Light cyan droplet with a soft blue glow so it pops
+                // against the dark appbar without needing a heavy outline.
+                ctx.fillStyle = '#A8E6FF';
+                ctx.shadowColor = '#6FB8E6';
+                ctx.shadowBlur = 6;
+                ctx.strokeStyle = COL_OUTLINE;
+                ctx.lineWidth = 0.8;
+                ctx.beginPath();
+                // Teardrop: small circle with a peaked top
+                ctx.moveTo(p.x, p.y - p.r * 1.6);
+                ctx.quadraticCurveTo(p.x + p.r, p.y, p.x, p.y + p.r);
+                ctx.quadraticCurveTo(p.x - p.r, p.y, p.x, p.y - p.r * 1.6);
+                ctx.fill();
+                ctx.stroke();
+            }
+        },
+        excite: {
+            // Burst of "!" and "*" glyphs popping around the bird's head
+            // when a new detection arrives. Spawn radially from above
+            // the head with slight upward drift so they read as an
+            // exclamation, not a snowfall. Short life, fast decay —
+            // the burst should be over before the 2s slot ends.
+            intervalMs: 90,
+            emit: function () {
+                var angle = -Math.PI / 2 + (Math.random() - 0.5) * Math.PI;
+                var speed = 0.9 + Math.random() * 0.6;
+                return {
+                    kind: 'excite',
+                    x: BASE_X + (Math.random() * 14 - 7),
+                    y: BASE_Y - 24 + (Math.random() * 4 - 2),
+                    vx: Math.cos(angle) * speed,
+                    vy: Math.sin(angle) * speed,
+                    life: 1,
+                    decay: 0.04,
+                    ch: Math.random() < 0.65 ? '!' : '*',
+                    sz: 13 + Math.random() * 5
+                };
+            },
+            draw: function (p) {
+                // Warm red on a soft yellow halo so it pops on the dark
+                // appbar without clashing with the cream-tone brand. Halo
+                // sized to match the notes glow (8 px) so all three
+                // particle kinds read with consistent visual weight.
+                ctx.fillStyle = '#E84B3C';
+                ctx.shadowColor = '#F4D36A';
+                ctx.shadowBlur = 9;
+                ctx.font = '900 ' + p.sz + 'px IBM Plex Mono, ui-monospace, monospace';
+                ctx.fillText(p.ch, p.x, p.y);
+            }
+        },
+        sun: {
+            // A single sun sprite that anchors the upper-left of the
+            // canvas while the bird sweats. `singleShot: true` means
+            // emit() runs exactly once per slot — the sprite sits with
+            // life=1 and decay=0 until startSlot()'s cleanup removes
+            // it on the next slot change. Drawn as a warm yellow disk
+            // with eight tapered rays, sized to read as "sun" without
+            // crowding the bird (which sits center-low).
+            singleShot: true,
+            intervalMs: 0,
+            emit: function () {
+                return {
+                    kind: 'sun',
+                    x: 22,
+                    y: 18,
+                    vx: 0,
+                    vy: 0,
+                    life: 1,
+                    decay: 0,
+                    r: 7,
+                    rayLen: 5,
+                    spin: Math.random() * Math.PI * 2
+                };
+            },
+            draw: function (p) {
+                // Subtle pulse so it doesn't look pasted-on — radius
+                // oscillates ~5% over a 2 s cycle.
+                var pulse = 1 + Math.sin(performance.now() / 320) * 0.05;
+                var r = p.r * pulse;
+                // Rays first (under the disk so the disk's hard edge
+                // covers the ray bases cleanly).
+                ctx.save();
+                ctx.translate(p.x, p.y);
+                ctx.rotate(p.spin + performance.now() / 4000);
+                ctx.strokeStyle = '#FFD86B';
+                ctx.lineWidth = 1.6;
+                ctx.lineCap = 'round';
+                ctx.shadowColor = '#FFB347';
+                ctx.shadowBlur = 6;
+                for (var i = 0; i < 8; i++) {
+                    var a = (i / 8) * Math.PI * 2;
+                    ctx.beginPath();
+                    ctx.moveTo(Math.cos(a) * (r + 1.5), Math.sin(a) * (r + 1.5));
+                    ctx.lineTo(Math.cos(a) * (r + 1.5 + p.rayLen),
+                               Math.sin(a) * (r + 1.5 + p.rayLen));
+                    ctx.stroke();
+                }
+                ctx.restore();
+                // Disk on top — warm gradient via two-pass fill: an
+                // outer orange ring + inner yellow core.
+                ctx.save();
+                ctx.shadowColor = '#FFB347';
+                ctx.shadowBlur = 10;
+                ctx.fillStyle = '#FFB347';
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.fillStyle = '#FFE27A';
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, r * 0.72, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.restore();
+            }
+        },
+        rain: {
+            // Vertical streaks falling from the top of the canvas, all
+            // across the width. Tilted slightly so it reads as "rain"
+            // not "asteroids". Spawns even outside the bird's horizontal
+            // span — it's weather, not bird-attached.
+            intervalMs: 60,
+            emit: function () {
+                return {
+                    kind: 'rain',
+                    x: Math.random() * W,
+                    y: -4 - Math.random() * 8,
+                    vx: 0.4 * SCALE,
+                    vy: (3.5 + Math.random() * 1.5) * SCALE,
+                    life: 1,
+                    decay: 0.0,    // rain lives until it hits the floor
+                    len: (5 + Math.random() * 4) * SCALE
+                };
+            },
+            draw: function (p) {
+                // Rim-light trick: a wider, softer streak rendered first,
+                // then a crisp bright streak on top. Halos work better than
+                // shadowBlur on strokes because shadowBlur smears the line.
+                ctx.lineCap = 'round';
+                // Soft outer halo
+                ctx.strokeStyle = 'rgba(127, 184, 217, 0.35)';
+                ctx.lineWidth = 3.0;
+                ctx.beginPath();
+                ctx.moveTo(p.x, p.y);
+                ctx.lineTo(p.x - p.vx * 2, p.y - p.vy * 2);
+                ctx.stroke();
+                // Crisp bright core
+                ctx.strokeStyle = '#BFE2F2';
+                ctx.lineWidth = 1.4;
+                ctx.beginPath();
+                ctx.moveTo(p.x, p.y);
+                ctx.lineTo(p.x - p.vx * 2, p.y - p.vy * 2);
+                ctx.stroke();
+            },
+            // Floor: rain dies when it leaves the bottom of the canvas
+            // (so we don't accumulate forever). Slot-end clears all rain
+            // immediately so it doesn't drizzle into the next animation.
+            killsAtFloor: true
+        },
+        sleep_z: {
+            // Sleepy "Z" glyphs drifting up-right from the head. Used by
+            // NightSleep and MiddaySiesta. Slower emit than musical notes
+            // so the bird looks calmly asleep, not noisily snoring.
+            intervalMs: 700,
+            emit: function () {
+                return {
+                    kind: 'sleep_z',
+                    x: BASE_X + 18 + Math.random() * 4,
+                    y: BASE_Y - 18 - Math.random() * 4,
+                    vx: 0.25 + Math.random() * 0.15,
+                    vy: -0.35 - Math.random() * 0.1,
+                    life: 1,
+                    decay: 0.012,
+                    sz: 11 + Math.random() * 4
+                };
+            },
+            draw: function (p) {
+                ctx.fillStyle = '#DCEEEC';
+                ctx.shadowColor = '#7FB8B5';
+                ctx.shadowBlur = 5;
+                ctx.font = '700 ' + p.sz + 'px IBM Plex Mono, ui-monospace, monospace';
+                ctx.fillText('z', p.x, p.y);
+            }
+        },
+        stars: {
+            // Faint twinkling stars scattered in the upper half. Slow,
+            // sparse — Stargaze is a quiet animation. Each star pulses
+            // its own brightness so the field shimmers.
+            intervalMs: 400,
+            emit: function () {
+                return {
+                    kind: 'stars',
+                    x: 10 + Math.random() * (W - 20),
+                    y: 4 + Math.random() * (H * 0.45),
+                    vx: 0,
+                    vy: 0,
+                    life: 1,
+                    decay: 0.006,
+                    sz: 1.6 + Math.random() * 1.4,
+                    twinkle: Math.random() * Math.PI * 2
+                };
+            },
+            draw: function (p) {
+                var pulse = 0.6 + 0.4 * Math.abs(Math.sin(performance.now() / 380 + p.twinkle));
+                ctx.fillStyle = '#FFF6C8';
+                ctx.shadowColor = '#FFD86B';
+                ctx.shadowBlur = 5;
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, p.sz * pulse, 0, Math.PI * 2);
+                ctx.fill();
+            }
+        },
+        snow: {
+            // Soft snowflakes drifting down with sideways sway. Bigger
+            // and slower than rain, with horizontal jitter so they look
+            // like flakes catching the breeze, not pellets.
+            intervalMs: 130,
+            emit: function () {
+                return {
+                    kind: 'snow',
+                    x: Math.random() * W,
+                    y: -4,
+                    vx: 0,
+                    vy: (0.6 + Math.random() * 0.5) * SCALE,
+                    life: 1,
+                    decay: 0.0,
+                    sz: 1.6 + Math.random() * 1.8,
+                    sway: Math.random() * Math.PI * 2
+                };
+            },
+            draw: function (p) {
+                // Lateral sway is a function of vertical position so
+                // flakes wiggle as they fall instead of dropping straight.
+                var dx = Math.sin(p.y / 8 + p.sway) * 0.8;
+                ctx.fillStyle = '#FFFFFF';
+                ctx.shadowColor = '#BFE2F2';
+                ctx.shadowBlur = 4;
+                ctx.beginPath();
+                ctx.arc(p.x + dx, p.y, p.sz, 0, Math.PI * 2);
+                ctx.fill();
+            },
+            killsAtFloor: true
+        },
+        leaves: {
+            // Stylised leaf glyphs blowing left-to-right with rotation.
+            // Used by WindyDay to sell the gust without painting actual
+            // leaves on an appbar that's only 64 px tall.
+            intervalMs: 220,
+            emit: function () {
+                return {
+                    kind: 'leaves',
+                    x: -8,
+                    y: 6 + Math.random() * (H - 16),
+                    vx: 1.4 + Math.random() * 0.8,
+                    vy: 0,
+                    life: 1,
+                    decay: 0.006,
+                    sz: 10 + Math.random() * 4,
+                    spin: Math.random() * Math.PI * 2,
+                    spinV: 0.08 + Math.random() * 0.08
+                };
+            },
+            draw: function (p) {
+                p.spin += p.spinV;
+                ctx.save();
+                ctx.translate(p.x, p.y);
+                ctx.rotate(p.spin);
+                ctx.fillStyle = '#7FB8B5';
+                ctx.shadowColor = '#2D5A57';
+                ctx.shadowBlur = 3;
+                ctx.font = '700 ' + p.sz + 'px IBM Plex Mono, ui-monospace, monospace';
+                ctx.fillText('~', 0, 0);
+                ctx.restore();
+            }
+        },
+        fog: {
+            // Translucent horizontal smears that slowly drift sideways
+            // and fade. Layered emission gives the canvas an enveloping
+            // haze without a heavy fullscreen overlay.
+            intervalMs: 280,
+            emit: function () {
+                var fromLeft = Math.random() < 0.5;
+                return {
+                    kind: 'fog',
+                    x: fromLeft ? -20 : W + 20,
+                    y: 8 + Math.random() * (H - 16),
+                    vx: fromLeft ? (0.25 + Math.random() * 0.15)
+                                 : -(0.25 + Math.random() * 0.15),
+                    vy: 0,
+                    life: 1,
+                    decay: 0.005,
+                    w: 36 + Math.random() * 20,
+                    h: 6 + Math.random() * 3
+                };
+            },
+            draw: function (p) {
+                ctx.fillStyle = 'rgba(220, 238, 236, 0.28)';
+                ctx.beginPath();
+                ctx.ellipse(p.x, p.y, p.w, p.h, 0, 0, Math.PI * 2);
+                ctx.fill();
+            }
+        },
+        breath: {
+            // Small puff of pale grey curling up from the beak. Used by
+            // Shivering — sells "cold" by visualising exhalation. Very
+            // short-lived so it reads as a puff, not a smoke trail.
+            intervalMs: 520,
+            emit: function () {
+                return {
+                    kind: 'breath',
+                    x: BASE_X + 26,
+                    y: BASE_Y - 18,
+                    vx: 0.35 + Math.random() * 0.2,
+                    vy: -0.3 - Math.random() * 0.15,
+                    life: 1,
+                    decay: 0.035,
+                    r: 2.4 + Math.random() * 1.4
+                };
+            },
+            draw: function (p) {
+                ctx.fillStyle = 'rgba(220, 238, 236, 0.65)';
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, p.r * (1.6 - p.life), 0, Math.PI * 2);
+                ctx.fill();
+            }
+        },
+        lightning: {
+            // Periodic full-canvas flash for Thunderstorm. The emitter
+            // pushes a single short-lived "flash" sprite roughly every
+            // 1.4 s (intervalMs); its draw() paints an additive overlay
+            // over the whole canvas, then dies in ~80 ms. Combined with
+            // a `rain` stream the result reads as a storm without
+            // expensive bolt-geometry.
+            intervalMs: 1400,
+            emit: function () {
+                return {
+                    kind: 'lightning',
+                    x: 0,
+                    y: 0,
+                    vx: 0,
+                    vy: 0,
+                    life: 1,
+                    decay: 0.18,
+                    flashCol: Math.random() < 0.5 ? '#F4F7FA' : '#E8EFFF'
+                };
+            },
+            draw: function (p) {
+                ctx.save();
+                ctx.globalCompositeOperation = 'lighter';
+                ctx.fillStyle = p.flashCol;
+                ctx.fillRect(0, 0, W, H);
+                ctx.restore();
+            }
+        },
+        splash: {
+            // Small radial water droplets flying out from the floor
+            // beneath the bird, used by PuddleSplash on each landing.
+            // Spawn point is the feet (BASE_X + s.x), velocity is a
+            // radial fan capped to the upper hemisphere so droplets
+            // arc outward and gravity pulls them back down.
+            intervalMs: 70,
+            emit: function () {
+                var angle = -Math.PI + Math.random() * Math.PI; // [-π, 0] = upper
+                var speed = 0.8 + Math.random() * 0.6;
+                return {
+                    kind: 'splash',
+                    x: BASE_X + (Math.random() * 12 - 6),
+                    y: BASE_Y + 22,
+                    vx: Math.cos(angle) * speed * 1.6,
+                    vy: Math.sin(angle) * speed,
+                    gravity: 0.08,
+                    life: 1,
+                    decay: 0.03,
+                    r: 1.6 + Math.random() * 1.4
+                };
+            },
+            draw: function (p) {
+                ctx.fillStyle = '#A8E6FF';
+                ctx.shadowColor = '#6FB8E6';
+                ctx.shadowBlur = 5;
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+                ctx.fill();
+            }
+        },
+        rainbow: {
+            // Single arc sprite that anchors the upper half of the
+            // canvas until the slot ends. singleShot like sun. Drawn as
+            // four concentric stroke arcs in the classic ROYGBIV-ish
+            // sequence (compressed to four bands for legibility at this
+            // size). Soft alpha so it reads as airy, not painted.
+            singleShot: true,
+            intervalMs: 0,
+            emit: function () {
+                return {
+                    kind: 'rainbow',
+                    x: W * 0.5,
+                    y: H + 6,
+                    vx: 0,
+                    vy: 0,
+                    life: 1,
+                    decay: 0,
+                    r: H * 0.95
+                };
+            },
+            draw: function (p) {
+                var bands = [
+                    { c: 'rgba(232, 75, 60, 0.55)',  o: 0 },
+                    { c: 'rgba(244, 211, 106, 0.55)', o: 5 },
+                    { c: 'rgba(127, 184, 181, 0.55)', o: 10 },
+                    { c: 'rgba(91, 110, 165, 0.55)',  o: 15 }
+                ];
+                ctx.save();
+                ctx.lineCap = 'round';
+                for (var i = 0; i < bands.length; i++) {
+                    ctx.strokeStyle = bands[i].c;
+                    ctx.lineWidth = 3.5;
+                    ctx.beginPath();
+                    ctx.arc(p.x, p.y, p.r - bands[i].o, Math.PI, Math.PI * 2);
+                    ctx.stroke();
+                }
+                ctx.restore();
+            }
+        }
+    };
+    function stepParticles() {
+        for (var i = particles.length - 1; i >= 0; i--) {
+            var p = particles[i];
+            p.x += p.vx;
+            p.y += p.vy;
+            if (p.gravity) p.vy += p.gravity;
+            p.life -= (p.decay || 0);
+            var kind = PARTICLE_KINDS[p.kind];
+            var dead = (p.life <= 0)
+                || (kind && kind.killsAtFloor && p.y > H + 4);
+            if (dead) { particles.splice(i, 1); continue; }
+            ctx.save();
+            ctx.globalAlpha = Math.max(0, p.life);
+            kind.draw(p);
+            ctx.restore();
+        }
+    }
+    function emitParticleMaybe(name, now) {
+        var kind = PARTICLE_KINDS[name];
+        if (!kind) return;
+        // singleShot kinds emit exactly once per slot. Tracked via
+        // lastEmitAt — startSlot() clears the entry for any kind that
+        // isn't carried over into the new slot, so re-entry works.
+        if (kind.singleShot) {
+            if (lastEmitAt[name]) return;
+            particles.push(kind.emit());
+            lastEmitAt[name] = now;
+            return;
+        }
+        var last = lastEmitAt[name] || 0;
+        if (now - last < kind.intervalMs) return;
+        particles.push(kind.emit());
+        lastEmitAt[name] = now;
+    }
+    function clearParticlesOfKind(name) {
+        for (var i = particles.length - 1; i >= 0; i--) {
+            if (particles[i].kind === name) particles.splice(i, 1);
+        }
+        // singleShot tracking lives in lastEmitAt — wipe it too so the
+        // kind can re-emit when its animation runs again later.
+        delete lastEmitAt[name];
+    }
+
+    // `particles` on an animation spec may be a string OR an array of
+    // strings (for combo effects like Sweating's sweat-drops + sun).
+    // This normalizer keeps the rest of the scheduler agnostic.
+    function particleKindsOf(spec) {
+        if (!spec || !spec.particles) return [];
+        return Array.isArray(spec.particles) ? spec.particles : [spec.particles];
+    }
+
+    /* ---------- crossfade helper ----------
+       Linearly interpolates every numeric field of `from` toward `to`
+       by factor `k` ∈ [0,1]. Writes into `out`. */
+    function lerpState(from, to, k, out) {
+        for (var key in to) {
+            if (typeof to[key] === 'number') {
+                out[key] = from[key] + (to[key] - from[key]) * k;
+            }
+        }
+    }
+
+    /* ---------- animation spec schema ----------
+       Required:
+         name        — identifier shown in DevTools, used by fire()
+         durationMs  — slot length when this anim is active
+         weight      — relative probability weight in ambient rotation
+         fn(t, s)    — write state into s for time t (seconds since slot start)
+       Optional:
+         priority      — 'ambient' (default) or 'event' (push-only)
+         eligible(ctx) — must return truthy for ambient scheduling
+         cooldownMs    — minimum gap before this anim can be picked again
+         particles     — name of a PARTICLE_KINDS entry to emit while active
+
+       Position anchoring (binary slot-edge rule):
+         startAnchor — where the bird MUST be at t=0:
+                         'center' (default)          — x=0, mid-canvas
+                         'offscreen-left'            — x=-200, fully outside
+                         'offscreen-right'           — x=+200, fully outside
+         endAnchor   — where the bird MUST be at t=durationMs (same values).
+       The crossfade interpolates the bird's *x* position between the
+       declared anchor and the animation's natural state. All other
+       kinematic values (head, wing, beak, eyes, …) still cross-fade
+       from reset() — only x is anchor-driven. This guarantees the
+       bird never appears mid-flight at a slot boundary: it's always
+       either centered or completely off-screen.
+    */
+    // Anchor values are in logical (pre-SCALE) coordinates. The sprite
+    // is ~84 logical units wide; at SCALE ≈ 0.73 that's ~61 canvas px.
+    // To be truly off-canvas (canvas width 172, BASE_X centered), the
+    // sprite center must be at |x| ≥ (canvasWidth/2 + sprite/2) / SCALE
+    // = (86 + 42) / 0.73 ≈ 176. Keep 360 for comfortable margin.
+    var ANCHOR_X = { 'center': 0, 'offscreen-left': -360, 'offscreen-right': 360 };
+    var ANIMS = [
+        {
+            name: 'Resting',
+            durationMs: 3000,
+            weight: 2.0,
+            priority: 'ambient',
+            eligible: function () { return true; },
+            cooldownMs: 0,
+            loopPosition: false,
+            particles: null,
+            fn: function (t, s) {
+                s.y = Math.sin(t * 3) * 2.2;
+                s.headY = Math.sin(t * 3 + 0.4) * 1.8;
+                s.wingAngle = 0.15 + Math.sin(t * 3) * 0.05;
+                var bp = t % 2.4;
+                if (bp < 0.13) {
+                    var e = bp / 0.13;
+                    s.eyeOpen = 1 - Math.sin(e * Math.PI);
+                }
+            }
+        },
+        {
+            name: 'Blinking',
+            durationMs: 3000,
+            weight: 1.5,
+            priority: 'ambient',
+            eligible: function () { return true; },
+            cooldownMs: 0,
+            loopPosition: false,
+            particles: null,
+            fn: function (t, s) {
+                s.y = Math.sin(t * 3) * 2;
+                var bp = t % 0.85;
+                if (bp < 0.14) {
+                    var e = bp / 0.14;
+                    s.eyeOpen = 1 - Math.sin(e * Math.PI);
+                }
+            }
+        },
+        {
+            name: 'Looking around',
+            durationMs: 3000,
+            weight: 1.5,
+            priority: 'ambient',
+            eligible: function () { return true; },
+            cooldownMs: 0,
+            loopPosition: false,
+            particles: null,
+            fn: function (t, s) {
+                s.y = Math.sin(t * 3) * 1.5;
+                s.headRot = Math.sin(t * 1.9) * 0.55;
+                s.headX = Math.sin(t * 1.9) * 3;
+            }
+        },
+        {
+            name: 'Pecking',
+            durationMs: 3000,
+            weight: 1.5,
+            priority: 'ambient',
+            eligible: function () { return true; },
+            cooldownMs: 0,
+            loopPosition: false,
+            particles: null,
+            fn: function (t, s) {
+                s.y = Math.sin(t * 3) * 1.2;
+                var ph = (t % 0.85) / 0.85;
+                var dip = Math.sin(ph * Math.PI);
+                s.headY += dip * 16;
+                s.headX += dip * 5;
+                s.bodyRot += dip * 0.14;
+                s.tailAngle = -dip * 0.18;
+            }
+        },
+        {
+            name: 'Hopping',
+            durationMs: 3000,
+            weight: 1.2,
+            priority: 'ambient',
+            eligible: function () { return true; },
+            cooldownMs: 0,
+            loopPosition: false,
+            particles: null,
+            fn: function (t, s) {
+                var ph = (t % 0.92) / 0.92;
+                var h = Math.sin(ph * Math.PI);
+                s.y = -h * 34;
+                var grnd = ph < 0.16
+                    ? (1 - ph / 0.16)
+                    : (ph > 0.84 ? ((ph - 0.84) / 0.16) : 0);
+                s.sy = 1 - grnd * 0.16 + h * 0.04;
+                s.sx = 1 + grnd * 0.14;
+                s.wingAngle = 0.15 - h * 0.5;
+                s.tailAngle = h * 0.3;
+            }
+        },
+        {
+            name: 'Wing flap',
+            durationMs: 3000,
+            weight: 1.2,
+            priority: 'ambient',
+            eligible: function () { return true; },
+            cooldownMs: 0,
+            loopPosition: false,
+            particles: null,
+            fn: function (t, s) {
+                s.wingAngle = Math.sin(t * 13) * 0.85;
+                s.y = Math.sin(t * 13) * -3 + Math.sin(t * 3) * 1.5;
+                s.headY = Math.sin(t * 13 + 0.3) * -1.5;
+            }
+        },
+        {
+            // Flying: enters from off-screen-left, exits off-screen-right.
+            // The anchor system guarantees the bird is fully off-canvas
+            // at t=0 and t=durationMs — no more mid-air "plop" at the
+            // slot boundary. The trajectory inside fn() spans the full
+            // visible width plus generous overshoot so it lines up
+            // naturally with the anchors at the edges.
+            name: 'Flying',
+            durationMs: 3000,
+            weight: 0.8,
+            priority: 'ambient',
+            eligible: function () { return true; },
+            cooldownMs: 0,
+            startAnchor: 'offscreen-left',
+            endAnchor: 'offscreen-right',
+            particles: null,
+            fn: function (t, s) {
+                // Trajectory matches the anchor values exactly: at t=0
+                // we're at -360 (== offscreen-left anchor), at t=3 we're
+                // at +360 (== offscreen-right anchor). That way the
+                // anchor→fn handoff at the end of fade-in (and fn→anchor
+                // at the start of fade-out) is continuous in x.
+                var ph = t / 3.0;
+                if (ph > 1) ph = 1;
+                s.x = -360 + ph * 720;
+                s.y = -26 + Math.sin(t * 4.5) * 9;
+                s.wingAngle = Math.sin(t * 15) * 0.95;
+                s.bodyRot = -0.12 + Math.sin(t * 4.5) * 0.05;
+                s.tailAngle = 0.1;
+                s.legLift = 8;
+            }
+        },
+        {
+            name: 'Singing',
+            durationMs: 3000,
+            weight: 1.2,
+            priority: 'ambient',
+            eligible: function () { return true; },
+            cooldownMs: 0,
+            loopPosition: false,
+            particles: 'notes',
+            fn: function (t, s) {
+                s.y = Math.sin(t * 3) * 1.8;
+                s.headRot = -0.16;
+                s.beakOpen = Math.abs(Math.sin(t * 6)) * 0.95;
+                s.eyeOpen = 0.7;
+                s.wingAngle = 0.15 + Math.sin(t * 6) * 0.07;
+            }
+        },
+        {
+            name: 'Preening',
+            durationMs: 3000,
+            weight: 1.0,
+            priority: 'ambient',
+            eligible: function () { return true; },
+            cooldownMs: 0,
+            loopPosition: false,
+            particles: null,
+            fn: function (t, s) {
+                var ph = Math.min(t / 2.7, 1);
+                var m = Math.sin(ph * Math.PI);
+                s.headRot = m * 1.35;
+                s.headY = m * 12;
+                s.headX = -m * 10;
+                s.bodyRot = m * 0.1;
+                s.eyeOpen = 1 - m * 0.6;
+                s.wingAngle = 0.15 + Math.sin(t * 16) * 0.18 * m;
+                s.beakOpen = Math.abs(Math.sin(t * 9)) * 0.3 * m;
+            }
+        },
+        {
+            name: 'Tail bob',
+            durationMs: 3000,
+            weight: 1.2,
+            priority: 'ambient',
+            eligible: function () { return true; },
+            cooldownMs: 0,
+            loopPosition: false,
+            particles: null,
+            fn: function (t, s) {
+                s.y = Math.sin(t * 3) * 1.4;
+                s.tailAngle = Math.sin(t * 8) * 0.5;
+                s.bodyRot = Math.sin(t * 8) * -0.04;
+                s.headY = Math.sin(t * 3 + 0.3) * 1.5;
+            }
+        },
+
+        /* ─── Position / movement animations ───────────────────────
+           Most ambient anims sit at center. These add motion that
+           takes the bird off-center, in or out of the canvas, or
+           across it on a non-straight path. Weights are kept low so
+           they're a treat in the rotation, not the dominant flavour. */
+        {
+            // Land from above: free-fall from the top, brake near the
+            // floor, settle into the standard pose. Anchored to center
+            // at the slot edges so the next slot starts cleanly.
+            name: 'LandFromAbove',
+            durationMs: 3000,
+            weight: 0.7,
+            priority: 'ambient',
+            eligible: function () { return true; },
+            cooldownMs: 25000,
+            loopPosition: false,
+            particles: null,
+            fn: function (t, s) {
+                // 0–1.6 s: drop. 1.6–2.4 s: brake & wing-flare.
+                // 2.4–3.0 s: settle (small bounce on the legs).
+                if (t < 1.6) {
+                    var ph = t / 1.6;
+                    s.y = -80 + ph * ph * 80;
+                    s.wingAngle = 0.35 + Math.sin(t * 14) * 0.45;
+                    s.legLift = 12 * (1 - ph);
+                    s.bodyRot = 0.05;
+                } else if (t < 2.4) {
+                    var bp = (t - 1.6) / 0.8;
+                    s.y = Math.sin(bp * Math.PI) * -8;
+                    s.wingAngle = -0.85 + bp * 0.7;
+                    s.beakOpen = 0.15;
+                    s.bodyRot = -0.08 + bp * 0.08;
+                    s.legLift = 0;
+                } else {
+                    var sp = (t - 2.4) / 0.6;
+                    var settle = Math.sin(sp * Math.PI * 2) * 1.2;
+                    s.y = settle * (1 - sp);
+                    s.wingAngle = 0.15;
+                    s.sy = 1 - settle * 0.05;
+                }
+            }
+        },
+        {
+            // Take off upward: crouch, leap, climb out of frame.
+            // The anchor system has no 'offscreen-top', so the exit
+            // lives entirely in fn(). At slot-end the fade-out
+            // crossfade between fn() and center pulls the bird back
+            // toward center; that's covered by the bird being far
+            // off-canvas at that point — the snap is invisible.
+            name: 'TakeOffUp',
+            durationMs: 3000,
+            weight: 0.6,
+            priority: 'ambient',
+            eligible: function () { return true; },
+            cooldownMs: 25000,
+            loopPosition: false,
+            particles: null,
+            fn: function (t, s) {
+                if (t < 0.8) {
+                    var cp = t / 0.8;
+                    s.y = 4 * cp;
+                    s.sy = 1 - cp * 0.18;
+                    s.sx = 1 + cp * 0.14;
+                    s.headY = 2 * cp;
+                    s.wingAngle = 0.3 - cp * 0.4;
+                } else if (t < 1.4) {
+                    var lp = (t - 0.8) / 0.6;
+                    s.y = 4 - lp * lp * 60;
+                    s.sy = 0.82 + lp * 0.25;
+                    s.sx = 1.14 - lp * 0.18;
+                    s.wingAngle = -0.95 + Math.sin(t * 18) * 0.45;
+                    s.beakOpen = 0.35;
+                    s.legLift = 12;
+                } else {
+                    var fp = (t - 1.4) / 1.6;
+                    s.y = -56 - fp * 100;
+                    s.wingAngle = Math.sin(t * 18) * 0.95;
+                    s.bodyRot = -0.18;
+                    s.legLift = 14;
+                }
+            }
+        },
+        {
+            // Peek from the left edge: body sits offscreen-left, only
+            // the head (at HX=18 right of body center) pokes in. The
+            // bird looks around, then retreats. No anchors — fn()
+            // controls x throughout, fade-in/out window is short
+            // enough that the small x-snap is invisible.
+            name: 'PeekFromLeft',
+            durationMs: 3500,
+            weight: 0.6,
+            priority: 'ambient',
+            eligible: function () { return true; },
+            cooldownMs: 30000,
+            loopPosition: false,
+            particles: null,
+            fn: function (t, s) {
+                // Body parked at x=-150 → head at x=-132, leaving the
+                // beak just inside the left edge of the canvas.
+                if (t < 0.7) {
+                    var ip = t / 0.7;
+                    s.x = -200 + ip * 50;
+                } else if (t < 2.8) {
+                    s.x = -150 + Math.sin((t - 0.7) * 1.4) * 4;
+                    s.headRot = Math.sin((t - 0.7) * 2.2) * 0.55;
+                    s.headX = Math.sin((t - 0.7) * 2.2) * 3;
+                    s.eyeOpen = 1;
+                } else {
+                    var op = (t - 2.8) / 0.7;
+                    s.x = -150 - op * 60;
+                }
+                s.y = Math.sin(t * 3) * 1;
+            }
+        },
+        {
+            // Peek from the right — mirror of PeekFromLeft. Body sits
+            // offscreen-right; head pokes in from the right.
+            name: 'PeekFromRight',
+            durationMs: 3500,
+            weight: 0.6,
+            priority: 'ambient',
+            eligible: function () { return true; },
+            cooldownMs: 30000,
+            loopPosition: false,
+            particles: null,
+            fn: function (t, s) {
+                if (t < 0.7) {
+                    var ip = t / 0.7;
+                    s.x = 200 - ip * 50;
+                } else if (t < 2.8) {
+                    s.x = 150 + Math.sin((t - 0.7) * 1.4) * 4;
+                    s.headRot = -0.3 + Math.sin((t - 0.7) * 2.2) * 0.55;
+                    s.headX = Math.sin((t - 0.7) * 2.2) * 3;
+                    s.eyeOpen = 1;
+                } else {
+                    var op = (t - 2.8) / 0.7;
+                    s.x = 150 + op * 60;
+                }
+                s.y = Math.sin(t * 3) * 1;
+            }
+        },
+        {
+            // Hop across left→right: four hops traverse the canvas,
+            // ending on-center for clean handoff to the next slot.
+            name: 'HopAcrossRight',
+            durationMs: 3200,
+            weight: 0.7,
+            priority: 'ambient',
+            eligible: function () { return true; },
+            cooldownMs: 25000,
+            startAnchor: 'offscreen-left',
+            endAnchor: 'center',
+            loopPosition: false,
+            particles: null,
+            fn: function (t, s) {
+                if (t < 3.0) {
+                    var hopPh = (t % 0.75) / 0.75;
+                    var hop = Math.sin(hopPh * Math.PI);
+                    var progress = Math.min(t / 3.0, 1);
+                    s.x = -360 + progress * 360;
+                    s.y = -hop * 24;
+                    s.wingAngle = 0.15 - hop * 0.5;
+                    s.tailAngle = hop * 0.3;
+                    var grnd = hopPh < 0.16
+                        ? (1 - hopPh / 0.16)
+                        : (hopPh > 0.84 ? ((hopPh - 0.84) / 0.16) : 0);
+                    s.sy = 1 - grnd * 0.16 + hop * 0.04;
+                    s.sx = 1 + grnd * 0.14;
+                } else {
+                    s.x = 0;
+                }
+            }
+        },
+        {
+            // Hop across right→left: mirror of HopAcrossRight.
+            name: 'HopAcrossLeft',
+            durationMs: 3200,
+            weight: 0.7,
+            priority: 'ambient',
+            eligible: function () { return true; },
+            cooldownMs: 25000,
+            startAnchor: 'offscreen-right',
+            endAnchor: 'center',
+            loopPosition: false,
+            particles: null,
+            fn: function (t, s) {
+                if (t < 3.0) {
+                    var hopPh = (t % 0.75) / 0.75;
+                    var hop = Math.sin(hopPh * Math.PI);
+                    var progress = Math.min(t / 3.0, 1);
+                    s.x = 360 - progress * 360;
+                    s.y = -hop * 24;
+                    s.wingAngle = 0.15 - hop * 0.5;
+                    s.tailAngle = hop * 0.3;
+                    var grnd = hopPh < 0.16
+                        ? (1 - hopPh / 0.16)
+                        : (hopPh > 0.84 ? ((hopPh - 0.84) / 0.16) : 0);
+                    s.sy = 1 - grnd * 0.16 + hop * 0.04;
+                    s.sx = 1 + grnd * 0.14;
+                } else {
+                    s.x = 0;
+                }
+            }
+        },
+        {
+            // FlyByFast — a swallow-style flyby high in the canvas,
+            // ~2× faster than Flying and held above the body's typical
+            // sit-line. Quick wing flicks for the speed feel.
+            name: 'FlyByFast',
+            durationMs: 2000,
+            weight: 0.5,
+            priority: 'ambient',
+            eligible: function () { return true; },
+            cooldownMs: 30000,
+            startAnchor: 'offscreen-left',
+            endAnchor: 'offscreen-right',
+            particles: null,
+            fn: function (t, s) {
+                var ph = t / 2.0;
+                if (ph > 1) ph = 1;
+                s.x = -360 + ph * 720;
+                s.y = -50 + Math.sin(t * 6) * 4;
+                s.wingAngle = Math.sin(t * 26) * 1.1;
+                s.bodyRot = -0.15;
+                s.tailAngle = 0.05;
+                s.legLift = 12;
+            }
+        },
+
+        /* ─── Time-of-day animations ───────────────────────────────
+           Eligibility helpers:
+             - hourLocal()       — 0..23 in the user's local timezone
+             - isNight(ctx)      — Open-Meteo says it's not day, OR
+                                   the local clock is in the night band
+                                   (fallback for when weather hasn't
+                                   loaded yet).
+           Time bands are deliberately wide so the user actually sees
+           the animation once per band per session, not just at the
+           edge of the window. Cooldowns prevent the same band-anim
+           from dominating the rotation. */
+        {
+            // Morning stretch: 06:00–09:00. Slow wing extension and a
+            // big yawn (beak wide, eyes half-closed). The "wake up"
+            // counterpart to NightSleep.
+            name: 'MorningStretch',
+            durationMs: 4000,
+            weight: 2.5,
+            priority: 'ambient',
+            eligible: function (ctx) {
+                var h = new Date().getHours();
+                return h >= 6 && h < 9;
+            },
+            cooldownMs: 300000,     // 5 min — once per band per visit feels right
+            loopPosition: false,
+            particles: null,
+            fn: function (t, s) {
+                // Single big stretch arc over the 4 s slot.
+                var ph = Math.min(t / 3.5, 1);
+                var arc = Math.sin(ph * Math.PI);
+                s.y = -arc * 4;
+                s.wingAngle = 0.15 - arc * 1.1;        // wing sweeps up & out
+                s.headY = -arc * 6;
+                s.headRot = arc * 0.35;
+                s.beakOpen = arc * 0.85;                // yawn
+                s.eyeOpen = 1 - arc * 0.7;              // squint at the brightness
+                s.sy = 1 + arc * 0.08;                  // body lengthens slightly
+            }
+        },
+        {
+            // Midday siesta: 12:00–14:00 AND warm sunny weather (≥18 °C,
+            // is_day). Bird tucks head, eyes shut, drowsy z-stream.
+            // Higher temp threshold than Sweating so they don't collide.
+            name: 'MiddaySiesta',
+            durationMs: 5000,
+            weight: 2.0,
+            priority: 'ambient',
+            eligible: function (ctx) {
+                var h = new Date().getHours();
+                if (h < 12 || h >= 14) return false;
+                if (!ctx || !ctx.weather) return true; // mild fallback
+                if (ctx.weather.is_day === 0) return false;
+                if (typeof ctx.weather.temp_c === 'number'
+                    && ctx.weather.temp_c < 18) return false;
+                return true;
+            },
+            cooldownMs: 240000,
+            loopPosition: false,
+            particles: 'sleep_z',
+            fn: function (t, s) {
+                // Head tucked low, very slow breath bob.
+                var breath = Math.sin(t * 1.4) * 1.2;
+                s.y = 2 + breath;
+                s.headY = 9 + breath * 0.5;
+                s.headX = -3;
+                s.headRot = -0.25;
+                s.eyeOpen = 0;
+                s.wingAngle = 0.05;
+                s.sy = 0.94 + Math.sin(t * 1.4) * 0.02; // breathing scale
+            }
+        },
+        {
+            // Evening wind-down: 18:00–21:00. Lots of preening + slower
+            // tail flicks. Calmer counterpart to MorningStretch.
+            name: 'EveningWindDown',
+            durationMs: 4000,
+            weight: 2.0,
+            priority: 'ambient',
+            eligible: function (ctx) {
+                var h = new Date().getHours();
+                return h >= 18 && h < 21;
+            },
+            cooldownMs: 240000,
+            loopPosition: false,
+            particles: null,
+            fn: function (t, s) {
+                // Slow side-to-side preen with intermittent eye closure.
+                var ph = (t % 2.0) / 2.0;
+                var m = Math.sin(ph * Math.PI);
+                s.headRot = -1.0 + m * 2.0;
+                s.headY = m * 8;
+                s.headX = -m * 8;
+                s.bodyRot = m * 0.06;
+                s.eyeOpen = 1 - m * 0.55;
+                s.wingAngle = 0.15 + m * 0.12;
+                s.tailAngle = Math.sin(t * 1.5) * 0.18;
+            }
+        },
+        {
+            // Night sleep: weather says it's night OR clock is in
+            // 21:00–05:00. Bird sits curled, slow breathing, "z" stream.
+            name: 'NightSleep',
+            durationMs: 5000,
+            weight: 3.0,
+            priority: 'ambient',
+            eligible: function (ctx) {
+                if (ctx && ctx.weather && ctx.weather.is_day === 0) return true;
+                var h = new Date().getHours();
+                return h >= 21 || h < 5;
+            },
+            cooldownMs: 480000,    // 8 min — long, but night sleeps long
+            loopPosition: false,
+            particles: 'sleep_z',
+            fn: function (t, s) {
+                // Curled posture: head down, body squat, very slow bob.
+                var br = Math.sin(t * 1.0) * 0.6;
+                s.y = 3 + br;
+                s.headY = 12 + br * 0.4;
+                s.headX = -2;
+                s.headRot = -0.35;
+                s.eyeOpen = 0;
+                s.wingAngle = 0.0;
+                s.tailAngle = 0.04;
+                s.sy = 0.92 + Math.sin(t * 1.0) * 0.02;
+            }
+        },
+        {
+            // Stargaze: night + clear sky (WMO codes 0 or 1). Bird tilts
+            // head up, eyes wide, faint stars twinkle above. The poetic
+            // one — keep weight low so it's a rare treat, not a rotation
+            // staple.
+            name: 'Stargaze',
+            durationMs: 5000,
+            weight: 0.7,
+            priority: 'ambient',
+            eligible: function (ctx) {
+                if (!ctx || !ctx.weather) return false;
+                var code = ctx.weather.condition_code;
+                if (code !== 0 && code !== 1) return false;
+                // Must be night (weather signal preferred, clock fallback)
+                if (ctx.weather.is_day === 0) return true;
+                if (ctx.weather.is_day == null) {
+                    var h = new Date().getHours();
+                    return h >= 21 || h < 5;
+                }
+                return false;
+            },
+            cooldownMs: 180000,
+            loopPosition: false,
+            particles: 'stars',
+            fn: function (t, s) {
+                // Head tipped up, eyes wide, very gentle sway.
+                s.y = Math.sin(t * 1.6) * 1.4;
+                s.headRot = 0.55;
+                s.headY = -4;
+                s.eyeOpen = 1;
+                s.beakOpen = 0.05;
+                s.wingAngle = 0.15;
+            }
+        },
+
+        /* ─── Weather-conditional animations ─── */
+        {
+            // Hot/sunny → bird pants and sheds sweat drops. Eligible
+            // when weather says it's day and ≥ 22°C. Cooldown 30s
+            // ("Häufig"): noticeable, not annoying.
+            name: 'Sweating',
+            durationMs: 4000,
+            weight: 2.5,
+            priority: 'ambient',
+            eligible: function (ctx) {
+                return !!(ctx && ctx.weather
+                    && ctx.weather.is_day
+                    && typeof ctx.weather.temp_c === 'number'
+                    && ctx.weather.temp_c >= 22);
+            },
+            cooldownMs: 30000,
+            loopPosition: false,
+            particles: ['sweat', 'sun'],
+            fn: function (t, s) {
+                // Panting head bob (fast), heavy body sag, mouth ajar.
+                s.y = 1.5 + Math.sin(t * 8) * 0.6;
+                s.headY = Math.sin(t * 8) * 1.2;
+                s.headRot = Math.sin(t * 4) * 0.08;
+                s.beakOpen = 0.45 + Math.abs(Math.sin(t * 8)) * 0.25;
+                s.eyeOpen = 0.6;
+                s.wingAngle = 0.25 + Math.sin(t * 3) * 0.04;
+            }
+        },
+        {
+            // Sunbathing — properly hot AND a clear sky. The bird lies
+            // back, wings spread wide, eyes closed in bliss. Longer
+            // slot than Sweating because the pose is more static and
+            // less anxious. WMO 0/1/2 = clear/mainly clear/partly
+            // cloudy.
+            name: 'Sunbathing',
+            durationMs: 6000,
+            weight: 1.5,
+            priority: 'ambient',
+            eligible: function (ctx) {
+                if (!ctx || !ctx.weather) return false;
+                if (!ctx.weather.is_day) return false;
+                if (typeof ctx.weather.temp_c !== 'number') return false;
+                if (ctx.weather.temp_c < 25) return false;
+                var c = ctx.weather.condition_code;
+                return c === 0 || c === 1 || c === 2;
+            },
+            cooldownMs: 60000,
+            loopPosition: false,
+            particles: 'sun',
+            fn: function (t, s) {
+                // Lying-back pose: bodyRot back, wings spread wide,
+                // head tilted up, slow breathing. Very static.
+                s.y = 5;
+                s.bodyRot = -0.22;
+                s.headRot = 0.32;
+                s.headY = -2;
+                s.wingAngle = -1.2;        // wing flat & spread
+                s.eyeOpen = 0.1;
+                s.beakOpen = 0.18;
+                s.tailAngle = 0.2;
+                s.sx = 1.08;               // slightly stretched out
+                s.sy = 0.95;
+            }
+        },
+        {
+            // Light rain — WMO drizzle/slight rain bucket. Bird ducks
+            // slightly but no umbrella-wing. Sparser rain than HeavyRain.
+            // WMO codes: 51 light drizzle, 53 moderate drizzle, 61 slight
+            // rain, 80 slight rain showers.
+            name: 'LightRain',
+            durationMs: 4000,
+            weight: 2.0,
+            priority: 'ambient',
+            eligible: function (ctx) {
+                if (!ctx || !ctx.weather) return false;
+                var c = ctx.weather.condition_code;
+                return c === 51 || c === 53 || c === 61 || c === 80;
+            },
+            cooldownMs: 30000,
+            loopPosition: false,
+            particles: 'rain',
+            fn: function (t, s) {
+                s.y = 2;
+                s.headY = 2;
+                s.headRot = -0.08;
+                s.wingAngle = 0.0;
+                s.eyeOpen = 0.9;
+                s.bodyRot = Math.sin(t * 3) * 0.015;
+            }
+        },
+        {
+            // Heavy rain — the umbrella-wing pose. Renamed from
+            // RainShelter for symmetry with LightRain. WMO codes: 55
+            // dense drizzle, 63 moderate rain, 65 heavy rain, 81/82
+            // heavy showers. Freezing-rain codes (56/57/66/67) also
+            // fall into "wet enough to seek shelter".
+            name: 'HeavyRain',
+            durationMs: 4000,
+            weight: 2.5,
+            priority: 'ambient',
+            eligible: function (ctx) {
+                if (!ctx || !ctx.weather) return false;
+                var c = ctx.weather.condition_code;
+                return c === 55 || c === 56 || c === 57
+                    || c === 63 || c === 65
+                    || c === 66 || c === 67
+                    || c === 81 || c === 82;
+            },
+            cooldownMs: 30000,
+            loopPosition: false,
+            particles: 'rain',
+            fn: function (t, s) {
+                // Crouch down, raise wing like an umbrella.
+                s.y = 4;
+                s.headY = 3;
+                s.headRot = -0.05;
+                s.wingAngle = -0.6;
+                s.eyeOpen = 0.85;
+                s.bodyRot = Math.sin(t * 4) * 0.02;
+            }
+        },
+        {
+            // Thunderstorm — WMO 95/96/99. Bird flinches periodically;
+            // rain pours + lightning flashes. Lower weight + longer
+            // cooldown than HeavyRain so the storm version is the
+            // dramatic exception, not the baseline.
+            name: 'Thunderstorm',
+            durationMs: 5000,
+            weight: 3.0,
+            priority: 'ambient',
+            eligible: function (ctx) {
+                if (!ctx || !ctx.weather) return false;
+                var c = ctx.weather.condition_code;
+                return c === 95 || c === 96 || c === 99;
+            },
+            cooldownMs: 60000,
+            loopPosition: false,
+            particles: ['rain', 'lightning'],
+            fn: function (t, s) {
+                // Crouched shelter pose, with a startle every ~2 s
+                // (synced loosely with lightning flashes — the eye is
+                // wide for ~200 ms after each "flash beat").
+                var beat = t % 1.7;
+                var flinch = beat < 0.2 ? (1 - beat / 0.2) : 0;
+                s.y = 5 - flinch * 4;
+                s.headY = 4 - flinch * 3;
+                s.headRot = -0.05;
+                s.wingAngle = -0.55 - flinch * 0.2;
+                s.eyeOpen = 0.7 + flinch * 0.3;
+                s.bodyRot = Math.sin(t * 5) * 0.025;
+            }
+        },
+        {
+            // Snowing — WMO 71/73/75/77/85/86. Bird sits squat with
+            // fluffed feathers; snow drifts down across the canvas.
+            name: 'Snowing',
+            durationMs: 5000,
+            weight: 2.5,
+            priority: 'ambient',
+            eligible: function (ctx) {
+                if (!ctx || !ctx.weather) return false;
+                var c = ctx.weather.condition_code;
+                return c === 71 || c === 73 || c === 75
+                    || c === 77 || c === 85 || c === 86;
+            },
+            cooldownMs: 30000,
+            loopPosition: false,
+            particles: 'snow',
+            fn: function (t, s) {
+                s.y = 3 + Math.sin(t * 1.2) * 0.6;
+                s.headY = 5;
+                s.headRot = -0.1;
+                s.wingAngle = 0.05;
+                s.eyeOpen = 0.85;
+                s.sy = 1.05;            // fluffed
+                s.sx = 1.05;
+            }
+        },
+        {
+            // Windy day — wind ≥ 25 km/h. Bird leans back, feathers
+            // pushed sideways, leaves blowing past.
+            name: 'WindyDay',
+            durationMs: 4000,
+            weight: 2.0,
+            priority: 'ambient',
+            eligible: function (ctx) {
+                return !!(ctx && ctx.weather
+                    && typeof ctx.weather.wind_kph === 'number'
+                    && ctx.weather.wind_kph >= 25);
+            },
+            cooldownMs: 45000,
+            loopPosition: false,
+            particles: 'leaves',
+            fn: function (t, s) {
+                // Lean back against the gust; head buffeted side-to-side.
+                var gust = Math.sin(t * 2.5);
+                s.bodyRot = -0.12 + gust * 0.04;
+                s.headRot = -0.18 + gust * 0.08;
+                s.headX = -3 + gust * 2;
+                s.wingAngle = 0.35 + gust * 0.1;
+                s.tailAngle = -0.25 + gust * 0.08;
+                s.eyeOpen = 0.7;
+            }
+        },
+        {
+            // Foggy — WMO 45/48. Bird squints, slow soft movement.
+            // Fog smears drift across the canvas.
+            name: 'Foggy',
+            durationMs: 5000,
+            weight: 1.5,
+            priority: 'ambient',
+            eligible: function (ctx) {
+                if (!ctx || !ctx.weather) return false;
+                var c = ctx.weather.condition_code;
+                return c === 45 || c === 48;
+            },
+            cooldownMs: 60000,
+            loopPosition: false,
+            particles: 'fog',
+            fn: function (t, s) {
+                s.y = Math.sin(t * 1.4) * 1.1;
+                s.headRot = Math.sin(t * 0.8) * 0.18;
+                s.headX = Math.sin(t * 0.8) * 2;
+                s.eyeOpen = 0.55;
+                s.wingAngle = 0.15;
+            }
+        },
+        {
+            // Shivering — cold day (≤ 2 °C and is_day). Body trembles
+            // at 12 Hz, faint breath puffs from the beak.
+            name: 'Shivering',
+            durationMs: 4000,
+            weight: 2.5,
+            priority: 'ambient',
+            eligible: function (ctx) {
+                return !!(ctx && ctx.weather
+                    && ctx.weather.is_day
+                    && typeof ctx.weather.temp_c === 'number'
+                    && ctx.weather.temp_c <= 2);
+            },
+            cooldownMs: 45000,
+            loopPosition: false,
+            particles: 'breath',
+            fn: function (t, s) {
+                // High-frequency tremor on x and a fluffed-up body scale.
+                s.x = Math.sin(t * 24) * 0.8;
+                s.headX = Math.sin(t * 24) * 0.6;
+                s.headY = 2 + Math.sin(t * 8) * 0.5;
+                s.headRot = -0.08;
+                s.wingAngle = 0.05;
+                s.eyeOpen = 0.7;
+                s.sy = 1.06;            // fluffed for warmth
+                s.sx = 1.06;
+            }
+        },
+        {
+            // Rainbow — clear/partly cloudy (WMO 0–3) after recent rain.
+            // The "recent rain" gate is held in a module-level latch:
+            // any rain animation that ran in the past `RAINBOW_WINDOW_MS`
+            // arms the rainbow. The latch is set inside startSlot()
+            // (see below) so eligibility here is just a read.
+            name: 'Rainbow',
+            durationMs: 4500,
+            weight: 1.8,
+            priority: 'ambient',
+            eligible: function (ctx) {
+                if (!ctx || !ctx.weather) return false;
+                var c = ctx.weather.condition_code;
+                if (c !== 0 && c !== 1 && c !== 2 && c !== 3) return false;
+                if (ctx.weather.is_day === 0) return false;
+                var armed = window.__wmbRainbowArmedUntil || 0;
+                return performance.now() < armed;
+            },
+            cooldownMs: 3600000,    // once per hour at most — keep it special
+            loopPosition: false,
+            particles: 'rainbow',
+            fn: function (t, s) {
+                // Bird looks up at the arc, mouth open in wonder.
+                s.y = Math.sin(t * 1.6) * 1.2;
+                s.headRot = 0.45;
+                s.headY = -3;
+                s.beakOpen = 0.35;
+                s.eyeOpen = 1;
+                s.wingAngle = 0.15;
+            }
+        },
+        {
+            // PuddleSplash — playful follow-up to recent rain. Same
+            // armed-window mechanism as Rainbow (Rain-class slot
+            // arms window.__wmbRainbowArmedUntil), but eligible
+            // independent of sky condition: even an overcast post-rain
+            // sky can have puddles to jump in.
+            name: 'PuddleSplash',
+            durationMs: 3500,
+            weight: 1.4,
+            priority: 'ambient',
+            eligible: function () {
+                var armed = window.__wmbRainbowArmedUntil || 0;
+                return performance.now() < armed;
+            },
+            cooldownMs: 90000,
+            loopPosition: false,
+            particles: 'splash',
+            fn: function (t, s) {
+                // Four enthusiastic puddle-jumps with squash at the
+                // bottom of each landing. Splash particles spawn from
+                // the feet on every landing thanks to the constant
+                // emit interval (70 ms) hitting them automatically.
+                var jumpPh = (t % 0.85) / 0.85;
+                var jump = Math.sin(jumpPh * Math.PI);
+                s.y = -jump * 28;
+                s.wingAngle = 0.15 - jump * 0.7;
+                s.headRot = 0.05 + jump * 0.15;
+                s.beakOpen = 0.25;
+                s.eyeOpen = 1;
+                s.tailAngle = jump * 0.45;
+                // Heavy squash at the impact frames — sells the splash.
+                var grnd = jumpPh < 0.16
+                    ? (1 - jumpPh / 0.16)
+                    : (jumpPh > 0.84 ? ((jumpPh - 0.84) / 0.16) : 0);
+                s.sy = 1 - grnd * 0.22 + jump * 0.06;
+                s.sx = 1 + grnd * 0.2;
+            }
+        },
+
+        /* ─── Mood / character animations ─────────────────────────
+           Small character moments. All stay at center, drive only
+           head/tail/leg/beak/eye — no body translation. Cheap to
+           write, high charm-per-line. */
+        {
+            // Head shake — a "no" gesture. Three left-right wipes.
+            name: 'HeadShake',
+            durationMs: 2200,
+            weight: 0.9,
+            priority: 'ambient',
+            eligible: function () { return true; },
+            cooldownMs: 20000,
+            loopPosition: false,
+            particles: null,
+            fn: function (t, s) {
+                s.y = Math.sin(t * 3) * 1.4;
+                s.headRot = Math.sin(t * 9) * 0.55;
+                s.headX = Math.sin(t * 9) * 4;
+                s.bodyRot = Math.sin(t * 9) * -0.04;
+            }
+        },
+        {
+            // Nod — a "yes" gesture. Three up-down dips.
+            name: 'Nod',
+            durationMs: 2200,
+            weight: 0.9,
+            priority: 'ambient',
+            eligible: function () { return true; },
+            cooldownMs: 20000,
+            loopPosition: false,
+            particles: null,
+            fn: function (t, s) {
+                s.y = Math.sin(t * 3) * 1.2;
+                var nod = Math.sin(t * 9);
+                s.headRot = -0.18 + nod * 0.25;
+                s.headY = nod * 5;
+                s.bodyRot = nod * 0.03;
+            }
+        },
+        {
+            // Curious — head tilts hard to one side, holds it, eyes
+            // wide. The "what's that?" pose without any push trigger.
+            name: 'Curious',
+            durationMs: 3000,
+            weight: 1.0,
+            priority: 'ambient',
+            eligible: function () { return true; },
+            cooldownMs: 18000,
+            loopPosition: false,
+            particles: null,
+            fn: function (t, s) {
+                // Tilt in (0–0.6s), hold (0.6–2.4s), release (2.4–3s).
+                var tilt;
+                if (t < 0.6) tilt = t / 0.6;
+                else if (t < 2.4) tilt = 1.0 + Math.sin((t - 0.6) * 1.8) * 0.05;
+                else tilt = Math.max(0, 1 - (t - 2.4) / 0.6);
+                s.y = Math.sin(t * 3) * 1;
+                s.headRot = tilt * 0.85;
+                s.headX = tilt * 2;
+                s.headY = -tilt * 3;
+                s.eyeOpen = 1;
+                s.bodyRot = tilt * 0.05;
+            }
+        },
+        {
+            // Scratch — leg lifts to head, head dips down to meet it.
+            // Classic preening cousin, but more vigorous and focused
+            // on the leg rather than the wing.
+            name: 'Scratch',
+            durationMs: 3000,
+            weight: 0.9,
+            priority: 'ambient',
+            eligible: function () { return true; },
+            cooldownMs: 25000,
+            loopPosition: false,
+            particles: null,
+            fn: function (t, s) {
+                // Lift + scratch (0–2.2s), settle (2.2–3s).
+                if (t < 2.2) {
+                    var ph = t / 2.2;
+                    var lift = Math.sin(ph * Math.PI);
+                    s.legLift = lift * 16;
+                    s.headRot = lift * 0.6;
+                    s.headY = lift * 10;
+                    s.headX = -lift * 4;
+                    s.bodyRot = -lift * 0.1;
+                    // Vigorous shake at the peak of the lift.
+                    s.headY += Math.sin(t * 22) * 1.5 * lift;
+                } else {
+                    var sp = (t - 2.2) / 0.8;
+                    s.legLift = (1 - sp) * 4;
+                }
+            }
+        },
+        {
+            // Yawn — slow beak open with eyes shutting halfway, then
+            // closing fully at the peak. Calmer cousin of MorningStretch
+            // without the wing-flare and body-elongation.
+            name: 'Yawn',
+            durationMs: 2800,
+            weight: 0.8,
+            priority: 'ambient',
+            eligible: function () { return true; },
+            cooldownMs: 25000,
+            loopPosition: false,
+            particles: null,
+            fn: function (t, s) {
+                var ph = Math.min(t / 2.5, 1);
+                var bell = Math.sin(ph * Math.PI);    // 0→1→0 bell curve
+                s.y = Math.sin(t * 3) * 1;
+                s.beakOpen = bell * 0.95;
+                s.eyeOpen = 1 - bell * 0.85;
+                s.headY = bell * 4;
+                s.headRot = bell * 0.18;
+            }
+        },
+        {
+            // Bow — a courtly forward bow. Body rotates forward, head
+            // dips toward the viewer, then returns. Used as a rare
+            // alternate to WelcomeFlyIn (random pick at page-load via
+            // weight comparison, but kept ambient here so the rotation
+            // also serves it).
+            name: 'Bow',
+            durationMs: 2600,
+            weight: 0.5,
+            priority: 'ambient',
+            eligible: function () { return true; },
+            cooldownMs: 40000,
+            loopPosition: false,
+            particles: null,
+            fn: function (t, s) {
+                // Bow down (0–1.0s), hold (1.0–1.6s), rise (1.6–2.6s).
+                var bow;
+                if (t < 1.0) bow = t / 1.0;
+                else if (t < 1.6) bow = 1.0;
+                else bow = Math.max(0, 1 - (t - 1.6) / 1.0);
+                s.bodyRot = bow * 0.35;
+                s.headRot = bow * 0.4;
+                s.headY = bow * 12;
+                s.y = bow * 3;
+                s.tailAngle = -bow * 0.4;
+                s.wingAngle = 0.15 - bow * 0.25;
+                s.legLift = 0;
+            }
+        },
+
+        /* ─── Interactive / specials ───────────────────────────────
+           These read non-weather context (mouse position, page-load
+           timing) or carry their own client-side gates. */
+        {
+            // LookAtMouse — head tracks the mouse cursor for the
+            // duration of the slot. The cursor position is published
+            // into mascotCtx by the mousemove listener at the bottom
+            // of the script. Eligible only when we've seen a recent
+            // mouse movement (cursor stayed on the page).
+            name: 'LookAtMouse',
+            durationMs: 2500,
+            weight: 0.7,
+            priority: 'ambient',
+            eligible: function (ctx) {
+                if (!ctx || typeof ctx.mouseLastMs !== 'number') return false;
+                // Only run if the mouse has moved in the last 4 s —
+                // otherwise the visitor's afk and the head tracking a
+                // stale position looks broken.
+                return (performance.now() - ctx.mouseLastMs) < 4000;
+            },
+            cooldownMs: 15000,
+            loopPosition: false,
+            particles: null,
+            fn: function (t, s) {
+                // mascotCtx.mouseX / mouseY are canvas-space px in the
+                // range [-W/2..W/2, -H/2..H/2] roughly (we publish them
+                // pre-centered in the listener). Translate to head-rot
+                // / head-x-y drives.
+                var ctx = window.wmbMascot ? window.wmbMascot.getContext() : {};
+                var mx = (ctx && typeof ctx.mouseX === 'number') ? ctx.mouseX : 0;
+                var my = (ctx && typeof ctx.mouseY === 'number') ? ctx.mouseY : 0;
+                // Saturate so a far-off mouse doesn't break the head.
+                var clamp = function (v, lo, hi) {
+                    return Math.max(lo, Math.min(hi, v));
+                };
+                s.y = Math.sin(t * 3) * 1;
+                s.headRot = clamp(mx / 60, -1.0, 1.0);
+                s.headX = clamp(mx / 25, -6, 6);
+                s.headY = clamp(my / 15, -6, 8);
+                s.eyeOpen = 1;
+            }
+        },
+        {
+            // FlyByBackground — same trajectory as Flying but rendered
+            // a bit smaller and offset higher so it reads as a distant
+            // pass without looking like the mascot failed to fill its
+            // appbar space.
+            name: 'FlyByBackground',
+            durationMs: 3500,
+            weight: 0.4,
+            priority: 'ambient',
+            eligible: function () { return true; },
+            cooldownMs: 45000,
+            startAnchor: 'offscreen-right',
+            endAnchor: 'offscreen-left',
+            particles: null,
+            fn: function (t, s) {
+                var ph = t / 3.5;
+                if (ph > 1) ph = 1;
+                // Right → left this time, for variety vs Flying & FlyByFast.
+                s.x = 360 - ph * 720;
+                s.y = -60 + Math.sin(t * 3) * 6;
+                s.sx = 0.62;
+                s.sy = 0.62;
+                s.wingAngle = Math.sin(t * 12) * 0.9;
+                s.bodyRot = 0.08;
+                s.tailAngle = 0.05;
+                s.legLift = 10;
+            }
+        },
+
+        /* ─── Event-only animations (push, never ambient) ─── */
+        {
+            // Fired from the SSE 'detection' handler in led_ticker.html
+            // whenever a fresh bird detection lands. Loud and excited:
+            // fast wing flapping, rapid hops, head whipping side-to-side,
+            // wide-open beak, exclamation-mark particles. The 1500ms
+            // cooldown swallows detection bursts — if 5 detections fire
+            // in 200ms (a flock entering frame), the bird does ONE
+            // excited burst, not five overlapping ones.
+            name: 'Excited',
+            durationMs: 4000,
+            weight: 0,
+            priority: 'event',
+            eligible: function () { return false; },
+            cooldownMs: 1500,
+            loopPosition: false,
+            particles: 'excite',
+            fn: function (t, s) {
+                // Three sub-hops over the 2s slot — fast and twitchy.
+                var hopPh = (t % 0.55) / 0.55;
+                var hop = Math.sin(hopPh * Math.PI);
+                s.y = -hop * 22;
+
+                // Frantic wing flapping (~10 Hz) much faster than the
+                // calmer ambient Wing-flap (4 Hz).
+                s.wingAngle = Math.sin(t * 22) * 1.1;
+
+                // Head whips left-right at 6 Hz with a small upward bias
+                // so the bird looks like it's checking around alertly.
+                s.headRot = Math.sin(t * 12) * 0.55;
+                s.headX = Math.sin(t * 12) * 5;
+                s.headY = -2 + Math.sin(t * 8) * 1.5;
+
+                // Beak wide open, chirping along with the head shake.
+                s.beakOpen = 0.55 + Math.abs(Math.sin(t * 14)) * 0.4;
+
+                // Eyes fully open — alert, not blinking.
+                s.eyeOpen = 1.0;
+
+                // Tail flicks in sync with the hops for a "ping" feel.
+                s.tailAngle = hop * 0.45;
+
+                // Slight squash-and-stretch on body for impact frames.
+                var grnd = hopPh < 0.16
+                    ? (1 - hopPh / 0.16)
+                    : (hopPh > 0.84 ? ((hopPh - 0.84) / 0.16) : 0);
+                s.sy = 1 - grnd * 0.18 + hop * 0.05;
+                s.sx = 1 + grnd * 0.15;
+            }
+        },
+        {
+            // Fired once per page-load from a DOMContentLoaded hook at
+            // the bottom of this script. Bird sails in from the left
+            // edge, brakes mid-canvas, then waves a wing for the last
+            // 1.5 s. Musical-notes particles sell the "hello!" beat.
+            // priority:'event' + cooldownMs:0 = the visitor sees it
+            // exactly once per navigation. Sprite faces right (beak
+            // at HX=18 right of body center), so a left→center entry
+            // matches the natural facing direction — bird arrives
+            // looking the way it's going.
+            name: 'WelcomeFlyIn',
+            durationMs: 3500,
+            weight: 0,
+            priority: 'event',
+            eligible: function () { return false; },
+            cooldownMs: 0,
+            startAnchor: 'offscreen-left',
+            endAnchor: 'center',
+            particles: 'notes',
+            // Notes only spawn once the bird has arrived and started
+            // waving (t >= 2.0). Without this gate, the static
+            // beak-anchored spawn position would emit notes in the
+            // empty center while the bird is still flying in from
+            // the left.
+            particleEligible: function (t) { return t >= 2.0; },
+            fn: function (t, s) {
+                if (t < 2.0) {
+                    // Arrival glide from left → center. Trajectory
+                    // matches the offscreen-left anchor (-360) at t=0
+                    // and lands at 0 at t=2.0 so the anchor handoff
+                    // is continuous.
+                    var ph = t / 2.0;
+                    s.x = -360 + ph * 360;
+                    s.y = -22 + Math.sin(t * 5) * 8 * (1 - ph);
+                    s.wingAngle = Math.sin(t * 16) * 0.95 * (1 - ph * 0.6);
+                    s.bodyRot = -0.1 * (1 - ph);
+                    s.tailAngle = 0.1;
+                    s.legLift = 8 * (1 - ph);
+                } else {
+                    // Wave phase: held at center. Wing rotated to the
+                    // mirrored angle (+0.95 instead of -0.95) so it
+                    // points down/back from the shoulder and waves
+                    // there — reads as "lower-hand wave" rather than
+                    // "raised-hand wave over the head".
+                    var wk = (t - 2.0) / 1.5;
+                    var wave = Math.sin(wk * Math.PI * 4);
+                    s.x = 0;
+                    s.y = Math.sin(t * 3) * 1.5;
+                    s.wingAngle = 0.95 + wave * 0.35;
+                    s.headRot = 0.15;
+                    s.headY = -1;
+                    s.beakOpen = 0.4 + Math.abs(Math.sin(wk * 8)) * 0.35;
+                    s.eyeOpen = 1;
+                }
+            }
+        },
+        {
+            // BigFlock — fired from the SSE detection handler when a
+            // burst of ≥ 5 detections lands within 5 s. Different look
+            // from Excited: bird leans forward, wings stretched wide,
+            // tracking the imagined flock across the canvas. Longer
+            // cooldown so a sustained burst doesn't loop the anim.
+            name: 'BigFlock',
+            durationMs: 6000,
+            weight: 0,
+            priority: 'event',
+            eligible: function () { return false; },
+            cooldownMs: 10000,
+            loopPosition: false,
+            particles: 'excite',
+            fn: function (t, s) {
+                // Head sweeps left → right, tracking a flock. Wings
+                // held outstretched in awe.
+                var sweep = Math.sin(t * 1.8);          // 1 cycle ≈ 3 s slot
+                s.y = Math.sin(t * 4) * 2;
+                s.headRot = sweep * 0.55;
+                s.headX = sweep * 7;
+                s.headY = -3;
+                s.wingAngle = -0.4 + Math.sin(t * 8) * 0.18;
+                s.beakOpen = 0.6;
+                s.eyeOpen = 1;
+                s.bodyRot = sweep * 0.05;
+                s.tailAngle = -sweep * 0.2;
+            }
+        },
+        {
+            // Sad — fired when the user deletes an event from Review or
+            // marks a detection as no-bird. Head droops, eyes downcast,
+            // a single tear-shaped particle (reused 'sweat' kind) falls.
+            // Short slot — sympathy, not melodrama.
+            name: 'Sad',
+            durationMs: 2200,
+            weight: 0,
+            priority: 'event',
+            eligible: function () { return false; },
+            cooldownMs: 5000,
+            loopPosition: false,
+            particles: 'sweat',
+            fn: function (t, s) {
+                // Slow droop on head + body, faint sigh.
+                var droop = Math.min(t / 1.2, 1);
+                s.y = 4 * droop;
+                s.headRot = -0.35 * droop;
+                s.headY = 8 * droop;
+                s.headX = -3 * droop;
+                s.eyeOpen = 1 - droop * 0.6;
+                s.wingAngle = 0.25 * droop;
+                s.beakOpen = 0;
+                s.tailAngle = -0.15 * droop;
+            }
+        },
+        {
+            // FirstDetectionOfDay — fired from led_ticker.html on the
+            // first 'detection' SSE event after local midnight. The
+            // LocalStorage gate ('wmbLastFirstDetectionISO') lives in
+            // led_ticker.html where the SSE handler is. Animation: a
+            // longer, more ceremonial fanfare than Excited — three
+            // upward leaps with notes + excite particles.
+            name: 'FirstDetectionOfDay',
+            durationMs: 3500,
+            weight: 0,
+            priority: 'event',
+            eligible: function () { return false; },
+            cooldownMs: 0,         // gated client-side, never re-fires same day
+            loopPosition: false,
+            particles: ['notes', 'excite'],
+            fn: function (t, s) {
+                // Three escalating leaps over the slot.
+                var leapPh = (t % 1.1) / 1.1;
+                var leap = Math.sin(leapPh * Math.PI);
+                var amp = 18 + Math.floor(t / 1.1) * 6;  // 18 → 24 → 30
+                s.y = -leap * amp;
+                s.wingAngle = Math.sin(t * 18) * 1.1;
+                s.headRot = Math.sin(t * 9) * 0.45;
+                s.headY = -3 + Math.sin(t * 12) * 1.5;
+                s.beakOpen = 0.6 + Math.abs(Math.sin(t * 14)) * 0.35;
+                s.eyeOpen = 1;
+                s.tailAngle = leap * 0.5;
+                var grnd = leapPh < 0.16
+                    ? (1 - leapPh / 0.16)
+                    : (leapPh > 0.84 ? ((leapPh - 0.84) / 0.16) : 0);
+                s.sy = 1 - grnd * 0.2 + leap * 0.06;
+                s.sx = 1 + grnd * 0.16;
+            }
+        },
+        {
+            // MilestoneCelebrate — fired from led_ticker.html when the
+            // daily detection counter rolls through a milestone
+            // (100/500/1000/…). LocalStorage gate lives there. The
+            // confetti effect reuses the 'excite' particle stream for
+            // a longer burst with a held celebratory pose.
+            name: 'MilestoneCelebrate',
+            durationMs: 4000,
+            weight: 0,
+            priority: 'event',
+            eligible: function () { return false; },
+            cooldownMs: 60000,
+            loopPosition: false,
+            particles: 'excite',
+            fn: function (t, s) {
+                // Wing-fluttering victory pose — body slowly rises,
+                // wings flare outward, head tilts back, beak chirps.
+                var rise = Math.min(t / 1.2, 1);
+                var settle = t > 3.0 ? Math.min((t - 3.0) / 1.0, 1) : 0;
+                var spin = Math.sin(t * 6);
+                s.y = -10 * rise * (1 - settle) + Math.sin(t * 4) * 1.5;
+                s.bodyRot = spin * 0.06;
+                s.wingAngle = -0.55 + Math.sin(t * 24) * 0.55;
+                s.headRot = 0.25 + spin * 0.15;
+                s.headY = -3;
+                s.beakOpen = 0.5 + Math.abs(Math.sin(t * 12)) * 0.35;
+                s.eyeOpen = 1;
+                s.tailAngle = Math.sin(t * 8) * 0.35;
+                // Subtle 360°-style body wobble using sx flipping. Not
+                // a true mirror (the canvas-2D drawing isn't reversible
+                // without rebuilding the sprite), just a stretchy nod
+                // to the celebration energy.
+                s.sx = 1 + spin * 0.08;
+                s.sy = 1 + Math.sin(t * 4) * 0.05;
+            }
+        }
+    ];
+
+    function forcedAnimation() {
+        if (!FORCED_ANIM_NAME) return null;
+        for (var i = 0; i < ANIMS.length; i++) {
+            if (ANIMS[i].name === FORCED_ANIM_NAME) return ANIMS[i];
+        }
+        return null;
+    }
+
+    /* ---------- scheduler ----------
+       State machine:
+         - cur: the currently active animation spec
+         - slotStart: performance.now() when it began
+         - lastShownAt: {name → timestamp} for cooldown tracking
+
+       Each frame:
+         1. If elapsed >= cur.durationMs → pick next animation.
+         2. Compute base state from cur.fn(t).
+         3. Apply crossfade against reset() at slot start/end.
+         4. Render.
+         5. Emit particles for cur.particles if set.
+
+       Event-interrupt:
+         fire(name) forces the named animation to start NOW, replacing
+         whatever's currently in progress. The current slot's "out"
+         crossfade is skipped (the new slot's "in" crossfade does the
+         smoothing for both sides). */
+    // Crossfade window at slot edges. Short enough that the rest-pose
+    // hold isn't perceptible as "the bird froze for a moment" — 120ms
+    // is comfortably below the threshold where motion looks broken,
+    // while still smoothing the transition between animations.
+    var FADE_IN_MS = 120;
+    var FADE_OUT_MS = 120;
+    var lastShownAt = {};
+    var mascotCtx = {};               // pushed in by wmbMascot.setContext()
+    var cur = null;
+    var slotStart = 0;
+
+    function eligibleAmbient() {
+        var out = [];
+        var now = performance.now();
+        for (var i = 0; i < ANIMS.length; i++) {
+            var a = ANIMS[i];
+            if (a.priority === 'event') continue;
+            if (typeof a.eligible === 'function' && !a.eligible(mascotCtx)) continue;
+            var last = lastShownAt[a.name] || 0;
+            if ((a.cooldownMs || 0) > 0 && (now - last) < a.cooldownMs) continue;
+            out.push(a);
+        }
+        return out;
+    }
+    function pickNext() {
+        var forced = forcedAnimation();
+        if (forced) return forced;
+        var pool = eligibleAmbient();
+        // Defensive: if nothing's eligible (shouldn't happen — Resting
+        // is always eligible), fall back to Resting by name.
+        if (pool.length === 0) {
+            for (var i = 0; i < ANIMS.length; i++) {
+                if (ANIMS[i].name === 'Resting') return ANIMS[i];
+            }
+            return ANIMS[0];
+        }
+        // Weighted random select.
+        var total = 0;
+        for (var j = 0; j < pool.length; j++) total += (pool[j].weight || 1);
+        var r = Math.random() * total;
+        for (var k = 0; k < pool.length; k++) {
+            r -= (pool[k].weight || 1);
+            if (r <= 0) return pool[k];
+        }
+        return pool[pool.length - 1];
+    }
+    // Rainbow latch — if a rain-class animation runs, arm the Rainbow
+    // animation to become eligible for the next 10 minutes (provided
+    // the sky clears). Stored on `window` so the eligible() reader is
+    // a single property lookup with no closure-capture concerns.
+    var RAINBOW_WINDOW_MS = 600000;
+    var RAIN_ANIM_NAMES = { 'LightRain': 1, 'HeavyRain': 1, 'Thunderstorm': 1 };
+
+    function startSlot(anim, now) {
+        // Clean up any particle stream from the previous slot whose kind
+        // isn't carried over into the incoming slot. Rain in particular
+        // must go — we don't want raindrops while the bird is hopping
+        // in the sun. With Array-form `particles`, we diff kind-by-kind.
+        if (cur) {
+            var prevKinds = particleKindsOf(cur);
+            var nextKinds = particleKindsOf(anim);
+            for (var i = 0; i < prevKinds.length; i++) {
+                if (nextKinds.indexOf(prevKinds[i]) === -1) {
+                    clearParticlesOfKind(prevKinds[i]);
+                }
+            }
+            if (RAIN_ANIM_NAMES[cur.name]) {
+                window.__wmbRainbowArmedUntil = now + RAINBOW_WINDOW_MS;
+            }
+        }
+        cur = anim;
+        slotStart = now;
+        lastShownAt[anim.name] = now;
+    }
+
+    function frame(now) {
+        var elapsed = now - slotStart;
+        if (!cur || elapsed >= cur.durationMs) {
+            startSlot(pickNext(), now);
+            elapsed = 0;
+        }
+        var dur = cur.durationMs;
+        var t = elapsed / 1000;
+
+        // Compute the animation's "pure" state and the rest pose.
+        var animS = reset();
+        cur.fn(t, animS);
+        var restS = reset();
+
+        // Crossfade factor: 0 = anchor/rest pose, 1 = full animation.
+        // Eased sinusoidally so the ramp feels organic, not linear.
+        var fade = 1.0;
+        var fadingIn = false, fadingOut = false;
+        if (elapsed < FADE_IN_MS) {
+            fade = elapsed / FADE_IN_MS;
+            fadingIn = true;
+        } else if (elapsed > dur - FADE_OUT_MS) {
+            fade = (dur - elapsed) / FADE_OUT_MS;
+            fadingOut = true;
+        }
+        fade = Math.max(0, Math.min(1, fade));
+        fade = 0.5 - 0.5 * Math.cos(fade * Math.PI);
+
+        var s = reset();
+        lerpState(restS, animS, fade, s);
+
+        // Position-anchor override: during fade-in, x is interpolated
+        // from the slot's startAnchor toward the animation's natural x.
+        // During fade-out, from the animation's x toward endAnchor.
+        // This is what guarantees the bird is either at center OR
+        // fully off-canvas at every slot boundary — never mid-frame.
+        // Default anchor is 'center' which mirrors the prior behavior
+        // for all 11 non-Flying animations.
+        var startAnchor = ANCHOR_X[cur.startAnchor] || 0;
+        var endAnchor   = ANCHOR_X[cur.endAnchor]   || 0;
+        if (fadingIn) {
+            s.x = startAnchor + (animS.x - startAnchor) * fade;
+        } else if (fadingOut) {
+            s.x = endAnchor + (animS.x - endAnchor) * fade;
+        }
+
+        // Particle stream: emit while we're not in the very last
+        // fade-out window (so spawned particles aren't immediately
+        // orphaned when the slot ends). Particles already in flight
+        // keep stepping regardless. Multi-kind animations (e.g.
+        // Sweating emits both 'sweat' and 'sun') iterate the list.
+        //
+        // Optional per-spec gate: if the animation declares a
+        // `particleEligible(t)` callback, it must return truthy to
+        // allow emission for the current frame. Used by anims whose
+        // particle effect should only kick in mid-slot (e.g.
+        // WelcomeFlyIn's notes — the bird is still flying in for the
+        // first 2 s, so spawning notes at the static beak anchor
+        // before the bird arrives looks wrong).
+        if (elapsed < dur - FADE_OUT_MS) {
+            var partGate = cur.particleEligible;
+            if (typeof partGate !== 'function' || partGate(t)) {
+                var emitKinds = particleKindsOf(cur);
+                for (var ei = 0; ei < emitKinds.length; ei++) {
+                    emitParticleMaybe(emitKinds[ei], now);
+                }
+            }
+        }
+
+        draw(s);
+        stepParticles();
+        requestAnimationFrame(frame);
+    }
+    requestAnimationFrame(frame);
+
+    // Tab-visibility handling. When the tab becomes visible again,
+    // start a fresh slot instead of just resetting slotStart — the
+    // latter leaves the in-progress animation pinned to its fade-in
+    // window, which read as "the bird froze". Picking a new anim is
+    // the natural resumption; particles from the previous slot are
+    // cleared so we don't drag stale state across the gap.
+    document.addEventListener('visibilitychange', function () {
+        if (!document.hidden) {
+            particles.length = 0;
+            startSlot(pickNext(), performance.now());
+        }
+    });
+
+    // ─── Mouse tracking ────────────────────────────────────────────
+    // Publishes the cursor position into mascotCtx as canvas-space
+    // coordinates centered on (0,0). LookAtMouse reads these. We use
+    // window-level mousemove so the head still tracks when the cursor
+    // is outside the canvas but somewhere on the page. mascotCtx
+    // stores the last-move timestamp; LookAtMouse.eligible() reads it
+    // against performance.now() to gate on staleness (4 s window).
+    window.addEventListener('mousemove', function (ev) {
+        var rect = canvas.getBoundingClientRect();
+        // Center-relative coords in CSS px (canvas logical size).
+        mascotCtx.mouseX = (ev.clientX - rect.left) - rect.width / 2;
+        mascotCtx.mouseY = (ev.clientY - rect.top) - rect.height / 2;
+        mascotCtx.mouseLastMs = performance.now();
+    }, { passive: true });
+
+    /* ---------- public API ----------
+       window.wmbMascot.setContext({weather, sysinfo, …})
+         Replace the context object the scheduler reads from. Caller
+         can push partial updates; we shallow-merge so individual keys
+         survive across calls. Shape:
+           weather: {temp_c, is_day, condition_text, wind_kph, …}
+           sysinfo: {cpu, ram, temp, freeGb}
+
+       window.wmbMascot.fire(name)
+         Force the named animation to play NOW, regardless of cooldown
+         or eligibility. Used for detection events (e.g. fire('Excited'))
+         where the trigger semantics are "push, not pull". The next
+         scheduled slot resumes ambient rotation. */
+    window.wmbMascot = {
+        setContext: function (partial) {
+            if (!partial || typeof partial !== 'object') return;
+            for (var k in partial) {
+                if (Object.prototype.hasOwnProperty.call(partial, k)) {
+                    mascotCtx[k] = partial[k];
+                }
+            }
+        },
+        getContext: function () { return mascotCtx; },
+        fire: function (name) {
+            if (FORCED_ANIM_NAME) return false;
+            for (var i = 0; i < ANIMS.length; i++) {
+                if (ANIMS[i].name !== name) continue;
+                var anim = ANIMS[i];
+                var now = performance.now();
+                // Honour cooldownMs so bursty callers (e.g. a flock of
+                // detections in 200ms) can't pin the mascot on a single
+                // event slot. Ambient scheduling enforces the same gap
+                // via eligibleAmbient(); fire() applies it here so the
+                // semantics are uniform across push and pull.
+                var last = lastShownAt[name] || 0;
+                if ((anim.cooldownMs || 0) > 0 && (now - last) < anim.cooldownMs) {
+                    return false;
+                }
+                startSlot(anim, now);
+                return true;
+            }
+            return false;
+        },
+        // Debug helper — expose the spec for DevTools introspection
+        _anims: ANIMS
+    };
+
+    // Page-load greeting — fire the WelcomeFlyIn anim once the DOM is
+    // ready. Listener-vs-immediate check: if the script ran after
+    // DOMContentLoaded already fired (defer/late include), we fire
+    // immediately; otherwise we wait. requestAnimationFrame defers one
+    // frame so the canvas has been sized for DPR and the first ambient
+    // pick has run — the welcome then preempts cleanly.
+    //
+    // The overview page (scripts/build_mascot_overview.py) sets
+    // window.__wmbSuppressWelcome = true *before* this script loads,
+    // so each per-anim preview can pin its own target without the
+    // welcome animation playing first in every iframe.
+    function fireWelcome() {
+        if (window.__wmbSuppressWelcome || FORCED_ANIM_NAME) return;
+        requestAnimationFrame(function () {
+            if (window.wmbMascot && window.wmbMascot.fire) {
+                window.wmbMascot.fire('WelcomeFlyIn');
+            }
+        });
+    }
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', fireWelcome, { once: true });
+    } else {
+        fireWelcome();
+    }
+})();
+</script>

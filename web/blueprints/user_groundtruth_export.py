@@ -47,8 +47,10 @@ from utils.path_manager import PathManager
 from web.blueprints.auth import login_required
 from web.services.user_groundtruth_export_service import (
     build_batch,
+    estimate_batch_bytes,
     exclude_image_from_export,
     last_batch_until,
+    list_recorded_batches,
     move_image_to_wmb_trash_and_exclude,
     preview_counts,
     record_batch_exported,
@@ -324,8 +326,8 @@ def _dry_run_tab_groups(
         {
             "source_key": "confirmed_positives",
             "key": "confirmed_positives",
-            "label": "Confirmed positives",
-            "title": "Confirmed positives",
+            "label": "Confirmed positives (excluded by default)",
+            "title": "Confirmed positives (excluded by default)",
         },
         {
             "source_key": "species_relabels",
@@ -542,6 +544,106 @@ def preview() -> Response:
     )
 
 
+@user_groundtruth_export_bp.route("/api/groundtruth-export/history", methods=["GET"])
+@login_required
+def history() -> Response:
+    """JSON: every recorded export batch, newest first.
+
+    Query params:
+        limit (optional, int): cap rows returned. Default 50.
+
+    Response shape:
+        {
+          "batches": [
+            {"batch_id": "...", "built_at": "...", "since_at": "...",
+             "until_at": "...", "counts": {...},
+             "frame_integrity_dropped_count": int,
+             "exporter_version": "1.2", "wmb_app_version": "...",
+             "notes": "..."},
+            ...
+          ],
+          "generated_at_utc": "..."
+        }
+    """
+    raw_limit = request.args.get("limit")
+    try:
+        limit = int(raw_limit) if raw_limit else 50
+    except (TypeError, ValueError):
+        limit = 50
+    limit = max(1, min(limit, 500))
+
+    with db_conn.closing_connection() as conn:
+        batches = list_recorded_batches(conn, limit=limit)
+
+    return jsonify(
+        {
+            "batches": batches,
+            "generated_at_utc": datetime.now(UTC).isoformat(),
+        }
+    )
+
+
+@user_groundtruth_export_bp.route(
+    "/api/groundtruth-export/size-estimate", methods=["GET"]
+)
+@login_required
+def size_estimate() -> Response:
+    """JSON: estimated on-disk byte size of the next batch.
+
+    Used by the build button to warn the operator before a large
+    download. No hard cap — the operator decides whether to proceed.
+
+    Query params mirror the build endpoint:
+        since (optional): override default ``since``.
+        until (optional): freeze the window end.
+
+    Response shape:
+        {
+          "bytes": int,
+          "image_count": int,
+          "missing_count": int,
+          "human": "2.4 GB",
+          "generated_at_utc": "..."
+        }
+    """
+    try:
+        resolver = _resolve_image_path_factory()
+    except RuntimeError as e:
+        logger.error("groundtruth-export not initialized: %s", e)
+        return jsonify({"status": "error", "message": "server misconfigured"}), 500
+
+    override_since = request.args.get("since") or None
+    override_until = request.args.get("until") or None
+
+    with db_conn.closing_connection() as conn:
+        since = override_since if override_since is not None else last_batch_until(conn)
+        est = estimate_batch_bytes(
+            conn,
+            path_resolver=resolver,
+            since=since,
+            until=override_until,
+        )
+
+    return jsonify(
+        {
+            **est,
+            "human": _format_bytes(est["bytes"]),
+            "generated_at_utc": datetime.now(UTC).isoformat(),
+        }
+    )
+
+
+def _format_bytes(n: int) -> str:
+    """Render a byte count as a short human string (e.g. ``2.4 GB``)."""
+    units = ("B", "KB", "MB", "GB", "TB")
+    value = float(n)
+    for unit in units:
+        if value < 1024.0 or unit == units[-1]:
+            return f"{value:.1f} {unit}" if unit != "B" else f"{int(value)} B"
+        value /= 1024.0
+    return f"{int(n)} B"
+
+
 @user_groundtruth_export_bp.route(
     "/api/groundtruth-export/exclusions", methods=["POST"]
 )
@@ -627,7 +729,9 @@ def build_and_stream() -> Response:
         {
           "since": "2026-05-15T00:00:00+00:00",  // override
           "until": "2026-05-22T20:00:00+00:00",  // override (default now)
-          "notes": "weekly batch W21"
+          "notes": "weekly batch W21",
+          "station_id": "station-garden-01",
+          "reviewer_id": "armin"
         }
 
     Empty-batch behavior: builds and streams a structurally valid
@@ -645,6 +749,8 @@ def build_and_stream() -> Response:
     override_since = data.get("since") or None
     override_until = data.get("until") or None
     notes = str(data.get("notes") or "").strip()
+    station_id = str(data.get("station_id") or "").strip()[:64]
+    reviewer_id = str(data.get("reviewer_id") or "").strip()[:64]
     app_version = str(_shared.get("app_version") or "")
 
     with db_conn.closing_connection() as conn:
@@ -657,6 +763,8 @@ def build_and_stream() -> Response:
             since=since,
             until=override_until,
             wmb_app_version=app_version,
+            station_id=station_id,
+            reviewer_id=reviewer_id,
         )
         buf = stream_batch_zip(batch)
         record_batch_exported(conn, batch, notes=notes)

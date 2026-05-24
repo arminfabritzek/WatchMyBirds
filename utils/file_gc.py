@@ -192,7 +192,10 @@ def hard_delete_detections(
     # Maps for reference counting (Path -> Count of candidates using it)
     candidate_orig_refs: dict[Path, int] = {}
     candidate_opt_refs: dict[Path, int] = {}
-    # candidate_thumb_refs: Dict[Path, int] = {} # Thumbnails are generally unique per detection
+    candidate_thumb_refs: dict[Path, int] = {}
+    # Map basename -> Path for thumbnails so we can resolve DB GROUP BY
+    # results (which key on the bare filename) back to filesystem paths.
+    thumb_name_to_path: dict[str, Path] = {}
 
     for row in rows:
         original_name = row["original_name"]
@@ -217,6 +220,10 @@ def hard_delete_detections(
             # Type is "thumb" based on PathManager convention
             thumb_path = pm.get_derivative_path(thumb_name, "thumb")
             target_thumbnails.add(thumb_path)
+            candidate_thumb_refs[thumb_path] = (
+                candidate_thumb_refs.get(thumb_path, 0) + 1
+            )
+            thumb_name_to_path[thumb_name] = thumb_path
 
     # 3. Global Reference Check (Are these files used by ACTIVE or NON-PURGED detections?)
     # We query the DB for GLOBAL usage counts of the candidate files.
@@ -226,6 +233,7 @@ def hard_delete_detections(
     # Total references in the ENTIRE DB (active + rejected + trashed)
     total_orig_refs: dict[Path, int] = {}
     total_opt_refs: dict[Path, int] = {}
+    total_thumb_refs: dict[Path, int] = {}
 
     if unique_orig_names:
         placeholders = ",".join("?" for _ in unique_orig_names)
@@ -251,6 +259,25 @@ def hard_delete_detections(
             total_orig_refs[op] = count
             total_opt_refs[opp] = count
 
+    # Thumbnail global refs (basename-keyed in DB → resolve via map)
+    if thumb_name_to_path:
+        thumb_names = list(thumb_name_to_path.keys())
+        placeholders_t = ",".join("?" for _ in thumb_names)
+        cur_thumbs = conn.execute(
+            f"""
+            SELECT thumbnail_path, COUNT(*) as cnt
+            FROM detections
+            WHERE thumbnail_path IN ({placeholders_t})
+            GROUP BY thumbnail_path
+            """,
+            thumb_names,
+        )
+        for r in cur_thumbs:
+            tname = r["thumbnail_path"]
+            path = thumb_name_to_path.get(tname)
+            if path is not None:
+                total_thumb_refs[path] = r["cnt"]
+
     # 4. Filter for Deletion
     files_to_delete: set[Path] = set()
 
@@ -267,11 +294,15 @@ def hard_delete_detections(
         if total_count <= candidate_count:
             files_to_delete.add(path)
 
-    # Thumbnails - Always delete (Detection Specific)
-    # Rationale: Detections own their thumbnails. One detection -> One crop.
-    # Exception: If multiple detections somehow point to same `thumbnail_path`.
-    # But clean slate architecture implies `thumbnail_path` is specific.
-    files_to_delete.update(target_thumbnails)
+    # Thumbnails — reference-counted (same pattern as originals/optimized).
+    # The legacy "always delete" rule wiped files still referenced by
+    # surviving detections when two rows shared a thumbnail_path (legacy
+    # rows, re-imports, or the crop_1 fallback above), forcing a lazy
+    # regen on the next browser request.
+    for path, candidate_count in candidate_thumb_refs.items():
+        total_count = total_thumb_refs.get(path, 0)
+        if total_count <= candidate_count:
+            files_to_delete.add(path)
 
     # 5. Execute Deletions
     files_deleted = 0

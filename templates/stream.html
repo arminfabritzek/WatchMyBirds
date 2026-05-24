@@ -276,18 +276,10 @@
             Detection-driven moves are suppressed until released.
         </div>
         <div class="stream-ptz-group" aria-label="Auto PTZ controls">
-            <button type="button"
-                    class="stream-ptz-pill stream-ptz-pill--toggle"
-                    id="streamPtzStatus"
-                    data-enabled="false"
-                    title="Toggle auto-return"
-                    aria-label="Toggle auto-return"
-                    aria-pressed="false"
-                    disabled>
-                <span class="stream-ptz-pill__dot" aria-hidden="true"></span>
-                <span class="stream-ptz-pill__label">Auto Cam</span>
-                <span class="stream-ptz-pill__value" id="streamPtzStatusValue">…</span>
-            </button>
+            {# Auto-Cam toggle moved to the LED ticker above the stats
+               row — the ticker's status zone now shows on/off/arriving/
+               home-Ns and is clickable. See templates/partials/
+               led_ticker.html and the toggleAutoCam() handler below. #}
             <button type="button"
                     class="stream-ptz-pill stream-ptz-pill--action"
                     id="ptzSnapshotBtn"
@@ -780,8 +772,6 @@
     <script>
         (function () {
             const overlayEl = document.getElementById('ptzBoxOverlay');
-            const statusEl = document.getElementById('streamPtzStatus');
-            const statusValueEl = document.getElementById('streamPtzStatusValue');
             const editToggleEl = document.getElementById('ptzEditToggle');
             const homeBtnEl = document.getElementById('ptzHomeButton');
             const minimapEl = document.getElementById('ptzMinimap');
@@ -910,39 +900,62 @@
             })();
 
             function paintStatusPill() {
-                if (!statusEl || !statusValueEl) return;
-                // Pill stays visible at all times; we toggle `disabled`
-                // instead of `hidden` so the operator can see the surface
-                // even before/without a PTZ camera being bound.
-                statusEl.hidden = false;
-                if (cameraId === null && !PTZ_DEBUG) {
-                    statusEl.disabled = true;
-                    statusEl.dataset.enabled = 'false';
-                    statusEl.dataset.returning = 'false';
-                    statusEl.setAttribute('aria-pressed', 'false');
-                    statusValueEl.textContent = 'no cam';
+                // Two surfaces stay in sync: the new appbar Auto-Cam
+                // toggle button (the actionable element) and the LED
+                // ticker (the live visual signal). Stream.html is the
+                // only place that owns cameraId / autoEnabled / settling
+                // so it drives both.
+                const cameraAvailable = (cameraId !== null) || !!PTZ_DEBUG;
+                let secs = null;
+                if (autoEnabled && !settling && returnDeadline > 0) {
+                    secs = Math.max(
+                        0,
+                        Math.ceil((returnDeadline - performance.now()) / 1000)
+                    );
+                }
+                // 1. Feed the ticker so the signal-LED + ARRIVING / HOME
+                //    text stay accurate.
+                if (window.wmbLedTicker && window.wmbLedTicker.setPtzState) {
+                    window.wmbLedTicker.setPtzState({
+                        cameraAvailable: cameraAvailable,
+                        enabled: !!autoEnabled,
+                        arriving: !!settling,
+                        secs: secs
+                    });
+                }
+                // 2. Paint the appbar toggle button — same five states
+                //    the old pill rendered (no-cam / off / on / arriving
+                //    / home-Ns), with the same green/orange palette.
+                const btn = document.getElementById('appbarAutoCamToggle');
+                const val = document.getElementById('appbarAutoCamValue');
+                if (!btn || !val) return;
+                if (!cameraAvailable) {
+                    btn.disabled = true;
+                    btn.dataset.enabled = 'false';
+                    btn.dataset.returning = 'false';
+                    btn.setAttribute('aria-pressed', 'false');
+                    val.textContent = 'no cam';
                     return;
                 }
-                statusEl.disabled = false;
-                statusEl.dataset.enabled = autoEnabled ? 'true' : 'false';
-                statusEl.setAttribute('aria-pressed', autoEnabled ? 'true' : 'false');
+                btn.disabled = false;
+                btn.dataset.enabled = autoEnabled ? 'true' : 'false';
+                btn.setAttribute('aria-pressed', autoEnabled ? 'true' : 'false');
                 if (!autoEnabled) {
-                    statusEl.dataset.returning = 'false';
-                    statusValueEl.textContent = 'off';
+                    btn.dataset.returning = 'false';
+                    val.textContent = 'off';
                     return;
                 }
                 if (settling) {
-                    statusEl.dataset.returning = 'true';
-                    statusValueEl.textContent = 'arriving…';
+                    btn.dataset.returning = 'true';
+                    val.textContent = 'arriving…';
                     return;
                 }
-                if (returnDeadline > 0) {
-                    const secs = Math.max(0, Math.ceil((returnDeadline - performance.now()) / 1000));
-                    statusEl.dataset.returning = 'true';
-                    statusValueEl.textContent = 'home in ' + secs + 's';
+                if (secs !== null && secs > 0) {
+                    btn.dataset.returning = 'true';
+                    val.textContent = 'home in ' + secs + 's';
                 } else {
-                    statusEl.dataset.returning = 'false';
-                    statusValueEl.textContent = 'on';
+                    btn.dataset.returning = 'false';
+                    val.textContent = 'on';
                 }
             }
 
@@ -1448,35 +1461,42 @@
                 });
             }
 
-            if (statusEl) {
-                statusEl.addEventListener('click', function () {
-                    if (cameraId === null) return;
-                    const next = !autoEnabled;
-                    // Optimistic local flip so the operator sees the change
-                    // instantly; the backend confirms or corrects on next poll.
-                    autoEnabled = next;
-                    if (!autoEnabled) {
-                        returnDeadline = 0;
-                        stopCountdownTicker();
-                    }
-                    paintStatusPill();
-                    fetch('/api/v1/cameras/' + cameraId + '/ptz/auto/enabled', {
-                        method: 'PATCH',
-                        headers: csrfHeaders({ 'Content-Type': 'application/json' }),
-                        body: JSON.stringify({ enabled: next }),
-                    })
-                        .then(function (r) { return r.json(); })
-                        .then(function (data) {
-                            if (!data || data.status !== 'success') {
-                                autoEnabled = !next;
-                                paintStatusPill();
-                            }
-                        })
-                        .catch(function () {
+            // Auto-Cam toggle: the old pill is gone; the LED ticker's
+            // status zone is the click target now. Logic is identical —
+            // optimistic local flip + PATCH, revert on failure.
+            function toggleAutoCam() {
+                if (cameraId === null) return;
+                const next = !autoEnabled;
+                autoEnabled = next;
+                if (!autoEnabled) {
+                    returnDeadline = 0;
+                    stopCountdownTicker();
+                }
+                paintStatusPill();
+                fetch('/api/v1/cameras/' + cameraId + '/ptz/auto/enabled', {
+                    method: 'PATCH',
+                    headers: csrfHeaders({ 'Content-Type': 'application/json' }),
+                    body: JSON.stringify({ enabled: next }),
+                })
+                    .then(function (r) { return r.json(); })
+                    .then(function (data) {
+                        if (!data || data.status !== 'success') {
                             autoEnabled = !next;
                             paintStatusPill();
-                        });
-                });
+                        }
+                    })
+                    .catch(function () {
+                        autoEnabled = !next;
+                        paintStatusPill();
+                    });
+            }
+            // Wire the appbar Auto-Cam toggle to the same logic that
+            // used to live on the old stream-page pill. The button is
+            // global (every page), but only stream.html knows cameraId,
+            // so the click handler is attached here.
+            const appbarToggleBtn = document.getElementById('appbarAutoCamToggle');
+            if (appbarToggleBtn) {
+                appbarToggleBtn.addEventListener('click', toggleAutoCam);
             }
 
             if (snapshotBtnEl) {
@@ -2157,6 +2177,10 @@
 
     {# Detection overlay intentionally disabled in public backport build. #}
 
+
+    {# LED ticker moved to the global appbar status bar so it's visible
+       on every page. Stats bootstrap (visits / species / station) also
+       lives there now — see templates/partials/appbar.html. #}
 
 
     {# Dashboard Stats Row - directly under video #}

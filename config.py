@@ -64,6 +64,12 @@ DEFAULTS = {
     "INGEST_DIR": "./data/ingest",
     "VIDEO_SOURCE": "0",
     "LOCATION_DATA": {"latitude": 52.516, "longitude": 13.377},
+    # Human-readable label for this WMB instance. Shown in the
+    # appbar LED ticker so operators can tell which station they are
+    # looking at when multiple browser tabs are open. Empty by default;
+    # set in settings.yaml to e.g. "My Garden" and the marquee
+    # picks it up on the next page reload.
+    "STATION_NAME": "",
     "DETECTOR_MODEL_CHOICE": "yolo",
     # Detection-confidence floor is now model-owned (read from the active
     # model_metadata.json). CONFIDENCE_THRESHOLD_DETECTION has been retired.

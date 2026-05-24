@@ -362,6 +362,11 @@
                 removeCard(card, 'Event moved to Trash');
             }
         } catch (err) {
+            if (isStaleReviewEventError(err)) {
+                removeCard(card, null);
+                reloadReviewEventsSoon('Event already gone — reloading…', 'info');
+                return;
+            }
             if (window.wmToast) window.wmToast('Trash failed: ' + err.message, 'error', 4000);
         }
     }

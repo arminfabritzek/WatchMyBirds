@@ -57,7 +57,16 @@ from core.user_groundtruth_core import (
     fetch_species_relabels,
 )
 
-EXPORTER_VERSION = "1.1"  # bumped: +favorites bucket, +frame-integrity filter
+EXPORTER_VERSION = "1.2"  # bumped: confirmed_positives bucket opt-in (default off)
+
+#: Default for the ``confirmed_positives`` opt-in. Off because the
+#: Review-Confirm write path cannot distinguish "user authored this
+#: label" from "user accepted the model's predicted label" — both
+#: stamp ``species_source='manual'`` — so including the bucket
+#: silently feeds model output back as ground-truth. Re-enable once
+#: the pipeline-side "Mark as training data" path is wired through
+#: to an unambiguous DB flag.
+INCLUDE_CONFIRMED_POSITIVES_DEFAULT = False
 
 #: Bucket names that carry a positive class label. A frame in any of
 #: these must have ALL its active detections also user-confirmed
@@ -97,6 +106,12 @@ class Batch:
     confirmed_positives: list[dict[str, Any]]
     species_relabels: list[dict[str, Any]]
     favorites: list[dict[str, Any]]
+    # Operator-supplied provenance — pseudonyms, browser-side persisted.
+    # Surfaced in batch_metadata.json so Pipeline-Dev can disambiguate
+    # batches across stations and reviewers. Not persisted in the
+    # export_batches DB table (browser localStorage is the home).
+    station_id: str = ""
+    reviewer_id: str = ""
     # Audit trail: frames dropped by frame-integrity. Each entry:
     #   {"image_filename": str, "reason": str,
     #    "dropped_detection_ids": list[int]}
@@ -146,6 +161,9 @@ def build_batch(
     until: str | None = None,
     wmb_app_version: str = "",
     now: datetime | None = None,
+    include_confirmed_positives: bool = INCLUDE_CONFIRMED_POSITIVES_DEFAULT,
+    station_id: str = "",
+    reviewer_id: str = "",
 ) -> Batch:
     """Materialize a Batch from the live DB.
 
@@ -163,13 +181,18 @@ def build_batch(
             be exactly this ``until``).
         wmb_app_version: app version string for provenance.
         now: override clock for tests.
+        include_confirmed_positives: opt-in for the confirmation-bias-
+            prone bucket. See ``INCLUDE_CONFIRMED_POSITIVES_DEFAULT``.
     """
     now = now or datetime.now(UTC)
     built_at = now.isoformat()
     effective_until = until or built_at
 
     hn = fetch_hard_negatives(conn, since=since, until=effective_until)
-    cp = fetch_confirmed_positives(conn, since=since, until=effective_until)
+    if include_confirmed_positives:
+        cp = fetch_confirmed_positives(conn, since=since, until=effective_until)
+    else:
+        cp = []
     rl = fetch_species_relabels(conn, since=since, until=effective_until)
     fav = fetch_favorites(conn, since=since, until=effective_until)
 
@@ -203,6 +226,8 @@ def build_batch(
         favorites=fav,
         frame_integrity_dropped=dropped,
         _image_paths=image_paths,
+        station_id=station_id.strip(),
+        reviewer_id=reviewer_id.strip(),
     )
 
 
@@ -489,17 +514,123 @@ def last_batch_until(conn: sqlite3.Connection) -> str | None:
         return row[0]
 
 
+def list_recorded_batches(
+    conn: sqlite3.Connection,
+    *,
+    limit: int = 50,
+) -> list[dict[str, Any]]:
+    """Return the most-recent ``limit`` rows from ``export_batches``.
+
+    Newest first. Used by the export page's history table — operator
+    sees what was shipped, when, with how many rows per bucket. Pure
+    read; no side effects.
+    """
+    if limit <= 0:
+        return []
+    rows = conn.execute(
+        """
+        SELECT
+            batch_id, built_at, since_at, until_at,
+            hard_negatives_count, confirmed_positives_count,
+            species_relabels_count, favorites_count,
+            frame_integrity_dropped_count,
+            exporter_version, wmb_app_version, notes
+        FROM export_batches
+        ORDER BY built_at DESC
+        LIMIT ?
+        """,
+        (limit,),
+    ).fetchall()
+    return [
+        {
+            "batch_id": r["batch_id"],
+            "built_at": r["built_at"],
+            "since_at": r["since_at"],
+            "until_at": r["until_at"],
+            "counts": {
+                "hard_negatives": r["hard_negatives_count"],
+                "confirmed_positives": r["confirmed_positives_count"],
+                "species_relabels": r["species_relabels_count"],
+                "favorites": r["favorites_count"],
+            },
+            "frame_integrity_dropped_count": r["frame_integrity_dropped_count"],
+            "exporter_version": r["exporter_version"],
+            "wmb_app_version": r["wmb_app_version"],
+            "notes": r["notes"],
+        }
+        for r in rows
+    ]
+
+
+def estimate_batch_bytes(
+    conn: sqlite3.Connection,
+    *,
+    path_resolver,
+    since: str | None = None,
+    until: str | None = None,
+    include_confirmed_positives: bool = INCLUDE_CONFIRMED_POSITIVES_DEFAULT,
+) -> dict[str, Any]:
+    """Estimate the on-disk byte size of a batch BEFORE building it.
+
+    Builds the batch in-memory (cheap — just SQL + path resolution,
+    no ZIP construction) and sums the byte size of every distinct
+    image file. The ZIP overhead (manifests, COCO JSON, README) is
+    negligible vs. the image files at the dataset sizes we care
+    about, so the estimate is intentionally just the image total.
+
+    Returns dict with:
+        bytes: int — sum of file sizes on disk
+        image_count: int — distinct files counted
+        missing_count: int — files referenced by the batch but not
+            present on disk (excluded from ``bytes``)
+    """
+    now = datetime.now(UTC)
+    effective_until = until or now.isoformat()
+    batch = build_batch(
+        conn,
+        path_resolver=path_resolver,
+        since=since,
+        until=effective_until,
+        include_confirmed_positives=include_confirmed_positives,
+        now=now,
+    )
+
+    total = 0
+    counted = 0
+    missing = 0
+    for path in batch._image_paths.values():
+        try:
+            if path.is_file():
+                total += path.stat().st_size
+                counted += 1
+            else:
+                missing += 1
+        except OSError:
+            missing += 1
+    return {
+        "bytes": total,
+        "image_count": counted,
+        "missing_count": missing,
+    }
+
+
 def preview_counts(
     conn: sqlite3.Connection,
     since: str | None = None,
+    *,
+    include_confirmed_positives: bool = INCLUDE_CONFIRMED_POSITIVES_DEFAULT,
 ) -> dict[str, int]:
     """Return per-bucket counts that WOULD be in a batch built now.
 
     Cheap enough to call on every page render — uses the same SQL as
     the fetch_* functions so the preview never lies about what the
-    actual export will contain.
+    actual export will contain. ``confirmed_positives`` reports 0
+    when the opt-in is off, mirroring ``build_batch``.
     """
-    return count_pending_by_bucket(conn, since=since)
+    counts = count_pending_by_bucket(conn, since=since)
+    if not include_confirmed_positives:
+        counts["confirmed_positives"] = 0
+    return counts
 
 
 def ensure_export_exclusion_schema(conn: sqlite3.Connection) -> None:
@@ -869,6 +1000,10 @@ def _build_metadata(
         "counts": batch.counts,
         "total_rows": batch.total_rows,
         "missing_images_on_disk": missing_images,
+        # Operator provenance — empty string when the browser had
+        # nothing stored; Pipeline-Dev treats both keys as optional.
+        "station_id": batch.station_id,
+        "reviewer_id": batch.reviewer_id,
         # Frame-integrity audit: frames the export *dropped* because
         # their active siblings were not all user-confirmed. Each
         # entry names the frame, why it was dropped, and which

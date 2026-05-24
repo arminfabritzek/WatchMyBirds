@@ -284,11 +284,13 @@ def test_preview_returns_pending_counts(client):
     assert r.status_code == 200
     data = r.get_json()
     assert "pending" in data
-    # Seeded DB: 1 HN, 2 CP (the RL row also counts as CP), 1 RL
+    # Seeded DB: 1 HN, 1 RL. confirmed_positives is 0 by HTTP contract
+    # because the endpoint does not expose the opt-in flag — the
+    # bucket is suppressed to avoid the Review-Confirm bias loop.
     assert data["pending"]["hard_negatives"] == 1
-    assert data["pending"]["confirmed_positives"] == 2
+    assert data["pending"]["confirmed_positives"] == 0
     assert data["pending"]["species_relabels"] == 1
-    assert data["total_pending"] == 4
+    assert data["total_pending"] == 2
     assert data["last_batch"] is None
     assert data["since"] is None
 
@@ -298,14 +300,14 @@ def test_preview_reflects_recorded_batches(client, app_and_db):
     and the pending counts drop. End-to-end through the DB."""
     _, db_path, output_dir = app_and_db
 
-    # First preview: full pending
+    # First preview: full pending (CP suppressed by endpoint default).
     r1 = client.get("/api/groundtruth-export/preview")
     full = r1.get_json()["total_pending"]
-    assert full == 4
+    assert full == 2
 
     # Manually record a batch (simulates a prior build) — directly
     # through the service so we don't depend on the build endpoint
-    # for this test.
+    # for this test. Matches the endpoint default: opt-out for CP.
     from utils.path_manager import PathManager
 
     pm = PathManager(output_dir)
@@ -327,7 +329,7 @@ def test_preview_reflects_recorded_batches(client, app_and_db):
     assert data["since"] == batch.until
     assert data["last_batch"] is not None
     assert data["last_batch"]["batch_id"] == batch.batch_id
-    assert data["last_batch"]["counts"]["confirmed_positives"] == 2
+    assert data["last_batch"]["counts"]["confirmed_positives"] == 0
     # No new actions happened after the batch, so pending is now 0
     assert data["total_pending"] == 0
 
@@ -358,25 +360,30 @@ def test_dry_run_page_renders_exact_batch_without_recording(client, app_and_db):
     assert 'data-dryrun-tab="species_relabels"' in body
     assert 'data-dryrun-tab="favorites"' in body
     assert 'data-dryrun-tab="hard_negatives"' in body
-    assert "Confirmed positives (2)" in body
+    assert "Confirmed positives (excluded by default) (0)" in body
     assert "Species re-labels (1)" in body
     assert "Favorites (0)" in body
     assert "FPs / Kein Vogel (1)" in body
     assert "Kein Vogel (Training Hard-negatives)" in body
-    assert "Confirmed positives" in body
     assert "Species re-labels" in body
     assert 'id="dryRunTileSize"' in body
     assert "wmbDryRunTileSize" in body
     assert "dryrun-crop" in body
     assert "dryrun-avatar" in body
-    assert "/assets/review_species/Cyanistes_caeruleus.webp" in body
+    # Erithacus avatar comes from the RL row (corrected species). The
+    # Cyanistes avatar — which used to come from the CP row — is gone
+    # because confirmed_positives is suppressed by default.
+    assert "/assets/review_species/Erithacus_rubecula.webp" in body
     assert "dryrun-avatar--no_bird" in body
     assert "dryrun-bbox" in body
     assert "Exclude from export" in body
     assert "Move to WMB Trash" in body
-    assert 'data-trash-export-image="20260522_110000_cp.jpg"' in body
+    # 20260522_110000_cp.jpg is the seeded CP-only row; with the
+    # confirmed_positives bucket suppressed by default, the row does
+    # not appear in any dry-run tab (it has no relabel / favorite /
+    # no_bird signal of its own).
     assert "20260522_100000_hn.jpg" in body
-    assert "20260522_110000_cp.jpg" in body
+    assert "20260522_110000_cp.jpg" not in body
     assert "20260522_120000_rl.jpg" in body
     assert "Build this dry-run ZIP" in body
     assert "const frozenUntil =" in body
@@ -395,12 +402,15 @@ def test_dry_run_page_renders_frame_integrity_drop_as_visual_tab(client, app_and
 
     conn = sqlite3.connect(db_path)
     conn.execute("INSERT INTO images (filename) VALUES (?)", (filename,))
+    # Positive sibling: a relabel (always exported). Picking RL over
+    # CP here so the frame-integrity drop is observable under the
+    # endpoint default that suppresses the confirmed_positives bucket.
     conn.execute(
         "INSERT INTO detections (image_filename, bbox_x, bbox_y, bbox_w, bbox_h, "
         "frame_width, frame_height, decision_level, raw_species_name, "
-        "species_source, species_updated_at) "
+        "manual_species_override, species_updated_at) "
         "VALUES (?, 0.1, 0.1, 0.2, 0.2, 1920, 1080, "
-        "'species', 'Parus_major', 'manual', '2026-05-22T13:00:00Z')",
+        "'species', 'Parus_major', 'Cyanistes_caeruleus', '2026-05-22T13:00:00Z')",
         (filename,),
     )
     conn.execute(
@@ -430,11 +440,19 @@ def test_dry_run_page_renders_frame_integrity_drop_as_visual_tab(client, app_and
 def test_dry_run_exclude_image_quarantines_frame(client, app_and_db):
     _, db_path, _ = app_and_db
 
+    # Use the RL row — it ships by default, so the exclusion has a
+    # visible before/after effect. The CP row would be a tautology
+    # under the current opt-out default.
+    target = "20260522_120000_rl.jpg"
+
+    body_before = client.get("/admin/groundtruth-export/dry-run").get_data(as_text=True)
+    assert target in body_before
+
     r = client.post(
         "/api/groundtruth-export/exclusions",
         json={
             "scope": "image",
-            "image_filename": "20260522_110000_cp.jpg",
+            "image_filename": target,
             "reason": "bad dry-run row",
         },
     )
@@ -454,23 +472,27 @@ def test_dry_run_exclude_image_quarantines_frame(client, app_and_db):
     assert [dict(r) for r in rows] == [
         {
             "scope": "image",
-            "image_filename": "20260522_110000_cp.jpg",
+            "image_filename": target,
             "reason": "bad dry-run row",
             "released_at": None,
         }
     ]
 
-    body = client.get("/admin/groundtruth-export/dry-run").get_data(as_text=True)
-    assert "20260522_110000_cp.jpg" not in body
+    body_after = client.get("/admin/groundtruth-export/dry-run").get_data(as_text=True)
+    assert target not in body_after
 
 
 def test_dry_run_trash_image_moves_to_wmb_trash_and_excludes(client, app_and_db):
     _, db_path, _ = app_and_db
 
+    # RL row: visible in the default dry-run, so the trash action's
+    # before/after diff is observable.
+    target = "20260522_120000_rl.jpg"
+
     r = client.post(
         "/api/groundtruth-export/trash-image",
         json={
-            "image_filename": "20260522_110000_cp.jpg",
+            "image_filename": target,
             "reason": "bad WMB row",
         },
     )
@@ -486,16 +508,16 @@ def test_dry_run_trash_image_moves_to_wmb_trash_and_excludes(client, app_and_db)
     conn.row_factory = sqlite3.Row
     image = conn.execute(
         "SELECT review_status, review_updated_at FROM images WHERE filename = ?",
-        ("20260522_110000_cp.jpg",),
+        (target,),
     ).fetchone()
     detection = conn.execute(
         "SELECT status FROM detections WHERE image_filename = ?",
-        ("20260522_110000_cp.jpg",),
+        (target,),
     ).fetchone()
     exclusion = conn.execute(
         "SELECT scope, reason, released_at FROM groundtruth_export_exclusions "
         "WHERE image_filename = ?",
-        ("20260522_110000_cp.jpg",),
+        (target,),
     ).fetchone()
     conn.close()
 
@@ -509,7 +531,7 @@ def test_dry_run_trash_image_moves_to_wmb_trash_and_excludes(client, app_and_db)
     }
 
     body = client.get("/admin/groundtruth-export/dry-run").get_data(as_text=True)
-    assert "20260522_110000_cp.jpg" not in body
+    assert target not in body
 
 
 def test_dry_run_trash_image_requires_valid_filename(client):
@@ -592,7 +614,8 @@ def test_build_records_batch_in_db(client, app_and_db):
     assert len(rows) == 1
     assert rows[0]["notes"] == "blueprint test"
     assert rows[0]["hard_negatives_count"] == 1
-    assert rows[0]["confirmed_positives_count"] == 2
+    # CP suppressed by endpoint default (Review-Confirm bias mitigation).
+    assert rows[0]["confirmed_positives_count"] == 0
     assert rows[0]["species_relabels_count"] == 1
 
 
@@ -627,7 +650,10 @@ def test_build_advances_window_on_subsequent_call(client, app_and_db):
     import io
 
     meta1 = json.loads(zipfile.ZipFile(io.BytesIO(r1.data)).read("batch_metadata.json"))
-    assert meta1["counts"]["confirmed_positives"] == 2
+    # CP suppressed by endpoint default; first batch carries HN + RL only.
+    assert meta1["counts"]["confirmed_positives"] == 0
+    assert meta1["counts"]["hard_negatives"] == 1
+    assert meta1["counts"]["species_relabels"] == 1
 
     # Build 2 (no new data) — should pick up `since` from build 1
     r2 = client.post("/api/groundtruth-export/build", json={})
@@ -642,8 +668,10 @@ def test_build_advances_window_on_subsequent_call(client, app_and_db):
 def test_build_handles_missing_image_files_gracefully(client, app_and_db, tmp_path):
     """Operator deleted a frame after labeling — build should not
     crash, missing files should appear in batch_metadata."""
-    # Remove one of the seeded originals
-    (tmp_path / "originals" / "2026-05-22" / "20260522_110000_cp.jpg").unlink()
+    # Remove the RL row's original — it ships by default, so its
+    # absence on disk is observable in the metadata. The CP file
+    # is invisible to the endpoint anyway (bucket suppressed).
+    (tmp_path / "originals" / "2026-05-22" / "20260522_120000_rl.jpg").unlink()
 
     r = client.post("/api/groundtruth-export/build", json={})
     assert r.status_code == 200
@@ -652,12 +680,11 @@ def test_build_handles_missing_image_files_gracefully(client, app_and_db, tmp_pa
     with zipfile.ZipFile(io.BytesIO(r.data)) as zf:
         meta = json.loads(zf.read("batch_metadata.json"))
         names = set(zf.namelist())
-    assert "20260522_110000_cp.jpg" in meta["missing_images_on_disk"]
+    assert "20260522_120000_rl.jpg" in meta["missing_images_on_disk"]
     # And the file is NOT in the ZIP
-    assert "images/2026-05-22/20260522_110000_cp.jpg" not in names
-    # But the other two are
+    assert "images/2026-05-22/20260522_120000_rl.jpg" not in names
+    # But the HN one is
     assert "images/2026-05-22/20260522_100000_hn.jpg" in names
-    assert "images/2026-05-22/20260522_120000_rl.jpg" in names
 
 
 # ---------------------------------------------------------------------------
@@ -688,3 +715,162 @@ def test_build_returns_500_when_blueprint_not_initialized(tmp_path):
         r = client.post("/api/groundtruth-export/build", json={})
     assert r.status_code == 500
     assert r.get_json()["status"] == "error"
+
+
+# ---------------------------------------------------------------------------
+# History endpoint
+# ---------------------------------------------------------------------------
+
+
+def test_history_empty_when_no_batches_recorded(client):
+    r = client.get("/api/groundtruth-export/history")
+    assert r.status_code == 200
+    data = r.get_json()
+    assert data["batches"] == []
+    assert "generated_at_utc" in data
+
+
+def _seed_recorded_batches(db_path: Path, output_dir: str, count: int) -> list[str]:
+    """Seed N export_batches rows by calling the service directly with
+    distinct ``now`` timestamps so each batch_id is unique. The build
+    endpoint cannot be used here because two HTTP calls in the same
+    test-second collide on batch_id (hex of clock seconds)."""
+    from utils.path_manager import PathManager
+
+    pm = PathManager(output_dir)
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    ids: list[str] = []
+    try:
+        for i in range(count):
+            now = datetime(2026, 5, 22, 12, 0, i, tzinfo=UTC)
+            batch = build_batch(conn, path_resolver=pm.get_original_path, now=now)
+            record_batch_exported(conn, batch, notes=f"seeded {i}")
+            ids.append(batch.batch_id)
+    finally:
+        conn.close()
+    return ids
+
+
+def test_history_lists_recorded_batches_newest_first(client, app_and_db):
+    _, db_path, output_dir = app_and_db
+    ids = _seed_recorded_batches(db_path, output_dir, count=2)
+
+    r = client.get("/api/groundtruth-export/history")
+    assert r.status_code == 200
+    data = r.get_json()
+    assert len(data["batches"]) == 2
+    # Newest first → seeded i=1 ahead of i=0
+    assert data["batches"][0]["batch_id"] == ids[1]
+    assert data["batches"][0]["notes"] == "seeded 1"
+    assert data["batches"][1]["batch_id"] == ids[0]
+    # Each row carries the four-bucket counts.
+    for row in data["batches"]:
+        assert set(row["counts"].keys()) == {
+            "hard_negatives",
+            "confirmed_positives",
+            "species_relabels",
+            "favorites",
+        }
+
+
+def test_history_respects_limit_query_param(client, app_and_db):
+    _, db_path, output_dir = app_and_db
+    _seed_recorded_batches(db_path, output_dir, count=3)
+    r = client.get("/api/groundtruth-export/history?limit=2")
+    data = r.get_json()
+    assert len(data["batches"]) == 2
+
+
+def test_history_clamps_garbage_limit(client):
+    client.post("/api/groundtruth-export/build", json={"notes": "x"})
+    # Non-integer limit → falls back to default; 0/negative → 1 (clamped).
+    r1 = client.get("/api/groundtruth-export/history?limit=not_a_number")
+    r2 = client.get("/api/groundtruth-export/history?limit=0")
+    assert r1.status_code == 200
+    assert r2.status_code == 200
+
+
+def test_history_requires_auth(unauth_client):
+    r = unauth_client.get("/api/groundtruth-export/history")
+    assert r.status_code in (302, 401, 403)
+
+
+# ---------------------------------------------------------------------------
+# Size-estimate endpoint
+# ---------------------------------------------------------------------------
+
+
+def test_size_estimate_returns_byte_total_and_human(client):
+    r = client.get("/api/groundtruth-export/size-estimate")
+    assert r.status_code == 200
+    data = r.get_json()
+    # Seeded fixture wrote the HN + RL files (CP file is invisible to
+    # the endpoint because confirmed_positives is suppressed). Each
+    # fake JPG is 12 bytes ("FAKEJPGBYTES").
+    assert data["bytes"] == 24
+    assert data["image_count"] == 2
+    assert data["missing_count"] == 0
+    assert data["human"] == "24 B"
+
+
+def test_size_estimate_after_disk_deletion_reports_missing(client, tmp_path):
+    (tmp_path / "originals" / "2026-05-22" / "20260522_120000_rl.jpg").unlink()
+    r = client.get("/api/groundtruth-export/size-estimate")
+    data = r.get_json()
+    assert data["image_count"] == 1  # only HN remains on disk
+    assert data["missing_count"] == 1
+
+
+def test_size_estimate_accepts_since_override(client):
+    # Window in the far future → empty batch, zero bytes.
+    r = client.get(
+        "/api/groundtruth-export/size-estimate?since=2099-01-01T00:00:00Z"
+    )
+    data = r.get_json()
+    assert data["bytes"] == 0
+    assert data["image_count"] == 0
+
+
+def test_size_estimate_requires_auth(unauth_client):
+    r = unauth_client.get("/api/groundtruth-export/size-estimate")
+    assert r.status_code in (302, 401, 403)
+
+
+# ---------------------------------------------------------------------------
+# Build endpoint — operator identity round-trip
+# ---------------------------------------------------------------------------
+
+
+def test_build_persists_station_and_reviewer_into_zip_metadata(client):
+    r = client.post(
+        "/api/groundtruth-export/build",
+        json={
+            "station_id": "station-garden-01",
+            "reviewer_id": "armin",
+        },
+    )
+    assert r.status_code == 200
+    import io
+
+    with zipfile.ZipFile(io.BytesIO(r.data)) as zf:
+        meta = json.loads(zf.read("batch_metadata.json"))
+    assert meta["station_id"] == "station-garden-01"
+    assert meta["reviewer_id"] == "armin"
+
+
+def test_build_truncates_oversized_identity_strings(client):
+    r = client.post(
+        "/api/groundtruth-export/build",
+        json={
+            "station_id": "s" * 200,
+            "reviewer_id": "r" * 200,
+        },
+    )
+    assert r.status_code == 200
+    import io
+
+    with zipfile.ZipFile(io.BytesIO(r.data)) as zf:
+        meta = json.loads(zf.read("batch_metadata.json"))
+    assert len(meta["station_id"]) == 64
+    assert len(meta["reviewer_id"]) == 64

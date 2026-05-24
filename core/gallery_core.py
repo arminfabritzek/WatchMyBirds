@@ -1128,20 +1128,39 @@ def regenerate_derivative(
             target_path = path_mgr.get_derivative_path(filename, "optimized")
 
         elif type == "thumb":
-            # BBox Lookup from DB
+            # BBox lookup keyed on the *actual* thumbnail filename so the
+            # regenerated crop matches the detection that owns this URL.
+            # Using OFFSET over surviving detections would silently
+            # regenerate from a different detection's bbox when sibling
+            # rows had been hard-deleted.
             with closing_connection() as conn:
                 cursor = conn.execute(
                     """
                     SELECT bbox_x, bbox_y, bbox_w, bbox_h
                     FROM detections
-                    WHERE image_filename = ?
+                    WHERE image_filename = ? AND thumbnail_path = ?
                     ORDER BY detection_id ASC
-                    LIMIT 1 OFFSET ?
+                    LIMIT 1
                 """,
-                    (original_filename, crop_index - 1),
+                    (original_filename, filename),
                 )
 
                 row = cursor.fetchone()
+                if not row:
+                    # Fallback for legacy detections without a stored
+                    # thumbnail_path: match by positional crop index.
+                    cursor = conn.execute(
+                        """
+                        SELECT bbox_x, bbox_y, bbox_w, bbox_h
+                        FROM detections
+                        WHERE image_filename = ? AND thumbnail_path IS NULL
+                        ORDER BY detection_id ASC
+                        LIMIT 1 OFFSET ?
+                    """,
+                        (original_filename, crop_index - 1),
+                    )
+                    row = cursor.fetchone()
+
                 if not row:
                     logger.error(
                         f"Cannot regenerate thumb: No detection found for {_slv(original_filename)} index {crop_index}"

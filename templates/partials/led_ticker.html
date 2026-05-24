@@ -1,0 +1,1090 @@
+{# Stream-page LED ticker — canvas-based dot-matrix display.
+
+   Renders:
+   - live detections pushed from the detector (SSE /api/v1/stream/detections/sse)
+   - a heartbeat segment (clock + dashboard stats) when idle
+   - all glyphs in a 5x7 bitmap font so animations / icons can later
+     reuse the same pixel-buffer surface.
+
+   Drop-in: include from templates/stream.html between the video block
+   and the dashboard stats row. Self-contained: no external JS, no
+   external image assets. CSS lives in assets/design-system.css under
+   the LED TICKER section.
+
+   Data inputs (Jinja):
+   - dashboard_stats.today_visits
+   - dashboard_stats.total_species
+   - dashboard_stats.today_busiest_hour
+   - visual_summary | length
+#}
+
+<aside class="led-ticker" id="ledTicker" role="status" aria-live="polite" aria-atomic="false">
+    <canvas class="led-ticker__canvas" id="ledTickerCanvas"
+            width="1280" height="16"
+            aria-label="Live detection ticker"></canvas>
+</aside>
+
+<script>
+(function () {
+    'use strict';
+
+    var canvas = document.getElementById('ledTickerCanvas');
+    if (!canvas || !canvas.getContext) { return; }
+    var ctx = canvas.getContext('2d');
+    ctx.imageSmoothingEnabled = false;
+
+    // ─── 5x7 bitmap font ──────────────────────────────────────────────
+    // Each glyph: 7 rows × 5 cols. Bit 0b10000 = leftmost column.
+    // Extend at will; missing characters render as a solid block.
+    var FONT = {
+        ' ': [0x00,0x00,0x00,0x00,0x00,0x00,0x00],
+        '!': [0x04,0x04,0x04,0x04,0x04,0x00,0x04],
+        '"': [0x0A,0x0A,0x0A,0x00,0x00,0x00,0x00],
+        '#': [0x0A,0x0A,0x1F,0x0A,0x1F,0x0A,0x0A],
+        '$': [0x04,0x0F,0x14,0x0E,0x05,0x1E,0x04],
+        '%': [0x18,0x19,0x02,0x04,0x08,0x13,0x03],
+        '&': [0x08,0x14,0x14,0x08,0x15,0x12,0x0D],
+        "'": [0x04,0x04,0x08,0x00,0x00,0x00,0x00],
+        '(': [0x02,0x04,0x08,0x08,0x08,0x04,0x02],
+        ')': [0x08,0x04,0x02,0x02,0x02,0x04,0x08],
+        '*': [0x00,0x04,0x15,0x0E,0x15,0x04,0x00],
+        '+': [0x00,0x04,0x04,0x1F,0x04,0x04,0x00],
+        ',': [0x00,0x00,0x00,0x00,0x00,0x04,0x08],
+        '-': [0x00,0x00,0x00,0x1F,0x00,0x00,0x00],
+        '.': [0x00,0x00,0x00,0x00,0x00,0x00,0x04],
+        '/': [0x00,0x01,0x02,0x04,0x08,0x10,0x00],
+        '0': [0x0E,0x11,0x13,0x15,0x19,0x11,0x0E],
+        '1': [0x04,0x0C,0x04,0x04,0x04,0x04,0x0E],
+        '2': [0x0E,0x11,0x01,0x02,0x04,0x08,0x1F],
+        '3': [0x1F,0x02,0x04,0x02,0x01,0x11,0x0E],
+        '4': [0x02,0x06,0x0A,0x12,0x1F,0x02,0x02],
+        '5': [0x1F,0x10,0x1E,0x01,0x01,0x11,0x0E],
+        '6': [0x06,0x08,0x10,0x1E,0x11,0x11,0x0E],
+        '7': [0x1F,0x01,0x02,0x04,0x08,0x08,0x08],
+        '8': [0x0E,0x11,0x11,0x0E,0x11,0x11,0x0E],
+        '9': [0x0E,0x11,0x11,0x0F,0x01,0x02,0x0C],
+        ':': [0x00,0x04,0x00,0x00,0x00,0x04,0x00],
+        ';': [0x00,0x04,0x00,0x00,0x00,0x04,0x08],
+        '<': [0x02,0x04,0x08,0x10,0x08,0x04,0x02],
+        '=': [0x00,0x00,0x1F,0x00,0x1F,0x00,0x00],
+        '>': [0x08,0x04,0x02,0x01,0x02,0x04,0x08],
+        '?': [0x0E,0x11,0x01,0x02,0x04,0x00,0x04],
+        '@': [0x0E,0x11,0x01,0x0D,0x15,0x15,0x0E],
+        'A': [0x04,0x0A,0x11,0x11,0x1F,0x11,0x11],
+        'B': [0x1E,0x11,0x11,0x1E,0x11,0x11,0x1E],
+        'C': [0x0E,0x11,0x10,0x10,0x10,0x11,0x0E],
+        'D': [0x1C,0x12,0x11,0x11,0x11,0x12,0x1C],
+        'E': [0x1F,0x10,0x10,0x1E,0x10,0x10,0x1F],
+        'F': [0x1F,0x10,0x10,0x1E,0x10,0x10,0x10],
+        'G': [0x0E,0x11,0x10,0x17,0x11,0x11,0x0E],
+        'H': [0x11,0x11,0x11,0x1F,0x11,0x11,0x11],
+        'I': [0x0E,0x04,0x04,0x04,0x04,0x04,0x0E],
+        'J': [0x01,0x01,0x01,0x01,0x01,0x11,0x0E],
+        'K': [0x11,0x12,0x14,0x18,0x14,0x12,0x11],
+        'L': [0x10,0x10,0x10,0x10,0x10,0x10,0x1F],
+        'M': [0x11,0x1B,0x15,0x15,0x11,0x11,0x11],
+        'N': [0x11,0x11,0x19,0x15,0x13,0x11,0x11],
+        'O': [0x0E,0x11,0x11,0x11,0x11,0x11,0x0E],
+        'P': [0x1E,0x11,0x11,0x1E,0x10,0x10,0x10],
+        'Q': [0x0E,0x11,0x11,0x11,0x15,0x12,0x0D],
+        'R': [0x1E,0x11,0x11,0x1E,0x14,0x12,0x11],
+        'S': [0x0E,0x11,0x10,0x0E,0x01,0x11,0x0E],
+        'T': [0x1F,0x04,0x04,0x04,0x04,0x04,0x04],
+        'U': [0x11,0x11,0x11,0x11,0x11,0x11,0x0E],
+        'V': [0x11,0x11,0x11,0x11,0x11,0x0A,0x04],
+        'W': [0x11,0x11,0x11,0x15,0x15,0x15,0x0A],
+        'X': [0x11,0x11,0x0A,0x04,0x0A,0x11,0x11],
+        'Y': [0x11,0x11,0x11,0x0A,0x04,0x04,0x04],
+        'Z': [0x1F,0x01,0x02,0x04,0x08,0x10,0x1F],
+        '[': [0x0E,0x08,0x08,0x08,0x08,0x08,0x0E],
+        '\\':[0x00,0x10,0x08,0x04,0x02,0x01,0x00],
+        ']': [0x0E,0x02,0x02,0x02,0x02,0x02,0x0E],
+        '^': [0x04,0x0A,0x11,0x00,0x00,0x00,0x00],
+        '_': [0x00,0x00,0x00,0x00,0x00,0x00,0x1F],
+        '`': [0x08,0x04,0x02,0x00,0x00,0x00,0x00],
+        // separator dot used between segments
+        '·': [0x00,0x00,0x00,0x04,0x00,0x00,0x00],
+        // degree symbol — small 3x3 ring sitting on the top three rows,
+        // so it reads as the superscript that English weather expects.
+        // (Forward slash already lives above with the punctuation block.)
+        '°': [0x0E,0x0A,0x0E,0x00,0x00,0x00,0x00],
+        // umlauts: collapsed to base letter (LED-style)
+        'Ä': [0x0A,0x04,0x0A,0x11,0x1F,0x11,0x11],
+        'Ö': [0x0A,0x00,0x0E,0x11,0x11,0x11,0x0E],
+        'Ü': [0x0A,0x00,0x11,0x11,0x11,0x11,0x0E],
+        'ß': [0x0C,0x12,0x12,0x1C,0x12,0x12,0x1C]
+    };
+
+    var GLYPH_W = 5;
+    var GLYPH_H = 7;
+    var GLYPH_GAP = 2;          // pixel columns between letters (was 1 — too tight)
+    var SEGMENT_GAP_PX = 12;    // pixel columns between segments in one message
+    var ROW_GAP_PX = 1;         // LED row of space between top and bottom rows
+    var TICKER_HEIGHT = 2 * GLYPH_H + ROW_GAP_PX + 2;  // 7+1+7+2 = 17 rows
+    // Y-positions for two stacked rows (top + bottom). Marquee renders
+    // vertically centered, so it sits between the two row anchors.
+    var GLYPH_ROW_TOP = 1;
+    var GLYPH_ROW_BOTTOM = GLYPH_H + ROW_GAP_PX + 1;
+    var GLYPH_TOP = Math.floor((TICKER_HEIGHT - GLYPH_H) / 2);   // marquee row
+    var COL_X_SCALE = 2;        // draw each glyph column this many display
+                                // pixels wide → fat-LED readability without
+                                // touching the bitmap font
+    var SCROLL_PX_PER_SEC = 10; // calm S-Bahn pace, not stock-ticker frenzy
+
+    // Two-zone layout: left = auto-fit status panel, right = scrolling
+    // marquee. Inspired by classic railway-platform LED displays where
+    // "GLEIS 7" sits left and the delay reason scrolls on the right.
+    // Status zone takes only what the current status text actually
+    // needs; the scroll zone gets the rest. Capped so a runaway status
+    // string never starves the scroll.
+    var STATUS_INNER_PAD_PX = 8;       // padding around the status text
+    var STATUS_MAX_FRAC = 0.55;        // status never eats more than this
+    var SEPARATOR_GAP_PX = 6;          // gap each side of the separator line
+    var DETECTION_STICKY_MS = 30000;   // last-detection page stays in rotation 30s
+
+    // ── Alert-sign overlay (full-canvas takeover on live detection) ──
+    // When a detection arrives, the whole canvas briefly becomes a
+    // flashing "BIRD SIGHTING / ATTENTION" hazard sign — like a railway
+    // platform when the train is coming. Each new detection refreshes
+    // the hold timer, so a steady stream of birds keeps the sign up.
+    // A hard 15 s ceiling guarantees the heartbeat returns even if
+    // detections never stop (e.g. a crow camped on the feeder).
+    var ALERT_HOLD_MS = 15000;         // hard ceiling per detection
+    var ALERT_WORD_MS = 700;           // ms per word in the rotation
+    var ALERT_FLOCK_THRESHOLD = 5;     // detections in window → escalate
+    var ALERT_FLOCK_WINDOW_MS = 5000;
+    // Two LED pixels per display pixel on each axis gives the chunky
+    // "airport timetable" look — the marquee scales X only, so the
+    // alert sign reads as a deliberately different visual register.
+    var ALERT_PIXEL_SCALE = 2;
+    var ALERT_WORDS_NORMAL = ['BIRD SIGHTING', 'ATTENTION'];
+    var ALERT_WORDS_FLOCK = ['FLOCK ALERT', 'BIRD SIGHTING', 'ATTENTION'];
+
+
+    // Signal-LED zone: pulsing dot + vertical bar + faint background tint
+    // on the very left of the status panel, before any text. Colors map
+    // to PTZ mode the way studio recording lights do — yellow=armed,
+    // red=moving, blue=manual-drive — and pulse rate carries urgency.
+    // Sized so the dot is at least as tall as a glyph so it reads as
+    // "I am a status LED" rather than a stray pixel.
+    var SIGNAL_DOT_W = 5;              // glyph-pixels wide for the dot
+    var SIGNAL_DOT_H = 7;              // = full glyph height
+    var SIGNAL_BAR_W = 2;
+    var SIGNAL_TINT_W_GLYPH = 4;       // extra glyph cols faintly tinted
+    var SIGNAL_GAP_GLYPH = 2;          // glyph cols of breathing room
+    var COLOR_PTZ_MOVE = '#ff3522';    // red, while camera is flying
+    var COLOR_PTZ_MANUAL = '#3aa6ff';  // blue, while operator is steering
+    var COLOR_PTZ_ARMED = '#ffc524';   // yellow, auto-PTZ on but idle
+
+    // Theme-aware colors. Re-read from computed style on every render so
+    // the ticker follows light/dark theme switches without a listener.
+    // OFF-pixels are intentionally not drawn — a real LED in daylight
+    // is invisible when off, and the dim grid clashes on light themes.
+    function themeColors() {
+        var cs = getComputedStyle(canvas);
+        return {
+            on: (cs.getPropertyValue('--color-text') || '#202426').trim(),
+            bg: (cs.getPropertyValue('--color-bg') || '#f3f3f2').trim()
+        };
+    }
+
+    // Apply alpha to a #rrggbb color string and return an rgba() string.
+    // Used for the signal-LED brightness pulse so we don't need an
+    // off-screen tint canvas — the alpha goes straight into fillStyle.
+    function withAlpha(hex, a) {
+        var h = hex.charAt(0) === '#' ? hex.substring(1) : hex;
+        if (h.length === 3) {
+            h = h.charAt(0) + h.charAt(0) + h.charAt(1) + h.charAt(1)
+              + h.charAt(2) + h.charAt(2);
+        }
+        var r = parseInt(h.substring(0, 2), 16);
+        var g = parseInt(h.substring(2, 4), 16);
+        var b = parseInt(h.substring(4, 6), 16);
+        return 'rgba(' + r + ',' + g + ',' + b + ',' + a + ')';
+    }
+
+    // ─── glyph-aware text → pixel-column buffer ───────────────────────
+    function textToColumns(text) {
+        text = (text || '').toUpperCase();
+        // upper-case fold ASCII, but keep our custom Ä/Ö/Ü glyphs:
+        var columns = [];
+        for (var i = 0; i < text.length; i++) {
+            var ch = text.charAt(i);
+            // Thin space (U+2009): emit a single empty column with no
+            // letter-gap padding. Used as minimal breathing room around
+            // the inter-segment bullet without inflating the global gap.
+            if (ch === ' ') {
+                columns.push(0);
+                continue;
+            }
+            var glyph = FONT[ch];
+            if (!glyph) {
+                // unknown char → solid block placeholder
+                glyph = [0x1F,0x1F,0x1F,0x1F,0x1F,0x1F,0x1F];
+            }
+            // Convert glyph rows → 5 columns
+            for (var col = 0; col < GLYPH_W; col++) {
+                var bit = 1 << (GLYPH_W - 1 - col);
+                var columnByte = 0;
+                for (var row = 0; row < GLYPH_H; row++) {
+                    if (glyph[row] & bit) columnByte |= (1 << row);
+                }
+                columns.push(columnByte);
+            }
+            // letter-gap (empty column)
+            for (var g = 0; g < GLYPH_GAP; g++) columns.push(0);
+        }
+        return columns;
+    }
+
+    // ─── signal-LED state machine ──────────────────────────────────────
+    // Returns null (no signal) OR { color, pulseHz } describing what to
+    // light up in the signal cluster. Priority order:
+    //   1. ptzMoveUntil active  → red/blue (move kind), fast pulse
+    //   2. Auto-PTZ enabled     → yellow, slow pulse ("armed")
+    //   3. otherwise            → null (signal cluster stays dark)
+    function signalState() {
+        var now = Date.now();
+        if (ptzMoveUntil > now) {
+            if (ptzMoveKind === 'manual') {
+                return { color: COLOR_PTZ_MANUAL, pulseHz: 1.6 };
+            }
+            return { color: COLOR_PTZ_MOVE, pulseHz: 2.4 };
+        }
+        if (ptzView && ptzView.enabled) {
+            return { color: COLOR_PTZ_ARMED, pulseHz: 0.5 };
+        }
+        return null;
+    }
+
+    // Width in screen pixels reserved for the signal cluster (dot + bar
+    // + tint + breathing room). Always full width: the cluster is a
+    // permanent layout anchor, only its appearance changes when nothing
+    // is signalled (rendered as a dim "off" pill instead of disappearing
+    // and snapping the rest of the status zone leftward).
+    function signalWidthPx() {
+        var glyphCols = SIGNAL_DOT_W + SIGNAL_GAP_GLYPH
+                      + SIGNAL_BAR_W + SIGNAL_GAP_GLYPH
+                      + SIGNAL_TINT_W_GLYPH + SIGNAL_GAP_GLYPH;
+        return glyphCols * COL_X_SCALE;
+    }
+
+    // ─── sysinfo (right-side) zone ─────────────────────────────────────
+    // Each item: {label, value, severity}. Renders right-aligned with
+    // a 1-col separator between items. Color follows severity:
+    //   ok   → green   warn → yellow   crit → red
+    // The whole zone collapses to width 0 if no payload has been pushed
+    // yet, so the page renders cleanly while the first poll is pending.
+    // Two-row layout for sysinfo:
+    //   top:    CPU%, RAM%
+    //   bottom: TEMP°, FREE GB
+    function sysInfoRows() {
+        if (!sysInfo) return { top: [], bottom: [] };
+        if (canvas.width < 440) return { top: [], bottom: [] };
+        // Compact labels (`C61%` vs `CPU 61%`) for everything up to and
+        // including standard desktop widths — keeps the sysinfo block
+        // narrow so the marquee gets more breathing room. The full
+        // labels only show on extra-wide canvases where space is
+        // genuinely free.
+        var compact = canvas.width < 1600;
+        var top = [];
+        var bottom = [];
+        if (sysInfo.cpu != null) {
+            top.push({
+                text: (compact ? 'C' : 'CPU ') + sysInfo.cpu + '%',
+                sev: sysInfo.cpuSev
+            });
+        }
+        if (sysInfo.ram != null) {
+            top.push({
+                text: (compact ? 'R' : 'RAM ') + sysInfo.ram + '%',
+                sev: sysInfo.ramSev
+            });
+        }
+        if (sysInfo.temp != null) {
+            bottom.push({ text: sysInfo.temp + '°C', sev: sysInfo.tempSev });
+        }
+        if (sysInfo.freeGb != null) {
+            bottom.push({ text: sysInfo.freeGb + 'GB', sev: sysInfo.diskSev });
+        }
+        return { top: top, bottom: bottom };
+    }
+
+    function _itemTextWidthPx(item) {
+        return textToColumns(item.text).length * COL_X_SCALE;
+    }
+
+    // Per-column width across the two rows. Column N's width is the max
+    // of top[N] and bottom[N] item widths, so a short C61% in column 0
+    // gets the same X-anchor as the longer 66°C below it. Single source
+    // of truth: both sysInfoWidthPx() and the renderer call this.
+    function _sysColumnWidths() {
+        var rows = sysInfoRows();
+        var n = Math.max(rows.top.length, rows.bottom.length);
+        var widths = [];
+        for (var i = 0; i < n; i++) {
+            var topW = rows.top[i] ? _itemTextWidthPx(rows.top[i]) : 0;
+            var botW = rows.bottom[i] ? _itemTextWidthPx(rows.bottom[i]) : 0;
+            widths.push(Math.max(topW, botW));
+        }
+        return widths;
+    }
+
+    function severityColor(sev) {
+        if (sev === 'crit') return COLOR_SYS_CRIT;
+        if (sev === 'warn') return COLOR_SYS_WARN;
+        return COLOR_SYS_OK;
+    }
+
+    var SYS_ITEM_GAP_PX = 6;       // gap between sysinfo columns
+    var SYS_INNER_PAD_PX = 8;      // padding outside the sysinfo group
+    var SYS_SEP_GAP_PX = 6;        // gap each side of the separator
+
+    function sysInfoWidthPx() {
+        var cols = _sysColumnWidths();
+        if (cols.length === 0) return 0;
+        var contentW = 0;
+        for (var i = 0; i < cols.length; i++) {
+            contentW += cols[i];
+            if (i < cols.length - 1) contentW += SYS_ITEM_GAP_PX;
+        }
+        return SYS_INNER_PAD_PX + contentW + SYS_INNER_PAD_PX;
+    }
+
+    // ─── auto-fit zone math ────────────────────────────────────────────
+    // Three zones now:
+    //   [status zone] | [scroll marquee] | [sysinfo zone]
+    // Status & sysinfo are auto-fit (only as wide as content); the
+    // marquee soaks up whatever is left in the middle.
+    function statusWidthPx() {
+        // Zone width is the widest line across whichever pages are
+        // currently in the rotation, so the separator + marquee don't
+        // jitter every time a page swaps. Reads the same pages list
+        // that buildStatusLines() picks from — single source of truth.
+        var pages = buildStatusPages();
+        var textPx = 0;
+        for (var i = 0; i < pages.length; i++) {
+            var wTop = textToColumns(pages[i].top).length * COL_X_SCALE;
+            var wBot = textToColumns(pages[i].bottom).length * COL_X_SCALE;
+            if (wTop > textPx) textPx = wTop;
+            if (wBot > textPx) textPx = wBot;
+        }
+        var desired = signalWidthPx() + textPx + STATUS_INNER_PAD_PX;
+        var capFrac = canvas.width < 560 ? 0.38 : STATUS_MAX_FRAC;
+        var cap = Math.floor(canvas.width * capFrac);
+        return Math.min(desired, cap);
+    }
+
+    function scrollWidthPx() {
+        var sysW = sysInfoWidthPx();
+        var rightSep = (sysW > 0) ? (SYS_SEP_GAP_PX + 1 + SYS_SEP_GAP_PX) : 0;
+        return Math.max(96, canvas.width
+            - statusWidthPx()
+            - SEPARATOR_GAP_PX - 1 - SEPARATOR_GAP_PX
+            - rightSep - sysW);
+    }
+
+    // ─── render one frame ──────────────────────────────────────────────
+    // Two zones drawn in the same canvas:
+    //   [0 .. statusW)               → auto-fit left status panel
+    //                                  (signal cluster + text)
+    //   [sepX]                       → 1-px vertical line
+    //   (scrollStartPx .. canvas.width) → scrolling marquee, clipped
+    function renderFrame(buffer, offsetX, tMs) {
+        var w = canvas.width;
+        var h = canvas.height;
+        var colors = themeColors();
+        ctx.fillStyle = colors.bg;
+        ctx.fillRect(0, 0, w, h);
+
+        var statusW = statusWidthPx();
+        var sepX = statusW + SEPARATOR_GAP_PX;
+        var scrollStartPx = sepX + 1 + SEPARATOR_GAP_PX;
+
+        // ── signal-LED cluster (always present, leftmost) ─────────────
+        // Stretches the full canvas height now that we're two-row.
+        // When signalState() is null the cluster renders as a dim "off"
+        // pill in the theme text color: layout never shifts, but the
+        // operator can see at a glance that nothing is being signalled.
+        var signal = signalState();
+        var signalW = signalWidthPx();
+        var dotColor, barColor, tintColor;
+        if (signal) {
+            var phase = (tMs / 1000) * signal.pulseHz * Math.PI * 2;
+            var bright = 0.55 + 0.45 * (0.5 + 0.5 * Math.sin(phase));
+            dotColor = withAlpha(signal.color, bright);
+            barColor = dotColor;
+            tintColor = withAlpha(signal.color, bright * 0.25);
+        } else {
+            // Off-state: very dim, no pulse, neutral theme color.
+            dotColor = withAlpha(colors.on, 0.18);
+            barColor = withAlpha(colors.on, 0.12);
+            tintColor = withAlpha(colors.on, 0.05);
+        }
+
+        // dot — full canvas height, dot-width LED cols wide
+        ctx.fillStyle = dotColor;
+        ctx.fillRect(0, 0, SIGNAL_DOT_W * COL_X_SCALE, h);
+
+        // vertical bar (full canvas height)
+        var barXStart = (SIGNAL_DOT_W + SIGNAL_GAP_GLYPH) * COL_X_SCALE;
+        ctx.fillStyle = barColor;
+        ctx.fillRect(barXStart, 0, SIGNAL_BAR_W * COL_X_SCALE, h);
+
+        // faint background tint, full height
+        var tintXStart = barXStart + (SIGNAL_BAR_W + SIGNAL_GAP_GLYPH) * COL_X_SCALE;
+        ctx.fillStyle = tintColor;
+        ctx.fillRect(tintXStart, 0, SIGNAL_TINT_W_GLYPH * COL_X_SCALE, h);
+
+        // ── left zone: stacked status text (time top, date bottom) ────
+        var statusLines = buildStatusLines();
+        var topCols = textToColumns(statusLines.top);
+        var botCols = textToColumns(statusLines.bottom);
+        ctx.fillStyle = colors.on;
+        drawGlyphRow(topCols, signalW, GLYPH_ROW_TOP);
+        drawGlyphRow(botCols, signalW, GLYPH_ROW_BOTTOM);
+
+        // ── separator line — full canvas height ──────────────────────
+        ctx.fillRect(sepX, 0, 1, h);
+
+        // ── sysinfo (right) zone — two stacked colored rows ──────────
+        //   top:    CPU%, RAM%
+        //   bottom: TEMP°, FREE GB
+        var rows = sysInfoRows();
+        var sysW = sysInfoWidthPx();
+        var scrollEndPx = w - sysW - (sysW > 0 ? (SYS_SEP_GAP_PX + 1 + SYS_SEP_GAP_PX) : 0);
+        if (sysW > 0) {
+            // right-side separator, full canvas height
+            var rsepX = scrollEndPx + SYS_SEP_GAP_PX;
+            ctx.fillStyle = colors.on;
+            ctx.fillRect(rsepX, 0, 1, h);
+
+            var contentX = rsepX + 1 + SYS_SEP_GAP_PX + SYS_INNER_PAD_PX;
+            // Column-aware paint: column N starts at the same X for
+            // both rows, so C61% / 66°C and R22% / 37GB line up
+            // vertically even when their lengths differ. The column
+            // widths come from _sysColumnWidths() — same source the
+            // width calculator uses, so there's no drift between
+            // layout reservation and actual paint.
+            var colWidths = _sysColumnWidths();
+            var ix = contentX;
+            for (var ci = 0; ci < colWidths.length; ci++) {
+                if (rows.top[ci]) {
+                    ctx.fillStyle = severityColor(rows.top[ci].sev);
+                    drawGlyphRow(textToColumns(rows.top[ci].text),
+                                 ix, GLYPH_ROW_TOP);
+                }
+                if (rows.bottom[ci]) {
+                    ctx.fillStyle = severityColor(rows.bottom[ci].sev);
+                    drawGlyphRow(textToColumns(rows.bottom[ci].text),
+                                 ix, GLYPH_ROW_BOTTOM);
+                }
+                ix += colWidths[ci] + SYS_ITEM_GAP_PX;
+            }
+        }
+
+        // ── middle: scrolling marquee, clipped to scroll region ───────
+        ctx.fillStyle = colors.on;
+        var shift = Math.floor(offsetX);
+        var scrollW = scrollEndPx - scrollStartPx;
+        for (var rpx = 0; rpx < scrollW; rpx++) {
+            var col = Math.floor((rpx - shift) / COL_X_SCALE);
+            if (col < 0 || col >= buffer.length) continue;
+            var columnByte = buffer[col];
+            if (!columnByte) continue;
+            for (var rr = 0; rr < GLYPH_H; rr++) {
+                if (columnByte & (1 << rr)) {
+                    ctx.fillRect(scrollStartPx + rpx, GLYPH_TOP + rr, 1, 1);
+                }
+            }
+        }
+    }
+
+    // ─── alert-sign overlay renderer ───────────────────────────────────
+    // Full-canvas takeover: chunky letters at ALERT_PIXEL_SCALE, word
+    // rotates every ALERT_WORD_MS. Brightness pulses on the same phase
+    // so the sign reads as one breathing block rather than a hard
+    // flicker — easier on the eyes than a clean on/off toggle, still
+    // captures peripheral vision.
+    function renderAlertSign(tMs) {
+        var w = canvas.width;
+        var h = canvas.height;
+        var colors = themeColors();
+        ctx.fillStyle = colors.bg;
+        ctx.fillRect(0, 0, w, h);
+
+        var words = (alertMode === 'flock') ? ALERT_WORDS_FLOCK : ALERT_WORDS_NORMAL;
+        var idx = Math.floor(tMs / ALERT_WORD_MS) % words.length;
+        var text = words[idx];
+
+        // Brightness pulse on the word swap cycle — peaks mid-word,
+        // dims at the swap so the transition feels like a sign
+        // reigniting rather than a hard flip.
+        var phase = (tMs / ALERT_WORD_MS) * Math.PI;
+        var bright = 0.6 + 0.4 * Math.abs(Math.sin(phase));
+
+        var px = ALERT_PIXEL_SCALE;
+        var glyphW = GLYPH_W * px;
+        var glyphH = GLYPH_H * px;
+        var letterGap = px;       // 1 LED-col gap between letters, scaled
+        var totalCols = 0;
+        for (var i = 0; i < text.length; i++) {
+            if (text.charAt(i) === ' ') { totalCols += 3 * px; continue; }
+            totalCols += glyphW + letterGap;
+        }
+        if (totalCols > 0) totalCols -= letterGap;
+
+        // Horizontal-center the word; if it overflows (extremely narrow
+        // canvas) we let it clip on the right rather than shrinking —
+        // an alert sign that gets smaller defeats the point.
+        var x0 = Math.floor((w - totalCols) / 2);
+        var y0 = Math.floor((h - glyphH) / 2);
+
+        // Use rgba on the main text color so the pulse rides on top of
+        // whatever the theme defines. No per-pixel calc — one fillStyle
+        // for the whole word.
+        ctx.fillStyle = withAlpha(colors.on, bright);
+
+        var x = x0;
+        for (var ci = 0; ci < text.length; ci++) {
+            var ch = text.charAt(ci);
+            if (ch === ' ') { x += 3 * px; continue; }
+            var glyph = FONT[ch];
+            if (!glyph) {
+                glyph = [0x1F,0x1F,0x1F,0x1F,0x1F,0x1F,0x1F];
+            }
+            for (var row = 0; row < GLYPH_H; row++) {
+                var rowByte = glyph[row];
+                for (var col = 0; col < GLYPH_W; col++) {
+                    var bit = 1 << (GLYPH_W - 1 - col);
+                    if (rowByte & bit) {
+                        ctx.fillRect(x + col * px, y0 + row * px, px, px);
+                    }
+                }
+            }
+            x += glyphW + letterGap;
+        }
+    }
+
+    // ─── content state: marquee buffer + scroll offset ────────────────
+    // The marquee shows the dashboard heartbeat deterministically; live
+    // detections surface on a dedicated page in the status zone instead
+    // of being injected here, so there's no per-event queue to maintain.
+    var compositeBuffer = []; // current scrolling buffer (right zone)
+    var compositeOffset = 0;  // float column-pixel offset (negative scrolls left)
+    var leadPadCols = 0;      // width of leading empty buffer; reset target
+    var lastFrameTime = performance.now();
+    // First-paint state: on initial load, start with text at the left
+    // of the scroll zone so the user sees something to read instantly,
+    // and hold it there for a short delay before scrolling begins. The
+    // standard "enter from the right" behavior takes over on the next
+    // loop reset.
+    var firstLoop = true;
+    var FIRST_LOOP_INTRO_DELAY_MS = 1500;
+    var firstLoopStartTime = 0;
+
+    // Left-zone state. The LED status field is the new home of the old
+    // "Auto Cam …" pill — it shows clock by default and rotates through
+    // weather + PTZ-status snippets.
+    var lastDetection = null;   // {ts, species}
+    // Alert-sign state. alertSignUntil is the wall-clock ms when the
+    // overlay stops; alertMode chooses which word list rotates;
+    // alertTimes is the sliding window that escalates to FLOCK ALERT.
+    var alertSignUntil = 0;
+    var alertMode = 'normal';   // 'normal' | 'flock'
+    var alertTimes = [];        // recent detection wall-clock ms
+    var ptzMoveUntil = 0;       // wall-clock ms; while > now, signal=move
+    var ptzMoveKind = null;     // 'auto' | 'preset' | 'manual'
+    // PTZ-status view, fed from stream.html via setPtzState(). Holds
+    // the values the old pill used to render. Null until first set.
+    // The action lives on the appbar's Auto-Cam button now; this is
+    // display-only.
+    var ptzView = null;         // {cameraAvailable, enabled, returning, secs}
+    // Live weather, polled from /api/v1/weather/now. Open-Meteo cache
+    // updates ~hourly, so 5 min polls are plenty.
+    var weatherData = null;     // {temp_c, wind_kph, is_day, condition_text}
+    var WEATHER_POLL_INTERVAL_MS = 300000;  // 5 min
+
+    // Sysinfo (CPU/RAM/TEMP/GB), pushed from appbar.html via setSysInfo().
+    // Rendered as a colored fixed zone on the RIGHT side of the canvas.
+    var sysInfo = null;     // {cpu, ram, temp, freeGb, *Sev: 'ok'|'warn'|'crit'}
+    var COLOR_SYS_OK   = '#3cc46a';   // green — happy
+    var COLOR_SYS_WARN = '#ffc524';   // yellow — pay attention
+    var COLOR_SYS_CRIT = '#ff3522';   // red — fire
+
+    function nowHHMMSS() {
+        var d = new Date();
+        function pad(n) { return n < 10 ? '0' + n : '' + n; }
+        return pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
+    }
+
+    // English 3-letter month abbreviations, suited to the LED look
+    // (uppercase, fixed width, ASCII-only).
+    var EN_MONTHS = ['JAN','FEB','MAR','APR','MAY','JUN',
+                     'JUL','AUG','SEP','OCT','NOV','DEC'];
+    function nowClockDate() {
+        var d = new Date();
+        function pad(n) { return n < 10 ? '0' + n : '' + n; }
+        return pad(d.getHours()) + ':' + pad(d.getMinutes())
+             + ' ' + d.getDate() + '.' + EN_MONTHS[d.getMonth()];
+    }
+
+    function nowClock() {
+        var d = new Date();
+        function pad(n) { return n < 10 ? '0' + n : '' + n; }
+        return pad(d.getHours()) + ':' + pad(d.getMinutes());
+    }
+
+    function nowDate() {
+        var d = new Date();
+        return d.getDate() + '.' + EN_MONTHS[d.getMonth()];
+    }
+
+    // Paint a column-buffer at (x, rowTop). Caller has already set fillStyle.
+    function drawGlyphRow(cols, x, rowTop) {
+        for (var c = 0; c < cols.length; c++) {
+            var b = cols[c];
+            if (!b) continue;
+            for (var r = 0; r < GLYPH_H; r++) {
+                if (b & (1 << r)) {
+                    for (var sx = 0; sx < COL_X_SCALE; sx++) {
+                        ctx.fillRect(x + c * COL_X_SCALE + sx, rowTop + r, 1, 1);
+                    }
+                }
+            }
+        }
+    }
+
+    // Stats are injected from the template once at boot. The ticker
+    // does not poll for stat updates — daily numbers shift slowly
+    // enough that page-reload cadence is fine. station is set from the
+    // global context_processor so every page sees the same label.
+    var DASHBOARD = window.__ledTickerStats || {
+        visits: 0, species: 0, station: ''
+    };
+
+    function buildHeartbeatSegments() {
+        // Clock + date + weather + detection live in the left status
+        // zone, and PTZ has its own DOM button on the appbar — so the
+        // marquee carries only the slower-changing context that has no
+        // dedicated surface: station identity and today's counters.
+        // Empty segments are skipped so the scroll never sits on a
+        // placeholder.
+        var segments = [];
+        if (DASHBOARD.station) segments.push(DASHBOARD.station);
+        segments.push(DASHBOARD.visits + ' VISITS');
+        segments.push(DASHBOARD.species + ' SPECIES TODAY');
+        if (DASHBOARD.total) segments.push(DASHBOARD.total + ' SPECIES TOTAL');
+        if (DASHBOARD.busiestHour) segments.push('BUSIEST ' + DASHBOARD.busiestHour);
+        return segments;
+    }
+
+    function rebuildBuffer() {
+        // Live detections surface as a dedicated page in the left
+        // status zone now (HH:MM / SPECIES, sticky 30 s), so the
+        // marquee carries the dashboard heartbeat unconditionally.
+        var segments = buildHeartbeatSegments();
+        var joined = segments.join(' · ');
+        // Pad with a SCROLL-zone-width worth of empty columns BOTH sides:
+        // - leading pad: the first letter enters from the right edge of
+        //   the scroll zone, never spawns mid-viewport.
+        // - trailing pad: the last letter cleanly exits past the LEFT
+        //   edge of the scroll zone (i.e. up against the separator)
+        //   before we loop.
+        // Buffer columns are expanded by COL_X_SCALE at render time, so
+        // a pad of `scrollWidthPx() / COL_X_SCALE` columns covers the
+        // full scroll viewport in screen pixels.
+        var padCols = Math.ceil(scrollWidthPx() / COL_X_SCALE);
+        var textCols = textToColumns(joined);
+        compositeBuffer = [];
+        for (var i = 0; i < padCols; i++) compositeBuffer.push(0);
+        for (var j = 0; j < textCols.length; j++) compositeBuffer.push(textCols[j]);
+        for (var k = 0; k < padCols; k++) compositeBuffer.push(0);
+        leadPadCols = padCols;
+    }
+
+    function appendDetection(ev) {
+        var label = (ev.species_common || ev.species_latin || 'UNKNOWN').toUpperCase();
+        // Live detections live exclusively on a dedicated page in the
+        // status zone (top: event time HH:MM, bottom: species). They
+        // join the page rotation immediately and stay for 30 s, so the
+        // marquee keeps showing the dashboard heartbeat undisturbed.
+        lastDetection = {
+            ts: Date.now(),
+            species: label
+        };
+    }
+
+    // ─── left-zone (status) content ───────────────────────────────────
+    // Layout: stacked two-row status zone, rotating through pages
+    // (clock+date · weather · last-detection). The colored signal-LED
+    // cluster handles PTZ ambient state; the actionable PTZ toggle
+    // lives on the appbar's Auto-Cam button. No PTZ or weather text
+    // appears in the marquee anymore — both have dedicated surfaces.
+
+    // Left status zone rotates through whichever pages are currently
+    // available. Clock is always present; weather joins once Open-Meteo
+    // answered; a detection page (HH:MM / SPECIES) joins for 30 s after
+    // each fresh SSE event. Hard swap every STATUS_PAGE_MS — classic
+    // LED-board behavior, no crossfade.
+    var STATUS_PAGE_MS = 5000;
+    var statusPageStart = Date.now();
+
+    function buildClockLines() {
+        return { top: nowClock(), bottom: nowDate() };
+    }
+
+    // Detection page lives in the status zone (not as a bottom-row
+    // overlay anymore). Top shows the event time so the operator can
+    // tell at a glance "this was 4 seconds ago" vs "this is current".
+    // Returns null when no recent detection is in the sticky window.
+    function buildDetectionLines() {
+        if (!lastDetection) return null;
+        if ((Date.now() - lastDetection.ts) >= DETECTION_STICKY_MS) return null;
+        var d = new Date(lastDetection.ts);
+        function pad(n) { return n < 10 ? '0' + n : '' + n; }
+        var top = pad(d.getHours()) + ':' + pad(d.getMinutes());
+        return { top: top, bottom: lastDetection.species };
+    }
+
+    // Single source of truth for which pages the status zone rotates
+    // through. statusWidthPx() and buildStatusLines() both call this so
+    // the auto-fit width is computed from the exact same set the picker
+    // chooses from — no drift between width calc and render.
+    function buildStatusPages() {
+        var pages = [buildClockLines()];
+        var weather = buildWeatherLines();
+        if (weather) pages.push(weather);
+        var detection = buildDetectionLines();
+        if (detection) pages.push(detection);
+        return pages;
+    }
+
+    function buildWeatherLines() {
+        if (!weatherData || weatherData.temp_c == null) return null;
+        var t = Math.round(weatherData.temp_c) + '°C';
+        var top = t;
+        if (weatherData.relative_humidity_pct != null) {
+            top = t + ' ' + Math.round(weatherData.relative_humidity_pct) + '%';
+        }
+        var bottom;
+        if (weatherData.wind_kph != null) {
+            bottom = 'WIND ' + Math.round(weatherData.wind_kph) + 'KM/H';
+        } else {
+            bottom = (weatherData.is_day === 0) ? 'NIGHT' : 'DAY';
+        }
+        return { top: top, bottom: bottom };
+    }
+
+    function buildStatusLines() {
+        // Rotate through whichever pages are currently available. Clock
+        // is always present; weather joins once Open-Meteo answered;
+        // detection joins for 30 s after a fresh SSE event. The page
+        // count therefore varies (1–3), but the modulo handles that
+        // naturally and statusWidthPx() reads the same pages list.
+        var pages = buildStatusPages();
+        var idx = Math.floor((Date.now() - statusPageStart) / STATUS_PAGE_MS)
+                  % pages.length;
+        return pages[idx];
+    }
+
+    // ─── animation loop ────────────────────────────────────────────────
+    // Coordinate system: compositeOffset is the screen-X position of
+    // buffer-column-0. Each buffer column renders COL_X_SCALE screen
+    // pixels wide, so the full buffer spans (buffer.length * COL_X_SCALE)
+    // screen pixels.
+    //  - offset == leadPadCols*COL_X_SCALE - canvas.width
+    //      → first text column at the right viewport edge (start state).
+    //  - offset == 0   → buffer column 0 at the left edge.
+    //  - offset < 0    → we've scrolled into the buffer.
+    function tick(t) {
+        var dt = Math.min(0.1, (t - lastFrameTime) / 1000);
+        lastFrameTime = t;
+
+        if (compositeBuffer.length === 0) {
+            rebuildBuffer();
+            if (firstLoop) {
+                // First paint: skip the leading pad entirely so the
+                // text's first column sits at screen-X = 0. Negative
+                // offset = "we've scrolled past leadPadCols columns".
+                compositeOffset = -leadPadCols * COL_X_SCALE;
+            } else {
+                compositeOffset = leadPadCols * COL_X_SCALE - scrollWidthPx();
+            }
+        }
+
+        // Arm the intro-hold timer on the first tick we see (resizeForDPR
+        // ran before tick started, so we can't set the timestamp there).
+        if (firstLoop && firstLoopStartTime === 0) {
+            firstLoopStartTime = t;
+        }
+        // Hold still for a beat on first paint so the user can actually
+        // start reading before things slide.
+        var scrolling = true;
+        if (firstLoop && (t - firstLoopStartTime) < FIRST_LOOP_INTRO_DELAY_MS) {
+            scrolling = false;
+        }
+        if (scrolling) {
+            compositeOffset -= SCROLL_PX_PER_SEC * dt;
+        }
+
+        // Reset when the trailing pad has reached the left edge of the
+        // scroll zone, i.e. the last text column has exited screen-left.
+        // At that moment the trailing pad covers the scroll zone and a
+        // fresh rebuild swaps in without a visible jump — the new
+        // buffer's leading pad takes over seamlessly.
+        var bufferSpanPx = compositeBuffer.length * COL_X_SCALE;
+        if (-compositeOffset >= bufferSpanPx - scrollWidthPx()) {
+            rebuildBuffer();
+            // From the second loop onward, text re-enters from the
+            // right — the steady-state cycle the user expects after the
+            // intro is over.
+            firstLoop = false;
+            compositeOffset = leadPadCols * COL_X_SCALE - scrollWidthPx();
+        }
+        // Alert-sign overlay takes precedence over the marquee while
+        // active. The scroll offset keeps advancing underneath so the
+        // ticker comes back mid-cycle, not from a stale frozen frame.
+        if (Date.now() < alertSignUntil) {
+            renderAlertSign(t);
+        } else {
+            renderFrame(compositeBuffer, compositeOffset, t);
+        }
+        requestAnimationFrame(tick);
+    }
+
+    // ─── HiDPI: rerender at actual pixel ratio without losing pixels ──
+    function resizeForDPR() {
+        var rect = canvas.getBoundingClientRect();
+        var dpr = Math.max(1, window.devicePixelRatio || 1);
+        // We want a virtual "LED grid" of fixed logical height (16 rows).
+        // Stretch logically wider with the on-screen width so the same
+        // amount of text shows on big vs. small viewports.
+        var logicalWidth = Math.max(320, Math.round(rect.width));
+        canvas.width = logicalWidth;
+        canvas.height = TICKER_HEIGHT;
+        canvas.style.height = (TICKER_HEIGHT * 2.5) + 'px';
+        // imageSmoothingEnabled resets after every width change.
+        ctx.imageSmoothingEnabled = false;
+        rebuildBuffer();
+        if (firstLoop) {
+            // First-paint intro: skip leading pad so the text's first
+            // column sits at screen-X = 0 instantly. Hold timer is
+            // armed when tick() first runs.
+            compositeOffset = -leadPadCols * COL_X_SCALE;
+            firstLoopStartTime = 0;
+        } else {
+            compositeOffset = leadPadCols * COL_X_SCALE - scrollWidthPx();
+        }
+    }
+    resizeForDPR();
+    if (typeof ResizeObserver === 'function') {
+        new ResizeObserver(resizeForDPR).observe(canvas);
+    } else {
+        window.addEventListener('resize', resizeForDPR);
+    }
+    requestAnimationFrame(tick);
+
+    // ─── SSE wiring ────────────────────────────────────────────────────
+    if (typeof window.EventSource === 'function') {
+        try {
+            var es = new EventSource('/api/v1/stream/detections/sse');
+            // BigFlock detector: a sliding window of detection timestamps.
+            // When the count within the last 5 s reaches 5, we fire the
+            // BigFlock animation instead of Excited. BigFlock has its
+            // own 10 s cooldown so a sustained burst doesn't loop it.
+            var _detTimes = [];
+            var FLOCK_WINDOW_MS = 5000;
+            var FLOCK_THRESHOLD = 5;
+            // LocalStorage keys for client-side milestone gates. The
+            // SSE stream has no notion of "first today" or "session
+            // total", so we track both here. Keys are scoped to today
+            // (YYYY-MM-DD) so they reset naturally at local midnight.
+            // Milestones are absolute count thresholds — every visitor
+            // sees the celebration when the daily counter rolls past
+            // the same number, independent of which page they're on.
+            var FIRST_DET_KEY = 'wmbFirstDetectionDate';
+            var DAILY_COUNT_KEY_PREFIX = 'wmbDailyDetCount.';
+            var DAILY_MILESTONES_KEY_PREFIX = 'wmbDailyMilestonesFired.';
+            var MILESTONES = [10, 50, 100, 250, 500, 1000];
+            function _todayKey() {
+                var d = new Date();
+                // YYYY-MM-DD in local timezone — matches the user's
+                // experience of "today" instead of UTC.
+                var mm = String(d.getMonth() + 1).padStart(2, '0');
+                var dd = String(d.getDate()).padStart(2, '0');
+                return d.getFullYear() + '-' + mm + '-' + dd;
+            }
+            function _readInt(key) {
+                var v = parseInt(localStorage.getItem(key) || '0', 10);
+                return isNaN(v) ? 0 : v;
+            }
+
+            es.addEventListener('detection', function (e) {
+                try {
+                    appendDetection(JSON.parse(e.data));
+                    // Alert-sign overlay: every detection refreshes the
+                    // 15 s ceiling, so a steady stream keeps the sign
+                    // up. Escalate to FLOCK ALERT when the same sliding
+                    // window the mascot uses crosses the threshold —
+                    // single source of truth for "is this a flock?".
+                    var nowAlert = Date.now();
+                    alertTimes.push(nowAlert);
+                    var alertCutoff = nowAlert - ALERT_FLOCK_WINDOW_MS;
+                    while (alertTimes.length && alertTimes[0] < alertCutoff) {
+                        alertTimes.shift();
+                    }
+                    alertMode = (alertTimes.length >= ALERT_FLOCK_THRESHOLD)
+                        ? 'flock' : 'normal';
+                    alertSignUntil = nowAlert + ALERT_HOLD_MS;
+                    if (!(window.wmbMascot && window.wmbMascot.fire)) return;
+                    var now = Date.now();
+                    _detTimes.push(now);
+                    var cutoff = now - FLOCK_WINDOW_MS;
+                    while (_detTimes.length && _detTimes[0] < cutoff) {
+                        _detTimes.shift();
+                    }
+
+                    // ─ First-detection-of-day gate ─
+                    // LocalStorage stores the date of the last "first"
+                    // we celebrated. If today's date differs, fire and
+                    // record. Survives reloads but resets after
+                    // midnight automatically.
+                    var today = _todayKey();
+                    if (localStorage.getItem(FIRST_DET_KEY) !== today) {
+                        localStorage.setItem(FIRST_DET_KEY, today);
+                        if (window.wmbMascot.fire('FirstDetectionOfDay')) {
+                            return; // celebration preempts other anims
+                        }
+                    }
+
+                    // ─ Milestone gate ─
+                    // Bump the daily counter, check if we just crossed
+                    // a milestone. Already-fired milestones are tracked
+                    // in a comma-joined string so we don't celebrate
+                    // 100 again after a page reload at count=102.
+                    var countKey = DAILY_COUNT_KEY_PREFIX + today;
+                    var firedKey = DAILY_MILESTONES_KEY_PREFIX + today;
+                    var dailyCount = _readInt(countKey) + 1;
+                    localStorage.setItem(countKey, String(dailyCount));
+                    var fired = (localStorage.getItem(firedKey) || '')
+                        .split(',').filter(Boolean);
+                    var hit = MILESTONES.filter(function (m) {
+                        return dailyCount >= m && fired.indexOf(String(m)) === -1;
+                    });
+                    if (hit.length > 0) {
+                        fired.push(String(hit[hit.length - 1]));
+                        localStorage.setItem(firedKey, fired.join(','));
+                        if (window.wmbMascot.fire('MilestoneCelebrate')) {
+                            return;
+                        }
+                    }
+
+                    // ─ Default path: BigFlock vs Excited ─
+                    if (_detTimes.length >= FLOCK_THRESHOLD) {
+                        if (!window.wmbMascot.fire('BigFlock')) {
+                            window.wmbMascot.fire('Excited');
+                        }
+                    } else {
+                        window.wmbMascot.fire('Excited');
+                    }
+                } catch (err) {}
+            });
+            // The 'Sad' mascot animation is defined and reachable via
+            // wmbMascot.fire('Sad') for DevTools introspection, but no
+            // SSE producer for review-deletes exists yet — wiring it up
+            // is a follow-up task once detectors/persistence learns to
+            // publish a 'detection_deleted' event onto the live bus.
+            es.addEventListener('ptz_move', function (e) {
+                try {
+                    var data = JSON.parse(e.data);
+                    // Drive the signal-LED red/blue dot for the estimated
+                    // move duration + 1s headroom so the indicator
+                    // outlives the move even if poll lags by ~2s.
+                    var holdMs = (Number(data.estimated_sec) || 8) * 1000 + 1000;
+                    ptzMoveKind = String(data.kind || 'preset');
+                    ptzMoveUntil = Date.now() + holdMs;
+                    // Refresh status now so the armed-yellow takes over
+                    // cleanly when the red-move signal expires.
+                    pollPtzStatus();
+                } catch (err) {}
+            });
+            es.addEventListener('hello', function () { /* connected */ });
+            es.onerror = function () {
+                // Browser auto-reconnects on its own with EventSource;
+                // no manual retry logic needed. Heartbeat segments keep
+                // the ticker alive during the gap.
+            };
+        } catch (e) { /* SSE unsupported — heartbeat-only */ }
+    }
+
+    // Inside the SSE refresh-on-move handler we used to nudge the poll
+    // immediately. The poll is gone now — stream.html drives ptzView
+    // via setPtzState() on its own existing cadence. The refresh call
+    // there is harmless because the function is defined as a no-op.
+    function pollPtzStatus() { /* no-op shim — stream.html owns state */ }
+
+    // ─── Weather polling ───────────────────────────────────────────────
+    // /api/v1/weather/now reads from a shared in-process cache that is
+    // refreshed by the weather service on ~hourly cadence. We poll
+    // every 5 min so the ticker shows fresh values even if the page
+    // stays open all day.
+    function pollWeather() {
+        fetch('/api/v1/weather/now', { cache: 'no-store' })
+            .then(function (r) { return r.ok ? r.json() : null; })
+            .then(function (data) {
+                if (data && data.status === 'success' && data.weather) {
+                    weatherData = data.weather;
+                    // Forward the same payload to the mascot so the
+                    // weather-conditional animations (Sweating, the
+                    // LightRain / HeavyRain / Thunderstorm / Snowing /
+                    // WindyDay / Foggy / Shivering / Rainbow set) can
+                    // read ctx.weather. The mascot has its own
+                    // scheduler and does its own throttling — we just
+                    // push.
+                    if (window.wmbMascot && window.wmbMascot.setContext) {
+                        window.wmbMascot.setContext({ weather: weatherData });
+                    }
+                }
+            })
+            .catch(function () { /* network blip — keep last value */ });
+    }
+    pollWeather();
+    setInterval(pollWeather, WEATHER_POLL_INTERVAL_MS);
+
+    // ─── Public API ────────────────────────────────────────────────────
+    // setPtzState: stream.html pushes the current Auto-Cam state here.
+    //   The ticker renders it as the signal-LED color (pulsing pill on
+    //   the left of the status zone). The actionable toggle lives on
+    //   the appbar Auto-Cam button, not the canvas.
+    // setSysInfo: appbar.html pushes the polled /health payload here
+    //   for the colored right-side zone.
+    window.wmbLedTicker = {
+        setPtzState: function (view) {
+            // Shallow-copy so caller mutations don't bleed in unexpectedly.
+            if (!view) { ptzView = null; return; }
+            ptzView = {
+                cameraAvailable: !!view.cameraAvailable,
+                enabled: !!view.enabled,
+                arriving: !!view.arriving,
+                secs: (typeof view.secs === 'number') ? view.secs : null
+            };
+        },
+        setSysInfo: function (info) {
+            // appbar.html pushes the polled /health payload here. The
+            // ticker renders the right-side colored zone from this.
+            if (!info) { sysInfo = null; return; }
+            sysInfo = {
+                cpu: (typeof info.cpu === 'number') ? info.cpu : null,
+                cpuSev: info.cpuSev || 'ok',
+                ram: (typeof info.ram === 'number') ? info.ram : null,
+                ramSev: info.ramSev || 'ok',
+                temp: (typeof info.temp === 'number') ? info.temp : null,
+                tempSev: info.tempSev || 'ok',
+                freeGb: (typeof info.freeGb === 'number') ? info.freeGb : null,
+                diskSev: info.diskSev || 'ok'
+            };
+        }
+    };
+})();
+</script>
