@@ -128,6 +128,19 @@ _NON_BIRD_OD_SPECIES: frozenset[str] = frozenset(
 )
 
 
+@lru_cache(maxsize=4)
+def _extended_species_keys(locale: str = "DE") -> frozenset[str]:
+    """Cached lookup set of scientific names from the extended catalog.
+
+    ``is_known_species`` runs per quick-pick render — on the Review-Grid
+    that is hundreds of calls per page. Building the set from
+    ``load_extended_species`` every call (without its own cache) re-read
+    a ~500ms JSON file. Caching both the JSON load and this derived set
+    keeps the hot path allocation-free.
+    """
+    return frozenset(entry["scientific"] for entry in load_extended_species(locale))
+
+
 def is_known_species(
     species_key: str | None, locale: str = "DE"
 ) -> bool:
@@ -151,8 +164,7 @@ def is_known_species(
         return True
     if key in load_common_names(locale):
         return True
-    extended_keys = {entry["scientific"] for entry in load_extended_species(locale)}
-    return key in extended_keys
+    return key in _extended_species_keys(locale)
 
 
 @lru_cache(maxsize=4)
@@ -193,6 +205,7 @@ def load_common_names(locale: str = "DE") -> dict[str, str]:
     return names
 
 
+@lru_cache(maxsize=4)
 def load_extended_species(locale: str = "DE") -> list[dict[str, str]]:
     """Return extended species entries for picker/search use.
 

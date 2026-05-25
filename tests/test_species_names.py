@@ -2,7 +2,26 @@
 
 import json
 
+import pytest
+
 from utils import species_names
+
+
+@pytest.fixture(autouse=True)
+def _clear_species_caches():
+    """Clear ``species_names`` caches around each test.
+
+    Each test monkeypatches ``_ASSETS_DIR`` to a tmp tree; the per-locale
+    ``@lru_cache`` on ``load_common_names`` / ``load_extended_species``
+    would otherwise leak fake-asset data into later tests in the run.
+    """
+    species_names.load_common_names.cache_clear()
+    species_names.load_extended_species.cache_clear()
+    species_names._extended_species_keys.cache_clear()
+    yield
+    species_names.load_common_names.cache_clear()
+    species_names.load_extended_species.cache_clear()
+    species_names._extended_species_keys.cache_clear()
 
 
 def test_load_extended_species_uses_multilang_fields_and_fallbacks(tmp_path, monkeypatch):
@@ -61,6 +80,9 @@ def test_load_extended_species_uses_multilang_fields_and_fallbacks(tmp_path, mon
     )
 
     monkeypatch.setattr(species_names, "_ASSETS_DIR", assets_dir)
+    species_names.load_common_names.cache_clear()
+    species_names.load_extended_species.cache_clear()
+    species_names._extended_species_keys.cache_clear()
 
     entries = species_names.load_extended_species("NO")
     common_by_scientific = {row["scientific"]: row["common"] for row in entries}
@@ -107,6 +129,9 @@ def test_load_extended_species_uses_de_fallback_order(tmp_path, monkeypatch):
     )
 
     monkeypatch.setattr(species_names, "_ASSETS_DIR", assets_dir)
+    species_names.load_common_names.cache_clear()
+    species_names.load_extended_species.cache_clear()
+    species_names._extended_species_keys.cache_clear()
 
     entries = species_names.load_extended_species("DE")
     common_by_scientific = {row["scientific"]: row["common"] for row in entries}
@@ -139,6 +164,9 @@ def test_load_extended_species_ignores_legacy_common_no_field(tmp_path, monkeypa
     )
 
     monkeypatch.setattr(species_names, "_ASSETS_DIR", assets_dir)
+    species_names.load_common_names.cache_clear()
+    species_names.load_extended_species.cache_clear()
+    species_names._extended_species_keys.cache_clear()
 
     entries = species_names.load_extended_species("NO")
     assert entries == [{"scientific": "Legacy_species", "common": "English fallback"}]
