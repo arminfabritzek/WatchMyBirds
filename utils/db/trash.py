@@ -24,16 +24,25 @@ def fetch_trash_items(
 ) -> tuple[list[dict[str, Any]], int]:
     """
     Fetches trashed items with pagination and filters.
-    Returns heterogeneous items:
-    - Rejected detections (trash_type='detection')
-    - No-bird images (trash_type='image')
+
+    Trash contains only rejected detections (``trash_type='detection'``).
+
+    ``review_status='no_bird'`` images are **not** trash — they are
+    user-verified false-positive crops kept for the training-export
+    pipeline (``utils.db.user_groundtruth.fetch_hard_negatives``).
+    Surfacing them here would invite an "Empty Trash" sweep that
+    silently wipes the hard-negative corpus. The legacy UNION ALL
+    over ``images.review_status='no_bird'`` was removed for that
+    reason. Restore/purge endpoints accepting ``image_filenames``
+    still exist (``web/blueprints/trash.py``) for an Export-Dashboard
+    surface, but no_bird images do not appear in the trash grid.
 
     Returns (items, total_count).
     """
     offset = (page - 1) * limit
     items = []
 
-    # === Part 1: Rejected Detections ===
+    # === Rejected Detections (only trash content) ===
     det_where = ["d.status = 'rejected'"]
     det_params = []
 
@@ -59,29 +68,10 @@ def fetch_trash_items(
     ).fetchone()
     det_count = det_count_row[0] if det_count_row else 0
 
-    # === Part 2: No-Bird Images ===
-    img_where = ["i.review_status = 'no_bird'"]
-    img_params = []
+    total_count = det_count
 
-    if before_date:
-        date_prefix = before_date.replace("-", "")
-        img_where.append("i.timestamp < ?")
-        img_params.append(date_prefix)
-
-    # Species filter doesn't apply to no-bird images (they have no species)
-    img_where_sql = " AND ".join(img_where)
-
-    img_count_row = conn.execute(
-        f"SELECT COUNT(*) FROM images i WHERE {img_where_sql}", img_params
-    ).fetchone()
-    img_count = img_count_row[0] if img_count_row else 0
-
-    total_count = det_count + img_count
-
-    # === Fetch Items with UNION (sorted by timestamp DESC, paginated) ===
-    # We use a UNION ALL to combine both types
-
-    union_query = f"""
+    # === Fetch Items (sorted by timestamp DESC, paginated) ===
+    query = f"""
         SELECT
             'detection' as trash_type,
             CAST(d.detection_id AS TEXT) as item_id,
@@ -105,35 +95,12 @@ def fetch_trash_items(
         JOIN images i ON d.image_filename = i.filename
         WHERE {det_where_sql}
 
-        UNION ALL
-
-        SELECT
-            'image' as trash_type,
-            i.filename as item_id,
-            i.timestamp as image_timestamp,
-            i.filename as filename,
-            NULL as bbox_x, NULL as bbox_y, NULL as bbox_w, NULL as bbox_h,
-            NULL as od_class_name,
-            NULL as od_confidence,
-            NULL as manual_species_override,
-            NULL as species_source,
-            i.review_updated_at as created_at,
-            REPLACE(i.filename, '.jpg', '.webp') as optimized_name_virtual,
-            (substr(i.timestamp, 1, 4) || '-' || substr(i.timestamp, 5, 2) || '-' || substr(i.timestamp, 7, 2) || '/' ||
-             REPLACE(i.filename, '.jpg', '.webp')) as relative_path,
-            NULL as thumbnail_path_virtual,
-            NULL as cls_class_name,
-            NULL as cls_confidence,
-            NULL as species_key
-        FROM images i
-        WHERE {img_where_sql}
-
         ORDER BY image_timestamp DESC
         LIMIT ? OFFSET ?
     """
 
-    all_params = det_params + img_params + [limit, offset]
-    rows = conn.execute(union_query, all_params).fetchall()
+    all_params = det_params + [limit, offset]
+    rows = conn.execute(query, all_params).fetchall()
 
     for row in rows:
         items.append(
@@ -168,19 +135,12 @@ def fetch_trash_items(
 
 def fetch_trash_count(conn: sqlite3.Connection) -> int:
     """
-    Returns total number of trashed items (for badge).
-    Includes: rejected detections + images with review_status='no_bird'.
+    Returns number of trashed items (for badge).
+
+    Counts only rejected detections. ``review_status='no_bird'`` images
+    are deliberately excluded — see ``fetch_trash_items`` docstring.
     """
-    # Count rejected detections
     det_row = conn.execute(
         "SELECT COUNT(*) FROM detections WHERE status = 'rejected'"
     ).fetchone()
-    det_count = det_row[0] if det_row else 0
-
-    # Count no_bird images
-    img_row = conn.execute(
-        "SELECT COUNT(*) FROM images WHERE review_status = 'no_bird'"
-    ).fetchone()
-    img_count = img_row[0] if img_row else 0
-
-    return det_count + img_count
+    return det_row[0] if det_row else 0

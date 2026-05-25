@@ -218,41 +218,42 @@ def trash_purge():
 @trash_bp.route("/api/trash/empty", methods=["POST"])
 @login_required
 def trash_empty():
-    """Empties entire trash (detections + no_bird images)."""
+    """Empties trash (rejected detections only).
+
+    ``review_status='no_bird'`` images are intentionally preserved:
+    they are the training-export hard-negative corpus
+    (``utils.db.user_groundtruth.fetch_hard_negatives``). Wiping them
+    here would silently destroy verified FP crops. Per-item purge of
+    no_bird images is still possible via ``/api/trash/purge`` with
+    explicit ``image_filenames``, but the bulk-empty must not touch
+    them.
+    """
     try:
         det_deleted = 0
-        img_deleted = 0
         files_deleted = 0
 
         conn = db_service.get_connection()
         try:
-            # Empty rejected detections
             result = detections_service.hard_delete_detections_with_conn(
                 conn, before_date="2099-12-31"
             )
             det_deleted = result.get("rows_deleted", 0)
             files_deleted = result.get("files_deleted", 0)
-
-            # Empty no_bird images (with full file cleanup)
-            img_result = detections_service.hard_delete_images_with_conn(
-                conn, delete_all=True
-            )
-            img_deleted = img_result.get("rows_deleted", 0)
-            files_deleted += img_result.get("files_deleted", 0)
         finally:
             conn.close()
 
         logger.info(
-            f"Trash emptied: {det_deleted} detections, {img_deleted} images, {files_deleted} files deleted"
+            f"Trash emptied: {det_deleted} detections, {files_deleted} files deleted "
+            "(no_bird images preserved as hard-negatives)"
         )
         return jsonify(
             {
                 "status": "success",
                 "result": {
                     "purged": True,
-                    "rows_deleted": det_deleted + img_deleted,
+                    "rows_deleted": det_deleted,
                     "det_deleted": det_deleted,
-                    "img_deleted": img_deleted,
+                    "img_deleted": 0,
                     "files_deleted": files_deleted,
                 },
             }
