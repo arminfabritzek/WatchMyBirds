@@ -217,9 +217,9 @@ class NotificationService(NotificationInterface):
                 # can tell a rarity ping apart from a routine live alert.
                 if self._mode == "new_species_only":
                     headline = (
-                        f"{prefix}✨ Neue Art entdeckt!"
+                        f"{prefix}✨ New species detected!"
                         if species_count == 1
-                        else f"{prefix}✨ {species_count} neue Arten entdeckt!"
+                        else f"{prefix}✨ {species_count} new species detected!"
                     )
                     message = headline + "\n" + "\n".join(species_lines)
                 else:

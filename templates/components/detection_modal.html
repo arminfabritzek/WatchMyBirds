@@ -37,13 +37,13 @@ nav_index (int|None): Optional index within nav_scope
                     {% set has_manual_review_approval = has_manual_species_review and (det.review_status == 'confirmed_bird') %}
                     {% set is_trusted = has_manual_species_review or (det.decision_state == 'confirmed') or (det.decision_state is none) %}
                     {% set title_species = det.species_key or det.manual_species_override or det.cls_class_name or det.od_class_name %}
-                    {% set ai_status_label = '🤖 KI unbekannt' %}
+                    {% set ai_status_label = '🤖 AI unknown' %}
                     {% if has_manual_review_approval %}
-                    {% set ai_status_label = '🧑👍 manuell bestaetigt' %}
+                    {% set ai_status_label = '🧑👍 manually confirmed' %}
                     {% elif det.decision_state == 'confirmed' %}
-                    {% set ai_status_label = '🤖 KI bestaetigt' %}
+                    {% set ai_status_label = '🤖 AI confirmed' %}
                     {% elif det.decision_state == 'uncertain' %}
-                    {% set ai_status_label = '🤖 KI unsicher' %}
+                    {% set ai_status_label = '🤖 AI uncertain' %}
                     {% endif %}
                     {% set review_status_text = render_review_status_text(det, "font-size: 0.7rem; opacity: 0.8;") %}
                     {% set wiki_url = wikipedia_species_url(det.common_name, title_species) %}

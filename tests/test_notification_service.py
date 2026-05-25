@@ -179,7 +179,7 @@ class TestNewSpeciesOnlyMode:
     def test_send_summary_uses_new_species_headline(
         self, mock_send, new_species_service
     ):
-        """new_species_only mode emits 'Neue Art entdeckt!' instead of
+        """new_species_only mode emits 'New species detected!' instead of
         the routine 'Species detected:' headline."""
         mock_send.return_value = [{"ok": True}]
 
@@ -196,7 +196,7 @@ class TestNewSpeciesOnlyMode:
 
         # Telegram message uses the new headline
         message = mock_send.call_args.kwargs["text"]
-        assert "Neue Art entdeckt!" in message
+        assert "New species detected!" in message
         assert "Blaumeise" in message
         # And mark_species_seen was called with the alerted species
         mock_mark.assert_called_once()

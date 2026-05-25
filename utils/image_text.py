@@ -4,7 +4,7 @@ OpenCV's ``cv2.putText`` uses Hershey stroke fonts: no anti-aliasing
 worth the name, no TrueType, no proper Unicode (umlauts and the
 narrow-no-break-space in formatted dates render as ``??``). For a
 hobbyist surface that the operator looks at on a phone several times a
-day, that's the most "alt und nicht schoen" surface in the app.
+day, that's the most "old and ugly" surface in the app.
 
 This module wraps Pillow's ``ImageDraw.text`` so report builders can
 draw cleanly anti-aliased TrueType text directly onto a numpy/cv2 BGR

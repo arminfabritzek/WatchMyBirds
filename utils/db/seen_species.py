@@ -77,7 +77,7 @@ def reset_seen_species() -> int:
     """Wipe the seen-species log. Returns the number of rows removed.
 
     Operator-facing: exposed via the Settings "Reset known-species list"
-    button so a fresh model deploy can re-fire all "Neue Art entdeckt!"
+    button so a fresh model deploy can re-fire all "New species detected!"
     alerts.
     """
     with closing_connection() as conn:

@@ -69,9 +69,9 @@ def test_detection_modal_supports_optional_nav_scope_and_index():
     assert "has_manual_species_review = (det.species_source == 'manual') and det.manual_species_override" in content
     assert "has_manual_review_approval = has_manual_species_review and (det.review_status == 'confirmed_bird')" in content
     assert "title_species = det.species_key or det.manual_species_override or det.cls_class_name or det.od_class_name" in content
-    assert "ai_status_label = '🤖 KI bestaetigt'" in content
-    assert "🧑👍 manuell bestaetigt" in content
-    assert "🤖 KI unbekannt" in content
+    assert "ai_status_label = '🤖 AI confirmed'" in content
+    assert "🧑👍 manually confirmed" in content
+    assert "🤖 AI unknown" in content
     assert "wikipedia_species_url(det.common_name, title_species)" in content
 
 
@@ -144,10 +144,10 @@ def test_detection_info_hides_decision_badges_after_manual_species_review():
     assert "sib_has_manual_review_approval = sib_has_manual_species_review and (sib.review_status == 'confirmed_bird')" in content
     assert "{% if sib_has_manual_review_approval %}" in content
     assert "{% elif sib.decision_state and not sib_has_manual_review_approval %}" in content
-    assert "🤖 KI bestaetigt" in content
-    assert "🤖 KI unsicher" in content
-    assert "🤖 KI unbekannt" in content
-    assert "🧑👍 manuell bestaetigt" in content
+    assert "🤖 AI confirmed" in content
+    assert "🤖 AI uncertain" in content
+    assert "🤖 AI unknown" in content
+    assert "🧑👍 manually confirmed" in content
 
 
 def test_species_templates_use_toolbox_without_legacy_badge():

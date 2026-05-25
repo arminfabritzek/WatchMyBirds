@@ -407,7 +407,7 @@ class VideoCapture:
         return output_dir / "stream_settings.json"
 
     def _get_ffmpeg_version(self):
-        """Liest die FFmpeg-Version zur Cache-Validierung."""
+        """Read the FFmpeg version string for cache validation."""
         if VideoCapture._ffmpeg_version_cache is not None:
             return VideoCapture._ffmpeg_version_cache
         try:
