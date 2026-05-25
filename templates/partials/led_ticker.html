@@ -660,7 +660,7 @@
     // enough that page-reload cadence is fine. station is set from the
     // global context_processor so every page sees the same label.
     var DASHBOARD = window.__ledTickerStats || {
-        visits: 0, species: 0, station: ''
+        visits: 0, species: 0, total: 0, busiestHour: '', station: ''
     };
 
     function buildHeartbeatSegments() {

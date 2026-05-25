@@ -94,6 +94,11 @@
     --z-appbar: 1000;
     --z-modal: 1100;
     --z-tooltip: 1200;
+
+    /* Layout — top app bar height. Mobile overrides below this token at
+       the 760px breakpoint when the nav stacks. Every sticky element
+       that sits below the app bar reads from this token. */
+    --appbar-height: 64px;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -349,7 +354,7 @@ code {
     top: 0;
     left: 0;
     right: 0;
-    height: 112px;
+    height: var(--appbar-height);
     background: #f4ecd9;
     border-bottom: 1px solid var(--color-border);
     display: flex;
@@ -369,17 +374,10 @@ code {
 .app-bar__brand {
     display: flex;
     align-items: center;
-    gap: var(--space-md);
     font-weight: 700;
     font-size: var(--font-size-lg);
     color: var(--color-text);
     margin-right: var(--space-xl);
-}
-
-.app-bar__brand img {
-    height: 88px;
-    width: auto;
-    display: block;
 }
 
 .app-bar__toggle {
@@ -584,7 +582,7 @@ code {
     border-bottom: 1px solid var(--color-border-light);
     font-size: var(--font-size-xs);
     color: var(--color-text-muted);
-    margin-top: 112px;
+    margin-top: var(--appbar-height);
 }
 
 .status-bar__item {
@@ -900,10 +898,6 @@ code {
         margin-right: var(--space-md);
     }
 
-    .app-bar__brand span {
-        display: none;
-    }
-
     /* Show hamburger menu on mobile */
     .app-bar__toggle {
         display: inline-flex;
@@ -919,7 +913,7 @@ code {
         display: flex;
         flex-direction: column;
         position: absolute;
-        top: 112px;
+        top: var(--appbar-height);
         left: 0;
         right: 0;
         background: var(--color-surface);
@@ -1707,7 +1701,7 @@ code {
 
 .trash-workbench__ops {
     position: sticky;
-    top: calc(var(--space-lg) + 112px);
+    top: calc(var(--space-lg) + var(--appbar-height));
     display: flex;
     flex-direction: column;
     gap: var(--space-md);
@@ -2214,51 +2208,6 @@ code {
     width: 100%;
     display: block;
     background: #000;
-}
-
-.stream-info {
-    --stream-info-scale: 1;
-    position: absolute;
-    top: calc(16px * var(--stream-info-scale));
-    left: calc(16px * var(--stream-info-scale));
-    z-index: 10;
-    display: inline-flex;
-    align-items: center;
-    gap: calc(10px * var(--stream-info-scale));
-    padding: calc(7px * var(--stream-info-scale)) calc(12px * var(--stream-info-scale));
-    border-radius: calc(8px * var(--stream-info-scale));
-    border: 1px solid rgba(196, 165, 104, 0.22);
-    background: rgba(33, 27, 20, 0.72);
-    color: white;
-    font-family: 'JetBrains Mono', monospace;
-    font-size: calc(0.92rem * var(--stream-info-scale));
-    font-weight: 500;
-    font-variant-numeric: tabular-nums;
-    line-height: 1;
-    pointer-events: none;
-    white-space: nowrap;
-}
-
-.stream-info__row {
-    display: flex;
-    align-items: center;
-    gap: calc(6px * var(--stream-info-scale));
-}
-
-.stream-info__dot {
-    width: 7px;
-    height: 7px;
-    background: #ff4d4d;
-    border-radius: 50%;
-    flex-shrink: 0;
-    animation: pulse 1s infinite;
-}
-
-.stream-info__weather {
-    display: flex;
-    align-items: center;
-    opacity: 0.92;
-    font-size: 1em;
 }
 
 .stream-report-action {
@@ -5884,7 +5833,7 @@ body {
 
 .review-queue {
     position: sticky;
-    top: calc(var(--space-lg) + 112px);
+    top: calc(var(--space-lg) + var(--appbar-height));
     align-self: start;
     display: flex;
     flex-direction: column;
@@ -5900,7 +5849,7 @@ body {
 
 .review-event-browser {
     position: sticky;
-    top: calc(var(--space-lg) + 112px);
+    top: calc(var(--space-lg) + var(--appbar-height));
     align-self: start;
     display: flex;
     flex-direction: column;
@@ -10392,8 +10341,7 @@ code {
        the operator act on the current event no matter how far they
        have scrolled inside it. */
     position: sticky;
-    top: 112px; /* matches .app-bar height; if app-bar height changes,
-                   update both this rule and .app-bar in one pass */
+    top: var(--appbar-height);
     z-index: 20; /* above tile-bbox canvases (z-index 3-4), below
                     bootstrap modal (z-index 1100) and app-bar (1000) */
     display: flex;

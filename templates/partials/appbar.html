@@ -2,7 +2,6 @@
 <header class="app-bar" id="appBar">
     {# Brand #}
     <a class="app-bar__brand" href="/">
-        <img src="/assets/images/logo.png" alt="Logo">
         <span>WatchMyBirds</span>
     </a>
 
@@ -74,68 +73,161 @@
    Weather + station name + live detections all scroll inside the ticker;
    the old weather widget is retired (info migrated). The ticker partial
    carries its own canvas + JS. #}
-{# Bootstrap stats for the ticker. station_name comes from the global
-   context_processor (config STATION_NAME); visits/species come from
-   dashboard_stats when the rendering route provides it. On routes
-   without dashboard_stats the ticker still shows station + weather +
-   live detections. #}
+{# Bootstrap stats for the ticker. station_name + ticker_dashboard_stats
+   both come from the global context_processor, so every page renders
+   the same numbers. The stream route additionally exports its own
+   richer `dashboard_stats` / `visual_summary` (route locals shadow
+   context-processor values), which is why we prefer those when present
+   — they reflect the same DB read the rest of the stream page uses,
+   without paying the 60s cache lag. #}
+{% set _td = ticker_dashboard_stats or {} %}
 <script>
     window.__ledTickerStats = {
         station: {{ (station_name | upper) | tojson }},
-        visits: {{ (dashboard_stats.today_visits if dashboard_stats else 0) | tojson }},
-        species: {{ ((visual_summary | length) if visual_summary is defined else 0) | tojson }}
+        visits: {{ ((dashboard_stats.today_visits if dashboard_stats else _td.get('today_visits', 0))) | tojson }},
+        species: {{ ((visual_summary | length) if visual_summary is defined else _td.get('today_species_count', 0)) | tojson }},
+        total: {{ ((dashboard_stats.total_species if dashboard_stats else _td.get('total_species', 0))) | tojson }},
+        busiestHour: {{ ((dashboard_stats.today_busiest_hour if (dashboard_stats and dashboard_stats.today_busiest_hour) else _td.get('today_busiest_hour', ''))) | tojson }}
     };
 </script>
-<div class="status-bar" id="statusBar">
-    <div class="status-bar__ticker-slot">
-        {% include 'partials/led_ticker.html' %}
-    </div>
-    <div class="status-bar__sysinfo">
-        {# CPU/RAM/TEMP/GB are now rendered inside the LED canvas as
-           colored values (driven by updateStatus() via setSysInfo()).
-           Only the Auto-Cam toggle remains as a real DOM button — it
-           needs hover/focus/keyboard affordance that a canvas can't
-           offer. Sits at the far right. #}
-        <button type="button"
-                class="status-bar__auto-cam"
-                id="appbarAutoCamToggle"
-                data-enabled="false"
-                data-returning="false"
-                aria-pressed="false"
-                aria-label="Toggle auto-PTZ return"
-                title="Toggle auto-PTZ return"
-                disabled>
-            <span class="status-bar__auto-cam-dot" aria-hidden="true"></span>
-            <span class="status-bar__auto-cam-label">Auto Cam</span>
-            <span class="status-bar__auto-cam-value" id="appbarAutoCamValue">--</span>
-        </button>
+<div class="app-mascot-bar">
+    {% include 'partials/mascot_bird.html' %}
+    <div class="status-bar" id="statusBar">
+        <div class="status-bar__ticker-slot">
+            {% include 'partials/led_ticker.html' %}
+        </div>
+        <div class="status-bar__sysinfo">
+            {# CPU/RAM/TEMP/GB are now rendered inside the LED canvas as
+               colored values (driven by updateStatus() via setSysInfo()).
+               The DOM controls stay on the right for keyboard/focus
+               affordance. #}
+            <button type="button"
+                    class="status-bar__auto-cam"
+                    id="appbarAutoCamToggle"
+                    data-enabled="false"
+                    data-returning="false"
+                    aria-pressed="false"
+                    aria-label="Toggle auto-PTZ return"
+                    title="Toggle auto-PTZ return"
+                    disabled>
+                <span class="status-bar__auto-cam-dot" aria-hidden="true"></span>
+                <span class="status-bar__auto-cam-label">Auto Cam</span>
+            </button>
+            {# Boxes mode toggle — only visible on the stream page. Stream
+               HTML unhides this on boot and owns the click handler. Save
+               snapshot sits next to it but only appears in Edit mode. #}
+            <button type="button"
+                    class="status-bar__auto-cam status-bar__boxes-toggle"
+                    id="appbarBoxesToggle"
+                    data-mode="hidden"
+                    aria-label="Toggle preset overlay boxes"
+                    title="Show preset overlay boxes"
+                    hidden
+                    disabled>
+                <span class="status-bar__auto-cam-label">Show boxes</span>
+            </button>
+            <button type="button"
+                    class="status-bar__auto-cam status-bar__snapshot-btn"
+                    id="appbarSnapshotBtn"
+                    aria-label="Capture overview snapshot"
+                    title="Fly to overview and freeze a new Mini-Map snapshot"
+                    hidden
+                    disabled>
+                <span class="spinner-border spinner-border-sm d-none" id="appbarSnapshotSpinner"></span>
+                <span class="status-bar__auto-cam-label">Save snapshot</span>
+            </button>
+            {# Telegram report send — only on the stream page (the
+               startTelegramReportJob() function is defined there). Stream
+               HTML unhides it on boot; other pages keep it hidden so the
+               paper-plane icon doesn't appear on Gallery/Species/etc. #}
+            <button type="button"
+                    class="stream-report-action"
+                    id="streamSendReportButton"
+                    title="Send evening report to Telegram"
+                    aria-label="Send evening report to Telegram"
+                    hidden>
+                <svg class="stream-report-action__icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                    <path d="M21.5 3.5L10.8 14.2" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+                    <path d="M21.5 3.5L14.7 20.5L10.8 14.2L4.5 10.3L21.5 3.5Z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/>
+                </svg>
+            </button>
+        </div>
     </div>
 </div>
 
 <style>
+    /* Single appbar status rail: mascot | LED clock/marquee/sysinfo | controls. */
+    .app-mascot-bar {
+        --app-mascot-width: 172px;
+        --app-status-rail-bg: #050806;
+        --app-status-rail-fg: #f4d36a;
+        --app-status-muted: rgba(244, 211, 106, 0.72);
+        --app-status-border: rgba(244, 211, 106, 0.18);
+        --color-bg: var(--app-status-rail-bg);
+        --color-text: var(--app-status-rail-fg);
+        --color-text-muted: var(--app-status-muted);
+        --color-border-light: var(--app-status-border);
+        margin-top: var(--appbar-height);
+        display: flex;
+        align-items: center;
+        flex-wrap: nowrap;
+        gap: 0;
+        min-height: 64px;
+        padding: 0 clamp(10px, 1.6vw, 22px) 0 0;
+        background: var(--app-status-rail-bg);
+        border-bottom: 1px solid rgba(244, 211, 106, 0.14);
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+        overflow: hidden;
+    }
+    .app-mascot-bar .mascot-bird {
+        flex: 0 0 var(--app-mascot-width);
+        width: var(--app-mascot-width);
+        margin-top: 0;
+        padding: 0;
+        overflow: hidden;
+    }
+    .app-mascot-bar .status-bar {
+        flex: 1 1 auto;
+        min-width: 0;
+        margin-top: 0;
+        padding: 0;
+        background: transparent;
+        border-bottom: none;
+        color: var(--app-status-muted);
+    }
+    .app-mascot-bar .status-bar__ticker-slot .led-ticker {
+        background: transparent;
+        border: none;
+    }
+
     /* LED ticker stretches across the bar; sysinfo pills pin right. */
     .status-bar {
         display: flex;
         align-items: center;
-        gap: var(--space-md, 12px);
+        flex-wrap: nowrap;
+        gap: clamp(8px, 1vw, 14px);
     }
     .status-bar__ticker-slot {
-        flex: 1 1 auto;
-        min-width: 0; /* so the canvas can actually shrink in flex */
+        flex: 1 1 460px;
+        min-width: 180px;
+        overflow: hidden;
     }
     .status-bar__sysinfo {
         display: flex;
         align-items: center;
-        gap: var(--space-md, 12px);
+        gap: 8px;
         flex: 0 0 auto;
         margin-left: auto;
+        min-width: max-content;
     }
     /* The ticker partial wraps itself in <aside class="led-ticker"> with
        its own margins; flatten those inside the status bar so it lives
        flush in the row. */
     .status-bar__ticker-slot .led-ticker {
+        display: block;
         margin: 0;
         max-width: none;
+        width: 100%;
     }
 
     /* Auto-Cam toggle in the sysinfo cluster. Inherits the existing
@@ -145,14 +237,16 @@
         display: inline-flex;
         align-items: center;
         gap: 6px;
-        padding: 2px 10px;
-        border: 1px solid var(--color-border-light, rgba(0,0,0,0.12));
+        min-height: 30px;
+        padding: 2px 9px;
+        border: 1px solid rgba(244, 211, 106, 0.22);
         border-radius: 999px;
-        background: transparent;
-        color: inherit;
+        background: rgba(255, 255, 255, 0.04);
+        color: var(--app-status-muted);
         font: inherit;
-        font-size: 0.875rem;
+        font-size: 0.78rem;
         line-height: 1.5;
+        white-space: nowrap;
         cursor: pointer;
         transition: background-color 120ms, border-color 120ms, opacity 120ms;
     }
@@ -160,25 +254,33 @@
         cursor: not-allowed;
         opacity: 0.55;
     }
+    /* Read-only state on non-Live pages: status is live and colored, but
+       click is inert. Slight dim + cursor signal "informational, switch
+       on the Live page". Overrides the harsher disabled opacity above
+       because the user explicitly should still *read* the live status. */
+    .status-bar__auto-cam[data-readonly="true"]:disabled {
+        cursor: not-allowed;
+        opacity: 0.78;
+    }
     .status-bar__auto-cam-dot {
         width: 8px;
         height: 8px;
         border-radius: 50%;
-        background: var(--color-text-subtle, #888);
+        background: rgba(244, 211, 106, 0.42);
     }
     .status-bar__auto-cam[data-enabled="true"] {
-        border-color: rgba(40, 170, 90, 0.85);
-        background: rgba(40, 170, 90, 0.10);
-        color: #1c5a36;
+        border-color: rgba(60, 196, 106, 0.65);
+        background: rgba(60, 196, 106, 0.11);
+        color: #91e8ad;
     }
     .status-bar__auto-cam[data-enabled="true"] .status-bar__auto-cam-dot {
-        background: rgba(40, 170, 90, 0.95);
-        box-shadow: 0 0 4px rgba(40, 170, 90, 0.5);
+        background: rgba(60, 196, 106, 0.95);
+        box-shadow: 0 0 4px rgba(60, 196, 106, 0.5);
     }
     .status-bar__auto-cam[data-enabled="true"][data-returning="true"] {
-        border-color: rgba(255, 165, 40, 0.95);
-        background: rgba(255, 165, 40, 0.12);
-        color: #7a3e00;
+        border-color: rgba(255, 197, 36, 0.82);
+        background: rgba(255, 197, 36, 0.12);
+        color: #ffd970;
     }
     .status-bar__auto-cam[data-enabled="true"][data-returning="true"] .status-bar__auto-cam-dot {
         background: rgba(255, 165, 40, 0.95);
@@ -190,6 +292,82 @@
     }
     .status-bar__auto-cam-label {
         font-weight: 500;
+    }
+
+    /* Boxes toggle: subtle highlight when in Edit mode so the operator
+       sees "I am editing" at a glance. data-mode attribute is set by
+       stream.html via existing MODE_LABELS / dataset.mode wiring. */
+    .status-bar__boxes-toggle[data-mode="edit"] {
+        border-color: rgba(74, 163, 217, 0.72);
+        background: rgba(74, 163, 217, 0.12);
+        color: #9ed9ff;
+    }
+    .status-bar__boxes-toggle[data-mode="visible"] {
+        border-color: rgba(60, 196, 106, 0.65);
+        background: rgba(60, 196, 106, 0.10);
+        color: #91e8ad;
+    }
+
+    /* Snapshot button — Bootstrap spinner inside; align it inline with
+       the label text. The d-none class is toggled by the existing
+       request handler. */
+    .status-bar__snapshot-btn .spinner-border {
+        width: 0.85rem;
+        height: 0.85rem;
+        border-width: 0.15em;
+    }
+
+    @media (max-width: 1100px) {
+        .app-mascot-bar {
+            --app-mascot-width: 132px;
+            padding: 0 8px 0 0;
+        }
+        .app-mascot-bar .mascot-bird__canvas {
+            width: 132px !important;
+            height: 49px !important;
+        }
+        .status-bar__ticker-slot {
+            flex-basis: 320px;
+            min-width: 140px;
+        }
+        .status-bar__sysinfo {
+            gap: 6px;
+        }
+        .status-bar__auto-cam {
+            padding-inline: 7px;
+        }
+    }
+
+    @media (max-width: 760px) {
+        .app-mascot-bar {
+            --app-mascot-width: 108px;
+        }
+        .app-mascot-bar .mascot-bird__canvas {
+            width: 108px !important;
+            height: 40px !important;
+        }
+        .status-bar__auto-cam-label {
+            display: none;
+        }
+        .status-bar__ticker-slot {
+            min-width: 120px;
+        }
+    }
+
+    @media (max-width: 560px) {
+        .app-mascot-bar {
+            --app-mascot-width: 84px;
+            min-height: 56px;
+        }
+        .app-mascot-bar .mascot-bird__canvas {
+            width: 84px !important;
+            height: 31px !important;
+        }
+        .status-bar__auto-cam {
+            min-height: 28px;
+            padding-inline: 6px;
+            font-size: 0.72rem;
+        }
     }
 </style>
 
@@ -246,6 +424,122 @@
 
         updateStatus();
         setInterval(updateStatus, 3000);
+    })();
+
+    // ─── Auto-Cam status: read-only mirror on non-Live pages ───────────
+    // The Live page (`stream.html`) owns the actionable toggle and runs
+    // its own fast poll → it sets window.__streamPageOwnsAutoCam = true
+    // and we stay out of its way. On every other page we poll the same
+    // /api/v1/ptz/auto/status endpoint at a slower cadence so the
+    // operator can still SEE whether Auto-Cam is on/returning, without
+    // being able to change it. The LED-Ticker signal-LED gets the same
+    // payload via setPtzState(), so its pulse is consistent app-wide.
+    (function () {
+        if (window.__streamPageOwnsAutoCam) return;  // Live page handles it
+
+        const btn = document.getElementById('appbarAutoCamToggle');
+        if (!btn) return;
+        // Mark read-only so CSS uses the dimmer, less-harsh look (and so
+        // the click handler installed by stream.html on the Live page is
+        // never reached here — the button never leaves disabled).
+        btn.dataset.readonly = 'true';
+
+        // Only authenticated users can hit /api/v1/ptz/auto/status. For
+        // logged-out visitors the button just stays in its initial grey
+        // "no camera" state — matches what they'd see on Live anyway.
+        const IS_AUTH = {% if session.get('authenticated') %}true{% else %}false{% endif %};
+        if (!IS_AUTH) return;
+
+        let _lastReturnDeadline = 0;
+        let _countdownTimer = null;
+
+        function paintReadOnly(auto) {
+            const cameraAvailable = (typeof auto.camera_id === 'number');
+            const autoEnabled = (typeof auto.configured_enabled === 'boolean')
+                ? auto.configured_enabled
+                : !!auto.enabled;
+            const settling = auto.state === 'settling';
+            const secsLeft = (typeof auto.seconds_until_return === 'number')
+                ? auto.seconds_until_return : null;
+
+            // Feed LED-Ticker so the signal-LED pulse mirrors Live.
+            if (window.wmbLedTicker && window.wmbLedTicker.setPtzState) {
+                let displaySecs = null;
+                if (autoEnabled && !settling && _lastReturnDeadline > 0) {
+                    displaySecs = Math.max(
+                        0,
+                        Math.ceil((_lastReturnDeadline - performance.now()) / 1000)
+                    );
+                }
+                window.wmbLedTicker.setPtzState({
+                    cameraAvailable: cameraAvailable,
+                    enabled: autoEnabled,
+                    arriving: settling,
+                    secs: displaySecs
+                });
+            }
+
+            // Paint the button — same data-* attributes as on Live, but
+            // disabled stays true so the click can't fire.
+            btn.disabled = true;
+            if (!cameraAvailable) {
+                btn.dataset.enabled = 'false';
+                btn.dataset.returning = 'false';
+                btn.setAttribute('aria-pressed', 'false');
+                btn.title = 'Auto Cam: no camera (switch on Live page)';
+                return;
+            }
+            btn.dataset.enabled = autoEnabled ? 'true' : 'false';
+            btn.setAttribute('aria-pressed', autoEnabled ? 'true' : 'false');
+            if (!autoEnabled) {
+                btn.dataset.returning = 'false';
+                btn.title = 'Auto Cam: off — switch on Live page';
+                return;
+            }
+            if (settling) {
+                btn.dataset.returning = 'true';
+                btn.title = 'Auto Cam: arriving home… (switch on Live page)';
+                return;
+            }
+            if (secsLeft !== null && secsLeft > 0) {
+                _lastReturnDeadline = performance.now() + secsLeft * 1000;
+                btn.dataset.returning = 'true';
+                btn.title = 'Auto Cam: home in ' + Math.ceil(secsLeft)
+                    + 's (switch on Live page)';
+                if (!_countdownTimer) {
+                    _countdownTimer = window.setInterval(function () {
+                        if (_lastReturnDeadline <= 0
+                            || performance.now() >= _lastReturnDeadline) {
+                            _lastReturnDeadline = 0;
+                            window.clearInterval(_countdownTimer);
+                            _countdownTimer = null;
+                            return;
+                        }
+                        const s = Math.max(0, Math.ceil(
+                            (_lastReturnDeadline - performance.now()) / 1000));
+                        btn.title = 'Auto Cam: home in ' + s
+                            + 's (switch on Live page)';
+                    }, 500);
+                }
+            } else {
+                _lastReturnDeadline = 0;
+                btn.dataset.returning = 'false';
+                btn.title = 'Auto Cam: on — switch on Live page';
+            }
+        }
+
+        function pollAutoCam() {
+            fetch('/api/v1/ptz/auto/status', { cache: 'no-store' })
+                .then(function (r) { return r.ok ? r.json() : null; })
+                .then(function (data) {
+                    if (!data || data.status !== 'success') return;
+                    paintReadOnly(data.auto_ptz || {});
+                })
+                .catch(function () { /* network blip — keep last paint */ });
+        }
+
+        pollAutoCam();
+        setInterval(pollAutoCam, 5000);  // slower than Live's poll
     })();
 
     function toggleNav() {

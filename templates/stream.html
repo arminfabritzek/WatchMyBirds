@@ -3,6 +3,15 @@
 
 {% block title %}Live Stream - WatchMyBirds{% endblock %}
 
+{% block head %}
+{# Claim ownership of the Auto-Cam button BEFORE appbar.html runs its
+   read-only poller. The Live page has its own fast poll + click
+   handler (paintStatusPill / toggleAutoCam), so the appbar's slower
+   read-only mirror must stand down here. Set in <head> because base
+   includes appbar.html before {% block content %}. #}
+<script>window.__streamPageOwnsAutoCam = true;</script>
+{% endblock %}
+
 {% block content %}
 {% from 'partials/tile_toolbox.html' import tile_toolbox %}
 {% set can_moderate = session.get('authenticated') %}
@@ -17,6 +26,28 @@
             <img id="video-feed-fallback" class="stream-video stream-embed__fallback" alt="Live Stream" data-fallback-src="/video_feed">
             {% if can_moderate %}
             <img id="ptzEditCanvas" class="stream-embed__edit-canvas" alt="Edit overview" hidden>
+            {# Floating PTZ D-pad: lives inside the stream container as
+               a corner overlay. Hidden by default, fades in on hover
+               (desktop) or stays visible on touch devices. The markup
+               is identical to the old toolbar D-pad — moving it here
+               only changes positioning, not behavior. #}
+            <div class="stream-ptz-dpad stream-ptz-dpad--overlay" id="ptzJoystick" role="group" aria-label="Manual PTZ control">
+                <div class="stream-ptz-dpad__cross">
+                    <span class="stream-ptz-dpad__spacer"></span>
+                    <button type="button" class="stream-ptz-joybtn" data-axis="tilt" data-dir="1" title="Tilt up" aria-label="Tilt up">▲</button>
+                    <span class="stream-ptz-dpad__spacer"></span>
+                    <button type="button" class="stream-ptz-joybtn" data-axis="pan" data-dir="-1" title="Pan left" aria-label="Pan left">◀</button>
+                    <button type="button" class="stream-ptz-joybtn stream-ptz-joybtn--home" id="ptzDpadHome" title="Return camera to overview position" aria-label="Return to overview">⌂</button>
+                    <button type="button" class="stream-ptz-joybtn" data-axis="pan" data-dir="1" title="Pan right" aria-label="Pan right">▶</button>
+                    <span class="stream-ptz-dpad__spacer"></span>
+                    <button type="button" class="stream-ptz-joybtn" data-axis="tilt" data-dir="-1" title="Tilt down" aria-label="Tilt down">▼</button>
+                    <span class="stream-ptz-dpad__spacer"></span>
+                </div>
+                <div class="stream-ptz-dpad__zoom">
+                    <button type="button" class="stream-ptz-joybtn" data-axis="zoom" data-dir="1" title="Zoom in" aria-label="Zoom in">+</button>
+                    <button type="button" class="stream-ptz-joybtn" data-axis="zoom" data-dir="-1" title="Zoom out" aria-label="Zoom out">−</button>
+                </div>
+            </div>
             {% endif %}
 
             {# Detection overlay intentionally disabled in public backport build. #}
@@ -132,81 +163,6 @@
             })();
         </script>
 
-        {# Combined overlay: clock + weather (bottom-left, avoids camera RTC top-right) #}
-        <div class="stream-info" id="streamInfo">
-            <div class="stream-info__row">
-                <span id="clockDisplay">--:--</span>
-            </div>
-            <div class="stream-info__weather" id="streamWeatherTemp" style="display: none;">
-                <span id="streamWeatherTempContent"></span>
-            </div>
-            <div class="stream-info__weather" id="streamWeatherHumidity" style="display: none;">
-                <span id="streamWeatherHumidityContent"></span>
-            </div>
-        </div>
-
-        <script>
-            (function () {
-                const streamInfoEl = document.getElementById('streamInfo');
-                const streamEmbedEl = document.querySelector('.stream-embed');
-                if (!streamInfoEl || !streamEmbedEl) return;
-
-                function syncStreamInfoScale() {
-                    const rect = streamEmbedEl.getBoundingClientRect();
-                    const scale = Math.max(0.72, Math.min(1.25, rect.width / 1100));
-                    streamInfoEl.style.setProperty('--stream-info-scale', scale.toFixed(3));
-                }
-
-                syncStreamInfoScale();
-                window.addEventListener('resize', syncStreamInfoScale);
-
-                if (typeof ResizeObserver === 'function') {
-                    const resizeObserver = new ResizeObserver(syncStreamInfoScale);
-                    resizeObserver.observe(streamEmbedEl);
-                }
-            })();
-
-            function updateClock() {
-                const clockEl = document.getElementById('clockDisplay');
-                if (!clockEl) return;
-                const now = new Date();
-                clockEl.textContent = now.toLocaleTimeString('de-DE', {
-                    hour: '2-digit',
-                    minute: '2-digit'
-                });
-            }
-            setInterval(updateClock, 1000);
-            updateClock();
-
-            // Weather line – polls /api/v1/weather/now every 5 min
-            (function () {
-                const WEATHER_POLL_MS = 5 * 60 * 1000;
-
-                function updateStreamWeather() {
-                    fetch('/api/v1/weather/now')
-                        .then(function (r) { return r.json(); })
-                        .then(function (data) {
-                            if (data.status !== 'success' || !data.weather || data.weather.temp_c === null) return;
-                            var w = data.weather;
-                            var temp = Math.round(w.temp_c) + '°C';
-                            document.getElementById('streamWeatherTempContent').textContent = temp;
-                            document.getElementById('streamWeatherTemp').style.display = 'block';
-
-                            if (w.relative_humidity_pct != null) {
-                                document.getElementById('streamWeatherHumidityContent').textContent = Math.round(w.relative_humidity_pct) + '% RH';
-                                document.getElementById('streamWeatherHumidity').style.display = 'block';
-                            } else {
-                                document.getElementById('streamWeatherHumidity').style.display = 'none';
-                            }
-                        })
-                        .catch(function () { /* silent */ });
-                }
-
-                updateStreamWeather();
-                setInterval(updateStreamWeather, WEATHER_POLL_MS);
-            })();
-        </script>
-
         {% if can_moderate %}
         <div id="ptzBoxOverlay" class="ptz-box-overlay" hidden>
             <!-- Box buttons get injected here by JS. -->
@@ -275,30 +231,10 @@
             <strong>⚠ Auto-PTZ paused</strong> — <span id="ptzExternalPauseReason">external control</span>.
             Detection-driven moves are suppressed until released.
         </div>
-        <div class="stream-ptz-group" aria-label="Auto PTZ controls">
-            {# Auto-Cam toggle moved to the LED ticker above the stats
-               row — the ticker's status zone now shows on/off/arriving/
-               home-Ns and is clickable. See templates/partials/
-               led_ticker.html and the toggleAutoCam() handler below. #}
-            <button type="button"
-                    class="stream-ptz-pill stream-ptz-pill--action"
-                    id="ptzSnapshotBtn"
-                    title="Fly to overview and freeze a new Mini-Map snapshot (available in Edit mode)"
-                    aria-label="Capture overview snapshot"
-                    disabled>
-                <span class="spinner-border spinner-border-sm d-none" id="ptzSnapshotSpinner"></span>
-                Save snapshot
-            </button>
-            <button type="button"
-                    class="stream-ptz-pill stream-ptz-pill--action"
-                    id="ptzEditToggle"
-                    title="Show preset overlay boxes"
-                    aria-label="Show preset overlay boxes"
-                    data-mode="hidden"
-                    disabled>
-                Show boxes
-            </button>
-        </div>
+        {# Save snapshot + Show boxes moved to the global appbar status
+           bar (right of Auto Cam). Boxes is always visible on the
+           stream page; Save snapshot appears only in Edit mode.
+           See templates/partials/appbar.html. #}
         <!-- Legacy Home button retained but hidden — replaced by the
              D-pad's center ⌂. Kept around so existing JS handlers
              (gotoPreset(overviewPreset)) continue to attach without
@@ -307,44 +243,15 @@
              alone was being overridden by inline-flex defaults in some
              browsers, leaving a 1-2px stub visible). -->
         <button type="button" id="ptzHomeButton" hidden aria-hidden="true" style="display:none"></button>
-        <!--
-            D-pad layout: 3×3 grid for pan/tilt + Home center, with a
-            separate 1×2 zoom column on the right. Tilt direction signs
-            are flipped relative to the ONVIF spec to match this
-            camera's inverted Y axis (▲ sends tilt=+1, ▼ sends tilt=-1).
-        -->
-        <div class="stream-ptz-dpad" id="ptzJoystick" role="group" aria-label="Manual PTZ control">
-            <div class="stream-ptz-dpad__cross">
-                <span class="stream-ptz-dpad__spacer"></span>
-                <button type="button" class="stream-ptz-joybtn" data-axis="tilt" data-dir="1" title="Tilt up" aria-label="Tilt up">▲</button>
-                <span class="stream-ptz-dpad__spacer"></span>
-                <button type="button" class="stream-ptz-joybtn" data-axis="pan" data-dir="-1" title="Pan left" aria-label="Pan left">◀</button>
-                <button type="button" class="stream-ptz-joybtn stream-ptz-joybtn--home" id="ptzDpadHome" title="Return camera to overview position" aria-label="Return to overview">⌂</button>
-                <button type="button" class="stream-ptz-joybtn" data-axis="pan" data-dir="1" title="Pan right" aria-label="Pan right">▶</button>
-                <span class="stream-ptz-dpad__spacer"></span>
-                <button type="button" class="stream-ptz-joybtn" data-axis="tilt" data-dir="-1" title="Tilt down" aria-label="Tilt down">▼</button>
-                <span class="stream-ptz-dpad__spacer"></span>
-            </div>
-            <div class="stream-ptz-dpad__zoom">
-                <button type="button" class="stream-ptz-joybtn" data-axis="zoom" data-dir="1" title="Zoom in" aria-label="Zoom in">+</button>
-                <button type="button" class="stream-ptz-joybtn" data-axis="zoom" data-dir="-1" title="Zoom out" aria-label="Zoom out">−</button>
-            </div>
-        </div>
+        {# D-pad moved into .stream-embed above as a corner overlay
+           (id="ptzJoystick" still works — same markup, just relocated).
+           Shown on hover or in Edit mode; hidden otherwise so the live
+           video is the focus. #}
         {% endif %}
-        <div class="stream-ptz-group stream-ptz-group--report" aria-label="Reporting">
-            <button
-                type="button"
-                class="stream-report-action"
-                id="streamSendReportButton"
-                title="Send evening report to Telegram"
-                aria-label="Send evening report to Telegram"
-            >
-                <svg class="stream-report-action__icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                    <path d="M21.5 3.5L10.8 14.2" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
-                    <path d="M21.5 3.5L14.7 20.5L10.8 14.2L4.5 10.3L21.5 3.5Z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/>
-                </svg>
-            </button>
-        </div>
+        {# Send-report button (paper-plane icon) moved to the global
+           appbar status bar — see templates/partials/appbar.html. The
+           inline init script below unhides it for the stream page only;
+           startTelegramReportJob() is still defined in this file. #}
     </div>
 
     {% if can_moderate %}
@@ -697,6 +604,58 @@
             border: 1px solid rgba(0, 0, 0, 0.08);
         }
         .stream-ptz-dpad[hidden] { display: none; }
+
+        /* Floating overlay variant: sits inside .stream-embed in the
+           bottom-right corner. Fades in on hover. Touch devices: kept
+           visible since there's no hover signal. Edit mode: also kept
+           visible because operators may need to fine-aim while placing
+           boxes (.stream-embed--ptz-edit on the container is set by
+           stream.html when Edit mode is active). */
+        .stream-ptz-dpad--overlay {
+            position: absolute;
+            right: 12px;
+            bottom: 56px;
+            z-index: 5;
+            background: rgba(0, 0, 0, 0.55);
+            border-color: rgba(255, 255, 255, 0.15);
+            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+            color: #fff;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 180ms ease;
+        }
+        .stream-embed:hover .stream-ptz-dpad--overlay,
+        .stream-ptz-dpad--overlay:hover,
+        .stream-ptz-dpad--overlay:focus-within,
+        .stream-embed--ptz-edit .stream-ptz-dpad--overlay {
+            opacity: 1;
+            pointer-events: auto;
+        }
+        /* Touch-only devices have no hover — keep the D-pad visible at
+           a softened opacity so it's always reachable without a swipe. */
+        @media (hover: none) {
+            .stream-ptz-dpad--overlay {
+                opacity: 0.9;
+                pointer-events: auto;
+            }
+        }
+        /* The joystick buttons inherit the global pill style; on the
+           dark overlay we need brighter contrast. */
+        .stream-ptz-dpad--overlay .stream-ptz-joybtn {
+            background: rgba(255, 255, 255, 0.12);
+            border-color: rgba(255, 255, 255, 0.25);
+            color: #fff;
+        }
+        .stream-ptz-dpad--overlay .stream-ptz-joybtn:hover:not(:disabled) {
+            background: rgba(255, 255, 255, 0.22);
+        }
+        .stream-ptz-dpad--overlay .stream-ptz-joybtn--home {
+            background: rgba(120, 200, 255, 0.30);
+            border-color: rgba(120, 200, 255, 0.55);
+        }
+        .stream-ptz-dpad--overlay .stream-ptz-joybtn--home:hover:not(:disabled) {
+            background: rgba(120, 200, 255, 0.50);
+        }
         .stream-ptz-dpad__cross {
             display: grid;
             grid-template-columns: repeat(3, 30px);
@@ -772,13 +731,13 @@
     <script>
         (function () {
             const overlayEl = document.getElementById('ptzBoxOverlay');
-            const editToggleEl = document.getElementById('ptzEditToggle');
+            const editToggleEl = document.getElementById('appbarBoxesToggle');
             const homeBtnEl = document.getElementById('ptzHomeButton');
             const minimapEl = document.getElementById('ptzMinimap');
             const minimapImgEl = document.getElementById('ptzMinimapImg');
             const minimapSvgEl = document.getElementById('ptzMinimapSvg');
-            const snapshotBtnEl = document.getElementById('ptzSnapshotBtn');
-            const snapshotSpinnerEl = document.getElementById('ptzSnapshotSpinner');
+            const snapshotBtnEl = document.getElementById('appbarSnapshotBtn');
+            const snapshotSpinnerEl = document.getElementById('appbarSnapshotSpinner');
             if (!overlayEl || !editToggleEl) return;
 
             const CSRF = '{{ csrf_token }}';
@@ -787,8 +746,8 @@
             const MODE_VISIBLE = 'visible';
             const MODE_EDIT = 'edit';
             const MODE_LABELS = {
-                hidden: { text: 'Show boxes', title: 'Show preset overlay boxes' },
-                visible: { text: 'Edit boxes', title: 'Edit preset overlay boxes' },
+                hidden: { text: 'Presets', title: 'Show preset overlay boxes' },
+                visible: { text: 'Edit presets', title: 'Edit preset overlay boxes' },
                 edit: { text: 'Done', title: 'Stop editing' },
             };
             let cameraId = null;
@@ -926,15 +885,18 @@
                 // 2. Paint the appbar toggle button — same five states
                 //    the old pill rendered (no-cam / off / on / arriving
                 //    / home-Ns), with the same green/orange palette.
+                // Auto-Cam is now state-by-color only: grey = off / no cam,
+                // green = on, yellow-pulse = on + returning. No text value
+                // span anymore — the dot + label + color carry the state,
+                // and the title attribute keeps the verbose status for hover.
                 const btn = document.getElementById('appbarAutoCamToggle');
-                const val = document.getElementById('appbarAutoCamValue');
-                if (!btn || !val) return;
+                if (!btn) return;
                 if (!cameraAvailable) {
                     btn.disabled = true;
                     btn.dataset.enabled = 'false';
                     btn.dataset.returning = 'false';
                     btn.setAttribute('aria-pressed', 'false');
-                    val.textContent = 'no cam';
+                    btn.title = 'Auto Cam: no camera';
                     return;
                 }
                 btn.disabled = false;
@@ -942,20 +904,20 @@
                 btn.setAttribute('aria-pressed', autoEnabled ? 'true' : 'false');
                 if (!autoEnabled) {
                     btn.dataset.returning = 'false';
-                    val.textContent = 'off';
+                    btn.title = 'Auto Cam: off (click to enable auto-PTZ return)';
                     return;
                 }
                 if (settling) {
                     btn.dataset.returning = 'true';
-                    val.textContent = 'arriving…';
+                    btn.title = 'Auto Cam: arriving home…';
                     return;
                 }
                 if (secs !== null && secs > 0) {
                     btn.dataset.returning = 'true';
-                    val.textContent = 'home in ' + secs + 's';
+                    btn.title = 'Auto Cam: home in ' + secs + 's';
                 } else {
                     btn.dataset.returning = 'false';
-                    val.textContent = 'on';
+                    btn.title = 'Auto Cam: on';
                 }
             }
 
@@ -1228,6 +1190,9 @@
                 const hasSomethingToShow = !!snapshotUrl || hasAnyPresetWithBox();
                 const editAvailable = (cameraId !== null)
                     && (mode === MODE_EDIT || hasSomethingToShow);
+                // Unhide on the stream page (appbar default is hidden so
+                // the button doesn't appear on Gallery/Species/etc.).
+                editToggleEl.hidden = false;
                 editToggleEl.disabled = !editAvailable && !PTZ_DEBUG;
                 const label = MODE_LABELS[mode];
                 if (label) {
@@ -1258,12 +1223,13 @@
                     homeBtnEl.disabled = !enableHome && !PTZ_DEBUG;
                 }
                 if (snapshotBtnEl) {
-                    // Always-visible policy: the pill stays in the toolbar so
-                    // its slot never collapses (no neighboring buttons
-                    // sliding left). It only becomes clickable while the
-                    // operator is in Edit mode with a bound camera and a
-                    // configured overview preset.
-                    snapshotBtnEl.hidden = false;
+                    // Now hidden outside Edit mode — it lives in the
+                    // appbar next to Boxes, only appears once the
+                    // operator has actually entered Edit mode. Disabled
+                    // (but visible) when in Edit mode without a bound
+                    // camera or overview preset so the title can explain
+                    // why.
+                    snapshotBtnEl.hidden = !isEdit;
                     const canSnapshot = isEdit && cameraId !== null && !!overviewPreset;
                     snapshotBtnEl.disabled = !canSnapshot && !PTZ_DEBUG;
                 }
@@ -2183,27 +2149,10 @@
        lives there now — see templates/partials/appbar.html. #}
 
 
-    {# Dashboard Stats Row - directly under video #}
-    {% if dashboard_stats %}
-    <div class="stats-row stats-row--stream">
-        <div class="stat-item">
-            <div class="stat-item__value">{{ dashboard_stats.today_visits | default(0) }}</div>
-            <div class="stat-item__label">Visits Today</div>
-        </div>
-        <div class="stat-item stat-item--accent">
-            <div class="stat-item__value">{{ visual_summary | length }}</div>
-            <div class="stat-item__label">Species Today</div>
-        </div>
-        <div class="stat-item stat-item--secondary">
-            <div class="stat-item__value">{{ dashboard_stats.total_species | default(0) }}</div>
-            <div class="stat-item__label">Total Species</div>
-        </div>
-        <div class="stat-item stat-item--neon">
-            <div class="stat-item__value">{{ dashboard_stats.today_busiest_hour | default('—') }}</div>
-            <div class="stat-item__label">Busiest Hour</div>
-        </div>
-    </div>
-    {% endif %}
+    {# Stats row (Visits Today / Species Today / Total Species / Busiest
+       Hour) retired 2026-05-25 — those numbers are now carried in the
+       LED ticker heartbeat in the global appbar. See
+       templates/partials/led_ticker.html buildHeartbeatSegments(). #}
 
     {# ── Unified: Today's Visitors / Species Fallback ──────── #}
     <section class="section section--stream-width" id="last24hSummarySection">
@@ -2532,6 +2481,11 @@
         (function () {
             const streamButton = document.getElementById('streamSendReportButton');
             if (!streamButton) return;
+
+            // Button lives in the global appbar so the icon stays in one
+            // place; appbar default is hidden so other pages don't get a
+            // dangling icon (startTelegramReportJob is stream-only).
+            streamButton.hidden = false;
 
             streamButton.addEventListener('click', function () {
                 startTelegramReportJob({ trigger: streamButton });

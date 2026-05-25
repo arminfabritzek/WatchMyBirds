@@ -151,10 +151,11 @@ class TestTemplateStructure:
         assert "{% block content %}" in content
 
     def test_stream_has_report_button(self):
-        """stream.html must expose the manual Telegram report action."""
-        content = self.get_template_content("stream.html")
-        assert 'id="streamSendReportButton"' in content
-        assert "/api/v1/telegram/send-report" in content
+        """The appbar exposes the manual Telegram report action; stream.html wires its JS."""
+        appbar_content = self.get_template_content("partials/appbar.html")
+        assert 'id="streamSendReportButton"' in appbar_content
+        stream_content = self.get_template_content("stream.html")
+        assert "/api/v1/telegram/send-report" in stream_content
 
     def test_settings_has_report_button(self):
         """settings.html must expose the manual Telegram report action."""
