@@ -22,7 +22,7 @@ from logging_config import get_logger
 from utils.species_names import build_species_picker_entries
 from web.blueprints.auth import login_required
 from web.security import safe_log_value as _slv
-from web.services import db_service, gallery_service
+from web.services import cache_service, db_service, gallery_service
 from web.services.filter_service import FilterContext, resolve_filtered_ids
 
 logger = get_logger(__name__)
@@ -175,6 +175,7 @@ def resolve_selection() -> tuple:
 
 @moderation_bp.route("/api/moderation/bulk/relabel", methods=["POST"])
 @login_required
+@cache_service.invalidates("analytics.")
 def bulk_relabel() -> tuple:
     """Bulk relabel detections to a new species.
 
@@ -240,6 +241,7 @@ def bulk_relabel() -> tuple:
 
 @moderation_bp.route("/api/moderation/bulk/reject", methods=["POST"])
 @login_required
+@cache_service.invalidates("analytics.")
 def bulk_reject() -> tuple:
     """Bulk reject detections and/or review queue items.
 
@@ -443,6 +445,7 @@ def rescan_job_status(job_id: str) -> tuple:
     "/api/moderation/rescan-proposals/<int:proposal_id>/apply", methods=["POST"]
 )
 @login_required
+@cache_service.invalidates("analytics.")
 def apply_rescan_proposal(proposal_id: int) -> tuple:
     """Accept a rescan proposal — writes the suggested species to the detection."""
     with db_service.closing_connection() as conn:

@@ -39,11 +39,73 @@ from utils.db.analytics import (
 )
 from utils.db.events import calculate_effort, get_events_cached
 from web.security import error_response_simple as _error_response_simple
-from web.services import db_service
+from web.services import cache_service, db_service
 
 logger = get_logger(__name__)
 
 analytics_bp = Blueprint("analytics", __name__)
+
+# Cache TTL for heavy /analytics aggregations. Bounded staleness window
+# acceptable because review/moderation routes drop the cache via
+# @invalidates("analytics.") on every state change.
+_ANALYTICS_TTL = 300  # 5 minutes
+
+
+def _cached_event_intelligence(
+    min_score: float, event_limit: int, species_limit: int
+) -> dict:
+    key = f"analytics.event_intelligence:{min_score}:{event_limit}:{species_limit}"
+
+    def build():
+        conn = db_service.get_connection()
+        try:
+            return fetch_event_intelligence_summary(
+                conn,
+                min_score=min_score,
+                event_limit=event_limit,
+                species_limit=species_limit,
+            )
+        finally:
+            conn.close()
+
+    return cache_service.cached(key, _ANALYTICS_TTL, build)
+
+
+def _cached_simulation_data(exclude: str | None) -> dict:
+    key = f"analytics.simulation:{exclude or ''}"
+
+    def build():
+        conn = db_service.get_connection()
+        try:
+            return fetch_simulation_data(conn, exclude)
+        finally:
+            conn.close()
+
+    return cache_service.cached(key, _ANALYTICS_TTL, build)
+
+
+def _cached_weather_correlation() -> list:
+    def build():
+        conn = db_service.get_connection()
+        try:
+            return fetch_weather_detection_correlation(conn)
+        finally:
+            conn.close()
+
+    return cache_service.cached("analytics.weather_correlation", _ANALYTICS_TTL, build)
+
+
+def _cached_all_detection_times(min_score: float) -> list:
+    key = f"analytics.detection_times:{min_score}"
+
+    def build():
+        conn = db_service.get_connection()
+        try:
+            return db_service.fetch_all_detection_times(conn, min_score=min_score)
+        finally:
+            conn.close()
+
+    return cache_service.cached(key, _ANALYTICS_TTL, build)
 
 
 def _get_species_peak_hour(item: dict) -> float:
@@ -85,11 +147,7 @@ def analytics_summary():
 def analytics_time_of_day():
     cfg = get_config()
     min_score = cfg["GALLERY_DISPLAY_THRESHOLD"]
-    conn = db_service.get_connection()
-    try:
-        rows = db_service.fetch_all_detection_times(conn, min_score=min_score)
-    finally:
-        conn.close()
+    rows = _cached_all_detection_times(min_score)
 
     if not rows:
         return jsonify({"points": [], "peak_hour": None, "histogram": []})
@@ -276,16 +334,7 @@ def analytics_event_intelligence_api():
     event_limit = min(max(request.args.get("event_limit", 8, type=int), 1), 50)
     species_limit = min(max(request.args.get("species_limit", 8, type=int), 1), 50)
     try:
-        conn = db_service.get_connection()
-        try:
-            data = fetch_event_intelligence_summary(
-                conn,
-                min_score=min_score,
-                event_limit=event_limit,
-                species_limit=species_limit,
-            )
-        finally:
-            conn.close()
+        data = _cached_event_intelligence(min_score, event_limit, species_limit)
         return jsonify(data)
     except Exception as exc:
         return _error_response_simple("Event intelligence API error", exc)
@@ -296,11 +345,7 @@ def analytics_simulation_api():
     """Return simulation data for species removal what-if analysis."""
     exclude = request.args.get("exclude", "")
     try:
-        conn = db_service.get_connection()
-        try:
-            data = fetch_simulation_data(conn, exclude if exclude else None)
-        finally:
-            conn.close()
+        data = _cached_simulation_data(exclude if exclude else None)
         return jsonify(data)
     except Exception as exc:
         return _error_response_simple("Simulation API error", exc)
@@ -569,16 +614,11 @@ def analytics_page():
         "retention_formula": "min(Kmax, 3 + ceil(log2(photo_count)) + bonuses)",
     }
     try:
-        conn = db_service.get_connection()
-        try:
-            event_intelligence = fetch_event_intelligence_summary(
-                conn,
-                min_score=min_score,
-                event_limit=6,
-                species_limit=6,
-            )
-        finally:
-            conn.close()
+        event_intelligence = _cached_event_intelligence(
+            min_score=min_score,
+            event_limit=6,
+            species_limit=6,
+        )
     except Exception as e:
         logger.error(f"Error fetching event intelligence summary: {e}")
 
@@ -589,11 +629,7 @@ def analytics_page():
         "peak_hour_formatted": "—",
     }
     try:
-        conn = db_service.get_connection()
-        try:
-            rows = db_service.fetch_all_detection_times(conn, min_score=min_score)
-        finally:
-            conn.close()
+        rows = _cached_all_detection_times(min_score)
 
         hours_float = []
         for row in rows:
@@ -906,9 +942,9 @@ def analytics_page():
         conn = db_service.get_connection()
         try:
             weather = fetch_weather_analytics(conn)
-            weather_correlation = fetch_weather_detection_correlation(conn)
         finally:
             conn.close()
+        weather_correlation = _cached_weather_correlation()
     except Exception as e:
         logger.error(f"Error fetching weather analytics: {e}")
 
@@ -922,11 +958,7 @@ def analytics_page():
         "excluded_species": None,
     }
     try:
-        conn = db_service.get_connection()
-        try:
-            simulation = fetch_simulation_data(conn)
-        finally:
-            conn.close()
+        simulation = _cached_simulation_data(None)
     except Exception as e:
         logger.error(f"Error fetching simulation data: {e}")
 

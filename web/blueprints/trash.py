@@ -30,7 +30,7 @@ from utils.species_names import (
 from web.blueprints.auth import login_required
 from web.security import error_response
 from web.security import safe_log_value as _slv
-from web.services import db_service, detections_service
+from web.services import cache_service, db_service, detections_service
 
 logger = get_logger(__name__)
 
@@ -121,6 +121,7 @@ def trash_page():
 
 
 @trash_bp.route("/api/trash/restore", methods=["POST"])
+@cache_service.invalidates("analytics.")
 @login_required
 def trash_restore():
     """
@@ -158,6 +159,7 @@ def trash_restore():
 
 
 @trash_bp.route("/api/trash/purge", methods=["POST"])
+@cache_service.invalidates("analytics.")
 @login_required
 def trash_purge():
     """
@@ -216,6 +218,7 @@ def trash_purge():
 
 
 @trash_bp.route("/api/trash/empty", methods=["POST"])
+@cache_service.invalidates("analytics.")
 @login_required
 def trash_empty():
     """Empties trash (rejected detections only).
@@ -263,6 +266,7 @@ def trash_empty():
 
 
 @trash_bp.route("/api/detections/reject", methods=["POST"])
+@cache_service.invalidates("analytics.")
 @login_required
 def reject_detection():
     """Rejects detections (moves them to trash)."""
@@ -300,6 +304,7 @@ def species_list():
 
 
 @trash_bp.route("/api/detections/relabel", methods=["POST"])
+@cache_service.invalidates("analytics.")
 @login_required
 def relabel_detection():
     """

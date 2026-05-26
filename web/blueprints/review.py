@@ -43,7 +43,7 @@ from utils.species_names import (
 )
 from web.blueprints.auth import login_required
 from web.security import error_response as _error_response
-from web.services import db_service, gallery_service
+from web.services import cache_service, db_service, gallery_service
 from web.species_thumbnails import (
     get_species_thumbnail_map,
     resolve_species_thumbnail_url,
@@ -2078,6 +2078,7 @@ def review_thumb(filename):
 
 @review_bp.route("/api/review/decision", methods=["POST"])
 @login_required
+@cache_service.invalidates("analytics.")
 def review_decision():
     """
     API endpoint for Review Queue decisions.
@@ -2182,6 +2183,7 @@ def review_decision():
 
 @review_bp.route("/api/review/bbox-review", methods=["POST"])
 @login_required
+@cache_service.invalidates("analytics.")
 def update_bbox_review_state():
     """Persist the manual bbox review state for a review item."""
     data = request.get_json() or {}
@@ -2244,6 +2246,7 @@ def update_bbox_review_state():
 
 @review_bp.route("/api/review/quick-species", methods=["POST"])
 @login_required
+@cache_service.invalidates("analytics.")
 def review_quick_species():
     """Apply a quick species choice without final gallery approval."""
     data = request.get_json() or {}
@@ -2352,6 +2355,7 @@ def review_quick_species():
 
 @review_bp.route("/api/review/approve", methods=["POST"])
 @login_required
+@cache_service.invalidates("analytics.")
 def review_approve():
     """Approve a fully reviewed image for gallery visibility."""
     data = request.get_json() or {}
@@ -2497,6 +2501,7 @@ def review_approve():
 
 @review_bp.route("/api/review/event-approve", methods=["POST"])
 @login_required
+@cache_service.invalidates("analytics.")
 def review_event_approve():
     """Approve a single biological event in one step.
 
@@ -2799,6 +2804,7 @@ def review_event_approve():
 
 @review_bp.route("/api/review/event-trash", methods=["POST"])
 @login_required
+@cache_service.invalidates("analytics.")
 def review_event_trash():
     """Reject every active detection in one BirdEvent.
 
@@ -2991,6 +2997,7 @@ def review_event_trash():
 
 @review_bp.route("/api/review/event-resolve", methods=["POST"])
 @login_required
+@cache_service.invalidates("analytics.")
 def review_event_resolve():
     """Resolve a mixed BirdEvent in one transaction.
 

@@ -453,6 +453,10 @@ def build_bird_events(
     open_last_epoch: dict[group_key_t, float] = {}
     open_start_epoch: dict[group_key_t, float] = {}
     open_profiles: dict[group_key_t, EventGroupingProfile] = {}
+    # Per-group (max_gap_sec, max_duration_sec) precomputed at attach time.
+    # Avoids recomputing the same minutes-to-seconds conversion on every
+    # _can_attach call, which is invoked O(open_groups * items) times.
+    open_limits: dict[group_key_t, tuple[float, float]] = {}
     closed_groups: list[list[dict[str, Any]]] = []
 
     def _finalize(open_key: group_key_t) -> None:
@@ -460,13 +464,13 @@ def build_bird_events(
         open_last_epoch.pop(open_key, None)
         open_start_epoch.pop(open_key, None)
         open_profiles.pop(open_key, None)
+        open_limits.pop(open_key, None)
         if group:
             closed_groups.append(group)
 
     def _can_attach(open_key: group_key_t, epoch: float) -> bool:
-        profile = open_profiles[open_key]
-        max_gap_sec = max(_effective_gap_minutes(profile) * 60.0, 0.0)
-        max_duration_sec = max(_effective_max_minutes(profile) * 60.0, 0.0)
+        # Cheap check first: gap. Short-circuit before touching duration.
+        max_gap_sec, max_duration_sec = open_limits[open_key]
         if epoch - open_last_epoch[open_key] > max_gap_sec:
             return False
         return epoch - open_start_epoch[open_key] <= max_duration_sec
@@ -507,7 +511,12 @@ def build_bird_events(
         if group is None:
             open_groups[attach_key] = [item]
             open_start_epoch[attach_key] = epoch
-            open_profiles[attach_key] = _profile_for_species(attach_key[1])
+            profile = _profile_for_species(attach_key[1])
+            open_profiles[attach_key] = profile
+            open_limits[attach_key] = (
+                max(_effective_gap_minutes(profile) * 60.0, 0.0),
+                max(_effective_max_minutes(profile) * 60.0, 0.0),
+            )
         else:
             group.append(item)
         open_last_epoch[attach_key] = epoch
