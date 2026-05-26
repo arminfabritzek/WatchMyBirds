@@ -50,7 +50,6 @@ docker-compose*.yml
 rpi/
 debuglogs/
 docs/
-private_docs/
 .github/
 .venv/
 systemd/

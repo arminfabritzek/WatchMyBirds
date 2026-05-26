@@ -275,9 +275,6 @@ docker-compose.yml
 /_debug_logs
 tools/onvif_ptz_tester/.onvif_tester_settings.json
 
-# Local-only workspace directory (may be a symlink to an external workspace)
-agent_handoff/
-
 # Local-only inbox for model release ZIPs and other large deliverables.
 # Files here are reproducible and never belong in git history.
 inbox/
