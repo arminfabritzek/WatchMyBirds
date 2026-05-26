@@ -1217,7 +1217,7 @@ def test_home_button_blocks_detection_driven_counter_goto():
 def test_manual_joystick_drive_blocks_detection_driven_counter_goto():
     """Third leg of the cooldown-seeding race: manual joystick drive.
 
-    HUMAN-reported 2026-05-16: in preset mode the camera springs to
+    Observed regression: in preset mode the camera springs to
     other presets in quick succession during a detection event,
     suspected to be a relic of a previous manual action. Commit 2e15f32
     closed this race for preset-click (notify_external_goto) and Home
@@ -1255,9 +1255,9 @@ def test_manual_joystick_drive_blocks_detection_driven_counter_goto():
 # ---------------------------------------------------------------------------
 # Detection-driven settle window — cheap-PTZ movement time.
 #
-# HUMAN-reported 2026-05-16 17:49: in preset mode the camera flew to
-# the correct preset on a bird detection, then 4 s later jumped to
-# Preset 4 (where no bird was), then 4 s later home. The cooldown gate
+# Observed regression: in preset mode the camera flew to the correct
+# preset on a bird detection, then 4 s later jumped to Preset 4 (where
+# no bird was), then 4 s later home. The cooldown gate
 # alone cannot prevent this because cheap cameras take 2–6 s to
 # traverse — far longer than even the 10 s default — yet the controller
 # was committing _state="tracking" the instant the goto was enqueued,
@@ -2029,9 +2029,9 @@ def test_goto_failure_does_not_clobber_newer_committed_goto():
 def test_goto_failure_in_grid_mode_rolls_back_cell_state():
     """Same rollback contract for grid-mode adjacent-cell switching.
 
-    This is the exact scenario from the 2026-05-16 RPi incident:
-    grid_r0_c1 → Preset006 enqueued, camera rejects, DB had been writing
-    ptz_zone=grid_r0_c1 + ptz_preset_token=Preset006 anyway.
+    Production scenario: grid_r0_c1 → Preset006 enqueued, camera
+    rejects, DB had been writing ptz_zone=grid_r0_c1 +
+    ptz_preset_token=Preset006 anyway.
     """
     fail_token = "grid_token_r0_c1"
     runner = _FailingRunner(fail_tokens={fail_token})
@@ -2078,7 +2078,7 @@ def test_successful_goto_leaves_last_preset_committed():
 # ---------------------------------------------------------------------------
 # Worker-thread retry — cheap-PTZ camera transient failures.
 #
-# Observation 2026-05-16: every goto in a 3h+ Grid-Mode session was
+# Observed regression: every goto in a 3h+ Grid-Mode session was
 # rejected with "Preset token does not exist", but a manual CLI test
 # of the same token an hour later worked instantly. The rejection is
 # transient (camera busy / mid-move / firmware quirk), not permanent.
@@ -2756,9 +2756,8 @@ def test_run_move_burst_does_not_abort_on_queued_follow_move(monkeypatch):
     follow-correction every ~250 ms, so the queue is almost always
     non-empty between burst iterations. If a queued `move` aborted the
     burst tail, every active burst would silently regress to burst=1
-    (= the 2026-05-25 live-test regression that motivated this test).
-    The queued move just runs next; it doesn't amputate the current
-    one.
+    (the regression that motivated this test). The queued move just
+    runs next; it doesn't amputate the current one.
     """
     calls = []
     monkeypatch.setattr(

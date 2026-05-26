@@ -1,19 +1,9 @@
 /*
- * Review Grid (2026-05-23 redesign — plan 2026-05-23_UI_review-grid-redesign).
- *
- * Slice 2 wiring:
- *  - per-card tile-size stepper (1 / 2 / 4 / 8 / 16 per row), persisted
- *    to localStorage `wmb_review_tile_size` as the page-wide session
- *    default.
- *  - per-card Approve / Trash buttons hitting the existing event-scope
- *    endpoints (`/api/review/event-approve`, `/api/review/event-trash`).
- *
- * Slice 3 will add multi-select + bulk-footer wiring.
- * Slice 4 will add continuity-batch card support.
+ * Review Grid controller.
  *
  * Convention: delegated handlers on `data-review-grid-action` and
  * `data-review-grid-stepper`, not per-card listeners — keeps the JS
- * cheap and survives Slice 3's tile-replacement DOM churn.
+ * cheap and survives tile-replacement DOM churn.
  */
 (function () {
     'use strict';
@@ -27,8 +17,8 @@
      * minmax(var(--review-tile-size), 1fr))` so the layout reflows
      * naturally as the slider moves.
      *
-     * Hotfix 8 (2026-05-23): the slider range depends on the
-     * current view mode because the crop source is only 256×256 —
+     * The slider range depends on the current view mode because the crop
+     * source is only 256×256 —
      * anything beyond ~320px would be visibly upscaled. We split
      * the range by mode and persist per-mode positions:
      *   crop mode  → 120..320 px,  default 240
@@ -174,7 +164,7 @@
         if (meta) meta.textContent = remaining + ' event' + (remaining === 1 ? '' : 's');
     }
 
-    /* 2026-05-23 evening — Smart-Mode for card-header buttons.
+    /* Smart-Mode for card-header buttons.
      *
      * Card-header Approve / Relabel / Trash / Mark No Bird now respect
      * the operator's selection: if any tile checkbox in the card is
@@ -413,7 +403,7 @@
         }
     }
 
-    /* Apple-Photos click semantics for tile images (Hotfix 5):
+    /* Apple-Photos click semantics for tile images:
      *   single-click  → toggle the tile's selection checkbox
      *   shift+click   → range-select from last clicked
      *   double-click  → open detection modal at full size
@@ -557,7 +547,7 @@
         }
     });
 
-    /* 2026-05-23 evening — wire checkbox change → card label refresh.
+    /* Wire checkbox change → card label refresh.
      * Smart-Mode buttons need to flip labels the moment selection
      * state changes. One delegated listener at document level catches
      * every .review-grid__tile-checkbox change without per-card hookup. */
@@ -572,7 +562,7 @@
     // also ensures the data-scope-label-event default labels stick).
     document.addEventListener('DOMContentLoaded', refreshAllCardActionLabels);
 
-    /* Hotfix 3b — Relabel Event from the card header.
+    /* Relabel Event from the card header.
      * Opens WmSpeciesPicker for the event's cover detection, then
      * POSTs /api/moderation/bulk/relabel for every actionable
      * detection_id in the card. The card's data-species + visible
@@ -648,7 +638,7 @@
     }
 
     /* ------------------------------------------------------------
-     * Slice 4 — Continuity batch actions.
+     * Continuity batch actions.
      *
      * Apply species: POST /api/moderation/bulk/relabel with the batch's
      *   actionable detection ids (every member of every event in the
@@ -656,9 +646,9 @@
      *   Approve Batch / Approve Event picks the new species.
      *
      * Approve batch: POST /api/review/event-approve with **no**
-     *   event_key (UI_STANDARD §6c rule 7) and the union of
-     *   review_detection_ids, after filtering context-only ids on the
-     *   client (rule 5 mirror). Each batch-member card is then removed.
+     *   event_key and the union of review_detection_ids, after filtering
+     *   context-only ids on the client. Each batch-member card is then
+     *   removed.
      * ---------------------------------------------------------- */
 
     function batchCards(batchKey) {
@@ -718,7 +708,7 @@
             if (window.wmToast) window.wmToast('Batch has no rendered cards.', 'error', 3500);
             return;
         }
-        // UI_STANDARD §6c rule 6: convergence on a single species.
+        // Batch approval requires convergence on a single species.
         const speciesSet = new Set(cards.map(function (c) { return c.dataset.species || ''; }).filter(Boolean));
         if (speciesSet.size !== 1) {
             if (window.wmToast) window.wmToast('Batch events disagree on species — relabel first.', 'warning', 3500);
@@ -746,7 +736,7 @@
     }
 
     /* ------------------------------------------------------------
-     * Slice 3 — multi-select + bulk-footer wiring.
+     * Multi-select and bulk action wiring.
      *
      * Selection is page-scoped: a Trash Selected can span multiple
      * events. Approve Selected groups picks by event_key and posts
@@ -789,8 +779,8 @@
         });
     }
 
-    /* 2026-05-23 evening — Bulk-footer + cross-event bulk handlers
-       removed in Slice 8. Card-header Smart-Mode covers every per-card
+    /* Bulk-footer + cross-event bulk handlers removed.
+       Card-header Smart-Mode covers every per-card
        bulk path; cross-event bulk is no longer reachable from this
        page. removeTilesByDetectionIds stays because it is shared by
        the Smart-Mode handlers and Apple-Photos tile-click flow. */
@@ -817,14 +807,14 @@
         if (!(checkbox && checkbox.classList && checkbox.classList.contains('review-grid__tile-checkbox'))) {
             return;
         }
-        // Hotfix 3c: visual highlight on the tile + per-card counter.
+        // Visual highlight on the tile + per-card counter.
         const tile = checkbox.closest('.review-grid__tile');
         if (tile) tile.classList.toggle('is-selected', checkbox.checked);
         const card = checkbox.closest('[data-review-grid-card]');
         if (card) updateCardSelectionCounter(card);
     });
 
-    /* Hotfix 7 — bbox-overlay toggle.
+    /* Bbox-overlay toggle.
      *
      * Each tile carries data-bbox-{x,y,w,h} (frame-fraction coords).
      * A sibling canvas under the image is empty until the operator

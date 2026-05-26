@@ -501,11 +501,10 @@ class PtzClient:
     def get_capabilities(self) -> dict[str, Any]:
         """Probe the camera's declared PTZ capabilities via ONVIF.
 
-        Returns a plain dict matching the shape that
-        ``agent_handoff/lab/experiments/ptz_probe/ptz_probe_core.py``
-        produces for the equivalent operations — declared support
-        for continuous / relative / absolute pan-tilt and zoom plus
-        the maximum preset count. This is a READ-ONLY ONVIF probe
+        Returns a plain dict matching the standalone PTZ probe's declared
+        capability shape — support for continuous / relative / absolute
+        pan-tilt and zoom plus the maximum preset count. This is a
+        READ-ONLY ONVIF probe
         (``GetServiceCapabilities`` + ``GetNodes``); it issues no
         move commands and is safe to call against any reachable cam.
 

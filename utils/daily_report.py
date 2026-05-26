@@ -300,8 +300,7 @@ def _fetch_species_best_photos(conn, date_iso: str) -> list[dict]:
         )
         -- "Best photo" ranking, highest priority first:
         --   1. PTZ preset bias — preset-targeted frames are physically
-        --      closer to the bird (see plan 2026-05-15_PTZ_image-context-
-        --      for-gallery-bias). Legacy NULL rows sort behind anything tagged.
+        --      closer to the bird. Legacy NULL rows sort behind anything tagged.
         --   2. nightly aesthetic_score from scripts/aesthetic_tag_nightly.py
         --      (NULL on legacy / non-taggable species → ranked behind scored)
         --   3. detector confidence
@@ -1107,7 +1106,7 @@ def send_report_variant_previews(variants: list[dict]) -> list:
 def _report_title_for_mode() -> str:
     """Return the report title based on the configured Telegram mode.
 
-    English copy by HUMAN convention "Sprache ist IMMER ENGLISH IM CODE".
+    English copy by project convention "Sprache ist IMMER ENGLISH IM CODE".
     Species names themselves stay in the operator's locale (handled
     upstream in common_names_<LOCALE>.json) — only the wrapper text
     is English here.
@@ -1140,7 +1139,7 @@ def render_text_report(
 ) -> str:
     """Render the report header + summary as valid Telegram HTML.
 
-    All wrapper copy is English (by HUMAN convention). The species name
+    All wrapper copy is English (by project convention). The species name
     in the "most frequent" line stays in whatever locale common_names
     resolved it to — that's a proper noun and shouldn't be translated.
 

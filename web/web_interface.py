@@ -64,7 +64,7 @@ from web.services import (
 # cover and rotating story frames fresh on every render via
 # ``_choose_story_board_frames``. This matches the rotation semantics of
 # Today's Visitors and the species-detail page (random.choice across the
-# favorite/KI/score-ranked pool) without paying the SQL cost on every hit.
+# favorite/AI/score-ranked pool) without paying the SQL cost on every hit.
 # TTL stays short so newly favorited/rated detections show up within one
 # refresh after the cache lapses.
 # Stored as ``{"timestamp": float, "pools": dict, "modal_dets": list}``.
@@ -406,12 +406,11 @@ def create_web_interface(detection_manager, system_monitor=None):
 
     # Quality key thin wrapper — single source of truth in core.gallery_core
     # so Best-of-Species, Today's Visitors, Species tab and subgallery all
-    # share one ranking DNA. See plan 2026-05-15_PTZ_image-context-for-
-    # gallery-bias.
+    # share one ranking policy.
     from core.gallery_core import cover_quality_tuple as _cover_quality_tuple  # noqa: E501
 
     def _is_favorite(det: dict) -> bool:
-        """True when a detection is marked as ❤️ favorite (HUMAN gold-label)."""
+        """True when a detection is marked as ❤️ favorite (manual gold label)."""
         return bool(int(det.get("is_favorite") or 0))
 
     def _is_gallery_eligible(det: dict) -> bool:
@@ -493,7 +492,7 @@ def create_web_interface(detection_manager, system_monitor=None):
         """Thin wrapper around ``core.gallery_core.pick_cover_for_group``.
 
         The shared picker is the single source of truth — see plan
-        2026-05-15_PTZ_image-context-for-gallery-bias. Legacy ``**_kwargs``
+        . Legacy ``**_kwargs``
         absorbs the ``seed_key``/``date_iso`` arguments older callers still
         pass; both are unused under the current rotation semantics.
         """
@@ -654,7 +653,7 @@ def create_web_interface(detection_manager, system_monitor=None):
 
         Uses ``_choose_story_board_frames`` (same picker as Today's Visitors and
         the species-detail page) so rotation semantics match the rest of the app:
-        random.choice() across the favorite pool, then KI pool, then ranked
+        random.choice() across the favorite pool, then AI pool, then ranked
         fallback.
         """
         from core.gallery_core import _choose_story_board_frames
@@ -896,8 +895,8 @@ def create_web_interface(detection_manager, system_monitor=None):
     )
     server.register_blueprint(training_export_bp)
 
-    # Register User-Groundtruth Export Blueprint (Pipeline-Dev feedback loop).
-    # Plan: 2026-05-22_FEATURE_user-groundtruth-export-for-pipeline-dev.
+    # Register User-Groundtruth Export Blueprint (model training feedback loop).
+    #
     # Distinct from training_export: this one is whole-window driven
     # (everything user-labeled since the last batch), the older one
     # is per-detection approve-driven. They coexist.

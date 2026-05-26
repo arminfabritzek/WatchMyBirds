@@ -567,19 +567,17 @@ def test_review_page_renders_workspace_for_detection_orphan_only_state(client):
     # The detection-orphan-only page must render the workspace, not
     # the empty state.
     #
-    # 2026-05-23 redesign (plan 2026-05-23_UI_review-grid-redesign):
-    # /admin/review now defaults to the new Review Grid layout
+    # /admin/review defaults to the Review Grid layout
     # (templates/review_grid.html). The legacy Stage-Panel hooks
     # (`#reviewWorkspace`, `#reviewQueueBrowser`, `data-panel-type`)
-    # live only in templates/orphans.html, reachable via
-    # ?layout=legacy. The new grid renders `.review-grid__stack`
-    # regardless of whether there are events. Slice 8 (2026-05-23
-    # evening) retired the sticky bulk-action footer — card-header
-    # Smart-Mode replaces it for the per-card workflow.
+    # live only in templates/orphans.html, reachable via ?layout=legacy.
+    # The grid renders `.review-grid__stack` regardless of whether there
+    # are events, and the former sticky bulk-action footer stays retired
+    # in favour of per-card Smart-Mode buttons.
     assert "Review Queue Empty" not in body
     assert 'class="review-grid' in body
     assert 'data-review-grid-stack' in body
-    assert 'id="reviewGridBatchFooter"' not in body  # Slice 8: footer retired
+    assert 'id="reviewGridBatchFooter"' not in body
 
 
 def test_review_page_strips_image_orphans_from_queue(client):
@@ -624,8 +622,8 @@ def test_review_page_strips_image_orphans_from_queue(client):
     assert response.status_code == 200
     body = response.get_data(as_text=True)
     # With only image-orphans loaded, the queue is effectively empty
-    # and the empty-state placeholder must render. 2026-05-23
-    # redesign uses "Inbox zero." (review_grid.html); the legacy
+    # and the empty-state placeholder must render. The default surface
+    # uses "Inbox zero." (review_grid.html); the legacy
     # "Review Queue Empty" wording lives in orphans.html behind
     # ?layout=legacy.
     assert "Inbox zero." in body
@@ -697,9 +695,9 @@ def test_review_page_hides_queue_rail_while_event_workspace_is_active(client):
 
     assert response.status_code == 200
     body = response.get_data(as_text=True)
-    # 2026-05-23 redesign: new Review Grid is default. Legacy hooks
+    # Review Grid is the default surface. Legacy hooks
     # (`#reviewWorkspace`, `#reviewEventBrowser`, `data-panel-type`)
-    # are reachable via ?layout=legacy. The new grid renders one
+    # are reachable via ?layout=legacy. The grid renders one
     # `.review-grid__card` per event.
     assert 'class="review-grid' in body
     assert 'data-review-grid-card' in body

@@ -55,7 +55,6 @@
     8-field payload shape, the no-PII allowlist, UUID lifecycle
     (lazy-gen, persistence, rotate), and atomic last-sent file
     semantics.
-  - Plan: `agent_handoff/workflow/plans/2026-05-05_FEATURE_telemetry-heartbeat-opt-in.md`.
   - First-Run consent screen and aggregated public DAU dashboard
     are deliberately out of scope here; they ship in a follow-up
     after this introduction release has run for a real interval.
@@ -78,7 +77,7 @@
   - Restore is **not** part of this release — recovery in v1 is a manual
     procedure on a separate Linux machine, documented in
     `docs/USB_BACKUP.md`. UI restore + OTA pre-update snapshot hook ship
-    in v2 (roadmap plan `2026-04-29_INFRA_usb-restore-and-ota-hooks`).
+    in v2.
 
 ## 0.2.0 - 2026-04-20
 

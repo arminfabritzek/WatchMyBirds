@@ -16,7 +16,7 @@ def test_tile_toolbox_supports_details_href():
     assert "allow_favorite=true" in content
     # `allow_training_export=true` macro parameter intentionally kept so
     # caller templates don't break; the button it gated was removed
-    # 2026-05-24 (HUMAN decision — one-click ground-truth poisoning risk).
+    # 2026-05-24 (manual decision — one-click ground-truth poisoning risk).
     assert "allow_training_export=true" in content
     assert "allow_details=true" in content
     assert "allow_change_species=true" in content
@@ -111,7 +111,7 @@ def test_modal_action_bar_data_actions_are_dispatched():
     action_bar = _read("templates/components/modal_action_bar.html")
     js = _read("assets/js/tile_actions.js")
 
-    # 2026-05-23 redesign: the bar gained an in_header variant
+    # The bar has an in_header variant
     # (class="modal-action-bar modal-action-bar--in-header"), so the
     # historical exact-match assertion would only catch the legacy
     # footer-rendered form. Match the class as a prefix and verify the
@@ -134,11 +134,11 @@ def test_tile_actions_dispatch_training_export_flag():
 def test_detection_info_hides_decision_badges_after_manual_species_review():
     content = _read("templates/components/modal_detection_info.html")
 
-    # 2026-05-23 redesign: the single-detection branch is gone (the header
-    # subtitle in detection_modal.html now carries species + confidence +
-    # AI-status for the entry-point detection). Only the multi-bird
-    # sibling-strip branch remains; the manual-species-review guard still
-    # has to suppress decision badges per sibling when human approval has
+    # The single-detection branch is gone (the header subtitle in
+    # detection_modal.html now carries species + confidence + AI-status
+    # for the entry-point detection). Only the multi-bird sibling-strip
+    # branch remains; the manual-species-review guard still has to
+    # suppress decision badges per sibling when human approval has
     # landed.
     assert "sib_has_manual_species_review = (sib.species_source == 'manual') and sib.manual_species_override" in content
     assert "sib_has_manual_review_approval = sib_has_manual_species_review and (sib.review_status == 'confirmed_bird')" in content
@@ -345,7 +345,7 @@ def test_review_modal_uses_quick_review_layout():
     assert "function clearPendingReviewSpecies(itemKey)" in review_js
     assert "persistPending: Boolean(pendingSpecies)" in review_js
     assert "new Image()" in review_js
-    assert "hydrateReviewSpeciesThumbs(panel);" in review_js
+    assert "hydrateReviewSpeciesThumbs();" in review_js
     assert "async function hydrateReviewSpeciesThumbs()" in review_js
     assert "reviewApprove(" in review_js
     assert "async function confirmReviewSpeciesSelection(actionBtn, panel, itemKey, filename)" in review_js

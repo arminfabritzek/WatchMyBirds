@@ -466,9 +466,10 @@ class ONNXDetectionModel(BaseDetectionModel):
             )
             yaml_set = set()
 
-        # Settings.yaml override (bridge period until pipeline-dev ships
-        # the YAML block). Both sources union — never subtract from one
-        # via the other; suppression is additive on purpose.
+        # Settings.yaml override (bridge period until the training
+        # pipeline ships the YAML block). Both sources union — never
+        # subtract from one via the other; suppression is additive on
+        # purpose.
         settings_set: set[str] = set()
         try:
             settings_raw = get_config().get("SUPPRESS_OD_CLASSES") or []

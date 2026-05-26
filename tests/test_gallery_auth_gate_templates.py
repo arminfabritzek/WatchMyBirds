@@ -31,11 +31,11 @@ class TestModalDetectionInfoGuard:
         assert "can_moderate=false" in content
 
     def test_no_per_card_action_buttons(self):
-        """2026-05-23 redesign: per-card Change-Species/Trash buttons are
-        removed. The header action group (modal_action_bar.html) now hosts
-        these verbs and acts on the active detection (selected via canvas-
-        click or sibling-card body click). TestModalActionBarGuard below
-        verifies the header guard. This test guarantees we do not silently
+        """Per-card Change-Species/Trash buttons are removed. The header
+        action group (modal_action_bar.html) now hosts these verbs and
+        acts on the active detection (selected via canvas-click or
+        sibling-card body click). TestModalActionBarGuard below verifies
+        the header guard. This test guarantees we do not silently
         re-introduce un-guarded per-card action buttons in the sibling
         strip."""
         content = _read_template("components/modal_detection_info.html")

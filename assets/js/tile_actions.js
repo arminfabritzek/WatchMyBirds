@@ -168,7 +168,7 @@
 
             const hint = document.createElement('p');
             hint.style.cssText = 'margin: 0; font-size: 12px; color: var(--color-text-muted, #888);';
-            hint.textContent = 'Feeds into the next Pipeline-Dev training batch as hard-negatives. '
+            hint.textContent = 'Feeds into the next model training batch as hard-negatives. '
                 + '(This confirmation appears only once per session.)';
             body.appendChild(hint);
 

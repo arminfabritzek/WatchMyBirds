@@ -617,7 +617,7 @@ def test_hf_refresh_preserves_active_precision_stamp(model_dir, monkeypatch):
     )
 
     # Fake HF's "latest" response — same latest id, same paths, but no
-    # precision key (mirrors what pipeline-dev's HF file looks like).
+    # precision key (mirrors the downstream model registry shape).
     remote_payload = {
         "latest": "20260417_yolox_tiny_locator_ep120",
         "project_name": "WatchMyBirds",

@@ -4,19 +4,17 @@ Reject-audit log — metadata-only record of classifier-rejected detections.
 The detection-manager routes detections through ``decide_label`` (see
 :mod:`detectors.cls_config`). When the classifier returns
 ``decision_level='reject'`` we skip image/crop/detection-row persistence
-entirely and instead record a single metadata row here (A1a, plan
-2026-05-19).
+entirely and instead record a single metadata row here.
 
 The audit row carries enough signal to reconstruct *why* a detection
 was dropped — bbox position, OD class + confidence, classifier top-1
 + probability, decision context — without needing the frame itself.
 Cluster queries against ``bbox_x``/``bbox_y`` then surface static
-background objects (the tree-branch / fat-ball FP pattern we hit in
-the 2026-05-19 obs window).
+background objects (the tree-branch / fat-ball FP pattern).
 
 If you later need a visual sample for a specific cluster, flip the
-operator-facing audit-capture toggle (separate plan, A2) for a
-bounded window — the default stays metadata-only.
+operator-facing audit-capture toggle for a bounded window — the
+default stays metadata-only.
 """
 
 from __future__ import annotations

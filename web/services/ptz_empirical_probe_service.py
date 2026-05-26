@@ -1,9 +1,8 @@
 """
 PTZ Empirical Probe Service - thin web wrapper.
 
-Slice 2 of 2026-05-18_PTZ_probe-ui-integration, expanded for free-form
-flow (2026-05-19): operator picks tests in any order from a flat list,
-re-runs are first-class, finalize is explicit.
+Free-form probe flow: operator picks tests in any order from a flat
+list, re-runs are first-class, finalize is explicit.
 
 Exposes the core.ptz_empirical_probe state machine to the Flask layer
 without leaking any camera/ or detector/ imports (H-01 boundary).

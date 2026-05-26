@@ -991,9 +991,9 @@ function drawBoundingBoxes(canvas, img, boxes, currentDetectionId) {
     const strokeCurrent = 3 * inv;
     const strokeOther = 2 * inv;
 
-    // 2026-05-23 redesign: collect CSS-pixel rects keyed by detection id
-    // so the click handler below can hit-test without recomputing. Stored
-    // on the canvas DOM node; replaced on every draw.
+    // Collect CSS-pixel rects keyed by detection id so the click handler
+    // below can hit-test without recomputing. Stored on the canvas DOM
+    // node; replaced on every draw.
     const hitTestBoxes = [];
 
     boxes.forEach((box, idx) => {
@@ -1059,9 +1059,9 @@ function drawBoundingBoxes(canvas, img, boxes, currentDetectionId) {
         }
     });
 
-    // 2026-05-23 redesign: expose CSS-pixel rects so the canvas click
-    // handler can hit-test against the just-drawn boxes. Sorted by area
-    // ascending so overlapping companions resolve foreground-first.
+    // Expose CSS-pixel rects so the canvas click handler can hit-test
+    // against the just-drawn boxes. Sorted by area ascending so
+    // overlapping companions resolve foreground-first.
     canvas._hitTestBoxes = hitTestBoxes.slice().sort(function (a, b) {
         return a.area - b.area;
     });
@@ -1523,10 +1523,6 @@ document.addEventListener('mouseleave', function (event) {
    switches it to the active detection: the modal's action buttons
    (Trash, Boxes, Zoom) and the smart-zoom target retarget the clicked
    detection. Sibling-strip chips dispatch the same event.
-
-   Absorbed from parked plan
-   2026-04-30_UI_multi-bird-modal-followups Item 1a (click-to-zoom on
-   companion bbox).
    ========================================= */
 
 function _findHitDetection(canvas, evt) {
@@ -1657,7 +1653,7 @@ function _handleActiveDetectionChange(modal, detail) {
         }
     }
 
-    // 6) Mark the active sibling-card in the strip (Slice 3 read it).
+    // 6) Mark the active sibling-card in the strip (recovery read it).
     const cards = modal.querySelectorAll('.sibling-card');
     cards.forEach(function (card) {
         const id = parseInt(card.dataset.detectionId, 10);
@@ -1676,7 +1672,7 @@ document.addEventListener('wmb:active-detection-change', function (event) {
 
 // Click on a sibling-card body (outside the per-card action buttons)
 // dispatches the same switch event so the chip-strip stays in sync
-// with the canvas. The per-card action buttons (Slice 3 removes them)
+// with the canvas. The per-card action buttons (recovery removes them)
 // still go through the existing delegated handler above.
 document.addEventListener('click', function (event) {
     if (!(event.target instanceof Element)) return;
@@ -1716,7 +1712,7 @@ document.addEventListener('click', function (event) {
 });
 
 /* =========================================
-   Maximize-Toggle (2026-05-23 redesign)
+   Maximize-Toggle
 
    The ⛶ button in the header action group toggles a .wm-modal--maximized
    modifier on the dialog root. Maximized = dialog fills the viewport

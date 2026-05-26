@@ -863,8 +863,8 @@ class DetectionManager:
 
             # --- Defer image save until we know the frame has a keeper ---
             #
-            # A1a (plan 2026-05-19): if every detection in this frame ends
-            # up at ``decision_level='reject'``, we do NOT write the
+            # If every detection in this frame ends up at
+            # ``decision_level='reject'``, we do NOT write the
             # original/optimized image or an images-row. We only log a
             # metadata audit per reject detection. This keeps disk and DB
             # from filling up with static-background FPs (tree-branch,

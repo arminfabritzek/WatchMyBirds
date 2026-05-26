@@ -72,12 +72,11 @@ By isolated AUC alone, only Parus would qualify.
 
 ### Real-world Pi-output simulation (5 days × 12 species, top-3 per bucket)
 
-HUMAN judgement on 111 picks: **~67 % were good** ("2 of 3 are good").
+Manual judgement on 111 picks: **~67 % were good** ("2 of 3 are good").
 This is ~3–6× lift over random selection given a typical favorite-rate
 of 10–20 % in the underlying pool.
 
-Source data: `agent_handoff/lab/experiments/aesthetic_tagger/aesthetic_last5/picks.csv`,
-`agent_handoff/lab/experiments/aesthetic_tagger/aesthetic_last5/embedded_per_day.html`.
+Source data came from a local validation run over five days of station output.
 
 ### Decision
 

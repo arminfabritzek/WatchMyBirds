@@ -9,8 +9,6 @@ closures are now thin wrappers around
 share one ranking DNA with the SQL pickers
 (``fetch_daily_covers``, ``fetch_species_story_board_candidates``,
 ``_fetch_species_best_photos``). These tests pin that DNA.
-
-See plan 2026-05-15_PTZ_image-context-for-gallery-bias.
 """
 
 from __future__ import annotations
@@ -125,7 +123,7 @@ def test_pick_cover_empty_returns_none():
 
 
 def test_pick_cover_human_favorite_wins_over_ptz_preset():
-    """A HUMAN favorite must never be hijacked by automation — including a
+    """A manual favorite must never be hijacked by automation — including a
     physically-closer PTZ preset frame."""
     fav = _det(detection_id=1, is_favorite=1, ptz_origin="overview")
     preset = _det(
@@ -137,7 +135,7 @@ def test_pick_cover_human_favorite_wins_over_ptz_preset():
 
 
 def test_pick_cover_ptz_ki_intersection_wins_over_plain_ptz():
-    """When PTZ-preset frames exist AND one of them is also KI-approved,
+    """When PTZ-preset frames exist AND one of them is also AI-approved,
     the intersection should win — strongest non-human signal."""
     ptz_plain = _det(
         detection_id=1, ptz_origin="preset", is_gallery_eligible=0
@@ -151,7 +149,7 @@ def test_pick_cover_ptz_ki_intersection_wins_over_plain_ptz():
 
 
 def test_pick_cover_plain_ptz_wins_over_ki_only():
-    """No PTZ-∩-KI frame available, but a plain PTZ-preset frame should
+    """No PTZ-∩-AI frame available, but a plain PTZ-preset frame should
     still outrank a pure aesthetic-tagger pick — close-up beats generic."""
     ptz_only = _det(
         detection_id=1, ptz_origin="preset", is_gallery_eligible=0
@@ -165,16 +163,16 @@ def test_pick_cover_plain_ptz_wins_over_ki_only():
 
 
 def test_pick_cover_ki_wins_over_interior_fallback():
-    """No favorite, no PTZ — a KI pick beats an interior-only fallback."""
+    """No favorite, no PTZ — an AI pick beats an interior-only fallback."""
     ki = _det(detection_id=1, is_gallery_eligible=1)
-    plain_interior = _det(detection_id=2)  # interior, not KI-approved
+    plain_interior = _det(detection_id=2)  # interior, not AI-approved
     rng = random.Random(0)
     picked = pick_cover_for_group([plain_interior, ki], rng=rng)
     assert picked is ki
 
 
 def test_pick_cover_score_fallback_for_legacy_rows():
-    """All else equal (no favorite, no PTZ, no KI flag), the highest-score
+    """All else equal (no favorite, no PTZ, no AI flag), the highest-score
     interior row wins. Mirrors the legacy fallback behaviour."""
     weak = _det(detection_id=1, score=0.5)
     strong = _det(detection_id=2, score=0.95)

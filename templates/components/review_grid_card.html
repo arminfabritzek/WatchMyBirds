@@ -1,8 +1,6 @@
 {#
   Review Grid Card — one BirdEvent rendered as a self-contained card.
 
-  Plan: 2026-05-23_UI_review-grid-redesign, Slice 2.
-
   Inputs (macro args):
     event        — event payload from _build_review_event (review.py)
     default_size — initial tiles-per-row for this card
@@ -10,14 +8,14 @@
   Composition:
     - Header row: species · start/end window · count · Approve · Trash · stepper
     - Grid body: one wm-tile per member, sized by --card-tile-cols
-    - Hidden detection-modal markup per member (UI_STANDARD §0 point 4)
+    - Hidden detection-modal markup per member
 
-  Toolbox + Image-Viewer use the shared macros (UI_STANDARD §0).
-  Species colour token (§6d) is set on the species pill via
+  Toolbox + Image-Viewer use the shared macros.
+  Species colour token is set on the species pill via
   data-species-colour + inline --cell-species-colour.
 
-  Slice 3 wires multi-select + bulk actions onto the tile checkboxes.
-  Slice 4 spins off a --batch variant for continuity batches.
+  Multi-select and continuity-batch variants are handled by the same
+  markup through data attributes.
 #}
 {% from "components/modal_image_viewer.html" import render_image_viewer %}
 {% from "components/detection_modal.html" import render_modal %}
@@ -68,9 +66,8 @@
 
     <header class="review-grid__card-header">
         <div class="review-grid__card-identity">
-            {# 2026-05-23 Slice 7 — Species name is the dominant identity
-               anchor. The meta line (date · time · count) drops to a
-               muted sub-line. The Operator reads the Species name first,
+            {# Species name is the dominant identity anchor. The meta line
+               (date · time · count) drops to a muted sub-line. The operator reads the species name first,
                not the timestamp. #}
             <div class="review-grid__card-species-row">
                 <span class="review-grid__card-species"
@@ -109,16 +106,14 @@
             </div>
         </div>
 
-        {# 2026-05-23 evening — Smart-Mode action group.
+        {# Smart-Mode action group.
            Every button carries a `data-scope-label-event` / `data-scope-
            label-selection` pair plus matching tooltip text. The JS
            handler getCardScopeIds() flips between the two based on
            whether any tile checkbox in the card is checked. The
            Mark No Bird button uses an outline+warning style to stay
            visually distinct from the filled-red Trash button — they
-           are semantically different (training signal vs. housekeeping)
-           per the 2026-05-23 "Event-Delete ≠ Hard-Negative" decision
-           recorded in memory + UI_STANDARD §6bb. #}
+           are semantically different (training signal vs. housekeeping). #}
         <div class="review-grid__card-actions">
             <button type="button"
                     class="btn btn--secondary btn--sm review-grid__card-invert"
@@ -196,7 +191,7 @@
                 class="btn btn--success btn--sm"
                 data-review-grid-action="approve_batch"
                 data-batch-key="{{ event.continuity_batch_key }}"
-                {% if not batch_recommended %}disabled title="Approve unlocks once every event in the batch shares the same species"{% else %}title="Approve every actionable frame across this batch in one shot (UI_STANDARD §6c rule 7: POST without event_key)"{% endif %}
+                {% if not batch_recommended %}disabled title="Approve unlocks once every event in the batch shares the same species"{% else %}title="Approve every actionable frame across this batch in one shot"{% endif %}
                 aria-label="Approve batch">
             ✓ Approve Batch
         </button>
@@ -240,11 +235,10 @@
                      single-click  → toggle selection
                      shift+click   → range-select from last clicked
                      double-click  → open big in lightbox modal
-                   Hotfix 5 (2026-05-23): explicit data-tile-image
-                   hook so the JS handler in review_grid.js only fires
-                   on the image itself, never on the toolbox or
-                   checkbox. The modal target stays available so the
-                   double-click handler can fire data-bs-target.
+                   Explicit data-tile-image hook so the JS handler in
+                   review_grid.js only fires on the image itself, never on
+                   the toolbox or checkbox. The modal target stays available
+                   so the double-click handler can fire data-bs-target.
 
                    Use optimized_url (mid-res webp) as the src so
                    tiles stay sharp when the slider grows them to
@@ -311,8 +305,8 @@
 </article>
 
 {# Detection-modal markup per actionable member — emitted once per
-   event card. UI_STANDARD §0 point 4 + §0c (companion bboxes auto-
-   render via render_image_viewer's siblings payload). #}
+   event card. Companion bboxes auto-render via render_image_viewer's
+   siblings payload. #}
 {% for member in _review_members %}
     {% if member.modal_detection and member.best_detection_id %}
     {{ render_modal(member.modal_detection, 'review-' ~ event.event_key) }}

@@ -159,5 +159,4 @@ After a successful probe run, every pill becomes green or red.
 - `core/ptz_core.py::probe_capabilities` + `_load_empirical_from_disk`:
   the read side of this contract
 - `docs/INVARIANTS.md`: PTZ-related hard invariants
-- Roadmap `2026-05-18_PTZ_probe-ui-integration_ROADMAP.md`: future
-  in-UI probe wizard that writes to the same canonical path
+- In-UI probe wizard: writes to the same canonical path

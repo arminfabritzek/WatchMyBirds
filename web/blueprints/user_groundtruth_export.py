@@ -19,11 +19,8 @@ Three endpoints (all login-required):
 Distinct from ``training_export``: that one is per-detection
 approve-driven (operator picks species and counts in the modal).
 This one is whole-window driven (everything user-labelled since the
-last batch). They can coexist; this plan does not retire the older
-endpoint.
-
-Plan reference:
-``agent_handoff/workflow/plans/2026-05-22_FEATURE_user-groundtruth-export-for-pipeline-dev.md``
+last batch). They can coexist; this endpoint does not retire the older
+export.
 """
 
 from __future__ import annotations
@@ -731,7 +728,7 @@ def build_and_stream() -> Response:
           "until": "2026-05-22T20:00:00+00:00",  // override (default now)
           "notes": "weekly batch W21",
           "station_id": "station-garden-01",
-          "reviewer_id": "armin"
+          "reviewer_id": "reviewer-a"
         }
 
     Empty-batch behavior: builds and streams a structurally valid

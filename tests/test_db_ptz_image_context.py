@@ -1,7 +1,7 @@
 """Schema + write-path tests for PTZ context on images rows.
 
 Verifies the additive columns added for the gallery thumbnail bias
-(plan 2026-05-15_PTZ_image-context-for-gallery-bias): ptz_origin,
+: ptz_origin,
 ptz_preset_token, ptz_zone, ptz_state, ptz_camera_id, plus the v2-
 reserved coordinate slots ptz_pan, ptz_tilt, ptz_zoom, ptz_position_at.
 """

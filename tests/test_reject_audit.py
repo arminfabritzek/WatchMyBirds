@@ -1,4 +1,4 @@
-"""Tests for the reject-audit log (A1a, plan 2026-05-19).
+"""Tests for the reject-audit log.
 
 The audit log replaces full persistence (image + crop + detection row)
 for detections the classifier routes to ``decision_level='reject'``.

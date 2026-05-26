@@ -4,7 +4,7 @@ Two layers:
 1. SQL: fetch_daily_covers picks the preset row over an overview row
    when all other quality fields tie.
 2. Python: _story_board_candidate_quality returns a tuple that ranks
-   preset rows above overview/NULL rows but BELOW HUMAN favorites.
+   preset rows above overview/NULL rows but BELOW manual favorites.
 """
 
 import pytest
@@ -85,8 +85,8 @@ def test_fetch_daily_covers_prefers_preset_row_over_overview_row():
 
 
 def test_fetch_daily_covers_rating_still_wins_over_preset():
-    """HUMAN rating outranks PTZ preset bias — the auto-picker never
-    overrides a HUMAN choice."""
+    """manual rating outranks PTZ preset bias — the auto-picker never
+    overrides a manual choice."""
     with closing_connection() as conn:
         # Overview row has manual 5-star rating; preset row has none.
         _seed_image(conn, "20260516_120000_000000.jpg", "overview")
@@ -147,7 +147,7 @@ def test_story_board_quality_preset_beats_overview_at_equal_aesthetic():
 
 
 def test_story_board_quality_favorite_beats_preset():
-    """is_favorite is the first tuple element — HUMAN choice wins."""
+    """is_favorite is the first tuple element — manual choice wins."""
     favorite_overview_det = {
         "is_favorite": 1,
         "is_gallery_eligible": 0,
@@ -188,7 +188,7 @@ def test_story_board_quality_manual_drive_treated_as_preset():
     }
     manual_drive = {**auto_preset, "ptz_origin": "manual_drive", "detection_id": 301}
 
-    # Slice 1 of the gallery ranker treats both equally.
+    # the initial of the gallery ranker treats both equally.
     auto_key = _story_board_candidate_quality(auto_preset)
     manual_key = _story_board_candidate_quality(manual_drive)
     # The PTZ-preset slot (index 1, between is_favorite and is_gallery_eligible)

@@ -507,7 +507,7 @@ def render_collector_card(
     # species hue and reads as the "this is the daily set" frame.
     hero_rim, hero_glow = _NEON_PALETTE[6]
 
-    # 1. Outer double frame — tightened on HUMAN request so more of the
+    # 1. Outer double frame — tightened on user request so more of the
     #    canvas is photo. Outer hairline at 6px from the edge, coloured
     #    inner rim at +4. Total reclaimed: ~16px on every side vs. the
     #    previous 14+6+14 stack.
@@ -536,7 +536,7 @@ def render_collector_card(
     # 2. Header band — single centred headline "✓ N CONFIRMED SPECIES",
     #    with a sub-line below it carrying a calendar-icon date and a
     #    pin-icon device label, separated by a thin divider. The total
-    #    visit count was removed on HUMAN request: aggregate numbers
+    #    visit count was removed on user request: aggregate numbers
     #    competed with the per-vignette visit counts and the headline
     #    became noisy.
     species_word = "SPECIES"  # singular/plural identical, like in EN news headlines

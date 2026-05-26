@@ -439,12 +439,12 @@ def fetch_random_favorites(
     Used for a quick 'best of' preview gallery on the homepage.
 
     Two sources, queried equally:
-      - is_favorite=1            → HUMAN gold-label
-      - is_gallery_eligible=1    → KI auto-pick (aesthetic tagger)
+      - is_favorite=1            → manual gold label
+      - is_gallery_eligible=1    → AI auto-pick (aesthetic tagger)
 
-    Both are good cover candidates. The UI distinguishes them via a KI badge
+    Both are good cover candidates. The UI distinguishes them via an AI badge
     rendered when is_favorite=0 AND is_gallery_eligible=1. Within the random
-    selection, both pool together so a station with few HUMAN favorites still
+    selection, both pool together so a station with few manual favorites still
     has a populated homepage.
     """
     query = f"""
@@ -887,7 +887,7 @@ def fetch_daily_covers(
                 --      driven to a non-overview preset are physically closer
                 --      to the bird. Auto and manual drives rank equally; legacy
                 --      NULL rows sort behind anything tagged. See plan
-                --      2026-05-15_PTZ_image-context-for-gallery-bias.
+                --      .
                 --   3. nightly aesthetic score from scripts/aesthetic_tag_nightly.py
                 --   4. detector confidence (legacy fallback)
                 ORDER BY COALESCE(d.rating, 0) DESC,

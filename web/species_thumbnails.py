@@ -94,8 +94,8 @@ def get_species_thumbnail_map(
 
     Priority:
     1. Dedicated local species art in assets/review_species
-    2. HUMAN favorite detections (is_favorite=1)
-    3. KI gallery-eligible detections (is_gallery_eligible=1)
+    2. manual favorite detections (is_favorite=1)
+    3. AI gallery-eligible detections (is_gallery_eligible=1)
     4. Any detection/optimized image for that species
     """
     common_names = common_names or {}
@@ -141,7 +141,7 @@ def get_species_thumbnail_map(
             if current_favorite is None or score >= current_favorite[0]:
                 favorite_by_species[species_key] = (score, preview_url)
         elif bool(int(det.get("is_gallery_eligible") or 0)):
-            # Only count as KI pick when not already a HUMAN favorite — the two
+            # Only count as AI pick when not already a manual favorite — the two
             # tiers are mutually exclusive in this map (favorite always wins
             # within the cascade).
             current_ki = ki_pick_by_species.get(species_key)

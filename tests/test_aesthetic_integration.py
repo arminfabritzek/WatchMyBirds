@@ -1,7 +1,7 @@
 """Tests for the aesthetic_score integration into ranking surfaces.
 
 Covers the four call sites threaded by plan
-``2026-05-01_HANDOFF_aesthetic-score-app-integration``:
+``aesthetic-score app integration``:
 
 1. core.gallery_core._story_board_candidate_quality (tuple ordering)
 2. SQL ORDER BY in fetch_daily_covers (utils.db.detections)
@@ -70,7 +70,7 @@ def test_aesthetic_score_overrides_lower_detector_score():
 def test_manual_favorite_still_wins_over_aesthetic():
     """is_favorite=1 still wins regardless of aesthetic_score.
 
-    HUMAN's manual stars must never be reordered behind an automatic
+    manual manual stars must never be reordered behind an automatic
     score. This is the safety contract for the integration.
     """
     manual_favorite_low_aesthetic = _det(

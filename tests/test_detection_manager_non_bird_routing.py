@@ -65,10 +65,9 @@ def _build_detection_manager_fixture():
 
     mgr = DetectionManager.__new__(DetectionManager)
     # Config: NON_BIRD_CONFIRM_THRESHOLD gates non-bird detections (0.80 in
-    # production after the 2026-05-10 night-FP plan). NON_BIRD_DROP_BELOW_CONFIRM
-    # controls whether the pre-persist gate (A1) fires. SAVE_THRESHOLD is kept
-    # in the dict so any unrelated lookup that still references it survives
-    # this fixture.
+    # production). NON_BIRD_DROP_BELOW_CONFIRM controls whether the
+    # pre-persist gate fires. SAVE_THRESHOLD is kept in the dict so any
+    # unrelated lookup that still references it survives this fixture.
     mgr.config = {
         "SAVE_THRESHOLD": 0.65,
         "NON_BIRD_CONFIRM_THRESHOLD": 0.80,

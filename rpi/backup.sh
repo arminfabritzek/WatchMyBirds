@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # ----------------------------------------------------------------------
-# WatchMyBirds USB Backup (Phase 2 of usb-data-backup plan)
+# WatchMyBirds USB Backup
 #
 # Snapshots the SQLite database, captured imagery (originals + derivatives),
 # and the installed app code to a USB stick mounted at /mnt/wmb-backup.
 #
 # Runs as the unprivileged 'watchmybirds' user. NO root, NO polkit, NO sudo.
 #
-# Three load-bearing mechanics (per the plan):
+# Three load-bearing mechanics:
 #   1. SQLite is captured via the online .backup pragma -- WAL-aware,
 #      respects writers, no need to stop the app.
 #   2. Imagery is rsync'd with --link-dest pointing at the previous

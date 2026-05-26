@@ -697,7 +697,7 @@ def decide_label(
         #    the contract: "Genus fallback ... still applies INSIDE
         #    the Review bucket." Inside Review only, not below it.
         #
-        # 2. Empirically (2026-05-19 obs window): genus rescue from
+        # 2. Empirically: genus rescue from
         #    the drop branch produced false positives on non-bird
         #    frames where the classifier saw a flat-uncertain
         #    distribution over small/brown classes (e.g. a fat-ball

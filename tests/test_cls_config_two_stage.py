@@ -204,7 +204,7 @@ def test_genus_fallback_promotes_out_of_review():
 def test_genus_fallback_does_not_run_below_review_threshold():
     """Drop-bucket samples are strictly dropped — no genus rescue.
 
-    This pins the 2026-05-19 fix: previously the drop branch also ran
+    Regression pin: previously the drop branch also ran
     ``_maybe_genus_label``, which produced FPs on confused-genus
     distributions (e.g. a non-bird crop where Turdus_merula 0.30 +
     Turdus_philomelos 0.43 = 0.73 crossed genus_threshold). The

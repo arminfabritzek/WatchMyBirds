@@ -1,11 +1,11 @@
 """Tests for ETag-based content-freshness refresh of companion YAMLs.
 
-When the model-dev re-pushes a bundle under the **same** ``model_id``
-with changed companion content (the 2026-05-20 classifier N+1 case),
-the App must detect the change and re-download the YAML. The old
-existence-only skip path silently kept stale content.
+When a bundle is re-pushed under the **same** ``model_id`` with
+changed companion content (the classifier N+1 case), the App must
+detect the change and re-download the YAML. The old existence-only
+skip path silently kept stale content.
 
-This file covers four matrix cells from the fix-plan acceptance:
+This file covers four matrix cells:
 
 1. local present + HF unchanged (same ETag) -> no body download
 2. local present + HF changed (new ETag)    -> body downloaded
@@ -191,9 +191,8 @@ def test_fetch_companion_local_present_hf_unchanged_no_download(tmp_path, monkey
 def test_fetch_companion_local_present_hf_changed_downloads(tmp_path, monkeypatch):
     """Cell 2: local present + HF changed -> body downloaded.
 
-    This is the regression of the 2026-05-20 bug: the model-dev re-pushed
-    new content under the same model_id; the App must detect it and pull
-    the new body.
+    Regression case: new content is re-pushed under the same model_id;
+    the App must detect it and pull the new body.
     """
     yaml = tmp_path / "model_A_model_config.yaml"
     yaml.write_text("stale-pre-refit")
@@ -321,7 +320,7 @@ def test_sidecar_corrupt_treated_as_empty(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# WMB_FORCE_REMOTE_REFRESH env-var path (Slice 3 recovery)
+# WMB_FORCE_REMOTE_REFRESH env-var path (recovery recovery)
 # ---------------------------------------------------------------------------
 
 

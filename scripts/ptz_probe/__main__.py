@@ -11,12 +11,8 @@ camera actually did the right thing, and writes a structured report:
     ptz_probe_report_<timestamp>.log    (raw ONVIF traffic + debug)
 
 Usage:
-    cd agent_handoff/lab/experiments/ptz_probe
-    python -m venv .venv && source .venv/bin/activate
-    pip install -r requirements.txt
-    python ptz_probe.py
-    # or with prefilled connection args:
-    python ptz_probe.py --ip 192.168.1.100 --port 80 --user admin --pass secret
+    cd <wmb-repo-root>
+    python -m scripts.ptz_probe --ip 192.168.1.100 --user admin
 
 Safety:
     A "Home" preset is mandatory before any move test runs. The probe

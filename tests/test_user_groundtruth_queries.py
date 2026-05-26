@@ -7,7 +7,7 @@ a future schema change cannot silently:
 - cross-contaminate buckets (e.g. let species_review leak into
   confirmed_positives)
 - include soft-deleted detections (Trash is explicitly excluded from
-  Pipeline-Dev training data)
+  model training data)
 - include no-op manual overrides (relabel where user re-confirmed the
   same species the model picked — zero training signal)
 - include hard-negatives that the user later un-rejected (review_status
@@ -183,7 +183,7 @@ def test_hard_negatives_excludes_images_without_no_bird_flag():
 
 def test_hard_negatives_returns_multiple_boxes_on_same_image():
     """A frame can carry several false-positive boxes (multi-bird FP).
-    All of them must be exported individually so Pipeline-Dev sees the
+    All of them must be exported individually so downstream training sees the
     actual box geometry."""
     conn = _make_conn()
     _add_image(conn, "img.jpg", review_status="no_bird",
@@ -635,7 +635,7 @@ def test_decision_level_case_insensitivity():
 ])
 def test_null_provenance_fields_propagate_as_none(missing_field):
     """Old detections from before a column existed have NULL values.
-    The export should still ship them — Pipeline-Dev needs to know
+    The export should still ship them — downstream training needs to know
     'no model version recorded' rather than have rows silently
     dropped."""
     conn = _make_conn()
@@ -738,7 +738,7 @@ def test_favorites_can_overlap_with_confirmed_positives():
     """A favorited confirmed-positive detection appears in both
     buckets — by design. The COCO de-dupe in the service layer
     handles the single-annotation guarantee; the manifests preserve
-    every signal-source so Pipeline-Dev can weight them differently.
+    every signal-source so downstream training can weight them differently.
     Requires species_source='manual' to satisfy the explicit-user-
     action gate on the CP side."""
     conn = _make_conn()

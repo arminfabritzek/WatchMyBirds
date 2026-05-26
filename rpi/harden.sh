@@ -200,11 +200,11 @@ chmod 644 /etc/systemd/system/wmb-wifi-watchdog.timer
 # Enable the timer, NOT the service (timer triggers service)
 ln -sf /etc/systemd/system/wmb-wifi-watchdog.timer /etc/systemd/system/multi-user.target.wants/wmb-wifi-watchdog.timer
 
-# Install USB backup mount infrastructure (Phase 1 of usb-data-backup plan)
+# Install USB backup mount infrastructure
 # - mount unit binds /dev/disk/by-label/WMB-BACKUP to /mnt/wmb-backup (ext4 only)
 # - automount unit makes the mount lazy: stick can be inserted/removed at runtime
 # - Mount-Options nosuid,nodev,noexec block code-exec from the stick.
-# - The .timer/.service for scheduled backups are installed below (Phase 3).
+# - The .timer/.service for scheduled backups are installed below.
 mkdir -p /mnt/wmb-backup
 chown watchmybirds:watchmybirds /mnt/wmb-backup
 chmod 755 /mnt/wmb-backup
@@ -216,12 +216,12 @@ chmod 644 '/etc/systemd/system/mnt-wmb\x2dbackup.automount'
 ln -sf '/etc/systemd/system/mnt-wmb\x2dbackup.automount' \
     '/etc/systemd/system/multi-user.target.wants/mnt-wmb\x2dbackup.automount'
 
-# backup.sh itself (Phase 2) lives in /opt/app/rpi/backup.sh -- it is
-# part of the app code and arrives via rsync from the release/sync layer.
-# The service uses ConditionPathExists= so a fresh image without app
-# code yet skips the unit cleanly instead of erroring.
+# backup.sh itself lives in /opt/app/rpi/backup.sh -- it is part of
+# the app code and arrives via rsync from the release/sync layer. The
+# service uses ConditionPathExists= so a fresh image without app code
+# yet skips the unit cleanly instead of erroring.
 
-# Install scheduled backup service + timer (Phase 3 of usb-data-backup plan).
+# Install scheduled backup service + timer.
 cp /tmp/systemd/wmb-backup.service /etc/systemd/system/wmb-backup.service
 cp /tmp/systemd/wmb-backup.timer   /etc/systemd/system/wmb-backup.timer
 chmod 644 /etc/systemd/system/wmb-backup.service

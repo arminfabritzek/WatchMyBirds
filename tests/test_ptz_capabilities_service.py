@@ -1,6 +1,6 @@
 """Tests for the PTZ capabilities service + the core probe_capabilities.
 
-Slice 4-C of 2026-05-17_PTZ_capability-probe-and-integration.
+PTZ capability-probe service tests.
 
 Three test groups:
 
@@ -517,7 +517,7 @@ def test_load_empirical_forwards_follow_zoom_max_burst_sec(tmp_path, monkeypatch
     """The near-focus zoom-budget field written by the in-UI probe
     wizard's finalize must round-trip through the loader.
 
-    Regression for a Slice 5b read-side miss: the loader's strict
+    Regression for a read-side read-side miss: the loader's strict
     whitelist was dropping the new key silently, so apply_near_focus_budget
     saw an empirical dict without the field and reported 'No near-focus
     budget recorded yet — run the wizard's near-focus step first' even
@@ -543,7 +543,7 @@ def test_load_empirical_forwards_follow_zoom_max_burst_sec(tmp_path, monkeypatch
 
 
 def test_load_empirical_omits_follow_zoom_when_absent(tmp_path, monkeypatch):
-    """Cams probed before Slice 5b have no follow_zoom_max_burst_sec
+    """Cams probed before read-side have no follow_zoom_max_burst_sec
     in their cache. The loader must not insert a default — absence is
     meaningful (apply path surfaces 'run the step first')."""
     monkeypatch.setattr(ptz_core, "get_path_manager", lambda: _fake_pm_for(tmp_path))

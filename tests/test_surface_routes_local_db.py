@@ -214,7 +214,7 @@ def test_local_sqlite_review_routes_render_real_continuity_batch(seeded_client):
     review_response = client.get("/admin/review")
     assert review_response.status_code == 200
     review_body = review_response.get_data(as_text=True)
-    # 2026-05-23 redesign: new Review Grid is the default. The legacy
+    # Review Grid is the default surface. The legacy
     # `#reviewEventBrowser` rail lives behind ?layout=legacy. The grid
     # renders one `[data-review-grid-card]` per event with its own
     # `data-event-key`.
@@ -227,8 +227,8 @@ def test_local_sqlite_review_routes_render_real_continuity_batch(seeded_client):
     # marker".
     distinct_keys = sorted(set(event_keys))
     assert len(distinct_keys) == 2
-    # Regression guard for the 2026-05-23 hotfix: the page renderer
-    # must request include_detail=True from _load_review_events so
+    # Regression guard: the page renderer must request
+    # include_detail=True from _load_review_events so
     # event.members is populated. Without this, the cards would
     # render with empty grids (header only, no tiles). At least one
     # `review-grid__tile` must exist in the rendered HTML.

@@ -241,7 +241,7 @@ def test_appbar_export_link_points_to_groundtruth_export():
     ).read_text(encoding="utf-8")
 
     assert 'href="/admin/groundtruth-export"' in content
-    assert "Export user-reviewed groundtruth for Pipeline-Dev" in content
+    assert "Export user-reviewed groundtruth for model training" in content
     assert "current_path in ['/admin/groundtruth-export', '/admin/export']" in content
 
 
@@ -260,7 +260,7 @@ def test_legacy_review_export_button_points_to_groundtruth_export():
     ).read_text(encoding="utf-8")
 
     assert 'href="/admin/groundtruth-export"' in content
-    assert "Export user-reviewed groundtruth for Pipeline-Dev" in content
+    assert "Export user-reviewed groundtruth for model training" in content
 
 
 def test_groundtruth_export_page_links_to_dry_run():
@@ -847,7 +847,7 @@ def test_build_persists_station_and_reviewer_into_zip_metadata(client):
         "/api/groundtruth-export/build",
         json={
             "station_id": "station-garden-01",
-            "reviewer_id": "armin",
+            "reviewer_id": "reviewer-a",
         },
     )
     assert r.status_code == 200
@@ -856,7 +856,7 @@ def test_build_persists_station_and_reviewer_into_zip_metadata(client):
     with zipfile.ZipFile(io.BytesIO(r.data)) as zf:
         meta = json.loads(zf.read("batch_metadata.json"))
     assert meta["station_id"] == "station-garden-01"
-    assert meta["reviewer_id"] == "armin"
+    assert meta["reviewer_id"] == "reviewer-a"
 
 
 def test_build_truncates_oversized_identity_strings(client):

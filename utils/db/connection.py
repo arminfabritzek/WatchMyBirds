@@ -233,12 +233,12 @@ def _init_schema(conn: sqlite3.Connection) -> None:
     # is_gallery_eligible: boolean flag set by the aesthetic tagger to mark a detection
     #   as a model-picked gallery candidate. Kept strictly separate from is_favorite so
     #   that:
-    #     - manual HUMAN favorites (is_favorite=1) remain a clean training gold-label
-    #     - the tagger never overwrites HUMAN choices
-    #     - gallery surfaces can render a "KI pick" badge on is_gallery_eligible=1 AND
+    #     - manual manual favorites (is_favorite=1) remain a clean training gold-label
+    #     - the tagger never overwrites manual choices
+    #     - gallery surfaces can render a "AI pick" badge on is_gallery_eligible=1 AND
     #       is_favorite=0 detections
     #   Backfill of legacy rating_source='auto' rows happens in _backfill_gallery_eligible
-    #   (see below). See workflow/plans/2026-05-02_FEATURE_aesthetic-tagger-three-column-split.md.
+    #   (see below). md.
     _ensure_column_on_table(
         conn, "detections", "is_gallery_eligible", "INTEGER DEFAULT 0"
     )
@@ -428,7 +428,7 @@ def _init_schema(conn: sqlite3.Connection) -> None:
     )
 
     # User-groundtruth export batches — book-keeping for the consolidated
-    # export added by plan 2026-05-22_FEATURE_user-groundtruth-export-for-pipeline-dev.
+    # user-groundtruth export table.
     # Each row records one export run: which time window it covered,
     # how many rows per bucket, when it was built. ``until_at`` becomes
     # the next batch's natural ``since_at`` so consecutive batches
@@ -607,13 +607,13 @@ def _backfill_gallery_eligible(conn: sqlite3.Connection) -> None:
     is_favorite=1 with rating_source='auto'. After the split, those rows
     must move to is_gallery_eligible=1 / is_favorite=0 so that:
 
-      - is_favorite is reserved for HUMAN clicks (gold-label for training)
+      - is_favorite is reserved for manual clicks (gold-label for training)
       - is_gallery_eligible is the model-decision column
 
     DANGER WITHOUT THE MARKER: the heart-toggle endpoint historically did
-    not stamp rating_source='manual' on HUMAN clicks, so the default
+    not stamp rating_source='manual' on manual clicks, so the default
     rating_source='auto' would match the migration WHERE clause. Running
-    the backfill on every app start would silently delete every HUMAN
+    the backfill on every app start would silently delete every manual
     favorite created since the last restart. The marker prevents that.
 
     Detection of "no rating_source column" (very old DBs predating

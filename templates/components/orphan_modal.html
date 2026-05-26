@@ -326,9 +326,9 @@
 <div class="modal fade gallery-modal wm-modal" id="{{ zoom_modal_id }}" tabindex="-1" aria-hidden="true">
     <div class="modal-dialog modal-xl modal-dialog-centered modal-dialog-scrollable modal-fullscreen-md-down wm-modal__dialog">
         <div class="modal-content wm-modal__content">
-            {# 2026-05-23 redesign: two-stockwork orphan-fallback modal, same shape
-               as detection_modal.html — header holds title + action group, body
-               holds only the image (no detection => no sibling strip). #}
+            {# Two-stockwork orphan-fallback modal, same shape as detection_modal.html —
+               header holds title + action group, body holds only the image
+               (no detection => no sibling strip). #}
             <div class="modal-header wm-modal__header">
                 <div class="wm-modal__title">
                     <span class="wm-modal__title-text"><em>{{ orphan.current_species_common or orphan.source_image_filename }}</em></span>

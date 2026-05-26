@@ -767,7 +767,7 @@
         });
     }
 
-    // --- PTZ capability pills (Slice 4-C of capability-probe plan) ---
+    // --- PTZ capability pills ---
     // Tri-state rendering: declared-only (yellow) until an empirical
     // probe-run confirms whether the cam's claim is real:
     //
@@ -776,10 +776,8 @@
     //   yellow ?  — declared, never empirically probed yet
     //   gray ✗    — not declared by the camera
     //
-    // Empirical data is auto-imported from the standalone probe at
-    // agent_handoff/lab/experiments/ptz_probe/ via cam IP match. Until
-    // the in-UI probe ships (see roadmap entry), the operator must run
-    // the standalone probe to upgrade pills from yellow to green/red.
+    // Empirical data is imported from scripts.ptz_probe or written by
+    // the in-UI probe to upgrade pills from yellow to green/red.
     //
     // SECURITY NOTE: rendering uses createElement+textContent throughout —
     // ONVIF errors and IPs from the cam are untrusted content, so we never

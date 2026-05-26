@@ -4,9 +4,8 @@ Background: on hosts where the WatchMyBirds container runs with
 ``network_mode: host`` (typical NAS deployment), the scanner inherits the
 host's full routing table. Without filtering, every Docker bridge and VPN
 tunnel becomes a scan target, and ``/16`` ranges expand to ~65k hosts ×
-6 ports = ~400k ThreadPool tasks resident in RAM. See plan
-2026-05-15_FIX_network-scanner-docker-bridge-filter for the live-log
-evidence (NAS RAM 90.9 % -> 99.6 % during one scan).
+6 ports = ~400k ThreadPool tasks resident in RAM, which can push host
+memory near saturation during a single scan.
 """
 
 from __future__ import annotations
@@ -56,29 +55,29 @@ def patch_adapters(monkeypatch):
 
 
 def test_local_networks_keep_real_lan(patch_adapters):
-    patch_adapters([_fake_adapter("eth0", "192.168.178.5", 24)])
+    patch_adapters([_fake_adapter("eth0", "192.168.1.100", 24)])
     scanner = NetworkScanner()
     nets = scanner._get_local_networks()
-    assert "192.168.178.0/24" in nets
+    assert "192.168.1.0/24" in nets
 
 
 def test_local_networks_skip_docker0(patch_adapters):
     patch_adapters(
         [
-            _fake_adapter("eth0", "192.168.178.5", 24),
+            _fake_adapter("eth0", "192.168.1.100", 24),
             _fake_adapter("docker0", "172.17.0.1", 16),
         ]
     )
     scanner = NetworkScanner()
     nets = scanner._get_local_networks()
-    assert "192.168.178.0/24" in nets
+    assert "192.168.1.0/24" in nets
     assert not any(n.startswith("172.17.") for n in nets)
 
 
 def test_local_networks_skip_compose_bridge(patch_adapters):
     patch_adapters(
         [
-            _fake_adapter("eth0", "192.168.178.5", 24),
+            _fake_adapter("eth0", "192.168.1.100", 24),
             _fake_adapter("br-1a2b3c4d5e6f", "172.22.0.1", 16),
         ]
     )
@@ -90,7 +89,7 @@ def test_local_networks_skip_compose_bridge(patch_adapters):
 def test_local_networks_skip_veth(patch_adapters):
     patch_adapters(
         [
-            _fake_adapter("eth0", "192.168.178.5", 24),
+            _fake_adapter("eth0", "192.168.1.100", 24),
             _fake_adapter("veth0815", "172.18.0.2", 16),
         ]
     )
@@ -102,7 +101,7 @@ def test_local_networks_skip_veth(patch_adapters):
 def test_local_networks_skip_vpn_interfaces(patch_adapters):
     patch_adapters(
         [
-            _fake_adapter("eth0", "192.168.178.5", 24),
+            _fake_adapter("eth0", "192.168.1.100", 24),
             _fake_adapter("tun0", "10.10.0.5", 24),
             _fake_adapter("wg0", "10.20.0.5", 24),
             _fake_adapter("tailscale0", "100.64.0.5", 32),
@@ -110,7 +109,7 @@ def test_local_networks_skip_vpn_interfaces(patch_adapters):
     )
     scanner = NetworkScanner()
     nets = scanner._get_local_networks()
-    assert "192.168.178.0/24" in nets
+    assert "192.168.1.0/24" in nets
     assert not any(n.startswith("10.10.") for n in nets)
     assert not any(n.startswith("10.20.") for n in nets)
     assert not any(n.startswith("100.64.") for n in nets)
@@ -119,7 +118,7 @@ def test_local_networks_skip_vpn_interfaces(patch_adapters):
 def test_local_networks_skip_link_local(patch_adapters):
     patch_adapters(
         [
-            _fake_adapter("eth0", "192.168.178.5", 24),
+            _fake_adapter("eth0", "192.168.1.100", 24),
             _fake_adapter("eth0:avahi", "169.254.5.5", 16),
         ]
     )
@@ -171,7 +170,7 @@ def test_local_networks_log_skip_reasons(patch_adapters, caplog):
     """
     patch_adapters(
         [
-            _fake_adapter("eth0", "192.168.178.5", 24),
+            _fake_adapter("eth0", "192.168.1.100", 24),
             _fake_adapter("docker0", "172.17.0.1", 16),
             _fake_adapter("eth1", "10.5.0.1", 16),
         ]
@@ -196,7 +195,7 @@ def test_scan_returns_cached_result_when_already_running(patch_adapters):
     *previous* result list back immediately (empty list on first ever
     call) and the scan loop runs only once.
     """
-    patch_adapters([_fake_adapter("eth0", "192.168.178.5", 24)])
+    patch_adapters([_fake_adapter("eth0", "192.168.1.100", 24)])
     scanner = NetworkScanner()
 
     start_barrier = threading.Event()

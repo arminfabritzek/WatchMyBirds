@@ -1093,13 +1093,11 @@ def _build_review_event_member(
         member["review_reason"] = "context"
         member["reason_label"] = "In Gallery"
 
-    # Modal-detection payload for the per-tile lightbox in the new
-    # Review-Grid layout (plan 2026-05-23_UI_review-grid-redesign).
-    # UI_STANDARD §0 point 4 requires every image to open through the
-    # shared detection_modal viewer; that needs a det-shaped dict per
-    # tile. _build_review_item runs with include_detail=False here for
-    # the heavy quick-species/picker work, so we build a focused
-    # modal-detection alongside it.
+    # Modal-detection payload for the per-tile lightbox in the Review Grid.
+    # Every image opens through the shared detection_modal viewer, which
+    # needs a det-shaped dict per tile. _build_review_item runs with
+    # include_detail=False here for the heavy quick-species/picker work,
+    # so we build a focused modal-detection alongside it.
     if member.get("best_detection_id") and not member["context_only"]:
         member["modal_detection"] = _build_review_modal_detection(
             row,
@@ -1889,11 +1887,11 @@ def review_page():
     species_locale = config.get("SPECIES_COMMON_NAME_LOCALE", "DE")
     common_names = load_common_names(species_locale)
 
-    # The new Review Grid (2026-05-23 redesign) renders every event's
-    # members inline as tiles, so it needs the full member payload at
-    # page-render time. The Legacy layout keeps its lazy fragment-load
-    # contract via /api/review/event-panel/<event_key>, which is why
-    # the original default was include_detail=False.
+    # The Review Grid renders every event's members inline as tiles, so
+    # it needs the full member payload at page-render time. The Legacy
+    # layout keeps its lazy fragment-load contract via
+    # /api/review/event-panel/<event_key>, which is why the original
+    # default was include_detail=False.
     layout_param = (request.args.get("layout") or "").strip().lower()
     is_grid_layout = layout_param != "legacy"
 
@@ -1951,8 +1949,7 @@ def review_page():
             pkey = str(picker.get("scientific") or "").strip()
             picker["species_colour"] = species_colour_map.get(pkey) if pkey else None
 
-    # New Review-Grid layout (2026-05-23 redesign, plan
-    # 2026-05-23_UI_review-grid-redesign) is now the default. The
+    # Review-Grid layout is now the default. The
     # legacy Stage-Panel layout (orphans.html → review_event_panel.html)
     # is still reachable via ?layout=legacy for RPi-side parallel
     # verification and as the per-detection queue / orphan-modal

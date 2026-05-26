@@ -27,9 +27,8 @@ nav_index (int|None): Optional index within nav_scope
         class="modal-dialog modal-xl modal-dialog-centered modal-dialog-scrollable modal-fullscreen-md-down wm-modal__dialog">
         <div class="modal-content wm-modal__content">
 
-            {# 2026-05-23 redesign: two-stockwork modal. Header holds title (left) +
-               action group (right); body holds only the image. The retired wm-modal__action
-               footer is documented in UI_STANDARD §1.1. #}
+            {# Two-stockwork modal. Header holds title (left) +
+               action group (right); body holds only the image. #}
             <div class="modal-header wm-modal__header">
                 <div class="wm-modal__title">
                     {# P1-06: Trusted-species rendering — non-confirmed show tentative label #}
@@ -59,8 +58,8 @@ nav_index (int|None): Optional index within nav_scope
                     <span class="wm-modal__title-text" {% if not is_trusted %}style="opacity: 0.65;" {% endif %}><em>{%
                             if not is_trusted %}~ {% endif %}{{ det.common_name }}</em></span>
                     {% endif %}
-                    {# 2026-05-23 redesign: subtitle absorbs the OD/CLS confidence numbers (87% / 70%)
-                       and the AI-status badge — these used to live in modal_detection_info.html. #}
+                    {# Subtitle absorbs the OD/CLS confidence numbers (87% / 70%)
+                       and the AI-status badge. #}
                     {% set _has_cls = det.cls_class_name is defined and det.cls_class_name %}
                     <span class="wm-modal__title-sub">
                         {{ det.formatted_date }} {{ det.formatted_time }}{% if title_species %} · <em>{{ title_species | replace('_', ' ') }}</em>{% endif %}
@@ -120,8 +119,8 @@ nav_index (int|None): Optional index within nav_scope
                 </div>
                 {% if det.sibling_count and det.sibling_count > 1 and det.siblings %}
                 {# Multi-bird only: slim sibling-selector strip below the image.
-                   Click switches active detection (Slice 4); per-card action buttons
-                   removed (live in the header action group now). #}
+                   Click switches active detection; per-card action buttons
+                   live in the header action group now. #}
                 <div class="wm-modal__sibling-strip">
                     {{ render_detection_info(
                     det=det,

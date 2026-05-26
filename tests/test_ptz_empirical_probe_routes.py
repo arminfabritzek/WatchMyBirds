@@ -1,7 +1,6 @@
 """HTTP-route tests for the empirical PTZ probe wizard.
 
-Slice 2 of 2026-05-18_PTZ_probe-ui-integration. The state-machine
-itself is tested in test_ptz_empirical_probe.py; these tests verify
+The state-machine itself is tested in test_ptz_empirical_probe.py; these tests verify
 that the five HTTP routes correctly delegate to the service layer,
 shape JSON responses the wizard expects, and gate on @login_required.
 """
@@ -415,7 +414,7 @@ def test_abort_returns_false_when_nothing_to_abort(client):
 
 
 # ---------------------------------------------------------------------------
-# /apply-budget — Slice 5b near-focus discovery
+# /apply-budget — read-side near-focus discovery
 # ---------------------------------------------------------------------------
 
 

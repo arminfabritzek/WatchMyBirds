@@ -459,9 +459,9 @@ def toggle_favorite():
         new_state = 0 if row["is_favorite"] else 1
         # Stamp rating_source='manual' so the legacy backfill (which migrates
         # rating_source='auto' rows into is_gallery_eligible) can never
-        # mistake a HUMAN heart-click for a stale auto-tag on the next app
+        # mistake a manual heart-click for a stale auto-tag on the next app
         # start. is_favorite is the gold-label column and the backfill must
-        # leave HUMAN rows alone.
+        # leave manual rows alone.
         action_at = datetime.now(UTC).isoformat()
         conn.execute(
             """

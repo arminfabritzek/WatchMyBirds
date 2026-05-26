@@ -894,9 +894,8 @@ class AutoPtzController:
     # ------------------------------------------------------------------
     # External-pause API
     #
-    # The in-UI empirical probe wizard (active plan
-    # 2026-05-18_PTZ_probe-ui-integration) takes exclusive control of
-    # the camera while the operator walks through move tests. While
+    # The in-UI empirical probe wizard takes exclusive control of the
+    # camera while the operator walks through move tests. While
     # paused, handle_detections and handle_no_detection are no-ops so
     # the controller cannot fight the wizard's commands.
     #

@@ -2,11 +2,9 @@
 PTZ Capabilities Service - thin web wrapper around the core
 capability-probe.
 
-Slice 4-C of 2026-05-17_PTZ_capability-probe-and-integration.
 Exposes the declared ONVIF capabilities of a saved camera to the
 Settings UI without invoking any movement on the cam. Empirical
-move tests live in the standalone probe tool under
-``agent_handoff/lab/experiments/ptz_probe/`` — this service is
+move tests live in the standalone ``scripts.ptz_probe`` tool — this service is
 ``GetServiceCapabilities`` + ``GetNodes``-grade only.
 
 Boundary: this module follows the H-01 invariant (web/services/*

@@ -18,7 +18,7 @@ current_species (str|None): Current species key for relabel/change-species flows
 frame_variant (str): 'overlay' for tiles, 'bar' for modal/action-footers.
 allow_review_no_bird (bool): Frame-level no-bird action — available on browse surfaces
     and Review-Queue. Flags ALL detections on the image as false-positives and feeds
-    the next Pipeline-Dev training batch. Not shown on Trash surface or when filename
+    the next model training batch. Not shown on Trash surface or when filename
     is absent.
 #}
 {% macro tile_toolbox(
@@ -51,25 +51,24 @@ allow_review_no_bird=true
 {% set show_move_to_trash = detection_id and surface != 'trash' and allow_move_to_trash %}
 {% set show_restore = surface == 'trash' %}
 {% set show_deep_scan = surface == 'review' and review_reason == 'orphan' and filename %}
-{# UI_STANDARD §0b: View Details renders as primary on hobby browse-surfaces.
+{#View Details renders as primary on hobby browse-surfaces.
    Stream uses surface='gallery'; Subgallery/Species use 'gallery'/'species'.
    The detail_modal surface is already the detail view — View Details does not
    apply there. #}
 {% set details_is_primary = can_open_details and surface in ['gallery', 'species'] %}
-{# UI_STANDARD §0b: Restore renders as primary on the Trash surface — it is
+{#Restore renders as primary on the Trash surface — it is
    the single most-reached-for action there. #}
 {% set restore_is_primary = show_restore %}
-{# UI_STANDARD §0b: inside a detail modal the verdict actions are primary —
+{#inside a detail modal the verdict actions are primary —
    the operator has the image at full size and is here to decide. Favorite is
    already primary by default rendering; Change Species and Move to Trash are
    promoted out of the overflow.
 
-   The Review surface (2026-05-23 redesign, plan
-   2026-05-23_UI_review-grid-redesign) also promotes the destructive
-   verdict actions to primary so they are reachable in one click on the
-   busy Review Grid, where hover-only affordances are too fragile (touch
-   devices, fast scanning). UI_STANDARD §0b "Review per-member tile" row
-   gains Move to Trash + Mark No Bird as primary alongside Favorite. #}
+   The Review surface also promotes the destructive verdict actions to
+   primary so they are reachable in one click on the busy Review Grid,
+   where hover-only affordances are too fragile (touch devices, fast
+   scanning). The Review per-member tile row gains Move
+   to Trash + Mark No Bird as primary alongside Favorite. #}
 {% set change_species_is_primary = show_change_species and surface in ['detail_modal', 'review'] %}
 {% set move_to_trash_is_primary = show_move_to_trash and surface in ['detail_modal', 'review'] %}
 {% set no_bird_is_primary = surface == 'review' and filename and allow_review_no_bird %}
@@ -99,16 +98,16 @@ allow_review_no_bird=true
     </button>
     {% endif %}
 
-    {# ── Training export flag removed 2026-05-24 (HUMAN decision):
+    {# ── Training export flag removed 2026-05-24 (manual decision):
        a single click in the toolbox could sign a wrong species as
-       ground-truth, poisoning Pipeline-Dev's training data. The
+       ground-truth, poisoning downstream training data. The
        new user-groundtruth export at /admin/groundtruth-export is
        the deliberate replacement surface. The macro parameters
        `allow_training_export` and `is_training_queued` still exist
        so callers don't break; a later cleanup will drop them once
        the entire old training-export backend is removed. #}
 
-    {# ── View Details as primary on hobby browse-surfaces (UI_STANDARD §0b) ── #}
+    {# ── View Details as primary on hobby browse-surfaces ── #}
     {% if details_is_primary %}
     <button type="button" class="wm-toolbox__btn wm-toolbox__details"
         data-action="view-details"
@@ -120,7 +119,7 @@ allow_review_no_bird=true
     </button>
     {% endif %}
 
-    {# ── Restore as primary on the Trash surface (UI_STANDARD §0b).
+    {# ── Restore as primary on the Trash surface.
        Jinja's default renders a None value as the literal string "None" inside
        an attribute, which would defeat the JS `detectionId || filename`
        trash-id resolution in tile_actions.js. Only emit the attribute when
@@ -136,7 +135,7 @@ allow_review_no_bird=true
     </button>
     {% endif %}
 
-    {# ── Change Species as primary inside detail modals (UI_STANDARD §0b) ── #}
+    {# ── Change Species as primary inside detail modals ── #}
     {% if change_species_is_primary %}
     <button type="button"
         class="wm-toolbox__btn wm-toolbox__change-species{% if not can_moderate %} wm-toolbox__btn--locked{% endif %}"
@@ -149,7 +148,7 @@ allow_review_no_bird=true
     </button>
     {% endif %}
 
-    {# ── Move to Trash as primary inside detail modals (UI_STANDARD §0b) ── #}
+    {# ── Move to Trash as primary inside detail modals ── #}
     {% if move_to_trash_is_primary %}
     <button type="button"
         class="wm-toolbox__btn wm-toolbox__move-trash{% if not can_moderate %} wm-toolbox__btn--locked{% endif %}"
@@ -161,11 +160,10 @@ allow_review_no_bird=true
     </button>
     {% endif %}
 
-    {# ── Mark No Bird as primary on the Review surface (UI_STANDARD §0b,
-         2026-05-23 redesign). Distinct from Move-to-Trash: rejects the
-         image as a training-export hard-negative signal without
-         touching detection status. Memory `Event-Delete ≠ Hard-Negative`
-         pins this distinction. ── #}
+    {# ── Mark No Bird as primary on the Review surface.
+         Distinct from Move-to-Trash: rejects the image as a
+         training-export hard-negative signal without touching
+         detection status. ── #}
     {% if no_bird_is_primary %}
     <button type="button"
         class="wm-toolbox__btn wm-toolbox__no-bird{% if not can_moderate %} wm-toolbox__btn--locked{% endif %}"
@@ -180,8 +178,7 @@ allow_review_no_bird=true
     {# ── Tools menu trigger ── #}
     {% set show_no_bird = surface in ('review', 'gallery', 'species', 'detail_modal') and filename and allow_review_no_bird %}
     {# Hide the overflow-menu copy of Mark No Bird when it is already
-       rendered as a primary button (Review surface, 2026-05-23
-       redesign). #}
+       rendered as a primary button (Review surface). #}
     {% set show_no_bird_in_overflow = show_no_bird and not no_bird_is_primary %}
     {% if (can_open_details and not details_is_primary)
         or (show_change_species and not change_species_is_primary)
@@ -195,7 +192,7 @@ allow_review_no_bird=true
 
         <div class="wm-toolbox__dropdown" role="menu" aria-label="Actions">
             {# Details — opens the detection modal (Top-K, Confidences, Wiki).
-               Skipped when rendered as a primary button above (UI_STANDARD §0b). #}
+               Skipped when rendered as a primary button above. #}
             {% if can_open_details and not details_is_primary %}
             <button type="button" class="wm-toolbox__item" role="menuitem" data-action="view-details"
                 {% if modal_target %}data-modal-target="{{ modal_target }}" {% endif %}
@@ -205,7 +202,7 @@ allow_review_no_bird=true
             {% endif %}
 
             {# Relabel — only if we have a detection_id.
-               Skipped when rendered as a primary button above (UI_STANDARD §0b). #}
+               Skipped when rendered as a primary button above. #}
             {% if show_change_species and not change_species_is_primary %}
             <button type="button"
                 class="wm-toolbox__item{% if not can_moderate %} wm-toolbox__item--disabled{% endif %}"
@@ -218,7 +215,7 @@ allow_review_no_bird=true
             {% endif %}
 
             {# Delete / Reject.
-               Skipped when rendered as a primary button above (UI_STANDARD §0b). #}
+               Skipped when rendered as a primary button above. #}
             {% if show_move_to_trash and not move_to_trash_is_primary %}
             <button type="button"
                 class="wm-toolbox__item wm-toolbox__item--danger{% if not can_moderate %} wm-toolbox__item--disabled{% endif %}"
@@ -238,7 +235,7 @@ allow_review_no_bird=true
             {% endif %}
 
             {# Trash-specific: Restore.
-               Skipped when rendered as a primary button above (UI_STANDARD §0b). #}
+               Skipped when rendered as a primary button above. #}
             {% if show_restore and not restore_is_primary %}
             <button type="button" class="wm-toolbox__item" role="menuitem" data-action="restore"
                 data-detection-id="{{ detection_id }}" data-filename="{{ filename }}" aria-label="Restore from trash">
@@ -248,8 +245,7 @@ allow_review_no_bird=true
 
             {# Frame-level no-bird action — available on browse surfaces and Review-Queue.
                Not shown on Trash (a discarded tile has nothing to mark).
-               Skipped when rendered as a primary button above
-               (Review surface, UI_STANDARD §0b 2026-05-23 redesign). #}
+               Skipped when rendered as a primary button above (Review surface). #}
             {% if show_no_bird_in_overflow %}
             <button type="button" class="wm-toolbox__item wm-toolbox__item--danger" role="menuitem"
                 data-action="review-no-bird" data-filename="{{ filename }}" aria-label="Mark as no bird">

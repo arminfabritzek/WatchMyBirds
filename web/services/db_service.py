@@ -240,5 +240,3 @@ def fetch_detections_last_24h(
     return db_core.fetch_detections_last_24h(
         conn, threshold_timestamp, limit=limit, order_by=order_by
     )
-
-

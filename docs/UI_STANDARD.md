@@ -199,15 +199,15 @@ stop being visually primary.
   table places in overflow, without updating this section.
 - The Review surface splits across two rows on purpose. The
   event-level decide-verbs (Approve Event, Move Event to Trash) live
-  on the card header (2026-05-23 redesign) — they are primary by
-  virtue of being in their own row above the tiles, not by toolbox-
-  priority rules. The per-member tile toolbox inside the card
-  promotes Change Species, Move to Trash, and Mark No Bird out of
-  the overflow alongside Favorite — four primary actions for the
-  per-tile case. The hover-only reveal is overridden by the Review
-  Grid CSS so the buttons are always visible (Hotfix 3a 2026-05-23):
-  the per-tile verdict is the highest-frequency Review action and
-  hover-only is too fragile on touch devices and during fast scans.
+  on the card header — they are primary by virtue of being in their
+  own row above the tiles, not by toolbox-priority rules. The
+  per-member tile toolbox inside the card promotes Change Species,
+  Move to Trash, and Mark No Bird out of the overflow alongside
+  Favorite — four primary actions for the per-tile case. The
+  hover-only reveal is overridden by the Review Grid CSS so the
+  buttons are always visible: the per-tile verdict is the
+  highest-frequency Review action and hover-only is too fragile on
+  touch devices and during fast scans.
   Tile sizes 8/row and 16/row (contact-sheet mode) restore the
   hover-only reveal because the always-on chrome would otherwise
   cover most of the bird image.
@@ -399,7 +399,7 @@ To prevent future drift between surfaces:
 - `wm-modal` (Detail/Review with Image-Viewer)
 - `wm-modal wm-modal--form` (Settings forms, e.g., Add/Edit Camera)
 
-### 1.1 Standard Modal (wm-modal) — two-stockwork layout (2026-05-23 redesign)
+### 1.1 Standard Modal (wm-modal) — two-stockwork layout
 
 The detail modal is **header + body**. The action group lives in the
 header (right slot); there is no separate footer row. Single-detection
@@ -783,14 +783,12 @@ sticky bulk-action footer below. **No left side rail. No right
 decision rail.** Per-card decision verbs live in the card header;
 selection-scoped verbs live in the footer.
 
-**Plan reference:** `2026-05-23_UI_review-grid-redesign` (the lane
-that retired the rail-+-stage-+-decision-rail layout). The retired
-`review-stage-panel` shell stays in the tree as the consumer of the
-fragment endpoints (`/api/review/event-panel/<event_key>`,
+The retired `review-stage-panel` shell stays in the tree as the consumer
+of the fragment endpoints (`/api/review/event-panel/<event_key>`,
 `/api/review/panel/<item_kind>/<item_id>`) and as the orphan-modal
-host (`templates/components/orphan_modal.html`). Those are
-single-item detail surfaces; the Review Desk no longer composes them
-as its default view.
+host (`templates/components/orphan_modal.html`). Those are single-item
+detail surfaces; the Review Desk no longer composes them as its default
+view.
 
 ### Layout (retired)
 
@@ -828,10 +826,10 @@ parallel verification only.
 
 ---
 
-## 6b. Review Event Panel (review-event-*)  [retired as default 2026-05-23]
+## 6b. Review Event Panel (review-event-*)  [retired as default]
 
-> **Status (2026-05-23 redesign):** the rail-based event panel
-> described below is no longer the default Review Desk surface. The
+> **Status:** the rail-based event panel described below is no
+> longer the default Review Desk surface. The
 > default is now the vertical event-card grid in §6 (rendered by
 > `templates/components/review_grid_card.html`). The `review-event-*`
 > class family stays in the codebase to serve the fragment endpoints
@@ -1103,12 +1101,12 @@ Each event card in the default Review Desk view (§6) carries one
 | `review-grid__filter-card` | Top filter card |
 | `review-grid__stack` | Vertical event-card stack container |
 | `review-grid__card` | Single event card root (`<article>`). Carries `--cell-species-colour` inline so the rail (`::before`), the header tint, and the tile borders all share one token. |
-| `review-grid__card--has-species` | Set when the event has a known species token — gives the rail an extra inner shadow for visual weight (Slice 7, 2026-05-23). |
+| `review-grid__card--has-species` | Set when the event has a known species token — gives the rail an extra inner shadow for visual weight. |
 | `review-grid__card--batch` | Card belongs to a continuity batch (left-edge accent) |
-| `review-grid__card-header` | Card header row — left zone holds `review-grid__card-identity`, right zone holds `review-grid__card-actions`. Background carries a soft `color-mix` gradient of the species colour over an opaque `--color-surface` base (Slice 7 + 9). **Sticky** under the fixed app-bar (`position: sticky; top: 112px`) so the operator can always act on the currently-scrolled event; replaced by the next card's header when it scrolls into view (iOS section-header pattern, Slice 9, 2026-05-23 evening). |
-| `review-grid__card-identity` | Flex-column wrapper for the dominant species-name row + the muted meta row (Slice 7). |
-| `review-grid__card-species-row` | Row inside `review-grid__card-identity` carrying the species name + warn-badge (Slice 7). |
-| `review-grid__card-meta` | Sub-line under the species name: date · time · count · `0 selected` (Slice 7 — was the dominant header line pre-2026-05-23 evening). |
+| `review-grid__card-header` | Card header row — left zone holds `review-grid__card-identity`, right zone holds `review-grid__card-actions`. Background carries a soft `color-mix` gradient of the species colour over an opaque `--color-surface` base. **Sticky** under the fixed app-bar (`position: sticky; top: 112px`) so the operator can always act on the currently-scrolled event; replaced by the next card's header when it scrolls into view (iOS section-header pattern). |
+| `review-grid__card-identity` | Flex-column wrapper for the dominant species-name row + the muted meta row. |
+| `review-grid__card-species-row` | Row inside `review-grid__card-identity` carrying the species name + warn-badge. |
+| `review-grid__card-meta` | Sub-line under the species name: date · time · count · `0 selected`. |
 | `review-grid__card-species` | Species name — 1.15rem bold, 3px coloured underline from `--cell-species-colour` (§6d). The visually dominant header element. |
 | `review-grid__card-badge--warn` | Multi-bird / event-ineligible warning chip |
 | `review-grid__card-actions` | Button group (Approve / Trash / stepper) |
@@ -1116,8 +1114,8 @@ Each event card in the default Review Desk view (§6) carries one
 | `review-grid__stepper-btn` | One of the two stepper buttons |
 | `review-grid__stepper-value` | Current tile-size value display |
 | `review-grid__card-tiles` | Inner CSS grid that holds the tiles |
-| `review-grid__tile` | Single member tile — a `wm-tile--bbox` + `wm-toolbox-host`. Carries a 2px species-coloured border inherited from the card root (Slice 7 — preserves species identity at the frame even when the header scrolls out of view). |
-| `review-grid__tile--context` | Read-only context-anchor tile (dashed border, muted; overrides the Slice-7 species border) |
+| `review-grid__tile` | Single member tile — a `wm-tile--bbox` + `wm-toolbox-host`. Carries a 2px species-coloured border inherited from the card root, preserving species identity at the frame even when the header scrolls out of view. |
+| `review-grid__tile--context` | Read-only context-anchor tile (dashed border, muted; overrides the species border) |
 | `review-grid__tile-select` | Checkbox holder for multi-select |
 | `review-grid__tile-checkbox` | The selection checkbox itself (shares `.wm-tile__checkbox`) |
 | `review-grid__tile-media` | Image frame inside the tile |
@@ -1148,7 +1146,7 @@ Each event card in the default Review Desk view (§6) carries one
 | `data-review-grid-tiles` | Inner grid container |
 | `data-review-grid-stack` | Stack container |
 
-**Action verbs (2026-05-23 evening — Slice 8):** Each card header
+**Action verbs:** Each card header
 carries four Smart-Mode buttons: `✓ Approve`, `🏷️ Relabel`,
 `✗ No Bird`, `🗑 Trash`. Plus continuity-batch lead cards carry
 `Apply <species> to all frames` and `Approve Batch` in the
@@ -1176,15 +1174,14 @@ read by `refreshCardActionLabels` in `assets/js/review_grid.js`.
 Tooltips on every button per §0a — Approve disabled states explain
 *why* (`Pick a species before approving`).
 
-**Trash vs. Mark No Bird (binding):** `🗑 Trash` (header-only since
-Slice 8) routes to `/api/review/event-trash` for event-wide and
+**Trash vs. Mark No Bird (binding):** `🗑 Trash` routes to
+`/api/review/event-trash` for event-wide and
 `/api/moderation/bulk/reject` for selection-scoped — both *reject
-the detections* (housekeeping). `✗ No Bird` (header since Slice 8,
-also in per-tile toolbox) routes to `/api/review/decision` with
+the detections* (housekeeping). `✗ No Bird` (header and per-tile
+toolbox) routes to `/api/review/decision` with
 `action=no_bird` (flags the image as no-bird training-export signal
 **without** rejecting the detection). These verbs stay verbally,
-behaviourally **and visually** distinct per the 2026-05-23 decision
-recorded in `Event-Delete ≠ Hard-Negative` memory:
+behaviourally **and visually** distinct:
 
 - `🗑 Trash` is filled-red (`.btn--danger`), housekeeping language.
 - `✗ No Bird` is outline-yellow (`.btn--outline-warning`), training
@@ -1196,8 +1193,8 @@ verbs must use the same outline-vs-filled, warning-vs-danger split.
 
 ## 6c. Continuity Batch Stage
 
-> **Layout change (2026-05-23 redesign):** in the default Review Desk
-> view (§6, §6bb), continuity batches no longer render as a separate
+> **Layout change:** in the default Review Desk view (§6, §6bb),
+> continuity batches no longer render as a separate
 > prepended stage. They render as a **batch-strip header** on the
 > *first* event card of the batch (`is_batch_lead=true` in
 > `render_review_grid_card`). The strip carries the

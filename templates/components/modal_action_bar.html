@@ -2,10 +2,9 @@
 Modal Action Bar Component
 
 Compact single-row action group using Design System buttons (pill style).
-2026-05-23 redesign: now renders into the modal HEADER right slot (default
-via in_header=true from detection_modal.html). The legacy footer-rendered
-form is kept for orphan_modal.html and any other consumer that opts out
-via in_header=false.
+By default renders into the modal HEADER right slot (in_header=true from
+detection_modal.html). The legacy footer-rendered form is kept for
+orphan_modal.html and any other consumer that opts out via in_header=false.
 
 Args:
   in_header (bool): When true, renders as a slim header-action group

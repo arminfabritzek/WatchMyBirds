@@ -3,7 +3,7 @@ User-Groundtruth Export Service.
 
 Orchestrates the conversion of user-interaction signals (queried via
 ``utils.db.user_groundtruth``) into a COCO+bucket-manifest ZIP that
-Pipeline-Dev can consume directly.
+downstream training can consume directly.
 
 Output shape (per ``build_batch`` + ``stream_batch_zip``):
 
@@ -16,13 +16,13 @@ Output shape (per ``build_batch`` + ``stream_batch_zip``):
     │   ├── confirmed_positives.jsonl
     │   └── species_relabels.jsonl
     ├── batch_metadata.json
-    └── README.md                               (Pipeline-Dev consumption hints)
+    └── README.md                               (downstream training consumption hints)
 
 The COCO file uses bbox=[x, y, w, h] in **pixel** coordinates, computed
 from the normalized ``bbox_x/y/w/h`` columns and the detection's
 ``frame_width/height``. Detections with missing geometry are skipped
 from COCO annotations but still appear in the bucket manifests, so
-Pipeline-Dev sees the existence of the row even if the geometry is
+downstream training sees the existence of the row even if the geometry is
 unusable for box-supervised training.
 
 Frame-integrity policy: every frame that ships gets ALL its active
@@ -107,7 +107,7 @@ class Batch:
     species_relabels: list[dict[str, Any]]
     favorites: list[dict[str, Any]]
     # Operator-supplied provenance — pseudonyms, browser-side persisted.
-    # Surfaced in batch_metadata.json so Pipeline-Dev can disambiguate
+    # Surfaced in batch_metadata.json so downstream training can disambiguate
     # batches across stations and reviewers. Not persisted in the
     # export_batches DB table (browser localStorage is the home).
     station_id: str = ""
@@ -449,7 +449,7 @@ def stream_batch_zip(
             json.dumps(meta, indent=2, ensure_ascii=False),
         )
 
-        # 5. README for Pipeline-Dev
+        # 5. README for downstream training
         zf.writestr("README.md", _build_readme(batch))
 
     buffer.seek(0)
@@ -757,7 +757,7 @@ def _date_folder_from_filename(filename: str) -> str:
 def _manifest_line(row: dict[str, Any], batch: Batch) -> str:
     """Build one JSON line for the per-bucket JSONL manifest.
 
-    Adds the provenance fields that Pipeline-Dev needs but that aren't
+    Adds the provenance fields that downstream training needs but that aren't
     in the raw DB row: the date-folder-prefixed image path inside the
     ZIP, the pixel-space bbox, and the originating batch_id.
     """
@@ -797,14 +797,14 @@ def _manifest_line(row: dict[str, Any], batch: Batch) -> str:
     elif row["bucket"] == "favorites":
         line["species"] = row.get("species")
         line["species_source"] = row.get("species_source")
-        line["is_gold_label"] = True  # explicit hint for Pipeline-Dev
+        line["is_gold_label"] = True  # explicit hint for downstream training
     return json.dumps(line, ensure_ascii=False)
 
 
 def _bbox_to_pixels(row: dict[str, Any]) -> list[int] | None:
     """Convert normalized bbox to pixel-space [x, y, w, h].
 
-    Returns None when any component is missing — Pipeline-Dev's
+    Returns None when any component is missing — downstream training
     coco-consumer should reject such rows for box-supervised training
     but can still use them for image-level classification.
     """
@@ -838,7 +838,7 @@ def _build_coco(
 
     Categories include the ``__non_bird__`` synthetic category for
     hard-negative crops where the operator's signal was "this is not
-    a bird" — Pipeline-Dev can include those as negative-class
+    a bird" — downstream training can include those as negative-class
     annotations or skip them depending on training regime.
     """
     # Collect distinct species across all three positive buckets.
@@ -1001,7 +1001,7 @@ def _build_metadata(
         "total_rows": batch.total_rows,
         "missing_images_on_disk": missing_images,
         # Operator provenance — empty string when the browser had
-        # nothing stored; Pipeline-Dev treats both keys as optional.
+        # nothing stored; downstream training treats both keys as optional.
         "station_id": batch.station_id,
         "reviewer_id": batch.reviewer_id,
         # Frame-integrity audit: frames the export *dropped* because
@@ -1055,7 +1055,7 @@ Exporter version: {EXPORTER_VERSION}
   calibration.
 - **{counts["favorites"]} favorites** — user explicitly heart-clicked
   these detections in the gallery UI. The codebase treats them as
-  the HUMAN gold-label that wins over every algorithmic ranking
+  the manual gold label that wins over every algorithmic ranking
   (`gallery_core.py:542`). Treat them as your highest-confidence
   positive anchors.
 
@@ -1105,7 +1105,7 @@ These are starting points, tune per validation results:
 Every row in this batch traces back to an explicit user action
 recorded in the WMB DB. The batch deliberately excludes ambiguous
 signals: no Trash-deletions, no star ratings (98% are auto-tagged).
-Pipeline-Dev can treat each row as ground-truth from a single
+Downstream training can treat each row as ground-truth from a single
 operator.
 
 ## What is NOT in this batch
@@ -1113,12 +1113,11 @@ operator.
 - Detections that the pipeline confirmed as species but the user
   never touched: those flow via the older `training_export` path
   if you still consume it.
-- Bbox corrections (`manual_bbox_review`): scheduled for a future
-  slice — current batches use the original detector geometry.
+- Bbox corrections (`manual_bbox_review`): not included yet — current
+  batches use the original detector geometry.
 - Detections from frames the user later deleted (Trash): excluded
   by policy (ambiguous signal — could be FP or "ugly but bird").
 - Auto-tagged star ratings (`rating_source='auto'`): not a user
   statement. Only favorites with `rating_source='manual'` qualify.
 
-Plan reference: `agent_handoff/workflow/plans/2026-05-22_FEATURE_user-groundtruth-export-for-pipeline-dev.md`
 """

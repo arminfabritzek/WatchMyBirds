@@ -2,8 +2,7 @@
 PTZ Empirical Probe — in-UI wizard backend.
 
 State-machine + persistence + finalize for the operator-attended PTZ
-capability probe that runs from the WMB Settings/Stream-page wizard
-(active plan 2026-05-18_PTZ_probe-ui-integration).
+capability probe that runs from the WMB Settings/Stream-page wizard.
 
 The wizard walks the operator through the same 10 move tests the CLI
 tool runs (`python -m scripts.ptz_probe`), but each step is a separate
@@ -73,10 +72,8 @@ VALID_FEEDBACK = frozenset({FEEDBACK_YES, FEEDBACK_NO, FEEDBACK_SKIP})
 #
 # These mirror scripts/ptz_probe/__main__.py::_continuous_cases /
 # _relative_cases / _absolute_cases. Kept independent (not imported)
-# because core/ should not depend on scripts/; if a future refactor
-# consolidates the case lists (see roadmap entry
-# 2026-05-18_PTZ_probe-script-refactor-to-ptzclient), this is the
-# obvious place to extract them to a shared module.
+# because core/ should not depend on scripts/; a future shared
+# probe-case module should be extracted from here and the CLI together.
 
 
 def _case_by_id(session: ProbeSession, step_id: str) -> dict[str, Any] | None:

@@ -1,10 +1,4 @@
-"""Tests for the in-UI PTZ empirical probe backend.
-
-Slice 1 of 2026-05-18_PTZ_probe-ui-integration. The wizard's HTTP
-surface (Slice 2) and UI (Slice 3) are not yet built — these tests
-exercise the state machine + persistence + finalize logic that
-underpins everything else.
-"""
+"""Tests for the in-UI PTZ empirical probe backend."""
 
 from __future__ import annotations
 
@@ -508,9 +502,9 @@ def test_pause_state_surfaces_in_controller_status():
 
 
 def test_execute_relative_step_calls_ptz_client_relative_move(tmp_path, monkeypatch):
-    """Phase 2c wired this — execute_current_step now drives the real
-    PtzClient.relative_move with the case's inputs. The operator's cam
-    will likely return success here even when the move empirically fails
+    """execute_current_step drives the real PtzClient.relative_move
+    with the case's inputs. The operator's cam will likely return
+    success here even when the move empirically fails
     (cheap-cam endless-pan); the operator catches that via ✗ feedback."""
     monkeypatch.setattr(ptz_core, "get_path_manager", lambda: _fake_pm_for(tmp_path))
     monkeypatch.setattr(
@@ -1002,7 +996,7 @@ def test_step_result_dataclass_roundtrips_through_yaml(tmp_path, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# Near-focus zoom budget tests (Slice 5b of probe-UI plan)
+# Near-focus zoom budget tests (read-side of probe-UI plan)
 # ---------------------------------------------------------------------------
 
 
@@ -1150,7 +1144,7 @@ def test_near_focus_finalize_without_verdict_omits_field(
 
 
 # ---------------------------------------------------------------------------
-# Cache-hydrate tests (Slice 5c: pre-seed verdicts from previous probe)
+# Cache-hydrate tests (cache-hydrate: pre-seed verdicts from previous probe)
 # ---------------------------------------------------------------------------
 
 
@@ -1501,9 +1495,9 @@ def test_finalize_skip_counts_as_not_tested_not_yes(tmp_path, monkeypatch):
 
 
 def test_near_focus_burst_after_hydrate_writes_budget(tmp_path, monkeypatch):
-    """Regression for the Slice 5b+5c interaction bug observed live
-    2026-05-20 morning: operator re-opened the wizard, hydrate seeded
-    the prior near_focus 'yes' verdict, then operator clicked 'Zoom in
+    """Regression for the read-side interaction bug observed in
+    production: operator re-opened the wizard, hydrate seeded the
+    prior near_focus 'yes' verdict, then operator clicked 'Zoom in
     once' (twice) + STOP. Finalize should write a fresh
     follow_zoom_max_burst_sec — but the original execute_step gated on
     `existing.feedback == PENDING`, so the hydrated 'yes' blocked the

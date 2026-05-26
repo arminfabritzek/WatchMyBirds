@@ -35,9 +35,8 @@ DEFAULT_PTZ_CONFIG: dict = {
     # Grid-mode additions (mode == "grid"). Operator picks shape once
     # via setup wizard; runtime uses grid_cells map and the grid-mode
     # cooldown, which is shorter than the preset-mode cooldown because
-    # adjacent-cell switching is the normal flow (see plan
-    # 2026-05-15_PTZ_grid-zoom-mode). The hysteresis margin prevents
-    # flap when a bird sits on a cell boundary.
+    # adjacent-cell switching is the normal flow. The hysteresis margin
+    # prevents flap when a bird sits on a cell boundary.
     "grid_shape": [3, 3],
     "grid_cells": {},  # {"r{row}_c{col}": "<onvif_preset_token>"}
     "grid_command_cooldown_ms": 4000,

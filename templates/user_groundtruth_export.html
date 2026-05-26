@@ -4,7 +4,7 @@
 
 {% block content %}
 <div class="page__header">
-    <h1 class="page__title">User-Groundtruth Export for Pipeline-Dev</h1>
+    <h1 class="page__title">User-Groundtruth Export for Model Training</h1>
     <div class="page__actions">
         <a href="/admin/export" class="btn btn--secondary">Older per-species export</a>
     </div>
@@ -16,7 +16,7 @@
             <div><strong>What gets exported?</strong></div>
             <div>
                 Every explicit user interaction since the last batch — bundled
-                into three buckets for Pipeline-Dev:
+                into three model-training buckets:
             </div>
             <ul style="margin: var(--space-xs) 0 0 var(--space-lg);">
                 <li><strong>Hard-negatives</strong> — frames you marked "no bird"
@@ -29,7 +29,7 @@
                 <li><strong>Species re-labels</strong> — corrections where you
                     overrode the classifier's species pick.</li>
                 <li><strong>Favorites</strong> — detections you heart-clicked
-                    in the gallery. The HUMAN gold-label, treated as
+                    in the gallery. The manual gold label, treated as
                     highest-confidence training anchor.</li>
             </ul>
             <div class="text-muted" style="margin-top: var(--space-xs);">
@@ -37,7 +37,6 @@
                 <em>deliberately</em> excluded — they are ambiguous signals.
                 Frames with mixed-status sibling detections are dropped
                 from positive buckets to preserve training-correctness.
-                Plan: <code>2026-05-22_FEATURE_user-groundtruth-export-for-pipeline-dev</code>.
             </div>
         </div>
     </div>
@@ -77,7 +76,7 @@
                 style="max-width: 280px;"
                 placeholder="e.g. station-garden-01" maxlength="64">
             <div class="settings-field__help">
-                Helps Pipeline-Dev tell batches from different Pi
+                Helps downstream training tell batches from different Pi
                 installations apart when several operators contribute.
                 Saved in your browser, not the server.
             </div>

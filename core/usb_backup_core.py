@@ -9,9 +9,7 @@ The write-side (creating snapshots) lives entirely in `rpi/backup.sh`
 and the systemd timer/service. This module never invokes that script
 directly — that's the service layer's job.
 
-See `docs/USB_BACKUP.md` and the focus plan
-`agent_handoff/workflow/plans/2026-04-27_INFRA_usb-data-backup.md`
-for the design.
+See `docs/USB_BACKUP.md` for the design.
 """
 
 from __future__ import annotations

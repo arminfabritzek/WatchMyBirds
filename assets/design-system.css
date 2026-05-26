@@ -5040,7 +5040,7 @@ body {
     flex-wrap: wrap;
 }
 
-/* 2026-05-23 redesign: header-action variant. Drops the footer chrome
+/* Header-action variant. Drops the footer chrome
    (no gradient, no top-border, tighter padding) so the action group sits
    cleanly to the right of the title inside .wm-modal__header. */
 .modal-action-bar--in-header {
@@ -5155,9 +5155,8 @@ body {
    ═══════════════════════════════════════════════════════════════════════════ */
 
 .wm-modal__dialog {
-    /* 2026-05-23 redesign: lift the 1000px cap. Modal scales with viewport
-       up to a generous ceiling so the image is bigger than the source tile
-       on any display from 13" laptop to 5K. */
+    /* Modal scales with viewport up to a generous ceiling so the image is
+       bigger than the source tile on any display from 13" laptop to 5K. */
     max-width: min(1600px, calc(100vw - 4rem));
 }
 
@@ -5209,8 +5208,8 @@ body {
     flex-shrink: 0;
 }
 
-/* 2026-05-23 redesign: header-action slot. Holds the consolidated
-   action group (Zoom / Boxes / Download / Day / Trash / Prev / Next /
+/* Header-action slot. Holds the consolidated action group
+   (Zoom / Boxes / Download / Day / Trash / Prev / Next /
    Maximize / Close) inside .wm-modal__header. Title gets flex: 1 above
    so a long species name truncates with ellipsis instead of pushing
    the buttons off-screen. */
@@ -5234,18 +5233,18 @@ body {
     margin-bottom: 0;
 }
 
-/* 2026-05-23 redesign: in the detail modal the image should consume the
+/* In the detail modal the image should consume the
    available viewport height. The global .wm-image-viewer__img cap of 65vh
    stays the default for non-modal surfaces (Stream, Gallery tiles); the
    modal raises it. The reserved header/padding budget lives in
-   --wm-modal-chrome so Slice 5 (maximize) can tune it without touching
+   --wm-modal-chrome so maximize mode can tune it without touching
    the image rule. */
 .wm-modal__body {
     --wm-modal-chrome: 10rem;
 }
 
-/* 2026-05-23 evening — Slice 1 modal-image sizing, corrected.
-   The original Slice 1 added `display: flex; justify-content: center`
+/* Modal-image sizing correction.
+   A prior version added `display: flex; justify-content: center`
    to .wm-modal__image .wm-image-viewer AND `object-fit: contain` to
    the inner <img>. That combination broke bbox overlays appwide:
      - flex+center could shrink the <img> while the canvas overlay
@@ -5257,7 +5256,7 @@ body {
    Reverted both. The image now sizes naturally via `max-height`
    alone — the <img> element shrinks/grows to match its rendered
    bitmap, so the absolutely-positioned canvas always overlaps the
-   image exactly. The viewport-cap (Slice 1's actual goal) is kept
+   image exactly. The viewport cap is kept
    via max-height. */
 .wm-modal__image .wm-image-viewer__img {
     max-height: calc(100vh - var(--wm-modal-chrome));
@@ -5284,8 +5283,8 @@ body {
     border-top: 1px solid var(--color-border-light);
 }
 
-/* 2026-05-23 redesign: slim sibling-strip below the image on multi-bird
-   frames only. Per-card action buttons (Change Species, Trash) are gone;
+/* Slim sibling-strip below the image on multi-bird frames only.
+   Per-card action buttons (Change Species, Trash) are gone;
    the header action group now acts on the active detection (set via
    canvas-click or sibling-card-click → wmb:active-detection-change). */
 .wm-modal__sibling-strip {
@@ -5312,7 +5311,7 @@ body {
     box-shadow: 0 0 0 2px rgba(201, 124, 42, 0.18);
 }
 
-/* 2026-05-23 redesign: maximized variant. Toggled via the ⛶ button in
+/* Maximized variant. Toggled via the ⛶ button in
    the header action group (toggleModalMaximize in gallery_utils.js).
    Dialog fills the viewport, header chrome shrinks to icons + title-only,
    subtitle and sibling-strip hide so the image gets the entire stage. */
@@ -9272,7 +9271,7 @@ img.review-species-ref {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   HUMAN IMPACT ANALYTICS – Banner, Cards, Charts
+   IMPACT ANALYTICS - Banner, Cards, Charts
    ═══════════════════════════════════════════════════════════════════════════ */
 
 /* --- Impact Banner (clickable link card on analytics page) --- */
@@ -10203,17 +10202,11 @@ code {
     background: var(--color-primary-light);
 }
 
-/* REVIEW GRID — 2026-05-23 redesign
+/* REVIEW GRID
    ============================================================
-   Plan: 2026-05-23_UI_review-grid-redesign.
    Vertical event-card stack with per-card tile-size stepper.
    Replaces the rail-+-center-stage-+-decision-rail composition
-   from `review-stage-panel__*` for the default Review Desk view.
-
-   Slice 1: shell only (filter card, empty stack, sticky bulk
-   footer). Slices 2-4 add cards + tiles + batch variant + wiring.
-   Slice 5 retires the ?layout=grid gate and rewrites
-   docs/UI_STANDARD.md §6/§6b/§6c. */
+   from `review-stage-panel__*` for the default Review Desk view. */
 
 .review-grid {
     max-width: 1600px;
@@ -10232,8 +10225,8 @@ code {
     padding: 32px 16px;
 }
 
-/* Inter-event separator (2026-05-23 evening — small UX feat).
-   A thick, soft, fade-in/fade-out bar that gives the Operator a strong
+/* Inter-event separator.
+   A thick, soft, fade-in/fade-out bar that gives the operator a strong
    visual "next event starts here" beat between cards in the stack.
    Rendered between events by review_grid.html, suppressed inside a
    continuity batch (the batch-strip already groups those). The stack's
@@ -10258,13 +10251,13 @@ code {
     opacity: 0.85;
 }
 
-/* .review-grid__batch-footer — RETIRED 2026-05-23 evening (Slice 8).
+/* .review-grid__batch-footer — retired.
    The sticky bulk-action footer is gone; card-header Smart-Mode
    (Approve / Relabel / No Bird / Trash respect per-card selection)
    replaces it for the per-card workflow. Cross-event bulk action
    is no longer reachable from /admin/review. */
 
-/* Review Grid — Card layout (Slice 2)
+/* Review Grid — Card layout
    ============================================================ */
 
 .review-grid__card {
@@ -10278,10 +10271,9 @@ code {
     );
     border-radius: 12px;
     padding: 12px 16px 20px 22px;
-    /* Hard black frame around every event card (HUMAN request
-       2026-05-23 evening). Sits OUTSIDE the existing species-tinted
+    /* Hard black frame around every event card. Sits OUTSIDE the existing species-tinted
        border so the §6d species-colour anchor stays visible, while the
-       Operator gets an unmistakable "this is one event" boundary.
+       operator gets an unmistakable "this is one event" boundary.
        Uses outline (not border) to avoid shifting layout and to keep
        the existing border-color logic untouched. */
     outline: 2px solid #000;
@@ -10289,8 +10281,8 @@ code {
     box-shadow:
         0 10px 26px rgba(26, 38, 45, 0.10),
         0 1px 2px rgba(0, 0, 0, 0.06);
-    /* 2026-05-23 Slice 7 — species-coloured vertical rail on the left
-       edge anchors each card as a distinct block. The Operator's eye
+    /* Species-coloured vertical rail on the left edge anchors each card
+       as a distinct block. The operator's eye
        reads a colour change as a block change without having to parse
        the header text. Cards with no species (eligibility != event_eligible
        before relabel, unknown species) fall back to a neutral border
@@ -10333,8 +10325,7 @@ code {
 }
 
 .review-grid__card-header {
-    /* 2026-05-23 evening — Slice 9: sticky header per event.
-       The header sticks to the top of the viewport (just below the
+    /* Sticky header per event. The header sticks to the top of the viewport (just below the
        fixed app-bar) while the rest of its card scrolls past. When
        the next card's header reaches the same top offset, it pushes
        the previous one out — iOS section-header pattern. This lets
@@ -10358,7 +10349,7 @@ code {
     );
     /* Solid base + species-tint gradient on top. The base is the
        card-surface colour so sticky-scroll doesn't bleed tiles
-       through the header. Slice 7's species-coloured tint sits over
+       through the header. The species-coloured tint sits over
        the base. */
     background:
         linear-gradient(
@@ -10510,7 +10501,7 @@ code {
     flex-wrap: wrap;
 }
 
-/* Global tile-size slider (Apple Photos pattern, Hotfix 4 2026-05-23).
+/* Global tile-size slider (Apple Photos pattern).
    Single control in the page header; all cards reflow as the slider
    moves. The CSS variable lives on .review-grid root and drives the
    minmax() in every card's tile grid. */
@@ -10543,15 +10534,15 @@ code {
    current --review-tile-size. minmax(N, 1fr) means tiles stretch
    to fill leftover space rather than leaving a gap on the right. */
 .review-grid__card-tiles {
-    /* 2026-05-23 evening — Tile size is locked to the slider value,
-       independent of frame count. A 1-frame event and a 50-frame
+    /* Tile size is locked to the slider value, independent of frame count.
+       A 1-frame event and a 50-frame
        event both render tiles at exactly --review-tile-size. The
-       Operator's slider controls tile size predictably; left-over
+       operator's slider controls tile size predictably; left-over
        horizontal space sits to the right as natural whitespace
        (semantically correct — a 1-frame event genuinely has less
        content). Prior auto-fit + 1fr stretched the single tile to
        fill the card width, which broke size consistency across
-       cards and surprised the Operator.
+       cards and surprised the operator.
 
        max-content keeps the column from collapsing below the tile's
        intrinsic size if any tile content (image aspect ratio) is
@@ -10575,8 +10566,7 @@ code {
     border-radius: 8px;
     background: var(--color-surface-2);
     isolation: isolate;
-    /* 2026-05-23 Slice 7 — Species-coloured frame around every tile
-       so the operator can read the species identity right at the
+    /* Species-coloured frame around every tile so the operator can read the species identity right at the
        image, not only in the card header. The colour is inherited
        from .review-grid__card[style="--cell-species-colour: ..."].
        Cards without a species token (unknown / multi-bird ambig)
@@ -10673,7 +10663,7 @@ code {
     background: rgba(60, 130, 90, 0.85);
 }
 
-/* Review Grid — Continuity batch strip (Slice 4)
+/* Review Grid — Continuity batch strip
    ============================================================ */
 
 .review-grid__card--batch {
@@ -10712,7 +10702,7 @@ code {
     font-style: italic;
 }
 
-/* Review Grid — always-visible tile toolbox (Hotfix 3a)
+/* Review Grid — always-visible tile toolbox
    ============================================================
    The default `.wm-toolbox` hides until hover/focus. Hover-only
    reveals are fragile on the Review Grid: touch devices have no
@@ -10742,9 +10732,9 @@ code {
     font-size: 0.95rem;
 }
 
-/* Hotfix 4: when tiles are below ~180px the always-on toolbox
-   would cover most of the bird image. Fall back to hover-reveal
-   under that threshold. Anything ≥180px keeps the toolbox visible.
+/* When tiles are below ~180px the always-on toolbox would cover most
+   of the bird image. Fall back to hover-reveal under that threshold.
+   Anything ≥180px keeps the toolbox visible.
    The threshold is enforced via container queries so it tracks the
    per-tile rendered size, not the slider value directly. */
 @supports (container-type: inline-size) {
@@ -10774,7 +10764,7 @@ code {
     pointer-events: auto;
 }
 
-/* Review Grid — selection visual feedback (Hotfix 3c)
+/* Review Grid — selection visual feedback
    ============================================================
    Checked tiles get a token-driven accent ring + tinted overlay
    so the operator can see at a glance which frames are in the
@@ -10818,7 +10808,7 @@ code {
     box-shadow: 0 0 0 2px var(--color-primary, #53676b);
 }
 
-/* Review Grid — bbox overlay canvas (Hotfix 7).
+/* Review Grid — bbox overlay canvas.
    Sits over the tile image; JS sizes it to match img.client*. */
 .review-grid__tile-bbox-canvas {
     position: absolute;

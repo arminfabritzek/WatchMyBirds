@@ -1,27 +1,19 @@
 {% extends 'base.html' %}
 
 {#
-  Review Grid (2026-05-23 redesign — plan
-  2026-05-23_UI_review-grid-redesign).
-
-  Slice 1 scaffolding: filter card + empty event stack container +
-  sticky bulk-action footer with stubbed handlers. Slice 2 fills the
-  stack with real event cards; Slice 3 wires the bulk footer to real
-  actions; Slice 4 adds continuity-batch cards; Slice 5 retires the
-  ?layout=grid query gate.
-
-  Reachable via /admin/review?layout=grid while under construction.
+  Review Grid: filter card plus vertical event-card stack. The former
+  rail/stage/decision-rail desk remains available through the legacy
+  layout path, but this template is the default Review surface.
 #}
 
 {% block title %}Review Desk · WatchMyBirds{% endblock %}
 
 {% block content %}
-{# 2026-05-23 evening — batch_action_footer retired here. Card-header
+{# batch_action_footer retired here. Card-header
    Approve / Relabel / No Bird / Trash now operate in Smart-Mode (respect
    per-card checkbox selection if any, fall back to event-wide otherwise).
    Cross-event bulk action is no longer reachable from this page;
-   per-card workflow is the only path. Decision recorded in plan
-   2026-05-23_UI_review-grid-redesign Slice 8. #}
+   per-card workflow is the only path. #}
 {% from 'components/review_grid_card.html' import render_review_grid_card %}
 
 <nav class="page-control-bar review-desk-bar" role="navigation"
@@ -48,7 +40,7 @@
                     aria-label="Smaller tiles">−</button>
             {# Default to crop-mode range (120-320, 256px source).
                JS reassigns min/max/value on load and on every
-               crop/full mode swap (Hotfix 8). #}
+               crop/full mode swap. #}
             <input type="range"
                    id="review-grid-size-slider"
                    class="review-grid__size-slider"
@@ -67,9 +59,8 @@
 
 <section class="review-grid">
 
-    {# Stack container. One review-grid__card per event; Slice 4 will
-       add the batch variant for events that participate in a
-       continuity batch. #}
+    {# Stack container. One review-grid__card per event; batch variants
+       render for events that participate in a continuity batch. #}
     <div class="review-grid__stack" data-review-grid-stack
          data-default-tile-size="4">
         {% if review_events %}

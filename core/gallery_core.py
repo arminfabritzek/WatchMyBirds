@@ -540,7 +540,7 @@ def _story_board_bbox_touches_edge(det: dict, margin: float = 0.01) -> bool:
 
 
 def is_favorite(det: dict) -> bool:
-    """True when a detection is marked as ❤️ favorite (HUMAN gold-label)."""
+    """True when a detection is marked as ❤️ favorite (manual gold label)."""
     return bool(int(det.get("is_favorite") or 0))
 
 
@@ -570,11 +570,10 @@ def cover_quality_tuple(
     Identical DNA to ``_story_board_candidate_quality`` — both must stay in
     sync. Used by the Today's-Visitors-Summary row, Species tab, and the
     subgallery's Species-of-Day. Highest priority first:
-        is_favorite           HUMAN gold-label.
+        is_favorite           manual gold label.
         ptz_preset            PTZ-driven frames (preset or manual_drive) are
-                              physically closer to the bird — plan
-                              2026-05-15_PTZ_image-context-for-gallery-bias.
-        is_gallery_eligible   KI auto-pick from aesthetic_tag_nightly.py.
+                              physically closer to the bird.
+        is_gallery_eligible   AI auto-pick from aesthetic_tag_nightly.py.
         is_interior           bbox not touching the frame edge.
         aesthetic_score       CLIP facing-camera probability; -1.0 when
                               missing so legacy / non-taggable rows sink.
@@ -612,16 +611,16 @@ def pick_cover_for_group(
     """Pick one cover candidate for a species group.
 
     Priority (highest first):
-        1. HUMAN favorites → random.choice() among them. The "sieh mal mein
+        1. manual favorites → random.choice() among them. The "sieh mal mein
            Lieblingsbild" surface must not be hijacked by automation.
-        2. PTZ preset / manual_drive frames ∩ KI gallery-eligible →
+        2. PTZ preset / manual_drive frames ∩ AI gallery-eligible →
            random.choice(). Preset-targeted frames are physically closer to
-           the bird (plan 2026-05-15_PTZ_image-context-for-gallery-bias);
+           the bird ;
            when the aesthetic tagger also approved the same frame, that is
            the strongest non-human signal available.
         3. PTZ preset / manual_drive frames (any aesthetic state) →
            random.choice(). A close-up beats a generic auto-pick.
-        4. KI gallery-eligible picks → random.choice().
+        4. AI gallery-eligible picks → random.choice().
         5. Prefer non-edge images, then fall back to best by score.
 
     ``rng`` is injectable for deterministic tests; defaults to module random.
@@ -663,7 +662,7 @@ def _story_board_candidate_quality(
     """Quality key for story-board cover candidates.
 
     Tuple ordering (highest priority first):
-        is_favorite     HUMAN gold-label. Wins over everything else so the
+        is_favorite     manual gold label. Wins over everything else so the
                         "sieh mal mein Lieblingsbild" surface cannot be
                         hijacked by automation.
         ptz_preset      1 if the frame was captured while the camera was
@@ -671,9 +670,8 @@ def _story_board_candidate_quality(
                         0 for overview rest, manual rest, or non-PTZ
                         cameras. Sits above is_gallery_eligible so a
                         physically-closer preset shot beats a pure
-                        aesthetic-tagger pick. See plan
-                        2026-05-15_PTZ_image-context-for-gallery-bias.
-        is_gallery_eligible KI auto-pick from aesthetic_tag_nightly.py.
+                        aesthetic-tagger pick.
+        is_gallery_eligible AI auto-pick from aesthetic_tag_nightly.py.
         is_interior     bbox not touching the frame edge.
         aesthetic_score CLIP "facing camera" probability from
                         scripts/aesthetic_tag_nightly.py; -1.0 when missing
@@ -752,8 +750,8 @@ def _build_story_board_candidate_pool(
                 break
 
     favorites = [d for d in ranked if int(d.get("is_favorite") or 0)]
-    # KI picks: gallery_eligible but NOT also a HUMAN favorite — already in
-    # `favorites` if both. Going in second so HUMAN choice still wins ties.
+    # AI picks: gallery_eligible but NOT also a manual favorite — already in
+    # `favorites` if both. Going in second so manual choice still wins ties.
     ki_picks = [
         d
         for d in ranked
@@ -787,8 +785,8 @@ def _choose_story_board_frames(
         rng = random.Random()
 
     ranked = _rank_story_board_candidates(candidates)
-    # Primary cover preference: HUMAN-favorites first; only fall back to KI
-    # picks if there are no HUMAN ones. The "sieh mal mein Lieblingsbild"
+    # Primary cover preference: manual-favorites first; only fall back to AI
+    # picks if there are no manual ones. The "sieh mal mein Lieblingsbild"
     # surface should not get hijacked by a model pick when a human pick
     # exists.
     favorites = [d for d in ranked if int(d.get("is_favorite") or 0)]

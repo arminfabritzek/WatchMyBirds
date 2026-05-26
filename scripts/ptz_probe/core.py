@@ -6,8 +6,8 @@ No prints, no inputs, no file I/O. All results returned as dataclasses
 or plain dicts so the CLI layer can serialise them to YAML/JSON.
 
 This module does NOT import from the surrounding WatchMyBirds tree.
-It is meant to be lifted out of agent_handoff/ and dropped anywhere
-with `pip install onvif-zeep pyyaml` and still work.
+It can be copied into a standalone diagnostic checkout with
+`pip install onvif-zeep pyyaml` and still work.
 """
 
 from __future__ import annotations

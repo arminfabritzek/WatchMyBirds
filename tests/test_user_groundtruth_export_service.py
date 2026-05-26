@@ -1227,7 +1227,7 @@ def test_frame_integrity_does_not_touch_hard_negatives(tmp_image_dir):
 
 def test_frame_integrity_audit_appears_in_metadata(tmp_image_dir):
     """The dropped-frames audit must be in batch_metadata.json so
-    Pipeline-Dev sees why X manifest rows are missing from COCO."""
+    downstream training sees why X manifest rows are missing from COCO."""
     resolver, write = tmp_image_dir
     conn = _make_conn()
     _add_image(conn, "20260522_130000_mixed.jpg")
@@ -1468,16 +1468,16 @@ def test_build_batch_persists_station_and_reviewer_into_metadata(tmp_image_dir):
         path_resolver=resolver,
         now=datetime(2026, 5, 22, 23, 59, 59, tzinfo=UTC),
         station_id="station-garden-01",
-        reviewer_id="armin",
+        reviewer_id="reviewer-a",
     )
     assert batch.station_id == "station-garden-01"
-    assert batch.reviewer_id == "armin"
+    assert batch.reviewer_id == "reviewer-a"
 
     buf = stream_batch_zip(batch)
     with zipfile.ZipFile(buf) as zf:
         meta = json.loads(zf.read("batch_metadata.json"))
     assert meta["station_id"] == "station-garden-01"
-    assert meta["reviewer_id"] == "armin"
+    assert meta["reviewer_id"] == "reviewer-a"
 
 
 def test_build_batch_station_and_reviewer_default_to_empty_strings(tmp_image_dir):
@@ -1506,7 +1506,7 @@ def test_build_batch_strips_whitespace_from_identity_fields(tmp_image_dir):
         path_resolver=resolver,
         now=datetime(2026, 5, 22, 23, 59, 59, tzinfo=UTC),
         station_id="  station-01  ",
-        reviewer_id="  armin\n",
+        reviewer_id="  reviewer-a\n",
     )
     assert batch.station_id == "station-01"
-    assert batch.reviewer_id == "armin"
+    assert batch.reviewer_id == "reviewer-a"

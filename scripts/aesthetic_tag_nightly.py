@@ -5,8 +5,7 @@ Nightly aesthetic auto-tagger for WatchMyBirds.
 Computes a CLIP "facing-camera" score on every new detection from the previous
 day, writes it to detections.aesthetic_score, and optionally sets is_favorite=1
 for the top-N per species per day --- but only for species where the score has
-been validated to track human judgement (see
-agent_handoff/lab/experiments/aesthetic_tagger/aesthetic_*/ directories).
+been validated to track manual judgement.
 
 Pigeons / large birds are intentionally NOT auto-tagged, because validation
 showed clip_facing_camera does not generalize to them (AUC 0.35 on 56-image
@@ -111,7 +110,7 @@ TAG_UNKNOWN_SPECIES = False
 #   work. The per-species top-3 logic downstream still filtered, but
 #   the floor was no longer load-bearing.
 # - 0.10 is calibrated against the current live CLIP-rescore
-#   distribution: every HUMAN-favorited pick scores at or above it,
+#   distribution: every manual-favorited pick scores at or above it,
 #   so the floor doesn't lose preferred picks while still cutting the
 #   candidate pool roughly in half. Should track TELEGRAM_MIN_AESTHETIC_SCORE.
 MIN_SCORE_FOR_TAG = 0.10
@@ -136,9 +135,8 @@ TOP_N_PER_SPECIES_PER_DAY = 3
 # in both prompts — it conflates two cases the operator wants to treat
 # differently (eye-visible side view = good, eye-hidden rear view = bad).
 # Both prompts retain a sharpness term so a sharp 3/4 view ranks above
-# a blurry frontal one. Existing per-species AUCs from earlier Lab runs
-# (agent_handoff/lab/experiments/aesthetic_tagger/aesthetic_sanity) are
-# no longer directly applicable; expect MIN_SCORE_FOR_TAG and
+# a blurry frontal one. Existing per-species AUCs from earlier validation
+# runs are no longer directly applicable; expect MIN_SCORE_FOR_TAG and
 # TELEGRAM_MIN_AESTHETIC_SCORE to need re-calibration once a few days
 # of fresh picks are in.
 CLIP_MODEL_NAME = "ViT-B-32"
@@ -298,9 +296,9 @@ def apply_auto_favorites(conn: sqlite3.Connection, since: str, dry_run: bool) ->
     and set is_gallery_eligible=1. By default, ALL species are eligible
     (TAGGABLE_SPECIES is empty); set the constant to a non-empty set to restrict.
 
-    is_favorite (HUMAN gold-label) is NEVER touched by this job. The two
+    is_favorite (manual gold label) is NEVER touched by this job. The two
     columns are deliberately decoupled:
-      - is_favorite      = HUMAN clicked the heart, used as training label
+      - is_favorite      = manual clicked the heart, used as training label
       - is_gallery_eligible = model-decided gallery candidate, badged in UI
 
     Re-tagging is idempotent: rows already at is_gallery_eligible=1 simply

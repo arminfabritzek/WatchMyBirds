@@ -965,7 +965,7 @@ def models_classifier_pin():
         # Force-refresh the classifier companion files from HF so a UI
         # pin click guarantees the freshest decision-config YAML and
         # metrics on disk. Without this, a model-side change shipped
-        # by the model-dev (e.g. new per_species_thresholds, retuned
+        # upstream (e.g. new per_species_thresholds, retuned
         # gallery/review thresholds) would never land — the local
         # cache check in ``_fetch_companion_files`` skips download
         # when the file exists, regardless of staleness.
@@ -2110,10 +2110,8 @@ def camera_ptz_capabilities(camera_id: int):
     ``?refresh=1`` to bypass the cache after firmware/network
     changes.
 
-    See Slice 4-C of 2026-05-17_PTZ_capability-probe-and-integration
-    and the operator-facing probe tool at
-    ``agent_handoff/lab/experiments/ptz_probe/`` for the empirical
-    counterpart (which IS allowed to move the cam).
+    See the operator-facing ``scripts.ptz_probe`` tool for the empirical
+    counterpart, which is allowed to move the camera.
     """
     refresh = request.args.get("refresh", "").lower() in ("1", "true", "yes")
     try:
@@ -2128,7 +2126,7 @@ def camera_ptz_capabilities(camera_id: int):
 
 
 # ---------------------------------------------------------------------------
-# Empirical PTZ probe wizard (active plan 2026-05-18_PTZ_probe-ui-integration)
+# Empirical PTZ probe wizard
 #
 # Operator-attended walkthrough that drives the cam through every move
 # type and records what works. Five routes form a state machine:
@@ -3405,20 +3403,14 @@ def bbox_heatmap_public():
 
 # OTA Update Endpoints intentionally absent.
 # The /api/v1/system/updates/* routes were merged onto main ahead of
-# their backing service implementation. The full implementation lives
-# on a private branch (private_review_7185d29) and ships as part of
-# the OTA roadmap (roadmap/2026-03-20_INFRA_ota-update-rpi_ROADMAP.md),
-# which is itself blocked on USB Backup v2
-# (roadmap/2026-04-29_INFRA_usb-restore-and-ota-hooks_ROADMAP.md).
-# When the OTA branch is promoted, the four endpoints
-# (/system/updates/{check,releases,status,install}) and a
-# web/services/update_service.py module land together.
+# their backing service implementation. When the OTA work lands, the
+# four endpoints (/system/updates/{check,releases,status,install})
+# and a web/services/update_service.py module land together.
 
 
 # =============================================================================
-# USB Backup (write-only v1) — see docs/USB_BACKUP.md and the focus plan
-# 2026-04-27_INFRA_usb-data-backup. Restore endpoints land in v2
-# (2026-04-29_INFRA_usb-restore-and-ota-hooks); not in this version.
+# USB Backup (write-only v1) — see docs/USB_BACKUP.md. Restore endpoints
+# land in v2; not in this version.
 # =============================================================================
 
 

@@ -4,7 +4,7 @@ User-Interaction Ground-Truth Queries.
 Every explicit user interaction on the WatchMyBirds web UI is a
 ground-truth statement about a frame or detection. This module exposes
 four SQL queries that lift those statements out of the live DB into
-training-ready row shapes for export to Pipeline-Dev.
+training-ready row shapes for export to downstream training.
 
 The four buckets — and what makes a row qualify:
 
@@ -50,11 +50,10 @@ The four buckets — and what makes a row qualify:
      favorites — see ``trash.py:463`` and ``connection.py:570``)
    - ``detections.status = 'active'``
    Source: explicit heart-click in the gallery UI. The codebase
-   treats this as the HUMAN gold-label (``gallery_core.py:542``);
+   treats this as the manual gold label (``gallery_core.py:542``);
    fav wins over every algorithmic ranking. For training: the
    strongest "this image is exemplary for this species" signal
-   the system has — Pipeline-Dev should sampling-weight these
-   highest.
+   the system has, and downstream samplers should weight these highest.
 
 Explicitly NOT included (deliberately):
 - Trash (``status='deleted'``) — ambiguous: could be FP or "ugly bird".
@@ -65,8 +64,8 @@ Explicitly NOT included (deliberately):
   *pipeline* uncertainty, not user statements unless paired with an
   explicit manual species action.
 
-Every row carries enough provenance for Pipeline-Dev to gate by model
-version, time range, and originating user action.
+Every row carries enough provenance for downstream training to gate by
+model version, time range, and originating user action.
 
 The queries are read-only and never write back to the DB. They return
 per-detection row dicts; **frame-integrity** (i.e. dropping frames
@@ -74,8 +73,7 @@ whose siblings are not all user-confirmed) is the export service's
 responsibility, not this module's — see
 ``web/services/user_groundtruth_export_service.py::_apply_frame_integrity``.
 
-The export-batches book-keeping lives in a separate service module
-(Slice 2 of plan ``2026-05-22_FEATURE_user-groundtruth-export-for-pipeline-dev``).
+The export-batches book-keeping lives in a separate service module.
 """
 
 from __future__ import annotations
@@ -171,7 +169,7 @@ def fetch_species_relabels(
     A row qualifies if ``manual_species_override`` is non-empty AND
     different from ``raw_species_name`` — pure no-op overrides
     (e.g. operator re-confirming the same species) are excluded so
-    Pipeline-Dev's classifier gets only rows with actual disagreement
+    downstream classifier training gets only rows with actual disagreement
     signal.
 
     Args:

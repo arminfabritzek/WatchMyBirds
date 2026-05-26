@@ -10,7 +10,7 @@ Forward-compatible: grid mode is one of three Auto-Cam modes (preset,
 hybrid, grid). The controller branches on `ptz.mode == "grid"`; this
 module owns the math for that branch.
 
-See plan 2026-05-15_PTZ_grid-zoom-mode.
+
 """
 
 from __future__ import annotations

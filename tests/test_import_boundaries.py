@@ -146,9 +146,8 @@ class TestWebLayerBoundaries:
         for module, line in violations:
             print(f"  - Line {line}: {module}")
 
-        # Target: 0 violations after migration is complete
-        # Currently expected: ~25 violations (see REPO_AUDIT_PLAN_AND_TASKs.md)
-        # Uncomment below when migration is complete:
+        # Target: 0 violations after migration is complete.
+        # Uncomment the assertion below when migration is complete:
         # assert len(violations) == 0
 
     @pytest.mark.arch_soft

@@ -1,6 +1,6 @@
 """Tests for the Phase-2a PtzClient extensions.
 
-Roadmap: 2026-05-18_PTZ_probe-script-refactor-to-ptzclient.
+PTZ probe client-extension tests.
 Adds relative_move, absolute_move, emergency_stop, poll_move_status,
 get_status (structured), get_device_info to the production PtzClient
 so the empirical probe wizard + the standalone CLI tool share one

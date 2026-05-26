@@ -13,7 +13,7 @@ Covers the N+1 (2026-05-20) classifier bundle's new behaviour:
   ``per_genus={}`` and behave byte-identically to the pre-N+1 loader.
 
 Test matrix from the focus plan
-(2026-05-20_FEATURE_consume-classifier-n1-per-genus-thresholds):
+(per-genus threshold support):
 
 1. bundle has per-genus + genus is in it           -> uses per-genus τ
 2. bundle has per-genus + genus is not in it       -> uses global τ

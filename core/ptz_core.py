@@ -26,13 +26,10 @@ _auto_camera_cache_lock = threading.Lock()
 _auto_camera_cache_ts = 0.0
 _auto_camera_cache_value: dict[str, Any] | None | object = _AUTO_CAMERA_CACHE_SENTINEL
 
-# Capability-probe cache (Slice 4-C of
-# 2026-05-17_PTZ_capability-probe-and-integration). Keyed by camera_id.
-# 60s TTL applies only to the DECLARED probe (ONVIF GetServiceCapabilities
-# + GetNodes). Empirical results are NOT cached in-memory — they're read
-# fresh from OUTPUT_DIR/ptz_capabilities/cam<id>.yaml each time, which is
-# cheap and lets the operator drop in updated probe results without
-# bouncing the app.
+# Capability-probe cache keyed by camera_id. The 60s TTL applies only to
+# the declared ONVIF probe (GetServiceCapabilities + GetNodes). Empirical
+# results are read fresh from OUTPUT_DIR/ptz_capabilities/cam<id>.yaml
+# each time, so updated probe results are visible without bouncing the app.
 _CAPABILITIES_CACHE_TTL_SEC = 60.0
 _capabilities_cache_lock = threading.Lock()
 _capabilities_cache: dict[int, tuple[float, dict[str, Any]]] = {}
@@ -931,9 +928,8 @@ def probe_capabilities(
 
     Read-only — issues no PTZ move commands. Safe to call against any
     reachable cam. Empirical move tests live in the standalone
-    ``agent_handoff/lab/experiments/ptz_probe/`` tool; this function
-    is the ``GetServiceCapabilities`` + ``GetNodes``-grade declared
-    view only.
+    ``scripts.ptz_probe`` tool; this function is the
+    ``GetServiceCapabilities`` + ``GetNodes``-grade declared view only.
 
     Cache is per-process, 60s TTL. ``force_refresh=True`` bypasses
     the cache (used by the Settings UI's "Re-probe" button).
@@ -972,11 +968,9 @@ def probe_capabilities(
 
     # Empirical augmentation: the standalone PTZ probe tool writes
     # operator-attended results to OUTPUT_DIR/ptz_capabilities/cam<id>.yaml.
-    # When the in-UI probe ships (tracked by
-    # 2026-05-18_PTZ_probe-ui-integration_ROADMAP.md) it will write to
-    # the same path. Either way, the core just reads — it never writes
-    # the empirical file. If the file is missing, empirical is None and
-    # the UI shows yellow ?-pills.
+    # The in-UI probe writes to the same path. Either way, the core just
+    # reads: it never writes the empirical file. If the file is missing,
+    # empirical is None and the UI shows yellow ?-pills.
     result["empirical"] = _load_empirical_from_disk(cam_id_int)
 
     with _capabilities_cache_lock:
@@ -1003,9 +997,7 @@ def _load_empirical_from_disk(camera_id: int) -> dict[str, Any] | None:
     Path: ``OUTPUT_DIR/ptz_capabilities/cam<id>.yaml``. The operator
     runs ``python -m scripts.ptz_probe --camera-id <id>`` (from the
     WMB repo, see ``scripts/ptz_probe/README.md``) to produce this
-    file. The future in-UI probe (roadmap entry
-    ``2026-05-18_PTZ_probe-ui-integration``) writes to the same path
-    from inside WMB.
+    file. The in-UI probe writes to the same path from inside WMB.
 
     Expected file shape (the probe tool's responsibility to produce):
 
