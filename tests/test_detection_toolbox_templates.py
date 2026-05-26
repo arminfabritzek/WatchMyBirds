@@ -383,31 +383,39 @@ def test_review_modal_uses_quick_review_layout():
 
 
 def test_no_bird_action_renders_on_browse_and_review_surfaces():
-    """Mark No Bird must be available on all non-trash surfaces when filename is present."""
+    """Mark No Bird must be available on Review, Gallery, and detail modals when filename is present.
+
+    Species is intentionally excluded: the user is already inside a
+    single-species view and the action is frame-wide, which is the
+    wrong mental model on that surface.
+    """
     toolbox = _read("templates/partials/tile_toolbox.html")
 
-    # Gate covers browse surfaces as well as Review-Queue
-    assert "surface in ('review', 'gallery', 'species', 'detail_modal')" in toolbox
+    # Gate covers Review-Queue, Gallery, and detail modals — Species omitted by design.
+    assert "surface in ('review', 'gallery', 'detail_modal')" in toolbox
     # Action attribute and filename binding are present
     assert 'data-action="review-no-bird"' in toolbox
     assert 'data-filename="{{ filename }}"' in toolbox
     # allow_review_no_bird parameter still guards the button
     assert "allow_review_no_bird" in toolbox
-    # Trash surface is explicitly excluded (not in the allowed tuple)
-    assert "'trash'" not in toolbox.split("surface in ('review', 'gallery', 'species', 'detail_modal')")[1].split("endif")[0]
+    # Trash and Species surfaces are excluded (not in the allowed tuple)
+    gate_body = toolbox.split("surface in ('review', 'gallery', 'detail_modal')")[1].split("endif")[0]
+    assert "'trash'" not in gate_body
+    assert "'species'" not in gate_body
 
 
-def test_no_bird_action_not_on_trash_surface():
-    """Trash tiles must never show the no-bird button.
+def test_no_bird_action_not_on_trash_or_species_surface():
+    """Trash and Species tiles must never show the no-bird button.
 
     Asserts that the surface-gate literal for the no-bird action does
-    NOT contain 'trash'. A future widening of the gate must consciously
-    rewrite this assertion.
+    NOT contain 'trash' or 'species'. A future widening of the gate
+    must consciously rewrite this assertion.
     """
     toolbox = _read("templates/partials/tile_toolbox.html")
-    gate = "surface in ('review', 'gallery', 'species', 'detail_modal')"
+    gate = "surface in ('review', 'gallery', 'detail_modal')"
     assert gate in toolbox, "no-bird gate literal moved or changed shape"
     assert "'trash'" not in gate
+    assert "'species'" not in gate
 
 
 def test_no_bird_js_fallback_is_surface_agnostic():

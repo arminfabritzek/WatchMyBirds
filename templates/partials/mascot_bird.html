@@ -229,7 +229,13 @@
 
         ctx.save();
         ctx.translate(BASE_X + s.x * SCALE, BASE_Y + s.y * SCALE);
-        ctx.scale(s.sx * SCALE, s.sy * SCALE);
+        // Horizontal mirror via facing sign. Done BEFORE the squash
+        // scale so a flipped bird squashes correctly along its own
+        // body axis, and BEFORE rotate so bodyRot still reads
+        // intuitively (positive = head-forward tilt regardless of
+        // which way the bird is facing).
+        var fx = (s.facing < 0) ? -1 : 1;
+        ctx.scale(fx * s.sx * SCALE, s.sy * SCALE);
         ctx.rotate(s.bodyRot);
 
         // legs — dark navy, slightly thicker stroke to match logo weight
@@ -362,6 +368,36 @@
         // so they land on top of the bird without a separate call here.
     }
 
+    /* ---------- time-of-day helper ----------
+       Single source of truth for "is it night?" so the NightSleep
+       eligible() and the idle-night filter in eligibleAmbient() agree.
+       Open-Meteo's is_day=0 is preferred when available; otherwise
+       fall back to the local clock (21:00..05:00). */
+    function isNight(ctx) {
+        if (ctx && ctx.weather && ctx.weather.is_day === 0) return true;
+        if (ctx && ctx.weather && ctx.weather.is_day === 1) return false;
+        var h = new Date().getHours();
+        return h >= 21 || h < 5;
+    }
+
+    // Set of animation names that count as "night idle" — the only
+    // ambient picks allowed when night-idle preemption kicks in.
+    // Deliberately tiny and ALL long-duration: a calm night = one
+    // calm animation owns the screen, not a rapid rotation of "calm"
+    // picks. NightSleep (5s, cooldown bypassed in idle) and Hammock
+    // (12s) carry the load. Stargaze is the rare clear-sky special.
+    // Resting (3s) and Blinking (2s) are deliberately EXCLUDED —
+    // their short duration is the source of the perceived "ADHS at
+    // night": the bird kept picking a new sub-2s anim every couple
+    // of seconds even when all picks were technically "calm".
+    var NIGHT_IDLE_ANIMS = { 'NightSleep': 1, 'Hammock': 1, 'Stargaze': 1 };
+    // After this long without ANY event (push or active ambient flag),
+    // the ambient pool restricts to NIGHT_IDLE_ANIMS while it's night.
+    // Short enough that the bird settles down soon after activity stops,
+    // long enough that a normal click-rotation doesn't yank it to sleep
+    // mid-interaction.
+    var NIGHT_IDLE_AFTER_MS = 30000;
+
     /* ---------- default kinematic state ----------
        The "anchor" pose that every slot starts and ends at. The scheduler
        crossfades between this and the animation's state for the first/last
@@ -369,6 +405,13 @@
     function reset() {
         return {
             x: 0, y: 0, sx: 1, sy: 1,
+            // facing: +1 = beak points right (sprite default),
+            //         -1 = bird mirrored horizontally. Applied via
+            // ctx.scale(facing, 1) in draw() BEFORE the sx scaling
+            // so the mirror is independent of squash-and-stretch.
+            // Excluded from lerpState() — mirror flips are hard
+            // sign changes, not numeric interpolations.
+            facing: 1,
             bodyRot: 0, headRot: 0, headX: 0, headY: 0,
             beakOpen: 0, eyeOpen: 1, wingAngle: 0.15,
             tailAngle: 0, legLift: 0
@@ -402,9 +445,12 @@
                     x: BASE_X + 22 + Math.random() * 6,
                     y: BASE_Y - 14 + Math.random() * 4,
                     vx: 0.35 + Math.random() * 0.25,
-                    vy: -0.45 - Math.random() * 0.15,
+                    // Slowed vy + faster decay so notes stay inside
+                    // the 64px appbar canvas instead of escaping the
+                    // top edge within a few frames.
+                    vy: -0.22 - Math.random() * 0.08,
                     life: 1,
-                    decay: 0.016,
+                    decay: 0.028,
                     ch: Math.random() < 0.5 ? '♪' : '♫',
                     sz: 14 + Math.random() * 4
                 };
@@ -467,16 +513,20 @@
             // the burst should be over before the 2s slot ends.
             intervalMs: 90,
             emit: function () {
-                var angle = -Math.PI / 2 + (Math.random() - 0.5) * Math.PI;
-                var speed = 0.9 + Math.random() * 0.6;
+                // Bias the spawn cone to the LOWER hemisphere instead
+                // of upper, so glyphs burst sideways + down where there
+                // IS canvas to fill, rather than instantly disappearing
+                // over the 64px top edge.
+                var angle = Math.PI / 2 + (Math.random() - 0.5) * Math.PI;
+                var speed = 0.7 + Math.random() * 0.5;
                 return {
                     kind: 'excite',
                     x: BASE_X + (Math.random() * 14 - 7),
-                    y: BASE_Y - 24 + (Math.random() * 4 - 2),
+                    y: BASE_Y - 18 + (Math.random() * 4 - 2),
                     vx: Math.cos(angle) * speed,
                     vy: Math.sin(angle) * speed,
                     life: 1,
-                    decay: 0.04,
+                    decay: 0.055,
                     ch: Math.random() < 0.65 ? '!' : '*',
                     sz: 13 + Math.random() * 5
                 };
@@ -557,6 +607,111 @@
                 ctx.restore();
             }
         },
+        sun_sparkle: {
+            // Bright golden lights that flash briefly anywhere on the
+            // canvas — sells "sunny weather sparkles" the way rain sells
+            // "wet weather". Each sparkle lives ~30 frames as a tiny
+            // four-point starburst that scales up then fades. Distributed
+            // across the full canvas (avoiding the bird's vertical band
+            // would mean fewer visible sparkles in the 64px height).
+            intervalMs: 230,
+            emit: function () {
+                return {
+                    kind: 'sun_sparkle',
+                    x: 6 + Math.random() * (W - 12),
+                    y: 4 + Math.random() * (H - 12),
+                    vx: 0, vy: 0,
+                    life: 1, decay: 0.04,
+                    sz: 2.0 + Math.random() * 1.6,
+                    phase: Math.random() * Math.PI * 2
+                };
+            },
+            draw: function (p) {
+                // Star-burst pulses bigger as it fades — short attention
+                // grab, then disappears. Cross-shape (2 line segments)
+                // reads as "sparkle" cheaper than a 4-point star polygon.
+                var pulse = (1.4 - p.life) * 1.6;       // 0.4 → 1.4 over life
+                var r = p.sz * pulse;
+                ctx.save();
+                ctx.translate(p.x, p.y);
+                ctx.rotate(p.phase + (1 - p.life) * 1.2);
+                ctx.strokeStyle = '#FFF6C8';
+                ctx.shadowColor = '#FFD86B';
+                ctx.shadowBlur = 6;
+                ctx.lineWidth = 1.0;
+                ctx.lineCap = 'round';
+                ctx.beginPath();
+                ctx.moveTo(-r, 0); ctx.lineTo(r, 0);
+                ctx.moveTo(0, -r); ctx.lineTo(0, r);
+                ctx.stroke();
+                // Tiny bright core
+                ctx.fillStyle = '#FFFFFF';
+                ctx.beginPath();
+                ctx.arc(0, 0, p.sz * 0.5, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.restore();
+            }
+        },
+        heat_haze: {
+            // Faint translucent waves drifting upward from the bottom
+            // edge — sells "hot summer day" without obscuring the bird.
+            // Slow upward drift, sideways sway, very transparent so the
+            // bird stays the focus. Wider than they are tall, like real
+            // heat shimmer.
+            intervalMs: 420,
+            emit: function () {
+                return {
+                    kind: 'heat_haze',
+                    x: 8 + Math.random() * (W - 16),
+                    y: H - 4,
+                    vx: 0,
+                    vy: -0.15 - Math.random() * 0.08,
+                    life: 1, decay: 0.012,
+                    w: 14 + Math.random() * 10,
+                    h: 2 + Math.random() * 1.5,
+                    sway: Math.random() * Math.PI * 2
+                };
+            },
+            draw: function (p) {
+                // Sway grows with rising distance — like shimmer wobbling
+                // more as it rises. Very low alpha so it never competes
+                // with the bird silhouette.
+                var dx = Math.sin((H - p.y) / 6 + p.sway) * 1.4;
+                ctx.fillStyle = 'rgba(255, 226, 122, 0.18)';
+                ctx.beginPath();
+                ctx.ellipse(p.x + dx, p.y, p.w, p.h, 0, 0, Math.PI * 2);
+                ctx.fill();
+            }
+        },
+        pollen: {
+            // Golden specks drifting down like very soft snow. Slower
+            // than snow, smaller, warmer color — "summer pollen in the
+            // air". Mixes well with both sun_sparkle and the static sun
+            // disk; together they sell a full sunny day.
+            intervalMs: 180,
+            emit: function () {
+                return {
+                    kind: 'pollen',
+                    x: Math.random() * W,
+                    y: -3,
+                    vx: 0.08 + Math.random() * 0.12,
+                    vy: (0.35 + Math.random() * 0.25) * SCALE,
+                    life: 1, decay: 0.0,
+                    sz: 1.1 + Math.random() * 1.0,
+                    sway: Math.random() * Math.PI * 2
+                };
+            },
+            draw: function (p) {
+                var dx = Math.sin(p.y / 10 + p.sway) * 0.6;
+                ctx.fillStyle = '#FFE27A';
+                ctx.shadowColor = '#FFB347';
+                ctx.shadowBlur = 3;
+                ctx.beginPath();
+                ctx.arc(p.x + dx, p.y, p.sz, 0, Math.PI * 2);
+                ctx.fill();
+            },
+            killsAtFloor: true
+        },
         rain: {
             // Vertical streaks falling from the top of the canvas, all
             // across the width. Tilted slightly so it reads as "rain"
@@ -611,9 +766,11 @@
                     x: BASE_X + 18 + Math.random() * 4,
                     y: BASE_Y - 18 - Math.random() * 4,
                     vx: 0.25 + Math.random() * 0.15,
-                    vy: -0.35 - Math.random() * 0.1,
+                    // Slower rise + faster fade so the Z stays within
+                    // the 64px canvas instead of escaping the top.
+                    vy: -0.18 - Math.random() * 0.05,
                     life: 1,
-                    decay: 0.012,
+                    decay: 0.022,
                     sz: 11 + Math.random() * 4
                 };
             },
@@ -864,6 +1021,95 @@
                 }
                 ctx.restore();
             }
+        },
+        hammock: {
+            // Static hammock prop the bird lies in. singleShot so it
+            // emits exactly once at slot start and stays put — same
+            // pattern as `sun` and `rainbow`. The hammock sways in sync
+            // with the bird's body via a shared phase clock read from
+            // performance.now() so the swing isn't a separate
+            // animation timeline that could drift.
+            //
+            // Drawing order note: particles paint AFTER the bird, so
+            // the hammock visually wraps around the lower body — which
+            // is physically correct for a hammock (the front cloth
+            // edge IS in front of the bird's belly). The suspension
+            // ropes also paint on top, reading as "in front of" the
+            // bird rather than tangled into its silhouette.
+            singleShot: true,
+            intervalMs: 0,
+            emit: function () {
+                return {
+                    kind: 'hammock', x: 0, y: 0, vx: 0, vy: 0,
+                    life: 1, decay: 0
+                };
+            },
+            draw: function () {
+                // Sway phase matched to the Hammock animation's body
+                // rotation (0.7 Hz, same omega). Anchor points are in
+                // canvas (screen) space — the hammock hangs from two
+                // fixed points; only the cloth/bird swing.
+                var t = performance.now() / 1000;
+                var sway = Math.sin(t * 0.7 * Math.PI * 2) * 4;
+                // Anchor points: upper corners of the canvas. Picked
+                // visually so the ropes meet the bird's sit-line at a
+                // believable angle.
+                var ax1 = BASE_X - 60, ay1 = 8;
+                var ax2 = BASE_X + 60, ay2 = 8;
+                // Lower attachment points sway together so the bird
+                // (drawn at BASE_X + sway via bodyRot) sits in the
+                // bottom of the curve.
+                var bx1 = BASE_X - 38 + sway;
+                var bx2 = BASE_X + 38 + sway;
+                var by = BASE_Y + 8;
+                ctx.save();
+                // Ropes — dark, thin, slightly desaturated cordage
+                ctx.strokeStyle = 'rgba(45, 90, 87, 0.85)';
+                ctx.lineWidth = 1.4;
+                ctx.lineCap = 'round';
+                ctx.beginPath();
+                ctx.moveTo(ax1, ay1); ctx.lineTo(bx1, by);
+                ctx.moveTo(ax2, ay2); ctx.lineTo(bx2, by);
+                ctx.stroke();
+                // Anchor knots
+                ctx.fillStyle = 'rgba(45, 90, 87, 0.9)';
+                ctx.beginPath(); ctx.arc(ax1, ay1, 1.6, 0, Math.PI * 2); ctx.fill();
+                ctx.beginPath(); ctx.arc(ax2, ay2, 1.6, 0, Math.PI * 2); ctx.fill();
+                // Cloth — a single soft curve from one lower anchor
+                // to the other, drooped by `dip` at center. Filled so
+                // the bird visually rests "in" it rather than "on top
+                // of" a wire.
+                var midX = (bx1 + bx2) / 2;
+                var midY = by + 14;
+                ctx.fillStyle = 'rgba(168, 213, 210, 0.85)';
+                ctx.strokeStyle = 'rgba(45, 90, 87, 0.9)';
+                ctx.lineWidth = 1.6;
+                ctx.beginPath();
+                ctx.moveTo(bx1, by);
+                ctx.quadraticCurveTo(midX, midY, bx2, by);
+                ctx.lineTo(bx2, by + 4);
+                ctx.quadraticCurveTo(midX, midY + 5, bx1, by + 4);
+                ctx.closePath();
+                ctx.fill();
+                ctx.stroke();
+                // Fringe ticks at the lower edge — sells the "woven
+                // cloth" feel cheaply.
+                ctx.strokeStyle = 'rgba(94, 155, 152, 0.7)';
+                ctx.lineWidth = 0.8;
+                for (var i = 0; i < 7; i++) {
+                    var fx = bx1 + (i + 1) * (bx2 - bx1) / 8;
+                    // Approximate the curve's y at this x with a
+                    // simple parabolic fit so the fringe follows the
+                    // droop instead of dangling off a flat line.
+                    var u = (i + 1) / 8;
+                    var fy = by + 4 + 4 * u * (1 - u) * 4;
+                    ctx.beginPath();
+                    ctx.moveTo(fx, fy);
+                    ctx.lineTo(fx, fy + 2.5);
+                    ctx.stroke();
+                }
+                ctx.restore();
+            }
         }
     };
     function stepParticles() {
@@ -923,7 +1169,15 @@
     function lerpState(from, to, k, out) {
         for (var key in to) {
             if (typeof to[key] === 'number') {
-                out[key] = from[key] + (to[key] - from[key]) * k;
+                // facing is a discrete mirror sign, not a quantity —
+                // interpolating from +1 to -1 would pass through 0
+                // (zero-width invisible bird). Snap at the midpoint
+                // so a flip happens crisply mid-crossfade.
+                if (key === 'facing') {
+                    out[key] = (k < 0.5) ? from[key] : to[key];
+                } else {
+                    out[key] = from[key] + (to[key] - from[key]) * k;
+                }
             }
         }
     }
@@ -953,12 +1207,37 @@
        bird never appears mid-flight at a slot boundary: it's always
        either centered or completely off-screen.
     */
-    // Anchor values are in logical (pre-SCALE) coordinates. The sprite
-    // is ~84 logical units wide; at SCALE ≈ 0.73 that's ~61 canvas px.
-    // To be truly off-canvas (canvas width 172, BASE_X centered), the
-    // sprite center must be at |x| ≥ (canvasWidth/2 + sprite/2) / SCALE
-    // = (86 + 42) / 0.73 ≈ 176. Keep 360 for comfortable margin.
-    var ANCHOR_X = { 'center': 0, 'offscreen-left': -360, 'offscreen-right': 360 };
+    // Anchor & edge helpers — pre-SCALE (logical) coordinates the way
+    // every animation's fn(t, s) writes them. The sprite is ~84 logical
+    // units wide; SCALE is recomputed against canvas size at boot, so
+    // we derive edge positions from W/SCALE rather than baking in a
+    // specific SCALE value. That keeps Peek/HopAcross/FlyBy correct if
+    // the canvas zoom (and thus SCALE) is ever changed.
+    //
+    // edgeX(margin)   logical-X just past the right edge by `margin`
+    //                 sprite-widths. Positive return = right side;
+    //                 negate for left. margin=0 puts the sprite center
+    //                 exactly on the canvas edge.
+    // peekX(beakIn)   logical-X where the body sits offscreen-LEFT but
+    //                 the beak pokes `beakIn` LED-units into view.
+    //                 Negate for the right-side peek.
+    var SPRITE_HALF_LOGICAL = 42;  // half-width of sprite in logical units
+    function edgeX(marginSprites) {
+        var halfCanvasLogical = (W * 0.5) / SCALE;
+        return halfCanvasLogical + SPRITE_HALF_LOGICAL * (1 + (marginSprites || 0));
+    }
+    function peekX(beakIn) {
+        // Beak tip at logical x = HX + 25 = 43 (right of body center).
+        // For a left-edge peek we want canvas-X(beak-tip) = beakIn (px).
+        // → bodyLogicalX = (-W/2 + beakIn) / SCALE - 43
+        return ((-W * 0.5) + (beakIn || 4)) / SCALE - 43;
+    }
+    var ANCHOR_X = {
+        'center': 0,
+        // Comfortable off-canvas margin (sprite fully out + headroom).
+        get 'offscreen-left'() { return -edgeX(1); },
+        get 'offscreen-right'() { return edgeX(1); }
+    };
     var ANIMS = [
         {
             name: 'Resting',
@@ -1087,13 +1366,14 @@
             particles: null,
             fn: function (t, s) {
                 // Trajectory matches the anchor values exactly: at t=0
-                // we're at -360 (== offscreen-left anchor), at t=3 we're
-                // at +360 (== offscreen-right anchor). That way the
-                // anchor→fn handoff at the end of fade-in (and fn→anchor
-                // at the start of fade-out) is continuous in x.
+                // we're at the offscreen-left anchor, at t=3 we're at
+                // offscreen-right. edgeX(1) returns whatever the anchor
+                // value is, so the anchor→fn handoff stays continuous
+                // even when the canvas (and SCALE) changes.
                 var ph = t / 3.0;
                 if (ph > 1) ph = 1;
-                s.x = -360 + ph * 720;
+                var span = edgeX(1);
+                s.x = -span + ph * (2 * span);
                 s.y = -26 + Math.sin(t * 4.5) * 9;
                 s.wingAngle = Math.sin(t * 15) * 0.95;
                 s.bodyRot = -0.12 + Math.sin(t * 4.5) * 0.05;
@@ -1253,19 +1533,22 @@
             loopPosition: false,
             particles: null,
             fn: function (t, s) {
-                // Body parked at x=-150 → head at x=-132, leaving the
-                // beak just inside the left edge of the canvas.
+                // Body parks just outside the left edge so the beak
+                // pokes ~4px inside. peekX() recomputes from SCALE so
+                // this stays correct if the canvas zoom changes.
+                var park = peekX(4);
+                var hide = -edgeX(0.6);
                 if (t < 0.7) {
                     var ip = t / 0.7;
-                    s.x = -200 + ip * 50;
+                    s.x = hide + (park - hide) * ip;
                 } else if (t < 2.8) {
-                    s.x = -150 + Math.sin((t - 0.7) * 1.4) * 4;
+                    s.x = park + Math.sin((t - 0.7) * 1.4) * 4;
                     s.headRot = Math.sin((t - 0.7) * 2.2) * 0.55;
                     s.headX = Math.sin((t - 0.7) * 2.2) * 3;
                     s.eyeOpen = 1;
                 } else {
                     var op = (t - 2.8) / 0.7;
-                    s.x = -150 - op * 60;
+                    s.x = park + (hide - park) * op;
                 }
                 s.y = Math.sin(t * 3) * 1;
             }
@@ -1282,17 +1565,25 @@
             loopPosition: false,
             particles: null,
             fn: function (t, s) {
+                // Mirror the bird so the beak points LEFT — into the
+                // canvas, not away from it. With facing=-1 the sprite
+                // is flipped, so its beak (logical +x) renders on the
+                // -x side. We then park the body just past the right
+                // edge using the mirrored peekX().
+                s.facing = -1;
+                var park = -peekX(4);
+                var hide = edgeX(0.6);
                 if (t < 0.7) {
                     var ip = t / 0.7;
-                    s.x = 200 - ip * 50;
+                    s.x = hide + (park - hide) * ip;
                 } else if (t < 2.8) {
-                    s.x = 150 + Math.sin((t - 0.7) * 1.4) * 4;
-                    s.headRot = -0.3 + Math.sin((t - 0.7) * 2.2) * 0.55;
+                    s.x = park + Math.sin((t - 0.7) * 1.4) * 4;
+                    s.headRot = Math.sin((t - 0.7) * 2.2) * 0.55;
                     s.headX = Math.sin((t - 0.7) * 2.2) * 3;
                     s.eyeOpen = 1;
                 } else {
                     var op = (t - 2.8) / 0.7;
-                    s.x = 150 + op * 60;
+                    s.x = park + (hide - park) * op;
                 }
                 s.y = Math.sin(t * 3) * 1;
             }
@@ -1315,7 +1606,8 @@
                     var hopPh = (t % 0.75) / 0.75;
                     var hop = Math.sin(hopPh * Math.PI);
                     var progress = Math.min(t / 3.0, 1);
-                    s.x = -360 + progress * 360;
+                    var start = -edgeX(1);
+                    s.x = start + progress * (-start);
                     s.y = -hop * 24;
                     s.wingAngle = 0.15 - hop * 0.5;
                     s.tailAngle = hop * 0.3;
@@ -1342,11 +1634,15 @@
             loopPosition: false,
             particles: null,
             fn: function (t, s) {
+                // Bird is moving LEFT — face left so the beak leads
+                // the motion. Without this the bird hops backwards.
+                s.facing = -1;
                 if (t < 3.0) {
                     var hopPh = (t % 0.75) / 0.75;
                     var hop = Math.sin(hopPh * Math.PI);
                     var progress = Math.min(t / 3.0, 1);
-                    s.x = 360 - progress * 360;
+                    var start = edgeX(1);
+                    s.x = start - progress * start;
                     s.y = -hop * 24;
                     s.wingAngle = 0.15 - hop * 0.5;
                     s.tailAngle = hop * 0.3;
@@ -1376,8 +1672,9 @@
             fn: function (t, s) {
                 var ph = t / 2.0;
                 if (ph > 1) ph = 1;
-                s.x = -360 + ph * 720;
-                s.y = -50 + Math.sin(t * 6) * 4;
+                var span = edgeX(1);
+                s.x = -span + ph * (2 * span);
+                s.y = -28 + Math.sin(t * 6) * 4;
                 s.wingAngle = Math.sin(t * 26) * 1.1;
                 s.bodyRot = -0.15;
                 s.tailAngle = 0.05;
@@ -1563,7 +1860,10 @@
             },
             cooldownMs: 30000,
             loopPosition: false,
-            particles: ['sweat', 'sun'],
+            // Hot weather: sweat-drops + sun disk + sparkles. Skipping
+            // heat_haze and pollen here because the sweat-drops own the
+            // low-canvas particle space and adding more would muddle.
+            particles: ['sweat', 'sun', 'sun_sparkle'],
             fn: function (t, s) {
                 // Panting head bob (fast), heavy body sag, mouth ajar.
                 s.y = 1.5 + Math.sin(t * 8) * 0.6;
@@ -1594,7 +1894,11 @@
             },
             cooldownMs: 60000,
             loopPosition: false,
-            particles: 'sun',
+            // Full summer programme: anchored sun disk, sparkles flashing
+            // across the canvas, heat shimmer rising from the floor,
+            // pollen drifting down. Together they sell "lying in the
+            // sun on a properly hot day".
+            particles: ['sun', 'sun_sparkle', 'heat_haze', 'pollen'],
             fn: function (t, s) {
                 // Lying-back pose: bodyRot back, wings spread wide,
                 // head tilted up, slow breathing. Very static.
@@ -2074,17 +2378,209 @@
             endAnchor: 'offscreen-left',
             particles: null,
             fn: function (t, s) {
+                // Right → left, so face left to lead with the beak.
+                s.facing = -1;
                 var ph = t / 3.5;
                 if (ph > 1) ph = 1;
-                // Right → left this time, for variety vs Flying & FlyByFast.
-                s.x = 360 - ph * 720;
-                s.y = -60 + Math.sin(t * 3) * 6;
-                s.sx = 0.62;
-                s.sy = 0.62;
+                var span = edgeX(1);
+                s.x = span - ph * (2 * span);
+                s.y = -30 + Math.sin(t * 3) * 6;
+                s.sx = 0.50;
+                s.sy = 0.50;
                 s.wingAngle = Math.sin(t * 12) * 0.9;
                 s.bodyRot = 0.08;
                 s.tailAngle = 0.05;
                 s.legLift = 10;
+            }
+        },
+        {
+            // Hammock: the "chill" idle. Bird lies in a hammock, sways
+            // gently, eyes half-lidded. Long duration (12 s) so the
+            // animation doesn't ADHS-cycle through Hammock → next-pick →
+            // Hammock again every few seconds — the whole point is that
+            // ONE animation owns a long stretch of time. Becomes the
+            // dominant pick at night by sitting in NIGHT_IDLE_ANIMS
+            // alongside NightSleep and Stargaze.
+            //
+            // The hammock prop is a singleShot 'hammock' particle —
+            // it spawns once at slot start, persists until slot end,
+            // and is auto-cleared by startSlot()'s diff logic when the
+            // next anim doesn't carry the 'hammock' kind.
+            //
+            // Sway physics: bird's bodyRot, x, and y all share the same
+            // 0.7 Hz sine wave as the hammock cloth (see the hammock
+            // particle's draw()). Same omega = visually coupled — the
+            // bird really looks like it's IN the hammock, not floating
+            // independently next to one.
+            name: 'Hammock',
+            durationMs: 12000,
+            // Daytime weight low (rare special), but it's in
+            // NIGHT_IDLE_ANIMS so it dominates the night pool.
+            weight: 0.5,
+            priority: 'ambient',
+            eligible: function () { return true; },
+            cooldownMs: 60000,
+            loopPosition: false,
+            particles: 'hammock',
+            fn: function (t, s) {
+                // Shared sway clock — 0.7 Hz, same phase as the
+                // hammock particle. Using performance.now() instead of
+                // `t` so both renderers read the SAME timeline rather
+                // than the slot-relative one. The slot can start
+                // anywhere in the sway cycle; the bird and the hammock
+                // are always in sync.
+                var phase = (performance.now() / 1000) * 0.7 * Math.PI * 2;
+                var sway = Math.sin(phase);
+                // Lay-down pose: body rotated slightly (lying in the
+                // curve), head dropped onto the chest, legs folded
+                // (legLift high so the feet tuck up into the cloth).
+                s.x = sway * 4;
+                s.y = 4 + Math.abs(sway) * 0.6;     // settles into curve
+                s.bodyRot = sway * 0.08 - 0.05;     // slight permanent recline
+                s.headRot = -0.25 + sway * 0.03;
+                s.headX = -4;
+                s.headY = 8;
+                s.eyeOpen = 0.18;                   // half-lidded: chilling
+                s.beakOpen = 0;
+                s.wingAngle = 0.0;                  // wings tucked
+                s.tailAngle = 0.04;
+                s.legLift = 14;                     // feet up in the cloth
+                s.sy = 0.96;                        // slightly squashed
+                s.sx = 1.04;                        // ...and spread wide
+            }
+        },
+        {
+            // ShakeOff: dog-style full-body shake to fling water off.
+            // Phase 1 (0..0.4 s): wind-up — body crouches, wings come
+            //   in close, eyes squint shut for the impact.
+            // Phase 2 (0.4..2.0 s): the actual shake. bodyRot oscillates
+            //   at ~14 Hz; the head counter-rotates at the same speed
+            //   so it appears to stay roughly upright (real dogs do
+            //   exactly this — flying ears, still snout). Wings flick
+            //   in counter-phase, tail whips with the body. Splash
+            //   droplets fly off the feet via the existing 'splash'
+            //   particle stream (already used by PuddleSplash).
+            // Phase 3 (2.0..2.8 s): wind-down — amplitude decays to
+            //   zero, beak opens once for a relieved exhale, eyes
+            //   reopen, the bird straightens back to neutral.
+            name: 'ShakeOff',
+            durationMs: 2800,
+            weight: 0.5,
+            priority: 'ambient',
+            eligible: function () { return true; },
+            cooldownMs: 60000,
+            loopPosition: false,
+            particles: 'splash',
+            // Suppress splash emission during wind-up and wind-down
+            // tails — droplets should only spray during the actual
+            // shake itself, not while the bird is just crouching or
+            // straightening up. Drop-rate is high (intervalMs=70 in
+            // splash.emit), so the visible spray feels dense.
+            particleEligible: function (t) { return t >= 0.4 && t <= 2.0; },
+            fn: function (t, s) {
+                // Envelope: 0 during wind-up, 1 during shake, fading
+                // to 0 across wind-down. Drives both the rotation
+                // amplitude and the head counter-spring.
+                var env;
+                if (t < 0.4) {
+                    env = t / 0.4;                         // ease-in
+                    var crouch = env;
+                    s.y = 2 * crouch;
+                    s.sy = 1 - 0.08 * crouch;
+                    s.sx = 1 + 0.06 * crouch;
+                    s.wingAngle = 0.15 - 0.4 * crouch;
+                    s.eyeOpen = 1 - 0.7 * crouch;
+                } else if (t < 2.0) {
+                    env = 1;
+                    var sh = Math.sin((t - 0.4) * 14 * Math.PI * 2);
+                    s.bodyRot = sh * 0.45;
+                    // Head counter-rotates so it reads as "still" while
+                    // the body whips — exactly how a wet dog shakes.
+                    s.headRot = -sh * 0.5;
+                    s.headX = -sh * 4;
+                    s.wingAngle = -0.25 + Math.sin((t - 0.4) * 28) * 0.8;
+                    s.tailAngle = sh * 0.55;
+                    s.y = 1 + Math.abs(sh) * 0.8;
+                    s.sy = 0.94 + Math.abs(sh) * 0.06;
+                    s.sx = 1.04 + Math.abs(sh) * 0.05;
+                    s.eyeOpen = 0.25;
+                    s.beakOpen = 0.1;
+                } else {
+                    env = (2.8 - t) / 0.8;                 // ease-out
+                    var settle = Math.max(0, env);
+                    var residual = Math.sin((t - 2.0) * 12) * 0.08 * settle;
+                    s.bodyRot = residual;
+                    s.headRot = -residual * 0.5;
+                    s.y = 2 * settle;
+                    s.sy = 1 - 0.04 * settle;
+                    // Relief exhale — beak opens briefly at the start of
+                    // the wind-down then closes.
+                    var exhale = Math.sin(((t - 2.0) / 0.8) * Math.PI);
+                    s.beakOpen = Math.max(0, exhale) * 0.55;
+                    s.eyeOpen = 0.5 + 0.5 * (1 - settle);
+                }
+            }
+        },
+        {
+            // LookLeftRight: head sweep right → left → right → center,
+            // including a full body mirror at the midpoint so the bird
+            // genuinely looks the other way (instead of just twisting
+            // its neck and looking over its shoulder). Proves the new
+            // s.facing system end-to-end.
+            //
+            // Sequence (durationMs = 4000):
+            //   t=0.0..0.5  look right (facing +1, head tilts +)
+            //   t=0.5..1.5  return to center (facing +1)
+            //   t=1.5..1.7  flip to facing -1 (snap mid-fade)
+            //   t=1.7..2.7  look "right" while flipped = visually left
+            //   t=2.7..3.7  return to center (still facing -1)
+            //   t=3.7..4.0  flip back to facing +1
+            // The animation only ever writes headRot/headX in one
+            // sign — the mirror does the rest. That's the readability
+            // win of s.facing.
+            name: 'LookLeftRight',
+            durationMs: 4000,
+            weight: 0.6,
+            priority: 'ambient',
+            eligible: function () { return true; },
+            cooldownMs: 35000,
+            loopPosition: false,
+            particles: null,
+            fn: function (t, s) {
+                // Body gently bobs throughout — keeps the bird alive
+                // even when the head is mid-sweep.
+                s.y = Math.sin(t * 2) * 1;
+                s.eyeOpen = 1;
+                // Mirror flip windows. Use a hard sign rather than a
+                // ramp — lerpState snaps facing at the midpoint of the
+                // crossfade, so the flip is invisible during a 120 ms
+                // fade window between slots, but inside one animation
+                // a mid-fn flip happens on the next frame and reads
+                // as a "ta-da" head whip.
+                var facing = (t < 1.6 || t >= 3.8) ? 1 : -1;
+                s.facing = facing;
+
+                // Head-turn sub-phases, expressed in local time.
+                // localT is "time since the last facing flip", so the
+                // same curve drives both the right-look (t=0..1.5) and
+                // the mirrored left-look (t=1.7..3.7).
+                var localT, peak;
+                if (t < 1.5) {
+                    // Look-toward, then return.
+                    localT = t;
+                    peak = Math.sin((localT / 1.5) * Math.PI);
+                } else if (t < 1.7) {
+                    // Brief neutral while the mirror snaps.
+                    peak = 0;
+                } else if (t < 3.7) {
+                    localT = t - 1.7;
+                    peak = Math.sin((localT / 2.0) * Math.PI);
+                } else {
+                    peak = 0;
+                }
+                s.headRot = peak * 0.55;
+                s.headX = peak * 4;
+                s.headY = -peak * 1.5;
             }
         },
 
@@ -2166,11 +2662,12 @@
             fn: function (t, s) {
                 if (t < 2.0) {
                     // Arrival glide from left → center. Trajectory
-                    // matches the offscreen-left anchor (-360) at t=0
-                    // and lands at 0 at t=2.0 so the anchor handoff
-                    // is continuous.
+                    // matches the offscreen-left anchor at t=0 and
+                    // lands at 0 at t=2.0 so the anchor handoff is
+                    // continuous regardless of canvas SCALE.
                     var ph = t / 2.0;
-                    s.x = -360 + ph * 360;
+                    var start = -edgeX(1);
+                    s.x = start - ph * start;
                     s.y = -22 + Math.sin(t * 5) * 8 * (1 - ph);
                     s.wingAngle = Math.sin(t * 16) * 0.95 * (1 - ph * 0.6);
                     s.bodyRot = -0.1 * (1 - ph);
@@ -2357,16 +2854,54 @@
     var mascotCtx = {};               // pushed in by wmbMascot.setContext()
     var cur = null;
     var slotStart = 0;
+    // Tracks the most recent "something happened" wall-clock time.
+    // Updated by fire() (external SSE detections, milestones, etc.)
+    // EXCEPT WelcomeFlyIn which is a page-load greeter, not a real
+    // event. Night-idle preemption reads this — after
+    // NIGHT_IDLE_AFTER_MS of quiet AND it being night, the ambient
+    // pool shrinks to the sleep crew (NightSleep + Hammock + Stargaze).
+    //
+    // Initial value: -Infinity. With `lastEventAt = 0`,
+    // `performance.now() - 0` is the page age in ms — anything under
+    // NIGHT_IDLE_AFTER_MS (30 s) would suppress night-idle for that
+    // long. -Infinity guarantees `(now - lastEventAt) >= 30000` from
+    // the very first frame, so opening the page at 2 a.m. drops the
+    // bird straight into sleep mode.
+    var lastEventAt = -Infinity;
 
     function eligibleAmbient() {
         var out = [];
         var now = performance.now();
+        // Night-idle preemption: when it's night AND no event has
+        // fired in the last NIGHT_IDLE_AFTER_MS, restrict the pool
+        // to the sleep crew so the bird actually sleeps instead of
+        // pinging through Hopping/Looking-around/Wing-flap on every
+        // slot. A push event (detection, milestone) bumps
+        // lastEventAt and wakes the bird until the next idle window.
+        var nightIdle = isNight(mascotCtx)
+            && (now - lastEventAt) >= NIGHT_IDLE_AFTER_MS;
         for (var i = 0; i < ANIMS.length; i++) {
             var a = ANIMS[i];
             if (a.priority === 'event') continue;
+            if (nightIdle && !NIGHT_IDLE_ANIMS[a.name]) continue;
             if (typeof a.eligible === 'function' && !a.eligible(mascotCtx)) continue;
             var last = lastShownAt[a.name] || 0;
-            if ((a.cooldownMs || 0) > 0 && (now - last) < a.cooldownMs) continue;
+            // In night-idle, NightSleep's own 480s cooldown would
+            // pull the bird back to Resting between sleep slots —
+            // we want continuous sleep, not 5s sleep then 8min wake.
+            // Bypass cooldown for the sleep crew specifically while
+            // night-idle is active. The default daytime gating still
+            // applies (NIGHT_IDLE_ANIMS only matters when nightIdle).
+            // Cooldown applies normally, EXCEPT: in night-idle we let
+            // NightSleep bypass its own 480 s cooldown so a 5 s sleep
+            // doesn't get followed by 8 minutes of nothing-eligible.
+            // Hammock (60 s) and Stargaze (180 s) DO respect their
+            // cooldowns even at night — otherwise Hammock would pick
+            // itself back-to-back forever, which is the opposite of
+            // what we want (some variety inside the calm pool).
+            var cdActive = (a.cooldownMs || 0) > 0 && (now - last) < a.cooldownMs;
+            var cdBypassed = nightIdle && a.name === 'NightSleep';
+            if (cdActive && !cdBypassed) continue;
             out.push(a);
         }
         return out;
@@ -2562,6 +3097,21 @@
                 var last = lastShownAt[name] || 0;
                 if ((anim.cooldownMs || 0) > 0 && (now - last) < anim.cooldownMs) {
                     return false;
+                }
+                // Mark "something happened" so night-idle preemption
+                // wakes the bird until NIGHT_IDLE_AFTER_MS of quiet.
+                // EXCLUDE WelcomeFlyIn — it fires on every page load
+                // and is a greeter, not a real event. Without this
+                // exclusion the bird is forced "awake" for 30 s
+                // after every reload, defeating the entire idle
+                // mechanism (observed live: 8 animations cycling
+                // through at 01:07 before the first sleep slot
+                // because Welcome had reset lastEventAt to now).
+                // Real wake-triggering events (Excited, BigFlock,
+                // MilestoneCelebrate, FirstDetectionOfDay) all live
+                // under priority:'event' and bump as before.
+                if (name !== 'WelcomeFlyIn') {
+                    lastEventAt = now;
                 }
                 startSlot(anim, now);
                 return true;

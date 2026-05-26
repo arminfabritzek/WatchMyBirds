@@ -119,6 +119,12 @@
     var GLYPH_H = 7;
     var GLYPH_GAP = 2;          // pixel columns between letters (was 1 — too tight)
     var SEGMENT_GAP_PX = 12;    // pixel columns between segments in one message
+    var LOOP_GAP_PX = 24;       // inter-loop breathing gap: after the last
+                                // text column exits, the next loop's first
+                                // column re-enters this many pixels later.
+                                // Small enough that the marquee feels
+                                // continuous (no dead phase), large enough
+                                // that a reader sees "and here we go again".
     var ROW_GAP_PX = 1;         // LED row of space between top and bottom rows
     var TICKER_HEIGHT = 2 * GLYPH_H + ROW_GAP_PX + 2;  // 7+1+7+2 = 17 rows
     // Y-positions for two stacked rows (top + bottom). Marquee renders
@@ -573,6 +579,8 @@
     var compositeBuffer = []; // current scrolling buffer (right zone)
     var compositeOffset = 0;  // float column-pixel offset (negative scrolls left)
     var leadPadCols = 0;      // width of leading empty buffer; reset target
+    var trailPadCols = 0;     // width of trailing empty buffer (inter-loop gap)
+    var textColCount = 0;     // text-only column count, drives reset trigger
     var lastFrameTime = performance.now();
     // First-paint state: on initial load, start with text at the left
     // of the scroll zone so the user sees something to read instantly,
@@ -685,22 +693,29 @@
         // marquee carries the dashboard heartbeat unconditionally.
         var segments = buildHeartbeatSegments();
         var joined = segments.join(' · ');
-        // Pad with a SCROLL-zone-width worth of empty columns BOTH sides:
-        // - leading pad: the first letter enters from the right edge of
-        //   the scroll zone, never spawns mid-viewport.
-        // - trailing pad: the last letter cleanly exits past the LEFT
-        //   edge of the scroll zone (i.e. up against the separator)
-        //   before we loop.
-        // Buffer columns are expanded by COL_X_SCALE at render time, so
-        // a pad of `scrollWidthPx() / COL_X_SCALE` columns covers the
-        // full scroll viewport in screen pixels.
-        var padCols = Math.ceil(scrollWidthPx() / COL_X_SCALE);
+        // Padding strategy depends on whether this is the very first
+        // paint or a steady-state loop:
+        // - First paint: leading pad = full scroll-zone width so the
+        //   text enters from the right edge instead of spawning
+        //   mid-viewport (gives the user a clean reading entrance).
+        // - Steady state: leading pad = LOOP_GAP_PX only, so the next
+        //   loop's first column re-enters right after the previous
+        //   loop's last column exits — no dead phase.
+        // Trailing pad is always LOOP_GAP_PX (the inter-loop gap that
+        // makes the reset readable as "and here we go again" rather
+        // than a snap).
+        var gapCols = Math.ceil(LOOP_GAP_PX / COL_X_SCALE);
+        var leadCols = firstLoop
+            ? Math.ceil(scrollWidthPx() / COL_X_SCALE)
+            : gapCols;
         var textCols = textToColumns(joined);
         compositeBuffer = [];
-        for (var i = 0; i < padCols; i++) compositeBuffer.push(0);
+        for (var i = 0; i < leadCols; i++) compositeBuffer.push(0);
         for (var j = 0; j < textCols.length; j++) compositeBuffer.push(textCols[j]);
-        for (var k = 0; k < padCols; k++) compositeBuffer.push(0);
-        leadPadCols = padCols;
+        for (var k = 0; k < gapCols; k++) compositeBuffer.push(0);
+        leadPadCols = leadCols;
+        trailPadCols = gapCols;
+        textColCount = textCols.length;
     }
 
     function appendDetection(ev) {
@@ -809,7 +824,10 @@
                 // offset = "we've scrolled past leadPadCols columns".
                 compositeOffset = -leadPadCols * COL_X_SCALE;
             } else {
-                compositeOffset = leadPadCols * COL_X_SCALE - scrollWidthPx();
+                // Recovery from a mid-stream empty: same anti-stall
+                // placement as the resize path — start at the small
+                // inter-loop gap, not way past the right edge.
+                compositeOffset = -leadPadCols * COL_X_SCALE;
             }
         }
 
@@ -828,19 +846,30 @@
             compositeOffset -= SCROLL_PX_PER_SEC * dt;
         }
 
-        // Reset when the trailing pad has reached the left edge of the
-        // scroll zone, i.e. the last text column has exited screen-left.
-        // At that moment the trailing pad covers the scroll zone and a
-        // fresh rebuild swaps in without a visible jump — the new
-        // buffer's leading pad takes over seamlessly.
-        var bufferSpanPx = compositeBuffer.length * COL_X_SCALE;
-        if (-compositeOffset >= bufferSpanPx - scrollWidthPx()) {
-            rebuildBuffer();
-            // From the second loop onward, text re-enters from the
-            // right — the steady-state cycle the user expects after the
-            // intro is over.
+        // Reset trigger: the moment the LAST TEXT column has just
+        // exited screen-left. We don't wait for the full trailing
+        // pad to scroll through — that's exactly what creates the
+        // dead phase. Instead, we rebuild immediately and place the
+        // new buffer so its first text column sits LOOP_GAP_PX past
+        // where the old text ended, giving a single inter-loop
+        // breath rather than an empty scroll zone.
+        var textEndPx = (leadPadCols + textColCount) * COL_X_SCALE;
+        if (-compositeOffset >= textEndPx) {
+            // Overshoot = how far past the trigger we landed this
+            // frame. Carry it into the new offset so the gap stays
+            // exactly LOOP_GAP_PX regardless of frame timing.
+            var overshootPx = (-compositeOffset) - textEndPx;
             firstLoop = false;
-            compositeOffset = leadPadCols * COL_X_SCALE - scrollWidthPx();
+            rebuildBuffer();
+            // With the rebuilt buffer:
+            //   buffer[leadPadCols] == first text column
+            // We want that column to sit at screen-X = LOOP_GAP_PX
+            // minus the overshoot (so a consistent gap is visible).
+            // offset + leadPadCols*scale = LOOP_GAP_PX - overshoot
+            // → offset = LOOP_GAP_PX - overshoot - leadPadCols*scale
+            // Since leadPadCols*scale == LOOP_GAP_PX in steady state,
+            // this simplifies to offset = -overshoot.
+            compositeOffset = -overshootPx;
         }
         // Alert-sign overlay takes precedence over the marquee while
         // active. The scroll offset keeps advancing underneath so the
@@ -874,7 +903,11 @@
             compositeOffset = -leadPadCols * COL_X_SCALE;
             firstLoopStartTime = 0;
         } else {
-            compositeOffset = leadPadCols * COL_X_SCALE - scrollWidthPx();
+            // Resize mid-stream: leadPad is now the tiny inter-loop
+            // gap, so don't push the text off the right edge — start
+            // it just inside the right viewport with the gap so the
+            // marquee picks up without a stall.
+            compositeOffset = -leadPadCols * COL_X_SCALE;
         }
     }
     resizeForDPR();

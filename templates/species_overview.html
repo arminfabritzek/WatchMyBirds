@@ -64,7 +64,6 @@
             {% if det.cls_class_name or det.od_class_name %}
             <span class="wm-tile__latin">{{ (det.cls_class_name or det.od_class_name) | replace('_', ' ') }}</span>
             {% endif %}
-            <span class="wm-tile__score">{{ "%.2f"|format(det.score) }}</span>
         </div>
     </div>
     {% endfor %}

@@ -61,7 +61,6 @@
                 {% if det.cls_class_name or det.od_class_name %}
                 <span class="wm-tile__latin">{{ (det.cls_class_name or det.od_class_name) | replace('_', ' ') }}</span>
                 {% endif %}
-                <span class="wm-tile__score">{{ "%.2f"|format(det.score) }}</span>
             </div>
         </div>
         {% endfor %}
@@ -113,8 +112,9 @@
         <span class="wm-tile__name">{{ obs.common_name }}</span>
         <span class="wm-tile__meta">{{ obs.cover_detection.formatted_time }}{% if obs.duration_sec > 0 %} · {{
             obs.duration_display }}{% endif %}</span>
-        <span class="wm-tile__score">{{ "%.2f"|format(obs.best_score) }}{% if obs.photo_count > 1 %} <span
-                class="obs-card__expand-hint">▼</span>{% endif %}</span>
+        {% if obs.photo_count > 1 %}
+        <span class="wm-tile__score"><span class="obs-card__expand-hint">▼</span></span>
+        {% endif %}
     </div>
 </div>
 

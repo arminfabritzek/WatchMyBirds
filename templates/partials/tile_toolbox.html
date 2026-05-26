@@ -176,7 +176,9 @@ allow_review_no_bird=true
     {% endif %}
 
     {# ── Tools menu trigger ── #}
-    {% set show_no_bird = surface in ('review', 'gallery', 'species', 'detail_modal') and filename and allow_review_no_bird %}
+    {# Species surface omits Mark No Bird: the user is already inside a single-species
+       view and the action operates frame-wide, which is the wrong mental model here. #}
+    {% set show_no_bird = surface in ('review', 'gallery', 'detail_modal') and filename and allow_review_no_bird %}
     {# Hide the overflow-menu copy of Mark No Bird when it is already
        rendered as a primary button (Review surface). #}
     {% set show_no_bird_in_overflow = show_no_bird and not no_bird_is_primary %}

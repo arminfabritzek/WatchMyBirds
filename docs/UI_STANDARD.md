@@ -183,7 +183,7 @@ stop being visually primary.
 | Stream                           | Favorite, View Details                   | Change Species, Move to Trash, Deep Scan, Mark No Bird, Training Export                 |
 | Gallery                          | Favorite, View Details                   | Change Species, Move to Trash, Deep Scan, Mark No Bird, Training Export                 |
 | Subgallery                       | Favorite, View Details                   | Change Species, Move to Trash, Deep Scan, Mark No Bird, Training Export                 |
-| Species / Species Overview       | Favorite, View Details                   | Change Species, Move to Trash, Mark No Bird, Training Export                            |
+| Species / Species Overview       | Favorite, View Details                   | Change Species, Move to Trash, Training Export                                          |
 | Review event-level (rail outside tile_toolbox) | Approve Event, Move Event to Trash | — (lives in `review-stage-panel__action` rail, not the toolbox) |
 | Review per-member tile (inside tile_toolbox) | Favorite, Change Species, Move to Trash, Mark No Bird | View Details, Deep Scan, Training Export |
 | Trash                            | Restore                                  | View Details, Change Species *(if exposed)* — Favorite is intentionally suppressed |
