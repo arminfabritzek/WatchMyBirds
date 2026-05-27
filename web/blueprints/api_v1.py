@@ -225,9 +225,11 @@ def status():
                 ),
             }
         )
-    except Exception as e:
-        logger.error(f"Status API error: {e}")
-        return jsonify({"error": str(e)}), 500
+    except Exception as exc:
+        logger.error(
+            "Status API error [%s]", type(exc).__name__, exc_info=True
+        )
+        return jsonify({"error": "Status read failed"}), 500
 
 
 @api_v1.route("/species/thumbnails", methods=["GET"])
@@ -1762,8 +1764,14 @@ def telegram_seen_species_list():
         rows = list_seen_species()
         return jsonify({"status": "success", "species": rows, "count": len(rows)})
     except Exception as exc:
-        logger.error("seen_species list failed: %s", exc, exc_info=True)
-        return jsonify({"status": "error", "message": str(exc)}), 500
+        logger.error(
+            "seen_species list failed [%s]",
+            type(exc).__name__,
+            exc_info=True,
+        )
+        return jsonify(
+            {"status": "error", "message": "Seen-species list failed"}
+        ), 500
 
 
 @api_v1.route("/telegram/seen-species", methods=["DELETE"])
@@ -1780,8 +1788,14 @@ def telegram_seen_species_reset():
         logger.info("seen_species log reset; %d row(s) removed.", deleted)
         return jsonify({"status": "success", "deleted": deleted})
     except Exception as exc:
-        logger.error("seen_species reset failed: %s", exc, exc_info=True)
-        return jsonify({"status": "error", "message": str(exc)}), 500
+        logger.error(
+            "seen_species reset failed [%s]",
+            type(exc).__name__,
+            exc_info=True,
+        )
+        return jsonify(
+            {"status": "error", "message": "Seen-species reset failed"}
+        ), 500
 
 
 # =============================================================================

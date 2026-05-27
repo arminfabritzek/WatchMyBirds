@@ -1327,8 +1327,18 @@ def create_web_interface(detection_manager, system_monitor=None):
                     name=name,
                 )
                 return jsonify({"status": "success", "camera": result})
-            except ValueError as e:
-                return jsonify({"status": "error", "message": str(e)}), 400
+            except ValueError as exc:
+                # Log the validation detail; surface a generic public
+                # message so exception text never reaches the client
+                # (CodeQL py/stack-trace-exposure).
+                logger.info(
+                    "Camera add rejected [%s]",
+                    type(exc).__name__,
+                    exc_info=True,
+                )
+                return jsonify(
+                    {"status": "error", "message": "Invalid camera parameters"}
+                ), 400
             except Exception as exc:
                 return _error_response("Camera add failed", exc)
 
@@ -1512,9 +1522,18 @@ def create_web_interface(detection_manager, system_monitor=None):
                     }
                 )
 
-            except Exception as e:
-                logger.error(f"Camera use failed: {e}", exc_info=True)
-                return jsonify({"status": "error", "message": str(e)}), 500
+            except Exception as exc:
+                # exc_info already captures the traceback; the public
+                # response carries no exception text
+                # (CodeQL py/stack-trace-exposure).
+                logger.error(
+                    "Camera use failed [%s]",
+                    type(exc).__name__,
+                    exc_info=True,
+                )
+                return jsonify(
+                    {"status": "error", "message": "Camera activation failed"}
+                ), 500
 
         server.add_url_rule(
             "/api/daily_species_summary",
@@ -1693,20 +1712,28 @@ def create_web_interface(detection_manager, system_monitor=None):
             # Guard: date_iso flows into redirect URLs below. Reject anything
             # that isn't a strict YYYY-MM-DD so an attacker cannot use
             # this endpoint as an open-redirect / path-traversal vector.
+            # The regex shape-check is also a CodeQL-recognised sanitizer
+            # for py/url-redirection, so the safe_date variable below is
+            # what we splice into redirect() (not the raw date_iso).
+            safe_date: str | None = None
             if date_iso is not None:
-                try:
-                    datetime.strptime(date_iso, "%Y-%m-%d")
-                except (TypeError, ValueError):
+                if re.fullmatch(r"\d{4}-\d{2}-\d{2}", date_iso):
+                    try:
+                        datetime.strptime(date_iso, "%Y-%m-%d")
+                        safe_date = date_iso
+                    except (TypeError, ValueError):
+                        safe_date = None
+                if safe_date is None:
                     return redirect("/gallery")
 
             # Handle reject_all BEFORE checking det_ids (it doesn't need selections)
             if action == "reject_all":
-                if not date_iso:
+                if not safe_date:
                     return redirect("/gallery")
 
                 with db_service.closing_connection() as conn:
                     # Get all detection IDs for this date
-                    date_prefix = date_iso.replace("-", "")  # 2026-02-06 -> 20260206
+                    date_prefix = safe_date.replace("-", "")  # 2026-02-06 -> 20260206
                     query = """
                         SELECT d.detection_id
                         FROM detections d
@@ -1722,15 +1749,15 @@ def create_web_interface(detection_manager, system_monitor=None):
                         logger.info(
                             "Rejected ALL %d detections for %s",
                             len(all_ids),
-                            _slv(date_iso),
+                            _slv(safe_date),
                         )
 
                 # Reset caches
                 gallery_service.invalidate_cache()
-                return redirect(f"/gallery/{date_iso}")
+                return redirect(f"/gallery/{safe_date}")
 
             if not det_ids:
-                return redirect(f"/edit/{date_iso}")
+                return redirect(f"/edit/{safe_date}" if safe_date else "/gallery")
 
             ids_int = [int(i) for i in det_ids]
 
@@ -1740,7 +1767,7 @@ def create_web_interface(detection_manager, system_monitor=None):
                 # Reset caches
                 gallery_service.invalidate_cache()
                 # _daily_gallery_summary_cache was removed
-                return redirect(f"/edit/{date_iso}")
+                return redirect(f"/edit/{safe_date}" if safe_date else "/gallery")
 
             elif action == "download":
                 import io
@@ -3654,9 +3681,11 @@ def create_web_interface(detection_manager, system_monitor=None):
                 pass
 
             return jsonify(response)
-        except Exception as e:
-            logger.error(f"Status API error: {e}")
-            return jsonify({"error": str(e)}), 500
+        except Exception as exc:
+            logger.error(
+                "Status API error [%s]", type(exc).__name__, exc_info=True
+            )
+            return jsonify({"error": "Status read failed"}), 500
 
     @server.route("/api/detection/pause", methods=["POST"])
     @login_required
@@ -3681,9 +3710,13 @@ def create_web_interface(detection_manager, system_monitor=None):
                 }
             )
 
-        except Exception as e:
-            logger.error(f"Detection pause error: {e}")
-            return jsonify({"error": str(e)}), 500
+        except Exception as exc:
+            logger.error(
+                "Detection pause error [%s]",
+                type(exc).__name__,
+                exc_info=True,
+            )
+            return jsonify({"error": "Detection pause failed"}), 500
 
     @server.route("/api/detection/resume", methods=["POST"])
     @login_required
@@ -3717,9 +3750,13 @@ def create_web_interface(detection_manager, system_monitor=None):
                 }
             )
 
-        except Exception as e:
-            logger.error(f"Detection resume error: {e}")
-            return jsonify({"error": str(e)}), 500
+        except Exception as exc:
+            logger.error(
+                "Detection resume error [%s]",
+                type(exc).__name__,
+                exc_info=True,
+            )
+            return jsonify({"error": "Detection resume failed"}), 500
 
     # ==========================================================================
     # BACKUP/RESTORE ROUTES --- MOVED TO web/blueprints/backup.py ---

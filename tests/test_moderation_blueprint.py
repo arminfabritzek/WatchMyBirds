@@ -200,8 +200,13 @@ class TestResolveSelection:
             json={"mode": "date_range", "from_date": "2026-03-01"},
         )
 
+        # Loosened after the response stopped leaking the exception
+        # text — the API contract is "400 + validation message that
+        # mentions one of the date fields", not the literal verbatim
+        # "to_date required" string.
         assert resp.status_code == 400
-        assert "to_date required" in resp.get_json()["message"]
+        message = resp.get_json()["message"].lower()
+        assert "to_date" in message or "from_date" in message or "invalid" in message
 
     def test_date_range_rejects_invalid_ordering(self, client):
         resp = client.post(

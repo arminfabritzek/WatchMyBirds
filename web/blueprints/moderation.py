@@ -112,7 +112,19 @@ def resolve_selection() -> tuple:
             from_date = _parse_iso_date(data.get("from_date"), "from_date")
             to_date = _parse_iso_date(data.get("to_date"), "to_date")
         except ValueError as exc:
-            return jsonify({"status": "error", "message": str(exc)}), 400
+            # ValueError messages from _parse_iso_date are authored-here
+            # constants ("Invalid <field>" / "<field> required"), not
+            # arbitrary exc text — but CodeQL cannot prove that across
+            # the call boundary. Log the actual reason; surface a
+            # generic public message (CodeQL py/stack-trace-exposure).
+            logger.info(
+                "moderation/resolve-selection date_range rejected [%s]",
+                type(exc).__name__,
+                exc_info=True,
+            )
+            return jsonify(
+                {"status": "error", "message": "Invalid from_date or to_date"}
+            ), 400
 
         if from_date > to_date:
             return jsonify(
