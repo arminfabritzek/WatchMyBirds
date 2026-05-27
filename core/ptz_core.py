@@ -1078,5 +1078,7 @@ def _load_empirical_from_disk(camera_id: int) -> dict[str, Any] | None:
                 empirical["follow_zoom_max_burst_sec"]
             )
         except (TypeError, ValueError):
+            # Malformed value in the YAML — silently drop and keep the
+            # default; the rest of the empirical block is still useful.
             pass
     return result

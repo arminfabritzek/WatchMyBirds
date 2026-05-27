@@ -141,6 +141,7 @@ def _resolve_wsdl_dir() -> str | None:
             candidates.append(Path(onvif_file).resolve().parent.parent / "wsdl")
             candidates.append(Path(onvif_file).resolve().parent / "wsdl")
     except Exception:
+        # onvif extra optional — fall through to the bundled wsdl below.
         pass
 
     here = Path(__file__).resolve().parent
@@ -214,6 +215,10 @@ def connect(
                     )
                     pi.stream_uri = str(res.Uri)
                 except Exception:
+                    # Some cameras refuse GetStreamUri for non-PTZ
+                    # profiles; leave stream_uri empty and continue —
+                    # the probe is a diagnostic tool, partial profile
+                    # data is still useful.
                     pass
                 conn.profiles.append(pi)
             ptz_profiles = [p for p in conn.profiles if p.has_ptz]

@@ -99,6 +99,10 @@ _analytics_summary_cache: dict = {"timestamp": 0.0, "payload": None}
 _TICKER_STATS_CACHE_TTL_SECONDS = 60
 _ticker_stats_cache: dict = {"key": None, "timestamp": 0.0, "payload": None}
 
+# Module-level logger for helpers that run before the in-function
+# logger in :func:`run_web_interface` is defined.
+_module_logger = logging.getLogger(__name__)
+
 
 def _compute_ticker_dashboard_stats() -> dict:
     """Cheap dashboard scalars for the LED ticker on non-stream routes."""
@@ -132,7 +136,13 @@ def _compute_ticker_dashboard_stats() -> dict:
             try:
                 stats["total_species"] = _dbs.fetch_gallery_total_species_count(conn)
             except Exception:
-                pass
+                # Ticker must never crash on a partial DB read; defaults
+                # already populated above so a silent fallback is the
+                # intended behaviour. exc_info logged at debug so an
+                # operator running with LOG_LEVEL=DEBUG can still see it.
+                _module_logger.debug(
+                    "ticker stats: total_species fetch failed", exc_info=True
+                )
             try:
                 today_rows = [
                     dict(row)
@@ -154,9 +164,14 @@ def _compute_ticker_dashboard_stats() -> dict:
                     peak = max(hour_buckets.items(), key=lambda kv: kv[1])[0]
                     stats["today_busiest_hour"] = f"{peak}:00"
             except Exception:
-                pass
+                # Same rationale — ticker degrades gracefully to zeros.
+                _module_logger.debug(
+                    "ticker stats: today aggregation failed", exc_info=True
+                )
     except Exception:
-        pass
+        # Outer guard for the rare case where the module imports
+        # themselves fail (e.g. during a hot-reload). Defaults stand.
+        _module_logger.debug("ticker stats: outer wrapper failed", exc_info=True)
 
     _ticker_stats_cache["key"] = cache_key
     _ticker_stats_cache["timestamp"] = now_ts

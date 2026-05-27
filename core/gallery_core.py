@@ -217,9 +217,9 @@ _OBS_MIN_AREA_SIMILARITY = 0.2
 
 
 # Shared helpers live in core._geom_helpers to break the
-# gallery_core <-> events import cycle. Re-export under the legacy
-# private names so existing in-file call sites keep working unchanged.
-from core._geom_helpers import bbox_dist as _bbox_dist  # noqa: E402
+# gallery_core <-> events import cycle. Only ts_to_epoch is still
+# called inside this module; bbox_dist was retired together with the
+# legacy max_bbox_dist event-policy and no longer has a call site.
 from core._geom_helpers import ts_to_epoch as _ts_to_epoch  # noqa: E402
 
 

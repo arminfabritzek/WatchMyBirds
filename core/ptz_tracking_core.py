@@ -826,7 +826,10 @@ class AutoPtzController:
                 }
             )
         except Exception:
-            pass
+            # Bus-side hiccup must never break PTZ — the doc-comment
+            # promises this. Logged at debug for diagnosis without
+            # spamming production logs.
+            logger.debug("ptz_move event publish failed", exc_info=True)
 
     def notify_manual_drive(self) -> None:
         """Record a manual joystick move from the stream-page buttons.
@@ -1363,6 +1366,9 @@ class AutoPtzController:
             try:
                 self._queue.get_nowait()
             except queue.Empty:
+                # Race: queue drained between Full and get_nowait. The
+                # next put_nowait below will succeed regardless, so
+                # silently absorbing the Empty is the correct policy.
                 pass
             self._queue.put_nowait(command)
 

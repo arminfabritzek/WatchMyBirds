@@ -299,6 +299,8 @@ def _download_file(
                 if os.path.exists(tmp_dest):
                     os.remove(tmp_dest)
             except OSError:
+                # Best-effort cleanup; the next retry / next run will
+                # rewrite the tmp file anyway.
                 pass
             if attempt < retries:
                 time.sleep(1)
@@ -1168,6 +1170,8 @@ def _write_companion_freshness_entry(
             if os.path.exists(tmp):
                 os.remove(tmp)
         except OSError:
+            # Best-effort cleanup; the tmp file (if it survives) will
+            # be overwritten on the next sidecar write.
             pass
 
 

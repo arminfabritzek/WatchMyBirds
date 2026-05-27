@@ -73,6 +73,9 @@ def _resolve_onvif_wsdl_dir() -> str | None:
 
         candidates.append(Path(onvif_module.__file__).resolve().parent.parent / "wsdl")
     except (ImportError, AttributeError, OSError):
+        # onvif extra is optional — if the package is missing or its
+        # __file__ attribute is unset (zipapp / namespace-package case),
+        # fall through to the bundled wsdl below. Intentional silence.
         pass
 
     project_root = Path(__file__).resolve().parents[1]

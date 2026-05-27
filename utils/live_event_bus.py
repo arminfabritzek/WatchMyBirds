@@ -73,6 +73,10 @@ class LiveEventBus:
                     with self._lock:
                         self._drop_counts[sub_id] = self._drop_counts.get(sub_id, 0) + 1
                 except queue.Empty:
+                    # Race: subscriber drained the queue between the
+                    # Full exception above and this get_nowait. Caller's
+                    # event is already lost in that case — nothing to
+                    # do, the subscriber will catch up on the next push.
                     pass
 
     def stream(
