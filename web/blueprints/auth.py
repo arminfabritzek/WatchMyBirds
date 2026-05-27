@@ -85,10 +85,8 @@ def login():
             # Clear failed attempts on success
             _login_attempts.pop(ip, None)
             logger.info("Login success ip=%s", _safe_log_value(ip))
-            # Local shape re-assertion at the redirect sink: must be a
-            # same-origin relative path (starts with single '/'). The
-            # validator above already enforces this, but CodeQL cannot
-            # follow that proof across the call boundary.
+            # Re-assert same-origin relative shape next to the redirect;
+            # the validator above already enforces it.
             if not next_url.startswith("/") or next_url.startswith("//"):
                 next_url = "/gallery"
             return redirect(next_url)

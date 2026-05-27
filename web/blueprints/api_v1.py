@@ -71,9 +71,6 @@ def _read_file_tail(path: Path, max_lines: int = 200) -> dict:
         result["tail_text"] = text
         result["line_count"] = len(text.splitlines())
     except Exception as exc:
-        # Log the actual exception for diagnostics; surface only the
-        # exception class so log content cannot leak filesystem details
-        # to the client (CodeQL py/stack-trace-exposure).
         logger.warning(
             "log-tail read failed [%s]", type(exc).__name__, exc_info=True
         )
@@ -194,9 +191,6 @@ def _run_command_safe(
             "expected_permission_error": False,
         }
     except Exception as exc:
-        # Log full traceback for ops debugging; surface only the
-        # exception class so subprocess details cannot leak to the
-        # client (CodeQL py/stack-trace-exposure).
         logger.warning(
             "diagnostic command failed [%s]",
             type(exc).__name__,
@@ -373,9 +367,7 @@ def _regenerate_metadata_for_variant(
         except Exception as exc:
             # Force-refresh is best-effort: HF outage, network issue,
             # or older release without the YAML — log and fall through
-            # to the existing local cache. Wrap exc via type-name only
-            # so its repr cannot smuggle log-line forging characters
-            # (CodeQL py/log-injection).
+            # to the existing local cache.
             logger.warning(
                 "Force-refresh of companion files for %s failed [%s]; "
                 "falling back to local cache.",
@@ -1549,10 +1541,8 @@ def telegram_send_report():
             logger.info("Telegram report job %s completed.", jid)
 
         except Exception as exc:
-            # Background-job error message flows to the public job-status
-            # endpoint; keep it generic so exception text never reaches
-            # the client (CodeQL py/stack-trace-exposure). Full traceback
-            # is captured by the logger call below.
+            # _report_jobs[jid]["message"] is polled by the client — keep
+            # it generic; exception detail goes to the log only.
             with _report_jobs_lock:
                 if jid in _report_jobs:
                     _report_jobs[jid]["status"] = "error"
@@ -1684,8 +1674,6 @@ def aesthetic_rescore():
         try:
             from scripts.aesthetic_tag_nightly import main_with_args
         except ImportError as exc:
-            # Background-job message flows to the public status endpoint;
-            # keep it generic. Full ImportError detail in the log.
             with _rescore_jobs_lock:
                 if jid in _rescore_jobs:
                     _rescore_jobs[jid]["status"] = "error"
@@ -1720,10 +1708,6 @@ def aesthetic_rescore():
                         )
             logger.info("Aesthetic rescore job %s finished (rc=%d).", jid, rc)
         except Exception as exc:
-            # Background-job error message flows to the public job-status
-            # endpoint; keep it generic so exception text never reaches
-            # the client (CodeQL py/stack-trace-exposure). Full traceback
-            # is captured by the logger call below.
             with _rescore_jobs_lock:
                 if jid in _rescore_jobs:
                     _rescore_jobs[jid]["status"] = "error"
@@ -2165,9 +2149,7 @@ def camera_ptz_capabilities(camera_id: int):
         )
         return jsonify({"status": "success", "data": data})
     except ValueError as exc:
-        # ValueError here means "camera not found / not configured" —
-        # log the specific reason; surface a generic 404 so exception
-        # text never reaches the client (CodeQL py/stack-trace-exposure).
+        # ValueError here means "camera not found / not configured".
         logger.info(
             "PTZ capabilities probe rejected for camera %d [%s]",
             camera_id,
@@ -2232,11 +2214,8 @@ def camera_ptz_empirical_probe_start(camera_id: int):
         )
         return jsonify({"status": "success", "data": data})
     except ValueError as exc:
-        # Wizard UI relies on the specific operator-help messages
-        # raised inside core/ptz_empirical_probe (no overview preset,
-        # probe slot collides, no PTZ capabilities). Whitelist those
-        # prefixes; anything else collapses to a generic message so
-        # arbitrary exception text never leaks (CodeQL).
+        # Wizard UI relies on these specific operator-help strings;
+        # anything else collapses to the generic fallback.
         msg = _safe_validation_message(
             exc,
             allowed_prefixes=(
@@ -2304,8 +2283,6 @@ def camera_ptz_empirical_probe_execute(camera_id: int):
         )
         return jsonify({"status": "busy", "message": msg}), 409
     except ValueError as exc:
-        # Whitelist session-state and step-id messages from
-        # core/ptz_empirical_probe (CodeQL).
         msg = _safe_validation_message(
             exc,
             allowed_prefixes=("No probe session", "Unknown step_id"),
@@ -3512,9 +3489,6 @@ def go2rtc_health_public():
             with urllib.request.urlopen(req, timeout=2.0) as resp:
                 healthy = resp.status == 200
         except Exception as exc:
-            # Log full traceback for ops; only the exception class
-            # reaches the response so urllib internals cannot leak
-            # (CodeQL py/stack-trace-exposure).
             logger.info(
                 "go2rtc health probe failed [%s]",
                 type(exc).__name__,

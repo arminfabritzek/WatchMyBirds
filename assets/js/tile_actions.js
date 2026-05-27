@@ -151,9 +151,8 @@
             // image is not yet cached, the operator sees a placeholder
             // background until the optimized version downloads.
             // Sanitise fullSrc through the same same-origin path validator
-            // used for navigation — even though the value originates from
-            // a Jinja-rendered data-attribute, static analysis cannot prove
-            // that and we want the guard to be co-located with the sink.
+            // used for navigation. Co-located at the sink so the guard is
+            // visible next to the .src assignment.
             const safeFullSrc = fullSrc ? safeSameOriginPath(fullSrc) : '';
             if (safeFullSrc) {
                 const preview = document.createElement('img');
@@ -362,10 +361,9 @@
                 }
                 if (detailsHref) {
                     const safeDetailsPath = safeSameOriginPath(detailsHref);
-                    // Local re-check at the sink: assignTo() static analysers
-                    // cannot trace safeSameOriginPath as a sanitizer across
-                    // the call boundary, so we re-assert the same-origin /
-                    // safe-path shape directly here. Cheap and explicit.
+                    // Re-assert the same-origin / safe-path shape at the
+                    // sink — the helper above already enforces it, but
+                    // keeping the check local makes the invariant obvious.
                     if (safeDetailsPath
                         && safeDetailsPath.charAt(0) === '/'
                         && /^[A-Za-z0-9_\-./?&=#]+$/.test(safeDetailsPath)) {

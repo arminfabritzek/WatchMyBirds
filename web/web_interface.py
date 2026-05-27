@@ -137,9 +137,7 @@ def _compute_ticker_dashboard_stats() -> dict:
                 stats["total_species"] = _dbs.fetch_gallery_total_species_count(conn)
             except Exception:
                 # Ticker must never crash on a partial DB read; defaults
-                # already populated above so a silent fallback is the
-                # intended behaviour. exc_info logged at debug so an
-                # operator running with LOG_LEVEL=DEBUG can still see it.
+                # already populated above.
                 _module_logger.debug(
                     "ticker stats: total_species fetch failed", exc_info=True
                 )
@@ -164,13 +162,10 @@ def _compute_ticker_dashboard_stats() -> dict:
                     peak = max(hour_buckets.items(), key=lambda kv: kv[1])[0]
                     stats["today_busiest_hour"] = f"{peak}:00"
             except Exception:
-                # Same rationale — ticker degrades gracefully to zeros.
                 _module_logger.debug(
                     "ticker stats: today aggregation failed", exc_info=True
                 )
     except Exception:
-        # Outer guard for the rare case where the module imports
-        # themselves fail (e.g. during a hot-reload). Defaults stand.
         _module_logger.debug("ticker stats: outer wrapper failed", exc_info=True)
 
     _ticker_stats_cache["key"] = cache_key
@@ -267,15 +262,10 @@ def create_web_interface(detection_manager, system_monitor=None):
         private: bool = True,
         immutable: bool = False,
     ):
-        # Reject any user-supplied path whose realpath escapes the upload root,
-        # then hand the rooted directory + relative path to send_from_directory
-        # so werkzeug's safe_join runs against the correct boundary.
+        # Reject any user-supplied path whose realpath escapes the upload
+        # root; the post-resolve relative_to() check below is the second
+        # line of defence, not the first.
         root_path = Path(root).resolve()
-        # Pre-sanitise the user-supplied relative path before any filesystem
-        # touch: reject NUL, absolute paths, parent-refs, and Windows
-        # separators. normpath collapses redundant components so the post-
-        # resolve relative_to() check below is the second line of defence,
-        # not the first. CodeQL recognises this combination as a sanitizer.
         if (
             not isinstance(relative, str)
             or not relative
@@ -1343,9 +1333,6 @@ def create_web_interface(detection_manager, system_monitor=None):
                 )
                 return jsonify({"status": "success", "camera": result})
             except ValueError as exc:
-                # Log the validation detail; surface a generic public
-                # message so exception text never reaches the client
-                # (CodeQL py/stack-trace-exposure).
                 logger.info(
                     "Camera add rejected [%s]",
                     type(exc).__name__,
@@ -1538,9 +1525,6 @@ def create_web_interface(detection_manager, system_monitor=None):
                 )
 
             except Exception as exc:
-                # exc_info already captures the traceback; the public
-                # response carries no exception text
-                # (CodeQL py/stack-trace-exposure).
                 logger.error(
                     "Camera use failed [%s]",
                     type(exc).__name__,
@@ -1725,11 +1709,9 @@ def create_web_interface(detection_manager, system_monitor=None):
             det_ids = request.form.getlist("ids")
 
             # Guard: date_iso flows into redirect URLs below. Reject anything
-            # that isn't a strict YYYY-MM-DD so an attacker cannot use
-            # this endpoint as an open-redirect / path-traversal vector.
-            # The regex shape-check is also a CodeQL-recognised sanitizer
-            # for py/url-redirection, so the safe_date variable below is
-            # what we splice into redirect() (not the raw date_iso).
+            # that isn't a strict YYYY-MM-DD so an attacker cannot use this
+            # endpoint as an open-redirect / path-traversal vector. Splice
+            # safe_date (not date_iso) into redirect() below.
             safe_date: str | None = None
             if date_iso is not None:
                 if re.fullmatch(r"\d{4}-\d{2}-\d{2}", date_iso):

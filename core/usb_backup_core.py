@@ -409,16 +409,12 @@ def _safe_snapshot_path(name: str) -> Path | None:
 
     Defense-in-depth: even after the literal rejects above, the final
     join uses ``os.path.basename`` to strip any residual directory
-    component. For an accepted name this is a no-op (basename of a
-    bare directory name is itself), but it gives static analysis a
-    recognisable sanitizer to anchor the taint flow on.
+    component. For an accepted name this is a no-op.
     """
     if not isinstance(name, str) or not name:
         return None
     if "/" in name or "\\" in name or ".." in name or "\x00" in name:
         return None
-    # os.path.basename acts as a CodeQL-recognised sanitizer; for any
-    # name that passed the literal rejects above, basename(name) == name.
     safe_name = os.path.basename(name)
     if safe_name != name or not safe_name:
         return None

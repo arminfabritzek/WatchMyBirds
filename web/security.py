@@ -60,10 +60,8 @@ def safe_validation_message(
 
     This helper accepts the exception only if ``str(exc)`` starts with
     one of the ``allowed_prefixes``. Anything else collapses to the
-    generic ``fallback``. The explicit prefix check is also what makes
-    CodeQL's py/stack-trace-exposure analyser treat this as a sanitizer
-    — the message that leaves this function is statically bounded by
-    the prefix list.
+    generic ``fallback`` — the message that leaves this function is
+    statically bounded by the prefix list.
 
     Usage::
 

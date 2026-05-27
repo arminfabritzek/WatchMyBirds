@@ -90,9 +90,6 @@ def inbox_upload():
             try:
                 file_bytes = f.read()
             except Exception as exc:
-                # Log the actual exception detail; keep the user-facing
-                # error generic so exception text never reaches the
-                # response body (CodeQL py/stack-trace-exposure).
                 logger.warning(
                     "Inbox read failed for %s [%s]",
                     _slv(f.filename),

@@ -165,9 +165,6 @@ def feedback():
     try:
         updated = svc.feedback(trigger_id=trigger_id, vote=vote)
     except ValueError as exc:
-        # Log the specific ValueError reason for debugging; surface a
-        # generic public message so exception text never reaches the
-        # client (CodeQL py/stack-trace-exposure).
         logger.info(
             "companion /feedback rejected [%s]", type(exc).__name__, exc_info=True
         )
