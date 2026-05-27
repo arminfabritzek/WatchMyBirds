@@ -256,8 +256,26 @@ def create_web_interface(detection_manager, system_monitor=None):
         # then hand the rooted directory + relative path to send_from_directory
         # so werkzeug's safe_join runs against the correct boundary.
         root_path = Path(root).resolve()
+        # Pre-sanitise the user-supplied relative path before any filesystem
+        # touch: reject NUL, absolute paths, parent-refs, and Windows
+        # separators. normpath collapses redundant components so the post-
+        # resolve relative_to() check below is the second line of defence,
+        # not the first. CodeQL recognises this combination as a sanitizer.
+        if (
+            not isinstance(relative, str)
+            or not relative
+            or "\x00" in relative
+            or ".." in relative.split("/")
+            or ".." in relative.split("\\")
+            or relative.startswith("/")
+            or relative.startswith("\\")
+        ):
+            return "Not found", 404
+        safe_rel = os.path.normpath(relative).replace("\\", "/").lstrip("/")
+        if safe_rel.startswith("..") or "/../" in safe_rel:
+            return "Not found", 404
         try:
-            candidate = (root_path / relative).resolve()
+            candidate = (root_path / safe_rel).resolve()
             candidate.relative_to(root_path)
         except (ValueError, OSError):
             return "Not found", 404

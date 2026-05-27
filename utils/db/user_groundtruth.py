@@ -265,188 +265,19 @@ def count_pending_by_bucket(
 # ---------------------------------------------------------------------------
 
 
-def _time_window_clause(
-    column: str,
-    since: str | None,
-    until: str | None,
-) -> tuple[str, list[Any]]:
-    """Build an optional ``AND <column> >= ? AND <column> < ?`` clause.
+# All five query builders share two predicates that are static SQL —
+# never built from caller input. They are written as module-level string
+# constants so the SQL is a fixed literal (no f-string interpolation in
+# the SELECT/WHERE bodies) and the time window binds since/until via ?
+# placeholders, not by splicing them into the query text.
+#
+# User-action timestamps have existed in two formats in the live DB:
+# old review paths used local naive strings, newer species/favorite
+# paths use UTC ISO strings with an offset. SQLite's 'utc' modifier
+# converts local naive timestamps to UTC while leaving offset-aware
+# values unchanged, so the export window stays honest across both.
 
-    Both bounds are optional. ``since`` is inclusive, ``until`` exclusive
-    (half-open intervals compose cleanly across consecutive batches:
-    today's ``until`` is tomorrow's ``since``).
-    """
-    # User-action timestamps have existed in two formats in the live DB:
-    # old review paths used local naive strings, newer species/favorite
-    # paths use UTC ISO strings with an offset. SQLite's 'utc' modifier
-    # converts local naive timestamps to UTC while leaving offset-aware
-    # values unchanged, so the export window stays honest across both.
-    normalized = f"julianday({column}, 'utc')"
-    parts: list[str] = []
-    params: list[Any] = []
-    if since is not None:
-        parts.append(f" AND {normalized} >= julianday(?, 'utc')")
-        params.append(since)
-    if until is not None:
-        parts.append(f" AND {normalized} < julianday(?, 'utc')")
-        params.append(until)
-    return "".join(parts), params
-
-
-def _build_hard_negatives_query(
-    since: str | None,
-    until: str | None,
-) -> tuple[str, list[Any]]:
-    window, params = _time_window_clause("i.review_updated_at", since, until)
-    exclusions = _active_export_exclusion_clause()
-    sql = f"""
-        SELECT
-            d.detection_id,
-            d.image_filename,
-            d.bbox_x, d.bbox_y, d.bbox_w, d.bbox_h,
-            d.od_confidence,
-            d.od_class_name,
-            d.detector_model_version,
-            d.classifier_model_version,
-            d.frame_width,
-            d.frame_height,
-            i.review_updated_at AS user_action_at
-        FROM detections d
-        JOIN images i ON i.filename = d.image_filename
-        WHERE d.status = 'active'
-          AND i.review_status = 'no_bird'
-          {exclusions}
-          {window}
-        ORDER BY i.review_updated_at DESC, d.detection_id DESC
-    """
-    return sql, params
-
-
-def _build_confirmed_positives_query(
-    since: str | None,
-    until: str | None,
-) -> tuple[str, list[Any]]:
-    window, params = _time_window_clause("d.species_updated_at", since, until)
-    exclusions = _active_export_exclusion_clause()
-    # Explicit-user-action gate: either species_source is 'manual'
-    # (any manual write site stamps that — confirm_unclear_detections,
-    # bulk-relabel, review-queue edit) OR manual_species_override is
-    # non-empty (user actively picked a species via the picker).
-    # Without this gate, pure pipeline predictions
-    # (species_source='model_top1') would leak through and create a
-    # confirmation-bias loop in re-training.
-    sql = f"""
-        SELECT
-            d.detection_id,
-            d.image_filename,
-            d.bbox_x, d.bbox_y, d.bbox_w, d.bbox_h,
-            d.od_confidence,
-            d.od_class_name,
-            d.detector_model_version,
-            d.classifier_model_version,
-            d.frame_width,
-            d.frame_height,
-            COALESCE(
-                NULLIF(d.manual_species_override, ''),
-                d.raw_species_name
-            ) AS species,
-            d.species_source,
-            d.species_updated_at AS user_action_at
-        FROM detections d
-        JOIN images i ON i.filename = d.image_filename
-        WHERE d.status = 'active'
-          AND lower(COALESCE(d.decision_level, '')) IN ('species', 'species_review')
-          AND (i.review_status IS NULL OR i.review_status != 'no_bird')
-          AND (
-              lower(COALESCE(d.species_source, '')) = 'manual'
-              OR (
-                  d.manual_species_override IS NOT NULL
-                  AND d.manual_species_override != ''
-              )
-          )
-          {exclusions}
-          {window}
-        ORDER BY d.species_updated_at DESC, d.detection_id DESC
-    """
-    return sql, params
-
-
-def _build_species_relabels_query(
-    since: str | None,
-    until: str | None,
-) -> tuple[str, list[Any]]:
-    window, params = _time_window_clause("d.species_updated_at", since, until)
-    exclusions = _active_export_exclusion_clause()
-    sql = f"""
-        SELECT
-            d.detection_id,
-            d.image_filename,
-            d.bbox_x, d.bbox_y, d.bbox_w, d.bbox_h,
-            d.od_confidence,
-            d.od_class_name,
-            d.detector_model_version,
-            d.classifier_model_version,
-            d.frame_width,
-            d.frame_height,
-            d.raw_species_name AS model_predicted_species,
-            d.manual_species_override AS user_corrected_species,
-            d.species_source,
-            d.species_updated_at AS user_action_at
-        FROM detections d
-        WHERE d.status = 'active'
-          AND d.manual_species_override IS NOT NULL
-          AND d.manual_species_override != ''
-          AND d.manual_species_override != COALESCE(d.raw_species_name, '')
-          {exclusions}
-          {window}
-        ORDER BY d.species_updated_at DESC, d.detection_id DESC
-    """
-    return sql, params
-
-
-def _build_favorites_query(
-    since: str | None,
-    until: str | None,
-) -> tuple[str, list[Any]]:
-    # Window predicate on species_updated_at — the heart-click stamps
-    # rating_source='manual' but reuses the species_updated_at column
-    # for "last user touched this row" semantics. If the row was never
-    # touched on the species axis, species_updated_at is NULL and the
-    # window predicate naturally rejects it under SQLite's NULL-vs-
-    # comparison semantics (which is the conservative default —
-    # an unwindowed favorites query has since=None and gets every fav).
-    window, params = _time_window_clause("d.species_updated_at", since, until)
-    exclusions = _active_export_exclusion_clause()
-    sql = f"""
-        SELECT
-            d.detection_id,
-            d.image_filename,
-            d.bbox_x, d.bbox_y, d.bbox_w, d.bbox_h,
-            d.od_confidence,
-            d.od_class_name,
-            d.detector_model_version,
-            d.classifier_model_version,
-            d.frame_width,
-            d.frame_height,
-            COALESCE(
-                NULLIF(d.manual_species_override, ''),
-                d.raw_species_name
-            ) AS species,
-            d.species_source,
-            d.species_updated_at AS user_action_at
-        FROM detections d
-        WHERE d.status = 'active'
-          AND d.is_favorite = 1
-          AND d.rating_source = 'manual'
-          {exclusions}
-          {window}
-        ORDER BY d.species_updated_at DESC, d.detection_id DESC
-    """
-    return sql, params
-
-
-def _active_export_exclusion_clause() -> str:
-    return """
+_ACTIVE_EXPORT_EXCLUSION_SQL = """
           AND NOT EXISTS (
               SELECT 1
               FROM groundtruth_export_exclusions gte
@@ -462,7 +293,179 @@ def _active_export_exclusion_clause() -> str:
                     )
                 )
           )
-    """
+"""
+
+# Optional half-open window: since inclusive, until exclusive. Both
+# bounds bind as ? placeholders; passing None makes the predicate a
+# no-op (NULL IS NULL → TRUE) without rebuilding the query text.
+_REVIEW_WINDOW_SQL = """
+          AND (? IS NULL OR julianday(i.review_updated_at, 'utc') >= julianday(?, 'utc'))
+          AND (? IS NULL OR julianday(i.review_updated_at, 'utc') < julianday(?, 'utc'))
+"""
+
+_SPECIES_WINDOW_SQL = """
+          AND (? IS NULL OR julianday(d.species_updated_at, 'utc') >= julianday(?, 'utc'))
+          AND (? IS NULL OR julianday(d.species_updated_at, 'utc') < julianday(?, 'utc'))
+"""
+
+
+def _window_params(since: str | None, until: str | None) -> list[Any]:
+    # Each bound is bound twice: once for the IS NULL guard, once for
+    # the actual comparison. SQLite optimises NULL OR ... predicates
+    # away when the bound is None.
+    return [since, since, until, until]
+
+
+_HARD_NEGATIVES_SQL = f"""
+    SELECT
+        d.detection_id,
+        d.image_filename,
+        d.bbox_x, d.bbox_y, d.bbox_w, d.bbox_h,
+        d.od_confidence,
+        d.od_class_name,
+        d.detector_model_version,
+        d.classifier_model_version,
+        d.frame_width,
+        d.frame_height,
+        i.review_updated_at AS user_action_at
+    FROM detections d
+    JOIN images i ON i.filename = d.image_filename
+    WHERE d.status = 'active'
+      AND i.review_status = 'no_bird'
+      {_ACTIVE_EXPORT_EXCLUSION_SQL}
+      {_REVIEW_WINDOW_SQL}
+    ORDER BY i.review_updated_at DESC, d.detection_id DESC
+"""
+
+
+def _build_hard_negatives_query(
+    since: str | None,
+    until: str | None,
+) -> tuple[str, list[Any]]:
+    return _HARD_NEGATIVES_SQL, _window_params(since, until)
+
+
+# Explicit-user-action gate: either species_source is 'manual'
+# (any manual write site stamps that — confirm_unclear_detections,
+# bulk-relabel, review-queue edit) OR manual_species_override is
+# non-empty (user actively picked a species via the picker).
+# Without this gate, pure pipeline predictions
+# (species_source='model_top1') would leak through and create a
+# confirmation-bias loop in re-training.
+_CONFIRMED_POSITIVES_SQL = f"""
+    SELECT
+        d.detection_id,
+        d.image_filename,
+        d.bbox_x, d.bbox_y, d.bbox_w, d.bbox_h,
+        d.od_confidence,
+        d.od_class_name,
+        d.detector_model_version,
+        d.classifier_model_version,
+        d.frame_width,
+        d.frame_height,
+        COALESCE(
+            NULLIF(d.manual_species_override, ''),
+            d.raw_species_name
+        ) AS species,
+        d.species_source,
+        d.species_updated_at AS user_action_at
+    FROM detections d
+    JOIN images i ON i.filename = d.image_filename
+    WHERE d.status = 'active'
+      AND lower(COALESCE(d.decision_level, '')) IN ('species', 'species_review')
+      AND (i.review_status IS NULL OR i.review_status != 'no_bird')
+      AND (
+          lower(COALESCE(d.species_source, '')) = 'manual'
+          OR (
+              d.manual_species_override IS NOT NULL
+              AND d.manual_species_override != ''
+          )
+      )
+      {_ACTIVE_EXPORT_EXCLUSION_SQL}
+      {_SPECIES_WINDOW_SQL}
+    ORDER BY d.species_updated_at DESC, d.detection_id DESC
+"""
+
+
+def _build_confirmed_positives_query(
+    since: str | None,
+    until: str | None,
+) -> tuple[str, list[Any]]:
+    return _CONFIRMED_POSITIVES_SQL, _window_params(since, until)
+
+
+_SPECIES_RELABELS_SQL = f"""
+    SELECT
+        d.detection_id,
+        d.image_filename,
+        d.bbox_x, d.bbox_y, d.bbox_w, d.bbox_h,
+        d.od_confidence,
+        d.od_class_name,
+        d.detector_model_version,
+        d.classifier_model_version,
+        d.frame_width,
+        d.frame_height,
+        d.raw_species_name AS model_predicted_species,
+        d.manual_species_override AS user_corrected_species,
+        d.species_source,
+        d.species_updated_at AS user_action_at
+    FROM detections d
+    WHERE d.status = 'active'
+      AND d.manual_species_override IS NOT NULL
+      AND d.manual_species_override != ''
+      AND d.manual_species_override != COALESCE(d.raw_species_name, '')
+      {_ACTIVE_EXPORT_EXCLUSION_SQL}
+      {_SPECIES_WINDOW_SQL}
+    ORDER BY d.species_updated_at DESC, d.detection_id DESC
+"""
+
+
+def _build_species_relabels_query(
+    since: str | None,
+    until: str | None,
+) -> tuple[str, list[Any]]:
+    return _SPECIES_RELABELS_SQL, _window_params(since, until)
+
+
+# Window predicate on species_updated_at — the heart-click stamps
+# rating_source='manual' but reuses the species_updated_at column
+# for "last user touched this row" semantics. If the row was never
+# touched on the species axis, species_updated_at is NULL and the
+# window predicate naturally rejects it under SQLite's NULL-vs-
+# comparison semantics (which is the conservative default —
+# an unwindowed favorites query has since=None and gets every fav).
+_FAVORITES_SQL = f"""
+    SELECT
+        d.detection_id,
+        d.image_filename,
+        d.bbox_x, d.bbox_y, d.bbox_w, d.bbox_h,
+        d.od_confidence,
+        d.od_class_name,
+        d.detector_model_version,
+        d.classifier_model_version,
+        d.frame_width,
+        d.frame_height,
+        COALESCE(
+            NULLIF(d.manual_species_override, ''),
+            d.raw_species_name
+        ) AS species,
+        d.species_source,
+        d.species_updated_at AS user_action_at
+    FROM detections d
+    WHERE d.status = 'active'
+      AND d.is_favorite = 1
+      AND d.rating_source = 'manual'
+      {_ACTIVE_EXPORT_EXCLUSION_SQL}
+      {_SPECIES_WINDOW_SQL}
+    ORDER BY d.species_updated_at DESC, d.detection_id DESC
+"""
+
+
+def _build_favorites_query(
+    since: str | None,
+    until: str | None,
+) -> tuple[str, list[Any]]:
+    return _FAVORITES_SQL, _window_params(since, until)
 
 
 def _count_with(
