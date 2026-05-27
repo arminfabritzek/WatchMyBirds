@@ -2149,9 +2149,17 @@ code {
    Migrated from templates/stream.html
    ═══════════════════════════════════════════════════════════════════════════ */
 
-/* Stream Container - Full-width, centered, prominent */
+/* Stream Container - Full-width, centered, prominent.
+   The stream page uses a tighter vertical rhythm than the rest of
+   the app — 6px instead of --space-lg (24px). Four places hold
+   this number: the negative margin-top here (cancels .page's
+   24px padding-top down to 6px without touching the global rule),
+   margin-bottom here, .section--stream-width margin-top, and the
+   inline margin-top on the Best-of-Species board in stream.html.
+   If this changes, move all four. */
 .stream-wrapper {
-    margin-bottom: var(--space-xl);
+    margin-top: calc(6px - var(--space-lg));
+    margin-bottom: 6px;
 }
 
 .stream-container {
@@ -2172,11 +2180,20 @@ code {
     max-width: var(--content-max-width);
     margin-left: auto;
     margin-right: auto;
+    /* Tighter-than-system 6px gap below the video. The global
+       .section { margin-top: --space-2xl } would otherwise win
+       collapse and balloon this to 48px. See .stream-wrapper for
+       the matching rule. */
+    margin-top: 6px;
 }
 
 .stream-actions {
     max-width: var(--content-max-width);
-    margin: 0.35rem auto 0;
+    /* No vertical margin: this row often renders empty (public view) or
+       hidden (admin view, pause banner d-none). Letting it contribute a
+       margin-top here would defeat the stream-page's single-rhythm rule
+       — see .stream-wrapper { margin-bottom: --space-lg }. */
+    margin: 0 auto;
     display: flex;
     justify-content: flex-end;
     align-items: center;
@@ -2277,7 +2294,6 @@ code {
 
 @media (max-width: 767px) {
     .stream-actions {
-        margin-top: 0.3rem;
         padding-right: 0.15rem;
     }
 

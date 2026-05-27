@@ -10,21 +10,43 @@
 
 <aside class="mascot-bird" id="mascotBird" aria-hidden="true">
     <canvas class="mascot-bird__canvas" id="mascotBirdCanvas"
-            width="172" height="64"></canvas>
+            width="172" height="96"></canvas>
 </aside>
 
 <style>
 .mascot-bird {
-    /* The appbar wrapper owns the dark rail. This slot has no inner
-       padding so flying animations can enter from the rail edge. */
+    /* The appbar wrapper occupies exactly the LED-band height (64 px)
+       so the parent flex row never stretches beyond that. The canvas
+       itself is taller (96 px) and is absolutely positioned with a
+       negative top, so it visually overshoots upward — giving the
+       bird sky to hop into — without contributing its full height to
+       the flex row's content-box.
+       Earlier attempts used `margin-top: -32px` on the wrapper alone,
+       but `align-items: center` on the parent row still measures the
+       96 px intrinsic canvas height for sizing, so the LED rail grew.
+       The `position: relative` + `position: absolute` pair below
+       severs the canvas from the row's height calculation entirely.
+       `overflow: visible` is required so the upward overshoot isn't
+       clipped at the wrapper edge. */
     display: block;
+    position: relative;
+    height: 64px;         /* match LED-band row height exactly */
     padding: 0;
     line-height: 0;       /* drop inline-baseline gap under canvas */
+    overflow: visible;
 }
 .mascot-bird__canvas {
     display: block;
-    /* Native 172×64 px — DPR scaling handled in JS for sharpness on
-       high-density displays. */
+    /* Native 172×96 px — DPR scaling handled in JS for sharpness on
+       high-density displays. Absolutely positioned so it doesn't
+       contribute its 96 px height to the parent row. `top: -32px`
+       puts the canvas floor exactly at the wrapper's bottom edge
+       (= the LED band's bottom edge), so ground props (branch, grass,
+       flowers) sit on the LED band and the extra 32 px lives above as
+       sky. */
+    position: absolute;
+    left: 0;
+    top: -32px;
 }
 @media (max-width: 600px) {
     .mascot-bird {
@@ -55,9 +77,20 @@
     // than the old 200×110 demo box. Size from a tight rail box so the
     // mascot claims the appbar slot, while still leaving headroom for
     // hops and fly-ins.
-    var SCALE = Math.min(W / 160, H / 88);
+    //
+    // FLOOR_H is the LED-band visual height (64 px). The canvas itself
+    // is taller (e.g. 96 px) and overflows UPWARD via negative CSS
+    // top-margin on the wrapper — giving the bird sky to hop into
+    // without lifting the ground props above the LED band. So every
+    // "ground-relative" coordinate (BASE_Y, branch line, grass line,
+    // flower roots) is computed from FLOOR_H, not from H. SCALE is
+    // also pinned to FLOOR_H so the sprite stays the size it always
+    // was; only the visible canvas around it grows.
+    var FLOOR_H = 64;
+    var SKY_OFFSET = H - FLOOR_H;      // extra px added above the floor
+    var SCALE = Math.min(W / 160, FLOOR_H / 88);
     var BASE_X = W * 0.50;             // sprite anchor: horizontally centered
-    var BASE_Y = H * 0.535;            // sit a touch higher so the larger feet fit
+    var BASE_Y = SKY_OFFSET + FLOOR_H * 0.535;  // sit a touch higher so the larger feet fit
     var HX = 18, HY = -22;             // head sits closer to body — logo-style fused silhouette
 
     // Logo-inspired palette: cool teal body, dark navy outline, soft mint
@@ -69,18 +102,45 @@
     // own light fills. Navy was logo-faithful but invisible at 1.54:1
     // against #050806; the dark-teal exterior (3:1) reads as a true
     // contour without going full grey.
-    var COL_OUTLINE = '#2D5A57';       // exterior contour (dark teal, ~3:1 on black)
-    var COL_DETAIL  = '#16324F';       // interior detail navy (pupil, seam)
-    var COL_BODY    = '#A8D5D2';       // teal body fill
-    var COL_BELLY   = '#DCEEEC';       // pale mint belly
-    var COL_WING    = '#7FB8B5';       // slightly darker teal wing for depth
-    var COL_TAIL    = '#5E9B98';       // deeper teal tail
-    var COL_BEAK_HI = '#C8D4DA';       // upper-mandible (lighter blue-grey)
-    var COL_BEAK_LO = '#8A98A1';       // lower-mandible (darker for depth)
-    var COL_BEAK_OL = '#3D4A52';       // beak outline (dark grey, ~3.2:1 on black)
-    var COL_LEG     = '#7FB8B5';       // legs in wing-teal so they show against black
-    var COL_EYE_W   = '#FFFFFF';       // big white sclera (logo signature)
-    var COL_EYE_P   = '#16324F';       // small navy pupil (sits in white, fine)
+    // v2 palette: darker outline for stronger silhouette, gradient
+    // endpoints (bodyDark/bodyLight) replace the flat body fill, and a
+    // peach belly accent warms the breast. The flat-fill names (BODY,
+    // BELLY) remain as mid-tones for places that don't take a gradient
+    // (e.g. animations during slot crossfade where the radial gradient
+    // would compute against a partial transform).
+    var COL_OUTLINE   = '#1F3D3B';     // darker exterior contour
+    var COL_DETAIL    = '#0F2236';     // interior detail navy (pupil, seam)
+    var COL_BODY_LT   = '#C8E6E4';     // gradient top
+    var COL_BODY_DK   = '#6FA8A5';     // gradient bottom
+    var COL_BODY      = COL_BODY_DK;   // mid-tone for non-gradient call sites
+    var COL_BELLY_LT  = '#F4FBFA';     // bright belly highlight
+    var COL_BELLY_AC  = '#FFD9B8';     // peach accent on the breast
+    var COL_BELLY     = '#DCEEEC';     // mid-tone fallback
+    var COL_WING      = '#5A9794';     // wing mid-tone
+    var COL_WING_DK   = '#2D5A57';     // wing feather lines + gradient anchor
+    var COL_TAIL      = '#4E807D';     // tail mid-tone
+    var COL_BEAK_HI   = '#E0D8C8';     // upper-mandible (warm bone)
+    var COL_BEAK_LO   = '#6A7480';     // lower-mandible
+    var COL_BEAK_OL   = '#2A2F35';     // beak outline
+    var COL_LEG       = '#5A9794';     // legs in wing-teal
+    var COL_EYE_W     = '#FFFFFF';     // big white sclera (logo signature)
+    var COL_EYE_P     = '#0F2236';     // small navy pupil
+    var COL_EYE_HI    = '#FFFFFF';     // catchlight highlight
+    var COL_CHEEK     = 'rgba(255, 180, 150, 0.35)';  // soft peach blush
+
+    // Spring-physics state for tail + wing. Persists across frames so a
+    // step in s.tailAngle / s.wingAngle decays into a brief Nachschwingen
+    // instead of snapping instantly to the new value. Lives at IIFE scope
+    // because draw(s) is called once per frame from a fresh `s` — the
+    // spring needs memory of where it was, the kinematic state doesn't.
+    // Tuned soft: stiffness 0.18 + damping 0.78 settles in ~10 frames,
+    // visible without feeling rubbery.
+    var SPRING = {
+        tailDisplayed: 0,    tailVel: 0,
+        wingDisplayed: 0.15, wingVel: 0
+    };
+    var SPRING_STIFF = 0.18;
+    var SPRING_DAMP  = 0.78;
 
     var BG_VARIANTS = { none: true, meadow: true, branch: true };
     var BG_VARIANT = 'branch';
@@ -166,24 +226,29 @@
     function drawBackground() {
         if (BG_VARIANT === 'none') return;
         var t = performance.now() / 1000;
+        // All ground props sit on the LED-band floor (y = SKY_OFFSET +
+        // FLOOR_H - 1). The original numbers were authored for a 64 px
+        // canvas; we re-express them as offsets from FLOOR_H so the
+        // taller canvas (with sky above) keeps the same ground layout.
+        var FY = SKY_OFFSET;            // y = FY + 0..FLOOR_H is the LED-band region
         if (BG_VARIANT === 'meadow') {
             ctx.save();
             ctx.strokeStyle = 'rgba(127, 184, 181, 0.35)';
             ctx.lineWidth = 1;
             ctx.beginPath();
-            ctx.moveTo(0, 58.5);
-            ctx.lineTo(W, 58.5);
+            ctx.moveTo(0, FY + 58.5);
+            ctx.lineTo(W, FY + 58.5);
             ctx.stroke();
             for (var x = 8; x < W; x += 11) {
                 var blade = 4 + (x % 3);
                 var lean = Math.sin(t * 1.3 + x) * 1.2;
                 ctx.beginPath();
-                ctx.moveTo(x, 60);
-                ctx.quadraticCurveTo(x + lean, 58 - blade * 0.45, x + lean * 1.4, 58 - blade);
+                ctx.moveTo(x, FY + 60);
+                ctx.quadraticCurveTo(x + lean, FY + 58 - blade * 0.45, x + lean * 1.4, FY + 58 - blade);
                 ctx.stroke();
             }
-            drawFlower(19, H - 1, Math.sin(t * 1.1) * 0.08, '#DCEEEC');
-            drawFlower(148, H - 1, Math.sin(t * 1.2 + 1.4) * 0.08, '#F4D36A');
+            drawFlower(19, FY + FLOOR_H - 1, Math.sin(t * 1.1) * 0.08, '#DCEEEC');
+            drawFlower(148, FY + FLOOR_H - 1, Math.sin(t * 1.2 + 1.4) * 0.08, '#F4D36A');
             ctx.restore();
             return;
         }
@@ -193,27 +258,27 @@
             ctx.lineWidth = 2.6;
             ctx.lineCap = 'round';
             ctx.beginPath();
-            ctx.moveTo(9, 59);
-            ctx.bezierCurveTo(44, 55, 104, 59, 162, 56);
+            ctx.moveTo(9, FY + 59);
+            ctx.bezierCurveTo(44, FY + 55, 104, FY + 59, 162, FY + 56);
             ctx.stroke();
             ctx.strokeStyle = 'rgba(94, 155, 152, 0.36)';
             ctx.lineWidth = 1.4;
             ctx.beginPath();
-            ctx.moveTo(126, 57);
-            ctx.quadraticCurveTo(136, 49, 150, 48);
+            ctx.moveTo(126, FY + 57);
+            ctx.quadraticCurveTo(136, FY + 49, 150, FY + 48);
             ctx.stroke();
             ctx.fillStyle = 'rgba(168, 213, 210, 0.45)';
             [[30, 55, -0.4], [138, 49, 0.35], [151, 48, -0.25]].forEach(function (leaf) {
                 ctx.save();
-                ctx.translate(leaf[0], leaf[1]);
+                ctx.translate(leaf[0], FY + leaf[1]);
                 ctx.rotate(leaf[2] + Math.sin(t * 1.2 + leaf[0]) * 0.05);
                 ctx.beginPath();
                 ctx.ellipse(0, 0, 5, 2.2, 0, 0, Math.PI * 2);
                 ctx.fill();
                 ctx.restore();
             });
-            drawFlower(21, H - 1, Math.sin(t * 1.1) * 0.06, '#DCEEEC');
-            drawFlower(153, H - 1, Math.sin(t * 1.2 + 1.4) * 0.06, '#F4D36A');
+            drawFlower(21, FY + FLOOR_H - 1, Math.sin(t * 1.1) * 0.06, '#DCEEEC');
+            drawFlower(153, FY + FLOOR_H - 1, Math.sin(t * 1.2 + 1.4) * 0.06, '#F4D36A');
             ctx.restore();
             return;
         }
@@ -225,7 +290,20 @@
        streamer), big white eye with a small navy pupil dot. No crest. */
     function draw(s) {
         ctx.clearRect(0, 0, W, H);
-        drawBackground();
+        // Per-anim backdrop hook: when the active anim sets suppressBg,
+        // the default branch/meadow paint is skipped so a custom scene
+        // (tunnel, plasma, starfield, ...) can own the whole frame.
+        // drawBackdrop runs BEFORE the bird, so its output reads as a
+        // layer behind the sprite. Particles still paint AFTER the bird,
+        // so foreground effects (rings, fountain) keep using PARTICLE_KINDS.
+        var skipBg = cur && cur.suppressBg;
+        if (!skipBg) drawBackground();
+        if (cur && typeof cur.drawBackdrop === 'function') {
+            var backdropT = (performance.now() - slotStart) / 1000;
+            ctx.save();
+            cur.drawBackdrop(backdropT, ctx);
+            ctx.restore();
+        }
 
         ctx.save();
         ctx.translate(BASE_X + s.x * SCALE, BASE_Y + s.y * SCALE);
@@ -238,50 +316,174 @@
         ctx.scale(fx * s.sx * SCALE, s.sy * SCALE);
         ctx.rotate(s.bodyRot);
 
-        // legs — dark navy, slightly thicker stroke to match logo weight
-        ctx.save();
-        ctx.strokeStyle = COL_LEG;
-        ctx.lineWidth = 2.6;
-        ctx.lineCap = 'round';
-        var legLift = s.legLift || 0;
-        [-7, 7].forEach(function (lx, i) {
-            var lift = (i === 0 ? legLift : -legLift) * 0.4;
+        // legs — dark navy, slightly thicker stroke to match logo weight.
+        // Skipped entirely when the active animation sets hideLegs (e.g.
+        // Hammock, where the bird's feet are tucked into the cloth and any
+        // leg geometry would poke out below the hammock and break the
+        // "lying in it" illusion).
+        if (!s.hideLegs) {
+            ctx.save();
+            ctx.strokeStyle = COL_LEG;
+            ctx.lineWidth = 2.6;
+            ctx.lineCap = 'round';
+            var legLift = s.legLift || 0;
+            [-7, 7].forEach(function (lx, i) {
+                var lift = (i === 0 ? legLift : -legLift) * 0.4;
+                ctx.beginPath();
+                ctx.moveTo(lx, 22); ctx.lineTo(lx, 40 - lift);
+                ctx.moveTo(lx, 40 - lift); ctx.lineTo(lx - 4, 40 - lift);
+                ctx.moveTo(lx, 40 - lift); ctx.lineTo(lx + 5, 40 - lift);
+                ctx.stroke();
+            });
+            ctx.restore();
+        }
+
+        // Spring physics step — tail + wing nachschwingen toward their
+        // commanded angles. Done here (inside draw) rather than in the
+        // frame loop so it stays right next to the values it advances.
+        var tailErr = s.tailAngle - SPRING.tailDisplayed;
+        SPRING.tailVel += tailErr * SPRING_STIFF;
+        SPRING.tailVel *= SPRING_DAMP;
+        SPRING.tailDisplayed += SPRING.tailVel;
+        var wingErr = s.wingAngle - SPRING.wingDisplayed;
+        SPRING.wingVel += wingErr * SPRING_STIFF;
+        SPRING.wingVel *= SPRING_DAMP;
+        SPRING.wingDisplayed += SPRING.wingVel;
+
+        // Soft drop-shadow under the body for grounding — sits in
+        // sprite-local space so it tracks bodyRot and squash. Drawn
+        // before the bird so the bird occludes it where they overlap.
+        // Skipped when legs are hidden (Hammock) — a floating shadow
+        // under a hammock-resting bird breaks the lying-in-cloth read.
+        if (!s.hideLegs) {
+            ctx.save();
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.28)';
+            ctx.filter = 'blur(2px)';
             ctx.beginPath();
-            ctx.moveTo(lx, 22); ctx.lineTo(lx, 40 - lift);
-            ctx.moveTo(lx, 40 - lift); ctx.lineTo(lx - 4, 40 - lift);
-            ctx.moveTo(lx, 40 - lift); ctx.lineTo(lx + 5, 40 - lift);
+            ctx.ellipse(0, 24, 18, 3, 0, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.filter = 'none';
+            ctx.restore();
+        }
+
+        // tail (pivots at body left) — short stub with a left-to-right
+        // gradient (dark outline-tone → tail-tone) so it reads as a
+        // separate plane behind the body. Three thin feather-line
+        // strokes hint at quills without going photo-real.
+        ctx.save();
+        ctx.translate(-22, 2);
+        ctx.rotate(SPRING.tailDisplayed);
+        var tg = ctx.createLinearGradient(-18, 0, 0, 0);
+        tg.addColorStop(0, COL_OUTLINE);
+        tg.addColorStop(1, COL_TAIL);
+        ctx.fillStyle = tg;
+        ctx.beginPath();
+        ctx.moveTo(0, -8); ctx.lineTo(-14, -10); ctx.lineTo(-18, -2);
+        ctx.lineTo(-14, 6); ctx.lineTo(-2, 6);
+        ctx.closePath();
+        ctx.fill();
+        ctx.lineWidth = 1.8;
+        ctx.strokeStyle = COL_OUTLINE;
+        ctx.lineJoin = 'round';
+        ctx.stroke();
+        ctx.strokeStyle = COL_OUTLINE;
+        ctx.lineWidth = 0.7;
+        for (var ti = 0; ti < 3; ti++) {
+            ctx.beginPath();
+            ctx.moveTo(-2, -4 + ti * 4);
+            ctx.lineTo(-15, -6 + ti * 5);
+            ctx.stroke();
+        }
+        ctx.restore();
+
+        // body — radial gradient (light upper-right → dark lower-left
+        // → outline-tone at the rim) gives the silhouette dimensional
+        // depth without the flat-fill look. Stroke kept at ~1.8 px so
+        // the gradient does the visual work, not the contour.
+        ctx.save();
+        var bg = ctx.createRadialGradient(4, -6, 4, 0, 2, 30);
+        bg.addColorStop(0, COL_BODY_LT);
+        bg.addColorStop(0.7, COL_BODY_DK);
+        bg.addColorStop(1, COL_OUTLINE);
+        ctx.fillStyle = bg;
+        ctx.beginPath();
+        ctx.ellipse(0, 2, 26, 25, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.lineWidth = 1.8;
+        ctx.strokeStyle = COL_OUTLINE;
+        ctx.stroke();
+        ctx.restore();
+
+        // belly highlight with peach accent — radial gradient blends
+        // bright belly → peach → body-light so the breast warms toward
+        // the center without a hard color seam.
+        ctx.save();
+        var belG = ctx.createRadialGradient(3, 10, 3, 3, 10, 18);
+        belG.addColorStop(0, COL_BELLY_LT);
+        belG.addColorStop(0.55, COL_BELLY_AC);
+        belG.addColorStop(1, COL_BODY_LT);
+        ctx.fillStyle = belG;
+        ctx.beginPath();
+        ctx.ellipse(3, 10, 17, 13, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+
+        // wing (pivots at shoulder) — teardrop with a horizontal gradient
+        // (dark feather-anchor at the leading edge → wing mid → near-body
+        // tone at the tip). Three thin feather lines suggest layered
+        // remiges without painting individual feathers.
+        ctx.save();
+        ctx.translate(-2, -4);
+        ctx.rotate(SPRING.wingDisplayed);
+        var wg = ctx.createLinearGradient(-18, 0, 8, 0);
+        wg.addColorStop(0, COL_WING_DK);
+        wg.addColorStop(0.6, COL_WING);
+        wg.addColorStop(1, COL_BODY_LT);
+        ctx.fillStyle = wg;
+        ctx.beginPath();
+        ctx.moveTo(4, -4); ctx.lineTo(-14, 0); ctx.lineTo(-18, 10);
+        ctx.lineTo(-2, 16); ctx.lineTo(8, 6);
+        ctx.closePath();
+        ctx.fill();
+        ctx.lineWidth = 1.6;
+        ctx.strokeStyle = COL_OUTLINE;
+        ctx.lineJoin = 'round';
+        ctx.stroke();
+        ctx.strokeStyle = COL_WING_DK;
+        ctx.lineWidth = 0.6;
+        [-9, -5, 0].forEach(function (yo) {
+            ctx.beginPath();
+            ctx.moveTo(-14, yo + 6);
+            ctx.lineTo(4, yo - 2);
             ctx.stroke();
         });
         ctx.restore();
 
-        // tail (pivots at body left) — short stub, deeper teal so it
-        // reads as a separate plane behind the body
-        ctx.save();
-        ctx.translate(-22, 2);
-        ctx.rotate(s.tailAngle);
-        poly([[0,-8],[-14,-10],[-18,-2],[-14,6],[-2,6]], COL_TAIL);
-        ctx.restore();
-
-        // body — rounder ellipse (close to circle), no glow, hard outline
-        blob(0, 2, 26, 25, COL_BODY);
-        // belly highlight — softer mint, no outline so it blends in
-        blob(3, 10, 17, 13, COL_BELLY, false);
-
-        // wing (pivots at shoulder) — teardrop pointing back-down, the
-        // logo's signature "tucked wing" shape
-        ctx.save();
-        ctx.translate(-2, -4);
-        ctx.rotate(s.wingAngle);
-        poly([[4,-4],[-14,0],[-18,10],[-2,16],[8,6]], COL_WING);
-        ctx.restore();
-
         // head — sits high-right, almost touching body, slightly smaller
-        // than body so the silhouette reads as one fused egg shape
+        // than body so the silhouette reads as one fused egg shape.
+        // Same radial-gradient treatment as the body for tonal continuity.
         ctx.save();
         ctx.translate(HX + s.headX, HY + s.headY);
         ctx.rotate(s.headRot);
 
-        blob(0, 0, 17, 17, COL_BODY);
+        var hg = ctx.createRadialGradient(3, -4, 3, 0, 0, 20);
+        hg.addColorStop(0, COL_BODY_LT);
+        hg.addColorStop(0.65, COL_BODY_DK);
+        hg.addColorStop(1, COL_OUTLINE);
+        ctx.fillStyle = hg;
+        ctx.beginPath();
+        ctx.ellipse(0, 0, 17, 17, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.lineWidth = 1.8;
+        ctx.strokeStyle = COL_OUTLINE;
+        ctx.stroke();
+
+        // Cheek blush — soft peach spot on the side opposite the beak,
+        // 35% alpha so it reads as personality not paint.
+        ctx.fillStyle = COL_CHEEK;
+        ctx.beginPath();
+        ctx.arc(8, 4, 4, 0, Math.PI * 2);
+        ctx.fill();
 
         // beak — two-plate "stout cone" with a nostril dot. Upper plate
         // sits flush on the seam line; lower plate drops at the tip when
@@ -329,32 +531,43 @@
         ctx.fill();
         ctx.restore();
 
-        // eye — large white sclera, small navy pupil. This is the
-        // single most logo-identifying detail; keep it generous.
+        // eye — large white sclera with subtle 3D radial gradient, iris
+        // with its own gradient (lighter navy core → deep navy edge),
+        // plus a small catchlight highlight that sells "alive" more than
+        // any other single pixel. Closed-eye state stays a single navy
+        // stroke so the blink reads cleanly.
         var eo = s.eyeOpen;
         ctx.save();
         ctx.translate(2, -3);
         ctx.scale(1, eo);
-        // white sclera with outline
-        ctx.fillStyle = COL_EYE_W;
+        var eg = ctx.createRadialGradient(-1.5, -1.5, 1, 0, 0, 7);
+        eg.addColorStop(0, '#FFFFFF');
+        eg.addColorStop(0.85, '#E8EEF0');
+        eg.addColorStop(1, '#C0CCD0');
+        ctx.fillStyle = eg;
         ctx.beginPath();
         ctx.arc(0, 0, 6.2, 0, Math.PI * 2);
         ctx.fill();
-        ctx.lineWidth = 1.8;
+        ctx.lineWidth = 1.5;
         ctx.strokeStyle = COL_OUTLINE;
         ctx.stroke();
-        // small pupil — only render when the eye is more than half open
-        // (otherwise the blink looks like a floating dot)
         if (eo > 0.5) {
-            ctx.fillStyle = COL_EYE_P;
+            var ig = ctx.createRadialGradient(1.4, 0.4, 0.5, 1.4, 0.4, 2.5);
+            ig.addColorStop(0, '#324C66');  // lighter navy core
+            ig.addColorStop(1, COL_EYE_P);  // deep navy edge
+            ctx.fillStyle = ig;
             ctx.beginPath();
-            ctx.arc(1.4, 0.4, 1.9, 0, Math.PI * 2);
+            ctx.arc(1.4, 0.4, 2.1, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.fillStyle = COL_EYE_HI;
+            ctx.beginPath();
+            ctx.arc(2.2, -0.4, 0.7, 0, Math.PI * 2);
             ctx.fill();
         }
         ctx.restore();
-        if (eo < 0.4) {  // blink line in navy
+        if (eo < 0.4) {  // blink line in outline navy
             ctx.strokeStyle = COL_OUTLINE;
-            ctx.lineWidth = 2;
+            ctx.lineWidth = 1.8;
             ctx.lineCap = 'round';
             ctx.beginPath();
             ctx.moveTo(-3, -3);
@@ -431,20 +644,28 @@
     var lastEmitAt = {};    // per-kind throttle timestamps
     var PARTICLE_KINDS = {
         notes: {
-            // Musical notes for Singing. Sized + positioned in CANVAS
-            // coordinates (not SCALE-multiplied) because the canvas is
-            // only 64px tall — scaling by 0.32 made the previous notes
-            // 5px tall and sent them off-screen within a frame. Now:
-            // spawn near the beak (right side of bird), drift up-right,
-            // stay inside the canvas the whole life. Larger glyphs so
-            // they register on the appbar.
+            // Musical notes for Singing (and FirstDetectionOfDay).
+            // Spawn fans across most of the canvas width so the
+            // celebration reads as a whole-canvas event rather than
+            // a tight cluster above the bird. Each note drifts in the
+            // direction of its spawn offset — left-side notes drift
+            // further left, right-side further right — so the cloud
+            // visibly expands outward over time.
             intervalMs: 350,
             emit: function () {
+                // Spawn x: ±50 px from center → covers ~58% of the
+                // 172 px canvas without bleeding into the appbar edges.
+                var dx = (Math.random() - 0.5) * 100;
+                // Lateral drift inherits sign from spawn offset so the
+                // shower fans outward; tiny base speed (0.05) makes
+                // the central notes still move sideways instead of
+                // floating straight up.
+                var lateralBias = dx * 0.012;
                 return {
                     kind: 'notes',
-                    x: BASE_X + 22 + Math.random() * 6,
+                    x: BASE_X + dx,
                     y: BASE_Y - 14 + Math.random() * 4,
-                    vx: 0.35 + Math.random() * 0.25,
+                    vx: lateralBias + (Math.random() - 0.5) * 0.35,
                     // Slowed vy + faster decay so notes stay inside
                     // the 64px appbar canvas instead of escaping the
                     // top edge within a few frames.
@@ -506,25 +727,37 @@
             }
         },
         excite: {
-            // Burst of "!" and "*" glyphs popping around the bird's head
-            // when a new detection arrives. Spawn radially from above
-            // the head with slight upward drift so they read as an
-            // exclamation, not a snowfall. Short life, fast decay —
-            // the burst should be over before the 2s slot ends.
+            // Burst of "!" and "*" glyphs for detection-event animations
+            // (Excited / BigFlock / MilestoneCelebrate / FirstDetectionOfDay).
+            // Spawn fans across the canvas width with a small vertical
+            // jitter so the burst reads as "the whole appbar is excited"
+            // rather than a tight cluster over the bird's head. Velocity
+            // pushes each glyph away from its spawn point, so the cloud
+            // visibly expands.
             intervalMs: 90,
             emit: function () {
-                // Bias the spawn cone to the LOWER hemisphere instead
-                // of upper, so glyphs burst sideways + down where there
-                // IS canvas to fill, rather than instantly disappearing
-                // over the 64px top edge.
-                var angle = Math.PI / 2 + (Math.random() - 0.5) * Math.PI;
-                var speed = 0.7 + Math.random() * 0.5;
+                // Spawn anywhere across ±55 px of the bird center
+                // (~64% of the 172 px canvas). Vertical jitter spans
+                // most of the sprite height so some glyphs appear at
+                // wing level, some near the head.
+                var dx = (Math.random() - 0.5) * 110;
+                var dy = (Math.random() - 0.5) * 28;
+                // Velocity direction: mostly outward from spawn point
+                // so glyphs fly away from where they appear, with a
+                // small downward bias (gravity-free, so without it the
+                // wide-spawned glyphs would all drift upward and miss
+                // the lower canvas). The outward component dominates
+                // for distant spawns and falls away near center.
+                var outwardX = dx * 0.022;
+                var outwardY = dy * 0.022 + 0.25;  // 0.25 = mild downward
+                var speed = 0.5 + Math.random() * 0.55;
+                var jitterA = Math.random() * Math.PI * 2;
                 return {
                     kind: 'excite',
-                    x: BASE_X + (Math.random() * 14 - 7),
-                    y: BASE_Y - 18 + (Math.random() * 4 - 2),
-                    vx: Math.cos(angle) * speed,
-                    vy: Math.sin(angle) * speed,
+                    x: BASE_X + dx,
+                    y: BASE_Y - 18 + dy,
+                    vx: outwardX + Math.cos(jitterA) * speed * 0.4,
+                    vy: outwardY + Math.sin(jitterA) * speed * 0.4,
                     life: 1,
                     decay: 0.055,
                     ch: Math.random() < 0.65 ? '!' : '*',
@@ -663,7 +896,11 @@
                 return {
                     kind: 'heat_haze',
                     x: 8 + Math.random() * (W - 16),
-                    y: H - 4,
+                    // Spawn at the LED-band floor (NOT the canvas
+                    // bottom) so the haze rises from the ground the
+                    // viewer reads, not from somewhere below the LED
+                    // band. SKY_OFFSET + FLOOR_H - 4 ≈ the visual floor.
+                    y: SKY_OFFSET + FLOOR_H - 4,
                     vx: 0,
                     vy: -0.15 - Math.random() * 0.08,
                     life: 1, decay: 0.012,
@@ -675,8 +912,10 @@
             draw: function (p) {
                 // Sway grows with rising distance — like shimmer wobbling
                 // more as it rises. Very low alpha so it never competes
-                // with the bird silhouette.
-                var dx = Math.sin((H - p.y) / 6 + p.sway) * 1.4;
+                // with the bird silhouette. Distance is measured from
+                // the visual floor (LED-band bottom), not the canvas
+                // bottom, so the wobble pattern stays anchored.
+                var dx = Math.sin(((SKY_OFFSET + FLOOR_H) - p.y) / 6 + p.sway) * 1.4;
                 ctx.fillStyle = 'rgba(255, 226, 122, 0.18)';
                 ctx.beginPath();
                 ctx.ellipse(p.x + dx, p.y, p.w, p.h, 0, 0, Math.PI * 2);
@@ -1108,6 +1347,43 @@
                     ctx.lineTo(fx, fy + 2.5);
                     ctx.stroke();
                 }
+                ctx.restore();
+            }
+        },
+        confetti: {
+            // Fountain-style confetti for CelebrationFountain. Spawns
+            // from the bird's feet with a strong upward velocity cone,
+            // gravity pulls each piece back down. Each piece carries a
+            // random hue and a slight spin via the `rot`/`vrot` fields,
+            // so a falling square looks like real paper, not a pixel.
+            intervalMs: 55,
+            emit: function () {
+                var palette = ['#E84B3C', '#F4D36A', '#A8D5D2',
+                               '#7FB8B5', '#DCEEEC', '#FFB347'];
+                var angle = -Math.PI * 0.5 + (Math.random() - 0.5) * 0.9;
+                var speed = 1.8 + Math.random() * 1.4;
+                return {
+                    kind: 'confetti',
+                    x: BASE_X + (Math.random() * 14 - 7),
+                    y: BASE_Y + 18,
+                    vx: Math.cos(angle) * speed,
+                    vy: Math.sin(angle) * speed,
+                    gravity: 0.10,
+                    life: 1,
+                    decay: 0.014,
+                    sz: 2.2 + Math.random() * 1.4,
+                    col: palette[(Math.random() * palette.length) | 0],
+                    rot: Math.random() * Math.PI * 2,
+                    vrot: (Math.random() - 0.5) * 0.35
+                };
+            },
+            draw: function (p) {
+                p.rot += p.vrot;
+                ctx.save();
+                ctx.translate(p.x, p.y);
+                ctx.rotate(p.rot);
+                ctx.fillStyle = p.col;
+                ctx.fillRect(-p.sz, -p.sz * 0.4, p.sz * 2, p.sz * 0.8);
                 ctx.restore();
             }
         }
@@ -2422,6 +2698,11 @@
             cooldownMs: 60000,
             loopPosition: false,
             particles: 'hammock',
+            // Legs are tucked into the cloth — drawing the leg sticks
+            // would poke them out below the hammock and break the
+            // "lying inside it" silhouette. draw() reads this flag and
+            // skips the leg block.
+            hideLegs: true,
             fn: function (t, s) {
                 // Shared sway clock — 0.7 Hz, same phase as the
                 // hammock particle. Using performance.now() instead of
@@ -2815,6 +3096,640 @@
                 s.sx = 1 + spin * 0.08;
                 s.sy = 1 + Math.sin(t * 4) * 0.05;
             }
+        },
+
+        /* ════════════════════════════════════════════════════════════
+           CANVAS-TRICKS ANIMATIONS — ported from sandbox demos.
+           Each entry owns its own scene (suppressBg + drawBackdrop)
+           or its own foreground burst. Bird stays the same sprite;
+           what changes is the world around it.
+           ════════════════════════════════════════════════════════════ */
+
+        /* ─── Group A — ambient backdrops ───────────────────────── */
+
+        {
+            // Tunnel — fake-3D zoom into perspective rings. The bird
+            // stares straight ahead, transfixed. Rare hypnotic ambient.
+            // Drawn at low resolution (every-2-px sampling) so the
+            // per-frame ImageData write stays cheap on the RPi.
+            name: 'Tunnel',
+            durationMs: 5000,
+            weight: 0.4,
+            priority: 'ambient',
+            eligible: function () { return true; },
+            cooldownMs: 90000,
+            loopPosition: false,
+            particles: null,
+            suppressBg: true,
+            drawBackdrop: function (t) {
+                var img = ctx.createImageData(W, H);
+                var d = img.data;
+                var cx = W * 0.5, cy = H * 0.55;
+                // Sample every 2 px and replicate — full per-pixel was
+                // ~7 ms on a Pi 5; the 2x downsample is ~2 ms with no
+                // perceptible loss at 172×96.
+                for (var y = 0; y < H; y += 2) {
+                    for (var x = 0; x < W; x += 2) {
+                        var dxp = x - cx, dyp = y - cy;
+                        var dist = Math.sqrt(dxp * dxp + dyp * dyp) || 0.1;
+                        var ang = Math.atan2(dyp, dxp) / Math.PI;
+                        var u = 30 / dist + t * 0.6;
+                        var v = ang;
+                        var checker = ((Math.floor(u * 4) + Math.floor(v * 8)) & 1)
+                            ? 180 : 40;
+                        var fog = Math.min(1, dist / 60);
+                        var c = checker * fog;
+                        var r = c * 0.55, g = c * 0.95, b = c * 0.85;
+                        for (var oy = 0; oy < 2 && y + oy < H; oy++) {
+                            for (var ox = 0; ox < 2 && x + ox < W; ox++) {
+                                var idx = ((y + oy) * W + (x + ox)) * 4;
+                                d[idx] = r; d[idx + 1] = g; d[idx + 2] = b;
+                                d[idx + 3] = 255;
+                            }
+                        }
+                    }
+                }
+                ctx.putImageData(img, 0, 0);
+            },
+            fn: function (t, s) {
+                // Bird transfixed — eyes wide, slight forward lean,
+                // tiny head tracking with the swirl phase so it looks
+                // alive but not active.
+                s.y = Math.sin(t * 2.2) * 1.2;
+                s.headRot = Math.sin(t * 0.8) * 0.18;
+                s.eyeOpen = 1;
+                s.beakOpen = 0;
+            }
+        },
+
+        {
+            // Plasma — classic demoscene plasma backdrop. Dreamy mood
+            // matched to a calm sway, like the bird is bathing in
+            // pulsing color. Lower frame cost than Tunnel because
+            // we sample even more coarsely (3px blocks).
+            name: 'PlasmaDream',
+            durationMs: 5000,
+            weight: 0.4,
+            priority: 'ambient',
+            eligible: function () { return true; },
+            cooldownMs: 90000,
+            loopPosition: false,
+            particles: null,
+            suppressBg: true,
+            drawBackdrop: function (t) {
+                var img = ctx.createImageData(W, H);
+                var d = img.data;
+                var tt = t * 1.4;
+                var STEP = 3;
+                for (var y = 0; y < H; y += STEP) {
+                    for (var x = 0; x < W; x += STEP) {
+                        var v = Math.sin(x / 18 + tt)
+                              + Math.sin(y / 14 - tt)
+                              + Math.sin((x + y) / 22 + tt * 0.7)
+                              + Math.sin(Math.sqrt(x * x + y * y) / 14);
+                        var hue = (v + 4) / 8;
+                        // Dimmed (60% of full demoscene intensity) so the
+                        // teal mascot stays readable on top.
+                        var r = Math.floor(76 + 76 * Math.sin(hue * Math.PI * 2));
+                        var g = Math.floor(76 + 76 * Math.sin(hue * Math.PI * 2 + 2));
+                        var b = Math.floor(76 + 76 * Math.sin(hue * Math.PI * 2 + 4));
+                        for (var oy = 0; oy < STEP && y + oy < H; oy++) {
+                            for (var ox = 0; ox < STEP && x + ox < W; ox++) {
+                                var idx = ((y + oy) * W + (x + ox)) * 4;
+                                d[idx] = r; d[idx + 1] = g; d[idx + 2] = b;
+                                d[idx + 3] = 255;
+                            }
+                        }
+                    }
+                }
+                ctx.putImageData(img, 0, 0);
+            },
+            fn: function (t, s) {
+                // Slow lateral float — the bird is drifting in the color
+                // sea, not standing on solid ground.
+                s.y = Math.sin(t * 1.3) * 3;
+                s.x = Math.sin(t * 0.7) * 4;
+                s.bodyRot = Math.sin(t * 0.9) * 0.06;
+                s.headRot = Math.sin(t * 1.1) * 0.15;
+                s.eyeOpen = 0.6 + Math.abs(Math.sin(t * 0.5)) * 0.4;
+            }
+        },
+
+        {
+            // DeepSpace — parallax starfield drifting toward camera.
+            // Stars persist across frames via closure-cached state
+            // (one star pool per anim instance, reset on first call).
+            // Pairs naturally with night hours but eligible() leaves it
+            // available all day for whimsy.
+            name: 'DeepSpace',
+            durationMs: 5000,
+            weight: 0.4,
+            priority: 'ambient',
+            eligible: function () { return true; },
+            cooldownMs: 90000,
+            loopPosition: false,
+            particles: null,
+            suppressBg: true,
+            _stars: null,
+            _starsSlot: -1,
+            drawBackdrop: function (t) {
+                // Reset star pool when the slot starts. slotStart isn't
+                // in scope here, but t===0 (first frame) is the signal —
+                // we cache a fingerprint and rebuild when it resets.
+                if (!this._stars || t < 0.05) {
+                    this._stars = [];
+                    for (var i = 0; i < 60; i++) {
+                        this._stars.push({
+                            x: (Math.random() - 0.5) * 2,
+                            y: (Math.random() - 0.5) * 2,
+                            z: Math.random()
+                        });
+                    }
+                }
+                ctx.fillStyle = '#050810';
+                ctx.fillRect(0, 0, W, H);
+                var cx = W / 2, cy = H / 2;
+                for (var j = 0; j < this._stars.length; j++) {
+                    var st = this._stars[j];
+                    st.z -= 0.008;
+                    if (st.z <= 0) st.z = 1;
+                    var k = 1 / st.z;
+                    var sx = cx + st.x * k * 50;
+                    var sy = cy + st.y * k * 50;
+                    if (sx < 0 || sx > W || sy < 0 || sy > H) continue;
+                    var alpha = 1 - st.z;
+                    ctx.fillStyle = 'rgba(255, 246, 200, ' + alpha + ')';
+                    var sz = 1 + alpha * 1.2;
+                    ctx.fillRect(sx, sy, sz, sz);
+                }
+            },
+            fn: function (t, s) {
+                // Slow floaty hover — the bird is weightless.
+                s.y = -2 + Math.sin(t * 1.2) * 2.5;
+                s.bodyRot = Math.sin(t * 0.6) * 0.08;
+                s.headRot = Math.sin(t * 0.9) * 0.2;
+                s.wingAngle = 0.15 + Math.sin(t * 2.4) * 0.12;
+            }
+        },
+
+        {
+            // StainedGlass — moving Voronoi cells in the WatchMyBirds palette.
+            // Quietly mesmerizing; pairs with a still bird that just
+            // blinks. Coarse sampling (4-px blocks) keeps the per-cell
+            // search affordable on RPi.
+            name: 'StainedGlass',
+            durationMs: 5000,
+            weight: 0.35,
+            priority: 'ambient',
+            eligible: function () { return true; },
+            cooldownMs: 90000,
+            loopPosition: false,
+            particles: null,
+            suppressBg: true,
+            _seeds: null,
+            drawBackdrop: function (t) {
+                if (!this._seeds || t < 0.05) {
+                    this._seeds = [];
+                    // WatchMyBirds palette + a few darker companions for depth.
+                    var palette = [
+                        [232, 75, 60], [244, 211, 106], [168, 213, 210],
+                        [127, 184, 181], [22, 50, 79], [94, 155, 152],
+                        [45, 90, 87], [220, 238, 236]
+                    ];
+                    for (var i = 0; i < palette.length; i++) {
+                        this._seeds.push({
+                            x: Math.random() * W,
+                            y: Math.random() * H,
+                            vx: (Math.random() - 0.5) * 0.35,
+                            vy: (Math.random() - 0.5) * 0.35,
+                            col: palette[i]
+                        });
+                    }
+                }
+                var seeds = this._seeds;
+                for (var si = 0; si < seeds.length; si++) {
+                    var s2 = seeds[si];
+                    s2.x += s2.vx; s2.y += s2.vy;
+                    if (s2.x < 0 || s2.x > W) s2.vx *= -1;
+                    if (s2.y < 0 || s2.y > H) s2.vy *= -1;
+                }
+                var STEP = 4;
+                for (var y = 0; y < H; y += STEP) {
+                    for (var x = 0; x < W; x += STEP) {
+                        var best = Infinity, bestCol = seeds[0].col;
+                        for (var k = 0; k < seeds.length; k++) {
+                            var sd = seeds[k];
+                            var ddx = x - sd.x, ddy = y - sd.y;
+                            var dd = ddx * ddx + ddy * ddy;
+                            if (dd < best) { best = dd; bestCol = sd.col; }
+                        }
+                        ctx.fillStyle = 'rgb(' + bestCol[0] + ',' + bestCol[1]
+                            + ',' + bestCol[2] + ')';
+                        ctx.fillRect(x, y, STEP, STEP);
+                    }
+                }
+            },
+            fn: function (t, s) {
+                // Bird stays mostly still; only blinks. The cells do
+                // the work. Tiny breathing keeps it from looking frozen.
+                s.y = Math.sin(t * 2) * 1.2;
+                var bp = t % 1.8;
+                if (bp < 0.16) s.eyeOpen = 1 - Math.sin((bp / 0.16) * Math.PI);
+            }
+        },
+
+        {
+            // CarnivalLights — rotating conic wedges around the bird,
+            // bright primary palette, slow rotation. Plays like a
+            // playful party ambient — could become Milestone's backdrop
+            // on a future revision, but here as a standalone.
+            name: 'CarnivalLights',
+            durationMs: 4500,
+            weight: 0.35,
+            priority: 'ambient',
+            eligible: function () { return true; },
+            cooldownMs: 90000,
+            loopPosition: false,
+            particles: null,
+            suppressBg: true,
+            drawBackdrop: function (t) {
+                ctx.fillStyle = '#0a0d12';
+                ctx.fillRect(0, 0, W, H);
+                var cx = W * 0.5, cy = H * 0.6;
+                var rot = t * 0.5;
+                var wedgeColors = [
+                    'rgba(232, 75, 60, 0.55)',
+                    'rgba(244, 211, 106, 0.55)',
+                    'rgba(168, 213, 210, 0.55)',
+                    'rgba(127, 184, 181, 0.55)'
+                ];
+                for (var i = 0; i < 12; i++) {
+                    var a = (i / 12) * Math.PI * 2 + rot;
+                    ctx.fillStyle = (i & 1)
+                        ? wedgeColors[(i >> 1) % wedgeColors.length]
+                        : 'rgba(10, 13, 18, 0.0)';
+                    if (!(i & 1)) continue;
+                    ctx.beginPath();
+                    ctx.moveTo(cx, cy);
+                    ctx.arc(cx, cy, Math.max(W, H), a, a + Math.PI / 6);
+                    ctx.closePath();
+                    ctx.fill();
+                }
+                // Dim radial vignette so the wedges fade at the edges
+                // and the bird in the middle stays high-contrast.
+                var vg = ctx.createRadialGradient(cx, cy, 10, cx, cy, H);
+                vg.addColorStop(0, 'rgba(0,0,0,0)');
+                vg.addColorStop(1, 'rgba(0,0,0,0.45)');
+                ctx.fillStyle = vg;
+                ctx.fillRect(0, 0, W, H);
+            },
+            fn: function (t, s) {
+                // Tiny "looking around amazed" — head sweeps slowly
+                // following the lights. Slight wing flare on each beat.
+                s.y = Math.sin(t * 3) * 1.4;
+                s.headRot = Math.sin(t * 1.1) * 0.45;
+                s.headX = Math.sin(t * 1.1) * 4;
+                s.wingAngle = 0.15 + Math.abs(Math.sin(t * 2.2)) * 0.18;
+                s.beakOpen = 0.15;
+            }
+        },
+
+        /* ─── Group B — particle/effect upgrades ──────────────── */
+
+        {
+            // Listening — concentric sonar rings emanate from the
+            // bird's beak. Head tilts in slow scan, eyes alert.
+            // Particle-free; rings are drawn directly in drawBackdrop
+            // so they sit on top of the normal branch background but
+            // BEHIND the bird (drawBackdrop runs before draw(s)).
+            // Visually rare and quietly cool.
+            name: 'Listening',
+            durationMs: 4000,
+            weight: 0.5,
+            priority: 'ambient',
+            eligible: function () { return true; },
+            cooldownMs: 60000,
+            loopPosition: false,
+            particles: null,
+            drawBackdrop: function (t) {
+                // Beak tip in canvas-space (matches s.facing default +1).
+                var cx = BASE_X + 26;
+                var cy = BASE_Y - 6;
+                ctx.save();
+                ctx.lineCap = 'round';
+                for (var i = 0; i < 4; i++) {
+                    var phase = ((t * 0.6) + i * 0.25) % 1;
+                    var r = phase * 60;
+                    ctx.strokeStyle = 'rgba(168, 213, 210, '
+                        + ((1 - phase) * 0.65) + ')';
+                    ctx.lineWidth = 1.2;
+                    ctx.beginPath();
+                    // Quarter-arc forward of the beak — directional
+                    // sonar, not a full ring (which would clip into
+                    // the bird's own body).
+                    ctx.arc(cx, cy, r, -Math.PI * 0.45, Math.PI * 0.45);
+                    ctx.stroke();
+                }
+                ctx.restore();
+            },
+            fn: function (t, s) {
+                s.y = Math.sin(t * 2.8) * 1;
+                // Slow scanning head sweep
+                s.headRot = Math.sin(t * 0.7) * 0.5;
+                s.headX = Math.sin(t * 0.7) * 4;
+                s.eyeOpen = 1;
+                s.beakOpen = 0;
+                s.bodyRot = Math.sin(t * 0.7 + 0.4) * 0.04;
+            }
+        },
+
+        {
+            // CelebrationFountain — confetti fountain particle burst.
+            // Higher event-celebration than MilestoneCelebrate but
+            // available as an ambient flourish too. Uses a brand-new
+            // particle kind ('confetti') so it doesn't crowd 'excite'.
+            // Registered below in PARTICLE_KINDS via the inline hook.
+            name: 'CelebrationFountain',
+            durationMs: 3500,
+            weight: 0.25,
+            priority: 'ambient',
+            eligible: function () { return true; },
+            cooldownMs: 120000,
+            loopPosition: false,
+            particles: 'confetti',
+            fn: function (t, s) {
+                // Bird does a victory pose — wings flared, head up,
+                // small hop on every other beat.
+                var hop = Math.abs(Math.sin(t * 3));
+                s.y = -hop * 6;
+                s.wingAngle = -0.4 + Math.sin(t * 12) * 0.4;
+                s.headRot = -0.2 + Math.sin(t * 4) * 0.1;
+                s.headY = -2;
+                s.beakOpen = 0.45 + Math.abs(Math.sin(t * 8)) * 0.3;
+                s.eyeOpen = 1;
+                s.tailAngle = Math.sin(t * 4) * 0.25;
+                s.sx = 1 + Math.sin(t * 2) * 0.05;
+                s.sy = 1 - hop * 0.08;
+            }
+        },
+
+        /* ─── Group C — standalone events ─────────────────────── */
+
+        {
+            // RainOfSeeds — bouncing-ball physics, but the balls are
+            // seeds raining onto the floor. Bird pecks at them as they
+            // land. Self-contained physics on the spec object so the
+            // seeds persist for the slot duration.
+            name: 'RainOfSeeds',
+            durationMs: 5000,
+            weight: 0.35,
+            priority: 'ambient',
+            eligible: function () { return true; },
+            cooldownMs: 90000,
+            loopPosition: false,
+            particles: null,
+            _seeds: null,
+            drawBackdrop: function (t) {
+                if (!this._seeds || t < 0.05) {
+                    this._seeds = [];
+                    for (var i = 0; i < 10; i++) {
+                        this._seeds.push({
+                            x: Math.random() * W,
+                            y: -10 - Math.random() * 40,
+                            vx: (Math.random() - 0.5) * 0.6,
+                            vy: 0.5 + Math.random() * 0.8,
+                            r: 1.6 + Math.random() * 0.8,
+                            settled: 0
+                        });
+                    }
+                }
+                var floor = SKY_OFFSET + FLOOR_H - 4;
+                for (var i = 0; i < this._seeds.length; i++) {
+                    var sd = this._seeds[i];
+                    if (!sd.settled) {
+                        sd.vy += 0.07;
+                        sd.x += sd.vx;
+                        sd.y += sd.vy;
+                        if (sd.y >= floor) {
+                            sd.y = floor;
+                            sd.vy *= -0.35;
+                            if (Math.abs(sd.vy) < 0.4) sd.settled = 1;
+                        }
+                        if (sd.x < 0 || sd.x > W) sd.vx *= -1;
+                    }
+                    // Seed shape: amber teardrop.
+                    ctx.fillStyle = '#C8A24A';
+                    ctx.strokeStyle = '#5C3B0F';
+                    ctx.lineWidth = 0.6;
+                    ctx.beginPath();
+                    ctx.ellipse(sd.x, sd.y, sd.r * 1.2, sd.r * 0.7, 0,
+                                0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.stroke();
+                }
+            },
+            fn: function (t, s) {
+                // Excited pecking — fast dips at the floor, head darts.
+                var ph = (t % 0.7) / 0.7;
+                var dip = Math.sin(ph * Math.PI);
+                s.y = Math.sin(t * 4) * 1.5;
+                s.headY = dip * 14;
+                s.headX = Math.sin(t * 1.4) * 5;
+                s.bodyRot = dip * 0.12;
+                s.tailAngle = -dip * 0.16;
+                s.beakOpen = dip * 0.35;
+                s.eyeOpen = 1;
+            }
+        },
+
+        {
+            // ClockWatcher — a pendulum swings across the canvas while
+            // the bird tracks it with head and eyes. Hypnotic and
+            // bird-believable. Pendulum drawn behind the bird so the
+            // bob doesn't appear to pierce the body.
+            name: 'ClockWatcher',
+            durationMs: 5000,
+            weight: 0.3,
+            priority: 'ambient',
+            eligible: function () { return true; },
+            cooldownMs: 90000,
+            loopPosition: false,
+            particles: null,
+            drawBackdrop: function (t) {
+                var cx = W * 0.5;
+                var anchorY = SKY_OFFSET + 4;
+                var len = 38;
+                // Damped pendulum — period ~2s, no decay so it keeps
+                // a steady swing for the slot.
+                var angle = Math.sin(t * Math.PI) * 0.9;
+                var bx = cx + Math.sin(angle) * len;
+                var by = anchorY + Math.cos(angle) * len;
+                ctx.save();
+                ctx.strokeStyle = 'rgba(127, 184, 181, 0.7)';
+                ctx.lineWidth = 1.2;
+                ctx.beginPath();
+                ctx.moveTo(cx, anchorY);
+                ctx.lineTo(bx, by);
+                ctx.stroke();
+                // Brass bob with shadow
+                ctx.fillStyle = '#D4A24A';
+                ctx.shadowColor = '#8B6520';
+                ctx.shadowBlur = 4;
+                ctx.beginPath();
+                ctx.arc(bx, by, 4.5, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.shadowBlur = 0;
+                // Anchor cap
+                ctx.fillStyle = 'rgba(45, 90, 87, 0.9)';
+                ctx.beginPath();
+                ctx.arc(cx, anchorY, 2, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.restore();
+            },
+            fn: function (t, s) {
+                // Head and eyes lock onto the bob — same phase as the
+                // pendulum so the tracking feels real.
+                var sway = Math.sin(t * Math.PI);
+                s.y = Math.sin(t * 2.5) * 1;
+                s.headRot = sway * 0.45;
+                s.headX = sway * 3;
+                s.eyeOpen = 1;
+                s.beakOpen = 0;
+            }
+        },
+
+        {
+            // GlitchInTheMatrix — rare Easter-egg: the bird "glitches"
+            // for a moment. RGB color-split silhouettes, scanline noise
+            // backdrop, jittery head. Very low weight (0.12) so it
+            // shows up once in a long while and feels special.
+            name: 'GlitchInTheMatrix',
+            durationMs: 2500,
+            weight: 0.12,
+            priority: 'ambient',
+            eligible: function () { return true; },
+            cooldownMs: 600000,    // ~10 minutes between appearances
+            loopPosition: false,
+            particles: null,
+            suppressBg: true,
+            drawBackdrop: function (t) {
+                // Dark base
+                ctx.fillStyle = '#06080c';
+                ctx.fillRect(0, 0, W, H);
+                // Horizontal scanline noise — every ~3rd row gets a
+                // bright streak. Rebuilt every frame so it crackles.
+                for (var y = 0; y < H; y += 3) {
+                    if (Math.random() < 0.15) continue;
+                    var alpha = 0.04 + Math.random() * 0.10;
+                    ctx.fillStyle = 'rgba(168, 213, 210, ' + alpha + ')';
+                    ctx.fillRect(0, y, W, 1);
+                }
+                // Occasional horizontal tear band — pure RGB pop
+                if (Math.random() < 0.18) {
+                    var ty = Math.floor(Math.random() * H);
+                    var th = 2 + ((Math.random() * 4) | 0);
+                    var c = (Math.random() < 0.5) ? '#E84B3C' : '#A8D5D2';
+                    ctx.fillStyle = c;
+                    ctx.globalAlpha = 0.6;
+                    ctx.fillRect(0, ty, W, th);
+                    ctx.globalAlpha = 1;
+                }
+                // "WMB" glitch text very rarely so the secret reveals
+                // itself if you stare long enough.
+                if (Math.random() < 0.06) {
+                    ctx.save();
+                    ctx.font = '900 24px IBM Plex Mono, monospace';
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'middle';
+                    var jx = (Math.random() - 0.5) * 8;
+                    ctx.fillStyle = 'rgba(232, 75, 60, 0.55)';
+                    ctx.fillText('WMB', W / 2 + jx - 2, H / 2);
+                    ctx.fillStyle = 'rgba(168, 213, 210, 0.55)';
+                    ctx.fillText('WMB', W / 2 + jx + 2, H / 2);
+                    ctx.restore();
+                }
+            },
+            fn: function (t, s) {
+                // Jittery head, occasional eye blink, body holds.
+                // Random jitter every frame — small enough not to nausea.
+                s.headX = (Math.random() - 0.5) * 4;
+                s.headY = (Math.random() - 0.5) * 3;
+                s.headRot = (Math.random() - 0.5) * 0.3;
+                s.eyeOpen = (Math.random() < 0.4) ? 0 : 1;
+                s.beakOpen = (Math.random() < 0.1) ? 0.4 : 0;
+                s.sx = 1 + (Math.random() - 0.5) * 0.08;
+            }
+        },
+
+        {
+            // OrbitGaze — planets orbit a central sun, bird gazes up
+            // and slowly rotates its head to follow them. Night-mood
+            // companion to Stargaze but with visible celestial motion.
+            name: 'OrbitGaze',
+            durationMs: 5500,
+            weight: 0.35,
+            priority: 'ambient',
+            eligible: function () { return true; },
+            cooldownMs: 90000,
+            loopPosition: false,
+            particles: null,
+            suppressBg: true,
+            _orbit: null,
+            drawBackdrop: function (t) {
+                if (!this._orbit || t < 0.05) {
+                    this._orbit = { planets: [] };
+                    var cols = ['#F4D36A', '#E84B3C', '#A8D5D2', '#7FB8B5'];
+                    var sunX = W * 0.5, sunY = SKY_OFFSET * 0.55;
+                    for (var i = 0; i < 4; i++) {
+                        var rr = 12 + i * 7;
+                        var vv = Math.sqrt(35 / rr);
+                        this._orbit.planets.push({
+                            x: sunX + rr, y: sunY,
+                            vx: 0, vy: vv,
+                            col: cols[i]
+                        });
+                    }
+                    this._orbit.sunX = sunX;
+                    this._orbit.sunY = sunY;
+                }
+                // Dark space backdrop with a soft trail
+                ctx.fillStyle = 'rgba(8, 10, 18, 0.35)';
+                ctx.fillRect(0, 0, W, H);
+                var o = this._orbit;
+                for (var p = 0; p < o.planets.length; p++) {
+                    var pl = o.planets[p];
+                    var dxp = o.sunX - pl.x, dyp = o.sunY - pl.y;
+                    var d2 = dxp * dxp + dyp * dyp;
+                    var f = 35 / d2;
+                    var d1 = Math.sqrt(d2) || 0.1;
+                    pl.vx += (dxp / d1) * f;
+                    pl.vy += (dyp / d1) * f;
+                    pl.x += pl.vx * 0.18;
+                    pl.y += pl.vy * 0.18;
+                    ctx.fillStyle = pl.col;
+                    ctx.shadowColor = pl.col;
+                    ctx.shadowBlur = 5;
+                    ctx.beginPath();
+                    ctx.arc(pl.x, pl.y, 2.2, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+                // Sun
+                ctx.fillStyle = '#FFE27A';
+                ctx.shadowColor = '#FFB347';
+                ctx.shadowBlur = 12;
+                ctx.beginPath();
+                ctx.arc(o.sunX, o.sunY, 4.5, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.shadowBlur = 0;
+            },
+            fn: function (t, s) {
+                // Head tilts up toward the orbits, slow tracking sweep.
+                s.y = Math.sin(t * 1.8) * 1.5;
+                s.headRot = -0.25 + Math.sin(t * 0.5) * 0.25;
+                s.headX = Math.sin(t * 0.5) * 3;
+                s.headY = -3;
+                s.eyeOpen = 1;
+            }
         }
     ];
 
@@ -3025,6 +3940,13 @@
                 }
             }
         }
+
+        // Per-spec boolean flags piped into draw via the state object.
+        // Kept separate from lerpState (numeric-only) — these are hard
+        // on/off intent, not values to interpolate. hideLegs activates
+        // only past the fade-in midpoint so the 250ms crossfade doesn't
+        // show a leg-pop at the slot boundary.
+        s.hideLegs = !!cur.hideLegs && fade > 0.5;
 
         draw(s);
         stepParticles();

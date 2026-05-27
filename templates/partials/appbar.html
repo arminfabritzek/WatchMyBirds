@@ -58,12 +58,30 @@
             href="/logs">
             Logs
         </a>
-        <a class="app-bar__link app-bar__link--secondary" href="/logout" title="Logout">
-            🔓
+        <a class="app-bar__link app-bar__link--secondary app-bar__auth app-bar__auth--logout"
+            href="/logout" title="Logout" aria-label="Logout">
+            <svg class="app-bar__auth-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path d="M14 4h4a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-4"
+                    stroke="currentColor" stroke-width="1.8"
+                    stroke-linecap="round" stroke-linejoin="round" />
+                <path d="M10 16l-4-4 4-4" stroke="currentColor" stroke-width="1.8"
+                    stroke-linecap="round" stroke-linejoin="round" />
+                <path d="M6 12h10" stroke="currentColor" stroke-width="1.8"
+                    stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
         </a>
         {% else %}
-        <a class="app-bar__link app-bar__link--secondary" href="/login" title="Login">
-            🔒
+        <a class="app-bar__link app-bar__link--secondary app-bar__auth app-bar__auth--login"
+            href="/login" title="Login" aria-label="Login">
+            <svg class="app-bar__auth-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path d="M10 4H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h4"
+                    stroke="currentColor" stroke-width="1.8"
+                    stroke-linecap="round" stroke-linejoin="round" />
+                <path d="M14 8l4 4-4 4" stroke="currentColor" stroke-width="1.8"
+                    stroke-linecap="round" stroke-linejoin="round" />
+                <path d="M8 12h10" stroke="currentColor" stroke-width="1.8"
+                    stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
         </a>
         {% endif %}
     </nav>
@@ -177,7 +195,12 @@
         background: var(--app-status-rail-bg);
         border-bottom: 1px solid rgba(244, 211, 106, 0.14);
         box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
-        overflow: hidden;
+        /* `overflow: visible` is intentional: the mascot canvas is
+           taller than this row and uses negative margins to overshoot
+           above/below the LED band. Clipping here would hide the
+           bird's hop/fly headroom. The LED ticker is still horizontally
+           clipped inside `.status-bar__ticker-slot { overflow: hidden }`. */
+        overflow: visible;
     }
     .app-mascot-bar .mascot-bird {
         flex: 0 0 var(--app-mascot-width);
@@ -228,6 +251,36 @@
         margin: 0;
         max-width: none;
         width: 100%;
+    }
+
+    /* Auth icon (login / logout) in the secondary nav slot.
+       Replaces the legacy 🔒 / 🔓 emoji with a vector glyph so the
+       slot keeps a stable geometry between auth states and so the
+       hover-tint can carry semantic weight (danger for logout). */
+    .app-bar__auth {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-width: 40px;
+        min-height: 40px;
+        padding: 6px;
+        border-radius: var(--radius-md, 8px);
+        transition: background-color 120ms ease, color 120ms ease;
+    }
+    .app-bar__auth-icon {
+        width: 22px;
+        height: 22px;
+        display: block;
+    }
+    .app-bar__auth--logout:hover,
+    .app-bar__auth--logout:focus-visible {
+        background: rgba(217, 83, 79, 0.12);
+        color: #d9534f;
+    }
+    .app-bar__auth--login:hover,
+    .app-bar__auth--login:focus-visible {
+        background: rgba(60, 196, 106, 0.12);
+        color: #3cc46a;
     }
 
     /* Auto-Cam toggle in the sysinfo cluster. Inherits the existing
@@ -322,9 +375,20 @@
             --app-mascot-width: 132px;
             padding: 0 8px 0 0;
         }
+        /* Responsive mascot scaling.
+           The canvas display-height is 74 px (was 49 before the
+           taller-canvas refactor — ratio 96/64 = 1.5). The wrapper
+           height stays at the LED-band height (49 px) so the row
+           doesn't grow; the canvas overflows upward by 25 px
+           (74 - 49 = 25) via top:-25px. Same logic for the smaller
+           breakpoints below. */
+        .app-mascot-bar .mascot-bird {
+            height: 49px !important;
+        }
         .app-mascot-bar .mascot-bird__canvas {
             width: 132px !important;
-            height: 49px !important;
+            height: 74px !important;
+            top: -25px !important;
         }
         .status-bar__ticker-slot {
             flex-basis: 320px;
@@ -342,9 +406,13 @@
         .app-mascot-bar {
             --app-mascot-width: 108px;
         }
+        .app-mascot-bar .mascot-bird {
+            height: 40px !important;
+        }
         .app-mascot-bar .mascot-bird__canvas {
             width: 108px !important;
-            height: 40px !important;
+            height: 60px !important;
+            top: -20px !important;
         }
         .status-bar__auto-cam-label {
             display: none;
@@ -359,9 +427,13 @@
             --app-mascot-width: 84px;
             min-height: 56px;
         }
+        .app-mascot-bar .mascot-bird {
+            height: 31px !important;
+        }
         .app-mascot-bar .mascot-bird__canvas {
             width: 84px !important;
-            height: 31px !important;
+            height: 47px !important;
+            top: -16px !important;
         }
         .status-bar__auto-cam {
             min-height: 28px;

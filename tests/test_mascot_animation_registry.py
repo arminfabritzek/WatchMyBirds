@@ -34,27 +34,41 @@ def _read(relative_path: str) -> str:
     return (_project_root() / relative_path).read_text(encoding="utf-8")
 
 
+def _extract_anims_body(mascot_html: str) -> str:
+    """Return the JS source between the outermost `[` and `]` of the
+    `var ANIMS = [...]` literal.
+
+    A bracket counter is required (not a non-greedy regex) because
+    animation bodies contain inner JS arrays — e.g. `palette = [...]`,
+    `wedgeColors = [...]`, `layers = [...]` — whose closing `];` sits
+    on its own line and would terminate a non-greedy match early.
+    """
+    head = re.search(r"var\s+ANIMS\s*=\s*\[", mascot_html)
+    assert head, "could not locate ANIMS literal in mascot_bird.html"
+    start = head.end()
+    depth = 1
+    i = start
+    n = len(mascot_html)
+    while i < n and depth > 0:
+        c = mascot_html[i]
+        if c == "[":
+            depth += 1
+        elif c == "]":
+            depth -= 1
+        i += 1
+    assert depth == 0, "ANIMS literal is unbalanced — JS syntax broken"
+    return mascot_html[start : i - 1]
+
+
 def _extract_anim_names(mascot_html: str) -> list[str]:
-    block = re.search(
-        r"var\s+ANIMS\s*=\s*\[(.*?)\n\s*\];",
-        mascot_html,
-        re.DOTALL,
-    )
-    assert block, "could not locate ANIMS literal in mascot_bird.html"
-    return re.findall(r"name:\s*'([^']+)'", block.group(1))
+    return re.findall(r"name:\s*'([^']+)'", _extract_anims_body(mascot_html))
 
 
 def _extract_anim_specs(mascot_html: str) -> list[dict[str, str]]:
-    block = re.search(
-        r"var\s+ANIMS\s*=\s*\[(.*?)\n\s*\];",
-        mascot_html,
-        re.DOTALL,
-    )
-    assert block, "could not locate ANIMS literal in mascot_bird.html"
     # Split entries on the top-level `{` … `}` separators. A simple
     # brace-counter is enough because the JS we maintain here has no
     # template literals or regex literals that would confuse it.
-    src = block.group(1)
+    src = _extract_anims_body(mascot_html)
     specs: list[dict[str, str]] = []
     depth = 0
     start = -1
