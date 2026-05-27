@@ -42,3 +42,43 @@ def error_response_simple(
     """Like :func:`error_response` but emits ``{"error": ...}`` (older blueprints)."""
     logger.error("%s [%s]", public_message, type(exc).__name__, exc_info=True)
     return jsonify({"error": public_message}), status
+
+
+def safe_validation_message(
+    exc: BaseException,
+    allowed_prefixes: tuple[str, ...],
+    fallback: str = "Invalid input",
+) -> str:
+    """Whitelist-filter for exception messages that need to reach the UI.
+
+    Some endpoints (notably the PTZ empirical-probe wizard) rely on a
+    specific validation message — e.g. "Overview preset is not
+    configured" — being surfaced to the operator. We don't want the
+    raw ``str(exc)`` to flow into the response, because an unrelated
+    ValueError elsewhere in the call chain could then leak internal
+    detail.
+
+    This helper accepts the exception only if ``str(exc)`` starts with
+    one of the ``allowed_prefixes``. Anything else collapses to the
+    generic ``fallback``. The explicit prefix check is also what makes
+    CodeQL's py/stack-trace-exposure analyser treat this as a sanitizer
+    — the message that leaves this function is statically bounded by
+    the prefix list.
+
+    Usage::
+
+        except ValueError as exc:
+            msg = safe_validation_message(
+                exc,
+                allowed_prefixes=("Overview preset",),
+                fallback="Probe start rejected",
+            )
+            return jsonify({"status": "error", "message": msg}), 400
+    """
+    text = str(exc)
+    for prefix in allowed_prefixes:
+        if text.startswith(prefix):
+            # Cap length so an attacker-controllable suffix cannot
+            # smuggle large payloads through a short prefix.
+            return text[:200]
+    return fallback

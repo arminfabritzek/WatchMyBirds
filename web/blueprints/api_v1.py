@@ -34,6 +34,7 @@ from web.power_actions import (
 )
 from web.security import error_response as _error_response
 from web.security import safe_log_value as _safe_log_value
+from web.security import safe_validation_message as _safe_validation_message
 from web.services import (
     backup_restore_service,
     db_service,
@@ -69,8 +70,14 @@ def _read_file_tail(path: Path, max_lines: int = 200) -> dict:
         text = "".join(tail_lines)
         result["tail_text"] = text
         result["line_count"] = len(text.splitlines())
-    except Exception as e:
-        result["error"] = str(e)
+    except Exception as exc:
+        # Log the actual exception for diagnostics; surface only the
+        # exception class so log content cannot leak filesystem details
+        # to the client (CodeQL py/stack-trace-exposure).
+        logger.warning(
+            "log-tail read failed [%s]", type(exc).__name__, exc_info=True
+        )
+        result["error"] = type(exc).__name__
 
     return result
 
@@ -186,7 +193,15 @@ def _run_command_safe(
             "error": f"timeout after {timeout_sec:.1f}s",
             "expected_permission_error": False,
         }
-    except Exception as e:
+    except Exception as exc:
+        # Log full traceback for ops debugging; surface only the
+        # exception class so subprocess details cannot leak to the
+        # client (CodeQL py/stack-trace-exposure).
+        logger.warning(
+            "diagnostic command failed [%s]",
+            type(exc).__name__,
+            exc_info=True,
+        )
         return {
             "available": True,
             "ok": False,
@@ -194,7 +209,7 @@ def _run_command_safe(
             "timed_out": False,
             "truncated": False,
             "output": "",
-            "error": str(e),
+            "error": type(exc).__name__,
             "expected_permission_error": False,
         }
 
@@ -358,12 +373,15 @@ def _regenerate_metadata_for_variant(
         except Exception as exc:
             # Force-refresh is best-effort: HF outage, network issue,
             # or older release without the YAML — log and fall through
-            # to the existing local cache.
+            # to the existing local cache. Wrap exc via type-name only
+            # so its repr cannot smuggle log-line forging characters
+            # (CodeQL py/log-injection).
             logger.warning(
-                "Force-refresh of companion files for %s failed: %s; "
+                "Force-refresh of companion files for %s failed [%s]; "
                 "falling back to local cache.",
                 _safe_log_value(model_id),
-                exc,
+                type(exc).__name__,
+                exc_info=True,
             )
 
     yaml_basename = os.path.basename(f"{model_id}_model_config.yaml")
@@ -1531,11 +1549,14 @@ def telegram_send_report():
             logger.info("Telegram report job %s completed.", jid)
 
         except Exception as exc:
-            error_msg = str(exc) or "Unknown error"
+            # Background-job error message flows to the public job-status
+            # endpoint; keep it generic so exception text never reaches
+            # the client (CodeQL py/stack-trace-exposure). Full traceback
+            # is captured by the logger call below.
             with _report_jobs_lock:
                 if jid in _report_jobs:
                     _report_jobs[jid]["status"] = "error"
-                    _report_jobs[jid]["message"] = error_msg
+                    _report_jobs[jid]["message"] = "Telegram report failed"
             logger.error("Telegram report job %s failed: %s", jid, exc, exc_info=True)
 
     t = threading.Thread(
@@ -1663,13 +1684,20 @@ def aesthetic_rescore():
         try:
             from scripts.aesthetic_tag_nightly import main_with_args
         except ImportError as exc:
+            # Background-job message flows to the public status endpoint;
+            # keep it generic. Full ImportError detail in the log.
             with _rescore_jobs_lock:
                 if jid in _rescore_jobs:
                     _rescore_jobs[jid]["status"] = "error"
                     _rescore_jobs[jid]["message"] = (
-                        f"Aesthetic worker not importable: {exc}"
+                        "Aesthetic worker not available"
                     )
-            logger.error("Aesthetic rescore job %s: worker missing (%s)", jid, exc)
+            logger.error(
+                "Aesthetic rescore job %s: worker missing [%s]",
+                jid,
+                type(exc).__name__,
+                exc_info=True,
+            )
             return
 
         argv: list[str] = ["--rescore", "--since", since]
@@ -1692,11 +1720,14 @@ def aesthetic_rescore():
                         )
             logger.info("Aesthetic rescore job %s finished (rc=%d).", jid, rc)
         except Exception as exc:
-            error_msg = str(exc) or "Unknown error"
+            # Background-job error message flows to the public job-status
+            # endpoint; keep it generic so exception text never reaches
+            # the client (CodeQL py/stack-trace-exposure). Full traceback
+            # is captured by the logger call below.
             with _rescore_jobs_lock:
                 if jid in _rescore_jobs:
                     _rescore_jobs[jid]["status"] = "error"
-                    _rescore_jobs[jid]["message"] = error_msg
+                    _rescore_jobs[jid]["message"] = "Aesthetic re-score failed"
             logger.error("Aesthetic rescore job %s failed: %s", jid, exc, exc_info=True)
 
     t = threading.Thread(
@@ -2134,7 +2165,18 @@ def camera_ptz_capabilities(camera_id: int):
         )
         return jsonify({"status": "success", "data": data})
     except ValueError as exc:
-        return jsonify({"status": "error", "message": str(exc)}), 404
+        # ValueError here means "camera not found / not configured" —
+        # log the specific reason; surface a generic 404 so exception
+        # text never reaches the client (CodeQL py/stack-trace-exposure).
+        logger.info(
+            "PTZ capabilities probe rejected for camera %d [%s]",
+            camera_id,
+            type(exc).__name__,
+            exc_info=True,
+        )
+        return jsonify(
+            {"status": "error", "message": "Camera not found or not configured"}
+        ), 404
     except Exception as exc:
         return _error_response("PTZ capabilities probe error", exc)
 
@@ -2190,10 +2232,27 @@ def camera_ptz_empirical_probe_start(camera_id: int):
         )
         return jsonify({"status": "success", "data": data})
     except ValueError as exc:
-        # Common case: no overview preset configured. The wizard UI
-        # surfaces this message verbatim so the operator knows to set
-        # the preset first.
-        return jsonify({"status": "error", "message": str(exc)}), 400
+        # Wizard UI relies on the specific operator-help messages
+        # raised inside core/ptz_empirical_probe (no overview preset,
+        # probe slot collides, no PTZ capabilities). Whitelist those
+        # prefixes; anything else collapses to a generic message so
+        # arbitrary exception text never leaks (CodeQL).
+        msg = _safe_validation_message(
+            exc,
+            allowed_prefixes=(
+                "No overview preset",
+                "Probe slot resolves to",
+                "Camera declares no PTZ capabilities",
+            ),
+            fallback="Probe start rejected",
+        )
+        logger.info(
+            "PTZ probe start rejected for camera %d [%s]",
+            camera_id,
+            type(exc).__name__,
+            exc_info=True,
+        )
+        return jsonify({"status": "error", "message": msg}), 400
     except Exception as exc:
         return _error_response("PTZ empirical probe start error", exc)
 
@@ -2237,9 +2296,28 @@ def camera_ptz_empirical_probe_execute(camera_id: int):
         data = ptz_empirical_probe_service.execute_step(camera_id, step_id)
         return jsonify({"status": "success", "data": data})
     except ExecuteInFlightError as exc:
-        return jsonify({"status": "busy", "message": str(exc)}), 409
+        # Whitelist the in-flight message — the wizard polls for it.
+        msg = _safe_validation_message(
+            exc,
+            allowed_prefixes=("Probe step still in flight", "In-flight"),
+            fallback="A probe step is still running",
+        )
+        return jsonify({"status": "busy", "message": msg}), 409
     except ValueError as exc:
-        return jsonify({"status": "error", "message": str(exc)}), 400
+        # Whitelist session-state and step-id messages from
+        # core/ptz_empirical_probe (CodeQL).
+        msg = _safe_validation_message(
+            exc,
+            allowed_prefixes=("No probe session", "Unknown step_id"),
+            fallback="Probe step rejected",
+        )
+        logger.info(
+            "PTZ probe execute rejected for camera %d [%s]",
+            camera_id,
+            type(exc).__name__,
+            exc_info=True,
+        )
+        return jsonify({"status": "error", "message": msg}), 400
     except Exception as exc:
         return _error_response("PTZ empirical probe execute error", exc)
 
@@ -2284,9 +2362,25 @@ def camera_ptz_empirical_probe_feedback(camera_id: int):
         )
         return jsonify({"status": "success", "data": data})
     except ExecuteInFlightError as exc:
-        return jsonify({"status": "busy", "message": str(exc)}), 409
+        msg = _safe_validation_message(
+            exc,
+            allowed_prefixes=("Probe step still in flight", "In-flight"),
+            fallback="A probe step is still running",
+        )
+        return jsonify({"status": "busy", "message": msg}), 409
     except ValueError as exc:
-        return jsonify({"status": "error", "message": str(exc)}), 400
+        msg = _safe_validation_message(
+            exc,
+            allowed_prefixes=("No probe session", "Unknown step_id"),
+            fallback="Probe feedback rejected",
+        )
+        logger.info(
+            "PTZ probe feedback rejected for camera %d [%s]",
+            camera_id,
+            type(exc).__name__,
+            exc_info=True,
+        )
+        return jsonify({"status": "error", "message": msg}), 400
     except Exception as exc:
         return _error_response("PTZ empirical probe feedback error", exc)
 
@@ -2303,7 +2397,18 @@ def camera_ptz_empirical_probe_finalize(camera_id: int):
         data = ptz_empirical_probe_service.finalize_session(camera_id)
         return jsonify({"status": "success", "data": data})
     except ValueError as exc:
-        return jsonify({"status": "error", "message": str(exc)}), 400
+        msg = _safe_validation_message(
+            exc,
+            allowed_prefixes=("No probe session",),
+            fallback="Probe finalize rejected",
+        )
+        logger.info(
+            "PTZ probe finalize rejected for camera %d [%s]",
+            camera_id,
+            type(exc).__name__,
+            exc_info=True,
+        )
+        return jsonify({"status": "error", "message": msg}), 400
     except Exception as exc:
         return _error_response("PTZ empirical probe finalize error", exc)
 
@@ -2448,7 +2553,15 @@ def camera_ptz_capture_overview_snapshot(camera_id: int):
             return jsonify({"status": "error", "message": "Camera not found"}), 404
         return jsonify({"status": "success", "snapshot": result})
     except ValueError as exc:
-        return jsonify({"status": "error", "message": str(exc)}), 400
+        logger.info(
+            "PTZ overview-snapshot rejected for camera %d [%s]",
+            camera_id,
+            type(exc).__name__,
+            exc_info=True,
+        )
+        return jsonify(
+            {"status": "error", "message": "Overview snapshot capture rejected"}
+        ), 400
     except Exception as exc:
         return _error_response("PTZ snapshot capture error", exc)
 
@@ -2559,7 +2672,15 @@ def camera_ptz_grid_shape(camera_id: int):
             return jsonify({"status": "error", "message": "Camera not found"}), 404
         return jsonify({"status": "success", "shape": result})
     except ValueError as exc:
-        return jsonify({"status": "error", "message": str(exc)}), 400
+        logger.info(
+            "PTZ grid shape rejected for camera %d [%s]",
+            camera_id,
+            type(exc).__name__,
+            exc_info=True,
+        )
+        return jsonify(
+            {"status": "error", "message": "Invalid grid shape"}
+        ), 400
     except Exception as exc:
         return _error_response("PTZ grid shape error", exc)
 
@@ -2596,7 +2717,17 @@ def camera_ptz_grid_cell_set(camera_id: int, row: int, col: int):
             return jsonify({"status": "error", "message": "Camera not found"}), 404
         return jsonify({"status": "success", "cell": result})
     except ValueError as exc:
-        return jsonify({"status": "error", "message": str(exc)}), 400
+        logger.info(
+            "PTZ grid cell-set rejected for camera %d cell (%d,%d) [%s]",
+            camera_id,
+            row,
+            col,
+            type(exc).__name__,
+            exc_info=True,
+        )
+        return jsonify(
+            {"status": "error", "message": "Invalid grid cell mapping"}
+        ), 400
     except Exception as exc:
         return _error_response("PTZ grid cell set error", exc)
 
@@ -2921,8 +3052,12 @@ def system_health_public():
                 },
             }
         )
-    except Exception as e:
-        logger.error(f"Public health check error: {e}")
+    except Exception as exc:
+        logger.error(
+            "Public health check error [%s]",
+            type(exc).__name__,
+            exc_info=True,
+        )
         return jsonify({"system": {}, "disk": {}}), 200
 
 
@@ -3377,8 +3512,16 @@ def go2rtc_health_public():
             with urllib.request.urlopen(req, timeout=2.0) as resp:
                 healthy = resp.status == 200
         except Exception as exc:
+            # Log full traceback for ops; only the exception class
+            # reaches the response so urllib internals cannot leak
+            # (CodeQL py/stack-trace-exposure).
+            logger.info(
+                "go2rtc health probe failed [%s]",
+                type(exc).__name__,
+                exc_info=True,
+            )
             healthy = False
-            detail = str(exc)
+            detail = type(exc).__name__
 
         result = {
             "status": "success",
