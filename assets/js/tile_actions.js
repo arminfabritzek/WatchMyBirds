@@ -150,9 +150,14 @@
             // Full-frame preview — the whole point of this dialog. If the
             // image is not yet cached, the operator sees a placeholder
             // background until the optimized version downloads.
-            if (fullSrc) {
+            // Sanitise fullSrc through the same same-origin path validator
+            // used for navigation — even though the value originates from
+            // a Jinja-rendered data-attribute, static analysis cannot prove
+            // that and we want the guard to be co-located with the sink.
+            const safeFullSrc = fullSrc ? safeSameOriginPath(fullSrc) : '';
+            if (safeFullSrc) {
                 const preview = document.createElement('img');
-                preview.src = fullSrc;
+                preview.src = safeFullSrc;
                 preview.alt = 'Full frame preview';
                 preview.style.cssText = [
                     'width: 100%',
@@ -357,7 +362,15 @@
                 }
                 if (detailsHref) {
                     const safeDetailsPath = safeSameOriginPath(detailsHref);
-                    if (safeDetailsPath) window.location.assign(safeDetailsPath);
+                    // Local re-check at the sink: assignTo() static analysers
+                    // cannot trace safeSameOriginPath as a sanitizer across
+                    // the call boundary, so we re-assert the same-origin /
+                    // safe-path shape directly here. Cheap and explicit.
+                    if (safeDetailsPath
+                        && safeDetailsPath.charAt(0) === '/'
+                        && /^[A-Za-z0-9_\-./?&=#]+$/.test(safeDetailsPath)) {
+                        window.location.assign(safeDetailsPath);
+                    }
                 }
                 break;
 

@@ -1387,6 +1387,13 @@ function loadDeferredViewerImages(scope) {
         if (!target) return;
         const safeTarget = safeSameOriginImagePath(target);
         if (!safeTarget) return;
+        // Local re-assertion at the assignment sink so static analysers
+        // see the sanitizer co-located with the .src write. The shape
+        // check mirrors safeSameOriginImagePath's regex contract.
+        if (safeTarget.charAt(0) !== '/'
+            || !/^[A-Za-z0-9_\-./?&=#]+$/.test(safeTarget)) {
+            return;
+        }
         if (img.getAttribute('src') !== safeTarget) {
             img.src = safeTarget;
         }
