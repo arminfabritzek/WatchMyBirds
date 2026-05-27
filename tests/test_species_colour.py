@@ -173,9 +173,9 @@ def test_stamp_species_display_on_event_without_members_or_batch():
     assert event_payload["species_colour_key"] == "Parus_major"
     assert event_payload["species_colour"] == 0
     # Reference image must be resolved from the real fixture set on
-    # disk. Parus_major exists as a .png there.
+    # disk. Parus_major exists as a .webp there.
     assert event_payload["species_ref_image_url"] is not None
-    assert event_payload["species_ref_image_url"].endswith("Parus_major.png")
+    assert event_payload["species_ref_image_url"].endswith("Parus_major.webp")
 
 
 def test_stamp_species_display_on_event_with_members_and_batch():
