@@ -146,16 +146,16 @@
     var STATUS_INNER_PAD_PX = 8;       // padding around the status text
     var STATUS_MAX_FRAC = 0.55;        // status never eats more than this
     var SEPARATOR_GAP_PX = 6;          // gap each side of the separator line
-    var DETECTION_STICKY_MS = 30000;   // last-detection page stays in rotation 30s
+    var DETECTION_STICKY_MS = 15000;   // last-detection page stays in rotation 15s
 
     // ── Alert-sign overlay (full-canvas takeover on live detection) ──
     // When a detection arrives, the whole canvas briefly becomes a
     // flashing "BIRD SIGHTING / ATTENTION" hazard sign — like a railway
     // platform when the train is coming. Each new detection refreshes
     // the hold timer, so a steady stream of birds keeps the sign up.
-    // A hard 15 s ceiling guarantees the heartbeat returns even if
+    // A hard 7.5 s ceiling guarantees the heartbeat returns even if
     // detections never stop (e.g. a crow camped on the feeder).
-    var ALERT_HOLD_MS = 15000;         // hard ceiling per detection
+    var ALERT_HOLD_MS = 7500;          // hard ceiling per detection
     var ALERT_WORD_MS = 700;           // ms per word in the rotation
     var ALERT_FLOCK_THRESHOLD = 5;     // detections in window → escalate
     var ALERT_FLOCK_WINDOW_MS = 5000;
@@ -689,7 +689,7 @@
 
     function rebuildBuffer() {
         // Live detections surface as a dedicated page in the left
-        // status zone now (HH:MM / SPECIES, sticky 30 s), so the
+        // status zone now (HH:MM / SPECIES, sticky 15 s), so the
         // marquee carries the dashboard heartbeat unconditionally.
         var segments = buildHeartbeatSegments();
         var joined = segments.join(' · ');
@@ -722,7 +722,7 @@
         var label = (ev.species_common || ev.species_latin || 'UNKNOWN').toUpperCase();
         // Live detections live exclusively on a dedicated page in the
         // status zone (top: event time HH:MM, bottom: species). They
-        // join the page rotation immediately and stay for 30 s, so the
+        // join the page rotation immediately and stay for 15 s, so the
         // marquee keeps showing the dashboard heartbeat undisturbed.
         lastDetection = {
             ts: Date.now(),
@@ -739,7 +739,7 @@
 
     // Left status zone rotates through whichever pages are currently
     // available. Clock is always present; weather joins once Open-Meteo
-    // answered; a detection page (HH:MM / SPECIES) joins for 30 s after
+    // answered; a detection page (HH:MM / SPECIES) joins for 15 s after
     // each fresh SSE event. Hard swap every STATUS_PAGE_MS — classic
     // LED-board behavior, no crossfade.
     var STATUS_PAGE_MS = 5000;
@@ -794,7 +794,7 @@
     function buildStatusLines() {
         // Rotate through whichever pages are currently available. Clock
         // is always present; weather joins once Open-Meteo answered;
-        // detection joins for 30 s after a fresh SSE event. The page
+        // detection joins for 15 s after a fresh SSE event. The page
         // count therefore varies (1–3), but the modulo handles that
         // naturally and statusWidthPx() reads the same pages list.
         var pages = buildStatusPages();
@@ -957,7 +957,7 @@
                 try {
                     appendDetection(JSON.parse(e.data));
                     // Alert-sign overlay: every detection refreshes the
-                    // 15 s ceiling, so a steady stream keeps the sign
+                    // 7.5 s ceiling, so a steady stream keeps the sign
                     // up. Escalate to FLOCK ALERT when the same sliding
                     // window the mascot uses crosses the threshold —
                     // single source of truth for "is this a flock?".
