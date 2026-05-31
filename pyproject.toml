@@ -7,7 +7,11 @@
 
 [project]
 name = "watchmybirds"
-version = "0.1.0"
+# WatchMyBirds is a deployed appliance, not a published package. The user-facing
+# build identity is the git commit + build date (see /api/v1/system/versions and
+# the footer in templates/base.html), not a semver here. `dynamic` signals to
+# PEP 621 tooling that version is intentionally not declared in this file.
+dynamic = ["version"]
 description = "AI-powered bird detection and classification from live camera streams"
 readme = "README.md"
 license = {text = "Apache-2.0"}

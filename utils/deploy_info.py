@@ -9,6 +9,7 @@ build date, and deployment type — consumed by both the legacy
 from __future__ import annotations
 
 import logging
+import subprocess
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -57,6 +58,39 @@ def _try_local_app_version() -> str:
             if text:
                 return text
     except Exception:  # noqa: BLE001
+        pass
+    return _UNKNOWN
+
+
+def _try_local_git(args: list[str]) -> str:
+    """Run a `git` command at the project root and return its trimmed stdout.
+
+    Dev-mode fallback only — when build-artifact files (BUILD_COMMIT,
+    BUILD_DATE) are absent because the app is launched from a checkout
+    without going through the Docker/RPi build pipelines. Returns
+    ``_UNKNOWN`` on any failure (missing git binary, not a repo,
+    shallow clone without history, subprocess timeout).
+
+    Intentionally NOT used on Docker/RPi: on those targets the build
+    files are the source of truth, and a missing file means the build
+    pipeline forgot to write it. Silently papering over that with a
+    subprocess call would hide a real build bug.
+    """
+    try:
+        project_root = Path(__file__).resolve().parent.parent
+        result = subprocess.run(
+            ["git", *args],
+            cwd=project_root,
+            capture_output=True,
+            text=True,
+            timeout=2,
+            check=False,
+        )
+        if result.returncode == 0:
+            text = result.stdout.strip()
+            if text:
+                return text
+    except (OSError, subprocess.TimeoutExpired):
         pass
     return _UNKNOWN
 
@@ -115,6 +149,17 @@ def read_build_metadata() -> dict[str, str]:
 
     build_date = _read_first(_FILE_SOURCES["build_date"])
     deploy_type = detect_deploy_type()
+
+    # Dev-mode only: when the build pipeline didn't write the files
+    # (i.e. someone launched `python main.py` from a checkout), fall
+    # back to live git queries so the footer shows something useful.
+    # Not applied on docker/rpi: a missing file there is a real build
+    # bug we don't want to mask.
+    if deploy_type == "dev":
+        if git_commit == _UNKNOWN:
+            git_commit = _try_local_git(["rev-parse", "--short=7", "HEAD"])
+        if build_date == _UNKNOWN:
+            build_date = _try_local_git(["log", "-1", "--format=%cs", "HEAD"])
 
     return {
         "app_version": app_version,

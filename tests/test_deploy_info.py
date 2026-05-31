@@ -143,7 +143,12 @@ class TestReadBuildMetadata:
         assert meta["deploy_type"] == "rpi"
 
     def test_no_files_returns_safe_defaults(self, tmp_path: Path) -> None:
-        """No metadata files → Unknown values and deploy_type 'dev'."""
+        """No metadata sources at all → Unknown values and deploy_type 'dev'.
+
+        The dev-mode git fallback is patched out here so this test can
+        express the pure "nothing available" case. The fallback itself
+        is covered by ``test_dev_git_fallback_*`` below.
+        """
         empty_sources = {
             "app_version": [tmp_path / "nope"],
             "git_commit": [tmp_path / "nope2"],
@@ -152,6 +157,7 @@ class TestReadBuildMetadata:
         with (
             patch("utils.deploy_info._FILE_SOURCES", empty_sources),
             patch("utils.deploy_info._try_local_app_version", return_value=_UNKNOWN),
+            patch("utils.deploy_info._try_local_git", return_value=_UNKNOWN),
             patch("utils.deploy_info.detect_deploy_type", return_value="dev"),
         ):
             meta = read_build_metadata()
@@ -173,8 +179,58 @@ class TestReadBuildMetadata:
             patch(
                 "utils.deploy_info._try_local_app_version", return_value="0.1.0-local"
             ),
+            patch("utils.deploy_info._try_local_git", return_value=_UNKNOWN),
             patch("utils.deploy_info.detect_deploy_type", return_value="dev"),
         ):
             meta = read_build_metadata()
 
         assert meta["app_version"] == "0.1.0-local"
+
+    def test_dev_git_fallback_fills_commit_and_date(self, tmp_path: Path) -> None:
+        """Dev mode with no build files → live git supplies commit + date."""
+        empty_sources = {
+            "app_version": [tmp_path / "nope"],
+            "git_commit": [tmp_path / "nope2"],
+            "build_date": [tmp_path / "nope3"],
+        }
+
+        def fake_git(args: list[str]) -> str:
+            if args[:1] == ["rev-parse"]:
+                return "abc1234"
+            if args[:1] == ["log"]:
+                return "2026-05-27"
+            return _UNKNOWN
+
+        with (
+            patch("utils.deploy_info._FILE_SOURCES", empty_sources),
+            patch("utils.deploy_info._try_local_app_version", return_value=_UNKNOWN),
+            patch("utils.deploy_info._try_local_git", side_effect=fake_git),
+            patch("utils.deploy_info.detect_deploy_type", return_value="dev"),
+        ):
+            meta = read_build_metadata()
+
+        assert meta["git_commit"] == "abc1234"
+        assert meta["build_date"] == "2026-05-27"
+        assert meta["deploy_type"] == "dev"
+
+    def test_dev_git_fallback_skipped_on_docker(self, tmp_path: Path) -> None:
+        """On docker/rpi a missing file must stay Unknown — no silent git probe."""
+        empty_sources = {
+            "app_version": [tmp_path / "nope"],
+            "git_commit": [tmp_path / "nope2"],
+            "build_date": [tmp_path / "nope3"],
+        }
+        with (
+            patch("utils.deploy_info._FILE_SOURCES", empty_sources),
+            patch("utils.deploy_info._try_local_app_version", return_value=_UNKNOWN),
+            patch("utils.deploy_info._try_local_git") as mock_git,
+            patch("utils.deploy_info.detect_deploy_type", return_value="docker"),
+        ):
+            meta = read_build_metadata()
+
+        # Git fallback must never run on docker — a missing BUILD_COMMIT
+        # there indicates a build-pipeline bug we want to surface, not mask.
+        mock_git.assert_not_called()
+        assert meta["git_commit"] == _UNKNOWN
+        assert meta["build_date"] == _UNKNOWN
+        assert meta["deploy_type"] == "docker"
