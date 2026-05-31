@@ -706,6 +706,36 @@
         @media (prefers-reduced-motion: reduce) {
             .stream-ptz-joybtn { transition: none; }
         }
+        /* Phones: shrink the overlay D-pad so it doesn't cover half the
+           stream. Buttons drop from 30px to 22px, padding and corner
+           offset tighten up. Keeps full functionality, just compact. */
+        @media (max-width: 600px) {
+            .stream-ptz-dpad--overlay {
+                right: 6px;
+                bottom: 44px;
+                gap: 4px;
+                padding: 3px 5px;
+            }
+            .stream-ptz-dpad__cross {
+                grid-template-columns: repeat(3, 22px);
+                grid-template-rows: repeat(3, 22px);
+                gap: 1px;
+            }
+            .stream-ptz-dpad__zoom {
+                grid-template-rows: repeat(2, 22px);
+                grid-template-columns: 22px;
+                gap: 1px;
+            }
+            .stream-ptz-dpad--overlay .stream-ptz-joybtn {
+                width: 22px;
+                height: 22px;
+                font-size: 11px;
+                border-radius: 5px;
+            }
+            .stream-ptz-dpad--overlay .stream-ptz-joybtn--home {
+                font-size: 13px;
+            }
+        }
         .ptz-minimap {
             position: absolute;
             left: var(--space-md, 16px);
