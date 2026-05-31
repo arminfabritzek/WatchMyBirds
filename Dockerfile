@@ -2,7 +2,7 @@
 # Pinned to multi-arch index digest so amd64 and arm64 builds stay reproducible.
 # Dependabot keeps this up-to-date; always use the index (multi-arch) digest,
 # never a platform-specific one, or arm64 builds will break.
-FROM python:3.14-slim-bookworm@sha256:980c03657c7c8bfbce5212d242ffe5caf69bfd8b6c8383e3580b27d028a6ddb3
+FROM python:3.14-slim-bookworm@sha256:2e256d0381371566ed96980584957ed31297f437569b79b0e5f7e17f2720e53a
 
 # Install system dependencies
 RUN apt-get update && \
