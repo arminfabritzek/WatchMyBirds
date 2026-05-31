@@ -254,29 +254,81 @@
         }
         if (BG_VARIANT === 'branch') {
             ctx.save();
-            ctx.strokeStyle = 'rgba(94, 155, 152, 0.58)';
-            ctx.lineWidth = 2.6;
+            // Main bough — thicker, with a dark underbody and a lighter
+            // top-side highlight so the branch reads as a rounded limb,
+            // not a painted line. The centreline of the bough still sits
+            // on FY + 59 so the bird's feet land where they always did
+            // (BASE_Y is anchored to that y).
+            var boughCx1 = 44, boughCy1 = 55;
+            var boughCx2 = 104, boughCy2 = 59;
+            var boughX0 = -4, boughY0 = FY + 60;
+            var boughX1 = W + 4, boughY1 = FY + 57;
             ctx.lineCap = 'round';
+            ctx.strokeStyle = 'rgba(58, 110, 108, 0.85)';
+            ctx.lineWidth = 7.5;
             ctx.beginPath();
-            ctx.moveTo(9, FY + 59);
-            ctx.bezierCurveTo(44, FY + 55, 104, FY + 59, 162, FY + 56);
+            ctx.moveTo(boughX0, boughY0);
+            ctx.bezierCurveTo(boughCx1, FY + boughCy1 + 1.4, boughCx2, FY + boughCy2 + 1.4, boughX1, boughY1);
             ctx.stroke();
-            ctx.strokeStyle = 'rgba(94, 155, 152, 0.36)';
-            ctx.lineWidth = 1.4;
+            ctx.strokeStyle = 'rgba(122, 178, 175, 0.65)';
+            ctx.lineWidth = 3.2;
             ctx.beginPath();
-            ctx.moveTo(126, FY + 57);
-            ctx.quadraticCurveTo(136, FY + 49, 150, FY + 48);
+            ctx.moveTo(boughX0, boughY0 - 2.4);
+            ctx.bezierCurveTo(boughCx1, FY + boughCy1 - 1.6, boughCx2, FY + boughCy2 - 1.6, boughX1, boughY1 - 2.4);
             ctx.stroke();
-            ctx.fillStyle = 'rgba(168, 213, 210, 0.45)';
-            [[30, 55, -0.4], [138, 49, 0.35], [151, 48, -0.25]].forEach(function (leaf) {
+            // Two side twigs branching upward — one short stub on the
+            // left, one longer reach on the right that the leaf cluster
+            // hangs off.
+            ctx.strokeStyle = 'rgba(58, 110, 108, 0.78)';
+            ctx.lineWidth = 2.4;
+            ctx.beginPath();
+            ctx.moveTo(24, FY + 58);
+            ctx.quadraticCurveTo(18, FY + 50, 12, FY + 44);
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.moveTo(128, FY + 57);
+            ctx.quadraticCurveTo(142, FY + 46, 156, FY + 38);
+            ctx.stroke();
+
+            // Stylised teardrop leaves with a darker midrib. Sizes are
+            // proportional to the bird (body ≈ 30 px tall): leafLen
+            // 14–18 px so the cluster reads as foliage, not confetti.
+            // Each entry: [anchorX, anchorY, baseAngle, length, sway].
+            var leaves = [
+                [12, 44, -1.05, 16, 0.05],
+                [20, 41, -0.55, 14, 0.06],
+                [150, 40, -0.30, 17, 0.05],
+                [158, 36, -0.65, 18, 0.06],
+                [144, 46, -1.20, 14, 0.07]
+            ];
+            leaves.forEach(function (leaf) {
+                var lx = leaf[0], ly = FY + leaf[1];
+                var ang = leaf[2] + Math.sin(t * 1.1 + leaf[0] * 0.3) * leaf[4];
+                var len = leaf[3];
+                var wid = len * 0.45;
                 ctx.save();
-                ctx.translate(leaf[0], FY + leaf[1]);
-                ctx.rotate(leaf[2] + Math.sin(t * 1.2 + leaf[0]) * 0.05);
+                ctx.translate(lx, ly);
+                ctx.rotate(ang);
+                // Leaf blade — teardrop pointing along +x.
+                ctx.fillStyle = 'rgba(140, 198, 195, 0.92)';
+                ctx.strokeStyle = 'rgba(58, 110, 108, 0.85)';
+                ctx.lineWidth = 1.1;
                 ctx.beginPath();
-                ctx.ellipse(0, 0, 5, 2.2, 0, 0, Math.PI * 2);
+                ctx.moveTo(0, 0);
+                ctx.quadraticCurveTo(len * 0.55, -wid, len, 0);
+                ctx.quadraticCurveTo(len * 0.55, wid, 0, 0);
                 ctx.fill();
+                ctx.stroke();
+                // Midrib for a touch of leaf anatomy.
+                ctx.strokeStyle = 'rgba(58, 110, 108, 0.55)';
+                ctx.lineWidth = 0.9;
+                ctx.beginPath();
+                ctx.moveTo(1.2, 0);
+                ctx.lineTo(len - 1.2, 0);
+                ctx.stroke();
                 ctx.restore();
             });
+
             drawFlower(21, FY + FLOOR_H - 1, Math.sin(t * 1.1) * 0.06, '#DCEEEC');
             drawFlower(153, FY + FLOOR_H - 1, Math.sin(t * 1.2 + 1.4) * 0.06, '#F4D36A');
             ctx.restore();
@@ -2716,7 +2768,7 @@
                 // curve), head dropped onto the chest, legs folded
                 // (legLift high so the feet tuck up into the cloth).
                 s.x = sway * 4;
-                s.y = 4 + Math.abs(sway) * 0.6;     // settles into curve
+                s.y = 0 + Math.abs(sway) * 0.6;     // settles into curve
                 s.bodyRot = sway * 0.08 - 0.05;     // slight permanent recline
                 s.headRot = -0.25 + sway * 0.03;
                 s.headX = -4;
@@ -3601,14 +3653,17 @@
         {
             // GlitchInTheMatrix — rare Easter-egg: the bird "glitches"
             // for a moment. RGB color-split silhouettes, scanline noise
-            // backdrop, jittery head. Very low weight (0.12) so it
-            // shows up once in a long while and feels special.
+            // backdrop, jittery head. A real glitch is a flicker, not a
+            // performance — 140 ms reads as "something just blipped"
+            // without occupying a full slot. Low weight + long cooldown
+            // keep it a genuine surprise; an operator might catch it
+            // once or twice per gallery session.
             name: 'GlitchInTheMatrix',
-            durationMs: 2500,
+            durationMs: 140,
             weight: 0.12,
             priority: 'ambient',
             eligible: function () { return true; },
-            cooldownMs: 600000,    // ~10 minutes between appearances
+            cooldownMs: 180000,
             loopPosition: false,
             particles: null,
             suppressBg: true,
