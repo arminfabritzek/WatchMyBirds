@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 
 # Per-subscriber queue depth. Detection peaks during a busy feeder visit can
 # stack a dozen events in a second; 64 gives slow clients ~half a minute of
-# slack at typical RPi rates before drops start.
+# slack at typical event rates before drops start.
 _SUBSCRIBER_BUFFER = 64
 
 
@@ -86,7 +86,7 @@ class LiveEventBus:
     ) -> Iterator[dict[str, Any] | None]:
         """Yield events for one subscriber. ``None`` means: emit a keepalive.
 
-        Keepalives matter on RPi behind nginx/cloudflare — connections
+        Keepalives matter behind reverse proxies — connections
         that go quiet for ~30s can be killed mid-stream. A periodic
         ping keeps the pipe warm without putting visible noise into
         the ticker.

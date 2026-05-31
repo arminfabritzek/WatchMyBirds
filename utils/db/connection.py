@@ -243,6 +243,17 @@ def _init_schema(conn: sqlite3.Connection) -> None:
         conn, "detections", "is_gallery_eligible", "INTEGER DEFAULT 0"
     )
     _backfill_gallery_eligible(conn)
+
+    # Nightly crop quality scoring (see web/services/nightly_job_hub.py
+    # + utils/image_ops.laplacian_sharpness/crop_brightness). Computed
+    # once per crop by the nightly sharpness job. Purely additive aux
+    # signal — never used to filter, gate, or drop detections.
+    # sharpness_score: float, variance of Laplacian on a 256-px-normalised
+    #   grayscale crop. Higher = sharper. NULL = unscored.
+    # crop_brightness: float in [0,255], mean grayscale luminance.
+    #   Companion metric so consumers can tell "blur" from "underexposed".
+    _ensure_column_on_table(conn, "detections", "sharpness_score", "REAL")
+    _ensure_column_on_table(conn, "detections", "crop_brightness", "REAL")
     conn.execute(
         """
         CREATE INDEX IF NOT EXISTS idx_detections_gallery_state_filename

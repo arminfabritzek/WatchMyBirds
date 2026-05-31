@@ -15,7 +15,7 @@ import queue
 import threading
 import time
 from collections import deque
-from datetime import datetime
+from datetime import UTC, datetime
 
 from camera.video_capture import VideoCapture
 from config import get_config
@@ -180,8 +180,20 @@ class DetectionManager:
         # Stop event
         self.stop_event = threading.Event()
 
-        # Daylight cache
-        self._daytime_cache = {"city": None, "value": True, "ts": 0.0}
+        # Daylight cache for the OD night-pause gate. Refreshed at
+        # most once per `_daytime_ttl` seconds via _should_run_od_now().
+        # When DAY_AND_NIGHT_CAPTURE is True (default), the gate is a
+        # no-op — OD runs 24/7. When False, OD pauses outside the
+        # operator-defined daytime window (see utils/sun_times.py).
+        # `value` is the most recent is_daytime() result;
+        # `next_transition` is the UTC timestamp at which the value
+        # will flip — used by the status endpoint and the transition
+        # log line. `ts` is the monotonic clock at last refresh.
+        self._daytime_cache: dict = {
+            "value": True,
+            "next_transition": None,
+            "ts": 0.0,
+        }
         self._daytime_ttl = 300
 
         # Threads
@@ -409,6 +421,176 @@ class DetectionManager:
             return self._deep_scan_active
 
     # =========================================================================
+    # OD NIGHT-PAUSE GATE
+    # =========================================================================
+    #
+    # When DAY_AND_NIGHT_CAPTURE is True (default), OD runs 24/7
+    # exactly as before — the gate is a no-op. When False, OD pauses
+    # outside the operator-defined daytime window. The daytime window
+    # is civil-twilight by default, widened by the offsets:
+    #   * OD_NIGHT_START_OFFSET_MIN extends evening (default +30 min)
+    #   * OD_NIGHT_END_OFFSET_MIN extends early morning (default -45 min)
+    #
+    # The cache refresh is rate-limited to _daytime_ttl seconds so
+    # astral.sun() is not called on every detect tick. The single
+    # log line on transitions makes pauses visible in app.log
+    # without per-frame spam.
+
+    def _should_run_od_now(self) -> bool:
+        """Return True if OD should execute now, False if it should pause.
+
+        Reads the daytime cache and refreshes it if the TTL is up.
+        Logs a single info line on every day↔night transition.
+        """
+        master_switch = bool(self.config.get("DAY_AND_NIGHT_CAPTURE", True))
+        if master_switch:
+            return True
+
+        now_mono = time.monotonic()
+        if (now_mono - self._daytime_cache["ts"]) > self._daytime_ttl:
+            self._refresh_daytime_cache()
+
+        return bool(self._daytime_cache["value"])
+
+    def _refresh_daytime_cache(self) -> None:
+        """Recompute is_daytime() and update the cache. Logs transitions."""
+        from datetime import datetime as _dt
+
+        from utils.sun_times import is_daytime
+
+        # Location resolution: prefer LOCATION_DATA (lat/lon, primary)
+        # over DAY_AND_NIGHT_CAPTURE_LOCATION (city name, legacy).
+        lat, lon = self._resolve_location()
+        if lat is None or lon is None:
+            # No location configured → can't compute twilight → fall
+            # back to "always daytime" so OD never pauses silently.
+            logger.warning(
+                "OD night-pause: no location configured "
+                "(LOCATION_DATA missing); pause disabled."
+            )
+            self._daytime_cache = {
+                "value": True,
+                "next_transition": None,
+                "ts": time.monotonic(),
+            }
+            return
+
+        try:
+            start_off = int(self.config.get("OD_NIGHT_START_OFFSET_MIN", 30))
+            end_off = int(self.config.get("OD_NIGHT_END_OFFSET_MIN", -45))
+            tw_mode = str(self.config.get("OD_NIGHT_TWILIGHT_MODE", "civil"))
+            now_utc = _dt.now(tz=UTC)
+            is_day, next_transition = is_daytime(
+                now_utc,
+                lat=lat,
+                lon=lon,
+                start_offset_min=start_off,
+                end_offset_min=end_off,
+                twilight=tw_mode,  # type: ignore[arg-type]
+            )
+        except Exception:
+            logger.exception(
+                "OD night-pause: is_daytime() raised; defaulting to daytime."
+            )
+            self._daytime_cache = {
+                "value": True,
+                "next_transition": None,
+                "ts": time.monotonic(),
+            }
+            return
+
+        prev_value = self._daytime_cache.get("value")
+        if prev_value is not None and prev_value != is_day:
+            logger.info(
+                "OD night-pause transition: %s → %s (next at %s, lat=%.4f, lon=%.4f, twilight=%s)",
+                "daytime" if prev_value else "night",
+                "daytime" if is_day else "night",
+                next_transition.isoformat(),
+                lat,
+                lon,
+                tw_mode,
+            )
+        self._daytime_cache = {
+            "value": is_day,
+            "next_transition": next_transition,
+            "ts": time.monotonic(),
+        }
+
+    def _resolve_location(self) -> tuple[float | None, float | None]:
+        """Return (lat, lon) from LOCATION_DATA. None if unset/(0,0)."""
+        loc = self.config.get("LOCATION_DATA")
+        if not loc:
+            return (None, None)
+        # LOCATION_DATA is stored as a dict {"latitude": .., "longitude": ..}
+        # or a "lat,lon" string in some legacy configs. Handle both.
+        try:
+            if isinstance(loc, dict):
+                lat = float(loc.get("latitude") or loc.get("lat") or 0.0)
+                lon = float(loc.get("longitude") or loc.get("lon") or 0.0)
+            elif isinstance(loc, str) and "," in loc:
+                a, b = loc.split(",", 1)
+                lat, lon = float(a), float(b)
+            else:
+                return (None, None)
+        except (TypeError, ValueError):
+            return (None, None)
+        if lat == 0.0 and lon == 0.0:
+            return (None, None)
+        return (lat, lon)
+
+    def get_od_status(self) -> dict:
+        """Snapshot for the /api/v1/od/status endpoint and the UI pill.
+
+        Returns a dict with the current OD activity state, the reason
+        ("master-switch-on" / "daytime" / "night-paused" / "no-location"),
+        the next transition timestamp if known, and the resolved
+        location lat/lon (for debugging).
+        """
+        master_switch = bool(self.config.get("DAY_AND_NIGHT_CAPTURE", True))
+        lat, lon = self._resolve_location()
+
+        if master_switch:
+            return {
+                "od_active": True,
+                "reason": "master-switch-on",
+                "next_transition_utc": None,
+                "lat": lat,
+                "lon": lon,
+                "twilight_mode": str(
+                    self.config.get("OD_NIGHT_TWILIGHT_MODE", "civil")
+                ),
+            }
+
+        if lat is None or lon is None:
+            return {
+                "od_active": True,
+                "reason": "no-location",
+                "next_transition_utc": None,
+                "lat": None,
+                "lon": None,
+                "twilight_mode": str(
+                    self.config.get("OD_NIGHT_TWILIGHT_MODE", "civil")
+                ),
+            }
+
+        # Trigger a refresh if stale, then read.
+        if (time.monotonic() - self._daytime_cache["ts"]) > self._daytime_ttl:
+            self._refresh_daytime_cache()
+
+        is_day = bool(self._daytime_cache["value"])
+        nt = self._daytime_cache["next_transition"]
+        return {
+            "od_active": is_day,
+            "reason": "daytime" if is_day else "night-paused",
+            "next_transition_utc": nt.isoformat() if nt is not None else None,
+            "lat": lat,
+            "lon": lon,
+            "twilight_mode": str(
+                self.config.get("OD_NIGHT_TWILIGHT_MODE", "civil")
+            ),
+        }
+
+    # =========================================================================
     # COMPONENT INITIALIZATION
     # =========================================================================
 
@@ -523,6 +705,18 @@ class DetectionManager:
                 continue
 
             self.last_detection_had_frame = True
+
+            # OD night-pause gate. Master switch DAY_AND_NIGHT_CAPTURE
+            # is True by default → this is a no-op. When False, skip
+            # OD entirely outside the operator-defined daytime window.
+            # We sleep the same interval the live loop uses, so the
+            # next tick respects DETECTION_INTERVAL_SECONDS regardless
+            # of whether we ran detection or not.
+            if not self._should_run_od_now():
+                time.sleep(
+                    float(self.config.get("DETECTION_INTERVAL_SECONDS", 1.0))
+                )
+                continue
 
             # Motion detection gate
             if self.config.get("MOTION_DETECTION_ENABLED", True):

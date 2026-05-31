@@ -3881,6 +3881,69 @@ def system_updates_install():
 
 
 # =============================================================================
+# Nightly Job Hub — generic Run / Stop / Status endpoints
+# =============================================================================
+#
+# Backs the Settings UI "Nightly Jobs" panel. List returns every
+# registered job's lifecycle snapshot. Run / Stop are thin wrappers
+# around the hub. The OD-status endpoint is colocated for the
+# Settings UI's "OD active until ..." pill.
+
+
+@api_v1.route("/nightly/jobs", methods=["GET"])
+@login_required
+def nightly_jobs_list():
+    """Snapshot of every registered nightly job for the UI poller."""
+    from web.services.nightly_job_hub import list_jobs
+
+    return jsonify({"jobs": list_jobs()})
+
+
+@api_v1.route("/nightly/jobs/<name>/run_now", methods=["POST"])
+@login_required
+def nightly_job_run_now(name: str):
+    """Trigger a registered job synchronously.
+
+    Returns the hub's status dict: ``started`` / ``already_running``
+    / ``unknown_job``.
+    """
+    from web.services.nightly_job_hub import run_now
+
+    payload = request.get_json(silent=True) or {}
+    reason = str(payload.get("reason") or "manual UI trigger")
+    result = run_now(name, reason=reason)
+    code = 200
+    if result.get("status") == "unknown_job":
+        code = 404
+    return jsonify(result), code
+
+
+@api_v1.route("/nightly/jobs/<name>/stop", methods=["POST"])
+@login_required
+def nightly_job_stop(name: str):
+    """Request a running job to stop at its next inner-loop checkpoint."""
+    from web.services.nightly_job_hub import stop
+
+    result = stop(name)
+    code = 200
+    if result.get("status") == "unknown_job":
+        code = 404
+    return jsonify(result), code
+
+
+@api_v1.route("/od/status", methods=["GET"])
+@login_required
+def od_status():
+    """Current OD activity / night-pause snapshot for the UI pill."""
+    try:
+        dm = api_v1.detection_manager
+        return jsonify(dm.get_od_status())
+    except Exception as exc:
+        logger.error("OD status error [%s]", type(exc).__name__, exc_info=True)
+        return jsonify({"error": "od status read failed"}), 500
+
+
+# =============================================================================
 # Blueprint Initialization
 # =============================================================================
 

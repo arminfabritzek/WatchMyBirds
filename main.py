@@ -225,6 +225,39 @@ def _create_runtime():
     except Exception as e:
         logger.warning(f"Aesthetic tag scheduler failed to start: {e}")
 
+    # Start the Nightly Job Hub (generic registry for night-only batch
+    # work). Aesthetic-tagger and sharpness scoring both register here
+    # so the Settings UI has one place to inspect / trigger / stop them.
+    # The daily-fire loop fires registered jobs once per UTC night;
+    # operators can also click "Run now" any time.
+    try:
+        from web.services.nightly_job_hub import (
+            register_job,
+            start_daily_loop,
+        )
+        from web.services.nightly_jobs import (
+            AestheticTaggerJob,
+            SharpnessJob,
+        )
+
+        register_job(AestheticTaggerJob())
+        register_job(SharpnessJob())
+
+        # Daily-fire gate: True when OD is currently paused for night.
+        # When the master switch is on or no location is set, OD is
+        # never night-paused → the hub never auto-fires (operators
+        # still get manual triggers via the UI).
+        def _is_night_for_hub() -> bool:
+            try:
+                status = detection_manager.get_od_status()
+            except Exception:
+                return False
+            return status.get("reason") == "night-paused"
+
+        start_daily_loop(_is_night_for_hub, check_interval_s=60)
+    except Exception as e:
+        logger.warning(f"Nightly job hub failed to start: {e}")
+
     # Start Telemetry Scheduler (anonymous opt-in usage heartbeat).
     # Default OFF; does nothing unless the user toggles it on in
     # Settings -> Privacy. See web/services/telemetry_service.py and

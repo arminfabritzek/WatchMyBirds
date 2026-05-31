@@ -1826,11 +1826,19 @@
                 </div>
                 <div class="col-md-6">
                     <div class="settings-field">
-                        <label for="DAY_AND_NIGHT_CAPTURE" class="settings-field__label">Night Mode Capture</label>
+                        <label for="DAY_AND_NIGHT_CAPTURE" class="settings-field__label">
+                            Night Mode Capture
+                            <span id="odStatusPill" class="badge" style="margin-left:0.5rem;"></span>
+                        </label>
                         <select name="DAY_AND_NIGHT_CAPTURE" id="DAY_AND_NIGHT_CAPTURE" class="form-select">
                             <option value="true" {% if payload['DAY_AND_NIGHT_CAPTURE'].value %}selected{% endif %}>Enabled (Capture 24/7)</option>
                             <option value="false" {% if not payload['DAY_AND_NIGHT_CAPTURE'].value %}selected{% endif %}>Disabled (Daylight Only)</option>
                         </select>
+                        <div class="settings-field__help">
+                            When disabled, OD pauses outside the daytime window. Offsets
+                            (<code>OD_NIGHT_START_OFFSET_MIN</code> / <code>OD_NIGHT_END_OFFSET_MIN</code>)
+                            widen the active window beyond civil twilight — see Detection panel.
+                        </div>
                     </div>
                 </div>
             </div>
@@ -2363,6 +2371,29 @@
     <!-- ╔══════════════════════════════════════════════╗
          ║ 5. Tools & System                           ║
          ╚══════════════════════════════════════════════╝ -->
+    <!-- ╔══════════════════════════════════════════════╗
+         ║ Nightly Jobs                                 ║
+         ╚══════════════════════════════════════════════╝ -->
+    <div class="settings-panel" id="panelNightlyJobs">
+        <button type="button" class="settings-panel__trigger" onclick="togglePanel('panelNightlyJobs')"
+                title="Background work that runs while OD is paused at night (CLIP aesthetic tagger, crop sharpness scoring, ...)">
+            Nightly Jobs
+            <span class="settings-panel__trigger-info">Manual trigger + status for night-only batch work</span>
+            <svg class="settings-panel__chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+        </button>
+        <div class="settings-panel__body">
+            <p class="settings-field__help mb-3">
+                These jobs run automatically once per night while OD is paused. You can
+                also trigger them manually here — useful for re-running after a code
+                change, or running a backfill against existing data. Each job has its
+                own lock; two clicks while a job is running will skip the second.
+            </p>
+            <div id="nightlyJobsContainer" class="d-flex flex-column gap-2">
+                <div class="text-muted">Loading…</div>
+            </div>
+        </div>
+    </div>
+
     <div class="settings-panel" id="panelTools">
         <button type="button" class="settings-panel__trigger" onclick="togglePanel('panelTools')">
             Tools & System
@@ -3358,10 +3389,6 @@
             <hr>
             <strong class="d-block mb-2">System Information</strong>
             <div class="row g-3 mb-4" id="sysInfoContainer">
-                <div class="col-6 col-md-3">
-                    <small class="text-muted d-block">WatchMyBirds</small>
-                    <span class="fw-bold" id="si-app">Loading...</span>
-                </div>
                 <div class="col-6 col-md-3">
                     <small class="text-muted d-block">Git Commit</small>
                     <span class="font-monospace" id="si-commit">Loading...</span>
@@ -4367,7 +4394,6 @@
         fetch('/api/v1/system/versions')
             .then(res => res.json())
             .then(data => {
-                document.getElementById('si-app').innerText = data.app_version || 'N/A';
                 document.getElementById('si-commit').innerText = data.git_commit || 'N/A';
                 document.getElementById('si-build-date').innerText = data.build_date || 'N/A';
                 const deployEl = document.getElementById('si-deploy');
@@ -4727,6 +4753,265 @@
     }
 
     document.addEventListener('DOMContentLoaded', initUpdates);
+
+    // ====================================================================
+    // Nightly Jobs panel — list / run / stop / status polling.
+    // ====================================================================
+    //
+    // Each job is rendered as a row with a name, a status line, and a
+    // pair of Run / Stop buttons. The poller refreshes every 2s while
+    // the Nightly Jobs panel is open. When the panel is collapsed the
+    // poll pauses to avoid background traffic.
+
+    let _nightlyPollHandle = null;
+    let _nightlyPollVisible = false;
+
+    function _nightlyFmtTime(iso) {
+        if (!iso) return '—';
+        try {
+            return new Date(iso).toLocaleTimeString();
+        } catch (_) {
+            return iso;
+        }
+    }
+
+    // Build a job row using safe DOM APIs — no innerHTML, no string
+    // interpolation of any field from the API response. Defends against
+    // a future JobBase subclass that puts something dangerous in its
+    // display_name; also defends against the API itself being spoofed.
+    function _nightlyBuildRow(job) {
+        const running = job.running === true;
+        const stopReq = job.stop_requested === true;
+        const progress = job.progress || {};
+
+        let statusLine;
+        if (running && stopReq) {
+            statusLine = 'Stopping…';
+        } else if (running) {
+            const done = progress.done;
+            const total = progress.total;
+            const elapsed = progress.elapsed_s;
+            if (typeof done === 'number' && typeof total === 'number') {
+                const pct = total > 0 ? Math.round((done / total) * 100) : 0;
+                statusLine = `Running: ${done} / ${total} (${pct}%)`;
+                if (typeof elapsed === 'number') {
+                    statusLine += ` — ${elapsed}s elapsed`;
+                }
+            } else {
+                statusLine = 'Running…';
+            }
+        } else if (job.last_started_at) {
+            const rc = job.last_rc;
+            const ok = rc === 0;
+            statusLine = `Idle — last run ${_nightlyFmtTime(job.last_finished_at)} (${ok ? 'ok' : 'rc=' + rc})`;
+        } else {
+            statusLine = 'Idle — no run yet this session';
+        }
+
+        const wrapper = document.createElement('div');
+        wrapper.className = 'settings-field';
+        wrapper.style.border = '1px solid var(--c-border, #444)';
+        wrapper.style.borderRadius = '6px';
+        wrapper.style.padding = '0.6rem 0.8rem';
+
+        const row = document.createElement('div');
+        row.className = 'd-flex align-items-center justify-content-between gap-2 flex-wrap';
+
+        const labelCol = document.createElement('div');
+        const nameEl = document.createElement('strong');
+        nameEl.textContent = String(job.display_name ?? job.name ?? '(unnamed)');
+        const statusEl = document.createElement('div');
+        statusEl.className = 'settings-field__help';
+        statusEl.style.marginTop = '0.25rem';
+        statusEl.textContent = statusLine;
+        labelCol.appendChild(nameEl);
+        labelCol.appendChild(statusEl);
+
+        const btnCol = document.createElement('div');
+        btnCol.className = 'd-flex gap-2';
+
+        const runBtn = document.createElement('button');
+        runBtn.type = 'button';
+        runBtn.className = 'btn btn--primary btn--sm';
+        runBtn.textContent = 'Run now';
+        runBtn.disabled = running;
+        // Capture the slug as a closure, not interpolated into HTML.
+        const jobName = String(job.name ?? '');
+        runBtn.addEventListener('click', () => nightlyRunNow(jobName));
+
+        const stopBtn = document.createElement('button');
+        stopBtn.type = 'button';
+        stopBtn.className = 'btn btn--secondary btn--sm';
+        stopBtn.textContent = 'Stop';
+        stopBtn.disabled = !running;
+        stopBtn.addEventListener('click', () => nightlyStop(jobName));
+
+        btnCol.appendChild(runBtn);
+        btnCol.appendChild(stopBtn);
+
+        row.appendChild(labelCol);
+        row.appendChild(btnCol);
+        wrapper.appendChild(row);
+        return wrapper;
+    }
+
+    function _nightlySetMessage(container, text, cssClass) {
+        // Replace container contents with one plain-text message.
+        // textContent avoids any HTML interpretation.
+        while (container.firstChild) {
+            container.removeChild(container.firstChild);
+        }
+        const msg = document.createElement('div');
+        msg.className = cssClass || 'text-muted';
+        msg.textContent = text;
+        container.appendChild(msg);
+    }
+
+    async function nightlyRefreshOnce() {
+        const container = document.getElementById('nightlyJobsContainer');
+        if (!container) return;
+        try {
+            const resp = await fetch('/api/v1/nightly/jobs');
+            if (!resp.ok) {
+                _nightlySetMessage(
+                    container,
+                    `Failed to load nightly jobs (HTTP ${resp.status}).`,
+                    'text-danger'
+                );
+                return;
+            }
+            const data = await resp.json();
+            const jobs = data.jobs || [];
+            if (jobs.length === 0) {
+                _nightlySetMessage(container, 'No nightly jobs registered.', 'text-muted');
+                return;
+            }
+            // Clear and re-render with DOM APIs.
+            while (container.firstChild) {
+                container.removeChild(container.firstChild);
+            }
+            for (const job of jobs) {
+                container.appendChild(_nightlyBuildRow(job));
+            }
+        } catch (err) {
+            _nightlySetMessage(container, 'Error: ' + err, 'text-danger');
+        }
+    }
+
+    async function nightlyRunNow(name) {
+        try {
+            const resp = await fetch(`/api/v1/nightly/jobs/${encodeURIComponent(name)}/run_now`, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({reason: 'manual UI trigger'}),
+            });
+            const data = await resp.json();
+            if (data.status !== 'started' && data.status !== 'already_running') {
+                alert(`Nightly job ${name}: ${data.status}`);
+            }
+        } catch (err) {
+            alert('Failed to start job: ' + err);
+        }
+        nightlyRefreshOnce();
+    }
+
+    async function nightlyStop(name) {
+        try {
+            await fetch(`/api/v1/nightly/jobs/${encodeURIComponent(name)}/stop`, {
+                method: 'POST',
+            });
+        } catch (err) {
+            alert('Failed to stop job: ' + err);
+        }
+        nightlyRefreshOnce();
+    }
+
+    function nightlyStartPolling() {
+        if (_nightlyPollHandle !== null) return;
+        nightlyRefreshOnce();
+        _nightlyPollHandle = setInterval(nightlyRefreshOnce, 2000);
+    }
+    function nightlyStopPolling() {
+        if (_nightlyPollHandle !== null) {
+            clearInterval(_nightlyPollHandle);
+            _nightlyPollHandle = null;
+        }
+    }
+
+    function nightlyPanelVisibilityCheck() {
+        const panel = document.getElementById('panelNightlyJobs');
+        if (!panel) return;
+        // The accordion expansion adds a class; we just check if the
+        // panel body is visible by measuring computed height.
+        const body = panel.querySelector('.settings-panel__body');
+        const open = body && body.offsetHeight > 0;
+        if (open && !_nightlyPollVisible) {
+            _nightlyPollVisible = true;
+            nightlyStartPolling();
+        } else if (!open && _nightlyPollVisible) {
+            _nightlyPollVisible = false;
+            nightlyStopPolling();
+        }
+    }
+
+    document.addEventListener('DOMContentLoaded', function () {
+        // Check on every panel toggle. The togglePanel() function
+        // mutates classes synchronously, so we re-check on the next
+        // animation frame.
+        document.querySelectorAll('#panelNightlyJobs .settings-panel__trigger').forEach(btn => {
+            btn.addEventListener('click', () => {
+                requestAnimationFrame(nightlyPanelVisibilityCheck);
+            });
+        });
+        // First load: if the panel is already open (e.g. browser
+        // restored state), start polling.
+        nightlyPanelVisibilityCheck();
+    });
+
+    // ====================================================================
+    // OD status pill — small badge near the DAY_AND_NIGHT_CAPTURE row.
+    // ====================================================================
+    //
+    // Renders into <span id="odStatusPill"></span>. Refreshes every
+    // 30s. Shows "OD active until 21:47 (civil dusk + 30 min)" or
+    // "OD paused — resumes 05:12 (civil dawn − 45 min)".
+
+    async function refreshOdStatusPill() {
+        const el = document.getElementById('odStatusPill');
+        if (!el) return;
+        try {
+            const resp = await fetch('/api/v1/od/status');
+            if (!resp.ok) {
+                el.textContent = '';
+                return;
+            }
+            const s = await resp.json();
+            if (s.reason === 'master-switch-on') {
+                el.textContent = 'OD runs 24/7';
+                el.className = 'badge badge--success';
+            } else if (s.reason === 'no-location') {
+                el.textContent = 'Set a location to enable night-pause';
+                el.className = 'badge badge--warn';
+            } else if (s.reason === 'daytime') {
+                const t = s.next_transition_utc ? new Date(s.next_transition_utc).toLocaleTimeString() : '—';
+                el.textContent = `OD active until ${t}`;
+                el.className = 'badge badge--success';
+            } else if (s.reason === 'night-paused') {
+                const t = s.next_transition_utc ? new Date(s.next_transition_utc).toLocaleTimeString() : '—';
+                el.textContent = `OD paused — resumes ${t}`;
+                el.className = 'badge badge--info';
+            } else {
+                el.textContent = '';
+            }
+        } catch (_) {
+            el.textContent = '';
+        }
+    }
+
+    document.addEventListener('DOMContentLoaded', function () {
+        refreshOdStatusPill();
+        setInterval(refreshOdStatusPill, 30000);
+    });
 </script>
 
 {% endblock %}

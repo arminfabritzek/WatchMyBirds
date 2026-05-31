@@ -120,6 +120,14 @@ DEFAULTS = {
     "STREAM_WIDTH_OUTPUT_RESIZE": 640,
     "DAY_AND_NIGHT_CAPTURE": True,
     "DAY_AND_NIGHT_CAPTURE_LOCATION": "Berlin",
+    # OD night-pause offsets (apply when DAY_AND_NIGHT_CAPTURE is False).
+    # See utils/sun_times.py for sign convention. Defaults widen the
+    # active daytime window past civil twilight: OD keeps running 30
+    # min past civil dusk (late-active species: blackbird, thrush)
+    # and resumes 45 min before civil dawn (dawn chorus: robin, wren).
+    "OD_NIGHT_START_OFFSET_MIN": 30,
+    "OD_NIGHT_END_OFFSET_MIN": -45,
+    "OD_NIGHT_TWILIGHT_MODE": "civil",
     "CPU_LIMIT": 0,
     "TELEGRAM_COOLDOWN": 3600.0,
     "EDIT_PASSWORD": "watchmybirds",
@@ -432,9 +440,9 @@ def _load_config():
     # Telemetry keys persist via a dedicated endpoint (/api/v1/settings/telemetry)
     # and deliberately bypass RUNTIME_KEYS so the generic Settings form can't
     # touch them. But they MUST be loaded from YAML at boot — otherwise the
-    # toggle "on" state is forgotten on every service restart. (Bug discovered
-    # 2026-05-06 on RPi: scheduler logged "started" but never sent because
-    # _load_config silently dropped telemetry_enabled=true from YAML.)
+    # toggle "on" state is forgotten on every service restart (the loader
+    # would silently drop telemetry_enabled=true from YAML, so the scheduler
+    # logged "started" but never actually sent).
     for key in ("telemetry_enabled", "telemetry_endpoint", "telemetry_installation_id"):
         if key in yaml_settings:
             config[key] = yaml_settings[key]

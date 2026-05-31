@@ -3300,6 +3300,8 @@ def create_web_interface(detection_manager, system_monitor=None):
         "GALLERY_DISPLAY_THRESHOLD",
         "MAX_DETECTIONS_PER_BURST",
         "BURST_WINDOW_SECONDS",
+        "OD_NIGHT_START_OFFSET_MIN",
+        "OD_NIGHT_END_OFFSET_MIN",
     }
 
     SETTING_LABELS = {
@@ -3308,8 +3310,11 @@ def create_web_interface(detection_manager, system_monitor=None):
         "NON_BIRD_CONFIRM_THRESHOLD": "Non-bird Confidence Floor (Minimum OD confidence for marten/cat/squirrel/hedgehog to be saved and confirmed; birds use a separate CLS-based gate and are unaffected)",
         "NON_BIRD_DROP_BELOW_CONFIRM": "Drop Non-bird Below Floor (When on, weak non-bird detections are dropped pre-persist — no DB row, no image saved. Off keeps them as UNCERTAIN for bbox-cluster analysis)",
         "DETECTION_INTERVAL_SECONDS": "Detection Interval (Seconds between AI analysis cycles - higher = less CPU)",
-        "DAY_AND_NIGHT_CAPTURE": "24/7 Capture (Enable or disable night-time detection)",
-        "DAY_AND_NIGHT_CAPTURE_LOCATION": "Sun Event Location (City name for sunrise/sunset checks)",
+        "DAY_AND_NIGHT_CAPTURE": "24/7 Capture (When ON, OD runs day and night. When OFF, OD pauses outside the daytime window — see offsets below)",
+        "DAY_AND_NIGHT_CAPTURE_LOCATION": "Sun Event Location (City name fallback; primary source is LOCATION_DATA lat/lon)",
+        "OD_NIGHT_START_OFFSET_MIN": "OD Night Start Offset (Minutes added to civil dusk; positive = OD keeps running into the evening, default 30 for late-active species)",
+        "OD_NIGHT_END_OFFSET_MIN": "OD Night End Offset (Minutes added to civil dawn; negative = OD starts earlier in the morning, default -45 for the dawn chorus)",
+        "OD_NIGHT_TWILIGHT_MODE": "OD Night Twilight Mode (civil / nautical / geometric — defines what 'dawn' and 'dusk' mean)",
         "TELEGRAM_ENABLED": "Live Alerts (Send Telegram messages when birds are detected)",
         "TELEGRAM_COOLDOWN": "Alert Cooldown (Minimum seconds between live alerts)",
         "STREAM_FPS": "Stream Display FPS (Visual smoothness in the web browser)",
@@ -3348,6 +3353,9 @@ def create_web_interface(detection_manager, system_monitor=None):
         "DETECTION_INTERVAL_SECONDS",
         "DAY_AND_NIGHT_CAPTURE",
         "DAY_AND_NIGHT_CAPTURE_LOCATION",
+        "OD_NIGHT_START_OFFSET_MIN",
+        "OD_NIGHT_END_OFFSET_MIN",
+        "OD_NIGHT_TWILIGHT_MODE",
         "LOCATION_DATA",
         "EXIF_GPS_ENABLED",
         "INBOX_REQUIRE_EXIF_DATETIME",
