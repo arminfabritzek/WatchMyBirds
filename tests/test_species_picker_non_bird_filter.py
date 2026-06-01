@@ -15,7 +15,28 @@ classifier-internal substrate label.
 import json
 import sqlite3
 
+import pytest
+
 from utils import species_names
+
+
+@pytest.fixture(autouse=True)
+def _clear_species_caches():
+    """Clear ``species_names`` caches around each test.
+
+    ``_seed_assets`` monkeypatches ``_ASSETS_DIR`` to a tmp tree; the
+    per-locale ``@lru_cache`` on ``load_common_names`` /
+    ``load_extended_species`` / ``_extended_species_keys`` would
+    otherwise leak fake-asset data into later tests in the run. Mirrors
+    the fixture in ``tests/test_species_names.py``.
+    """
+    species_names.load_common_names.cache_clear()
+    species_names.load_extended_species.cache_clear()
+    species_names._extended_species_keys.cache_clear()
+    yield
+    species_names.load_common_names.cache_clear()
+    species_names.load_extended_species.cache_clear()
+    species_names._extended_species_keys.cache_clear()
 
 
 def _seed_assets(tmp_path, monkeypatch) -> None:

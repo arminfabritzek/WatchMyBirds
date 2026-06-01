@@ -141,6 +141,53 @@ def test_load_extended_species_uses_de_fallback_order(tmp_path, monkeypatch):
     assert common_by_scientific["Species_only"] == "Species only"
 
 
+def test_load_common_names_result_survives_caller_inplace_refresh(
+    tmp_path, monkeypatch
+):
+    """Regression for issue #55.
+
+    ``web_interface`` keeps a long-lived ``COMMON_NAMES`` dict and refreshes
+    it in place (``clear()`` + ``update()``) whenever the locale setting is
+    re-applied — which happens on *every* settings save, because the form
+    POSTs the locale field each time. ``load_common_names`` is ``@lru_cache``'d
+    and returns the SAME dict object per locale, so binding ``COMMON_NAMES``
+    straight to that object made ``clear()`` wipe the cache (and the
+    ``update`` source, which was the same object) — leaving every species
+    showing its bare scientific name until a restart.
+
+    The fix is that the caller owns a private ``dict(...)`` copy. This test
+    pins that the documented app idiom keeps the names AND leaves the cache
+    intact for other readers.
+    """
+    assets_dir = tmp_path / "assets"
+    assets_dir.mkdir()
+    (assets_dir / "common_names_DE.json").write_text(
+        json.dumps({"Parus_major": "Kohlmeise"}),
+        encoding="utf-8",
+    )
+    (assets_dir / "common_names_NO.json").write_text(
+        json.dumps({"Parus_major": "Kjøttmeis"}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(species_names, "_ASSETS_DIR", assets_dir)
+    species_names.load_common_names.cache_clear()
+
+    # Mount: caller owns a private copy (the issue-#55 fix).
+    common_names = dict(species_names.load_common_names("NO"))
+    assert common_names["Parus_major"] == "Kjøttmeis"
+
+    # Settings save re-applies the (unchanged) locale -> in-place refresh.
+    new_names = species_names.load_common_names("NO")
+    common_names.clear()
+    common_names.update(new_names)
+
+    # Names must survive the refresh...
+    assert common_names["Parus_major"] == "Kjøttmeis"
+    # ...and the shared cache must NOT have been poisoned for other readers.
+    assert species_names.load_common_names("NO")["Parus_major"] == "Kjøttmeis"
+    assert species_names.load_common_names("DE")["Parus_major"] == "Kohlmeise"
+
+
 def test_load_extended_species_ignores_legacy_common_no_field(tmp_path, monkeypatch):
     assets_dir = tmp_path / "assets"
     assets_dir.mkdir()

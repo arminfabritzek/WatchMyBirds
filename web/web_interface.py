@@ -227,7 +227,13 @@ def create_web_interface(detection_manager, system_monitor=None):
     )
 
     _species_locale = config.get("SPECIES_COMMON_NAME_LOCALE", "DE")
-    COMMON_NAMES = load_common_names(_species_locale)
+    # Own a private copy: load_common_names is @lru_cache'd and hands out the
+    # SAME dict object on every call. COMMON_NAMES is refreshed in place
+    # (clear()/update()) by _on_runtime_settings_applied below, so binding it
+    # straight to the cached object would mutate — and poison — the shared
+    # cache for every other reader (issue #55: NO names vanished after any
+    # settings save until restart).
+    COMMON_NAMES = dict(load_common_names(_species_locale))
     UNKNOWN_SPECIES_KEY = "Unknown_species"
     IMAGE_CACHE_SECONDS = 30 * 24 * 60 * 60
     ASSET_CACHE_SECONDS = 7 * 24 * 60 * 60
@@ -852,6 +858,10 @@ def create_web_interface(detection_manager, system_monitor=None):
         """React to runtime setting changes dispatched from API v1."""
         nonlocal COMMON_NAMES
         if "SPECIES_COMMON_NAME_LOCALE" in valid_updates:
+            # Refresh in place so every closure holding COMMON_NAMES sees the
+            # new locale. Safe because COMMON_NAMES is our private copy (see
+            # the mount above) — clear() never touches the lru_cache, and
+            # update() only reads values out of the cached map.
             new_names = load_common_names(valid_updates["SPECIES_COMMON_NAME_LOCALE"])
             COMMON_NAMES.clear()
             COMMON_NAMES.update(new_names)
