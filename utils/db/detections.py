@@ -1203,12 +1203,10 @@ def reject_detections(conn: sqlite3.Connection, detection_ids: Iterable[int]) ->
         return
     placeholders = ",".join("?" for _ in ids)
 
-    # Update status of detections
     conn.execute(
         f"UPDATE detections SET status = 'rejected' WHERE detection_id IN ({placeholders})",
         ids,
     )
-    # Also reject classifications for these rejected detections
     conn.execute(
         f"UPDATE classifications SET status = 'rejected' WHERE detection_id IN ({placeholders})",
         ids,
@@ -1344,7 +1342,6 @@ def purge_detections(
 
     where_sql = " AND ".join(where_clauses)
 
-    # Dry Run: Count what would be deleted
     count_cursor = conn.execute(
         f"SELECT COUNT(*), GROUP_CONCAT(detection_id) FROM detections WHERE {where_sql}",
         params,
