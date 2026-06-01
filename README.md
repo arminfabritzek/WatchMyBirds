@@ -237,7 +237,7 @@ The system is designed to run locally on affordable hardware to make wildlife ob
 
 <p align="center">
   <a href="https://www.wikipedia.org/">
-    <img src="https://images.weserv.nl/?url=upload.wikimedia.org/wikipedia/commons/thumb/8/80/Wikipedia-logo-v2.svg/200px-Wikipedia-logo-v2.svg.png&w=120&h=120&fit=cover&mask=circle" width="100" alt="Wikipedia">
+    <img src="https://images.weserv.nl/?url=upload.wikimedia.org/wikipedia/commons/thumb/8/80/Wikipedia-logo-v2.svg/120px-Wikipedia-logo-v2.svg.png&w=120&h=120&fit=cover&mask=circle" width="100" alt="Wikipedia">
   </a>
   &nbsp;&nbsp;&nbsp;
   <a href="https://open-meteo.com/">

@@ -163,6 +163,31 @@
             })();
         </script>
 
+        <script>
+            // Fit the frame to the real camera aspect (runs for every
+            // visitor, not just moderators). The .stream-embed box defaults
+            // to 16:9 in CSS; a 4:3 (or any non-16:9) source would otherwise
+            // sit inside it with black pillarbox bars. The go2rtc iframe
+            // never exposes its natural size and the MJPEG fallback is
+            // display:none, so we read the true ratio from a live frame and
+            // pin it onto --stream-aspect. The PTZ overlay code (moderator
+            // build) keeps its own richer aspect handling for letterbox math.
+            (function () {
+                const embed = document.querySelector('.stream-embed');
+                if (!embed) return;
+                const probe = new Image();
+                probe.onload = function () {
+                    const w = probe.naturalWidth;
+                    const h = probe.naturalHeight;
+                    if (w > 0 && h > 0) {
+                        embed.style.setProperty('--stream-aspect', String(w / h));
+                    }
+                };
+                // Cache-bust so a stale snapshot can't pin a wrong ratio.
+                probe.src = '/api/snapshot?aspect_probe=' + Date.now();
+            })();
+        </script>
+
         {% if can_moderate %}
         <div id="ptzBoxOverlay" class="ptz-box-overlay" hidden>
             <!-- Box buttons get injected here by JS. -->

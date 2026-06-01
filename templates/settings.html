@@ -1484,14 +1484,102 @@
 
 <div class="settings-accordion">
 
-    <!-- ╔══════════════════════════════════════════════╗
-         ║ 1. AI                                        ║
-         ╚══════════════════════════════════════════════╝ -->
+    <!-- ╔══════════════════════════════════════════════════╗
+         ║ 1. Camera                                         ║
+         ╚══════════════════════════════════════════════════╝ -->
+    <div class="settings-panel" id="panelCamera">
+        <button type="button" class="settings-panel__trigger" onclick="togglePanel('panelCamera')">
+            Camera
+            <span class="settings-panel__trigger-info">Source, Routing & Saved Cameras</span>
+            <svg class="settings-panel__chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+        </button>
+        <div class="settings-panel__body">
+
+            <!-- Status strip -->
+            <div class="settings-status">
+                <span class="text-muted">Active:</span>
+                <code id="runtimeSourceDisplay" style="font-size:0.8rem;">{{ payload.get('STREAM_SOURCE_RUNTIME_VIDEO', {}).get('value', payload['VIDEO_SOURCE'].value) }}</code>
+                <span class="badge {{ 'text-bg-success' if payload.get('STREAM_SOURCE_RUNTIME_MODE', {}).get('value', 'direct') == 'relay' else 'text-bg-primary' }}" id="runtimeModeBadge">
+                    {{ payload.get('STREAM_SOURCE_RUNTIME_MODE', {}).get('value', 'direct') | default('direct') }}</span>
+                <span class="badge text-bg-secondary" id="resolverModeBadge">resolver: {{ payload.get('STREAM_SOURCE_EFFECTIVE_MODE', {}).get('value', 'direct') | default('direct') }}</span>
+                <span class="badge text-bg-light border text-dark" id="streamModeSettingBadge">setting: {{ payload.get('STREAM_SOURCE_MODE', {}).get('value', 'auto') | default('auto') }}</span>
+            </div>
+            <div class="settings-field__help mb-3" id="streamModeReason">{{ payload.get('STREAM_SOURCE_REASON', {}).get('value', '') }}</div>
+
+            <!-- Source inputs -->
+            <div class="row g-2 mb-3">
+                <div class="col-12">
+                    <div class="settings-field__label">USB Camera</div>
+                    <div class="input-group input-group-sm">
+                        <select id="usbIndexSelect" class="form-select form-select-sm">
+                            <option value="0">Camera 0</option>
+                            <option value="1">Camera 1</option>
+                            <option value="2">Camera 2</option>
+                        </select>
+                        <button type="button" class="btn btn--primary btn--sm" onclick="setCameraUrl(document.getElementById('usbIndexSelect').value)">Set</button>
+                    </div>
+                </div>
+                <div class="col-12">
+                    <div class="settings-field__label">Camera URL (rtsp:// or http://)</div>
+                    <div class="input-group input-group-sm">
+                        <input type="text" id="cameraUrlInput" class="form-control form-control-sm"
+                            value="{{ payload.get('CAMERA_URL', {}).get('value', '') }}"
+                            placeholder="rtsp://viewer:example-password@198.51.100.10:554/stream">
+                        <button type="button" class="btn btn--primary btn--sm" onclick="setCameraUrl(document.getElementById('cameraUrlInput').value)">Apply</button>
+                    </div>
+                    <div class="settings-field__help">Passwords stay masked as <code>*****</code>. Replace stars only to change credentials.</div>
+                </div>
+            </div>
+
+            <div class="row g-2 mb-3">
+                <div class="col-md-6">
+                    <div class="settings-field__label">Stream Routing Mode</div>
+                    <select name="STREAM_SOURCE_MODE" id="STREAM_SOURCE_MODE" class="form-select form-select-sm">
+                        <option value="auto" {{ 'selected' if payload.get('STREAM_SOURCE_MODE', {}).get('value', 'auto') == 'auto' }}>auto (use go2rtc if available)</option>
+                        <option value="relay" {{ 'selected' if payload.get('STREAM_SOURCE_MODE', {}).get('value', 'auto') == 'relay' }}>relay (always go2rtc)</option>
+                        <option value="direct" {{ 'selected' if payload.get('STREAM_SOURCE_MODE', {}).get('value', 'auto') == 'direct' }}>direct (camera -> app)</option>
+                    </select>
+                    <div class="settings-field__help"><strong>auto:</strong> prefer go2rtc. <strong>relay:</strong> force go2rtc. <strong>direct:</strong> app connects directly.</div>
+                </div>
+                <div class="col-md-6">
+                    <div class="settings-field__label">Effective Video Source (read-only)</div>
+                    <input type="text" class="form-control form-control-sm" readonly disabled value="{{ payload['VIDEO_SOURCE'].value }}">
+                </div>
+            </div>
+
+            <!-- Saved Cameras -->
+            <hr>
+            <div class="d-flex justify-content-between align-items-center mb-2">
+                <strong>Saved Cameras</strong>
+                <div class="d-flex gap-2">
+                    <button type="button" class="btn btn--secondary btn--sm" onclick="startOnvifDiscoveryCamSection()">Scan Network</button>
+                    <button type="button" class="btn btn--primary btn--sm" onclick="showAddCameraModal()">Add Camera</button>
+                </div>
+            </div>
+            <div id="savedCamerasList" class="list-group mb-3">
+                <div class="text-center text-muted p-3">Loading...</div>
+            </div>
+
+            <!-- Discovery Results (hidden) -->
+            <div id="camSectionDiscoveryResults" class="d-none">
+                <strong class="d-block mb-2">Discovered Cameras</strong>
+                <div id="camSectionDiscoveryLoading" class="text-center p-2 d-none">
+                    <div class="spinner-border spinner-border-sm text-info"></div>
+                    <span class="ms-1 small">Scanning network...</span>
+                </div>
+                <div id="camSectionDiscoveryList" class="list-group mb-3"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ╔══════════════════════════════════════════════════╗
+         ║ 2. Detection & AI (merged: models + scheduling)   ║
+         ╚══════════════════════════════════════════════════╝ -->
     <div class="settings-panel" id="panelAI">
         <button type="button" class="settings-panel__trigger" onclick="togglePanel('panelAI')"
-                title="Choose which detector model the app runs">
-            AI
-            <span class="settings-panel__trigger-info">Detector Model & Variant Selection</span>
+                title="Choose which detector model the app runs and how often it analyses frames">
+            Detection &amp; AI
+            <span class="settings-panel__trigger-info">Models, Thresholds &amp; Scheduling</span>
             <svg class="settings-panel__chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
         </button>
         <div class="settings-panel__body">
@@ -1561,67 +1649,6 @@
                     Higher values save disk space and review time at the cost
                     of dropping borderline detections. Changes take effect on
                     the next detection cycle (no restart needed).
-                </div>
-            </div>
-
-            <!-- ── Non-bird Confidence Floor ─────────────────────────
-                 Tighter gate for non-bird OD classes (marten/cat/squirrel/
-                 hedgehog). Birds run a separate CLS-based decision and are
-                 NOT affected by this knob. Designed against static-bbox
-                 night-FP triggers: marten max OD-conf on 1700+ live samples
-                 is 0.77, so 0.80 gates them all while a genuine cat near
-                 the feeder (max 0.92) still confirms. -->
-            <div class="settings-field mt-4">
-                <label class="settings-field__label" for="NON_BIRD_CONFIRM_THRESHOLD"
-                    title="Minimum OD confidence for non-bird species (marten, cat, squirrel, hedgehog) to be CONFIRMED. Birds use a separate CLS-gated track and are unaffected.">
-                    Non-bird Confidence Floor
-                </label>
-                <div class="d-flex align-items-center gap-2">
-                    <input type="number" step="0.05" min="0" max="1"
-                        name="NON_BIRD_CONFIRM_THRESHOLD" id="NON_BIRD_CONFIRM_THRESHOLD"
-                        class="form-control" style="max-width: 8rem;"
-                        value="{{ payload['NON_BIRD_CONFIRM_THRESHOLD'].value if 'NON_BIRD_CONFIRM_THRESHOLD' in payload else 0.80 }}">
-                    <span class="settings-field__help mb-0">marten · cat · squirrel · hedgehog</span>
-                </div>
-                <div class="settings-field__help">
-                    Bird detections ride a CLS sanity check, non-bird OD classes do
-                    not — so they need a stricter floor. Default <code>0.80</code>
-                    is calibrated against live RPi data: marten_mustelid peaks at
-                    OD-conf <code>0.77</code> on static-bbox night triggers, while
-                    a genuine cat near the feeder reaches <code>0.92</code>. Below
-                    this floor the detection is gated to UNCERTAIN and hidden from
-                    Stream / Gallery / Telegram. <strong>Bird detections
-                    (Tauben, Eichelhäher, Blaumeise, …) are not touched by this
-                    knob</strong> regardless of their OD confidence.
-                </div>
-            </div>
-
-            <!-- ── Drop Non-bird Below Floor (A1 pre-persist gate) ────
-                 When on, weak non-bird detections are dropped BEFORE the
-                 DB write — no row, no crop, no derivative files. Saves
-                 ~250 MB / night when marten background-triggers are
-                 active. Off keeps them as UNCERTAIN rows for Phase-7
-                 bbox-cluster analysis. -->
-            <div class="settings-field mt-3">
-                <label class="settings-field__label" for="NON_BIRD_DROP_BELOW_CONFIRM"
-                    title="When on (default), non-bird detections below the floor are dropped pre-persist — no DB row, no image saved. Off keeps them as UNCERTAIN for bbox-cluster analysis.">
-                    Drop Non-bird Below Floor
-                </label>
-                <select name="NON_BIRD_DROP_BELOW_CONFIRM" id="NON_BIRD_DROP_BELOW_CONFIRM"
-                    class="form-select" style="max-width: 12rem;">
-                    {% set _drop = payload['NON_BIRD_DROP_BELOW_CONFIRM'].value if 'NON_BIRD_DROP_BELOW_CONFIRM' in payload else true %}
-                    <option value="True" {% if _drop %}selected{% endif %}>On (recommended)</option>
-                    <option value="False" {% if not _drop %}selected{% endif %}>Off (collect for analysis)</option>
-                </select>
-                <div class="settings-field__help">
-                    <strong>On</strong>: non-bird detections below the floor are
-                    dropped before the database write — no image saved, no
-                    compute spent. Saves ~250 MB per night against static-bbox
-                    triggers like the marten background false positives.
-                    <strong>Off</strong>: keep them as UNCERTAIN rows in the DB
-                    (still hidden from Stream / Gallery / Telegram). Useful
-                    during a Phase-7 bbox-cluster collection window when you
-                    want to see where the FPs cluster on the camera.
                 </div>
             </div>
 
@@ -1715,107 +1742,10 @@
                         title="Re-read the classifier registry from disk">Refresh</button>
             </div>
 
-        </div>
-    </div>
-
-    <!-- ╔══════════════════════════════════════════════╗
-         ║ 2. Camera                                    ║
-         ╚══════════════════════════════════════════════╝ -->
-    <div class="settings-panel" id="panelCamera">
-        <button type="button" class="settings-panel__trigger" onclick="togglePanel('panelCamera')">
-            Camera
-            <span class="settings-panel__trigger-info">Source, Routing & Saved Cameras</span>
-            <svg class="settings-panel__chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
-        </button>
-        <div class="settings-panel__body">
-
-            <!-- Status strip -->
-            <div class="settings-status">
-                <span class="text-muted">Active:</span>
-                <code id="runtimeSourceDisplay" style="font-size:0.8rem;">{{ payload.get('STREAM_SOURCE_RUNTIME_VIDEO', {}).get('value', payload['VIDEO_SOURCE'].value) }}</code>
-                <span class="badge {{ 'text-bg-success' if payload.get('STREAM_SOURCE_RUNTIME_MODE', {}).get('value', 'direct') == 'relay' else 'text-bg-primary' }}" id="runtimeModeBadge">
-                    {{ payload.get('STREAM_SOURCE_RUNTIME_MODE', {}).get('value', 'direct') | default('direct') }}</span>
-                <span class="badge text-bg-secondary" id="resolverModeBadge">resolver: {{ payload.get('STREAM_SOURCE_EFFECTIVE_MODE', {}).get('value', 'direct') | default('direct') }}</span>
-                <span class="badge text-bg-light border text-dark" id="streamModeSettingBadge">setting: {{ payload.get('STREAM_SOURCE_MODE', {}).get('value', 'auto') | default('auto') }}</span>
-            </div>
-            <div class="settings-field__help mb-3" id="streamModeReason">{{ payload.get('STREAM_SOURCE_REASON', {}).get('value', '') }}</div>
-
-            <!-- Source inputs -->
-            <div class="row g-2 mb-3">
-                <div class="col-12">
-                    <div class="settings-field__label">USB Camera</div>
-                    <div class="input-group input-group-sm">
-                        <select id="usbIndexSelect" class="form-select form-select-sm">
-                            <option value="0">Camera 0</option>
-                            <option value="1">Camera 1</option>
-                            <option value="2">Camera 2</option>
-                        </select>
-                        <button type="button" class="btn btn--primary btn--sm" onclick="setCameraUrl(document.getElementById('usbIndexSelect').value)">Set</button>
-                    </div>
-                </div>
-                <div class="col-12">
-                    <div class="settings-field__label">Camera URL (rtsp:// or http://)</div>
-                    <div class="input-group input-group-sm">
-                        <input type="text" id="cameraUrlInput" class="form-control form-control-sm"
-                            value="{{ payload.get('CAMERA_URL', {}).get('value', '') }}"
-                            placeholder="rtsp://viewer:example-password@198.51.100.10:554/stream">
-                        <button type="button" class="btn btn--primary btn--sm" onclick="setCameraUrl(document.getElementById('cameraUrlInput').value)">Apply</button>
-                    </div>
-                    <div class="settings-field__help">Passwords stay masked as <code>*****</code>. Replace stars only to change credentials.</div>
-                </div>
-            </div>
-
-            <div class="row g-2 mb-3">
-                <div class="col-md-6">
-                    <div class="settings-field__label">Stream Routing Mode</div>
-                    <select name="STREAM_SOURCE_MODE" id="STREAM_SOURCE_MODE" class="form-select form-select-sm">
-                        <option value="auto" {{ 'selected' if payload.get('STREAM_SOURCE_MODE', {}).get('value', 'auto') == 'auto' }}>auto (use go2rtc if available)</option>
-                        <option value="relay" {{ 'selected' if payload.get('STREAM_SOURCE_MODE', {}).get('value', 'auto') == 'relay' }}>relay (always go2rtc)</option>
-                        <option value="direct" {{ 'selected' if payload.get('STREAM_SOURCE_MODE', {}).get('value', 'auto') == 'direct' }}>direct (camera -> app)</option>
-                    </select>
-                    <div class="settings-field__help"><strong>auto:</strong> prefer go2rtc. <strong>relay:</strong> force go2rtc. <strong>direct:</strong> app connects directly.</div>
-                </div>
-                <div class="col-md-6">
-                    <div class="settings-field__label">Effective Video Source (read-only)</div>
-                    <input type="text" class="form-control form-control-sm" readonly disabled value="{{ payload['VIDEO_SOURCE'].value }}">
-                </div>
-            </div>
-
-            <!-- Saved Cameras -->
-            <hr>
-            <div class="d-flex justify-content-between align-items-center mb-2">
-                <strong>Saved Cameras</strong>
-                <div class="d-flex gap-2">
-                    <button type="button" class="btn btn--secondary btn--sm" onclick="startOnvifDiscoveryCamSection()">Scan Network</button>
-                    <button type="button" class="btn btn--primary btn--sm" onclick="showAddCameraModal()">Add Camera</button>
-                </div>
-            </div>
-            <div id="savedCamerasList" class="list-group mb-3">
-                <div class="text-center text-muted p-3">Loading...</div>
-            </div>
-
-            <!-- Discovery Results (hidden) -->
-            <div id="camSectionDiscoveryResults" class="d-none">
-                <strong class="d-block mb-2">Discovered Cameras</strong>
-                <div id="camSectionDiscoveryLoading" class="text-center p-2 d-none">
-                    <div class="spinner-border spinner-border-sm text-info"></div>
-                    <span class="ms-1 small">Scanning network...</span>
-                </div>
-                <div id="camSectionDiscoveryList" class="list-group mb-3"></div>
-            </div>
-        </div>
-    </div>
-
-    <!-- ╔══════════════════════════════════════════════╗
-         ║ 2. Detection & Stream                       ║
-         ╚══════════════════════════════════════════════╝ -->
-    <div class="settings-panel" id="panelDetection">
-        <button type="button" class="settings-panel__trigger" onclick="togglePanel('panelDetection')">
-            Detection
-            <span class="settings-panel__trigger-info">Sensitivity, Thresholds & Scheduling</span>
-            <svg class="settings-panel__chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
-        </button>
-        <div class="settings-panel__body">
+            <!-- Detection scheduling — merged in from the former standalone
+                 "Detection" panel. Interval + night-mode are part of the same
+                 AI/detection topic, so they live here now. -->
+            <hr class="my-4">
             <div class="row g-3">
                 <div class="col-md-6">
                     <div class="settings-field">
@@ -1835,9 +1765,10 @@
                             <option value="false" {% if not payload['DAY_AND_NIGHT_CAPTURE'].value %}selected{% endif %}>Disabled (Daylight Only)</option>
                         </select>
                         <div class="settings-field__help">
-                            When disabled, OD pauses outside the daytime window. Offsets
-                            (<code>OD_NIGHT_START_OFFSET_MIN</code> / <code>OD_NIGHT_END_OFFSET_MIN</code>)
-                            widen the active window beyond civil twilight — see Detection panel.
+                            When disabled, detection pauses overnight and resumes around
+                            dawn. The active window is tuned to span the full useful
+                            bird-activity period, extending a little past dusk and before
+                            dawn.
                         </div>
                     </div>
                 </div>
@@ -1846,9 +1777,9 @@
         </div>
     </div>
 
-    <!-- ╔══════════════════════════════════════════════╗
-         ║ 3. Notifications                            ║
-         ╚══════════════════════════════════════════════╝ -->
+    <!-- ╔══════════════════════════════════════════════════╗
+         ║ 4. Notifications                                  ║
+         ╚══════════════════════════════════════════════════╝ -->
     <div class="settings-panel" id="panelNotifications">
         <button type="button" class="settings-panel__trigger" onclick="togglePanel('panelNotifications')">
             Notifications
@@ -2013,13 +1944,120 @@
         </div>
     </div>
 
-    <!-- ╔══════════════════════════════════════════════╗
-         ║ 3a. Privacy — Anonymous Opt-In Heartbeat    ║
-         ╚══════════════════════════════════════════════╝ -->
+    <!-- ╔══════════════════════════════════════════════════╗
+         ║ 5. General                                        ║
+         ╚══════════════════════════════════════════════════╝ -->
+    <div class="settings-panel" id="panelGeneral">
+        <button type="button" class="settings-panel__trigger" onclick="togglePanel('panelGeneral')">
+            General
+            <span class="settings-panel__trigger-info">Location, Language, Security</span>
+            <svg class="settings-panel__chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+        </button>
+        <div class="settings-panel__body">
+            <!-- Location -->
+            <div class="settings-field mb-3">
+                <div class="settings-field__label mb-2">Location (GPS)</div>
+                <div class="row g-3">
+                    <div class="col-sm-6">
+                        <label class="settings-field__help">Latitude</label>
+                        <input type="text" id="locLat" class="form-control" placeholder="52.5200" onchange="updateLocationJson()">
+                    </div>
+                    <div class="col-sm-6">
+                        <label class="settings-field__help">Longitude</label>
+                        <input type="text" id="locLon" class="form-control" placeholder="13.4050" onchange="updateLocationJson()">
+                    </div>
+                </div>
+            </div>
+            <div class="row g-3">
+                <div class="col-md-6">
+                    <div class="settings-field">
+                        <label for="EXIF_GPS_ENABLED" class="settings-field__label">Write GPS to Metadata</label>
+                        <select name="EXIF_GPS_ENABLED" id="EXIF_GPS_ENABLED" class="form-select">
+                            <option value="true" {% if payload['EXIF_GPS_ENABLED'].value %}selected{% endif %}>Yes</option>
+                            <option value="false" {% if not payload['EXIF_GPS_ENABLED'].value %}selected{% endif %}>No</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="col-md-6">
+                    <div class="settings-field">
+                        <label for="SPECIES_COMMON_NAME_LOCALE" class="settings-field__label">Species Common Names</label>
+                        <select name="SPECIES_COMMON_NAME_LOCALE" id="SPECIES_COMMON_NAME_LOCALE" class="form-select">
+                            <option value="DE" {% if payload.get('SPECIES_COMMON_NAME_LOCALE', {}).get('value', 'DE') == 'DE' %}selected{% endif %}>Deutsch (DE)</option>
+                            <option value="NO" {% if payload.get('SPECIES_COMMON_NAME_LOCALE', {}).get('value', 'DE') == 'NO' %}selected{% endif %}>Norsk (NO)</option>
+                        </select>
+                        <div class="settings-field__help">Language for species display names.</div>
+                    </div>
+                </div>
+                <div class="col-md-6">
+                    <div class="settings-field">
+                        <label for="DEBUG_MODE" class="settings-field__label">Debug Mode</label>
+                        <select name="DEBUG_MODE" id="DEBUG_MODE" class="form-select">
+                            <option value="true" {% if payload['DEBUG_MODE'].value %}selected{% endif %}>Enabled (Verbose Logs)</option>
+                            <option value="false" {% if not payload['DEBUG_MODE'].value %}selected{% endif %}>Disabled</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="col-md-6">
+                    <div class="settings-field">
+                        <label for="EDIT_PASSWORD" class="settings-field__label">Settings Password (Optional)</label>
+                        <input type="text" name="EDIT_PASSWORD" id="EDIT_PASSWORD" class="form-control" value="{{ payload['EDIT_PASSWORD'].value }}">
+                    </div>
+                </div>
+                <div class="col-md-6">
+                    <div class="settings-field">
+                        <label for="TRAINING_EXPORT_AUTO_OPT_IN" class="settings-field__label">Auto-Queue Approvals for Training</label>
+                        <select name="TRAINING_EXPORT_AUTO_OPT_IN" id="TRAINING_EXPORT_AUTO_OPT_IN" class="form-select">
+                            <option value="true" {% if payload.get('TRAINING_EXPORT_AUTO_OPT_IN', {}).get('value', False) %}selected{% endif %}>Enabled (Feed approved events into the training pool)</option>
+                            <option value="false" {% if not payload.get('TRAINING_EXPORT_AUTO_OPT_IN', {}).get('value', False) %}selected{% endif %}>Disabled</option>
+                        </select>
+                        <div class="settings-field__help">
+                            When on, every Approve-event click in the review queue also queues the detections for the next training export batch. Visible in <a href="/admin/export">/admin/export</a>.
+                        </div>
+                    </div>
+                </div>
+                {# Theme toggle — pure client-side, persisted in localStorage.
+                   No backend round-trip: base.html hydrates the attribute
+                   from localStorage before first paint. The three buttons
+                   mirror the three resolvable states (System/Light/Dark). #}
+                <div class="col-md-6">
+                    <div class="settings-field">
+                        <label class="settings-field__label">Appearance</label>
+                        {# Reuses the Save-Threshold toggle styling but
+                           with a distinct CSS class so the JS for either
+                           toggle can't cross-bind. The visual styles are
+                           aliased in design-system.css. #}
+                        <div class="theme-mode-toggle" role="group"
+                             aria-label="Appearance theme"
+                             id="themeModeToggle">
+                            <button type="button" class="theme-mode-btn"
+                                    data-theme-mode="system">System</button>
+                            <button type="button" class="theme-mode-btn"
+                                    data-theme-mode="light">Light</button>
+                            <button type="button" class="theme-mode-btn"
+                                    data-theme-mode="dark">Dark</button>
+                        </div>
+                        <div class="settings-field__help">
+                            System follows your OS preference. Light and Dark override it
+                            everywhere (incl. iPhone). Stored locally in this browser.
+                        </div>
+                        <div class="settings-field__help theme-mode-feedback"
+                             id="themeModeFeedback"
+                             role="status"
+                             aria-live="polite"
+                             style="display:none;"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ╔══════════════════════════════════════════════════╗
+         ║ 6. Data Sharing (local-only + optional heartbeat) ║
+         ╚══════════════════════════════════════════════════╝ -->
     <div class="settings-panel" id="panelPrivacy">
         <button type="button" class="settings-panel__trigger" onclick="togglePanel('panelPrivacy')">
-            Privacy
-            <span class="settings-panel__trigger-info">Anonymous usage heartbeat (off by default)</span>
+            Data Sharing
+            <span class="settings-panel__trigger-info">Local-only by default — optional anonymous heartbeat</span>
             <svg class="settings-panel__chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
         </button>
         <div class="settings-panel__body">
@@ -2261,119 +2299,9 @@
     })();
     </script>
 
-    <!-- ╔══════════════════════════════════════════════╗
-         ║ 4. General                                  ║
-         ╚══════════════════════════════════════════════╝ -->
-    <div class="settings-panel" id="panelGeneral">
-        <button type="button" class="settings-panel__trigger" onclick="togglePanel('panelGeneral')">
-            General
-            <span class="settings-panel__trigger-info">Location, Language, Security</span>
-            <svg class="settings-panel__chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
-        </button>
-        <div class="settings-panel__body">
-            <!-- Location -->
-            <div class="settings-field mb-3">
-                <div class="settings-field__label mb-2">Location (GPS)</div>
-                <div class="row g-3">
-                    <div class="col-sm-6">
-                        <label class="settings-field__help">Latitude</label>
-                        <input type="text" id="locLat" class="form-control" placeholder="52.5200" onchange="updateLocationJson()">
-                    </div>
-                    <div class="col-sm-6">
-                        <label class="settings-field__help">Longitude</label>
-                        <input type="text" id="locLon" class="form-control" placeholder="13.4050" onchange="updateLocationJson()">
-                    </div>
-                </div>
-            </div>
-            <div class="row g-3">
-                <div class="col-md-6">
-                    <div class="settings-field">
-                        <label for="EXIF_GPS_ENABLED" class="settings-field__label">Write GPS to Metadata</label>
-                        <select name="EXIF_GPS_ENABLED" id="EXIF_GPS_ENABLED" class="form-select">
-                            <option value="true" {% if payload['EXIF_GPS_ENABLED'].value %}selected{% endif %}>Yes</option>
-                            <option value="false" {% if not payload['EXIF_GPS_ENABLED'].value %}selected{% endif %}>No</option>
-                        </select>
-                    </div>
-                </div>
-                <div class="col-md-6">
-                    <div class="settings-field">
-                        <label for="SPECIES_COMMON_NAME_LOCALE" class="settings-field__label">Species Common Names</label>
-                        <select name="SPECIES_COMMON_NAME_LOCALE" id="SPECIES_COMMON_NAME_LOCALE" class="form-select">
-                            <option value="DE" {% if payload.get('SPECIES_COMMON_NAME_LOCALE', {}).get('value', 'DE') == 'DE' %}selected{% endif %}>Deutsch (DE)</option>
-                            <option value="NO" {% if payload.get('SPECIES_COMMON_NAME_LOCALE', {}).get('value', 'DE') == 'NO' %}selected{% endif %}>Norsk (NO)</option>
-                        </select>
-                        <div class="settings-field__help">Language for species display names.</div>
-                    </div>
-                </div>
-                <div class="col-md-6">
-                    <div class="settings-field">
-                        <label for="DEBUG_MODE" class="settings-field__label">Debug Mode</label>
-                        <select name="DEBUG_MODE" id="DEBUG_MODE" class="form-select">
-                            <option value="true" {% if payload['DEBUG_MODE'].value %}selected{% endif %}>Enabled (Verbose Logs)</option>
-                            <option value="false" {% if not payload['DEBUG_MODE'].value %}selected{% endif %}>Disabled</option>
-                        </select>
-                    </div>
-                </div>
-                <div class="col-md-6">
-                    <div class="settings-field">
-                        <label for="EDIT_PASSWORD" class="settings-field__label">Settings Password (Optional)</label>
-                        <input type="text" name="EDIT_PASSWORD" id="EDIT_PASSWORD" class="form-control" value="{{ payload['EDIT_PASSWORD'].value }}">
-                    </div>
-                </div>
-                <div class="col-md-6">
-                    <div class="settings-field">
-                        <label for="TRAINING_EXPORT_AUTO_OPT_IN" class="settings-field__label">Auto-Queue Approvals for Training</label>
-                        <select name="TRAINING_EXPORT_AUTO_OPT_IN" id="TRAINING_EXPORT_AUTO_OPT_IN" class="form-select">
-                            <option value="true" {% if payload.get('TRAINING_EXPORT_AUTO_OPT_IN', {}).get('value', False) %}selected{% endif %}>Enabled (Feed approved events into the training pool)</option>
-                            <option value="false" {% if not payload.get('TRAINING_EXPORT_AUTO_OPT_IN', {}).get('value', False) %}selected{% endif %}>Disabled</option>
-                        </select>
-                        <div class="settings-field__help">
-                            When on, every Approve-event click in the review queue also queues the detections for the next training export batch. Visible in <a href="/admin/export">/admin/export</a>.
-                        </div>
-                    </div>
-                </div>
-                {# Theme toggle — pure client-side, persisted in localStorage.
-                   No backend round-trip: base.html hydrates the attribute
-                   from localStorage before first paint. The three buttons
-                   mirror the three resolvable states (System/Light/Dark). #}
-                <div class="col-md-6">
-                    <div class="settings-field">
-                        <label class="settings-field__label">Appearance</label>
-                        {# Reuses the Save-Threshold toggle styling but
-                           with a distinct CSS class so the JS for either
-                           toggle can't cross-bind. The visual styles are
-                           aliased in design-system.css. #}
-                        <div class="theme-mode-toggle" role="group"
-                             aria-label="Appearance theme"
-                             id="themeModeToggle">
-                            <button type="button" class="theme-mode-btn"
-                                    data-theme-mode="system">System</button>
-                            <button type="button" class="theme-mode-btn"
-                                    data-theme-mode="light">Light</button>
-                            <button type="button" class="theme-mode-btn"
-                                    data-theme-mode="dark">Dark</button>
-                        </div>
-                        <div class="settings-field__help">
-                            System follows your OS preference. Light and Dark override it
-                            everywhere (incl. iPhone). Stored locally in this browser.
-                        </div>
-                        <div class="settings-field__help theme-mode-feedback"
-                             id="themeModeFeedback"
-                             role="status"
-                             aria-live="polite"
-                             style="display:none;"></div>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <!-- ╔══════════════════════════════════════════════╗
-         ║ 5. Tools & System                           ║
-         ╚══════════════════════════════════════════════╝ -->
-    <!-- ╔══════════════════════════════════════════════╗
-         ║ Nightly Jobs                                 ║
-         ╚══════════════════════════════════════════════╝ -->
+    <!-- ╔══════════════════════════════════════════════════╗
+         ║ 7. Nightly Jobs                                   ║
+         ╚══════════════════════════════════════════════════╝ -->
     <div class="settings-panel" id="panelNightlyJobs">
         <button type="button" class="settings-panel__trigger" onclick="togglePanel('panelNightlyJobs')"
                 title="Background work that runs while OD is paused at night (CLIP aesthetic tagger, crop sharpness scoring, ...)">
@@ -2394,6 +2322,11 @@
         </div>
     </div>
 
+
+
+    <!-- ╔══════════════════════════════════════════════════╗
+         ║ 8. Tools & System                                 ║
+         ╚══════════════════════════════════════════════════╝ -->
     <div class="settings-panel" id="panelTools">
         <button type="button" class="settings-panel__trigger" onclick="togglePanel('panelTools')">
             Tools & System
@@ -3858,10 +3791,20 @@
         document.getElementById('aiActiveMeta').textContent = metaBits.join(' · ');
     }
 
+    // Model IDs hidden from the variant lists on operator request. Purely
+    // cosmetic: the registry/API still knows them and they stay switchable
+    // via the API — they're just not surfaced in the Settings UI.
+    const HIDDEN_MODEL_IDS = new Set([
+        '20260513_yolox_s_locator_640_mosaic0p75_v2_coco',
+        '20260504_yolox_s_locator_640_mosaic0p75_v10_balanced',
+        '20260427_104449',
+        '20260427_143835',
+    ]);
+
     function _renderVariantList(payload) {
         const list = document.getElementById('aiVariantList');
         list.replaceChildren();
-        const variants = payload.variants || [];
+        const variants = (payload.variants || []).filter(v => !HIDDEN_MODEL_IDS.has(v.id));
         if (!variants.length) {
             const empty = document.createElement('div');
             empty.className = 'text-muted small p-2';
@@ -4227,7 +4170,7 @@
     function _renderClassifierVariantList(payload) {
         const list = document.getElementById('clsVariantList');
         list.replaceChildren();
-        const variants = payload.variants || [];
+        const variants = (payload.variants || []).filter(v => !HIDDEN_MODEL_IDS.has(v.id));
         if (!variants.length) {
             const empty = document.createElement('div');
             empty.className = 'text-muted small p-2';
