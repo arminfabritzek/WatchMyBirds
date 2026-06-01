@@ -8,13 +8,18 @@
 #    require a custom index URL, which would clutter the main file.
 #
 # Install with:
-#   pip install --index-url https://download.pytorch.org/whl/cpu \
-#               --extra-index-url https://pypi.org/simple \
-#               -r requirements-aesthetic.txt
+#   pip install -r requirements-aesthetic.txt
 #
-# The custom index ensures torch/torchvision come from PyTorch's CPU
-# distribution; --extra-index-url falls back to PyPI for open_clip_torch.
+# The index directives below are pinned in-file so a plain `-r` install
+# pulls torch/torchvision from PyTorch's CPU distribution. Without them,
+# a bare `pip install torchvision>=0.27` resolves to the PyPI CUDA wheels
+# and drags ~3.8 GB of nvidia-*/cuda-*/triton onto CPU-only hosts (e.g.
+# the Raspberry Pi appliance). --extra-index-url falls back to PyPI for
+# open_clip_torch.
+
+--index-url https://download.pytorch.org/whl/cpu
+--extra-index-url https://pypi.org/simple
 
 torch>=2.0
-torchvision>=0.15
+torchvision>=0.27.0
 open_clip_torch>=3.3.0
