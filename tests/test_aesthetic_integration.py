@@ -171,6 +171,7 @@ def _build_minimal_db() -> sqlite3.Connection:
         decision_reasons TEXT,
         status TEXT DEFAULT 'active',
         created_at TEXT,
+        quality_gallery_ok INTEGER,
         FOREIGN KEY(image_filename) REFERENCES images(filename)
     );
     CREATE TABLE classifications (

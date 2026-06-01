@@ -63,7 +63,9 @@ def _build_conn() -> sqlite3.Connection:
             bbox_quality REAL,
             unknown_score REAL,
             decision_reasons TEXT,
-            decision_level TEXT
+            decision_level TEXT,
+            sharpness_score REAL,
+            quality_gallery_ok INTEGER
         );
 
         CREATE TABLE classifications (
@@ -469,3 +471,106 @@ def test_uncertain_detection_never_appears_in_gallery_even_if_image_is_confirmed
         row["detection_id"] for row in fetch_detections_for_gallery(conn, order_by="score")
     ]
     assert gallery_ids == []
+
+
+def test_quality_gallery_ok_floor_hides_only_explicit_zero():
+    """The quality floor (quality_gallery_ok) is NULL-safe: NULL and 1
+    both show, only an explicit 0 hides. Confirms the COALESCE(...,1)=1
+    clause in _gallery_visibility_sql."""
+    conn = _build_conn()
+    conn.executemany(
+        """
+        INSERT INTO images(filename, timestamp, source_id, review_status)
+        VALUES (?, ?, ?, ?)
+        """,
+        [
+            ("20260401_120000_null.jpg", "20260401_120000", 1, "untagged"),
+            ("20260401_120100_ok.jpg", "20260401_120100", 1, "untagged"),
+            ("20260401_120200_floored.jpg", "20260401_120200", 1, "untagged"),
+        ],
+    )
+    conn.executemany(
+        """
+        INSERT INTO detections(
+            detection_id, image_filename, status, created_at,
+            bbox_x, bbox_y, bbox_w, bbox_h,
+            od_class_name, od_confidence, score, is_favorite,
+            decision_state, sharpness_score, quality_gallery_ok
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        [
+            # Un-scored crop: quality_gallery_ok NULL → shown.
+            (
+                201,
+                "20260401_120000_null.jpg",
+                "active",
+                "20260401_120000",
+                0.1,
+                0.1,
+                0.2,
+                0.2,
+                "Null_species",
+                0.9,
+                0.60,
+                0,
+                "confirmed",
+                None,
+                None,
+            ),
+            # Scored and above floor: quality_gallery_ok=1 → shown.
+            (
+                202,
+                "20260401_120100_ok.jpg",
+                "active",
+                "20260401_120100",
+                0.1,
+                0.1,
+                0.2,
+                0.2,
+                "Ok_species",
+                0.9,
+                0.65,
+                0,
+                "confirmed",
+                3000.0,
+                1,
+            ),
+            # Scored and below floor: quality_gallery_ok=0 → hidden.
+            (
+                203,
+                "20260401_120200_floored.jpg",
+                "active",
+                "20260401_120200",
+                0.1,
+                0.1,
+                0.2,
+                0.2,
+                "Floored_species",
+                0.9,
+                0.70,
+                0,
+                "confirmed",
+                40.0,
+                0,
+            ),
+        ],
+    )
+    conn.executemany(
+        """
+        INSERT INTO classifications(detection_id, cls_class_name, cls_confidence, rank, status)
+        VALUES (?, ?, ?, ?, ?)
+        """,
+        [
+            (201, "Null_species", 0.91, 1, "active"),
+            (202, "Ok_species", 0.90, 1, "active"),
+            (203, "Floored_species", 0.90, 1, "active"),
+        ],
+    )
+    conn.commit()
+
+    gallery_ids = {
+        row["detection_id"]
+        for row in fetch_detections_for_gallery(conn, order_by="score")
+    }
+    # NULL (201) and 1 (202) show; explicit 0 (203) is hidden.
+    assert gallery_ids == {201, 202}

@@ -59,6 +59,15 @@ def _gallery_visibility_sql(det_alias: str = "d", image_alias: str = "i") -> str
     A single high-confidence frame can still be a false positive
     (hallucinated species, motion blur); a single low-confidence
     frame is even worse.
+
+    3. **Quality floor**: ``COALESCE(quality_gallery_ok, 1) = 1`` — the
+       nightly sharpness job hides the bottom-percentile (per this
+       station's own distribution) of crops from thumbnails. NULL means
+       un-scored (fresh crop, mid-backfill, restored DB) → shown, so a
+       station never goes dark on un-scored rows. Only an explicit 0
+       from the job hides a crop, and only from gallery surfaces — the
+       row stays in the DB, detail views, and export untouched. This is
+       orthogonal to ``is_gallery_eligible`` (the AI-pick axis).
     """
     return f"""
         {det_alias}.status = 'active'
@@ -68,6 +77,7 @@ def _gallery_visibility_sql(det_alias: str = "d", image_alias: str = "i") -> str
             {det_alias}.decision_level IS NULL
             OR lower({det_alias}.decision_level) NOT IN ('reject', 'species_review')
         )
+        AND COALESCE({det_alias}.quality_gallery_ok, 1) = 1
     """
 
 

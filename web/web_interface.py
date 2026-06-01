@@ -3302,6 +3302,8 @@ def create_web_interface(detection_manager, system_monitor=None):
         "BURST_WINDOW_SECONDS",
         "OD_NIGHT_START_OFFSET_MIN",
         "OD_NIGHT_END_OFFSET_MIN",
+        "GALLERY_QUALITY_BOTTOM_PCT",
+        "GALLERY_QUALITY_MIN_SCORED",
     }
 
     SETTING_LABELS = {
@@ -3315,6 +3317,8 @@ def create_web_interface(detection_manager, system_monitor=None):
         "OD_NIGHT_START_OFFSET_MIN": "OD Night Start Offset (Minutes added to civil dusk; positive = OD keeps running into the evening, default 30 for late-active species)",
         "OD_NIGHT_END_OFFSET_MIN": "OD Night End Offset (Minutes added to civil dawn; negative = OD starts earlier in the morning, default -45 for the dawn chorus)",
         "OD_NIGHT_TWILIGHT_MODE": "OD Night Twilight Mode (civil / nautical / geometric — defines what 'dawn' and 'dusk' mean)",
+        "GALLERY_QUALITY_BOTTOM_PCT": "Gallery Quality Floor (Hide the blurriest N% of crops from gallery thumbnails, relative to this station's own sharpness range; 0 disables. Crops stay in detail views and export)",
+        "GALLERY_QUALITY_MIN_SCORED": "Gallery Quality Min. Scored (Only apply the quality floor once at least this many crops have a sharpness score — protects small stations from hiding birds on a thin sample)",
         "TELEGRAM_ENABLED": "Live Alerts (Send Telegram messages when birds are detected)",
         "TELEGRAM_COOLDOWN": "Alert Cooldown (Minimum seconds between live alerts)",
         "STREAM_FPS": "Stream Display FPS (Visual smoothness in the web browser)",
@@ -3356,6 +3360,8 @@ def create_web_interface(detection_manager, system_monitor=None):
         "OD_NIGHT_START_OFFSET_MIN",
         "OD_NIGHT_END_OFFSET_MIN",
         "OD_NIGHT_TWILIGHT_MODE",
+        "GALLERY_QUALITY_BOTTOM_PCT",
+        "GALLERY_QUALITY_MIN_SCORED",
         "LOCATION_DATA",
         "EXIF_GPS_ENABLED",
         "INBOX_REQUIRE_EXIF_DATETIME",

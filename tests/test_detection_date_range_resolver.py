@@ -26,7 +26,8 @@ def _build_conn() -> sqlite3.Connection:
             image_filename TEXT NOT NULL,
             status TEXT DEFAULT 'active',
             decision_state TEXT,
-            decision_level TEXT
+            decision_level TEXT,
+            quality_gallery_ok INTEGER
         );
 
         CREATE TABLE sources (

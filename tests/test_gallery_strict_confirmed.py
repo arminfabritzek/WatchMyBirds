@@ -45,7 +45,8 @@ def _minimal_schema() -> sqlite3.Connection:
             status TEXT DEFAULT 'active',
             decision_state TEXT,
             decision_level TEXT,
-            raw_species_name TEXT
+            raw_species_name TEXT,
+            quality_gallery_ok INTEGER
         );
         """
     )

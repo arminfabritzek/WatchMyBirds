@@ -122,12 +122,24 @@ DEFAULTS = {
     "DAY_AND_NIGHT_CAPTURE_LOCATION": "Berlin",
     # OD night-pause offsets (apply when DAY_AND_NIGHT_CAPTURE is False).
     # See utils/sun_times.py for sign convention. Defaults widen the
-    # active daytime window past civil twilight: OD keeps running 30
-    # min past civil dusk (late-active species: blackbird, thrush)
-    # and resumes 45 min before civil dawn (dawn chorus: robin, wren).
+    # active daytime window past nautical twilight: OD keeps running 30
+    # min past nautical dusk (late-active species: blackbird, thrush)
+    # and resumes 45 min before nautical dawn (dawn chorus: robin, wren).
+    # Mode is "nautical" (sun to -12 deg) rather than "civil" (-6 deg)
+    # so the active window covers the maximum useful bird-activity span;
+    # IR-capable cameras still resolve birds at that light level.
     "OD_NIGHT_START_OFFSET_MIN": 30,
     "OD_NIGHT_END_OFFSET_MIN": -45,
-    "OD_NIGHT_TWILIGHT_MODE": "civil",
+    "OD_NIGHT_TWILIGHT_MODE": "nautical",
+    # Station-adaptive gallery quality floor. The nightly sharpness job
+    # hides the bottom GALLERY_QUALITY_BOTTOM_PCT percent of crops (by
+    # sharpness_score) from gallery thumbnails, relative to THIS
+    # station's own distribution — never a fixed pixel threshold, so it
+    # stays portable across cameras/setups. 0 disables the cut entirely.
+    # The floor only applies once at least GALLERY_QUALITY_MIN_SCORED
+    # crops have a score, so a small/fresh station never hides birds.
+    "GALLERY_QUALITY_BOTTOM_PCT": 15,
+    "GALLERY_QUALITY_MIN_SCORED": 200,
     "CPU_LIMIT": 0,
     "TELEGRAM_COOLDOWN": 3600.0,
     "EDIT_PASSWORD": "watchmybirds",

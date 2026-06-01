@@ -38,7 +38,9 @@ def _make_minimal_db(db_path: Path):
             thumbnail_path TEXT,
             status TEXT DEFAULT 'active',
             sharpness_score REAL,
-            crop_brightness REAL
+            crop_brightness REAL,
+            quality_gallery_ok INTEGER,
+            is_gallery_eligible INTEGER DEFAULT 0
         );
         """
     )
@@ -212,3 +214,157 @@ def test_missing_db_returns_failure(env, tmp_path, monkeypatch):
     job = SharpnessJob()
     rc = job.run(threading.Event(), reason="missing-db")
     assert rc == 1
+
+
+# ---------------------------------------------------------------------------
+# Gallery quality floor (quality_gallery_ok eligibility step)
+# ---------------------------------------------------------------------------
+
+
+def _scored_db(scores: list[float]) -> sqlite3.Connection:
+    """In-memory DB with N active detections carrying the given
+    sharpness_scores (in detection_id order). quality_gallery_ok and
+    is_gallery_eligible start at their defaults."""
+    conn = sqlite3.connect(":memory:")
+    conn.executescript(
+        """
+        CREATE TABLE detections (
+            detection_id INTEGER PRIMARY KEY,
+            status TEXT DEFAULT 'active',
+            sharpness_score REAL,
+            quality_gallery_ok INTEGER,
+            is_gallery_eligible INTEGER DEFAULT 0
+        );
+        """
+    )
+    for i, s in enumerate(scores, start=1):
+        conn.execute(
+            "INSERT INTO detections(detection_id, status, sharpness_score) "
+            "VALUES (?, 'active', ?)",
+            (i, s),
+        )
+    conn.commit()
+    return conn
+
+
+def _set_floor(monkeypatch, *, bottom_pct: int, min_scored: int) -> None:
+    import web.services.nightly_jobs.sharpness_job as mod
+
+    monkeypatch.setattr(mod, "_gallery_quality_bottom_pct", lambda: bottom_pct)
+    monkeypatch.setattr(mod, "_gallery_quality_min_scored", lambda: min_scored)
+
+
+def test_eligibility_floors_bottom_percentile(monkeypatch):
+    """With enough scored crops, the bottom ~15% get quality_gallery_ok=0
+    and the rest get 1. The cut is station-relative."""
+    _set_floor(monkeypatch, bottom_pct=15, min_scored=10)
+    # 100 crops, scores 1..100. Bottom 15% → scores < the 15th-percentile
+    # cutoff get 0.
+    conn = _scored_db([float(i) for i in range(1, 101)])
+
+    SharpnessJob()._recompute_gallery_eligibility(conn)
+
+    hidden = conn.execute(
+        "SELECT COUNT(*) FROM detections WHERE quality_gallery_ok = 0"
+    ).fetchone()[0]
+    shown = conn.execute(
+        "SELECT COUNT(*) FROM detections WHERE quality_gallery_ok = 1"
+    ).fetchone()[0]
+    assert hidden + shown == 100
+    # ~15 hidden (cutoff is the 15th lowest score; strictly-less-than).
+    assert 10 <= hidden <= 20
+    # The very blurriest crop is hidden, the sharpest is shown.
+    assert (
+        conn.execute(
+            "SELECT quality_gallery_ok FROM detections WHERE detection_id=1"
+        ).fetchone()[0]
+        == 0
+    )
+    assert (
+        conn.execute(
+            "SELECT quality_gallery_ok FROM detections WHERE detection_id=100"
+        ).fetchone()[0]
+        == 1
+    )
+
+
+def test_eligibility_below_min_scored_flags_all_visible(monkeypatch):
+    """A tiny station (below GALLERY_QUALITY_MIN_SCORED) hides nothing —
+    every scored crop is flagged visible."""
+    _set_floor(monkeypatch, bottom_pct=15, min_scored=200)
+    conn = _scored_db([float(i) for i in range(1, 51)])  # only 50 scored
+
+    SharpnessJob()._recompute_gallery_eligibility(conn)
+
+    hidden = conn.execute(
+        "SELECT COUNT(*) FROM detections WHERE quality_gallery_ok = 0"
+    ).fetchone()[0]
+    shown = conn.execute(
+        "SELECT COUNT(*) FROM detections WHERE quality_gallery_ok = 1"
+    ).fetchone()[0]
+    assert hidden == 0
+    assert shown == 50
+
+
+def test_eligibility_zero_pct_disables_floor(monkeypatch):
+    """GALLERY_QUALITY_BOTTOM_PCT=0 disables the cut: all scored visible."""
+    _set_floor(monkeypatch, bottom_pct=0, min_scored=10)
+    conn = _scored_db([float(i) for i in range(1, 101)])
+
+    SharpnessJob()._recompute_gallery_eligibility(conn)
+
+    hidden = conn.execute(
+        "SELECT COUNT(*) FROM detections WHERE quality_gallery_ok = 0"
+    ).fetchone()[0]
+    assert hidden == 0
+
+
+def test_eligibility_leaves_null_scores_untouched(monkeypatch):
+    """Un-scored crops (sharpness_score NULL) keep quality_gallery_ok
+    NULL — never bulk-flipped — so the reader's COALESCE shows them."""
+    _set_floor(monkeypatch, bottom_pct=15, min_scored=10)
+    conn = _scored_db([float(i) for i in range(1, 101)])
+    # Add 5 un-scored rows.
+    for did in range(101, 106):
+        conn.execute(
+            "INSERT INTO detections(detection_id, status, sharpness_score) "
+            "VALUES (?, 'active', NULL)",
+            (did,),
+        )
+    conn.commit()
+
+    SharpnessJob()._recompute_gallery_eligibility(conn)
+
+    null_rows = conn.execute(
+        "SELECT COUNT(*) FROM detections "
+        "WHERE sharpness_score IS NULL AND quality_gallery_ok IS NULL"
+    ).fetchone()[0]
+    assert null_rows == 5
+
+
+def test_eligibility_does_not_touch_is_gallery_eligible(monkeypatch):
+    """The quality floor and the AI-pick axis stay orthogonal: the
+    eligibility step must never write is_gallery_eligible."""
+    _set_floor(monkeypatch, bottom_pct=15, min_scored=10)
+    conn = _scored_db([float(i) for i in range(1, 101)])
+    # Mark a handful as AI-picks (the aesthetic tagger's column).
+    conn.execute(
+        "UPDATE detections SET is_gallery_eligible = 1 "
+        "WHERE detection_id IN (1, 2, 99, 100)"
+    )
+    conn.commit()
+
+    SharpnessJob()._recompute_gallery_eligibility(conn)
+
+    still_picks = conn.execute(
+        "SELECT COUNT(*) FROM detections WHERE is_gallery_eligible = 1"
+    ).fetchone()[0]
+    assert still_picks == 4
+    # And a floored-out AI-pick keeps its badge while being quality-hidden:
+    # det 1 is the blurriest AND an AI-pick — both axes hold independently.
+    row = conn.execute(
+        "SELECT is_gallery_eligible, quality_gallery_ok "
+        "FROM detections WHERE detection_id = 1"
+    ).fetchone()
+    assert row[0] == 1  # still an AI-pick
+    assert row[1] == 0  # but quality-floored

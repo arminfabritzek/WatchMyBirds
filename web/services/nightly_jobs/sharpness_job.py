@@ -222,6 +222,14 @@ class SharpnessJob(JobBase):
             if not batch_updates and not rows:
                 break  # nothing left
 
+        # After scoring, recompute the station-adaptive gallery quality
+        # floor from the FULL current distribution. Runs even if this
+        # batch scored nothing new (a config change to the percentile
+        # should still re-apply against existing scores). A stop request
+        # skips it — the next run recomputes from scratch anyway.
+        if not stop_event.is_set():
+            self._recompute_gallery_eligibility(conn)
+
         elapsed = time.monotonic() - started
         logger.info(
             "SharpnessJob: finished — done=%d skipped=%d errored=%d "
@@ -233,11 +241,134 @@ class SharpnessJob(JobBase):
         )
         return 0
 
+    def _recompute_gallery_eligibility(self, conn: sqlite3.Connection) -> None:
+        """Set ``quality_gallery_ok`` from this station's own sharpness
+        distribution. Station-adaptive: the cut is a percentile of the
+        local scores, never a fixed pixel threshold.
+
+        Rules (mirrors the plan's scope guarantees):
+        - Only scored, active crops participate. NULL-score rows keep
+          ``quality_gallery_ok`` NULL (the reader's COALESCE shows them).
+        - Below ``GALLERY_QUALITY_MIN_SCORED`` scored crops, the cut is a
+          no-op: everything scored is flagged ``1`` (show). A tiny or
+          fresh station never hides birds on a thin distribution.
+        - ``GALLERY_QUALITY_BOTTOM_PCT == 0`` disables the floor — all
+          scored crops become ``1``.
+        - ``is_gallery_eligible`` (the aesthetic-tagger AI-pick axis) is
+          never read or written here. The two axes stay orthogonal.
+        """
+        bottom_pct = _gallery_quality_bottom_pct()
+        min_scored = _gallery_quality_min_scored()
+
+        scored = conn.execute(
+            """
+            SELECT COUNT(*)
+              FROM detections
+             WHERE sharpness_score IS NOT NULL
+               AND status = 'active'
+            """
+        ).fetchone()[0]
+
+        if bottom_pct <= 0 or scored < min_scored:
+            # No cut: flag every scored crop as visible. Leaves NULL-score
+            # rows untouched (they stay NULL → shown via COALESCE).
+            conn.execute(
+                """
+                UPDATE detections
+                   SET quality_gallery_ok = 1
+                 WHERE sharpness_score IS NOT NULL
+                   AND status = 'active'
+                """
+            )
+            conn.commit()
+            logger.info(
+                "SharpnessJob: gallery quality floor skipped "
+                "(scored=%d, min=%d, bottom_pct=%d) — all %d scored "
+                "crops flagged visible",
+                scored,
+                min_scored,
+                bottom_pct,
+                scored,
+            )
+            return
+
+        # Station-relative cutoff: the sharpness_score at the bottom
+        # percentile. Pulled into Python so the UPDATE is a single plain
+        # comparison (SQLite's UPDATE-FROM-CTE is awkward across versions).
+        offset = int(scored * bottom_pct / 100)
+        cutoff_row = conn.execute(
+            """
+            SELECT sharpness_score
+              FROM detections
+             WHERE sharpness_score IS NOT NULL
+               AND status = 'active'
+             ORDER BY sharpness_score ASC
+             LIMIT 1 OFFSET ?
+            """,
+            (offset,),
+        ).fetchone()
+        if cutoff_row is None:
+            return
+        cutoff = float(cutoff_row[0])
+
+        conn.execute(
+            """
+            UPDATE detections
+               SET quality_gallery_ok = CASE
+                     WHEN sharpness_score < ? THEN 0 ELSE 1 END
+             WHERE sharpness_score IS NOT NULL
+               AND status = 'active'
+            """,
+            (cutoff,),
+        )
+        conn.commit()
+
+        hidden = conn.execute(
+            """
+            SELECT COUNT(*)
+              FROM detections
+             WHERE quality_gallery_ok = 0
+               AND status = 'active'
+            """
+        ).fetchone()[0]
+        logger.info(
+            "SharpnessJob: gallery quality floor applied — bottom %d%% "
+            "(cutoff sharpness=%.1f over %d scored crops) → %d hidden",
+            bottom_pct,
+            cutoff,
+            scored,
+            hidden,
+        )
+
 
 # ---------------------------------------------------------------------------
 # Path helpers (mirrored from aesthetic_tag_nightly so the hub job does not
 # depend on importing a script file).
 # ---------------------------------------------------------------------------
+
+
+def _gallery_quality_bottom_pct() -> int:
+    """Percent of the station's own sharpness distribution to hide from
+    gallery thumbnails. 0 disables. Read live so a settings.yaml change
+    takes effect on the next nightly run without a restart."""
+    try:
+        from config import get_config
+
+        return int(get_config().get("GALLERY_QUALITY_BOTTOM_PCT", 15))
+    except Exception:
+        return 15
+
+
+def _gallery_quality_min_scored() -> int:
+    """Minimum scored-crop count before the floor applies at all. Below
+    this, every scored crop is flagged visible — a small/fresh station
+    never hides birds on a thin distribution."""
+    try:
+        from config import get_config
+
+        return int(get_config().get("GALLERY_QUALITY_MIN_SCORED", 200))
+    except Exception:
+        return 200
 
 
 def _resolve_db_path() -> Path:

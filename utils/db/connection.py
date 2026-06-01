@@ -254,6 +254,15 @@ def _init_schema(conn: sqlite3.Connection) -> None:
     #   Companion metric so consumers can tell "blur" from "underexposed".
     _ensure_column_on_table(conn, "detections", "sharpness_score", "REAL")
     _ensure_column_on_table(conn, "detections", "crop_brightness", "REAL")
+    # quality_gallery_ok: station-adaptive gallery quality floor. 1 = show
+    # in gallery thumbnails, 0 = quality-floored out (bottom-percentile by
+    # sharpness for THIS station). Written by the nightly sharpness job's
+    # eligibility step. Orthogonal to is_gallery_eligible (the aesthetic
+    # tagger's AI-pick whitelist): a crop can be a non-AI-pick yet visible,
+    # or an AI-pick yet quality-floored. NULL = unscored → treated as
+    # "show" via COALESCE in the gallery visibility clause, so a station
+    # mid-backfill never goes dark. Never deletes, never touches export.
+    _ensure_column_on_table(conn, "detections", "quality_gallery_ok", "INTEGER")
     conn.execute(
         """
         CREATE INDEX IF NOT EXISTS idx_detections_gallery_state_filename
