@@ -16,5 +16,5 @@
 # distribution; --extra-index-url falls back to PyPI for open_clip_torch.
 
 torch>=2.0
-torchvision>=0.15
+torchvision>=0.27.0
 open_clip_torch>=3.3.0
