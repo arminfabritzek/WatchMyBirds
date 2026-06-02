@@ -226,3 +226,49 @@ def test_excited_event_animation_is_registered():
         "'Excited' must be priority:'event' so the ambient scheduler "
         "does not pull it randomly — it is push-only by design."
     )
+
+
+def _extract_click_anims(mascot_html: str) -> list[str]:
+    """Return the names in the CLICK_ANIMS pool.
+
+    The click handler fires these via `fire(name)` with a runtime
+    variable, so the call-site integrity test (which only sees string
+    literals) cannot validate them. A typo here would silently no-op
+    the click reaction, so this extractor closes that gap.
+    """
+    block = re.search(
+        r"var\s+CLICK_ANIMS\s*=\s*\[(.*?)\]", mascot_html, re.DOTALL
+    )
+    assert block, "could not locate CLICK_ANIMS literal in mascot_bird.html"
+    return re.findall(r"'([^']+)'", block.group(1))
+
+
+def test_click_anims_target_real_animations():
+    """Every animation in the click-interaction pool must exist in the
+    registry. fire(name) silently returns false for unknown names, so a
+    typo would make tapping the bird feel dead with no error."""
+    html = _read("templates/partials/mascot_bird.html")
+    names = set(_extract_anim_names(html))
+    pool = _extract_click_anims(html)
+    assert pool, "CLICK_ANIMS pool is empty"
+    unknown = [n for n in pool if n not in names]
+    assert not unknown, (
+        f"CLICK_ANIMS references unknown animations: {unknown}\n"
+        f"Known animations: {sorted(names)}"
+    )
+
+
+def test_sad_animation_is_registered():
+    """The scold flow fires 'Sad' when the user over-clicks the bird.
+    If it gets renamed, the annoyed reaction breaks silently."""
+    html = _read("templates/partials/mascot_bird.html")
+    specs = _extract_anim_specs(html)
+    sad = next((s for s in specs if s.get("name") == "Sad"), None)
+    assert sad is not None, (
+        "'Sad' animation missing from ANIMS — the click-interaction "
+        "scold flow fires it on rapid over-clicking."
+    )
+    assert sad.get("priority") == "event", (
+        "'Sad' must be priority:'event' so the ambient scheduler never "
+        "pulls it randomly — it is push-only (scold + Review delete)."
+    )

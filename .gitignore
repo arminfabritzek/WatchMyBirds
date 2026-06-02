@@ -285,3 +285,6 @@ privat_debugging_now/
 # Cloudflare Wrangler local cache and node_modules for the telemetry Worker.
 .wrangler/
 infra/telemetry-worker/node_modules/
+
+# Playwright MCP run artifacts (screenshots, snapshots, console logs).
+.playwright-mcp/

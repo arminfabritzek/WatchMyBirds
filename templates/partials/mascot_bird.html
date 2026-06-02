@@ -8,9 +8,14 @@
    canvas, own IIFE scope.
 #}
 
-<aside class="mascot-bird" id="mascotBird" aria-hidden="true">
+<aside class="mascot-bird" id="mascotBird">
     <canvas class="mascot-bird__canvas" id="mascotBirdCanvas"
-            width="172" height="96"></canvas>
+            width="200" height="128"
+            role="button" tabindex="0"
+            title="Tap the bird"
+            aria-label="Mascot bird — click to play"></canvas>
+    <div class="mascot-bird__bubble" id="mascotBirdBubble"
+         role="status" aria-live="polite"></div>
 </aside>
 
 <style>
@@ -37,21 +42,82 @@
 }
 .mascot-bird__canvas {
     display: block;
-    /* Native 172×96 px — DPR scaling handled in JS for sharpness on
+    /* Native 200×128 px — DPR scaling handled in JS for sharpness on
        high-density displays. Absolutely positioned so it doesn't
-       contribute its 96 px height to the parent row. `top: -32px`
+       contribute its 128 px height to the parent row. `top: -64px`
        puts the canvas floor exactly at the wrapper's bottom edge
-       (= the LED band's bottom edge), so ground props (branch, grass,
-       flowers) sit on the LED band and the extra 32 px lives above as
-       sky. */
+       (= the LED band's bottom edge: H − FLOOR_H = 128 − 64), so
+       ground props (branch, grass, flowers) sit on the LED band and
+       the extra 64 px lives above as sky for the bird to fly into. */
     position: absolute;
     left: 0;
-    top: -32px;
+    top: -64px;
 }
 @media (max-width: 600px) {
     .mascot-bird {
         padding: 0;
     }
+}
+
+/* Speech bubble for click interactions. Absolutely positioned inside
+   the `position: relative` wrapper so it floats over the canvas without
+   touching the flex-row height. Hidden by default (opacity + visibility)
+   so it never reserves layout; JS toggles `.is-visible` to fade it in.
+   Anchored to the sprite's horizontal center (left: 50%) and sitting in
+   the sky region above the bird, with a small tail pointing down-left
+   toward the head. Pointer-events: none so it never eats clicks meant
+   for the canvas underneath. */
+.mascot-bird__bubble {
+    position: absolute;
+    left: 50%;
+    top: 2px;
+    transform: translate(-38%, -4px);
+    max-width: 168px;
+    padding: 5px 9px;
+    border-radius: 11px;
+    background: #F4FBFA;
+    color: #1F3D3B;
+    border: 1.6px solid #2D5A57;
+    font: 600 11px/1.25 "IBM Plex Mono", ui-monospace, monospace;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35);
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 0.22s ease, transform 0.22s ease;
+    pointer-events: none;
+    z-index: 3;
+    white-space: normal;
+    word-break: break-word;
+}
+.mascot-bird__bubble.is-visible {
+    opacity: 1;
+    visibility: visible;
+    transform: translate(-38%, -8px);
+}
+/* Speech-bubble tail — a small diamond rotated 45° peeking from the
+   bottom-left edge, pointing toward the bird's head. Shares the bubble's
+   fill + border so it reads as one shape. */
+.mascot-bird__bubble::after {
+    content: "";
+    position: absolute;
+    left: 22px;
+    bottom: -5px;
+    width: 9px;
+    height: 9px;
+    background: #F4FBFA;
+    border-right: 1.6px solid #2D5A57;
+    border-bottom: 1.6px solid #2D5A57;
+    transform: rotate(45deg);
+}
+/* Scolding variant — warmer/redder so an annoyed line reads differently
+   from a neutral one at a glance. */
+.mascot-bird__bubble.is-cross {
+    background: #FBEFEA;
+    border-color: #C0563E;
+    color: #7A2E1C;
+}
+.mascot-bird__bubble.is-cross::after {
+    background: #FBEFEA;
+    border-color: #C0563E;
 }
 </style>
 
@@ -88,7 +154,7 @@
     // was; only the visible canvas around it grows.
     var FLOOR_H = 64;
     var SKY_OFFSET = H - FLOOR_H;      // extra px added above the floor
-    var SCALE = Math.min(W / 160, FLOOR_H / 88);
+    var SCALE = Math.min(W / 160, FLOOR_H / 74);
     var BASE_X = W * 0.50;             // sprite anchor: horizontally centered
     var BASE_Y = SKY_OFFSET + FLOOR_H * 0.535;  // sit a touch higher so the larger feet fit
     var HX = 18, HY = -22;             // head sits closer to body — logo-style fused silhouette
@@ -4122,6 +4188,160 @@
         document.addEventListener('DOMContentLoaded', fireWelcome, { once: true });
     } else {
         fireWelcome();
+    }
+
+    // ─── Click interaction ─────────────────────────────────────────
+    // Tapping the bird plays a random "fun" animation. Tapping too many
+    // times in a short window annoys it: it droops into the Sad anim and
+    // scolds via a speech bubble. The scold line comes from a local
+    // German phrase bank by default; if the on-device Companion LLM is
+    // enabled (COMPANION_ENABLED), we ask it for a fresh line and fall
+    // back to the phrase bank on any error/disabled response — so this
+    // works with or without a running model and never un-parks the
+    // Companion plan as a hard dependency.
+    var bubbleEl = document.getElementById('mascotBirdBubble');
+
+    // Curated pool of short, lively animations that read well as a
+    // "reaction to being poked". Excludes weather/night/long-form anims.
+    var CLICK_ANIMS = [
+        'Hopping', 'Pecking', 'Bow', 'Nod', 'Curious', 'Scratch',
+        'HeadShake', 'Excited', 'Singing', 'Preening', 'ShakeOff', 'Yawn'
+    ];
+
+    // Scold lines — kept light and never cruel, matching the mascot's
+    // warm tone. Used directly when the LLM is off, and as the fallback
+    // when an LLM call fails. Two sentences max each.
+    var SCOLD_PHRASES = [
+        'Ouch! Not so rough, okay?',
+        'Hey! Quit poking me already.',
+        'I am not a doorbell, you know.',
+        'Okay, okay — I get it!',
+        'Enough now. I need a break.',
+        'Hands off, human!',
+        'You are making me all jittery.',
+        'Stop that, or I will fly away!'
+    ];
+
+    // Rapid-click bookkeeping. A click counts toward "annoyed" only if it
+    // lands within CLICK_WINDOW_MS of the previous one; otherwise the
+    // streak resets. Once the streak crosses ANNOY_THRESHOLD the bird gets
+    // Sad and scolds, then the streak resets so it doesn't scold every
+    // single click thereafter. A cooldown keeps it from scolding twice in
+    // quick succession.
+    var CLICK_WINDOW_MS = 1200;
+    var ANNOY_THRESHOLD = 5;
+    var SCOLD_COOLDOWN_MS = 6000;
+    var clickStreak = 0;
+    var lastClickMs = 0;
+    var lastScoldMs = -Infinity;
+    var bubbleTimer = null;
+
+    function pickFunAnim() {
+        // Try a handful of random picks; fire() can refuse a pick that's
+        // still on cooldown (returns false), so we retry rather than
+        // no-op silently. Math.random is fine here (presentational only).
+        for (var attempt = 0; attempt < 6; attempt++) {
+            var name = CLICK_ANIMS[Math.floor(Math.random() * CLICK_ANIMS.length)];
+            if (window.wmbMascot.fire(name)) return true;
+        }
+        return false;
+    }
+
+    function showBubble(text, cross) {
+        if (!bubbleEl || !text) return;
+        bubbleEl.textContent = text;
+        bubbleEl.classList.toggle('is-cross', !!cross);
+        bubbleEl.classList.add('is-visible');
+        if (bubbleTimer) clearTimeout(bubbleTimer);
+        // Linger a touch longer for longer lines so there's time to read.
+        var holdMs = Math.min(6000, 2600 + text.length * 45);
+        bubbleTimer = setTimeout(function () {
+            bubbleEl.classList.remove('is-visible');
+        }, holdMs);
+    }
+
+    function randomScold() {
+        return SCOLD_PHRASES[Math.floor(Math.random() * SCOLD_PHRASES.length)];
+    }
+
+    // Ask the on-device Companion for a scold line. Resolves to a string
+    // on success, or null if the Companion is disabled/unreachable/slow —
+    // the caller then uses the local phrase bank. We send a short prompt
+    // describing the situation; the service handles persona + language.
+    function fetchLlmScold() {
+        var controller = new AbortController();
+        var timer = setTimeout(function () { controller.abort(); }, 4000);
+        return fetch('/api/v1/companion/chat', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'same-origin',
+            signal: controller.signal,
+            body: JSON.stringify({
+                message: 'The human keeps poking you far too often. '
+                       + 'Scold them briefly and look sad about it.',
+                language: 'en'
+            })
+        }).then(function (resp) {
+            clearTimeout(timer);
+            if (!resp.ok) return null;
+            return resp.json();
+        }).then(function (data) {
+            if (!data || !data.ok) return null;
+            var line = (data.text || data.reply || data.message || '').trim();
+            return line || null;
+        }).catch(function () {
+            clearTimeout(timer);
+            return null;
+        });
+    }
+
+    function scold() {
+        window.wmbMascot.fire('Sad');
+        // Try the LLM first; whatever comes back (or the fallback) goes
+        // into the bubble. The fallback fires immediately if the LLM is
+        // off, so there's no perceptible wait in the common (disabled)
+        // case — fetch() rejects fast on a disabled/unreachable endpoint.
+        fetchLlmScold().then(function (llmLine) {
+            showBubble(llmLine || randomScold(), true);
+        });
+    }
+
+    function onPoke() {
+        var now = performance.now();
+        if (now - lastClickMs <= CLICK_WINDOW_MS) {
+            clickStreak += 1;
+        } else {
+            clickStreak = 1;
+        }
+        lastClickMs = now;
+
+        if (clickStreak >= ANNOY_THRESHOLD && (now - lastScoldMs) >= SCOLD_COOLDOWN_MS) {
+            lastScoldMs = now;
+            clickStreak = 0;
+            scold();
+            return;
+        }
+        pickFunAnim();
+    }
+
+    if (canvas) {
+        // pointerdown covers mouse + touch + pen in one listener. The
+        // forced-animation debug mode (?mascot_anim=) disables play so
+        // previews stay pinned. preventDefault stops a double-tap on
+        // touch from zooming the appbar.
+        canvas.addEventListener('pointerdown', function (ev) {
+            if (FORCED_ANIM_NAME) return;
+            ev.preventDefault();
+            onPoke();
+        });
+        // Keyboard parity for the role="button": Enter / Space poke too.
+        canvas.addEventListener('keydown', function (ev) {
+            if (FORCED_ANIM_NAME) return;
+            if (ev.key === 'Enter' || ev.key === ' ' || ev.key === 'Spacebar') {
+                ev.preventDefault();
+                onPoke();
+            }
+        });
     }
 })();
 </script>
