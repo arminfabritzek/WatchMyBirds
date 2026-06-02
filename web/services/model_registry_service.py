@@ -718,8 +718,8 @@ def _build_classifier_variant_metadata(
                 # Calibrated decision thresholds (CLS-v2 decision layer).
                 # species_threshold is the species-accept threshold;
                 # genus_threshold is the summed-sibling-mass accept for
-                # the genus fallback. Both were added 2026-04-23; older
-                # YAMLs that lack them simply do not surface the chip.
+                # the genus fallback. Older YAMLs that lack them simply
+                # do not surface the chip.
                 if isinstance(detection_section, dict):
                     species_thr = detection_section.get("confidence_threshold")
                     if isinstance(species_thr, (int, float)):

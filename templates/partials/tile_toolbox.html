@@ -98,13 +98,12 @@ allow_review_no_bird=true
     </button>
     {% endif %}
 
-    {# ── Training export flag removed 2026-05-24 (manual decision):
-       a single click in the toolbox could sign a wrong species as
-       ground-truth, poisoning downstream training data. The
-       new user-groundtruth export at /admin/groundtruth-export is
-       the deliberate replacement surface. The macro parameters
-       `allow_training_export` and `is_training_queued` still exist
-       so callers don't break; a later cleanup will drop them once
+    {# ── Training export flag removed: a single click in the toolbox
+       could sign a wrong species as ground-truth, poisoning downstream
+       training data. The user-groundtruth export at
+       /admin/groundtruth-export is the replacement surface. The macro
+       parameters `allow_training_export` and `is_training_queued` still
+       exist so callers don't break; a later cleanup will drop them once
        the entire old training-export backend is removed. #}
 
     {# ── View Details as primary on hobby browse-surfaces ── #}

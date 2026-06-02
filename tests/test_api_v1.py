@@ -103,6 +103,32 @@ class TestApiV1Settings:
                 # API contract:
                 assert data["status"] == "success"
 
+    def test_settings_post_forwards_location_data_to_detector(self, client):
+        """A LOCATION_DATA change must reach DetectionManager.update_configuration.
+
+        Regression: the handler previously forwarded only VIDEO_SOURCE, so a
+        live GPS change updated settings.yaml + config but left the detector's
+        frozen self.location_config stale — EXIF kept writing the old GPS.
+        """
+        from web.blueprints.api_v1 import api_v1
+
+        loc = {"latitude": 52.646, "longitude": 13.377}
+        with patch("config.validate_runtime_updates") as mock_validate:
+            with patch("config.update_runtime_settings"):
+                mock_validate.return_value = ({"LOCATION_DATA": loc}, [])
+
+                response = client.post(
+                    "/api/v1/settings",
+                    json={"LOCATION_DATA": "52.646, 13.377"},
+                )
+
+        assert response.status_code == 200
+        # The detector must have been told about the new coordinates.
+        dm = api_v1.detection_manager
+        assert dm.update_configuration.called
+        forwarded = dm.update_configuration.call_args.args[0]
+        assert forwarded.get("LOCATION_DATA") == loc
+
     def test_settings_post_invokes_runtime_callback_for_locale(self, client):
         """POST /api/v1/settings triggers on_runtime_settings_applied callback."""
         from web.blueprints.api_v1 import api_v1

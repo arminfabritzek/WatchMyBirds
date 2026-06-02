@@ -202,7 +202,7 @@ def _init_schema(conn: sqlite3.Connection) -> None:
     _ensure_column_on_table(conn, "detections", "manual_bbox_review", "TEXT")
     _ensure_column_on_table(conn, "detections", "bbox_reviewed_at", "TEXT")
 
-    # CLS-v2 decision layer (added 2026-04-23 with classifier config YAMLs).
+    # CLS-v2 decision layer (added with the classifier config YAMLs).
     # decision_level: 'species' | 'genus' | 'reject'. NULL for detections
     #   saved before the decision layer shipped — those are species-level
     #   by construction (the old pipeline had no genus fallback).

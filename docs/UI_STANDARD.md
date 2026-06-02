@@ -215,8 +215,8 @@ stop being visually primary.
   the split of the surface that opened them. A modal opened from
   Stream and a modal opened from Trash both use the "Detail modals"
   row.
-- **Detail modals** are addressed by `surface='detail_modal'`
-  (introduced 2026-05-14). The macro promotes Change Species and
+- **Detail modals** are addressed by `surface='detail_modal'`.
+  The macro promotes Change Species and
   Move to Trash to primary buttons on this surface in addition to
   Favorite (which is primary by default rendering across all
   surfaces that show it). The `frame_variant='bar'` rendering
@@ -1073,7 +1073,7 @@ references to those classes, do not revive them; migrate them to the
 
 ---
 
-## 6bb. Review Grid card (review-grid-card-*)  [added 2026-05-23]
+## 6bb. Review Grid card (review-grid-card-*)
 
 Each event card in the default Review Desk view (§6) carries one
 `BirdEvent` and is rendered by

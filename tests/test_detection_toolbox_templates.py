@@ -16,7 +16,7 @@ def test_tile_toolbox_supports_details_href():
     assert "allow_favorite=true" in content
     # `allow_training_export=true` macro parameter intentionally kept so
     # caller templates don't break; the button it gated was removed
-    # 2026-05-24 (manual decision — one-click ground-truth poisoning risk).
+    # (one-click ground-truth poisoning risk).
     assert "allow_training_export=true" in content
     assert "allow_details=true" in content
     assert "allow_change_species=true" in content
@@ -27,10 +27,9 @@ def test_tile_toolbox_supports_details_href():
     assert "data-details-href" in content
     # The training-export button (data-action="training-export" with the
     # "Confirm and add to training export" tooltip) was removed from the
-    # toolbox 2026-05-24. The deliberate replacement is the
-    # /admin/groundtruth-export surface. The JS dispatch in
-    # tile_actions.js stays for now; a later cleanup removes the whole
-    # old training-export backend at once.
+    # toolbox. The replacement is the /admin/groundtruth-export surface.
+    # The JS dispatch in tile_actions.js stays for now; a later cleanup
+    # removes the whole old training-export backend at once.
     assert 'data-action="training-export"' not in content
     assert "Confirm and add to training export" not in content
 

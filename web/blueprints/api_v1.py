@@ -1283,8 +1283,15 @@ def settings_post():
                 resolved["reason"],
             )
 
+            # Forward ALL validated runtime changes to the detector, not just
+            # VIDEO_SOURCE. update_configuration() picks out the keys it cares
+            # about (LOCATION_DATA, EXIF_GPS_ENABLED, DEBUG_MODE, …); passing
+            # only VIDEO_SOURCE left the detector's frozen self.location_config
+            # stale, so EXIF kept writing the old GPS after a live change.
             dm = api_v1.detection_manager
-            dm.update_configuration({"VIDEO_SOURCE": resolved["video_source"]})
+            dm_changes = dict(valid)
+            dm_changes["VIDEO_SOURCE"] = resolved["video_source"]
+            dm.update_configuration(dm_changes)
 
         return jsonify({"status": "success"})
     except Exception as exc:
