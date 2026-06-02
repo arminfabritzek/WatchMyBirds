@@ -10,7 +10,7 @@
 
 <aside class="mascot-bird" id="mascotBird">
     <canvas class="mascot-bird__canvas" id="mascotBirdCanvas"
-            width="200" height="128"
+            width="168" height="128"
             role="button" tabindex="0"
             title="Tap the bird"
             aria-label="Mascot bird — click to play"></canvas>
@@ -154,7 +154,10 @@
     // was; only the visible canvas around it grows.
     var FLOOR_H = 64;
     var SKY_OFFSET = H - FLOOR_H;      // extra px added above the floor
-    var SCALE = Math.min(W / 160, FLOOR_H / 74);
+    // Bird size: a gentle tick above the original /88 so it fills the
+    // taller canvas a touch better without dominating. Stays under the
+    // W/160 term, so the bird remains height-bound and never stretches.
+    var SCALE = Math.min(W / 160, FLOOR_H / 80);
     var BASE_X = W * 0.50;             // sprite anchor: horizontally centered
     var BASE_Y = SKY_OFFSET + FLOOR_H * 0.535;  // sit a touch higher so the larger feet fit
     var HX = 18, HY = -22;             // head sits closer to body — logo-style fused silhouette

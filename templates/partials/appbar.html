@@ -176,7 +176,7 @@
 <style>
     /* Single appbar status rail: mascot | LED clock/marquee/sysinfo | controls. */
     .app-mascot-bar {
-        --app-mascot-width: 172px;
+        --app-mascot-width: 168px;
         --app-status-rail-bg: #050806;
         --app-status-rail-fg: #f4d36a;
         --app-status-muted: rgba(244, 211, 106, 0.72);
@@ -375,20 +375,19 @@
             --app-mascot-width: 132px;
             padding: 0 8px 0 0;
         }
-        /* Responsive mascot scaling.
-           The canvas display-height is 74 px (was 49 before the
-           taller-canvas refactor — ratio 96/64 = 1.5). The wrapper
-           height stays at the LED-band height (49 px) so the row
-           doesn't grow; the canvas overflows upward by 25 px
-           (74 - 49 = 25) via top:-25px. Same logic for the smaller
-           breakpoints below. */
+        /* Responsive mascot scaling. Native canvas is 168×128 (aspect
+           128/168 = 0.762), so every CSS override below keeps that aspect
+           or the browser stretches the bird. The wrapper height stays at
+           the LED-band height so the row doesn't grow; the canvas
+           overflows upward by (display-height − band-height) via a
+           negative top. Here: band 64 px, canvas 132×100, top −36 px. */
         .app-mascot-bar .mascot-bird {
-            height: 49px !important;
+            height: 64px !important;
         }
         .app-mascot-bar .mascot-bird__canvas {
             width: 132px !important;
-            height: 74px !important;
-            top: -25px !important;
+            height: 100px !important;
+            top: -36px !important;
         }
         .status-bar__ticker-slot {
             flex-basis: 320px;
@@ -406,13 +405,14 @@
         .app-mascot-bar {
             --app-mascot-width: 108px;
         }
+        /* aspect 0.762: 108×82, band 51, top −31 (= 82 − 51). */
         .app-mascot-bar .mascot-bird {
-            height: 40px !important;
+            height: 51px !important;
         }
         .app-mascot-bar .mascot-bird__canvas {
             width: 108px !important;
-            height: 60px !important;
-            top: -20px !important;
+            height: 82px !important;
+            top: -31px !important;
         }
         .status-bar__auto-cam-label {
             display: none;
@@ -427,13 +427,14 @@
             --app-mascot-width: 84px;
             min-height: 56px;
         }
+        /* aspect 0.762: 84×64, band 39, top −25 (= 64 − 39). */
         .app-mascot-bar .mascot-bird {
-            height: 31px !important;
+            height: 39px !important;
         }
         .app-mascot-bar .mascot-bird__canvas {
             width: 84px !important;
-            height: 47px !important;
-            top: -16px !important;
+            height: 64px !important;
+            top: -25px !important;
         }
         .status-bar__auto-cam {
             min-height: 28px;

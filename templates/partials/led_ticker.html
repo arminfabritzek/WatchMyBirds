@@ -137,6 +137,39 @@
                                 // touching the bitmap font
     var SCROLL_PX_PER_SEC = 10; // calm S-Bahn pace, not stock-ticker frenzy
 
+    // ── LED supersampling ─────────────────────────────────────────────
+    // The ticker's native grid is 1 logical px per LED. That's too coarse
+    // to draw a round, glowing emitter (a sub-pixel circle is invisible).
+    // LED_SS multiplies the canvas backing store so each LED cell becomes
+    // LED_SS×LED_SS device px — enough room for a round dot + glow in the
+    // slow-changing status zones. The whole context is scaled by LED_SS
+    // once, so all the existing 1-px-grid math (marquee fillRect, X
+    // anchors) keeps working unchanged: a fillRect(x,y,1,1) simply paints
+    // an LED_SS-sized block, preserving the deliberately chunky marquee.
+    // Only drawGlyphRow() opts into round dots within each cell.
+    // ledRoundDots gates the round style; perf-watchdog can flip it off.
+    var LED_SS = 6;
+    // CSS display pixels per logical LED row. Backstore is LED_SS px per
+    // row, so LED_SS / DISPLAY_PX_PER_LED is the downscale ratio — keep
+    // it a clean integer (here 6/3 = 2) to avoid interlace artefacts.
+    var DISPLAY_PX_PER_LED = 3;
+    var ledRoundDots = false;   // false → legacy square cells everywhere
+                                // (status + sysinfo back to plain dots)
+    // Perf-watchdog state (see tick()): trips ledRoundDots off for the
+    // session if the device can't sustain the round-dot frame cost.
+    var perfFrames = 0;         // total frames seen
+    var perfAccum = 0;          // summed dt over the current window
+    var perfCount = 0;          // frames counted in the current window
+    var PERF_WARMUP = 60;       // ignore first ~1 s while the page settles
+    var PERF_WINDOW = 90;       // frames per measurement window
+    var PERF_MIN_FPS = 40;      // below this average → fall back to squares
+
+    // Logical (LED-grid) canvas dimensions. The backing store is LED_SS
+    // times larger, but all layout math thinks in logical LED units, so
+    // every read of "how wide/tall is the canvas" goes through these.
+    function logicalW() { return canvas.width / LED_SS; }
+    function logicalH() { return canvas.height / LED_SS; }
+
     // Two-zone layout: left = auto-fit status panel, right = scrolling
     // marquee. Inspired by classic railway-platform LED displays where
     // "GLEIS 7" sits left and the delay reason scrolls on the right.
@@ -286,13 +319,13 @@
     //   bottom: TEMP°, FREE GB
     function sysInfoRows() {
         if (!sysInfo) return { top: [], bottom: [] };
-        if (canvas.width < 440) return { top: [], bottom: [] };
+        if (logicalW() < 440) return { top: [], bottom: [] };
         // Compact labels (`C61%` vs `CPU 61%`) for everything up to and
         // including standard desktop widths — keeps the sysinfo block
         // narrow so the marquee gets more breathing room. The full
         // labels only show on extra-wide canvases where space is
         // genuinely free.
-        var compact = canvas.width < 1600;
+        var compact = logicalW() < 1600;
         var top = [];
         var bottom = [];
         if (sysInfo.cpu != null) {
@@ -376,15 +409,15 @@
             if (wBot > textPx) textPx = wBot;
         }
         var desired = signalWidthPx() + textPx + STATUS_INNER_PAD_PX;
-        var capFrac = canvas.width < 560 ? 0.38 : STATUS_MAX_FRAC;
-        var cap = Math.floor(canvas.width * capFrac);
+        var capFrac = logicalW() < 560 ? 0.38 : STATUS_MAX_FRAC;
+        var cap = Math.floor(logicalW() * capFrac);
         return Math.min(desired, cap);
     }
 
     function scrollWidthPx() {
         var sysW = sysInfoWidthPx();
         var rightSep = (sysW > 0) ? (SYS_SEP_GAP_PX + 1 + SYS_SEP_GAP_PX) : 0;
-        return Math.max(96, canvas.width
+        return Math.max(96, logicalW()
             - statusWidthPx()
             - SEPARATOR_GAP_PX - 1 - SEPARATOR_GAP_PX
             - rightSep - sysW);
@@ -397,8 +430,8 @@
     //   [sepX]                       → 1-px vertical line
     //   (scrollStartPx .. canvas.width) → scrolling marquee, clipped
     function renderFrame(buffer, offsetX, tMs) {
-        var w = canvas.width;
-        var h = canvas.height;
+        var w = logicalW();
+        var h = logicalH();
         var colors = themeColors();
         ctx.fillStyle = colors.bg;
         ctx.fillRect(0, 0, w, h);
@@ -443,12 +476,23 @@
         ctx.fillRect(tintXStart, 0, SIGNAL_TINT_W_GLYPH * COL_X_SCALE, h);
 
         // ── left zone: stacked status text (time top, date bottom) ────
+        // Clip to the reserved status width. statusWidthPx() caps the
+        // zone (e.g. 38% on narrow portrait), but the text is painted at
+        // its natural length — without this clip a long line like
+        // "WIND 12KM/H" spills past the separator into the marquee
+        // (observed overlap on mobile portrait). Clipping guarantees the
+        // status text can never cross sepX regardless of its length.
         var statusLines = buildStatusLines();
         var topCols = textToColumns(statusLines.top);
         var botCols = textToColumns(statusLines.bottom);
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(0, 0, statusW, h);
+        ctx.clip();
         ctx.fillStyle = colors.on;
         drawGlyphRow(topCols, signalW, GLYPH_ROW_TOP);
         drawGlyphRow(botCols, signalW, GLYPH_ROW_BOTTOM);
+        ctx.restore();
 
         // ── separator line — full canvas height ──────────────────────
         ctx.fillRect(sepX, 0, 1, h);
@@ -513,8 +557,8 @@
     // flicker — easier on the eyes than a clean on/off toggle, still
     // captures peripheral vision.
     function renderAlertSign(tMs) {
-        var w = canvas.width;
-        var h = canvas.height;
+        var w = logicalW();
+        var h = logicalH();
         var colors = themeColors();
         ctx.fillStyle = colors.bg;
         ctx.fillRect(0, 0, w, h);
@@ -648,19 +692,51 @@
         return d.getDate() + '.' + EN_MONTHS[d.getMonth()];
     }
 
-    // Paint a column-buffer at (x, rowTop). Caller has already set fillStyle.
+    // Paint a column-buffer at (x, rowTop). Caller has already set
+    // fillStyle. Two render modes share the same grid:
+    //   ledRoundDots → one round, softly glowing emitter per LED cell
+    //                  (used for the slow-changing status + sysinfo
+    //                   zones; the supersampled backing store gives the
+    //                   circle device pixels to live in).
+    //   else         → legacy square cells (the cheap fallback the perf
+    //                  watchdog drops to, and what the marquee still uses).
+    // Radius is just under half the cell so adjacent dots keep a hair of
+    // dark gap and read as discrete LEDs.
+    var DOT_R = COL_X_SCALE * 0.30;     // logical radius (smaller = finer,
+                                        // more dark gap between LEDs)
     function drawGlyphRow(cols, x, rowTop) {
-        for (var c = 0; c < cols.length; c++) {
-            var b = cols[c];
-            if (!b) continue;
-            for (var r = 0; r < GLYPH_H; r++) {
-                if (b & (1 << r)) {
-                    for (var sx = 0; sx < COL_X_SCALE; sx++) {
-                        ctx.fillRect(x + c * COL_X_SCALE + sx, rowTop + r, 1, 1);
+        if (!ledRoundDots) {
+            for (var c = 0; c < cols.length; c++) {
+                var b = cols[c];
+                if (!b) continue;
+                for (var r = 0; r < GLYPH_H; r++) {
+                    if (b & (1 << r)) {
+                        for (var sx = 0; sx < COL_X_SCALE; sx++) {
+                            ctx.fillRect(x + c * COL_X_SCALE + sx, rowTop + r, 1, 1);
+                        }
                     }
                 }
             }
+            return;
         }
+        // Round-dot path. shadowBlur gives the glow for free; set it once
+        // for the whole row, keyed to the caller's current color.
+        ctx.save();
+        ctx.shadowColor = ctx.fillStyle;
+        ctx.shadowBlur = COL_X_SCALE * 1.1;   // logical; soft halo
+        for (var c2 = 0; c2 < cols.length; c2++) {
+            var bb = cols[c2];
+            if (!bb) continue;
+            var cx = x + c2 * COL_X_SCALE + COL_X_SCALE / 2;
+            for (var r2 = 0; r2 < GLYPH_H; r2++) {
+                if (!(bb & (1 << r2))) continue;
+                var cy = rowTop + r2 + 0.5;
+                ctx.beginPath();
+                ctx.arc(cx, cy, DOT_R, 0, Math.PI * 2);
+                ctx.fill();
+            }
+        }
+        ctx.restore();
     }
 
     // Stats are injected from the template once at boot. The ticker
@@ -777,14 +853,20 @@
 
     function buildWeatherLines() {
         if (!weatherData || weatherData.temp_c == null) return null;
+        // On narrow portrait the status zone is capped tight, so the
+        // full weather line ("20°C 62%" / "WIND 12KM/H") overflows. Use
+        // a compact form there: drop the humidity and the "WIND"/"/H"
+        // chrome. Same breakpoint as sysInfoRows()'s compact mode.
+        var compact = logicalW() < 560;
         var t = Math.round(weatherData.temp_c) + '°C';
         var top = t;
-        if (weatherData.relative_humidity_pct != null) {
+        if (!compact && weatherData.relative_humidity_pct != null) {
             top = t + ' ' + Math.round(weatherData.relative_humidity_pct) + '%';
         }
         var bottom;
         if (weatherData.wind_kph != null) {
-            bottom = 'WIND ' + Math.round(weatherData.wind_kph) + 'KM/H';
+            var wind = Math.round(weatherData.wind_kph);
+            bottom = compact ? (wind + 'KM') : ('WIND ' + wind + 'KM/H');
         } else {
             bottom = (weatherData.is_day === 0) ? 'NIGHT' : 'DAY';
         }
@@ -815,6 +897,29 @@
     function tick(t) {
         var dt = Math.min(0.1, (t - lastFrameTime) / 1000);
         lastFrameTime = t;
+
+        // ── perf watchdog ──────────────────────────────────────────────
+        // Round glow dots cost more per frame than the legacy square
+        // cells. On a device that can't keep up we drop ledRoundDots once
+        // and stay there for the session — a flapping toggle would look
+        // worse than either steady state. We sample real frame deltas
+        // (ignoring the first few while the page settles) and trip if the
+        // moving average sinks below ~40 fps over a short window.
+        if (ledRoundDots) {
+            perfFrames++;
+            if (perfFrames > PERF_WARMUP) {
+                perfAccum += dt;
+                perfCount++;
+                if (perfCount >= PERF_WINDOW) {
+                    var avgFps = perfCount / perfAccum;
+                    if (avgFps < PERF_MIN_FPS) {
+                        ledRoundDots = false;  // permanent fallback
+                    }
+                    perfAccum = 0;
+                    perfCount = 0;
+                }
+            }
+        }
 
         if (compositeBuffer.length === 0) {
             rebuildBuffer();
@@ -890,11 +995,23 @@
         // Stretch logically wider with the on-screen width so the same
         // amount of text shows on big vs. small viewports.
         var logicalWidth = Math.max(320, Math.round(rect.width));
-        canvas.width = logicalWidth;
-        canvas.height = TICKER_HEIGHT;
-        canvas.style.height = (TICKER_HEIGHT * 2.5) + 'px';
-        // imageSmoothingEnabled resets after every width change.
+        // Backing store is supersampled by LED_SS so round status dots
+        // have device pixels to live in; the context is then scaled so
+        // every draw call still uses the original logical LED grid.
+        canvas.width = logicalWidth * LED_SS;
+        canvas.height = TICKER_HEIGHT * LED_SS;
+        // CSS display height must be an integer multiple of the logical
+        // LED rows so the backing store (TICKER_HEIGHT * LED_SS) downsizes
+        // by a clean ratio. A fractional factor (the old 2.5×) made the
+        // browser distribute source rows unevenly across target rows,
+        // which read as interlace once the dots got small. Pinning a
+        // whole number of CSS px per LED row removes that.
+        canvas.style.height = (TICKER_HEIGHT * DISPLAY_PX_PER_LED) + 'px';
+        // Keep the marquee's square cells crisp (no blur on upscale);
+        // the round status dots get their smoothing from the higher
+        // backing-store resolution itself.
         ctx.imageSmoothingEnabled = false;
+        ctx.setTransform(LED_SS, 0, 0, LED_SS, 0, 0);
         rebuildBuffer();
         if (firstLoop) {
             // First-paint intro: skip leading pad so the text's first
