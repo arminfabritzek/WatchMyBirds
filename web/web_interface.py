@@ -1003,6 +1003,57 @@ def create_web_interface(detection_manager, system_monitor=None):
                 immutable=True,
             )
 
+        @server.route("/api/image/download/<int:detection_id>")
+        def download_image_with_metadata(detection_id):
+            """Serve a download copy of a detection's image.
+
+            When EXPORT_BURN_IN_METADATA is on, the copy carries species +
+            location XMP at current DB state (closes #19). When off — or if
+            the copy cannot be produced — falls back to the verbatim
+            original. The on-disk original is never written.
+            """
+            import io
+
+            from flask import abort, send_file
+
+            from web.services import metadata_export_service as mx
+
+            resolved = mx.resolve_image_for_detection(detection_id)
+            if resolved is None:
+                abort(404)
+            image_filename, timestamp = resolved
+
+            if mx.burn_in_enabled():
+                try:
+                    copy_bytes = mx.produce_copy_bytes(image_filename)
+                    return send_file(
+                        io.BytesIO(copy_bytes),
+                        mimetype="image/jpeg",
+                        as_attachment=True,
+                        download_name=mx.export_filename(image_filename, timestamp),
+                    )
+                except FileNotFoundError:
+                    abort(404)
+                except Exception:
+                    logger.exception(
+                        "metadata burn-in failed for detection %s; "
+                        "serving raw original",
+                        detection_id,
+                    )
+
+            # Toggle off, or burn-in failed: verbatim original. The filename
+            # comes from the DB (not user input), so there is no traversal
+            # surface here.
+            original_path = path_mgr.get_original_path(image_filename)
+            if not original_path.is_file():
+                abort(404)
+            return send_file(
+                str(original_path),
+                mimetype="image/jpeg",
+                as_attachment=True,
+                download_name=image_filename,
+            )
+
         @server.route("/uploads/derivatives/thumbs/<path:filename>")
         def serve_thumb(filename):
             full_path = path_mgr.thumbs_dir / filename
@@ -1782,6 +1833,10 @@ def create_web_interface(detection_manager, system_monitor=None):
 
                 from flask import send_file
 
+                from web.services import metadata_export_service as mx
+
+                burn_in = mx.burn_in_enabled()
+
                 with db_service.closing_connection() as conn:
                     # Resolve IDs to paths
                     placeholders = ",".join("?" for _ in ids_int)
@@ -1795,11 +1850,17 @@ def create_web_interface(detection_manager, system_monitor=None):
 
                     output_dir = config.get("OUTPUT_DIR", "detections")
                     files_to_zip = []
+                    # De-dup by original image: several selected detections can
+                    # share one frame. Each image is zipped once.
+                    seen_images: set[str] = set()
 
                     for r in rows:
                         original_name, ts = r["original_name"], r["timestamp"]
                         if not original_name or not ts:
                             continue
+                        if original_name in seen_images:
+                            continue
+                        seen_images.add(original_name)
 
                         # Build YYYY-MM-DD folder format
                         date_folder = (
@@ -1810,7 +1871,7 @@ def create_web_interface(detection_manager, system_monitor=None):
                         abs_path = os.path.join(
                             output_dir, "originals", date_folder, original_name
                         )
-                        files_to_zip.append((abs_path, original_name))
+                        files_to_zip.append((abs_path, original_name, ts))
 
                     # Update downloaded timestamp using original filenames
                     if files_to_zip:
@@ -1820,12 +1881,27 @@ def create_web_interface(detection_manager, system_monitor=None):
                             conn, filenames, download_time
                         )
 
-                # Create Zip
+                # Create Zip. With burn-in on, each entry is a copy carrying
+                # current-DB species/location XMP (originals stay untouched);
+                # otherwise entries are the verbatim originals.
                 zip_buffer = io.BytesIO()
                 with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
-                    for abs_path, arcname in files_to_zip:
-                        if os.path.exists(abs_path):
-                            zf.write(abs_path, arcname=arcname)
+                    for abs_path, original_name, ts in files_to_zip:
+                        if not os.path.exists(abs_path):
+                            continue
+                        if burn_in:
+                            try:
+                                copy_bytes = mx.produce_copy_bytes(original_name)
+                                arcname = mx.export_filename(original_name, ts)
+                                zf.writestr(arcname, copy_bytes)
+                                continue
+                            except Exception:
+                                logger.exception(
+                                    "metadata burn-in failed for %s; zipping "
+                                    "raw original",
+                                    original_name,
+                                )
+                        zf.write(abs_path, arcname=original_name)
 
                 zip_buffer.seek(0)
                 download_name = f"watchmybirds_{date_iso.replace('-', '')}_download.zip"
@@ -3299,6 +3375,7 @@ def create_web_interface(detection_manager, system_monitor=None):
         "INBOX_REQUIRE_EXIF_GPS",
         "MOTION_DETECTION_ENABLED",
         "TRAINING_EXPORT_AUTO_OPT_IN",
+        "EXPORT_BURN_IN_METADATA",
     }
     RUNTIME_NUMBER_KEYS = {
         "SAVE_THRESHOLD",
@@ -3347,6 +3424,7 @@ def create_web_interface(detection_manager, system_monitor=None):
         "TELEGRAM_BOT_TOKEN": "Telegram Bot Token (From BotFather)",
         "TELEGRAM_CHAT_ID": "Telegram Chat ID (Numeric ID or JSON list of IDs)",
         "EXIF_GPS_ENABLED": "Write GPS to Exif (Safe to disable for privacy)",
+        "EXPORT_BURN_IN_METADATA": "Burn Metadata Into Downloads (Embed species name + location into downloaded copies for iNaturalist re-import; the stored original is never changed. Off downloads the raw original)",
         "INBOX_REQUIRE_EXIF_DATETIME": "Inbox Require EXIF Date/Time (Skip imports without DateTimeOriginal/DateTimeDigitized)",
         "INBOX_REQUIRE_EXIF_GPS": "Inbox Require EXIF GPS (Skip imports without GPSLatitude/GPSLongitude)",
         "SPECIES_COMMON_NAME_LOCALE": "Species Common Names (Language for display names: DE=Deutsch, NO=Norsk)",
@@ -3374,6 +3452,7 @@ def create_web_interface(detection_manager, system_monitor=None):
         "GALLERY_QUALITY_MIN_SCORED",
         "LOCATION_DATA",
         "EXIF_GPS_ENABLED",
+        "EXPORT_BURN_IN_METADATA",
         "INBOX_REQUIRE_EXIF_DATETIME",
         "INBOX_REQUIRE_EXIF_GPS",
         "SPECIES_COMMON_NAME_LOCALE",

@@ -206,6 +206,12 @@ DEFAULTS = {
     "EXIF_GPS_ENABLED": True,
     "INBOX_REQUIRE_EXIF_DATETIME": True,
     "INBOX_REQUIRE_EXIF_GPS": True,
+    # When True, human-facing downloads (detail-modal "Download" and the
+    # edit-page batch ZIP) serve a COPY with species/location/provenance
+    # burned into XMP at current DB state, never touching the immutable
+    # original. Off restores the verbatim-original download. Runtime
+    # (live-editable in Settings), not a boot ENV like EXIF_GPS_ENABLED.
+    "EXPORT_BURN_IN_METADATA": True,
     # When True, every "Approve event" click in the review queue also
     # marks its detections as pending training-export. Off by default
     # so the export pool only grows deliberately.
@@ -252,6 +258,7 @@ DEFAULTS = {
 }
 
 RUNTIME_KEYS = {
+    "EXPORT_BURN_IN_METADATA",
     "SAVE_THRESHOLD",
     "SAVE_THRESHOLD_MODE",
     "NON_BIRD_CONFIRM_THRESHOLD",
@@ -1115,6 +1122,7 @@ def _validate_value(key, value):
         "MOTION_DETECTION_ENABLED",
         "DEBUG_MODE",
         "EXIF_GPS_ENABLED",
+        "EXPORT_BURN_IN_METADATA",
         "TRAINING_EXPORT_AUTO_OPT_IN",
         "NON_BIRD_DROP_BELOW_CONFIRM",
     ):

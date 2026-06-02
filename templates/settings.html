@@ -1971,6 +1971,16 @@
                 </div>
                 <div class="col-md-6">
                     <div class="settings-field">
+                        <label for="EXPORT_BURN_IN_METADATA" class="settings-field__label">Burn Metadata Into Downloads</label>
+                        <select name="EXPORT_BURN_IN_METADATA" id="EXPORT_BURN_IN_METADATA" class="form-select">
+                            <option value="true" {% if payload['EXPORT_BURN_IN_METADATA'].value %}selected{% endif %}>Yes</option>
+                            <option value="false" {% if not payload['EXPORT_BURN_IN_METADATA'].value %}selected{% endif %}>No</option>
+                        </select>
+                        <div class="settings-field__help">Embed species, location, favorite and rating into downloaded copies (for iNaturalist re-import). The stored original is never changed; Off downloads the raw original.</div>
+                    </div>
+                </div>
+                <div class="col-md-6">
+                    <div class="settings-field">
                         <label for="SPECIES_COMMON_NAME_LOCALE" class="settings-field__label">Species Common Names</label>
                         <select name="SPECIES_COMMON_NAME_LOCALE" id="SPECIES_COMMON_NAME_LOCALE" class="form-select">
                             <option value="DE" {% if payload.get('SPECIES_COMMON_NAME_LOCALE', {}).get('value', 'DE') == 'DE' %}selected{% endif %}>Deutsch (DE)</option>

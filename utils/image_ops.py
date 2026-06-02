@@ -1,4 +1,5 @@
 from pathlib import Path
+from xml.sax.saxutils import escape as _xml_escape
 
 import cv2
 import numpy as np
@@ -190,3 +191,187 @@ def crop_brightness(crop_bgr: np.ndarray) -> float:
     if gray.size == 0:
         return 0.0
     return float(np.mean(gray))
+
+
+# --------------------------------------------------------------------------
+# XMP metadata burn-in for download/export copies.
+#
+# Hand-authored RDF/XMP packet passed to Pillow's ``Image.save(xmp=...)``.
+# No IPTC-IIM, no ExifTool, no pyexiv2 — Pillow only — so the RPi/aarch64
+# lane gains no new native dependency (plan: metadata-burn-in-export-copies).
+# The packet is written into in-memory COPIES served at download; on-disk
+# originals are never touched.
+# --------------------------------------------------------------------------
+
+_XMP_NS = {
+    "dc": "http://purl.org/dc/elements/1.1/",
+    "dwc": "http://rs.tdwg.org/dwc/terms/",
+    "xmp": "http://ns.adobe.com/xap/1.0/",
+    "wmb": "https://watchmybirds.app/ns/1.0/",
+}
+
+
+def _rdf_bag(terms: list[str]) -> str:
+    """Serialise a keyword list as an ``rdf:Bag`` body (one li per term)."""
+    items = "".join(
+        f"<rdf:li>{_xml_escape(t)}</rdf:li>" for t in terms if t
+    )
+    return f"<rdf:Bag>{items}</rdf:Bag>"
+
+
+def build_xmp_packet(metadata) -> str:
+    """Build an RDF/XMP packet string from an ``EventMetadata`` envelope.
+
+    Writes (all optional, emitted only when populated):
+      - ``dc:subject``      species keywords (rdf:Bag) — the iNat match key
+      - ``dc:description``  composed "Common (Scientific)" caption
+      - ``xmp:Rating``      0-5 stars (favorite → 5, else max star rating)
+      - ``xmp:Label``       "Favorite" when any detection is starred
+      - ``xmp:CreatorTool`` / ``dc:creator`` — provenance in standard fields
+      - ``dwc:*``           per-species scientific/genus/class/kingdom
+                            (class/kingdom gated on birds only)
+      - ``wmb:*``           private provenance (schema version, models,
+                            review status, favorite flag, per-detection
+                            id/confidence/rating)
+
+    Accepts a ``core.event_metadata.EventMetadata``; typed loosely to keep
+    this module free of a core import (image_ops is a leaf utility).
+    Returns a UTF-8 XMP packet ready for ``Image.save(xmp=...)``.
+    """
+    ns_decls = " ".join(f'xmlns:{p}="{uri}"' for p, uri in _XMP_NS.items())
+
+    body_parts: list[str] = []
+
+    keywords = metadata.subject_keywords()
+    if keywords:
+        body_parts.append(f"<dc:subject>{_rdf_bag(keywords)}</dc:subject>")
+
+    caption = metadata.primary_caption()
+    if caption:
+        body_parts.append(
+            f"<dc:description>{_xml_escape(caption)}</dc:description>"
+        )
+
+    # Class A — standard image-wide rating/label that foto tools display.
+    # A favorite pins the image to 5 stars + a "Favorite" colour label;
+    # otherwise the highest star rating on the frame wins.
+    rating = metadata.xmp_rating()
+    if rating is not None:
+        body_parts.append(f"<xmp:Rating>{int(rating)}</xmp:Rating>")
+    label = metadata.xmp_label()
+    if label:
+        body_parts.append(f"<xmp:Label>{_xml_escape(label)}</xmp:Label>")
+
+    # Class B — provenance in standard fields (CreatorTool, dc:creator).
+    if metadata.creator_tool:
+        body_parts.append(
+            f"<xmp:CreatorTool>{_xml_escape(metadata.creator_tool)}"
+            f"</xmp:CreatorTool>"
+        )
+    if metadata.creator:
+        body_parts.append(
+            f"<dc:creator><rdf:Seq><rdf:li>{_xml_escape(metadata.creator)}"
+            f"</rdf:li></rdf:Seq></dc:creator>"
+        )
+
+    for entry in metadata.species:
+        if entry.scientific:
+            body_parts.append(
+                f"<dwc:scientificName>{_xml_escape(entry.scientific)}"
+                f"</dwc:scientificName>"
+            )
+        if entry.genus:
+            body_parts.append(
+                f"<dwc:genus>{_xml_escape(entry.genus)}</dwc:genus>"
+            )
+        # Aves/Animalia only for birds; squirrels/martens get no dwc class.
+        if entry.dwc_class:
+            body_parts.append(
+                f"<dwc:class>{_xml_escape(entry.dwc_class)}</dwc:class>"
+            )
+        if entry.dwc_kingdom:
+            body_parts.append(
+                f"<dwc:kingdom>{_xml_escape(entry.dwc_kingdom)}</dwc:kingdom>"
+            )
+
+    body_parts.append(
+        f"<wmb:metadataSchemaVersion>{int(metadata.schema_version)}"
+        f"</wmb:metadataSchemaVersion>"
+    )
+    if metadata.detector_model:
+        body_parts.append(
+            f"<wmb:detectorModel>{_xml_escape(metadata.detector_model)}"
+            f"</wmb:detectorModel>"
+        )
+    if metadata.classifier_model:
+        body_parts.append(
+            f"<wmb:classifierModel>{_xml_escape(metadata.classifier_model)}"
+            f"</wmb:classifierModel>"
+        )
+    if metadata.review_status:
+        body_parts.append(
+            f"<wmb:reviewStatus>{_xml_escape(metadata.review_status)}"
+            f"</wmb:reviewStatus>"
+        )
+    if metadata.is_favorite:
+        body_parts.append("<wmb:isFavorite>true</wmb:isFavorite>")
+    for entry in metadata.species:
+        if entry.detection_id is not None:
+            body_parts.append(
+                f"<wmb:detectionId>{int(entry.detection_id)}"
+                f"</wmb:detectionId>"
+            )
+        if entry.confidence is not None:
+            body_parts.append(
+                f"<wmb:confidence>{float(entry.confidence):.4f}"
+                f"</wmb:confidence>"
+            )
+        if entry.rating:
+            body_parts.append(
+                f"<wmb:rating>{int(entry.rating)}</wmb:rating>"
+            )
+
+    body = "".join(body_parts)
+    return (
+        '<?xpacket begin="﻿" id="W5M0MpCehiHzreSzNTczkc9d"?>'
+        '<x:xmpmeta xmlns:x="adobe:ns:meta/">'
+        f'<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">'
+        f'<rdf:Description rdf:about="" {ns_decls}>'
+        f"{body}"
+        "</rdf:Description></rdf:RDF></x:xmpmeta>"
+        '<?xpacket end="w"?>'
+    )
+
+
+def save_jpeg_copy_with_metadata(src_path: str | Path, xmp_packet: str) -> bytes:
+    """Return JPEG bytes of ``src_path`` with ``xmp_packet`` injected.
+
+    Reads the on-disk original, preserves its existing EXIF (ingest-time
+    DateTimeOriginal + GPS), strips the camera/maker author chrome that is
+    irrelevant for an exported copy, injects the XMP packet, and returns the
+    re-encoded bytes. **The source file is never written** — burn-in happens
+    only into this in-memory copy.
+
+    Raises ``FileNotFoundError`` if the source is missing; lets other Pillow
+    errors propagate so the caller can fall back to serving the raw original.
+    """
+    import io
+
+    from PIL import Image
+
+    src_path = Path(src_path)
+    with Image.open(src_path) as img:
+        # Preserve ingest-time EXIF (datetime + GPS) verbatim so iNat still
+        # reads observation date/location off the copy.
+        exif = img.info.get("exif")
+        save_kwargs: dict = {
+            "format": "JPEG",
+            "quality": "keep",
+            "xmp": xmp_packet.encode("utf-8"),
+        }
+        if exif:
+            save_kwargs["exif"] = exif
+
+        buffer = io.BytesIO()
+        img.save(buffer, **save_kwargs)
+        return buffer.getvalue()

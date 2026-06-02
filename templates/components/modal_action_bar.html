@@ -43,9 +43,15 @@ show_close=true
             data-current-bbox='{{ (bbox | default({})) | tojson }}'
             title="Toggle bounding box overlay" aria-label="Toggle bounding box overlay">□ Boxes</button>
         {% endif %}
-        {% if show_download and original_url %}
-        <a href="{{ original_url }}" download class="btn btn--secondary btn--sm"
-            title="Download original image" aria-label="Download original image">↓ Download</a>
+        {% if show_download and (detection_id or original_url) %}
+        {# When a detection_id is known, route through the metadata-aware
+           download (burns species/location XMP into a copy at current DB
+           state when the EXPORT_BURN_IN_METADATA setting is on; serves the
+           verbatim original otherwise). Falls back to the raw original URL
+           for surfaces without a detection_id (e.g. orphan modal). #}
+        <a href="{% if detection_id %}/api/image/download/{{ detection_id }}{% else %}{{ original_url }}{% endif %}"
+            download class="btn btn--secondary btn--sm"
+            title="Download image" aria-label="Download image">↓ Download</a>
         {% endif %}
         {% if gallery_date %}
         <a href="/gallery/{{ gallery_date }}?focus={{ detection_id }}#detection-{{ detection_id }}"
