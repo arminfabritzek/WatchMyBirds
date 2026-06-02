@@ -1584,21 +1584,44 @@
         </button>
         <div class="settings-panel__body">
 
-            <!-- Active model card -->
-            <div class="ai-active-card" id="aiActiveCard">
-                <div class="ai-active-card__label">Active detector</div>
-                <div class="ai-active-card__id" id="aiActiveId">Loading…</div>
-                <div class="ai-active-card__meta" id="aiActiveMeta"></div>
+            <!-- Detection scheduling — interval + night-mode lead the panel
+                 because they are the controls operators touch most often. -->
+            <div class="row g-3">
+                <div class="col-md-6">
+                    <div class="settings-field">
+                        <label for="DETECTION_INTERVAL_SECONDS" class="settings-field__label">Detection Interval (s)</label>
+                        <input type="number" name="DETECTION_INTERVAL_SECONDS" id="DETECTION_INTERVAL_SECONDS" class="form-control" value="{{ payload['DETECTION_INTERVAL_SECONDS'].value }}">
+                        <div class="settings-field__help">Seconds to wait between AI analysis cycles.</div>
+                    </div>
+                </div>
+                <div class="col-md-6">
+                    <div class="settings-field">
+                        <label for="DAY_AND_NIGHT_CAPTURE" class="settings-field__label">
+                            Night Mode Capture
+                            <span id="odStatusPill" class="badge" style="margin-left:0.5rem;"></span>
+                        </label>
+                        <select name="DAY_AND_NIGHT_CAPTURE" id="DAY_AND_NIGHT_CAPTURE" class="form-select">
+                            <option value="true" {% if payload['DAY_AND_NIGHT_CAPTURE'].value %}selected{% endif %}>Enabled (Capture 24/7)</option>
+                            <option value="false" {% if not payload['DAY_AND_NIGHT_CAPTURE'].value %}selected{% endif %}>Disabled (Daylight Only)</option>
+                        </select>
+                        <div class="settings-field__help">
+                            When disabled, detection pauses overnight and resumes around
+                            dawn. The active window is tuned to span the full useful
+                            bird-activity period, extending a little past dusk and before
+                            dawn.
+                        </div>
+                    </div>
+                </div>
             </div>
+
+            <hr class="my-4">
 
             <!-- Variant list -->
             <div class="mb-2">
-                <strong>Available variants</strong>
+                <strong>Detection model</strong>
                 <div class="settings-field__help">
-                    Sorted latest first. Switching reloads the detector in-place; no restart needed.
-                    <br>
-                    <strong>tiny</strong> runs faster (good for Raspberry Pi), <strong>s</strong> is more accurate.
-                    Tags describe each variant — no single one is universally "best".
+                    The model that finds birds (and other feeder visitors) in the
+                    frame. Switching reloads the detector in-place; no restart needed.
                 </div>
             </div>
             <div id="aiVariantList">
@@ -1726,7 +1749,7 @@
                 <div class="ai-active-card__meta" id="clsActiveMeta"></div>
             </div>
             <div class="mb-2">
-                <strong>Available classifier variants</strong>
+                <strong>Classifier model</strong>
                 <div class="settings-field__help">
                     The classifier names the species of a detected bird. Switching
                     reloads on the next classification cycle — no restart needed.
@@ -1740,38 +1763,6 @@
                 <span class="settings-field__help" id="clsLastRefresh"></span>
                 <button type="button" class="btn btn--secondary btn--sm" onclick="loadClassifierModels()"
                         title="Re-read the classifier registry from disk">Refresh</button>
-            </div>
-
-            <!-- Detection scheduling — merged in from the former standalone
-                 "Detection" panel. Interval + night-mode are part of the same
-                 AI/detection topic, so they live here now. -->
-            <hr class="my-4">
-            <div class="row g-3">
-                <div class="col-md-6">
-                    <div class="settings-field">
-                        <label for="DETECTION_INTERVAL_SECONDS" class="settings-field__label">Detection Interval (s)</label>
-                        <input type="number" name="DETECTION_INTERVAL_SECONDS" id="DETECTION_INTERVAL_SECONDS" class="form-control" value="{{ payload['DETECTION_INTERVAL_SECONDS'].value }}">
-                        <div class="settings-field__help">Seconds to wait between AI analysis cycles.</div>
-                    </div>
-                </div>
-                <div class="col-md-6">
-                    <div class="settings-field">
-                        <label for="DAY_AND_NIGHT_CAPTURE" class="settings-field__label">
-                            Night Mode Capture
-                            <span id="odStatusPill" class="badge" style="margin-left:0.5rem;"></span>
-                        </label>
-                        <select name="DAY_AND_NIGHT_CAPTURE" id="DAY_AND_NIGHT_CAPTURE" class="form-select">
-                            <option value="true" {% if payload['DAY_AND_NIGHT_CAPTURE'].value %}selected{% endif %}>Enabled (Capture 24/7)</option>
-                            <option value="false" {% if not payload['DAY_AND_NIGHT_CAPTURE'].value %}selected{% endif %}>Disabled (Daylight Only)</option>
-                        </select>
-                        <div class="settings-field__help">
-                            When disabled, detection pauses overnight and resumes around
-                            dawn. The active window is tuned to span the full useful
-                            bird-activity period, extending a little past dusk and before
-                            dawn.
-                        </div>
-                    </div>
-                </div>
             </div>
 
         </div>
@@ -3716,11 +3707,13 @@
     }
 
     function _describeSource(source) {
+        // The plain on-disk default needs no label — only surface an
+        // operator-level pin, which overrides what the UI would select.
         return ({
             env_pin_task:    'pinned by systemd drop-in',
             env_pin_generic: 'pinned by generic env var',
-            latest_models:   'current default (latest_models.json)',
-        })[source] || source;
+            latest_models:   '',
+        })[source] || '';
     }
 
     function _makeBadge(text, variant, titleAttr) {
@@ -3742,63 +3735,25 @@
         return value;
     }
 
-    function _renderActiveCard(payload) {
-        const active = payload.active || {};
-        const runtime = payload.runtime || {};
-        const meta = payload.metadata || {};
-        document.getElementById('aiActiveId').textContent =
-            active.id || runtime.model_id || '(unknown)';
-
-        // An operator-level pin (systemd drop-in or env var) takes
-        // precedence over latest_models.json in the running process.
-        // UI switches still update the on-disk default so they will
-        // take effect on the next startup without the env pin — but
-        // they do NOT flip the currently-loaded detector. Surface
-        // that distinction so the user knows why the Active card
-        // shows the env-pin id instead of what they just clicked.
-        const envPinActive =
-            active.source === 'env_pin_task' || active.source === 'env_pin_generic';
-        const fb = document.getElementById('aiPinFeedback');
-        if (envPinActive) {
-            fb.textContent =
-                'An operator-level pin is active (systemd drop-in or env var). ' +
-                'Variant switches here update the on-disk default (latest_models.json) ' +
-                'and will take effect on the next startup without that pin — but the ' +
-                'currently-loaded detector stays on the env-pin value until the pin is removed.';
-            fb.className = 'settings-field__help mt-2 text-warning';
-        } else if (fb.className.indexOf('text-warning') !== -1) {
-            // Clear stale warning if the env pin was removed.
-            fb.textContent = '';
-            fb.className = 'settings-field__help mt-2';
-        }
-
-        const metaBits = [];
-        metaBits.push(_describeSource(active.source));
-        if (meta.variant) metaBits.push('variant: ' + meta.variant);
-        if (runtime.output_format) metaBits.push('format: ' + runtime.output_format);
-        if (runtime.num_classes != null) metaBits.push(runtime.num_classes + ' classes');
-        const conf = runtime.conf_threshold_default != null
-            ? runtime.conf_threshold_default
-            : (meta.inference_thresholds ? meta.inference_thresholds.confidence : null);
-        const iou = runtime.iou_threshold_default != null
-            ? runtime.iou_threshold_default
-            : (meta.inference_thresholds ? meta.inference_thresholds.iou_nms : null);
-        if (conf != null) metaBits.push('conf: ' + conf);
-        if (iou != null) metaBits.push('iou: ' + iou);
-        if (meta.metrics && meta.metrics.bird_recall != null) {
-            metaBits.push('recall: ' + _fmtPct(meta.metrics.bird_recall));
-        }
-        document.getElementById('aiActiveMeta').textContent = metaBits.join(' · ');
-    }
-
     // Model IDs hidden from the variant lists on operator request. Purely
     // cosmetic: the registry/API still knows them and they stay switchable
     // via the API — they're just not surfaced in the Settings UI.
+    //
+    // Operator policy: surface exactly ONE variant per lane (the active
+    // default). Everything else is hidden here. The default itself is
+    // pinned by latest_models.json["latest"] (OD: v11 2cls, CLS:
+    // 20260522_125156). Keep this list in sync with that pointer — if the
+    // default changes, the previous default moves into this set and the new
+    // one comes out.
     const HIDDEN_MODEL_IDS = new Set([
+        // --- Object detection: keep only v11 2cls (coco) ---
         '20260513_yolox_s_locator_640_mosaic0p75_v2_coco',
         '20260504_yolox_s_locator_640_mosaic0p75_v10_balanced',
+        '20260430_yolox_s_locator_640_mosaic0p75_v6',
+        // --- Classifier: keep only 20260522_125156 ---
         '20260427_104449',
         '20260427_143835',
+        '20250817_213043',
     ]);
 
     function _renderVariantList(payload) {
@@ -3808,9 +3763,7 @@
         if (!variants.length) {
             const empty = document.createElement('div');
             empty.className = 'text-muted small p-2';
-            empty.textContent =
-                'No variants listed in latest_models.json pinned_models block. ' +
-                'The current default is active.';
+            empty.textContent = 'The current default detection model is active.';
             list.appendChild(empty);
             return;
         }
@@ -3941,27 +3894,6 @@
                 row.appendChild(chipGroup);
             }
 
-            const btn = document.createElement('button');
-            btn.type = 'button';
-            btn.className = 'btn btn--sm ai-variant-row__action';
-            if (v.is_active) {
-                btn.textContent = 'Switch';
-                btn.classList.add('btn--secondary');
-                btn.disabled = true;
-                btn.title = 'Already active';
-            } else if (!v.is_available_locally) {
-                btn.textContent = 'Install & switch';
-                btn.classList.add('btn--primary');
-                btn.title = 'Download weights + labels from HuggingFace, then switch';
-                btn.addEventListener('click', () => installAndPinDetector(v.id, btn));
-            } else {
-                btn.textContent = 'Switch';
-                btn.classList.add('btn--primary');
-                btn.title = 'Reload the detector with this variant';
-                btn.addEventListener('click', () => pinDetector(v.id));
-            }
-            row.appendChild(btn);
-
             list.appendChild(row);
         });
     }
@@ -3976,14 +3908,11 @@
                 return res.json();
             })
             .then(payload => {
-                _renderActiveCard(payload);
                 _renderVariantList(payload);
                 document.getElementById('aiLastRefresh').textContent =
                     'Last refresh: ' + new Date().toLocaleTimeString();
             })
             .catch(err => {
-                document.getElementById('aiActiveId').textContent = 'Error';
-                document.getElementById('aiActiveMeta').textContent = '';
                 const list = document.getElementById('aiVariantList');
                 list.replaceChildren();
                 const alertEl = document.createElement('div');
@@ -4146,6 +4075,7 @@
             active.id || '(none loaded yet)';
 
         const metaBits = [];
+        // Only present when an operator-level pin overrides the default.
         metaBits.push(_describeSource(active.source));
         if (activeMeta.architecture) {
             metaBits.push(_prettyArchitecture(activeMeta.architecture));
@@ -4159,12 +4089,13 @@
         // accept for the genus fallback. Legacy classifiers without a
         // decision config simply omit the chips.
         if (typeof runtime.confidence_threshold === 'number') {
-            metaBits.push('conf: ' + runtime.confidence_threshold);
+            metaBits.push('species ≥ ' + runtime.confidence_threshold);
         }
         if (typeof runtime.genus_fallback_threshold === 'number') {
-            metaBits.push('genus: ' + runtime.genus_fallback_threshold);
+            metaBits.push('genus ≥ ' + runtime.genus_fallback_threshold);
         }
-        document.getElementById('clsActiveMeta').textContent = metaBits.join(' · ');
+        document.getElementById('clsActiveMeta').textContent =
+            metaBits.filter(Boolean).join(' · ');
     }
 
     function _renderClassifierVariantList(payload) {
@@ -4174,7 +4105,7 @@
         if (!variants.length) {
             const empty = document.createElement('div');
             empty.className = 'text-muted small p-2';
-            empty.textContent = 'No classifier variants available.';
+            empty.textContent = 'The current default classifier model is active.';
             list.appendChild(empty);
             return;
         }
@@ -4247,27 +4178,6 @@
                 _makeBadge('Not installed', 'warning', 'Weights or classes missing on disk')
             );
             row.appendChild(badges);
-
-            const btn = document.createElement('button');
-            btn.type = 'button';
-            btn.className = 'btn btn--sm ai-variant-row__action';
-            if (v.is_active) {
-                btn.textContent = 'Switch';
-                btn.classList.add('btn--secondary');
-                btn.disabled = true;
-                btn.title = 'Already active';
-            } else if (!v.is_available_locally) {
-                btn.textContent = 'Install & switch';
-                btn.classList.add('btn--primary');
-                btn.title = 'Download weights + classes from HuggingFace, then switch';
-                btn.addEventListener('click', () => installAndPinClassifier(v.id, btn));
-            } else {
-                btn.textContent = 'Switch';
-                btn.classList.add('btn--primary');
-                btn.title = 'Reload the classifier with this variant';
-                btn.addEventListener('click', () => pinClassifier(v.id));
-            }
-            row.appendChild(btn);
 
             list.appendChild(row);
         });
