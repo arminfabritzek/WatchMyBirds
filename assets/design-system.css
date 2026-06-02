@@ -2164,7 +2164,11 @@ code {
 
 .stream-container {
     position: relative;
-    max-width: var(--content-max-width);
+    /* Desktop ceiling so a 4:3 source (75% height/width) can't dominate
+       the viewport. --content-max-width is the shared reading frame when
+       a skin defines it; the literal fallback keeps the stream bounded
+       even where that var is unset. */
+    max-width: var(--content-max-width, 880px);
     margin: 0 auto;
     border-radius: var(--radius-xl);
     overflow: hidden;
@@ -2202,12 +2206,16 @@ code {
 
 .stream-embed {
     position: relative;
-    width: 100%;
-    height: 0;
-    /* 16:9 until the real camera aspect is known. stream.html's
-       setCameraAspectDims() overwrites --stream-aspect with the
-       probed frame ratio so the frame fits the source with no bars. */
-    padding-bottom: calc(100% / var(--stream-aspect, 1.7778));
+    /* aspect-ratio keeps the frame matched to the source (16:9 until
+       stream.html's probe pins --stream-aspect to the real ratio);
+       max-height caps how tall a non-16:9 source (4:3 → 75% of width)
+       may grow, and the browser shrinks width to honour it, centring
+       the frame. width:auto + margin:auto give the side-centring. */
+    width: auto;
+    max-width: 100%;
+    aspect-ratio: var(--stream-aspect, 1.7778);
+    max-height: 70vh;
+    margin-inline: auto;
 }
 
 .stream-embed__frame,
