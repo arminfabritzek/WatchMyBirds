@@ -120,6 +120,9 @@ DEFAULTS = {
     "STREAM_WIDTH_OUTPUT_RESIZE": 640,
     "DAY_AND_NIGHT_CAPTURE": True,
     "DAY_AND_NIGHT_CAPTURE_LOCATION": "Berlin",
+    # Diagnostic overlay drawn over the live stream (auto-PTZ target box
+    # + tracking state). Off by default; gated behind moderator auth.
+    "PTZ_TRACKING_OVERLAY_ENABLED": False,
     # OD night-pause offsets (apply when DAY_AND_NIGHT_CAPTURE is False).
     # See utils/sun_times.py for sign convention. Defaults widen the
     # active daytime window past nautical twilight: OD keeps running 30
@@ -266,6 +269,7 @@ RUNTIME_KEYS = {
     "DETECTION_INTERVAL_SECONDS",
     "DAY_AND_NIGHT_CAPTURE",
     "DAY_AND_NIGHT_CAPTURE_LOCATION",
+    "PTZ_TRACKING_OVERLAY_ENABLED",
     "STREAM_FPS",
     "STREAM_FPS_CAPTURE",
     "BBOX_QUALITY_THRESHOLD",
@@ -1125,6 +1129,7 @@ def _validate_value(key, value):
         "EXPORT_BURN_IN_METADATA",
         "TRAINING_EXPORT_AUTO_OPT_IN",
         "NON_BIRD_DROP_BELOW_CONFIRM",
+        "PTZ_TRACKING_OVERLAY_ENABLED",
     ):
         return True, _coerce_bool(value)
     if key == "SAVE_THRESHOLD_MODE":

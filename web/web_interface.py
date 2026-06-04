@@ -3392,6 +3392,7 @@ def create_web_interface(detection_manager, system_monitor=None):
 
     RUNTIME_BOOL_KEYS = {
         "DAY_AND_NIGHT_CAPTURE",
+        "PTZ_TRACKING_OVERLAY_ENABLED",
         "TELEGRAM_ENABLED",
         "DEBUG_MODE",
         "EXIF_GPS_ENABLED",
@@ -3424,6 +3425,7 @@ def create_web_interface(detection_manager, system_monitor=None):
         "NON_BIRD_DROP_BELOW_CONFIRM": "Drop Non-bird Below Floor (When on, weak non-bird detections are dropped pre-persist — no DB row, no image saved. Off keeps them as UNCERTAIN for bbox-cluster analysis)",
         "DETECTION_INTERVAL_SECONDS": "Detection Interval (Seconds between AI analysis cycles - higher = less CPU)",
         "DAY_AND_NIGHT_CAPTURE": "24/7 Capture (When ON, OD runs day and night. When OFF, OD pauses outside the daytime window — see offsets below)",
+        "PTZ_TRACKING_OVERLAY_ENABLED": "Live Tracking Overlay (Draws the auto-PTZ target box and tracking state over the live stream; a diagnostic aid, off by default)",
         "DAY_AND_NIGHT_CAPTURE_LOCATION": "Sun Event Location (City name fallback; primary source is LOCATION_DATA lat/lon)",
         "OD_NIGHT_START_OFFSET_MIN": "OD Night Start Offset (Minutes added to civil dusk; positive = OD keeps running into the evening, default 30 for late-active species)",
         "OD_NIGHT_END_OFFSET_MIN": "OD Night End Offset (Minutes added to civil dawn; negative = OD starts earlier in the morning, default -45 for the dawn chorus)",
@@ -3469,6 +3471,7 @@ def create_web_interface(detection_manager, system_monitor=None):
         "DETECTION_INTERVAL_SECONDS",
         "DAY_AND_NIGHT_CAPTURE",
         "DAY_AND_NIGHT_CAPTURE_LOCATION",
+        "PTZ_TRACKING_OVERLAY_ENABLED",
         "OD_NIGHT_START_OFFSET_MIN",
         "OD_NIGHT_END_OFFSET_MIN",
         "OD_NIGHT_TWILIGHT_MODE",

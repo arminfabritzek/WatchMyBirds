@@ -1612,6 +1612,22 @@
                         </div>
                     </div>
                 </div>
+                <div class="col-md-6">
+                    <div class="settings-field">
+                        <label for="PTZ_TRACKING_OVERLAY_ENABLED" class="settings-field__label">
+                            Live Tracking Overlay
+                        </label>
+                        <select name="PTZ_TRACKING_OVERLAY_ENABLED" id="PTZ_TRACKING_OVERLAY_ENABLED" class="form-select">
+                            <option value="true" {% if payload['PTZ_TRACKING_OVERLAY_ENABLED'].value %}selected{% endif %}>Enabled</option>
+                            <option value="false" {% if not payload['PTZ_TRACKING_OVERLAY_ENABLED'].value %}selected{% endif %}>Disabled</option>
+                        </select>
+                        <div class="settings-field__help">
+                            Draws the auto-PTZ controller's current target box and
+                            tracking state over the live stream. A diagnostic aid for
+                            watching how the camera follows a bird; off by default.
+                        </div>
+                    </div>
+                </div>
             </div>
 
             <hr class="my-4">

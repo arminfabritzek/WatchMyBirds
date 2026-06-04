@@ -2736,6 +2736,12 @@ def camera_ptz_grid_cell_clear(camera_id: int, row: int, col: int):
 @login_required
 def ptz_auto_status():
     """Return runtime auto-PTZ state from the detection manager."""
+    # Read a fresh config per request so a live settings change to the
+    # tracking-overlay toggle takes effect on the next poll without a
+    # restart (same pattern as the per-request get_config above).
+    from config import get_config
+
+    overlay_enabled = bool(get_config().get("PTZ_TRACKING_OVERLAY_ENABLED"))
     try:
         dm = api_v1.detection_manager
         controller = getattr(dm, "auto_ptz_controller", None)
@@ -2743,10 +2749,17 @@ def ptz_auto_status():
             return jsonify(
                 {
                     "status": "success",
+                    "overlay_enabled": overlay_enabled,
                     "auto_ptz": {"enabled": False, "state": "idle"},
                 }
             )
-        return jsonify({"status": "success", "auto_ptz": controller.status()})
+        return jsonify(
+            {
+                "status": "success",
+                "overlay_enabled": overlay_enabled,
+                "auto_ptz": controller.status(),
+            }
+        )
     except Exception as exc:
         return _error_response("PTZ status error", exc)
 

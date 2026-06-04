@@ -807,3 +807,33 @@ class TestApiV1PtzManualMove:
         metadata = response.get_json()["metadata"]
         assert metadata["stream_frame_width"] == 1280
         assert metadata["stream_frame_height"] == 720
+
+
+def test_ptz_tracking_overlay_enabled_validates_as_bool():
+    """PTZ_TRACKING_OVERLAY_ENABLED is a known runtime key coerced to bool."""
+    from config import validate_runtime_updates
+
+    valid, errors = validate_runtime_updates({"PTZ_TRACKING_OVERLAY_ENABLED": "true"})
+    assert valid.get("PTZ_TRACKING_OVERLAY_ENABLED") is True
+    assert not errors
+
+    valid2, _ = validate_runtime_updates({"PTZ_TRACKING_OVERLAY_ENABLED": "false"})
+    assert valid2.get("PTZ_TRACKING_OVERLAY_ENABLED") is False
+
+
+class TestPtzAutoStatusOverlayFlag:
+    """The auto-PTZ status endpoint surfaces the overlay toggle."""
+
+    def test_ptz_auto_status_includes_overlay_enabled(self, client):
+        # Force the no-controller branch (serialisable) so the test pins
+        # the overlay_enabled field, which is read from config and is
+        # independent of the controller. PTZ_TRACKING_OVERLAY_ENABLED
+        # defaults False.
+        from web.blueprints.api_v1 import api_v1
+
+        api_v1.detection_manager.auto_ptz_controller = None
+        response = client.get("/api/v1/ptz/auto/status")
+        assert response.status_code == 200
+        body = response.get_json()
+        assert "overlay_enabled" in body
+        assert body["overlay_enabled"] is False

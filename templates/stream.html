@@ -26,6 +26,12 @@
             <img id="video-feed-fallback" class="stream-video stream-embed__fallback" alt="Live Stream" data-fallback-src="/video_feed">
             {% if can_moderate %}
             <img id="ptzEditCanvas" class="stream-embed__edit-canvas" alt="Edit overview" hidden>
+            {# Live auto-PTZ tracking overlay (debug overlay). Shown when the
+               "Live Tracking Overlay" setting is on (Settings → Detection &
+               AI). Positioned to the video letterbox by the inline PTZ
+               script; tracking_overlay.js only draws into it. #}
+            <canvas id="trackingOverlay" class="stream-embed__tracking-overlay"
+                    aria-hidden="true" hidden></canvas>
             {# Floating PTZ D-pad: lives inside the stream container as
                a corner overlay. Hidden by default, fades in on hover
                (desktop) or stays visible on touch devices. The markup
@@ -357,6 +363,17 @@
             z-index: 3;
         }
         .stream-embed__edit-canvas[hidden] { display: none; }
+        /* Live auto-PTZ tracking overlay. Inline JS positions it to the
+           video letterbox rect; pointer-events:none keeps the joystick
+           underneath clickable. Sits above the video, below the D-pad. */
+        .stream-embed__tracking-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            pointer-events: none;
+            z-index: 4;
+        }
+        .stream-embed__tracking-overlay[hidden] { display: none; }
         .stream-embed--ptz-edit .stream-embed__frame,
         .stream-embed--ptz-edit .stream-embed__fallback {
             visibility: hidden;
@@ -1202,7 +1219,23 @@
                 el.style.height = rect.height + 'px';
             }
 
+            // Position the live tracking overlay canvas to the video
+            // letterbox rectangle (shares applyVideoRectToOverlay with the
+            // preset/grid overlays) and keep its drawing buffer matched to
+            // the CSS box so tracking_overlay.js can draw in plain
+            // canvas-local coordinates. No-op when the canvas is absent
+            // (unauthenticated build) or hidden (debug flag off).
+            function syncTrackingOverlay() {
+                const el = document.getElementById('trackingOverlay');
+                if (!el || el.hidden) return;
+                applyVideoRectToOverlay(el);
+                const w = el.clientWidth, h = el.clientHeight;
+                if (w > 0 && el.width !== w) el.width = w;
+                if (h > 0 && el.height !== h) el.height = h;
+            }
+
             function syncOverlayToCanvas() {
+                syncTrackingOverlay();
                 if (!overlayEl) return;
                 if (mode === MODE_EDIT && editCanvasEl && !editCanvasEl.hidden) {
                     applyVideoRectToOverlay(editCanvasEl);
@@ -2386,6 +2419,12 @@
     <script src="/assets/js/species_picker.js?v=1"></script>
     <script src="/assets/js/gallery_utils.js?v=20260523-bboxgeom"></script>
     <script src="/assets/js/tile_actions.js?v=2"></script>
+    {% if can_moderate %}
+    {# Live auto-PTZ tracking overlay (debug overlay). Controlled by the
+       "Live Tracking Overlay" setting; the status endpoint it polls is
+       login_required, so it is only included for moderators. #}
+    <script src="/assets/js/tracking_overlay.js?v=20260604-trackoverlay" defer></script>
+    {% endif %}
     <script>
         async function startTelegramReportJob(options) {
             const trigger = options && options.trigger ? options.trigger : null;

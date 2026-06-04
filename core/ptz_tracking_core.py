@@ -81,6 +81,12 @@ class AutoPtzController:
         self._last_preset = ""
         self._acquire_count = 0
         self._last_target_center: tuple[float, float] | None = None
+        # Normalised (x, y, w, h) bbox of the current target, surfaced in
+        # status() for the live tracking overlay. Set alongside
+        # _last_target_center; held through lost_grace; cleared on the
+        # transition to returning / overview / idle (see _set_idle and the
+        # returning transitions). Presentation-only — no control logic.
+        self._last_target_bbox: tuple[float, float, float, float] | None = None
         self._manual_view_until: float = 0.0  # 0 = no manual-view override active
         self._acquiring_preset: str = ""  # token currently being acquired
         self._grid_current_cell: tuple[int, int] | None = (
@@ -201,12 +207,11 @@ class AutoPtzController:
         # save-threshold the gallery uses so the cam reacts to exactly
         # the detections the operator would have persisted anyway.
         bird_dets = [
-            d for d in detections
+            d
+            for d in detections
             if is_bird_od_class(str(d.get("class_name") or "bird"))
         ]
-        bird_confidences = [
-            float(d.get("confidence") or 0.0) for d in bird_dets
-        ]
+        bird_confidences = [float(d.get("confidence") or 0.0) for d in bird_dets]
         if bird_confidences:
             # Log every frame's bird confidences so we can correlate the
             # PTZ moves below with the actual detection strengths. Helps
@@ -220,7 +225,8 @@ class AutoPtzController:
             )
         if min_confidence > 0.0:
             detections = [
-                d for d in detections
+                d
+                for d in detections
                 if float(d.get("confidence") or 0.0) >= min_confidence
             ]
             if not detections:
@@ -258,7 +264,7 @@ class AutoPtzController:
             return
 
         now = self._clock()
-        center_x, center_y, confidence = target
+        center_x, center_y, confidence, bbox = target
         zone = self._zone_for_center(config, center_x, center_y)
         if not zone or not zone.get("preset"):
             self._update_status(
@@ -273,6 +279,7 @@ class AutoPtzController:
         with self._lock:
             self._last_seen_mono = now
             self._last_target_center = (center_x, center_y)
+            self._last_target_bbox = bbox
             # Bird detection always reverts to the detection-driven timeout,
             # even if a manual-view override was active from an earlier click.
             self._manual_view_until = 0.0
@@ -326,6 +333,7 @@ class AutoPtzController:
             self._state = "settling" if issued else "tracking"
             self._last_error = ""
             self._last_target_center = (center_x, center_y)
+            self._last_target_bbox = bbox
             logger.debug(
                 "Auto PTZ tracking target zone=%s conf=%.3f center=(%.3f, %.3f)",
                 zone_name,
@@ -342,7 +350,7 @@ class AutoPtzController:
         *,
         config: dict[str, Any],
         camera: dict[str, Any],
-        target: tuple[float, float, float],
+        target: tuple[float, float, float, tuple[float, float, float, float]],
     ) -> None:
         """Grid-mode dispatch: route bbox center to a (row, col) cell.
 
@@ -353,7 +361,7 @@ class AutoPtzController:
         boundary — see core.ptz_grid.cell_for_center.
         """
         now = self._clock()
-        center_x, center_y, confidence = target
+        center_x, center_y, confidence, bbox = target
 
         shape = config.get("grid_shape") or [3, 3]
         try:
@@ -383,6 +391,7 @@ class AutoPtzController:
         with self._lock:
             self._last_seen_mono = now
             self._last_target_center = (center_x, center_y)
+            self._last_target_bbox = bbox
             self._manual_view_until = 0.0
             cell_changed = (
                 self._state in {"acquiring", "tracking"}
@@ -415,6 +424,7 @@ class AutoPtzController:
             self._state = "settling" if issued else "tracking"
             self._last_error = ""
             self._last_target_center = (center_x, center_y)
+            self._last_target_bbox = bbox
             logger.debug(
                 "Auto PTZ grid tracking cell=%s conf=%.3f center=(%.3f, %.3f)",
                 cell_name,
@@ -431,7 +441,7 @@ class AutoPtzController:
         *,
         config: dict[str, Any],
         camera: dict[str, Any],
-        target: tuple[float, float, float],
+        target: tuple[float, float, float, tuple[float, float, float, float]],
         frame_shape: tuple[int, ...],
         detections: list[dict[str, Any]],
     ) -> None:
@@ -444,7 +454,7 @@ class AutoPtzController:
         zoom corrections fire; otherwise pan/tilt only.
         """
         now = self._clock()
-        center_x, center_y, confidence = target
+        center_x, center_y, confidence, bbox = target
 
         # Look up the winning detection's bbox area for the zoom signal.
         # Re-finding it here keeps _select_target's contract unchanged.
@@ -455,6 +465,7 @@ class AutoPtzController:
         with self._lock:
             self._last_seen_mono = now
             self._last_target_center = (center_x, center_y)
+            self._last_target_bbox = bbox
             self._manual_view_until = 0.0
             self._state = "tracking"
             self._last_error = ""
@@ -549,9 +560,13 @@ class AutoPtzController:
         logger.debug(
             "Auto PTZ follow conf=%.3f center=(%.3f, %.3f) area=%s "
             "→ pan=%.2f tilt=%.2f zoom=%.2f",
-            confidence, center_x, center_y,
+            confidence,
+            center_x,
+            center_y,
             f"{area_pct:.3f}" if area_pct is not None else "n/a",
-            pan, tilt, zoom,
+            pan,
+            tilt,
+            zoom,
         )
 
     def _bbox_area_pct_for_target(
@@ -714,6 +729,8 @@ class AutoPtzController:
             self._last_preset = overview
             self._last_zone = "overview"
             self._acquire_count = 0
+            # Returning to overview — no current target, drop the overlay box.
+            self._last_target_bbox = None
             self._lost_cooldown_until = now + lost_cd
             # Overview is the one absolute reference point the lens has;
             # clearing the zoom-in budget here gives the next bird a
@@ -795,9 +812,7 @@ class AutoPtzController:
                 daemon=True,
             )
             t.start()
-            self._publish_movement_event(
-                kind="preset", estimated_sec=settle_max
-            )
+            self._publish_movement_event(kind="preset", estimated_sec=settle_max)
         elif preset_token:
             self._publish_movement_event(
                 kind="preset",
@@ -1083,6 +1098,8 @@ class AutoPtzController:
             self._last_preset = overview
             self._last_zone = "overview"
             self._acquire_count = 0
+            # Returning to overview — no current target, drop the overlay box.
+            self._last_target_bbox = None
             # Same race-protection as notify_external_goto: an active
             # return-to-overview is a command, so block detection-driven
             # gotos for the cooldown window while the camera is flying
@@ -1114,6 +1131,9 @@ class AutoPtzController:
                 "last_preset": self._last_preset,
                 "acquire_count": self._acquire_count,
                 "last_target_center": self._last_target_center,
+                # Normalised (x, y, w, h) bbox of the current target for the
+                # live tracking overlay; None when there is no target.
+                "last_bbox": self._last_target_bbox,
                 # Surfaced for the Stream-page banner: when set, the UI
                 # shows "Auto-PTZ paused — <reason>" so it's clear why
                 # detections aren't triggering moves.
@@ -1259,13 +1279,15 @@ class AutoPtzController:
         *,
         frame_shape: tuple[int, ...],
         detections: list[dict[str, Any]],
-    ) -> tuple[float, float, float] | None:
+    ) -> tuple[float, float, float, tuple[float, float, float, float]] | None:
         if not frame_shape or len(frame_shape) < 2:
             return None
         frame_h = max(1, int(frame_shape[0]))
         frame_w = max(1, int(frame_shape[1]))
 
-        best: tuple[float, float, float] | None = None
+        best: tuple[float, float, float, tuple[float, float, float, float]] | None = (
+            None
+        )
         best_score = -1.0
         for det in detections:
             od_class = str(det.get("class_name") or "bird")
@@ -1287,7 +1309,14 @@ class AutoPtzController:
                 continue
             center_x = max(0.0, min(1.0, ((x1 + x2) / 2.0) / frame_w))
             center_y = max(0.0, min(1.0, ((y1 + y2) / 2.0) / frame_h))
-            best = (center_x, center_y, confidence)
+            # Normalised bbox (x, y, w, h) of the winning detection, clamped
+            # to 0..1 so the overlay is resolution-independent. Threaded
+            # alongside center/confidence; presentation-only.
+            nx = max(0.0, min(1.0, x1 / frame_w))
+            ny = max(0.0, min(1.0, y1 / frame_h))
+            nw = max(0.0, min(1.0, (x2 - x1) / frame_w))
+            nh = max(0.0, min(1.0, (y2 - y1) / frame_h))
+            best = (center_x, center_y, confidence, (nx, ny, nw, nh))
             best_score = score
         return best
 
@@ -1604,6 +1633,8 @@ class AutoPtzController:
             self._state = "idle"
             self._last_error = error
             self._acquire_count = 0
+            # No current target in idle — drop the overlay box.
+            self._last_target_bbox = None
 
     def _update_status(
         self,
