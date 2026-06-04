@@ -12,6 +12,35 @@ window.WmSpeciesPicker = (function () {
     var _speciesCache = Object.create(null);
     var EXTENDED_IDLE_LIMIT = 80;
     var FILTERED_RESULT_LIMIT = 200;
+    var RECENT_STORAGE_KEY = 'wmSpeciesPickerRecent';
+    var RECENT_LIMIT = 10;
+
+    function getRecent() {
+        try {
+            var raw = window.localStorage.getItem(RECENT_STORAGE_KEY);
+            if (!raw) return [];
+            var parsed = JSON.parse(raw);
+            return Array.isArray(parsed) ? parsed : [];
+        } catch (e) {
+            return [];
+        }
+    }
+
+    function pushRecent(sp) {
+        if (!sp || !sp.scientific) return;
+        try {
+            var list = getRecent().filter(function (e) {
+                return e && e.scientific !== sp.scientific;
+            });
+            list.unshift({ scientific: sp.scientific, common: sp.common });
+            window.localStorage.setItem(
+                RECENT_STORAGE_KEY,
+                JSON.stringify(list.slice(0, RECENT_LIMIT))
+            );
+        } catch (e) {
+            /* localStorage unavailable (private mode / quota) — recency is best-effort */
+        }
+    }
 
     function getCacheKey(detectionId) {
         return detectionId ? ('det:' + detectionId) : 'base';
@@ -216,8 +245,26 @@ window.WmSpeciesPicker = (function () {
                 }
 
                 function onPick(sp) {
+                    pushRecent(sp);
                     cleanup();
                     resolve({ scientific: sp.scientific, common: sp.common });
+                }
+
+                var speciesByScientific = Object.create(null);
+                for (var s = 0; s < species.length; s++) {
+                    speciesByScientific[species[s].scientific] = species[s];
+                }
+
+                function recentItems(filter) {
+                    var out = [];
+                    var recent = getRecent();
+                    for (var r = 0; r < recent.length; r++) {
+                        var sp = speciesByScientific[recent[r].scientific];
+                        if (!sp) continue;
+                        if (!matchesFilter(sp, filter)) continue;
+                        out.push(sp);
+                    }
+                    return out;
                 }
 
                 function renderList(filter) {
@@ -225,6 +272,17 @@ window.WmSpeciesPicker = (function () {
 
                     var groups = splitSpecies(species, filter);
                     var renderedAny = false;
+
+                    var recent = recentItems(filter);
+                    if (recent.length) {
+                        listEl.appendChild(createSectionHeader('Recently Used'));
+                        for (var r = 0; r < recent.length; r++) {
+                            listEl.appendChild(
+                                createSpeciesItem(recent[r], currentSpecies, onPick)
+                            );
+                        }
+                        renderedAny = true;
+                    }
 
                     if (groups.predictions.length) {
                         listEl.appendChild(createSectionHeader('Model Predictions'));
@@ -329,6 +387,8 @@ window.WmSpeciesPicker = (function () {
 
     return {
         pickSpecies: pickSpecies,
-        loadSpeciesList: loadSpeciesList
+        loadSpeciesList: loadSpeciesList,
+        getRecent: getRecent,
+        pushRecent: pushRecent
     };
 })();
