@@ -130,7 +130,7 @@ def update_camera(
         True if successful, False if camera not found
     """
     storage = get_camera_storage()
-    return storage.update_camera(
+    updated = storage.update_camera(
         camera_id=camera_id,
         ip=ip,
         port=port,
@@ -138,6 +138,13 @@ def update_camera(
         password=password,
         name=name,
     )
+    if updated:
+        # ip/port/credentials may have changed; drop any cached PtzClient so
+        # the next PTZ command rebuilds against the new connection details.
+        from core import ptz_core
+
+        ptz_core.clear_ptz_client_cache(camera_id)
+    return updated
 
 
 def delete_camera(camera_id: int) -> bool:
@@ -151,7 +158,12 @@ def delete_camera(camera_id: int) -> bool:
         True if deleted, False if not found
     """
     storage = get_camera_storage()
-    return storage.delete_camera(camera_id)
+    deleted = storage.delete_camera(camera_id)
+    if deleted:
+        from core import ptz_core
+
+        ptz_core.clear_ptz_client_cache(camera_id)
+    return deleted
 
 
 def test_camera_connection(stream_url: str, timeout: float = 5.0) -> dict[str, Any]:

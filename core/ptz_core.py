@@ -34,6 +34,42 @@ _CAPABILITIES_CACHE_TTL_SEC = 60.0
 _capabilities_cache_lock = threading.Lock()
 _capabilities_cache: dict[int, tuple[float, dict[str, Any]]] = {}
 
+# Persistent PtzClient cache keyed by camera_id. Each PtzClient lazily
+# performs an ONVIF handshake (create_media_service + create_ptz_service +
+# GetProfiles) on first use and caches the profile token on the instance.
+#
+# Coherence: the embedded ip/port/credentials/profile_index can change when
+# camera config is edited, so this cache is dropped wherever the auto-PTZ
+# camera cache is dropped (clear_auto_ptz_camera_cache) and on credential
+# mutations. Robustness: any ONVIF error during a command evicts the client
+# so the next command rebuilds a fresh connection (self-healing).
+#
+# Serialization: a per-camera lock guards command execution so manual moves
+# and the AutoPtzController worker thread cannot interleave ContinuousMove/
+# Stop calls on the same non-thread-safe ONVIF connection.
+_ptz_client_cache_lock = threading.Lock()
+_ptz_client_cache: dict[int, tuple[PtzClient, dict[str, Any]]] = {}
+_ptz_command_locks: dict[int, threading.Lock] = {}
+
+# Hold-to-move backpressure. When the operator holds a joystick button, the
+# frontend POSTs /ptz/move every ~180ms, but each move blocks for its
+# duration (ContinuousMove + sleep + Stop) under the per-camera lock. Without
+# backpressure the moves pile up in the Waitress thread queue and the
+# release-Stop lands behind them, so the camera keeps moving for seconds
+# after release. Two coupled mechanisms fix this WITHOUT touching the
+# frontend heartbeat or the dead-man-switch sleep:
+#
+#   1. Coalescing: at most one move may WAIT for the lock per camera. A move
+#      arriving while one runs and one already waits is dropped before it
+#      queues — back-to-back holds carry no new information.
+#   2. Stop generation: every stop bumps a per-camera counter. A move records
+#      the counter when it arrives; if a stop happened before the move
+#      acquires the lock, the move skips its ONVIF call. A release-Stop thus
+#      invalidates every move queued before it.
+_ptz_move_state_lock = threading.Lock()
+_ptz_move_waiting: dict[int, int] = {}  # camera_id -> moves currently waiting
+_ptz_stop_generation: dict[int, int] = {}  # camera_id -> monotonic stop counter
+
 
 def _float_in_range(value: Any, default: float, low: float, high: float) -> float:
     try:
@@ -578,8 +614,7 @@ def set_grid_shape(camera_id: int, rows: int, cols: int) -> dict[str, Any] | Non
         return None
     if (int(rows), int(cols)) not in ALLOWED_GRID_SHAPES:
         raise ValueError(
-            f"Grid shape ({rows}, {cols}) not in allowed set "
-            f"{ALLOWED_GRID_SHAPES}"
+            f"Grid shape ({rows}, {cols}) not in allowed set {ALLOWED_GRID_SHAPES}"
         )
     if not storage.set_grid_shape(camera_id, int(rows), int(cols)):
         return None
@@ -715,7 +750,9 @@ def clear_grid_cell(camera_id: int, row: int, col: int) -> bool:
     if not storage.delete_grid_cell(camera_id, cell_key):
         return False
     clear_auto_ptz_camera_cache()
-    logger.info("PTZ grid cell cleared camera_id=%s cell=%s", _slv(camera_id), _slv(cell_key))
+    logger.info(
+        "PTZ grid cell cleared camera_id=%s cell=%s", _slv(camera_id), _slv(cell_key)
+    )
     return True
 
 
@@ -755,8 +792,12 @@ def goto_preset(camera_id: int, preset_token: str, speed: float | None = None) -
         _slv(camera_id),
         _slv(preset_token),
     )
-    client = _client_for_camera(camera_id)
-    client.goto_preset(preset_token=preset_token, speed=speed)
+    generation = _current_stop_generation(camera_id)
+    _run_ptz_command(
+        camera_id,
+        lambda client: client.goto_preset(preset_token=preset_token, speed=speed),
+        skip_if_superseded=generation,
+    )
 
 
 def continuous_move(
@@ -767,6 +808,15 @@ def continuous_move(
     zoom: float = 0.0,
     duration_ms: int = 250,
 ) -> None:
+    # Coalesce: at most one move may wait for the lock. If a move is already
+    # running and another already waiting, this one carries no new info while
+    # the button is held — drop it before it queues so the backlog (and thus
+    # the post-release run-on) cannot build.
+    if not _reserve_move_slot(camera_id):
+        logger.debug("PTZ move coalesced (slot busy) camera_id=%s", _slv(camera_id))
+        return
+
+    generation = _current_stop_generation(camera_id)
     logger.info(
         "PTZ move camera_id=%s pan=%.3f tilt=%.3f zoom=%.3f duration=%sms",
         _slv(camera_id),
@@ -775,19 +825,27 @@ def continuous_move(
         zoom,
         duration_ms,
     )
-    client = _client_for_camera(camera_id)
-    client.continuous_move(
-        pan=pan,
-        tilt=tilt,
-        zoom=zoom,
-        duration_ms=duration_ms,
-    )
+    try:
+        _run_ptz_command(
+            camera_id,
+            lambda client: client.continuous_move(
+                pan=pan,
+                tilt=tilt,
+                zoom=zoom,
+                duration_ms=duration_ms,
+            ),
+            skip_if_superseded=generation,
+        )
+    finally:
+        _release_move_slot(camera_id)
 
 
 def stop(camera_id: int) -> None:
+    # Bump the stop generation FIRST so any move already waiting for the lock
+    # sees that it has been superseded and skips its ONVIF call when it wakes.
+    _bump_stop_generation(camera_id)
     logger.info("PTZ stop camera_id=%s", _slv(camera_id))
-    client = _client_for_camera(camera_id)
-    client.stop()
+    _run_ptz_command(camera_id, lambda client: client.stop())
 
 
 def find_auto_ptz_camera() -> dict[str, Any] | None:
@@ -819,6 +877,145 @@ def clear_auto_ptz_camera_cache() -> None:
     with _auto_camera_cache_lock:
         _auto_camera_cache_ts = 0.0
         _auto_camera_cache_value = _AUTO_CAMERA_CACHE_SENTINEL
+
+    # The PtzClient cache embeds ip/port/credentials/profile_index, which can
+    # change in the same edit that invalidated the camera-config cache. Drop
+    # cached clients so the next command rebuilds against current config.
+    clear_ptz_client_cache()
+
+
+def _connection_fingerprint(camera: dict[str, Any]) -> dict[str, Any]:
+    """Connection-identifying fields. A change here means the cached client
+    points at the wrong endpoint/credentials and must be rebuilt."""
+    return {
+        "ip": str(camera.get("ip") or ""),
+        "port": int(camera.get("port", 80)),
+        "username": str(camera.get("username") or ""),
+        "password": str(camera.get("password") or ""),
+        "profile_index": int(
+            normalize_ptz_config(camera.get("ptz")).get("profile_index", 0)
+        ),
+    }
+
+
+def _command_lock_for_camera(camera_id: int) -> threading.Lock:
+    """Return the per-camera command lock, creating it on first use.
+
+    Serializes ONVIF command execution so manual moves and the
+    AutoPtzController worker cannot interleave ContinuousMove/Stop on the
+    same non-thread-safe connection.
+    """
+    with _ptz_client_cache_lock:
+        lock = _ptz_command_locks.get(camera_id)
+        if lock is None:
+            lock = threading.Lock()
+            _ptz_command_locks[camera_id] = lock
+        return lock
+
+
+def _get_cached_client(camera_id: int) -> PtzClient:
+    """Return a cached PtzClient for the camera, rebuilding if absent or if
+    the persisted connection fingerprint changed since it was cached."""
+    fingerprint = _connection_fingerprint(_camera_or_raise(camera_id))
+    with _ptz_client_cache_lock:
+        entry = _ptz_client_cache.get(camera_id)
+        if entry is not None and entry[1] == fingerprint:
+            return entry[0]
+        client = PtzClient(
+            ip=fingerprint["ip"],
+            port=fingerprint["port"],
+            username=fingerprint["username"],
+            password=fingerprint["password"],
+            profile_index=fingerprint["profile_index"],
+        )
+        _ptz_client_cache[camera_id] = (client, fingerprint)
+        return client
+
+
+def _current_stop_generation(camera_id: int) -> int:
+    with _ptz_move_state_lock:
+        return _ptz_stop_generation.get(camera_id, 0)
+
+
+def _bump_stop_generation(camera_id: int) -> None:
+    with _ptz_move_state_lock:
+        _ptz_stop_generation[camera_id] = _ptz_stop_generation.get(camera_id, 0) + 1
+
+
+# At most one move running plus one move waiting for the lock. A third
+# concurrent move carries no new information while the button is held and is
+# coalesced away. Keeping one waiting (rather than zero) keeps held-button
+# motion fluid: the next move is already queued to fire the instant the
+# running one finishes, so there is no per-step gap.
+_MAX_MOVES_IN_FLIGHT = 2
+
+
+def _reserve_move_slot(camera_id: int) -> bool:
+    """Try to admit a move into the in-flight set (running + waiting).
+
+    Returns True if this move may proceed to the lock, False if the camera
+    already has one move running and one waiting (this one is coalesced
+    away), so a held button cannot build an unbounded backlog.
+    """
+    with _ptz_move_state_lock:
+        in_flight = _ptz_move_waiting.get(camera_id, 0)
+        if in_flight >= _MAX_MOVES_IN_FLIGHT:
+            return False
+        _ptz_move_waiting[camera_id] = in_flight + 1
+        return True
+
+
+def _release_move_slot(camera_id: int) -> None:
+    with _ptz_move_state_lock:
+        waiting = _ptz_move_waiting.get(camera_id, 0)
+        if waiting <= 1:
+            _ptz_move_waiting.pop(camera_id, None)
+        else:
+            _ptz_move_waiting[camera_id] = waiting - 1
+
+
+def _run_ptz_command(
+    camera_id: int, action, *, skip_if_superseded: int | None = None
+) -> None:
+    """Run one PTZ command against the cached client under the per-camera lock.
+
+    ``skip_if_superseded`` is the stop generation captured when the command
+    was issued. If a stop bumped the generation while this command waited for
+    the lock, the command is dropped without touching the camera — this is how
+    a release-Stop cancels moves that were queued before it.
+
+    On any error the cached client is evicted so the next command rebuilds a
+    fresh ONVIF connection — credentials may have rotated, the socket may have
+    dropped, or the camera may have rebooted.
+    """
+    lock = _command_lock_for_camera(camera_id)
+    with lock:
+        if (
+            skip_if_superseded is not None
+            and _current_stop_generation(camera_id) != skip_if_superseded
+        ):
+            logger.debug("PTZ command superseded by stop camera_id=%s", _slv(camera_id))
+            return
+        client = _get_cached_client(camera_id)
+        try:
+            action(client)
+        except Exception:
+            clear_ptz_client_cache(camera_id)
+            raise
+
+
+def clear_ptz_client_cache(camera_id: int | None = None) -> None:
+    """Drop cached PtzClient instances.
+
+    ``camera_id=None`` clears all entries (used on config reload and in tests).
+    The per-camera command locks are intentionally retained: a lock may be
+    held by an in-flight command, and Lock objects are cheap to keep.
+    """
+    with _ptz_client_cache_lock:
+        if camera_id is None:
+            _ptz_client_cache.clear()
+        else:
+            _ptz_client_cache.pop(int(camera_id), None)
 
 
 def _find_auto_ptz_camera_uncached() -> dict[str, Any] | None:
@@ -886,21 +1083,22 @@ def find_any_ptz_camera() -> dict[str, Any] | None:
     return fallback
 
 
-def _client_for_camera(camera_id: int) -> PtzClient:
+def _camera_or_raise(camera_id: int) -> dict[str, Any]:
     storage = get_camera_storage()
     camera = storage.get_camera(camera_id, include_password=True)
     if not camera:
         raise ValueError(f"Camera {camera_id} not found")
+    return camera
 
-    return PtzClient(
-        ip=str(camera.get("ip") or ""),
-        port=int(camera.get("port", 80)),
-        username=str(camera.get("username") or ""),
-        password=str(camera.get("password") or ""),
-        profile_index=int(
-            normalize_ptz_config(camera.get("ptz")).get("profile_index", 0)
-        ),
-    )
+
+def _client_for_camera(camera_id: int) -> PtzClient:
+    """Return the cached PtzClient for a camera (rebuilt on config change).
+
+    Kept as the module-internal accessor for one-shot callers (e.g. applying
+    a new overview preset). Routes through the same cache as the hot command
+    path so a single connection is shared.
+    """
+    return _get_cached_client(camera_id)
 
 
 def probe_capabilities(
@@ -1037,9 +1235,7 @@ def _load_empirical_from_disk(camera_id: int) -> dict[str, Any] | None:
         with path.open("r", encoding="utf-8") as fh:
             data = yaml.safe_load(fh) or {}
     except (OSError, yaml.YAMLError) as exc:
-        logger.debug(
-            "Unreadable PTZ capability cache %s: %s", _slv(str(path)), exc
-        )
+        logger.debug("Unreadable PTZ capability cache %s: %s", _slv(str(path)), exc)
         return None
 
     empirical = data.get("empirical") or {}
