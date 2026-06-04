@@ -24,5 +24,10 @@ chown -R $PUID:$PGID /app/assets || true
 [ -d "$MODEL_BASE_PATH" ] && chown -R $PUID:$PGID "$MODEL_BASE_PATH"
 [ -d "$INGEST_DIR" ] && chown -R $PUID:$PGID "$INGEST_DIR"
 
-# Switch to the user and execute the CMD
-exec gosu $PUID:$PGID "$@"
+# Switch to the user and execute the CMD. --init-groups sets the
+# supplementary groups for PGID; the guard refuses to run as root.
+if ! command -v setpriv > /dev/null 2>&1; then
+    echo "FATAL: setpriv not found; refusing to start as root" >&2
+    exit 1
+fi
+exec setpriv --reuid "$PUID" --regid "$PGID" --init-groups "$@"

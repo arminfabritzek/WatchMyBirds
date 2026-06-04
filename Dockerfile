@@ -10,8 +10,7 @@ RUN apt-get update && \
     ffmpeg \
     libglib2.0-0 \
     libsm6 \
-    libopenjp2-7 \
-    gosu && \
+    libopenjp2-7 && \
     apt-get autoremove -y && \
     apt-get autoclean -y && \
     rm -rf /var/lib/apt/lists/*
