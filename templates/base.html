@@ -91,13 +91,14 @@
 
     <footer class="app-footer py-2 text-center text-muted">
         <small>WatchMyBirds</small>
-        <small class="ms-1 font-monospace" id="footer-version" style="opacity:.55"></small>
+        {% set _footer_ver = [footer_commit, footer_build_date] | select | join(' · ') %}
+        {% if _footer_ver %}<small class="ms-1 font-monospace" style="opacity:.55">{{ _footer_ver }}</small>{% endif %}
         <a href="/privacy" class="ms-2 text-muted" title="Privacy" style="opacity:.55;transition:opacity .2s;"
            onmouseover="this.style.opacity='1'" onmouseout="this.style.opacity='.55'">
             <small>Privacy</small>
         </a>
-        <a id="footer-github" href="https://github.com/arminfabritzek/WatchMyBirds" target="_blank" rel="noopener noreferrer"
-           class="ms-2 text-muted" title="View on GitHub" style="opacity:.55;transition:opacity .2s;"
+        <a href="{% if footer_commit %}https://github.com/arminfabritzek/WatchMyBirds/commit/{{ footer_commit }}{% else %}https://github.com/arminfabritzek/WatchMyBirds{% endif %}" target="_blank" rel="noopener noreferrer"
+           class="ms-2 text-muted" title="{% if footer_commit %}Commit {{ footer_commit }}{% else %}View on GitHub{% endif %}" style="opacity:.55;transition:opacity .2s;"
            onmouseover="this.style.opacity='1'" onmouseout="this.style.opacity='.55'">
             <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
                 <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38
@@ -130,34 +131,6 @@
                 }
                 return _origFetch.call(this, url, opts);
             };
-        })();
-    </script>
-    <script>
-        (function(){
-            fetch('/api/v1/system/versions')
-                .then(function(r){return r.json()})
-                .then(function(d){
-                    var el=document.getElementById('footer-version');
-                    if(el){
-                        var parts=[];
-                        if(d.git_commit && d.git_commit!=='Unknown'){
-                            parts.push(d.git_commit);
-                        }
-                        if(d.build_date && d.build_date!=='Unknown'){
-                            // Keep just the date portion if a full timestamp arrives.
-                            parts.push(String(d.build_date).slice(0,10));
-                        }
-                        if(parts.length){
-                            el.textContent=parts.join(' · ');
-                        }
-                    }
-                    var gh=document.getElementById('footer-github');
-                    if(gh && d.git_commit && d.git_commit!=='Unknown'){
-                        gh.href='https://github.com/arminfabritzek/WatchMyBirds/commit/'+d.git_commit;
-                        gh.title='Commit '+d.git_commit;
-                    }
-                })
-                .catch(function(){});
         })();
     </script>
 

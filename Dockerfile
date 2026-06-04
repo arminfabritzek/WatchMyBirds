@@ -80,6 +80,17 @@ RUN mkdir -p /models /output /ingest
 # fallbacks so that an empty build-arg never produces an empty file --
 # read_build_metadata() reports "Unknown" only for missing/empty files,
 # so an explicit "unknown" token at least signals "build forgot the arg".
+#
+# Re-declare the args immediately before use so this layer's cache key
+# tracks GIT_COMMIT/BUILD_DATE/VERSION. Without the re-declaration a
+# stale registry-buildcache layer -- baked once when the args were empty
+# and so resolved to the literal "unknown" -- has a byte-identical digest
+# on every later run and gets reused forever, even for builds that carry
+# a real commit. Tying the args into the layer here forces a fresh layer
+# whenever the commit changes.
+ARG GIT_COMMIT
+ARG BUILD_DATE
+ARG VERSION
 RUN echo "${VERSION:-unknown}" > /app/APP_VERSION && \
     echo "${GIT_COMMIT:-unknown}" > /app/BUILD_COMMIT && \
     echo "${BUILD_DATE:-unknown}" > /app/BUILD_DATE

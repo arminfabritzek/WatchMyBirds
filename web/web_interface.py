@@ -436,7 +436,9 @@ def create_web_interface(detection_manager, system_monitor=None):
     # Quality key thin wrapper — single source of truth in core.gallery_core
     # so Best-of-Species, Today's Visitors, Species tab and subgallery all
     # share one ranking policy.
-    from core.gallery_core import cover_quality_tuple as _cover_quality_tuple  # noqa: E501
+    from core.gallery_core import (
+        cover_quality_tuple as _cover_quality_tuple,  # noqa: E501
+    )
 
     def _is_favorite(det: dict) -> bool:
         """True when a detection is marked as ❤️ favorite (manual gold label)."""
@@ -445,7 +447,6 @@ def create_web_interface(detection_manager, system_monitor=None):
     def _is_gallery_eligible(det: dict) -> bool:
         """True when the aesthetic tagger marked the detection as a gallery pick."""
         return bool(int(det.get("is_gallery_eligible") or 0))
-
 
     def _build_detection_view_dict(
         det: dict,
@@ -701,7 +702,8 @@ def create_web_interface(detection_manager, system_monitor=None):
                     "last_seen_timestamp": pool["last_seen_timestamp"],
                     "best_cover_score": pool["best_cover_score"],
                     "is_favorite_available": pool["is_favorite_available"],
-                    "primary_detection": primary or (candidates[0] if candidates else None),
+                    "primary_detection": primary
+                    or (candidates[0] if candidates else None),
                     "story_detections": frames,
                 }
             )
@@ -805,6 +807,23 @@ def create_web_interface(detection_manager, system_monitor=None):
     server.config["SESSION_COOKIE_HTTPONLY"] = True
     server.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 
+    # Build metadata for the always-visible footer. Read once at app
+    # init (it stats files / may shell out in dev) and reuse on every
+    # request. Normalize the "Unknown" sentinel to "" so the template
+    # logic is a plain truthiness check. Shown logged-out too: the short
+    # commit SHA is already public on GitHub, where the footer links it.
+    from utils.deploy_info import read_build_metadata as _read_build_metadata
+
+    _footer_meta = _read_build_metadata()
+    _footer_commit = (
+        "" if _footer_meta["git_commit"] == "Unknown" else _footer_meta["git_commit"]
+    )
+    _footer_build_date = (
+        ""
+        if _footer_meta["build_date"] == "Unknown"
+        else _footer_meta["build_date"][:10]
+    )
+
     # Inject a default-password warning and CSRF token into every template context
     @server.context_processor
     def inject_security_context():
@@ -829,6 +848,10 @@ def create_web_interface(detection_manager, system_monitor=None):
             # render time (Jinja resolves route locals before context_processor
             # values), so this only fills in routes that don't.
             "ticker_dashboard_stats": _compute_ticker_dashboard_stats(),
+            # Build metadata for the footer — rendered on every page,
+            # logged in or out. Empty string when unknown.
+            "footer_commit": _footer_commit,
+            "footer_build_date": _footer_build_date,
         }
 
     # CSRF validation for state-changing requests
@@ -937,6 +960,7 @@ def create_web_interface(detection_manager, system_monitor=None):
         init_user_groundtruth_export_bp,
         user_groundtruth_export_bp,
     )
+
     init_user_groundtruth_export_bp(
         output_dir=output_dir,
         app_version=str(_build_meta.get("app_version") or ""),
@@ -3782,9 +3806,7 @@ def create_web_interface(detection_manager, system_monitor=None):
 
             return jsonify(response)
         except Exception as exc:
-            logger.error(
-                "Status API error [%s]", type(exc).__name__, exc_info=True
-            )
+            logger.error("Status API error [%s]", type(exc).__name__, exc_info=True)
             return jsonify({"error": "Status read failed"}), 500
 
     @server.route("/api/detection/pause", methods=["POST"])
