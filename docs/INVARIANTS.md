@@ -1,4 +1,32 @@
-# INVARIANTS.md v2
+# INVARIANTS.md v3
+
+## Rule lifecycle
+
+Rules live in one of three sections, by enforcement strength:
+
+- **HARD** — test-enforced facts about the whole codebase. A violation
+  is caught by CI (e.g. `tests/test_import_boundaries.py`). HARD rules
+  constrain *where* code lives, not *what* the project can do.
+- **SOFT** — preferred patterns for new code. Not enforced as facts;
+  legacy violations still exist. Monitored non-blocking by
+  `tests/test_architecture_soft_monitoring.py`, which reports trend
+  metrics only and never fails the build.
+- **OBSOLETE** — former rules retired because they over-constrained
+  reality. Kept (not deleted) so the reasoning stays on the record.
+
+**Demoting a rule** (HARD→SOFT, SOFT→OBSOLETE) is a deliberate
+architectural decision — never an automatic consequence. In
+particular, neither "THE_FUTURE.md endorses a change that this rule
+blocks" nor "the enforcement test is firing" is, on its own, a
+sufficient reason: a firing test may mean the test is wrong, not the
+rule. Demotion requires all of:
+
+1. a deliberate architectural decision to demote;
+2. a written rationale recorded with the rule's new section;
+3. the corresponding enforcement/monitoring tests updated to match;
+4. a `schema_version` bump (the title line, e.g. `v2` → `v3`).
+
+Never silently delete a rule. Move it to OBSOLETE with its reason.
 
 ## HARD
 

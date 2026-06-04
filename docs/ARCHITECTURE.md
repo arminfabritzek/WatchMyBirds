@@ -66,7 +66,7 @@ WatchMyBirds is an AI-powered bird detection system that provides real-time vide
 *   **New Routes:** All new web routes MUST be implemented in Flask (`server.route` or a blueprint).
 *   **Path Construction in new code:** Do not use `os.path.join` to build storage paths in new code. Use `path_manager`. (Legacy manual-path call sites exist; do not extend them.)
 *   **Cross-Cutting Impact:** Any change affecting storage layout, deletion logic, or image processing MUST trigger a simultaneous review of `PathManager`, `detection_manager`, `file_gc`, and `web_interface` to ensure consistency.
-*   **Authority hierarchy:** When this document and `INVARIANTS.md` disagree, `INVARIANTS.md` wins. It is schema-versioned (currently `v2`) and tracks what is actually enforced; this document is the narrative companion.
+*   **Authority hierarchy:** When this document and `INVARIANTS.md` disagree, `INVARIANTS.md` wins. It is schema-versioned (currently `v3`) and tracks what is actually enforced; this document is the narrative companion.
 
 ## 6. Non-Goals
 *   **Client-Side Rendering (CSR):** The core gallery is Server-Side Rendered (SSR). We do not aim to move the app to a SPA framework.

@@ -41,7 +41,7 @@ no separate `.flake8` / `.isort.cfg` / `pytest.ini` files.
 
 Authority order when they disagree: **`INVARIANTS.md` > `ARCHITECTURE.md` > everything else.** `INVARIANTS.md` is schema-versioned and tracks what is actually enforced; the others are narrative.
 
-- [`docs/INVARIANTS.md`](docs/INVARIANTS.md) — schema-versioned (`v2`)
+- [`docs/INVARIANTS.md`](docs/INVARIANTS.md) — schema-versioned (`v3`)
   list of HARD / SOFT / OBSOLETE invariants. The canonical answer to
   "is this rule actually enforced?" Read first for any cross-cutting
   change.
@@ -59,7 +59,7 @@ Authority order when they disagree: **`INVARIANTS.md` > `ARCHITECTURE.md` > ever
 - [`docs/PRIVACY.md`](docs/PRIVACY.md) — privacy posture (local-only
   by default, opt-in heartbeat only).
 
-## Hard rules (HARD invariants from `INVARIANTS.md v2`)
+## Hard rules (HARD invariants from `INVARIANTS.md v3`)
 
 These are the rules whose violations are detected by tests. If you
 break one, CI catches you.
