@@ -39,15 +39,24 @@ def get_or_create_secret_key(config):
     # 2. Generate new
     new_key = secrets.token_hex(32)
 
-    # 3. Try to save
+    # 3. Try to save. Create with mode 0o600 at creation time (O_CREAT |
+    # O_EXCL) so there is no window where the file exists with default
+    # permissions before a follow-up chmod (TOCTOU). O_EXCL also makes a
+    # concurrent first-run race safe: if another process created the file
+    # first, fall back to reading theirs.
     try:
-        # Ensure dir exists
         secret_file.parent.mkdir(parents=True, exist_ok=True)
-        with open(secret_file, "w") as f:
+        fd = os.open(secret_file, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "w") as f:
             f.write(new_key)
-        # Fix permissions (600)
-        os.chmod(secret_file, 0o600)
         print(f"Generated new persistent secret key at {secret_file}")
+    except FileExistsError:
+        try:
+            existing = secret_file.read_text().strip()
+            if len(existing) >= 32:
+                return existing
+        except Exception:
+            pass
     except Exception as e:
         print(
             f"Warning: Could not save persistent secret key to {secret_file}: {e}. Using volatile key."

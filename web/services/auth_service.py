@@ -4,6 +4,7 @@ Auth Service - Web Layer Service for Authentication.
 Handles authentication logic and redirect target validation.
 """
 
+import secrets
 from urllib.parse import urlparse
 
 from core import settings_core
@@ -25,11 +26,21 @@ def authenticate(provided_password: str) -> bool:
     # Get raw password from settings (bypass security filter to match legacy behavior)
     stored_password = settings_core.get_setting("EDIT_PASSWORD", "")
 
-    # Match legacy comparison logic: (stored_password or "")
     # Note: If stored_password is None, it becomes ""
     target = stored_password or ""
 
-    return provided_password == target
+    # Refuse to authenticate against an unconfigured (empty) password. An
+    # empty stored value means no password is set; treating it as a valid
+    # credential would leave the instance open to anyone.
+    if not target:
+        return False
+
+    # Constant-time comparison to avoid leaking the password length or a
+    # matching prefix through response timing. Compare as bytes so that
+    # non-ASCII passwords don't raise (str compare_digest is ASCII-only).
+    return secrets.compare_digest(
+        (provided_password or "").encode("utf-8"), target.encode("utf-8")
+    )
 
 
 def is_default_password() -> bool:

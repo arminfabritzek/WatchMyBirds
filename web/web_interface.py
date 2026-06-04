@@ -791,12 +791,24 @@ def create_web_interface(detection_manager, system_monitor=None):
 
     # Configure Flask Session for server-side auth
     def _load_or_create_secret_key(key_file: Path) -> str:
-        """Load persisted secret key or generate a new one."""
+        """Load persisted secret key or generate a new one.
+
+        The key file is created with mode 0o600 at creation time via
+        ``os.open(... O_CREAT | O_EXCL ...)`` so there is no window where
+        it exists with default permissions before a follow-up ``chmod``
+        (TOCTOU). ``O_EXCL`` also makes a concurrent first-run race safe:
+        if another worker created the file first, we read theirs.
+        """
         if key_file.exists():
             return key_file.read_text().strip()
         key = secrets.token_hex(32)
-        key_file.write_text(key)
-        key_file.chmod(0o600)
+        key_file.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            fd = os.open(key_file, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        except FileExistsError:
+            return key_file.read_text().strip()
+        with os.fdopen(fd, "w") as fh:
+            fh.write(key)
         return key
 
     secret_key_path = Path(output_dir) / ".flask_secret_key"
