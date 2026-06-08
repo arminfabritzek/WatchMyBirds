@@ -686,8 +686,8 @@ function initBboxOverlay(img) {
             localStorage.setItem(prefs.bbox, prefs.bboxDefault);
         }
 
-        // UI_STANDARD § 0c: detail modal must show every active companion
-        // detection on the frame. When `data-siblings` is present and
+        // The detail modal must show every active companion detection
+        // on the frame. When `data-siblings` is present and
         // contains > 1 box, force-on the overlay regardless of the saved
         // pref so the user does not need to discover the toggle.
         let multiBird = false;
@@ -892,7 +892,7 @@ function drawBoundingBoxes(canvas, img, boxes, currentDetectionId) {
     const ctx = canvas.getContext('2d');
 
     // ──────────────────────────────────────────────────────────────
-    // Hi-DPI + zoom-aware canvas setup (2026-04-08)
+    // Hi-DPI + zoom-aware canvas setup
     //
     // Before this fix the canvas was set up with the raw CSS pixel
     // dimensions of the image, which caused two compounding quality

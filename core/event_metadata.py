@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 # Bumped whenever the field set or serialisation changes in a way a
 # downstream reader would need to know about. Carried into the wmb:
 # namespace so a re-imported WMB copy can tell which envelope produced it.
-# v2 (2026-06-02): added image-wide rating/favorite/review fields and the
+# v2: added image-wide rating/favorite/review fields and the
 #   xmp:Rating / xmp:Label / wmb:* mapping for them.
 METADATA_SCHEMA_VERSION = 2
 

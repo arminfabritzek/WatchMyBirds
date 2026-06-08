@@ -4150,7 +4150,7 @@
                 // and is a greeter, not a real event. Without this
                 // exclusion the bird is forced "awake" for 30 s
                 // after every reload, defeating the entire idle
-                // mechanism (observed live: 8 animations cycling
+                // mechanism (in practice: 8 animations cycling
                 // through at 01:07 before the first sleep slot
                 // because Welcome had reset lastEventAt to now).
                 // Real wake-triggering events (Excited, BigFlock,

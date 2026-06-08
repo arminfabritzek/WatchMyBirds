@@ -1,7 +1,3 @@
-# ------------------------------------------------------------------------------
-# Backup Utilities for WatchMyBirds
-# utils/backup.py
-# ------------------------------------------------------------------------------
 """
 Streaming backup archive generation for migration.
 Implements tar.gz streaming without local archive file.
@@ -53,7 +49,6 @@ def get_backup_stats() -> dict:
         "settings_size_bytes": 0,
     }
 
-    # DB Size
     try:
         db_path = Path(get_db_path())
         if db_path.exists():
@@ -62,7 +57,6 @@ def get_backup_stats() -> dict:
     except Exception as e:
         logger.warning(f"Could not get DB size: {e}")
 
-    # Originals
     try:
         if pm.originals_dir.exists():
             for f in pm.originals_dir.rglob("*"):
@@ -75,7 +69,6 @@ def get_backup_stats() -> dict:
     except Exception as e:
         logger.warning(f"Could not scan originals: {e}")
 
-    # Derivatives
     try:
         if pm.derivatives_dir.exists():
             for f in pm.derivatives_dir.rglob("*"):
@@ -88,7 +81,6 @@ def get_backup_stats() -> dict:
     except Exception as e:
         logger.warning(f"Could not scan derivatives: {e}")
 
-    # Settings
     try:
         settings_path = Path(get_settings_path())
         if settings_path.exists():
@@ -164,16 +156,13 @@ def stream_backup_archive(
             if not _create_db_snapshot(tmp_db_path):
                 raise RuntimeError("Failed to create DB snapshot")
 
-        # Create streaming tar
         buffer = BytesIO()
 
         with tarfile.open(fileobj=buffer, mode="w|gz") as tar:
-            # Add DB
             if include_db and tmp_db_path and tmp_db_path.exists():
                 tar.add(str(tmp_db_path), arcname="images.db")
                 logger.debug("Added DB to archive")
 
-                # Yield current buffer
                 buffer.seek(0)
                 data = buffer.read()
                 if data:
@@ -181,7 +170,6 @@ def stream_backup_archive(
                 buffer.seek(0)
                 buffer.truncate(0)
 
-            # Add settings
             if include_settings:
                 settings_path = Path(get_settings_path())
                 if settings_path.exists():
@@ -195,7 +183,6 @@ def stream_backup_archive(
                     buffer.seek(0)
                     buffer.truncate(0)
 
-            # Add originals
             if include_originals and pm.originals_dir.exists():
                 file_count = 0
                 for filepath in pm.originals_dir.rglob("*"):
@@ -204,7 +191,6 @@ def stream_backup_archive(
                         tar.add(str(filepath), arcname=arcname)
                         file_count += 1
 
-                        # Yield every 10 files to keep memory low
                         if file_count % 10 == 0:
                             buffer.seek(0)
                             data = buffer.read()
@@ -215,7 +201,6 @@ def stream_backup_archive(
 
                 logger.debug(f"Added {file_count} original files to archive")
 
-                # Final yield for originals
                 buffer.seek(0)
                 data = buffer.read()
                 if data:
@@ -223,7 +208,6 @@ def stream_backup_archive(
                 buffer.seek(0)
                 buffer.truncate(0)
 
-            # Add derivatives
             if include_derivatives and pm.derivatives_dir.exists():
                 file_count = 0
                 for filepath in pm.derivatives_dir.rglob("*"):
@@ -257,7 +241,6 @@ def stream_backup_archive(
         raise
 
     finally:
-        # Cleanup temp DB
         if tmp_db_path and tmp_db_path.exists():
             try:
                 tmp_db_path.unlink()

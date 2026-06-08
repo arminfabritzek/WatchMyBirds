@@ -12,7 +12,6 @@ For new code, prefer direct imports from submodules:
     from utils.db.connection import get_connection
 """
 
-# Re-export everything from the db package
 from utils.db import (  # noqa: F401
     DB_FILENAME,
     _ensure_column,

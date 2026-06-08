@@ -17,10 +17,8 @@ _ROLE_PREFIX_RE = re.compile(
 )
 _SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+")
 
-# Hard cap on the cleaned response. The contract is 60-150 tokens; one
-# token is roughly 3-4 chars for German/English, so 720 chars covers
-# the upper bound with headroom. Anything longer is the model failing
-# to obey the brevity rule and is trimmed.
+# 720 chars ≈ the 150-token contract ceiling at 3-4 chars/token (DE/EN) with
+# headroom; anything longer means the model ignored the brevity rule — trim.
 MAX_CHARS = 720
 MAX_SENTENCES = 6  # 4 dialog turns × ~1.5 sentences, generous buffer
 

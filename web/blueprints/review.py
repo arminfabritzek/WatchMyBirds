@@ -1075,7 +1075,7 @@ def _build_review_event_member(
     member["candidate_species_common"] = resolve_common_name(
         member["candidate_species"], common_names
     )
-    # Post fixed-5 (2026-04-08): the grid cell label needs to know
+    # The grid cell label needs to know
     # whether its species came from a per-frame manual override or from
     # the auto-CLS guess. The Event-level species picker must only
     # update auto-species cells — manual overrides win and stay locked
@@ -2709,8 +2709,7 @@ def review_event_approve():
             # — e.g. the operator used Multi-Select to relabel a
             # subset of frames before approving), do NOT overwrite it
             # with the event species picked in the right control rail.
-            # Mirrors the `per-frame wins` rule in event-resolve at
-            # web/blueprints/review.py:2930.
+            # Mirrors the `per-frame wins` rule in event-resolve.
             def _row_field(row, key):
                 try:
                     return row[key]
@@ -2868,8 +2867,7 @@ def review_event_trash():
                 # in the Gallery. Accept both payload shapes so that
                 # older tabs that still submit the full event id list
                 # continue to work — we down-cast to actionable ids
-                # server-side. Mirrors the event-approve contract in
-                # web/blueprints/review.py:2394.
+                # server-side. Mirrors the event-approve contract.
                 event_detection_ids = sorted(event.get("detection_ids") or [])
                 actionable_event_detection_ids = sorted(
                     int(member.get("best_detection_id") or 0)

@@ -12,7 +12,7 @@
     read-only; only ``context_only == false`` cells expose editing
     actions (checkboxes, frame-decision toggles, per-frame relabel).
 
-    Why no budget: the previous fixed-5 budget was designed around a
+    Why no budget: the previous fixed five-frame budget was designed around a
     "enough of the event to decide" batch-approve hypothesis. It broke
     down for mixed-species events, where the operator must inspect
     every frame and can land in a state where a just-relabelled frame
@@ -254,7 +254,7 @@
                             {% endif %}
                             <span class="review-event-panel__cell-reason">{{ member.reason_label }}</span>
                         </div>
-                        {# Retired 2026-04-19: the inline per-frame decision
+                        {# Retired: the inline per-frame decision
                            toggle. Per-frame trash lives in the hover
                            toolbox and in the multi-select batch footer.
                            The mixed-resolve backend stays but is no
@@ -275,7 +275,7 @@
                Honest counts: split the total into review-frames (will be
                approved) and context-frames (already in the Gallery,
                shown read-only for orientation). The overflow hint is
-               retired with the Fixed-5 budget — every frame is visible
+               retired with the fixed frame budget — every frame is visible
                now. #}
             {% set _review_count = _review_members | length %}
             {% set _context_count = _context_members | length %}
@@ -310,7 +310,7 @@
             </div>
         </div>
 
-        {# Fixed-5 approve path: the actionable (non-context) IDs drive both
+        {# Approve path: the actionable (non-context) IDs drive both
            the fastpath event-approve and the resolve path for ineligible
            events. Context (Gallery anchor) IDs never participate in the
            write — the resolve endpoint refuses to touch them. #}
@@ -339,7 +339,7 @@
             data-original-species-origin="{{ event.species_source or '' }}"
             data-original-species-meta="{% if event.species_source == 'cls' %}CLS{% elif event.species_source %}{{ event.species_source|capitalize }}{% endif %}"
            >
-            {# Removed 2026-04-19: the right-rail mini-map + "Event Ready"
+            {# Removed: the right-rail mini-map + "Event Ready"
                badge duplicated what the top-left grid already shows
                (event header with time range + frame count, bbox overlay
                per cell). Keeping one authoritative surface reduces
@@ -448,7 +448,7 @@
             <div class="review-stage-panel__section review-stage-panel__section--decision">
                 <div class="review-stage-panel__section-label">Decision</div>
                 <div class="review-stage-panel__action-stack">
-                    {# Post fixed-5 (2026-04-08): the disabled gate no longer
+                    {# The disabled gate no longer
                        checks ``event.eligibility``. Event-ineligible events
                        (fallback_reason set) stay approvable as long as a
                        species is present — the JS routes them through the
@@ -474,7 +474,7 @@
                 <div class="review-stage-panel__hint">Rejects the review detections of this event. Gallery-anchor frames (with the "In Gallery" badge) stay untouched. Images whose only detections were in this event go to Trash; others keep their remaining detections.</div>
             </div>
 
-            {# Removed 2026-04-19: the Utilities section (only button
+            {# Removed: the Utilities section (only button
                opened the cover frame in the per-detection queue view).
                Unused in the current event workflow — every cell is
                already first-class and editable in the grid. #}

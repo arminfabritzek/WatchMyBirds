@@ -265,7 +265,11 @@ DEFAULTS = {
     # popup. Endpoint is overridable for self-hosters / privacy-paranoid
     # operators (point it at /dev/null or a self-hosted Worker).
     "telemetry_enabled": False,
-    "telemetry_endpoint": "https://heartbeat-wmb.starmin.de/v1/heartbeat",
+    # Canonical default lives in web/services/telemetry_service.DEFAULT_TELEMETRY_ENDPOINT;
+    # kept as a literal here to avoid a config -> web.services import cycle. Keep in sync.
+    "telemetry_endpoint": (
+        "https://watchmybirds-telemetry.wmb-infra.workers.dev/v1/heartbeat"
+    ),
     "telemetry_installation_id": "",  # lazily generated on first opt-in
 }
 

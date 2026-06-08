@@ -24,9 +24,8 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-# Per-subscriber queue depth. Detection peaks during a busy feeder visit can
-# stack a dozen events in a second; 64 gives slow clients ~half a minute of
-# slack at typical event rates before drops start.
+# Detection peaks stack ~a dozen events/s; 64 gives slow clients ~half a
+# minute of slack at typical rates before drops start.
 _SUBSCRIBER_BUFFER = 64
 
 

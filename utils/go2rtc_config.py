@@ -41,7 +41,6 @@ def ensure_go2rtc_config_exists(path: str, template_path: str = "") -> bool:
                 logger.info("go2rtc config copied from template: %s → %s", tpl, target)
                 return True
 
-        # Minimal default – empty source until user sets CAMERA_URL.
         # NEVER use a fake/fallback URL here: go2rtc reads config only at
         # startup, and a stale default would persist until next restart.
         default_config = {
@@ -81,13 +80,11 @@ def set_camera_stream_source(
         with open(target, encoding="utf-8") as fh:
             config = yaml.safe_load(fh) or {}
 
-        # Ensure structure
         if "streams" not in config or not isinstance(config["streams"], dict):
             config["streams"] = {}
 
         config["streams"][stream_name] = [camera_url]
 
-        # Backup + atomic write
         _backup(target)
         _write_yaml_atomic(target, config)
         logger.info(

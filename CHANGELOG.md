@@ -4,8 +4,8 @@
 
 ### Added
 
-- **Telemetry Phase 2 — consent + aggregation + instant toggle.** Three
-  improvements on top of the Phase 1 heartbeat:
+- **Telemetry — consent + aggregation + instant toggle.** Three
+  improvements on top of the initial heartbeat:
   - **First-Run consent checkbox** in `setup_password.html` so new
     operators see the opt-in question once at install time, not buried
     in Settings. Default unchecked. Submitting the password without
@@ -22,7 +22,7 @@
     out of its 5-minute sleep, so the first heartbeat after toggle-on
     fires within ~10ms instead of waiting up to one full tick.
   - 9 new tests (3 for Event wake-up, 2 for first-run consent, 4
-    already in Phase 1 for `_detect_detector_variant`).
+    pre-existing for `_detect_detector_variant`).
 
 - **Anonymous opt-in usage heartbeat (default OFF).** A new
   Settings → Privacy section lets operators optionally send one
@@ -39,7 +39,8 @@
     Localization Suite). 90-day retention enforced by a daily cron
     `DELETE` inside the same Worker.
   - Worker source is in this repo at `infra/telemetry-worker/`,
-    deployed to `https://heartbeat-wmb.starmin.de`. The Worker
+    deployed to a Cloudflare Workers endpoint (the operator-facing
+    URL ships in `config.py` and `docs/PRIVACY.md`). The Worker
     rejects requests without the `WatchMyBirds-Heartbeat/<version>`
     User-Agent (404, no recon hint), validates the payload shape
     strictly, and drops all CF-injected metadata before writing.

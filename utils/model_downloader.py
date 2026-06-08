@@ -1285,7 +1285,7 @@ def _fetch_int8_qdq_weights(
     For each pinned variant the publisher may declare one primary QDQ
     file (``weights_int8_qdq_path``) plus a list of fallback variants
     (``weights_int8_qdq_fallback_paths``). The loader's
-    :func:`build_precision_load_plan` tries them in order at load time,
+    :func:`resolve_active_precision_artefacts` tries them in order at load time,
     so we mirror that policy here by pulling the primary AND every
     declared fallback. The first one that parses on the host's ORT
     build wins; the others are tiny insurance against ORT-version
@@ -1498,7 +1498,7 @@ def _fetch_companion_files(
     #     model_metadata.json may be from a previous (different) variant
     #     or absent entirely. Always rebuild it here to keep them in sync.
     # Only applies to the detector (object_detection) — the classifier
-    # ships a YAML too (per the 2026-04-18 HF release layout spec), but
+    # ships a YAML too (per the publisher's release layout), but
     # the classifier runtime has no model_metadata.json reader so writing
     # one there would just litter the filesystem.
     if (

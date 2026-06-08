@@ -1,4 +1,3 @@
-# utils/cpu_limiter.py
 import multiprocessing
 import os
 import platform

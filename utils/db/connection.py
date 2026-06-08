@@ -533,7 +533,7 @@ def _init_schema(conn: sqlite3.Connection) -> None:
     # routed to ``decision_level='reject'`` (top-1 below review threshold,
     # no genus rescue). The detection itself is not persisted — no image,
     # no crop, no detections row, no images row when the frame had only
-    # rejects (A1a from 2026-05-19). This keeps the FP-cluster signal
+    # rejects. This keeps the FP-cluster signal
     # (bbox position + raw_species_name + counts) auditable without
     # filling disk and the Unclear-tab with non-bird crops from static
     # background objects (e.g. tree-branch FPs).

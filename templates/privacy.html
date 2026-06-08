@@ -21,7 +21,7 @@
     <h2>What we send (only when you opt in)</h2>
 
     <p>One small JSON payload, once per UTC day, to
-       <code>heartbeat-wmb.starmin.de</code>:</p>
+       <code>watchmybirds-telemetry.wmb-infra.workers.dev</code>:</p>
 
     <pre class="p-3 bg-body-secondary rounded"><code>{
   "installation_id":   "(32 random hex chars, generated once when you opt in)",
@@ -60,7 +60,7 @@
        Cloudflare D1 database with <code>jurisdiction=eu</code>, meaning
        Cloudflare guarantees the data is stored and processed only in the
        European Union. The endpoint is
-       <code>https://heartbeat-wmb.starmin.de/v1/heartbeat</code>.</p>
+       <code>https://watchmybirds-telemetry.wmb-infra.workers.dev/v1/heartbeat</code>.</p>
 
     <p>The Worker explicitly drops the IP address, country code, and all
        Cloudflare-injected location metadata before writing to the database.
@@ -98,7 +98,7 @@
             received, so a rotation has effect very quickly.</li>
         <li><strong>Block at the firewall</strong> — the heartbeat hostname
             is deliberately separate from any other WMB endpoint, so you can
-            firewall-block <code>heartbeat-wmb.starmin.de</code> without
+            firewall-block <code>watchmybirds-telemetry.wmb-infra.workers.dev</code> without
             breaking anything else in the app.</li>
         <li><strong>Override the endpoint</strong> — set
             <code>telemetry_endpoint</code> in <code>settings.yaml</code> to

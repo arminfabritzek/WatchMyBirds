@@ -687,7 +687,7 @@ def _build_classifier_variant_metadata(
             with open(yaml_path, encoding="utf-8") as file:
                 config = _yaml.safe_load(file)
             if isinstance(config, dict):
-                # Canonical layout (2026-04-23 HF spec): thresholds + input
+                # Canonical layout (publisher's release spec): thresholds + input
                 # size live under ``detection.*``. Earlier dev-style YAMLs
                 # may nest the same fields under ``classification`` or
                 # ``model``; we fall back to those so variants from any

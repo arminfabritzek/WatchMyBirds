@@ -4,12 +4,9 @@ from xml.sax.saxutils import escape as _xml_escape
 import cv2
 import numpy as np
 
-# Reference resolution used by laplacian_sharpness() to normalise
-# scores across crop sizes. Bigger crops have more pixels and
-# therefore more raw Laplacian variance even at the same perceptual
-# sharpness; downsampling to a fixed long-side makes the score
-# comparable across detections of small distant birds and large
-# close-ups.
+# laplacian_sharpness() downsamples to this long-side first: bigger crops have
+# more raw Laplacian variance at the same perceptual sharpness, so a fixed
+# resolution makes scores comparable across crop sizes.
 _SHARPNESS_REF_LONG_SIDE = 256
 
 
@@ -198,7 +195,7 @@ def crop_brightness(crop_bgr: np.ndarray) -> float:
 #
 # Hand-authored RDF/XMP packet passed to Pillow's ``Image.save(xmp=...)``.
 # No IPTC-IIM, no ExifTool, no pyexiv2 — Pillow only — so the RPi/aarch64
-# lane gains no new native dependency (plan: metadata-burn-in-export-copies).
+# lane gains no new native dependency.
 # The packet is written into in-memory COPIES served at download; on-disk
 # originals are never touched.
 # --------------------------------------------------------------------------

@@ -96,7 +96,7 @@ def _detect_runtime_environment() -> str:
         if "containerd" in lowered:
             return "containerd"
     except OSError:
-        # /proc/self/cgroup missing (non-Linux); treat as host deploy.
+        # /proc/1/cgroup missing (non-Linux); treat as host deploy.
         pass
 
     return "host"

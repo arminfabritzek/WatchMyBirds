@@ -43,7 +43,6 @@ def get_system_health() -> dict[str, Any]:
     db_status = _check_database()
     disk_status = _check_disk_space()
 
-    # Determine overall status
     overall = "ok"
     if not db_status["connected"]:
         overall = "error"
@@ -103,10 +102,8 @@ def _check_database() -> dict[str, Any]:
         try:
             start = datetime.datetime.now()
             with closing_connection() as conn:
-                # 1. Connectivity Check
                 conn.execute("SELECT 1")
 
-                # 2. Last Detection Check
                 cursor = conn.execute(
                     "SELECT created_at FROM detections ORDER BY detection_id DESC LIMIT 1"
                 )

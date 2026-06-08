@@ -93,7 +93,6 @@ def _score_border(x1: int, y1: int, x2: int, y2: int, img_w: int, img_h: int) ->
     if y2 >= img_h - margin_y:
         touching += 1
 
-    # 0 edges touching = 1.0, 1 edge = 0.6, 2 edges = 0.25, 3+ = 0.0
     penalties = {0: 1.0, 1: 0.6, 2: 0.25, 3: 0.0, 4: 0.0}
     return penalties.get(touching, 0.0)
 

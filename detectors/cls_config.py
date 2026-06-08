@@ -244,7 +244,7 @@ def load_cls_decision_config(
         )
         return None
 
-    # Canonical location (per 2026-04-23 HF spec): genus_map is
+    # Canonical location (per the publisher's release layout): genus_map is
     # top-level, genus_pairs lives under threshold_contract. We also
     # accept legacy ``detection.genus_map`` / ``detection.genus_pairs``
     # to avoid breaking either direction of future spec drift.

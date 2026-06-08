@@ -31,17 +31,17 @@ CREATE INDEX IF NOT EXISTS idx_heartbeats_ts ON heartbeats(ts);
 -- Index for date-range aggregations (DAU/WAU/MAU queries).
 CREATE INDEX IF NOT EXISTS idx_heartbeats_date ON heartbeats(date);
 
--- Daily aggregates: post-Phase-2 retention model.
+-- Daily aggregates: the aggregate-only retention model.
 --
 -- A nightly cron at 04:30 UTC aggregates the previous UTC day's raw
 -- heartbeats into one row per (date, app_version, hardware cohort,
 -- detector_variant), then deletes those raw rows. This makes the
 -- privacy claim stronger:
 --
---   Phase 1 (raw retention): "we keep individual heartbeats up to
+--   Raw retention:           "we keep individual heartbeats up to
 --   90 days, then delete"
 --
---   Phase 2 (this table):    "we keep individual heartbeats less
+--   Aggregation (this table): "we keep individual heartbeats less
 --   than 24 hours; we keep only counts after that"
 --
 -- The aggregate has NO installation_id — there is no way to track

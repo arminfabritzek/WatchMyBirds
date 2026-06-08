@@ -539,11 +539,11 @@ def stream_export_zip(
         # Per-frame UUID map: each source image gets ONE uuid, even
         # when it carries multiple approved detections. The dev's
         # training pipeline expects "one file in images/, multiple
-        # rows in annotations.csv sharing that file's uuid" (see
-        # dev handoff 2026-04-23). Generating a fresh uuid per
+        # rows in annotations.csv sharing that file's uuid".
+        # Generating a fresh uuid per
         # detection would:
         #   - bloat the ZIP (each frame written N times under N names)
-        #   - break the dev's per-image multi-bbox assumption
+        #   - break the pipeline's per-image multi-bbox assumption
         # So we dedupe by image_filename and reuse the uuid per row.
         uuid_by_filename: dict[str, str] = {}
         extension_by_filename: dict[str, str] = {}
@@ -620,8 +620,7 @@ def stream_export_zip(
             )
             written_rows += 1
         # ``skipped_bbox`` in the manifest keeps its historical name
-        # (rows dropped due to invalid bbox geometry), unified across
-        # "frame missing" and "sibling-bbox-bad" cases.
+        # (rows dropped due to invalid bbox geometry).
         skipped_bbox = skipped_sibling_bbox
 
         zf.writestr("annotations.csv", csv_buf.getvalue())
@@ -634,7 +633,7 @@ def stream_export_zip(
             "rows_written": written_rows,
             # distinct image files packed into the ZIP. Will be less
             # than rows_written whenever multiple detections share a
-            # frame (the intended shape per dev handoff).
+            # frame (the pipeline's intended shape).
             "images_written": written_images,
             "rows_requested": len(selection.detection_ids),
             "skipped_missing_images": missing_images,

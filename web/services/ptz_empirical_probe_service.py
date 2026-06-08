@@ -169,9 +169,8 @@ def _session_to_payload(session: Any) -> dict[str, Any]:
                 "comment": r.comment,
                 "executed_at": r.executed_at,
                 "onvif_error": r.onvif_error,
-                # poll_samples is empty for most kinds; near_focus uses
-                # it as a burst accumulator so the wizard can render
-                # "N bursts so far" while the operator clicks.
+                # Empty for most kinds; near_focus accumulates bursts so the
+                # wizard can show "N bursts so far" while the operator clicks.
                 "poll_samples": list(r.poll_samples or []),
             }
             for sid, r in session.results.items()

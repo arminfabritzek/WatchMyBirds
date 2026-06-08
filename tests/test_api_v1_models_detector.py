@@ -740,8 +740,8 @@ def test_install_downloads_missing_variant_from_hf(client, model_dir, monkeypatc
         assert str(model_dir) in dest
     # Regression guard: the YAML URL must be a direct sibling of the
     # weights URL. An earlier bug concatenated 'object_detection/' twice
-    # because HF_BASE_URL already ends in that subfolder (observed
-    # 2026-04-17 22:53 on RPi: 404 for .../object_detection/object_detection/...yaml).
+    # because HF_BASE_URL already ends in that subfolder (observed as
+    # a 404 for .../object_detection/object_detection/...yaml).
     yaml_url = next(u for u, _ in calls if u.endswith(".yaml"))
     assert yaml_url.count("/object_detection/") == 1, (
         f"YAML URL has duplicated subfolder: {yaml_url}"

@@ -6,7 +6,7 @@ Builds a temporary SQLite database matching the production schema, populates
 it with synthetic detections, runs the tagger, and asserts:
 
 1. aesthetic_score is written for all detections with thumbnail_path
-2. only species in TAGGABLE_SPECIES (+ unknown) get is_favorite=1
+2. only species in TAGGABLE_SPECIES get is_gallery_eligible=1 (unknown excluded; is_favorite is never touched)
 3. manual favorites are preserved
 4. re-running is idempotent (no double-scoring)
 5. dry-run does not write
@@ -173,8 +173,9 @@ def assert_eq(actual, expected, msg: str) -> None:
 
 
 def test_basic_run() -> None:
-    """Only TAGGABLE_SPECIES (Parus, Cyanistes, Columba) get tagged.
-    'unknown' and rare-species CLS guesses are excluded."""
+    """In test mode TAGGABLE_SPECIES is empty, so every CLS-labelled
+    species (including rare guesses like Phoenicurus) becomes gallery-
+    eligible; only 'unknown' (CLS-null) is excluded."""
     if DB_PATH.exists():
         DB_PATH.unlink()
     conn = sqlite3.connect(str(DB_PATH))

@@ -3610,7 +3610,7 @@
     // Module-level hook: the AI panel calls this after a successful
     // switch/install so the Save-Threshold block re-derives from the new
     // detector's conf-default. Without this, the auto-derived value is
-    // stale until the user hard-refreshes (observed 2026-04-21).
+    // stale until the user hard-refreshes.
     let _refreshSaveThresholdFromDetector = null;
 
     function initSaveThresholdToggle() {
@@ -4166,7 +4166,7 @@
             }
             // Calibrated decision thresholds per variant. ``conf`` is
             // the species-accept cutoff; higher = stricter labelling.
-            // Variants without a YAML (pre-2026-04-23) simply omit.
+            // Older variants without a YAML simply omit.
             if (typeof meta.confidence_threshold === 'number') {
                 metaBits.push('conf ' + meta.confidence_threshold);
             }

@@ -96,8 +96,9 @@ class BirdEvent:
     start_time / end_time
         ``YYYYMMDD_HHMMSS`` strings of the first and last member.
     cover_detection_id
-        Detection id chosen to represent the event (the newest member,
-        matching the existing review ordering convention.
+        Detection id chosen to represent the event: the newest
+        actionable (non-context) member, falling back to the newest
+        member overall when every member is context.
     eligibility
         ``"event_eligible"`` when the event is a clean single-species
         run without ambiguity, ``"event_ineligible"`` otherwise.

@@ -44,7 +44,7 @@ IMAGE_WIDTH = 450
 @trash_bp.route("/trash", methods=["GET"])
 @login_required
 def trash_page():
-    """Trash page showing rejected detections and no_bird images."""
+    """Trash page showing rejected detections (no_bird images are preserved as hard-negatives, not shown here)."""
     page = request.args.get("page", 1, type=int)
     limit = 50
     cfg = get_config()
@@ -365,8 +365,8 @@ def relabel_detection():
 
 def compute_auto_rating(od_confidence, cls_confidence, bbox_w, bbox_h):
     """
-    Compute automatic detection quality rating (1-5).
-    5 = Audio+Visual match (gold), 4 = excellent, 3 = good, 2 = uncertain, 1 = poor.
+    Compute automatic detection quality rating (1-4).
+    4 = excellent, 3 = good, 2 = uncertain, 1 = poor.
 
     NOTE: Legacy function kept for backward compatibility. The UI now uses
     the simpler is_favorite toggle for cover image selection.

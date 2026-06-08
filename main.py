@@ -116,8 +116,6 @@ def _create_runtime():
             photo_path="assets/debug.jpg",
         )
 
-    # go2rtc sync already handled by ensure_go2rtc_stream_synced() above.
-
     # Startup cleanup: wipe legacy FasterRCNN artefacts so in-place upgrades
     # from pre-YOLOX deployments do not fail loudly at detector init. The
     # autofetch then pulls the current YOLOX latest from HuggingFace.
@@ -216,7 +214,7 @@ def _create_runtime():
 
     # Start Aesthetic Tag Scheduler (nightly CLIP-based auto-favorite tagger).
     # Runs in the same process so Pi and Docker behave identically; replaces
-    # the systemd-based design from 2026-04-30. Skips itself silently when
+    # an earlier systemd-based design. Skips itself silently when
     # the optional torch / open_clip packages are not installed.
     try:
         from web.services.aesthetic_tag_scheduler import start_aesthetic_tag_scheduler

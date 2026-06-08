@@ -521,8 +521,7 @@ def create_web_interface(detection_manager, system_monitor=None):
     def _pick_cover_for_group(candidates: list[dict], **_kwargs) -> dict | None:
         """Thin wrapper around ``core.gallery_core.pick_cover_for_group``.
 
-        The shared picker is the single source of truth — see plan
-        . Legacy ``**_kwargs``
+        The shared picker is the single source of truth. Legacy ``**_kwargs``
         absorbs the ``seed_key``/``date_iso`` arguments older callers still
         pass; both are unused under the current rotation semantics.
         """
@@ -1860,7 +1859,6 @@ def create_web_interface(detection_manager, system_monitor=None):
                     db_service.reject_detections(conn, ids_int)
                 # Reset caches
                 gallery_service.invalidate_cache()
-                # _daily_gallery_summary_cache was removed
                 return redirect(f"/edit/{safe_date}" if safe_date else "/gallery")
 
             elif action == "download":
@@ -2685,8 +2683,8 @@ def create_web_interface(detection_manager, system_monitor=None):
         def _load_modal_siblings(raw: dict) -> list[dict]:
             """Build the siblings list for a detail modal.
 
-            UI_STANDARD § 0c requires every active companion detection to
-            render as a bbox overlay in detail modals. Stream surfaces
+            Every active companion detection must render as a bbox
+            overlay in detail modals. Stream surfaces
             previously emitted ``siblings: []`` to avoid the lookup; the
             modal still works with one box, but multi-bird frames hid
             their companions even after the user clicked through.

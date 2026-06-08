@@ -151,7 +151,6 @@ class CaptureService(CaptureInterface):
         """
         logger.info(f"Updating video source: {self._source} -> {source}")
 
-        # Clear frame buffer
         with self._frame_lock:
             self._latest_frame = None
             self._latest_timestamp = 0.0

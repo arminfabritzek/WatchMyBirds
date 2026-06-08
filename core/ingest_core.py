@@ -20,7 +20,7 @@ def process_inbox(pending_dir: str, file_snapshot: list[str]) -> dict[str, Any]:
     This function processes images from inbox/pending and moves them to:
     - inbox/processed/YYYYMMDD/ for successfully ingested files
     - inbox/skipped/YYYYMMDD/ for duplicates
-    - inbox/error/YYYYMMDD/ for files that failed processing
+    - inbox/error/ for files that failed processing
 
     Args:
         pending_dir: Path to inbox/pending directory

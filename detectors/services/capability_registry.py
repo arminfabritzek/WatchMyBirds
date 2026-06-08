@@ -129,7 +129,7 @@ def build_default_registry(config: dict | None = None) -> CapabilityRegistry:
     from detectors.services.temporal_decision_service import TEMPORAL_VERSION
 
     reg = CapabilityRegistry(config=config)
-    reg.register("detector", "v8")  # YOLOv8 object detection
+    reg.register("detector", "v8")  # YOLOX object detection
     reg.register("classifier", "v2")  # ONNX species classifier
     reg.register("bbox_quality", "v1")  # Geometric bbox quality
     reg.register("ood", "v1")  # Unknown/OOD score (margin+entropy)

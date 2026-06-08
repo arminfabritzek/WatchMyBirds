@@ -73,7 +73,7 @@ DEFAULT_PTZ_CONFIG: dict = {
     # Cheap PTZ cams that ignore ContinuousMove velocity AND throttle
     # back-to-back calls (= burst multiplier doesn't help) sometimes
     # honour a single longer ContinuousMove instead. A multiplier of
-    # 2.0 extends move_duration_ms from 300 ms → 600 ms per call.
+    # 2.0 extends move_duration_ms from 250 ms → 500 ms per call.
     # Independent from manual_pan_tilt_burst — operator can drive
     # both at the same time, the effective movement per move-command
     # is `burst × (duration × multiplier)`. 1.0 = legacy behaviour.

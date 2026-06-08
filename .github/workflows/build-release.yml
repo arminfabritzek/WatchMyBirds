@@ -208,7 +208,7 @@ jobs:
             /opt/app/.venv/bin/pip install --no-index --find-links /opt/wheelhouse -r /opt/app/requirements.txt
 
             # Aesthetic tagger optional stack: install if the file is in
-            # the image (it always is from 2026-05-02 onward; older
+            # the image (current images always include it; older
             # release branches won't have the file and the conditional
             # keeps the build green for them).
             if [ -f /opt/app/requirements-aesthetic.txt ]; then

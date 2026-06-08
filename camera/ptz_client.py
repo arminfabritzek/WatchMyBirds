@@ -20,9 +20,8 @@ from utils.log_safety import safe_log_value as _slv
 
 logger = logging.getLogger(__name__)
 
-# See camera/network_scanner.py for the rationale: zeep's default
-# SqliteCache fails on hardened containers where /tmp/<parent> is
-# root-owned. InMemoryCache sidesteps the filesystem entirely.
+# zeep's default SqliteCache fails on hardened containers (root-owned /tmp);
+# InMemoryCache avoids the filesystem. Rationale: camera/network_scanner.py.
 _ZEEP_TRANSPORT = Transport(cache=InMemoryCache())
 
 

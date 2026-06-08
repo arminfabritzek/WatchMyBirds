@@ -22,9 +22,8 @@ from zeep.transports import Transport
 
 logger = logging.getLogger(__name__)
 
-# See camera/network_scanner.py for the rationale: zeep's default
-# SqliteCache fails on hardened containers where /tmp/<parent> is
-# root-owned. InMemoryCache sidesteps the filesystem entirely.
+# zeep's default SqliteCache fails on hardened containers (root-owned /tmp);
+# InMemoryCache avoids the filesystem. Rationale: camera/network_scanner.py.
 _ZEEP_TRANSPORT = Transport(cache=InMemoryCache())
 
 
@@ -78,7 +77,7 @@ class ONVIFDiscovery:
             if wsd:
                 try:
                     wsd.stop()
-                except Exception:  # noqa: BLE001 — wsdiscovery shutdown is best-effort
+                except Exception:
                     pass
 
         with self._discovery_lock:

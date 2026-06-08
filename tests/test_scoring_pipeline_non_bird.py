@@ -273,7 +273,7 @@ def test_non_bird_marten_at_077_is_uncertain_with_default(
     temporal_service,
     capability_registry,
 ):
-    """marten_mustelid at the observed live max (0.77) -> UNCERTAIN by default.
+    """marten_mustelid at the observed max (0.77) -> UNCERTAIN by default.
 
     This is the key behaviour change: the same detection that would have
     been CONFIRMED under the previous 0.65 default is now correctly

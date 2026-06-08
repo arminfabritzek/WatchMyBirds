@@ -111,14 +111,14 @@ def test_review_event_panel_exposes_event_actions_and_grid():
     assert "review-event-panel__member-media" not in content
     assert "review-stage-panel__image-frame wm-toolbox-host" not in content
 
-    # Retired 2026-04-19: the right-rail mini-trail + "Event Ready" badge
+    # Retired: the right-rail mini-trail + "Event Ready" badge
     # were redundant with the grid header and cell bbox overlays.
     assert "review-event-panel__trail-section" not in content
     assert "review-event-panel__trail-map" not in content
     assert "review-event-panel__trail-head" not in content
     assert "event.bbox_trail" not in content
 
-    # Retired 2026-04-19: the Utilities / "Review in Queue" button.
+    # Retired: the Utilities / "Review in Queue" button.
     assert "data-review-open-item" not in content
     assert "Review in Queue" not in content
 
@@ -217,8 +217,8 @@ def test_review_event_panel_renders_every_member():
     timestamp order, shown read-only for orientation. Each physical
     frame appears exactly once.
 
-    The previous Fixed-5 frame budget (2026-04-08) was retired on
-    2026-04-19 because it hid relabel-affected frames from the
+    The previous fixed five-frame budget was retired because it hid
+    relabel-affected frames from the
     operator when events carried more than five review-frames.
     Honest default: show everything that will be approved plus
     everything already in Gallery.
@@ -239,7 +239,7 @@ def test_review_event_panel_renders_every_member():
     assert "_context_members = event.members | selectattr('context_only') | list" in content
     assert "display_members = _review_members + _context_members" in content
 
-    # The old Fixed-5 budget variables are gone.
+    # The old frame-budget variables are gone.
     assert "_frame_budget" not in content
     assert "_review_budget" not in content
     assert "_context_budget" not in content
@@ -568,15 +568,15 @@ def test_gallery_context_frames_can_draw_bbox_without_toolbox_toggle():
     assert "const x = parseFloat(container.dataset.bboxX);" in content
     # The context-only branch must still call drawBoundingBoxes — but
     # the call now accepts either the legacy single-box list or a
-    # multi-sibling list (UI_STANDARD §0c). Match the call by
+    # multi-sibling list. Match the call by
     # function name + canvas+img args, not the literal `[{` opener.
     assert "drawBoundingBoxes(canvas, img, boxes, detectionId" in content
 
 
 def test_gallery_detail_modal_auto_renders_companion_bboxes():
-    """UI_STANDARD §0c: detail-modal auto-render must paint every
-    active sibling bbox when more than one is present, regardless of
-    the saved bbox-overlay user pref."""
+    """Detail-modal auto-render must paint every active sibling bbox
+    when more than one is present, regardless of the saved
+    bbox-overlay user pref."""
     content = _read("assets/js/gallery_utils.js")
 
     # Force-on multi-bird path triggered by container.dataset.siblings
@@ -797,8 +797,8 @@ def test_review_event_panel_e_copy_cleanup():
     assert "Cover image plus" not in content
     # The grid caption container is present and states honestly what
     # "Approve Event" will do. The old "Approve once the pattern is
-    # consistent" copy was retired on 2026-04-19 together with the
-    # Fixed-5 budget: the caption now says exactly how many frames
+    # consistent" copy was retired together with the
+    # fixed five-frame budget: the caption now says exactly how many frames
     # will be approved and how many context frames are already in
     # the Gallery.
     assert "review-event-panel__grid-caption" in content
@@ -929,7 +929,7 @@ def test_js_species_palette_reads_from_css_custom_properties():
 
 
 # ─────────────────────────────────────────────────────────────────────
-# Mixed-event direct actions (2026-04-08)
+# Mixed-event direct actions
 # ─────────────────────────────────────────────────────────────────────
 
 
@@ -1115,7 +1115,7 @@ def test_species_reference_image_is_anchored_top_right():
 #
 # These are the only tests in this file that actually render a template
 # rather than asserting on raw source. They guard the orphan-modal
-# panel against regressions like the 2026-05-14 inline `{# ... #}`
+# panel against regressions like an inline `{# ... #}`
 # comment inside the `tile_toolbox(...)` argument list, which Jinja2
 # rejects with `TemplateSyntaxError: invalid syntax for function call
 # expression` only at render time.

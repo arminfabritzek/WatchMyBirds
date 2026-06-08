@@ -21,7 +21,7 @@ logger = get_logger(__name__)
 
 # Goto-retry policy for cheap ONVIF PTZ cameras.
 #
-# Observed live on 2026-05-16: a cheap camera will sometimes reject
+# Observed in the field: a cheap camera will sometimes reject
 # GotoPreset with a generic "Preset token does not exist" SOAP fault
 # even though GetPresets lists the same token — typically when a
 # previous goto is still mid-flight, when the camera is busy with an
@@ -1561,8 +1561,8 @@ class AutoPtzController:
             # loop enqueues a new follow-correction every ~250 ms, so
             # any active burst would always see queue.empty() == False
             # after call 1 and abort there. The result would be a
-            # silent regression to burst=1, which is exactly what the
-            # 2026-05-25 live test was reporting. A fresher `stop` or
+            # silent regression to burst=1, which is exactly what showed up
+            # in practice. A fresher `stop` or
             # `goto overview` IS allowed to preempt — see the peek
             # below — but a fresher `move` just means "do another
             # burst next" and should not amputate the current one.

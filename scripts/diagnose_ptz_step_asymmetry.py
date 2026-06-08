@@ -182,9 +182,9 @@ def _run_sweep(camera_id: int, *, auto: bool = False) -> list[dict]:
     rows: list[dict] = []
     # Axis order: pan first (lateral motion is most familiar), then tilt,
     # zoom last (most surprising / most asymmetric on cheap cams).
-    # Tilt sweeps DOWN, not up — operator's safe-headroom direction on
-    # this rig (verified live 2026-05-25, the home preset sits high
-    # enough that "up" risks the upper endstop on a 300ms burst at 0.9).
+    # Tilt sweeps DOWN, not up — the safe-headroom direction when the
+    # home preset sits high enough that "up" risks the upper endstop
+    # on a 300ms burst at 0.9.
     axis_direction = {"pan": +1, "tilt": -1, "zoom": +1}
     for axis in ("pan", "tilt", "zoom"):
         for speed in SPEEDS:

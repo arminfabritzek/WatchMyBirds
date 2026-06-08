@@ -149,7 +149,7 @@ def test_guard_accepts_bird_plus_anything():
 
 
 # ---------------------------------------------------------------------------
-# Model-owned thresholds regression guard (2026-04-18)
+# Model-owned thresholds regression guard
 # ---------------------------------------------------------------------------
 
 

@@ -692,7 +692,7 @@
         }
         if (isEventScope) {
             updateReviewEventSpeciesSummary(controls, species, selectedOrigin);
-            // Post fixed-5 (2026-04-08): mirror the event-level species
+            // Mirror the event-level species
             // choice onto every auto-origin cell label in the grid so the
             // label under each Review frame tracks the picker. Cells with
             // `data-species-is-manual="1"` keep their per-frame manual
@@ -987,7 +987,7 @@
 
         const approveEventBtn = controls.querySelector('[data-review-panel-action="approve_event"]');
         if (approveEventBtn) {
-            // Post fixed-5: `data-can-approve` is `1` whenever the event
+            // `data-can-approve` is `1` whenever the event
             // carries any species at all (candidate or manually selected),
             // regardless of the cluster-time `event_eligible` / `event_ineligible`
             // split. Ineligible events get routed through /api/review/event-resolve
@@ -1056,7 +1056,7 @@
     }
 
     /**
-     * Post fixed-5 (2026-04-08): fan out a bbox-overlay toggle click to
+     * Fan out a bbox-overlay toggle click to
      * every cell inside the same `.wm-viewer-scope` (the event grid).
      *
      * The user clicks the bbox toggle on any one cell. We compute the
@@ -1750,7 +1750,7 @@
         });
     }
 
-    // --- Per-cell species relabel (V1, ad-hoc 2026-04-08) ----------------
+    // --- Per-cell species relabel ----------------------------------------
     //
     // Clicking a cell's species label in the event grid opens the shared
     // WmSpeciesPicker for that single detection. The pick persists
@@ -1994,7 +1994,7 @@
         // now-retired continuity-batch panel, which POSTed to the exact same
         // endpoint but deliberately WITHOUT an event_key — that skips the
         // eligibility gate (see web/blueprints/review.py:2359). After the
-        // fixed-5 rewrite we re-use that no-event_key fastpath for ineligible
+        // frame-budget removal we re-use that no-event_key fastpath for ineligible
         // events, limited to non-context (actionable) detection ids so
         // Gallery anchors stay read-only.
         const isEventIneligible = controls.dataset.eventIneligible === '1';
@@ -2636,7 +2636,7 @@
                 toggleSmartZoom(viewerToolBtn);
             }
             if (tool === 'bbox' && typeof toggleBboxOverlay === 'function') {
-                // Post fixed-5 (2026-04-08): the bbox overlay pref is
+                // The bbox overlay pref is
                 // already scope-global in LocalStorage
                 // (wmb_review_bbox_pref), so clicking the bbox toggle on
                 // one cell should flip every cell in the same

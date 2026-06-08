@@ -368,7 +368,7 @@ def test_preservation_surfaces_remote_latest_even_when_not_in_pinned_models(tmp_
     _touch(tmp_path / f"{local_id}_best.onnx")
     _touch(tmp_path / f"{local_id}_labels.json")
 
-    # Remote shape mirrors the real HF payload (2026-04-21): ``latest`` points
+    # Remote shape mirrors the real HF payload: ``latest`` points
     # at a new id that is NOT listed under pinned_models, pinned_models only
     # contains an older sibling.
     remote_payload = {
@@ -468,7 +468,7 @@ def test_preservation_prunes_stale_local_only_variants_without_weights(tmp_path)
     _touch(tmp_path / f"{locally_installed}_best.onnx")
     _touch(tmp_path / f"{locally_installed}_labels.json")
 
-    # HF on 2026-04-21: publisher removed every stale id; only advertises _v4
+    # HF publisher cleanup: removed every stale id; only advertises _v4
     # as latest and _prodcal_tiny under pinned_models.
     remote_payload = {
         "latest": remote_latest,
@@ -595,7 +595,7 @@ def test_local_wins_on_conflict_even_when_both_usable(tmp_path):
     install endpoint fetched new_id's weights, so both old_id and new_id
     files are on disk. HF still advertises old_id as latest. Without
     this guard the reload path would overwrite the user's choice with
-    HF's pointer — observed live on RPi 2026-04-17: UI switched to
+    HF's pointer — observed: UI switched to
     yolox_s, detector reloaded yolox_tiny because HF wrote back.
     """
     _write_local(
@@ -839,7 +839,7 @@ def test_ensure_model_files_also_fetches_companions(tmp_path):
     when ensure_model_files boots a fresh deployment from HF, it must
     pull not just weights+labels but also _model_config.yaml and
     _metrics.json — otherwise the pin endpoint falls back to hardcoded
-    thresholds and the AI panel shows null metrics. Observed live:
+    thresholds and the AI panel shows null metrics. Observed:
     Tiny was installed via startup-autofetch, S via /install endpoint;
     Tiny lacked the YAML (hence the bug), S had it.
     """

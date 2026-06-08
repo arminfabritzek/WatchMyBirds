@@ -7,17 +7,13 @@ import requests
 
 from config import get_config
 
-# Read the debug flag from the environment variable (default: False)
-# This is mainly for initial module-level logging setup.
 _debug = os.getenv("DEBUG_MODE", "False").lower() == "true"
 
-# Configure logging
 logging.basicConfig(
     level=logging.DEBUG if _debug else logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
 logger = logging.getLogger(__name__)
-# Adjust root logger if needed, though usually main.py sets this up.
 logging.getLogger().setLevel(logging.DEBUG if _debug else logging.INFO)
 
 

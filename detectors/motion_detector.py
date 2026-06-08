@@ -1,4 +1,3 @@
-# detectors/motion_detector.py
 import cv2
 import numpy as np
 
@@ -45,7 +44,6 @@ class MotionDetector:
         if frame is None:
             return False
 
-        # Convert to grayscale and blur to remove noise
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         gray = cv2.GaussianBlur(gray, (21, 21), 0)
 
@@ -60,13 +58,10 @@ class MotionDetector:
         # Compute absolute difference
         frame_diff = cv2.absdiff(self.previous_frame_gray, gray)
 
-        # Threshold the difference (pixel value > 25 becomes 255/white)
         _, thresh = cv2.threshold(frame_diff, 25, 255, cv2.THRESH_BINARY)
 
-        # Dilate to fill in holes
         thresh = cv2.dilate(thresh, self.kernel, iterations=2)
 
-        # Find contours
         contours, _ = cv2.findContours(
             thresh.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
         )
@@ -81,7 +76,6 @@ class MotionDetector:
                 if area > max_area:
                     max_area = area
 
-        # Update previous frame
         self.previous_frame_gray = gray
 
         # Periodic logging (every 30 seconds)

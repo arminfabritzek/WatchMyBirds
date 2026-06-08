@@ -896,8 +896,7 @@ def fetch_daily_covers(
                 --   2. PTZ preset bias — frames captured while the camera was
                 --      driven to a non-overview preset are physically closer
                 --      to the bird. Auto and manual drives rank equally; legacy
-                --      NULL rows sort behind anything tagged. See plan
-                --      .
+                --      NULL rows sort behind anything tagged.
                 --   3. nightly aesthetic score from scripts/aesthetic_tag_nightly.py
                 --   4. detector confidence (legacy fallback)
                 ORDER BY COALESCE(d.rating, 0) DESC,

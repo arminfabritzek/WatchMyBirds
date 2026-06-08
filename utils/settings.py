@@ -13,7 +13,6 @@ def mask_rtsp_url(url):
     if not url:
         return url
 
-    # Find scheme separator
     val = str(url)
     scheme_end = val.find("://")
     if scheme_end == -1:
@@ -22,7 +21,6 @@ def mask_rtsp_url(url):
     scheme_len = 3  # ://
     start_auth = scheme_end + scheme_len
 
-    # Find end of authority (first / after scheme, or end of string)
     path_start = val.find("/", start_auth)
     if path_start == -1:
         authority = val[start_auth:]
@@ -31,25 +29,18 @@ def mask_rtsp_url(url):
         authority = val[start_auth:path_start]
         rest = val[path_start:]
 
-    # In authority, find the LAST '@'
     last_at = authority.rfind("@")
     if last_at == -1:
-        return val  # No credentials
+        return val
 
-    # user:pass is before the last @
     user_pass = authority[:last_at]
     host_port = authority[last_at + 1 :]
 
-    # Split user:pass
-    # Standard is first colon separates user from pass
     first_colon = user_pass.find(":")
     if first_colon == -1:
-        # No password? e.g. user@host
         return val
 
     user = user_pass[:first_colon]
-    # Password is everything after first colon
-    # mask it
     new_authority = f"{user}:*****@{host_port}"
 
     return f"{val[:start_auth]}{new_authority}{rest}"

@@ -5304,7 +5304,7 @@ body {
     text-align: left;
 }
 
-/* RETIRED 2026-05-23 — header action group replaces this footer row.
+/* Retired — header action group replaces this footer row.
    Class kept for one release in case any external override consumes it. */
 .wm-modal__action {
     border-top: 1px solid var(--color-border-light);
@@ -8455,7 +8455,7 @@ img.review-species-ref {
     max-width: 600px;
 }
 
-/* 2026-05-25 — tall form modals (Auto PTZ) outgrow the viewport on
+/* Tall form modals (Auto PTZ) outgrow the viewport on
    13" laptops, pushing the footer Save button off-screen. Make the
    content a flex column so only the body scrolls; header + footer
    stay anchored. Equivalent to Bootstrap's modal-dialog-scrollable
@@ -9599,7 +9599,7 @@ img.review-species-ref {
 
 .wm-toast-container {
     position: fixed;
-    /* Moved from bottom-right to top-right on 2026-04-19: the dev
+    /* Moved from bottom-right to top-right: the dev
        palette-tester widget sits at bottom-right with z-index 99999
        and was overlapping toasts, making them unreadable. Top-right
        is also the convention in Slack/GitHub/Google, keeps the area

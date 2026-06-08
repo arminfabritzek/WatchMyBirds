@@ -1,7 +1,7 @@
 """Regression guard: the classifier metadata extractor surfaces
 calibrated thresholds and input size from the canonical YAML layout.
 
-Before 2026-04-23 the extractor only looked under ``classification.*``
+Previously the extractor only looked under ``classification.*``
 or ``model.*`` for input size, and never read the decision thresholds
 at all. That meant the settings page showed "31 species · 224²" for
 the CLS-v2 model with no way to see how strictly each variant labels.
@@ -31,7 +31,7 @@ def _write_variant(model_dir: str, model_id: str, yaml_doc: dict, metrics: dict 
 
 
 class TestCanonicalYamlLayout:
-    """The layout shipped from 20260423_062443 onward (Dev handoff)."""
+    """The layout shipped from 20260423_062443 onward."""
 
     def test_extracts_architecture_from_detection_section(self):
         with tempfile.TemporaryDirectory() as d:

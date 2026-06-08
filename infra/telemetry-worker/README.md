@@ -10,7 +10,7 @@ for the full data policy.
 
 ## Architecture
 
-- **Endpoint:** `POST https://heartbeat-wmb.starmin.de/v1/heartbeat`
+- **Endpoint:** `POST https://watchmybirds-telemetry.wmb-infra.workers.dev/v1/heartbeat`
 - **Storage:** Cloudflare D1 (`watchmybirds-heartbeats`),
   `jurisdiction=eu` for hard EU data residency.
 - **Retention:** 90 days, enforced by daily cron (04:00 UTC) inside
@@ -58,7 +58,7 @@ npx wrangler dev                    # local dev with mock D1
 
 4. Test:
    ```bash
-   curl -X POST https://heartbeat-wmb.starmin.de/v1/heartbeat \
+   curl -X POST https://watchmybirds-telemetry.wmb-infra.workers.dev/v1/heartbeat \
      -H "Content-Type: application/json" \
      -d '{
        "installation_id": "0123456789abcdef0123456789abcdef",

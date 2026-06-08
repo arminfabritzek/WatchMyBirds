@@ -4,9 +4,10 @@ WatchMyBirds Services Package.
 This package contains service layer classes that encapsulate business logic,
 separating it from Flask routes for better testability and maintainability.
 
-ARCHITECTURE RULE:
-- Services may ONLY import from core/* modules
-- Services MUST NOT import directly from utils/, camera/, detectors/
+ARCHITECTURE RULE (HARD invariant H-01):
+- Services may import from core/*, stdlib/typing, config, logging_config,
+  utils.*, and other web.services.* modules
+- Services MUST NOT import directly from camera/* or detectors/*
 """
 
 from web.services import (

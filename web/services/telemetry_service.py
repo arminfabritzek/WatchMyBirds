@@ -47,6 +47,12 @@ logger = logging.getLogger(__name__)
 # Worker regex: /^WatchMyBirds-Heartbeat\/[\w.+-]+/
 USER_AGENT = "WatchMyBirds-Heartbeat/1.0"
 
+# Public telemetry endpoint. Override per-install via settings.yaml: telemetry_endpoint.
+# Keep config.py's literal default in sync; it avoids importing web.services.
+DEFAULT_TELEMETRY_ENDPOINT = (
+    "https://watchmybirds-telemetry.wmb-infra.workers.dev/v1/heartbeat"
+)
+
 # Marker file lives next to settings.yaml so reset/migration is implicit
 # (delete OUTPUT_DIR -> heartbeat history is also gone).
 LAST_SENT_FILENAME = "telemetry_last_sent.txt"
@@ -476,7 +482,7 @@ def start_telemetry_scheduler(check_interval: int = 300):
                         endpoint = str(
                             cfg.get(
                                 "telemetry_endpoint",
-                                "https://heartbeat-wmb.starmin.de/v1/heartbeat",
+                                DEFAULT_TELEMETRY_ENDPOINT,
                             )
                         )
                         payload = build_payload(cfg)

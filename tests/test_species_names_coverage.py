@@ -18,7 +18,7 @@ import pytest
 _ASSETS = Path(__file__).resolve().parents[1] / "assets" / "common_names_DE.json"
 
 
-# Species observed on the live Pi 2026-05-11. Extend when new species
+# Species observed at a real station. Extend when new species
 # appear (and add the translation at the same time).
 #
 # NOTE: ``Falco_rufigularis`` (a classifier hallucination — bat falcon,

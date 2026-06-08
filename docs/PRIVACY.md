@@ -17,7 +17,7 @@ disagree, the code in `web/services/telemetry_service.py` and
 ## What we send (only when you opt in)
 
 One small JSON payload, once per UTC day, to
-`https://heartbeat-wmb.starmin.de/v1/heartbeat`:
+`https://watchmybirds-telemetry.wmb-infra.workers.dev/v1/heartbeat`:
 
 **Schema:**
 
@@ -86,7 +86,7 @@ hardware, MAC, hostname, or anything else identifiable.
 The heartbeat is received by a tiny Cloudflare Worker and stored in a
 Cloudflare D1 database with `jurisdiction=eu`, meaning Cloudflare guarantees
 the data is stored and processed only in the European Union. The endpoint is
-`https://heartbeat-wmb.starmin.de/v1/heartbeat`.
+`https://watchmybirds-telemetry.wmb-infra.workers.dev/v1/heartbeat`.
 
 The Worker explicitly drops the IP address, country code, and all
 Cloudflare-injected location metadata before writing to the database. The
@@ -123,7 +123,7 @@ per-install timeline is gone forever.
 
 - **Block at the firewall** — the heartbeat hostname is deliberately
   separate from any other WatchMyBirds endpoint, so you can firewall-block
-  `heartbeat-wmb.starmin.de` without breaking anything else in the app.
+  `watchmybirds-telemetry.wmb-infra.workers.dev` without breaking anything else in the app.
 
 - **Override the endpoint** — set `telemetry_endpoint` in `settings.yaml` to
   point at any URL you control (or `http://localhost/discard`). The
