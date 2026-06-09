@@ -288,3 +288,8 @@ infra/telemetry-worker/node_modules/
 
 # Playwright MCP run artifacts (screenshots, snapshots, console logs).
 .playwright-mcp/
+
+# Top-level scratch screenshots from UI/design iteration. Root-anchored
+# (/*.png) so genuine image assets under assets/, templates/, etc. are
+# unaffected. Keeps one-off PNGs out of git status and out of history.
+/*.png

@@ -221,10 +221,21 @@
     // is invisible when off, and the dim grid clashes on light themes.
     function themeColors() {
         var cs = getComputedStyle(canvas);
+        var bg = (cs.getPropertyValue('--led-ticker-bg') || '').trim();
+        if (!bg) { bg = (cs.getPropertyValue('--color-bg') || '#f3f3f2').trim(); }
+        var on = (cs.getPropertyValue('--led-ticker-on') || '').trim();
+        if (!on) { on = (cs.getPropertyValue('--color-text') || '#202426').trim(); }
         return {
-            on: (cs.getPropertyValue('--color-text') || '#202426').trim(),
-            bg: (cs.getPropertyValue('--color-bg') || '#f3f3f2').trim()
+            on: on,
+            bg: bg,
+            bgTransparent: (bg === 'transparent' || bg === 'none')
         };
+    }
+    // Clear the frame: either paint the opaque theme bg, or wipe to
+    // transparent so a backdrop behind the canvas shows through.
+    function clearFrame(colors, w, h) {
+        if (colors.bgTransparent) { ctx.clearRect(0, 0, w, h); }
+        else { ctx.fillStyle = colors.bg; ctx.fillRect(0, 0, w, h); }
     }
 
     // Apply alpha to a #rrggbb color string and return an rgba() string.
@@ -433,8 +444,7 @@
         var w = logicalW();
         var h = logicalH();
         var colors = themeColors();
-        ctx.fillStyle = colors.bg;
-        ctx.fillRect(0, 0, w, h);
+        clearFrame(colors, w, h);
 
         var statusW = statusWidthPx();
         var sepX = statusW + SEPARATOR_GAP_PX;
@@ -490,12 +500,17 @@
         ctx.rect(0, 0, statusW, h);
         ctx.clip();
         ctx.fillStyle = colors.on;
-        drawGlyphRow(topCols, signalW, GLYPH_ROW_TOP);
-        drawGlyphRow(botCols, signalW, GLYPH_ROW_BOTTOM);
+        // centre each line horizontally within the status field (signalW..statusW)
+        // so a short line (e.g. "18:47") sits centred over a longer one ("9.JUN")
+        var statusField = Math.max(0, statusW - signalW);
+        var topX = signalW + Math.max(0, (statusField - topCols.length * COL_X_SCALE) / 2);
+        var botX = signalW + Math.max(0, (statusField - botCols.length * COL_X_SCALE) / 2);
+        drawGlyphRow(topCols, topX, GLYPH_ROW_TOP);
+        drawGlyphRow(botCols, botX, GLYPH_ROW_BOTTOM);
         ctx.restore();
 
-        // ── separator line — full canvas height ──────────────────────
-        ctx.fillRect(sepX, 0, 1, h);
+        // (no separator line — the bar now sits on the page background,
+        //  the zones read fine without dividers)
 
         // ── sysinfo (right) zone — two stacked colored rows ──────────
         //   top:    CPU%, RAM%
@@ -504,12 +519,12 @@
         var sysW = sysInfoWidthPx();
         var scrollEndPx = w - sysW - (sysW > 0 ? (SYS_SEP_GAP_PX + 1 + SYS_SEP_GAP_PX) : 0);
         if (sysW > 0) {
-            // right-side separator, full canvas height
             var rsepX = scrollEndPx + SYS_SEP_GAP_PX;
-            ctx.fillStyle = colors.on;
-            ctx.fillRect(rsepX, 0, 1, h);
-
-            var contentX = rsepX + 1 + SYS_SEP_GAP_PX + SYS_INNER_PAD_PX;
+            // right-side vertical bar — a quiet mirror of the left signal bar,
+            // so both ends of the rail are visually balanced.
+            ctx.fillStyle = withAlpha(colors.on, 0.12);
+            ctx.fillRect(rsepX, 0, SIGNAL_BAR_W * COL_X_SCALE, h);
+            var contentX = rsepX + SIGNAL_BAR_W * COL_X_SCALE + SYS_SEP_GAP_PX + SYS_INNER_PAD_PX;
             // Column-aware paint: column N starts at the same X for
             // both rows, so C61% / 66°C and R22% / 37GB line up
             // vertically even when their lengths differ. The column
@@ -560,8 +575,7 @@
         var w = logicalW();
         var h = logicalH();
         var colors = themeColors();
-        ctx.fillStyle = colors.bg;
-        ctx.fillRect(0, 0, w, h);
+        clearFrame(colors, w, h);
 
         var words = (alertMode === 'flock') ? ALERT_WORDS_FLOCK : ALERT_WORDS_NORMAL;
         var idx = Math.floor(tMs / ALERT_WORD_MS) % words.length;
@@ -660,7 +674,7 @@
     // Sysinfo (CPU/RAM/TEMP/GB), pushed from appbar.html via setSysInfo().
     // Rendered as a colored fixed zone on the RIGHT side of the canvas.
     var sysInfo = null;     // {cpu, ram, temp, freeGb, *Sev: 'ok'|'warn'|'crit'}
-    var COLOR_SYS_OK   = '#3cc46a';   // green — happy
+    var COLOR_SYS_OK   = '#4C8E7E';   // deep mint — readable green on light paper
     var COLOR_SYS_WARN = '#ffc524';   // yellow — pay attention
     var COLOR_SYS_CRIT = '#ff3522';   // red — fire
 
@@ -719,11 +733,10 @@
             }
             return;
         }
-        // Round-dot path. shadowBlur gives the glow for free; set it once
-        // for the whole row, keyed to the caller's current color.
+        // Round-dot path. No glow on light paper — a halo around dark ink
+        // glyphs just smears; keep the dots crisp.
         ctx.save();
-        ctx.shadowColor = ctx.fillStyle;
-        ctx.shadowBlur = COL_X_SCALE * 1.1;   // logical; soft halo
+        ctx.shadowBlur = 0;
         for (var c2 = 0; c2 < cols.length; c2++) {
             var bb = cols[c2];
             if (!bb) continue;

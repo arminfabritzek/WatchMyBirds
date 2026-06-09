@@ -109,7 +109,7 @@
     };
 </script>
 <div class="app-mascot-bar">
-    {% include 'partials/mascot_bird.html' %}
+    {% include 'partials/mascot_hero.html' %}
     <div class="status-bar" id="statusBar">
         <div class="status-bar__ticker-slot">
             {% include 'partials/led_ticker.html' %}
@@ -177,11 +177,13 @@
     /* Single appbar status rail: mascot | LED clock/marquee/sysinfo | controls. */
     .app-mascot-bar {
         --app-mascot-width: 168px;
-        --app-status-rail-bg: #050806;
-        --app-status-rail-fg: #f4d36a;
-        --app-status-muted: rgba(244, 211, 106, 0.72);
-        --app-status-border: rgba(244, 211, 106, 0.18);
-        --color-bg: var(--app-status-rail-bg);
+        /* LIGHT rail: page background (not surface), so it melts into the page.
+           rail-bg pulls the page bg directly; do NOT re-assign --color-bg here
+           (that creates a circular var() and both resolve to transparent). */
+        --app-status-rail-bg: var(--color-bg);
+        --app-status-rail-fg: #2b3033;
+        --app-status-muted: #6b7472;
+        --app-status-border: rgba(76, 142, 126, 0.28);
         --color-text: var(--app-status-rail-fg);
         --color-text-muted: var(--app-status-muted);
         --color-border-light: var(--app-status-border);
@@ -193,8 +195,8 @@
         min-height: 64px;
         padding: 0 clamp(10px, 1.6vw, 22px) 0 0;
         background: var(--app-status-rail-bg);
-        border-bottom: 1px solid rgba(244, 211, 106, 0.14);
-        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+        border-bottom: none;          /* seamless: bar melts into the page */
+        box-shadow: none;
         /* `overflow: visible` is intentional: the mascot canvas is
            taller than this row and uses negative margins to overshoot
            above/below the LED band. Clipping here would hide the
@@ -292,10 +294,10 @@
         gap: 6px;
         min-height: 30px;
         padding: 2px 9px;
-        border: 1px solid rgba(244, 211, 106, 0.22);
+        border: 1px solid var(--color-border);
         border-radius: 999px;
-        background: rgba(255, 255, 255, 0.04);
-        color: var(--app-status-muted);
+        background: transparent;
+        color: var(--color-text-muted);
         font: inherit;
         font-size: 0.78rem;
         line-height: 1.5;
@@ -319,29 +321,31 @@
         width: 8px;
         height: 8px;
         border-radius: 50%;
-        background: rgba(244, 211, 106, 0.42);
+        background: var(--color-accent);
     }
     .status-bar__auto-cam[data-enabled="true"] {
-        border-color: rgba(60, 196, 106, 0.65);
-        background: rgba(60, 196, 106, 0.11);
-        color: #91e8ad;
+        border-color: var(--color-primary);
+        border-width: 2px;
+        background: transparent;
+        color: var(--color-text);
     }
     .status-bar__auto-cam[data-enabled="true"] .status-bar__auto-cam-dot {
-        background: rgba(60, 196, 106, 0.95);
-        box-shadow: 0 0 4px rgba(60, 196, 106, 0.5);
+        background: var(--color-primary);
     }
     .status-bar__auto-cam[data-enabled="true"][data-returning="true"] {
-        border-color: rgba(255, 197, 36, 0.82);
-        background: rgba(255, 197, 36, 0.12);
-        color: #ffd970;
+        border-color: var(--color-primary);
+        border-width: 2px;
+        background: transparent;
+        color: var(--color-text);
+        animation: appbar-auto-cam-pulse 1s infinite ease-in-out;
     }
     .status-bar__auto-cam[data-enabled="true"][data-returning="true"] .status-bar__auto-cam-dot {
-        background: rgba(255, 165, 40, 0.95);
+        background: var(--color-primary);
         animation: appbar-auto-cam-pulse 1s infinite ease-in-out;
     }
     @keyframes appbar-auto-cam-pulse {
         0%, 100% { opacity: 1; }
-        50% { opacity: 0.4; }
+        50% { opacity: 0.45; }
     }
     .status-bar__auto-cam-label {
         font-weight: 500;

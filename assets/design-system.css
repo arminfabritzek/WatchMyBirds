@@ -312,7 +312,7 @@ code {
 /* --- Layout Utility Classes --- */
 
 .page {
-    padding-top: var(--space-lg);
+    padding-top: var(--space-md);
     /* App Bar offset is handled by .status-bar margin-top; only a small gap is needed here. */
     padding-bottom: var(--space-2xl);
     min-height: 100vh;
@@ -572,17 +572,41 @@ code {
    STATUS BAR - Minimal, muted (whispers, doesn't shout)
    ═══════════════════════════════════════════════════════════════════════════ */
 
+/* The mascot hero canvas backs the whole status bar from inside this
+   wrapper (position context); children render above it via z-index. */
+.app-mascot-bar {
+    position: relative;
+    overflow: hidden;
+    background: var(--color-bg);   /* page background — bar melts into the page */
+    --led-ticker-bg: transparent;
+    --led-ticker-on: var(--color-text);  /* dark ink glyphs on light paper */
+    --mascot-hero-scrim: none;           /* no scrim on a light background */
+}
+/* blend modes are set per-canvas in mascot_hero.html (backdrop=multiply,
+   fx=difference); no blanket rule here so the fx layer isn't overridden */
+.app-mascot-bar::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: 0;
+    pointer-events: none;
+    background: var(--mascot-hero-scrim);
+}
+.app-mascot-bar .led-ticker { background: transparent; }
+
 .status-bar {
     display: flex;
     align-items: center;
     justify-content: center;
     gap: var(--space-lg);
     padding: var(--space-xs) var(--space-xl);
-    background-color: var(--color-surface);
+    background-color: transparent;
     border-bottom: 1px solid var(--color-border-light);
     font-size: var(--font-size-xs);
     color: var(--color-text-muted);
     margin-top: var(--appbar-height);
+    position: relative;
+    z-index: 2;
 }
 
 .status-bar__item {
@@ -1288,11 +1312,7 @@ code {
     gap: var(--space-sm);
     padding: 12px var(--space-md);
     height: 60px;
-    margin-bottom: var(--space-xl);
-    background: var(--color-surface);
-    border: 1px solid var(--color-border-light);
-    border-radius: var(--radius-xl);
-    box-shadow: var(--shadow-sm);
+    margin-bottom: var(--space-md);
 }
 
 .page-control-bar__left {
@@ -1688,7 +1708,8 @@ code {
 .page-control-bar--trash-summary {
     margin-bottom: var(--space-md);
     background: var(--color-surface);
-    border-color: var(--color-border-light);
+    border: 1px solid var(--color-border-light);
+    border-radius: var(--radius-xl);
     box-shadow: var(--shadow-sm);
 }
 
@@ -1720,7 +1741,8 @@ code {
     gap: 12px;
     padding: 16px;
     background: var(--color-surface);
-    border-color: var(--color-border-light);
+    border: 1px solid var(--color-border-light);
+    border-radius: var(--radius-xl);
     box-shadow: var(--shadow-sm);
 }
 

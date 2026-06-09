@@ -1,0 +1,322 @@
+{# Appbar mascot hero — canvas-rendered dark scene that backs the whole
+   status bar. Replaces the songbird mascot. A flat, full-width texture
+   (stars + drifting spores OR ink streaks) with one small comet crossing
+   slowly; the look auto-rotates spores ↔ ink with a short comet-only
+   breath between. Click anywhere on the bar advances the look.
+
+   Pure presentational element, no app state, no data coupling.
+   Self-contained: own canvas, own CSS, own IIFE scope. Architecture
+   parallel to led_ticker.html — drop-in include.
+#}
+
+<canvas class="mascot-hero__canvas" id="mascotHeroCanvas"
+        role="img" aria-label="Animated night-sky backdrop"></canvas>
+<canvas class="mascot-hero__fx" id="mascotHeroFx" aria-hidden="true"></canvas>
+
+<style>
+.mascot-hero__canvas {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    display: block;
+    z-index: 1;                 /* backdrop texture, under the LED text */
+    pointer-events: none;
+    mix-blend-mode: multiply;
+}
+.mascot-hero__fx {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    display: block;
+    z-index: 3;                 /* comets, ABOVE the LED text (z-index 2) */
+    pointer-events: none;
+    mix-blend-mode: difference; /* invert where a comet crosses dark glyphs */
+}
+@media (prefers-reduced-motion: reduce) {
+    /* Static-friendly: the IIFE renders one frame and stops (see JS). */
+    .mascot-hero__canvas, .mascot-hero__fx { opacity: 0.85; }
+}
+</style>
+
+<script>
+(function () {
+    'use strict';
+    var canvas = document.getElementById('mascotHeroCanvas');
+    if (!canvas || !canvas.getContext) { return; }
+    var ctx = canvas.getContext('2d');
+    var fxCanvas = document.getElementById('mascotHeroFx');   // comets, above the text
+    var fx = fxCanvas ? fxCanvas.getContext('2d') : null;
+    var TAU = Math.PI * 2;
+    var dpr = Math.max(1, Math.min(window.devicePixelRatio || 1, 2));
+
+    // ── palette pulled from the app's design tokens, so the scene speaks the
+    //    same muted sage/sand language as the rest of the UI ──────────────
+    function readToken(name, fallback) {
+        var v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+        return v || fallback;
+    }
+    function toRGB(col) {
+        // accept #rgb / #rrggbb / rgb(...) → "r,g,b"
+        col = col.trim();
+        if (col[0] === '#') {
+            var h = col.slice(1);
+            if (h.length === 3) { h = h[0] + h[0] + h[1] + h[1] + h[2] + h[2]; }
+            var n = parseInt(h, 16);
+            return ((n >> 16) & 255) + ',' + ((n >> 8) & 255) + ',' + (n & 255);
+        }
+        var m = col.match(/(\d+)\D+(\d+)\D+(\d+)/);
+        return m ? m[1] + ',' + m[2] + ',' + m[3] : '128,128,128';
+    }
+    var PAL = {
+        warm: toRGB(readToken('--color-warning', '#b99663')),   // sand → comets
+        impact: toRGB(readToken('--color-impact', '#9e8570')),  // warm earth
+        primary: toRGB(readToken('--color-primary', '#53676b')),// sage → stars/spores
+        accent: toRGB(readToken('--color-accent', '#979fa0')),  // grey-green
+        info: toRGB(readToken('--color-impact-ratio', '#74889a')),// cool slate
+        text: toRGB(readToken('--color-text', '#202426')),
+        surface: toRGB(readToken('--color-surface-3', '#e4e7e5'))
+    };
+
+    function mulberry32(a) {
+        return function () {
+            a |= 0; a = a + 0x6D2B79F5 | 0;
+            var t = Math.imul(a ^ a >>> 15, 1 | a);
+            t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+            return ((t ^ t >>> 14) >>> 0) / 4294967296;
+        };
+    }
+
+    function sizeCanvas() {
+        var w = canvas.clientWidth || 1280, h = canvas.clientHeight || 64;
+        canvas.width = Math.max(1, w * dpr);
+        canvas.height = Math.max(1, h * dpr);
+        if (fxCanvas) { fxCanvas.width = canvas.width; fxCanvas.height = canvas.height; }
+    }
+    sizeCanvas();
+
+    // ── particles ──────────────────────────────────────────────────────
+    var SPORE_COLS = [PAL.warm, PAL.primary, PAL.impact];   // sand / sage / earth
+    var stars = (function () {
+        var r = mulberry32(424), a = [];
+        for (var i = 0; i < 70; i++) {
+            a.push({ u: r(), v: r(), r: 0.4 + r() * 1.1, p: r() * 10, ice: r() < 0.25 });
+        }
+        return a;
+    })();
+    var spores = (function () {
+        var r = mulberry32(515), a = [];
+        for (var i = 0; i < 46; i++) {
+            a.push({ u: r(), v: r(), sp: 0.012 + r() * 0.04, ph: r() * TAU,
+                c: SPORE_COLS[(r() * SPORE_COLS.length) | 0], rad: 0.6 + r() * 1.6 });
+        }
+        return a;
+    })();
+    var inkStreaks = (function () {
+        var r = mulberry32(606), a = [];
+        for (var i = 0; i < 26; i++) {
+            a.push({ u: r(), sp: 0.01 + r() * 0.03, w: 0.6 + r() * 1.8,
+                al: 0.10 + r() * 0.30, h: 0.4 + r() * 0.6 });
+        }
+        return a;
+    })();
+    // Far-off "sun" upper-left: only used to point every tail the same way
+    // (anti-sunward → lower-right). Motion itself is a closed-form linear drift
+    // (below) instead of an iterative integrator, so it resumes after a reload.
+    var GC = { x: -1.4, y: -1.0 };
+    // Each comet drifts upper-left on its own slow diagonal and wraps. Position
+    // is a pure function of wall-clock time → identical after any page reload.
+    var comets = (function () {
+        var r = mulberry32(909), a = [];
+        for (var i = 0; i < 4; i++) {
+            a.push({
+                phase: r(),                          // 0..1 offset along the path
+                speed: 0.0016 + r() * 0.0014,        // band-spans per second
+                lane: 0.12 + r() * 0.72,             // base height
+                slopeY: -0.18 + r() * 0.36,          // vertical lean of the path
+                size: 0.5 + r() * 1.9,
+                len: 30 + r() * 120
+            });
+        }
+        return a;
+    })();
+    function cometPos(c, real) {
+        // travel 0..1 along a path entering lower-right (1.2) and exiting
+        // upper-left (-0.2), span 1.4; wrap keeps the band populated.
+        var p = ((c.phase + c.speed * real) % 1 + 1) % 1;
+        return { x: 1.2 - p * 1.4, y: c.lane + c.slopeY * (1 - p) };
+    }
+
+    // ── the giant — permanent, always in view. Drifts steadily right→left
+    //    (same as the small comets) and wraps back in from the right, so it
+    //    flies forever in one direction. y gently bobs for life.
+    var giant = { x: 1.2, y: 0.62 };
+    var GIANT_SPEED = 0.0022;                      // band-widths per second, leftward — slow drift
+    function stepGiant(real) {
+        // closed-form from wall-clock so the giant resumes after a reload:
+        // x is a sawtooth from 1.35 → -0.35 (span 1.7) at GIANT_SPEED/s.
+        var span = 1.7;
+        giant.x = 1.35 - (((GIANT_SPEED * real) % span) + span) % span;
+        giant.y = 0.55 + 0.18 * Math.sin(real / 70);
+    }
+    function drawGiant(c, bw, bh) {
+        var cx = giant.x * bw, cy = giant.y * bh;
+        var R = 34 * dpr;                          // ink head, sits inside the 64px band
+        var rdx = (giant.x - GC.x) * bw, rdy = (giant.y - GC.y) * bh;
+        var rl = Math.sqrt(rdx * rdx + rdy * rdy) || 1;
+        var tl = R * 4.5;
+        var ex = cx + (rdx / rl) * tl, ey = cy + (rdy / rl) * tl;
+        // normal compositing → dark ink builds on paper; CSS multiply sinks it in
+        c.save();
+        var tg = c.createLinearGradient(cx, cy, ex, ey);
+        tg.addColorStop(0, 'rgba(' + PAL.warm + ',0.5)');   // warm sand tail
+        tg.addColorStop(1, 'rgba(' + PAL.warm + ',0)');
+        c.strokeStyle = tg; c.lineWidth = R * 0.7; c.lineCap = 'round';
+        c.beginPath(); c.moveTo(cx, cy); c.lineTo(ex, ey); c.stroke();
+        // ink blot: darkest at the centre, fading out to transparent
+        var cg = c.createRadialGradient(cx, cy, 0, cx, cy, R);
+        cg.addColorStop(0, 'rgba(' + PAL.text + ',0.96)');   // dark ink core
+        cg.addColorStop(0.4, 'rgba(' + PAL.text + ',0.55)');
+        cg.addColorStop(1, 'rgba(' + PAL.impact + ',0)');
+        c.fillStyle = cg; c.beginPath(); c.arc(cx, cy, R, 0, TAU); c.fill();
+        c.restore();
+    }
+
+    // ── look rotation: spores ↔ ink with a comet-only breath between ──
+    // mode 1 = spores, 2 = ink, 3 = breath. Crossfade ~2s. Calm cadence.
+    var CYCLE = [2, 3, 1, 3];
+    var PERIOD = 120;                   // seconds per look (breath = 40%)
+    var cur = 2, prev = -1, fade = 1, nextAt = 0;
+    function modeDur(m) { return m === 3 ? PERIOD * 0.4 : PERIOD; }
+    // seed the rotation from wall-clock so the look is the same after a reload
+    function seedRotationFromClock(nowSec) {
+        var total = 0, i;
+        for (i = 0; i < CYCLE.length; i++) { total += modeDur(CYCLE[i]); }
+        var into = ((nowSec % total) + total) % total;
+        for (i = 0; i < CYCLE.length; i++) {
+            var d = modeDur(CYCLE[i]);
+            if (into < d) { cur = CYCLE[i]; prev = -1; fade = 1; nextAt = nowSec + (d - into); return; }
+            into -= d;
+        }
+    }
+    function weights(m) {
+        return m === 1 ? { s: 1, k: 1 } : m === 2 ? { s: 0, k: 1 } : { s: 0.5, k: 0 };
+    }
+    function texWeights() {
+        var c = weights(cur), p = prev >= 0 ? weights(prev) : c;
+        return { spore: p.s + (c.s - p.s) * fade, density: p.k + (c.k - p.k) * fade };
+    }
+    function advance() {
+        var i = CYCLE.indexOf(cur);
+        prev = cur; cur = CYCLE[(i + 1) % CYCLE.length]; fade = 0;
+    }
+    // click anywhere on the parent bar → next look
+    (function () {
+        var bar = canvas.closest('.app-mascot-bar') || canvas.parentElement;
+        if (bar) { bar.addEventListener('click', function () { advance(); nextAt = sceneT + modeDur(cur); }); }
+    })();
+
+    function draw(t, real) {
+        var bw = canvas.width, bh = canvas.height, c = ctx;
+        // transparent base: the paper (.app-mascot-bar background) shows through;
+        // the canvas blends onto it via CSS mix-blend-mode: multiply (ink on paper)
+        c.clearRect(0, 0, bw, bh);
+        if (fx) { fx.clearRect(0, 0, bw, bh); }   // comets layer (above the text)
+        var bg = c.createLinearGradient(0, 0, 0, bh);
+        // a whisper of sage so the paper isn't perfectly flat
+        bg.addColorStop(0, 'rgba(' + PAL.primary + ',0.08)');
+        bg.addColorStop(1, 'rgba(' + PAL.primary + ',0)');
+        c.fillStyle = bg; c.fillRect(0, 0, bw, bh);
+
+        var tw = texWeights();
+        var i;
+        for (i = 0; i < stars.length; i++) {
+            var s = stars[i];
+            // ink flecks: kept faint so they read as paper grain, not dots
+            c.globalAlpha = (0.10 + 0.30 * (0.5 + 0.5 * Math.sin(t * 1.7 + s.p)));
+            c.fillStyle = s.ice ? 'rgb(' + PAL.info + ')' : 'rgb(' + PAL.impact + ')';
+            c.fillRect(s.u * bw, s.v * bh, s.r * dpr, s.r * dpr);
+        }
+        c.globalAlpha = 1;
+        for (i = 0; i < inkStreaks.length; i++) {
+            var k = inkStreaks[i];
+            var x = ((k.u - t * k.sp) % 1 + 1) % 1 * bw;
+            c.globalAlpha = k.al * tw.density * (1 - tw.spore);
+            c.fillStyle = 'rgb(' + PAL.primary + ')';   // sage trunks
+            c.fillRect(x, bh * (1 - k.h), k.w * dpr, bh * k.h);
+        }
+        c.globalAlpha = 1;
+        // normal compositing (not 'lighter'): on light paper the ink must
+        // build up DARK; the CSS mix-blend-mode: multiply sinks it into the page.
+        for (i = 0; i < spores.length; i++) {
+            var m = spores[i];
+            var x2 = ((m.u - t * m.sp) % 1 + 1) % 1 * bw;
+            var y2 = (m.v + 0.04 * Math.sin(t * 0.6 + m.ph)) * bh;
+            var al = (0.35 + 0.4 * Math.sin(t * 1.4 + m.ph)) * tw.spore * tw.density;
+            if (al <= 0.01) { continue; }
+            var rad = m.rad * dpr * 2.4;
+            var g = c.createRadialGradient(x2, y2, 0, x2, y2, rad);
+            g.addColorStop(0, 'rgba(' + m.c + ',' + al.toFixed(3) + ')');
+            g.addColorStop(1, 'rgba(' + m.c + ',0)');
+            c.fillStyle = g; c.beginPath(); c.arc(x2, y2, rad, 0, TAU); c.fill();
+        }
+        for (i = 0; i < comets.length; i++) {
+            var cm = comets[i];
+            var cpos = cometPos(cm, real);
+            var cx = cpos.x * bw, cy = cpos.y * bh;
+            var hr = (2.5 + cm.size * 2.5) * dpr;
+            // edge fade: only comets sitting comfortably inside the band show at
+            // full strength; anything within ~28% of a rim fades out, so no
+            // sliver of a head ever lurks at the top/bottom edge.
+            var margin = bh * 0.28;
+            var edgeFade = Math.min(cy / margin, (bh - cy) / margin, 1);
+            if (edgeFade <= 0.04) { continue; }
+            // tail is anti-sunward (away from the far gravity centre) → with a
+            // distant centre every tail points the same way (lower-right).
+            var rdx = (cpos.x - GC.x) * bw, rdy = (cpos.y - GC.y) * bh;
+            var rl = Math.sqrt(rdx * rdx + rdy * rdy) || 1;
+            var tl = cm.len * dpr;
+            var ex = cx + (rdx / rl) * tl, ey = cy + (rdy / rl) * tl;
+            // comets render on the FX layer (above the text, difference-blended)
+            var fctx = fx || c;
+            var tg = fctx.createLinearGradient(cx, cy, ex, ey);
+            tg.addColorStop(0, 'rgba(' + PAL.impact + ',' + (0.45 * edgeFade) + ')');   // earth-tone tail
+            tg.addColorStop(1, 'rgba(' + PAL.impact + ',0)');
+            fctx.strokeStyle = tg; fctx.lineWidth = (1 + cm.size) * dpr; fctx.lineCap = 'round';
+            fctx.beginPath(); fctx.moveTo(cx, cy); fctx.lineTo(ex, ey); fctx.stroke();
+            var hg = fctx.createRadialGradient(cx, cy, 0, cx, cy, hr);
+            hg.addColorStop(0, 'rgba(' + PAL.text + ',' + (0.8 * edgeFade) + ')');      // dark ink head
+            hg.addColorStop(1, 'rgba(' + PAL.text + ',0)');
+            fctx.fillStyle = hg; fctx.beginPath(); fctx.arc(cx, cy, hr, 0, TAU); fctx.fill();
+        }
+        drawGiant(fx || c, bw, bh);        // permanent giant — on the FX layer too
+    }
+
+    var SLOW = 0.0056;
+    // Wall-clock anchor: scene time is seconds since a fixed past epoch, NOT
+    // since page load. So after a full-page navigation (this is an MPA) the
+    // animation resumes exactly where it would have been — no restart.
+    var EPOCH = 1700000000;                  // fixed reference (2023-11-14)
+    function wallSeconds() { return Date.now() / 1000 - EPOCH; }
+    var last = 0, sceneT = 0;
+    var reduced = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    function frame(now) {
+        var real = wallSeconds();
+        var dt = last ? Math.min((now - last) / 1000, 0.05) : 0.016; last = now;
+        sceneT = real;
+        if (fade < 1) { fade = Math.min(1, fade + dt / 2.0); }
+        if (real >= nextAt) { advance(); nextAt = real + modeDur(cur); }
+        stepGiant(real);
+        draw(real * SLOW, real);
+        if (!reduced) { requestAnimationFrame(frame); }
+    }
+    seedRotationFromClock(wallSeconds());   // resume the look phase after a reload
+    requestAnimationFrame(frame);
+
+    window.addEventListener('resize', function () {
+        var nd = Math.max(1, Math.min(window.devicePixelRatio || 1, 2));
+        dpr = nd; sizeCanvas();
+    });
+})();
+</script>
