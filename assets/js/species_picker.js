@@ -94,8 +94,10 @@ window.WmSpeciesPicker = (function () {
     function createSpeciesItem(sp, currentSpecies, onPick) {
         var item = document.createElement('button');
         item.type = 'button';
+        item.className = 'wm-species-picker-item';
 
         var isCurrent = sp.scientific === currentSpecies;
+        item.dataset.isCurrent = isCurrent ? '1' : '0';
         item.style.cssText =
             'display:flex;justify-content:space-between;align-items:center;gap:10px;' +
             'width:100%;padding:10px 12px;border:none;border-radius:8px;' +
@@ -108,7 +110,9 @@ window.WmSpeciesPicker = (function () {
             if (!isCurrent) item.style.background = 'rgba(255,255,255,0.08)';
         };
         item.onmouseleave = function () {
-            if (!isCurrent) item.style.background = 'transparent';
+            if (!isCurrent && item.dataset.cursor !== '1') {
+                item.style.background = 'transparent';
+            }
         };
 
         var left = document.createElement('div');
@@ -241,7 +245,7 @@ window.WmSpeciesPicker = (function () {
 
                 function cleanup() {
                     overlay.remove();
-                    document.removeEventListener('keydown', onEscape);
+                    document.removeEventListener('keydown', onKey);
                 }
 
                 function onPick(sp) {
@@ -342,6 +346,56 @@ window.WmSpeciesPicker = (function () {
                     }
                 }
 
+                // Keyboard cursor over the focusable species buttons.
+                // Re-resolved on every render because renderList rebuilds
+                // listEl from scratch on each keystroke in the search box.
+                var cursorIndex = -1;
+
+                function cursorItems() {
+                    return Array.prototype.slice.call(
+                        listEl.querySelectorAll('.wm-species-picker-item')
+                    );
+                }
+
+                function paintCursor(items) {
+                    for (var i = 0; i < items.length; i++) {
+                        var it = items[i];
+                        var on = i === cursorIndex;
+                        it.dataset.cursor = on ? '1' : '0';
+                        if (on) {
+                            it.style.background = 'rgba(167,139,250,0.30)';
+                            it.style.outline = '2px solid rgba(167,139,250,0.85)';
+                            it.style.outlineOffset = '-2px';
+                            it.scrollIntoView({ block: 'nearest' });
+                        } else {
+                            it.style.outline = 'none';
+                            it.style.background = it.dataset.isCurrent === '1'
+                                ? 'rgba(167,139,250,0.16)' : 'transparent';
+                        }
+                    }
+                }
+
+                function moveCursor(direction) {
+                    var items = cursorItems();
+                    if (!items.length) { cursorIndex = -1; return; }
+                    if (cursorIndex === -1) {
+                        cursorIndex = direction > 0 ? 0 : items.length - 1;
+                    } else {
+                        cursorIndex = Math.min(
+                            items.length - 1,
+                            Math.max(0, cursorIndex + direction)
+                        );
+                    }
+                    paintCursor(items);
+                }
+
+                function pickCursor() {
+                    var items = cursorItems();
+                    if (cursorIndex >= 0 && cursorIndex < items.length) {
+                        items[cursorIndex].click();
+                    }
+                }
+
                 renderList('');
                 panel.appendChild(listEl);
 
@@ -352,33 +406,54 @@ window.WmSpeciesPicker = (function () {
                     'padding:7px 16px;border-radius:8px;border:1px solid rgba(255,255,255,0.14);' +
                     'background:transparent;color:rgba(255,255,255,0.68);cursor:pointer;' +
                     'font-size:0.8rem;align-self:flex-end;';
-                cancelBtn.onclick = function () {
-                    cleanup();
-                    resolve(null);
-                };
+                cancelBtn.onclick = function () { cancel(); };
                 panel.appendChild(cancelBtn);
 
                 overlay.appendChild(panel);
 
                 overlay.onclick = function (e) {
-                    if (e.target === overlay) {
-                        cleanup();
-                        resolve(null);
-                    }
+                    if (e.target === overlay) cancel();
                 };
 
-                function onEscape(e) {
-                    if (e.key === 'Escape') {
-                        cleanup();
-                        resolve(null);
+                function cancel() {
+                    cleanup();
+                    resolve(null);
+                }
+
+                // Handled here (not on the input) so arrows + Space win
+                // over the focused search box; plain typing still filters.
+                function onKey(e) {
+                    if (e.key === 'Escape' || e.key === 'ArrowLeft') {
+                        e.preventDefault();
+                        cancel();
+                        return;
+                    }
+                    if (e.key === 'ArrowDown') {
+                        e.preventDefault();
+                        moveCursor(1);
+                        return;
+                    }
+                    if (e.key === 'ArrowUp') {
+                        e.preventDefault();
+                        moveCursor(-1);
+                        return;
+                    }
+                    if (e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar') {
+                        // Space only acts as "pick" once a cursor exists,
+                        // so the operator can still type a space into the
+                        // search box before navigating.
+                        if (cursorIndex === -1 && (e.key === ' ' || e.key === 'Spacebar')) return;
+                        e.preventDefault();
+                        pickCursor();
                     }
                 }
-                document.addEventListener('keydown', onEscape);
+                document.addEventListener('keydown', onKey);
 
                 mountEl.appendChild(overlay);
 
                 setTimeout(function () { searchInput.focus(); }, 50);
                 searchInput.oninput = function () {
+                    cursorIndex = -1;
                     renderList(searchInput.value.toLowerCase().trim());
                 };
             });

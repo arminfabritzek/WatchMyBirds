@@ -790,6 +790,40 @@ host (`templates/components/orphan_modal.html`). Those are single-item
 detail surfaces; the Review Desk no longer composes them as its default
 view.
 
+### Keyboard navigation (review_grid_keyboard.js)
+
+The Review Grid supports hands-on-keyboard triage. The binding is
+operator-defined and drives the **existing** card-header action buttons
+via synthetic clicks — it re-implements no action, so disabled-state,
+Smart-Mode scope, confirm dialogs and toasts are all inherited.
+
+| Key | Action |
+|---|---|
+| `↑` / `↓` | Move the event cursor to the previous / next card. The active card shows `.review-grid__card--kbd-active` (a blue focus ring inside the hard-black event outline) and scrolls to centre. |
+| `←` / `→` | Cycle the *armed* action within the active card: **Invert → Approve → Relabel → No Bird → Trash**. The armed button shows `.review-grid__card-action--armed`. Disabled verbs (e.g. Approve before a species is picked) are skipped. |
+| `Space` | Fire the armed action (clicks the armed button). |
+| `Enter` | Open the active event's detail modal (first actionable tile). |
+
+The handler stays inert while a text field is focused or any modal is
+open, so it never competes with form input or the in-modal viewer
+controls. New per-card action verbs added to `review_grid_card.html`
+must also be added to `ACTION_ORDER` in `review_grid_keyboard.js` if
+they should be reachable from the `←/→` cursor.
+
+The species picker (`assets/js/species_picker.js`) is matched in the
+grid handler's modal-open guard (it is a bespoke overlay, not a
+Bootstrap modal), so while it is open it owns the arrow keys and the
+grid cursor stands still behind it.
+
+**Picker keyboard binding** (active whenever `WmSpeciesPicker` is open,
+e.g. after Relabel):
+
+| Key | Action |
+|---|---|
+| `↑` / `↓` | Move a highlight cursor through the species list (`.wm-species-picker-item`), skipping section headers and hints. |
+| `Space` / `Enter` | Pick the highlighted species. `Space` only picks once a cursor exists, so a space can still be typed into the search box before navigating. |
+| `←` / `Esc` | Cancel — resolves to no change and returns to the event card. |
+
 ### Layout (retired)
 
 The pre-2026-05-23 layout — *"Event rail on the left, image viewer

@@ -10550,6 +10550,35 @@ code {
     flex-wrap: wrap;
 }
 
+/* Keyboard navigation (review_grid_keyboard.js).
+   The active event card gets an unmistakable blue focus ring that sits
+   inside the existing hard-black event outline so the two never fight.
+   The armed action button (cycled with Left/Right, fired with Space)
+   gets a pulse ring so the operator always sees what Space will do. */
+.review-grid__card--kbd-active {
+    box-shadow:
+        0 0 0 3px var(--color-accent, #0072B2),
+        0 10px 26px rgba(26, 38, 45, 0.10),
+        0 1px 2px rgba(0, 0, 0, 0.06);
+}
+
+.review-grid__card-action--armed {
+    outline: 3px solid var(--color-accent, #0072B2);
+    outline-offset: 2px;
+    border-radius: 6px;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+    .review-grid__card-action--armed {
+        animation: review-grid-armed-pulse 1.4s ease-in-out infinite;
+    }
+}
+
+@keyframes review-grid-armed-pulse {
+    0%, 100% { outline-color: var(--color-accent, #0072B2); }
+    50% { outline-color: color-mix(in srgb, var(--color-accent, #0072B2) 35%, transparent); }
+}
+
 /* Global tile-size slider (Apple Photos pattern).
    Single control in the page header; all cards reflow as the slider
    moves. The CSS variable lives on .review-grid root and drives the
