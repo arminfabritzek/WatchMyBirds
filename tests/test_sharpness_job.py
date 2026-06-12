@@ -7,7 +7,6 @@ runs the job, and asserts the DB rows are populated.
 
 from __future__ import annotations
 
-import os
 import sqlite3
 import threading
 from pathlib import Path

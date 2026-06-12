@@ -283,13 +283,13 @@ def run_probe(args: argparse.Namespace) -> int:
         print("  Before we connect, please confirm:")
         print()
         print(f"    [ ] Camera is powered on and reachable at {ip}:{port}")
-        print(f"    [ ] You have a live view of the camera (cam app, RTSP")
-        print(f"        viewer, or WMB stream page) so you can SEE moves")
-        print(f"    [ ] Operator preset slots 1–7, 8, 11–17 are intact")
+        print("    [ ] You have a live view of the camera (cam app, RTSP")
+        print("        viewer, or WMB stream page) so you can SEE moves")
+        print("    [ ] Operator preset slots 1–7, 8, 11–17 are intact")
         print(f"        and you accept that slot {DEFAULT_HOME_SLOT} will be")
-        print(f"        overwritten with the probe's Home preset")
-        print(f"    [ ] You can stop the probe at any time with Ctrl-C —")
-        print(f"        emergency stop fires and the cam is left where it is")
+        print("        overwritten with the probe's Home preset")
+        print("    [ ] You can stop the probe at any time with Ctrl-C —")
+        print("        emergency stop fires and the cam is left where it is")
         print()
         print()
         if not ask_yn("All set — start the probe?", default=True):
@@ -311,7 +311,7 @@ def run_probe(args: argparse.Namespace) -> int:
     def _sigint(_sig, _frm):
         print("\n\n  ⛔  Ctrl-C — emergency stop")
         core.emergency_stop(conn)
-        print(f"  📄  Partial reports already saved at:")
+        print("  📄  Partial reports already saved at:")
         print(f"      {yaml_path}")
         print(f"      {json_path}")
         sys.exit(130)
@@ -396,11 +396,11 @@ def run_probe(args: argparse.Namespace) -> int:
               f"fixed={nc.fixed_home_position}")
         print(f"    max_presets         : {nc.maximum_number_of_presets}")
         if nc.pan_tilt_spaces:
-            print(f"    pan_tilt_spaces:")
+            print("    pan_tilt_spaces:")
             for sp in nc.pan_tilt_spaces:
                 print(f"      • {sp}")
         if nc.zoom_spaces:
-            print(f"    zoom_spaces:")
+            print("    zoom_spaces:")
             for sp in nc.zoom_spaces:
                 print(f"      • {sp}")
     report["ptz_nodes"] = [asdict(n) for n in nodes]
@@ -431,12 +431,12 @@ def run_probe(args: argparse.Namespace) -> int:
             print(f"    • RTSP ({p.name}): {p.stream_uri}{marker}")
     if snapshot_uri:
         print(f"    • Snapshot JPEG: {snapshot_uri}")
-    print(f"    • go2rtc UI (if running locally): http://localhost:1984")
-    print(f"    • WMB stream page (if app is running): http://localhost:8050")
+    print("    • go2rtc UI (if running locally): http://localhost:1984")
+    print("    • WMB stream page (if app is running): http://localhost:8050")
     print()
     print("  Quick RTSP preview from terminal (Mac with ffplay installed):")
     if conn.profiles and conn.profiles[0].stream_uri:
-        print(f"    ffplay -fflags nobuffer -rtsp_transport tcp \\")
+        print("    ffplay -fflags nobuffer -rtsp_transport tcp \\")
         print(f"      {conn.profiles[0].stream_uri}")
     print()
     report["stream_check"] = {
@@ -521,12 +521,12 @@ def run_probe(args: argparse.Namespace) -> int:
     print()
 
     print()
-    print(f"  → returning to Home preset before exit")
+    print("  → returning to Home preset before exit")
     core.goto_preset(conn, home_token, settle_sec=2.0)
 
     _write_reports(report, yaml_path, json_path)
     print()
-    print(f"  📄 Reports written:")
+    print("  📄 Reports written:")
     print(f"     {yaml_path}")
     print(f"     {json_path}")
     print(f"     {log_path}")
@@ -616,17 +616,17 @@ def _ensure_home_preset(
         return None
 
     print()
-    print(f"  Operator's slot convention:")
-    print(f"    1–7   preset-mode zones")
-    print(f"    8     auto-re-focus")
-    print(f"    11–17 grid-mode cells")
-    print(f"    20+   free for ad-hoc use")
+    print("  Operator's slot convention:")
+    print("    1–7   preset-mode zones")
+    print("    8     auto-re-focus")
+    print("    11–17 grid-mode cells")
+    print("    20+   free for ad-hoc use")
     print()
-    print(f"  Cam declares max 32 presets but lists 256 — slots above ~32 may")
+    print("  Cam declares max 32 presets but lists 256 — slots above ~32 may")
     print(f"  silently no-op or modulo-map. Default slot {DEFAULT_HOME_SLOT} is")
-    print(f"  clear of all conventions AND well within the 32-slot hardware limit.")
+    print("  clear of all conventions AND well within the 32-slot hardware limit.")
     print()
-    slot_str = ask(f"Which preset slot to use for Home?", str(DEFAULT_HOME_SLOT))
+    slot_str = ask("Which preset slot to use for Home?", str(DEFAULT_HOME_SLOT))
     try:
         slot_num = int(slot_str)
     except ValueError:
@@ -634,7 +634,7 @@ def _ensure_home_preset(
         slot_num = DEFAULT_HOME_SLOT
     requested_token = f"Preset{slot_num:03d}"
     print(f"  → will REQUEST cam to save Home as token={requested_token!r}")
-    print(f"     (cam may return a different token — we will verify)")
+    print("     (cam may return a different token — we will verify)")
 
     print()
     print()
@@ -670,15 +670,15 @@ def _ensure_home_preset(
     print("    Step 1: drive the cam visibly AWAY from Home (1.5s pan-right).")
     print("            You confirm the cam has actually moved away.")
     print(f"    Step 2: send GotoPreset({returned_token!r}) and wait for the cam")
-    print(f"            to return to YOUR ORIGINAL AIM. You confirm the cam")
-    print(f"            is back where you set it.")
+    print("            to return to YOUR ORIGINAL AIM. You confirm the cam")
+    print("            is back where you set it.")
     print()
     ask_confirm("Ready for Step 1 (drive AWAY from Home)? Press Enter to start:")
     print()
-    print(f"  Step 1: driving cam pan-right (ContinuousMove, 1.5s burst)")
+    print("  Step 1: driving cam pan-right (ContinuousMove, 1.5s burst)")
     core.continuous_move(conn, pan=0.2, duration_sec=1.5)
     time.sleep(1.0)  # let mechanical settle
-    print(f"  Step 1 complete — cam should now be visibly RIGHT of Home.")
+    print("  Step 1 complete — cam should now be visibly RIGHT of Home.")
     print()
     if not ask_yn("Has the cam visibly moved AWAY from Home?", default=True):
         print()
@@ -704,14 +704,14 @@ def _ensure_home_preset(
         print(f"  ✓  Home verified: token={returned_token!r}")
         return returned_token
     print()
-    print(f"  ✗  Verification FAILED.")
-    print(f"     The cam saved your aim into a slot that's NOT what we requested,")
-    print(f"     OR the SetPreset write was a no-op (cam returned OK but stored")
+    print("  ✗  Verification FAILED.")
+    print("     The cam saved your aim into a slot that's NOT what we requested,")
+    print("     OR the SetPreset write was a no-op (cam returned OK but stored")
     print(f"     nothing). This is the {requested_token!r}-doesn't-stick problem.")
     print()
-    print(f"     Recommended next step: pick a slot inside the declared 32 limit")
-    print(f"     (any of 20–32 is safe — clear of your conventions and within")
-    print(f"     the cam's hardware preset limit).")
+    print("     Recommended next step: pick a slot inside the declared 32 limit")
+    print("     (any of 20–32 is safe — clear of your conventions and within")
+    print("     the cam's hardware preset limit).")
     return None
 
 
@@ -975,7 +975,7 @@ def _run_one_case(conn: core.Connection, case: dict[str, Any]) -> dict[str, Any]
 
     print()
     print()
-    print(f"  → Question: was the move correct?")
+    print("  → Question: was the move correct?")
     print(f"     (expected: {case.get('expectation', '<no expectation set>')})")
     print()
     feedback = ask_feedback("Did the camera do the expected thing?")

@@ -9,7 +9,7 @@ pause.
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -48,7 +48,7 @@ def test_night_with_location_pauses(monkeypatch, manager):
     manager.config["DAY_AND_NIGHT_CAPTURE"] = False
     manager.config["LOCATION_DATA"] = {"latitude": 52.52, "longitude": 13.40}
 
-    future = datetime.now(tz=timezone.utc) + timedelta(hours=6)
+    future = datetime.now(tz=UTC) + timedelta(hours=6)
     monkeypatch.setattr(
         "utils.sun_times.is_daytime",
         lambda *a, **kw: (False, future),
@@ -61,7 +61,7 @@ def test_day_with_location_runs(monkeypatch, manager):
     manager.config["DAY_AND_NIGHT_CAPTURE"] = False
     manager.config["LOCATION_DATA"] = {"latitude": 52.52, "longitude": 13.40}
 
-    future = datetime.now(tz=timezone.utc) + timedelta(hours=6)
+    future = datetime.now(tz=UTC) + timedelta(hours=6)
     monkeypatch.setattr(
         "utils.sun_times.is_daytime",
         lambda *a, **kw: (True, future),
@@ -79,7 +79,7 @@ def test_cache_avoids_repeated_calls_within_ttl(monkeypatch, manager):
 
     def fake_is_daytime(*a, **kw):
         calls["n"] += 1
-        return False, datetime.now(tz=timezone.utc) + timedelta(hours=6)
+        return False, datetime.now(tz=UTC) + timedelta(hours=6)
 
     monkeypatch.setattr("utils.sun_times.is_daytime", fake_is_daytime)
 
@@ -99,7 +99,7 @@ def test_cache_refreshes_after_ttl(monkeypatch, manager):
 
     def fake_is_daytime(*a, **kw):
         calls["n"] += 1
-        return False, datetime.now(tz=timezone.utc) + timedelta(hours=6)
+        return False, datetime.now(tz=UTC) + timedelta(hours=6)
 
     monkeypatch.setattr("utils.sun_times.is_daytime", fake_is_daytime)
 
@@ -120,7 +120,7 @@ def test_transition_log_fires_once(monkeypatch, manager, caplog):
     # First call: seed cache as daytime.
     monkeypatch.setattr(
         "utils.sun_times.is_daytime",
-        lambda *a, **kw: (True, datetime.now(tz=timezone.utc) + timedelta(hours=6)),
+        lambda *a, **kw: (True, datetime.now(tz=UTC) + timedelta(hours=6)),
     )
     manager._should_run_od_now()
 
@@ -128,7 +128,7 @@ def test_transition_log_fires_once(monkeypatch, manager, caplog):
     caplog.set_level(logging.INFO, logger="detectors.detection_manager")
     monkeypatch.setattr(
         "utils.sun_times.is_daytime",
-        lambda *a, **kw: (False, datetime.now(tz=timezone.utc) + timedelta(hours=6)),
+        lambda *a, **kw: (False, datetime.now(tz=UTC) + timedelta(hours=6)),
     )
     manager._should_run_od_now()
 
@@ -162,7 +162,7 @@ def test_get_od_status_night(monkeypatch, manager):
     manager.config["LOCATION_DATA"] = {"latitude": 52.52, "longitude": 13.40}
     manager._daytime_ttl = 0
 
-    future = datetime.now(tz=timezone.utc) + timedelta(hours=6)
+    future = datetime.now(tz=UTC) + timedelta(hours=6)
     monkeypatch.setattr(
         "utils.sun_times.is_daytime",
         lambda *a, **kw: (False, future),

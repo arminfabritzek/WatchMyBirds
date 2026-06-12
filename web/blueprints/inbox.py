@@ -23,7 +23,12 @@ from logging_config import get_logger
 from web.blueprints.auth import login_required
 from web.security import error_response_simple as _error_response_simple
 from web.security import safe_log_value as _slv
-from web.services import backup_restore_service, cache_service, ingest_service, path_service
+from web.services import (
+    backup_restore_service,
+    cache_service,
+    ingest_service,
+    path_service,
+)
 
 logger = get_logger(__name__)
 config = get_config()

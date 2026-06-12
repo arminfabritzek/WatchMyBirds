@@ -15,7 +15,6 @@ module owns the math for that branch.
 
 from __future__ import annotations
 
-
 # Default grid shape choices the setup wizard exposes. Operator picks
 # one once per camera; stored as ``ptz.grid_shape: [rows, cols]``.
 ALLOWED_GRID_SHAPES: tuple[tuple[int, int], ...] = (

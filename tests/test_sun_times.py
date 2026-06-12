@@ -10,7 +10,7 @@ the expected wall clock) are what matters.
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -30,7 +30,7 @@ def test_naive_datetime_raises():
 def test_unknown_twilight_mode_raises():
     with pytest.raises(ValueError, match="unknown twilight mode"):
         is_daytime(
-            datetime(2026, 6, 21, 12, 0, tzinfo=timezone.utc),
+            datetime(2026, 6, 21, 12, 0, tzinfo=UTC),
             *BERLIN,
             twilight="lunar",  # type: ignore[arg-type]
         )
@@ -38,7 +38,7 @@ def test_unknown_twilight_mode_raises():
 
 def test_berlin_summer_noon_is_daytime():
     """Summer solstice noon UTC in Berlin → unambiguously daytime."""
-    now = datetime(2026, 6, 21, 12, 0, tzinfo=timezone.utc)
+    now = datetime(2026, 6, 21, 12, 0, tzinfo=UTC)
     is_day, next_transition = is_daytime(now, *BERLIN)
     assert is_day is True
     # The next transition is tonight's daytime_end, which is dusk +
@@ -51,7 +51,7 @@ def test_berlin_summer_noon_is_daytime():
 
 def test_berlin_winter_pre_dawn_is_night():
     """Winter solstice 03:00 UTC in Berlin → unambiguously night."""
-    now = datetime(2026, 12, 21, 3, 0, tzinfo=timezone.utc)
+    now = datetime(2026, 12, 21, 3, 0, tzinfo=UTC)
     is_day, next_transition = is_daytime(now, *BERLIN)
     assert is_day is False
     # Next transition is morning daytime_start = civil dawn + (-45)
@@ -69,7 +69,7 @@ def test_berlin_dusk_transition_with_default_offsets():
     extension (default), so OD treats it as daytime. Same moment
     with zero offsets → night.
     """
-    now = datetime(2026, 6, 21, 20, 30, tzinfo=timezone.utc)
+    now = datetime(2026, 6, 21, 20, 30, tzinfo=UTC)
     is_day, _ = is_daytime(
         now, *BERLIN, start_offset_min=30, end_offset_min=-45
     )
@@ -89,7 +89,7 @@ def test_berlin_pre_dawn_with_default_offsets():
     extension (default), so OD already considers it daytime. Same
     moment with zero offsets → night.
     """
-    now = datetime(2026, 6, 21, 1, 30, tzinfo=timezone.utc)
+    now = datetime(2026, 6, 21, 1, 30, tzinfo=UTC)
     is_day_default, _ = is_daytime(
         now, *BERLIN, start_offset_min=30, end_offset_min=-45
     )
@@ -106,21 +106,21 @@ def test_offset_zero_matches_civil_twilight():
 
     Reference (astral 3.2): Berlin 2026-06-21 civil dusk = 20:24 UTC.
     """
-    now = datetime(2026, 6, 21, 12, 0, tzinfo=timezone.utc)
+    now = datetime(2026, 6, 21, 12, 0, tzinfo=UTC)
     _, next_transition = is_daytime(
         now, *BERLIN, start_offset_min=0, end_offset_min=0
     )
-    expected = datetime(2026, 6, 21, 20, 24, tzinfo=timezone.utc)
+    expected = datetime(2026, 6, 21, 20, 24, tzinfo=UTC)
     assert abs((next_transition - expected).total_seconds()) < 5 * 60
 
 
 def test_equator_has_short_twilight():
     """Equator at noon is daytime; equator at midnight is night."""
-    noon = datetime(2026, 6, 21, 17, 0, tzinfo=timezone.utc)  # ~12:00 local
+    noon = datetime(2026, 6, 21, 17, 0, tzinfo=UTC)  # ~12:00 local
     is_day, _ = is_daytime(noon, *EQUATOR_QUITO)
     assert is_day is True
 
-    midnight = datetime(2026, 6, 21, 5, 0, tzinfo=timezone.utc)  # ~midnight local
+    midnight = datetime(2026, 6, 21, 5, 0, tzinfo=UTC)  # ~midnight local
     is_day, _ = is_daytime(midnight, *EQUATOR_QUITO)
     assert is_day is False
 
@@ -128,7 +128,7 @@ def test_equator_has_short_twilight():
 def test_tromso_polar_day_is_daytime():
     """Mid-polar-day in Tromsø: sun never sets → always daytime."""
     # June 21 in Tromsø: midnight sun. Pick local midnight UTC.
-    now = datetime(2026, 6, 21, 22, 0, tzinfo=timezone.utc)
+    now = datetime(2026, 6, 21, 22, 0, tzinfo=UTC)
     is_day, next_transition = is_daytime(now, *TROMSO)
     assert is_day is True
     # Either falls back to a far-future transition (synthetic +12h)
@@ -139,7 +139,7 @@ def test_tromso_polar_day_is_daytime():
 def test_tromso_polar_night_is_night():
     """Mid-polar-night in Tromsø: sun never rises → daytime is False."""
     # Dec 21 in Tromsø: polar night.
-    now = datetime(2026, 12, 21, 12, 0, tzinfo=timezone.utc)
+    now = datetime(2026, 12, 21, 12, 0, tzinfo=UTC)
     is_day, _ = is_daytime(now, *TROMSO)
     # During genuine polar night civil twilight may still exist
     # briefly (Tromsø has a "blue hour" even in December). Accept
@@ -166,7 +166,7 @@ def test_twilight_modes_widen_progressively():
         - nautical: daytime ✓
         - civil:    night ✗
     """
-    seven_am = datetime(2026, 12, 21, 7, 0, tzinfo=timezone.utc)
+    seven_am = datetime(2026, 12, 21, 7, 0, tzinfo=UTC)
     is_day_naut, _ = is_daytime(seven_am, *BERLIN, start_offset_min=0, end_offset_min=0, twilight="nautical")
     is_day_civ, _ = is_daytime(seven_am, *BERLIN, start_offset_min=0, end_offset_min=0, twilight="civil")
     is_day_geo, _ = is_daytime(seven_am, *BERLIN, start_offset_min=0, end_offset_min=0, twilight="geometric")
@@ -174,7 +174,7 @@ def test_twilight_modes_widen_progressively():
     assert is_day_civ is True
     assert is_day_geo is False
 
-    six_am = datetime(2026, 12, 21, 6, 0, tzinfo=timezone.utc)
+    six_am = datetime(2026, 12, 21, 6, 0, tzinfo=UTC)
     is_day_naut, _ = is_daytime(six_am, *BERLIN, start_offset_min=0, end_offset_min=0, twilight="nautical")
     is_day_civ, _ = is_daytime(six_am, *BERLIN, start_offset_min=0, end_offset_min=0, twilight="civil")
     assert is_day_naut is True
@@ -184,6 +184,6 @@ def test_twilight_modes_widen_progressively():
 def test_next_transition_is_in_future():
     """The returned next_transition is always strictly > now."""
     for hour in range(0, 24, 3):
-        now = datetime(2026, 5, 1, hour, 0, tzinfo=timezone.utc)
+        now = datetime(2026, 5, 1, hour, 0, tzinfo=UTC)
         _, next_transition = is_daytime(now, *BERLIN)
         assert next_transition > now, f"Failed at hour {hour}: {next_transition} <= {now}"

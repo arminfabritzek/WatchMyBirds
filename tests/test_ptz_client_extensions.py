@@ -17,7 +17,6 @@ from unittest.mock import MagicMock
 
 from camera.ptz_client import DeviceInfo, PtzClient, StatusSample
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

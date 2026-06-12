@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import threading
 import time
+from datetime import UTC
 
 import pytest
 
@@ -198,8 +199,8 @@ def test_should_run_in_daily_loop_false_skips_fire():
     # The fake should NOT have started.
     assert not j.started_event.is_set()
     # But the date guard IS marked, so next minute won't retry.
-    from datetime import datetime, timezone
-    today = datetime.now(tz=timezone.utc).date().isoformat()
+    from datetime import datetime
+    today = datetime.now(tz=UTC).date().isoformat()
     assert nightly_job_hub._last_fire_date.get("opt_out") == today  # type: ignore[attr-defined]
 
 

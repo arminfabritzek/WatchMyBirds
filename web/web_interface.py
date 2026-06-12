@@ -3371,7 +3371,7 @@ def create_web_interface(detection_manager, system_monitor=None):
         text_dump = buf.getvalue()
 
         rows = []
-        for func, (cc, nc, tt, ct, _callers) in stats.stats.items():
+        for func, (_cc, nc, tt, ct, _callers) in stats.stats.items():
             rows.append(
                 {
                     "file": func[0],
