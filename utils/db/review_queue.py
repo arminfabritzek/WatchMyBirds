@@ -709,7 +709,7 @@ def restore_no_bird_images(conn: sqlite3.Connection, filenames: Iterable[str]) -
 
 
 def delete_no_bird_images(
-    conn: sqlite3.Connection, filenames: Iterable[str] = None, delete_all: bool = False
+    conn: sqlite3.Connection, filenames: Iterable[str] | None = None, delete_all: bool = False
 ) -> int:
     """
     Permanently deletes 'no_bird' images from the database.
@@ -743,7 +743,7 @@ def update_review_status(
     conn: sqlite3.Connection,
     filenames: Iterable[str],
     new_status: str,
-    updated_at: str = None,
+    updated_at: str | None = None,
 ) -> int:
     """
     Updates review_status for specified images.

@@ -18,6 +18,7 @@ import logging
 import threading
 import time
 from datetime import date, datetime
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -69,14 +70,14 @@ def _should_send_interval(interval_hours: int) -> bool:
         return False
 
 
-def _mark_sent_daily():
+def _mark_sent_daily() -> None:
     """Mark today as 'report sent' for the daily-mode guard."""
     global _last_report_date
     with _lock:
         _last_report_date = date.today()
 
 
-def _mark_sent_interval():
+def _mark_sent_interval() -> None:
     """Record the timestamp for the interval-mode guard."""
     global _last_interval_send_ts
     with _lock:
@@ -97,7 +98,7 @@ def _parse_report_time(time_str: str) -> tuple[int, int]:
     return 21, 0
 
 
-def start_report_scheduler(check_interval: int = 30, detection_manager=None):
+def start_report_scheduler(check_interval: int = 30, detection_manager: Any = None) -> None:
     """
     Start the background scheduler thread.
 
@@ -151,7 +152,7 @@ def start_report_scheduler(check_interval: int = 30, detection_manager=None):
         except Exception as e:
             logger.error("Report failed (%s): %s", reason, e, exc_info=True)
 
-    def _loop():
+    def _loop() -> None:
         logger.info("Telegram report scheduler started.")
         while True:
             try:

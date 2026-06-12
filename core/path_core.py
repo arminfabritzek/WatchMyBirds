@@ -6,10 +6,11 @@ Provides path resolution and management abstracted from the web layer.
 
 from pathlib import Path
 
+from utils.path_manager import PathManager
 from utils.path_manager import get_path_manager as _get_path_manager
 
 
-def get_path_manager(output_dir: str | None = None):
+def get_path_manager(output_dir: str | None = None) -> PathManager:
     """
     Get or create a PathManager instance.
 

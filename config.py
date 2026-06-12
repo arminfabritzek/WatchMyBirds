@@ -1,5 +1,6 @@
 # config.py
 import os
+from typing import Any
 
 from dotenv import load_dotenv
 
@@ -13,7 +14,7 @@ load_dotenv()
 import secrets
 
 
-def get_or_create_secret_key(config):
+def get_or_create_secret_key(config: dict[str, Any]) -> str:
     """
     Retrieves or generates a persistent secret key.
     Tries to store it in the state directory (/var/lib/watchmybirds/secret.key).
@@ -355,7 +356,7 @@ RUNTIME_KEYS = {
 BOOT_KEYS = set(DEFAULTS.keys()) - RUNTIME_KEYS
 
 
-def _load_config():
+def _load_config() -> dict[str, Any]:
     """Loads configuration from environment variables and YAML."""
     config = dict(DEFAULTS)
 
@@ -520,7 +521,7 @@ def _load_config():
     return config
 
 
-def ensure_app_directories(config_dict=None):
+def ensure_app_directories(config_dict: dict[str, Any] | None = None) -> None:
     """
     Creates necessary directories based on configuration.
     Uses relative paths by default for portability.
@@ -552,7 +553,7 @@ def ensure_app_directories(config_dict=None):
             print(f"CRITICAL: Failed to create directory {path}: {e}", file=sys.stderr)
 
 
-def get_config():
+def get_config() -> dict[str, Any]:
     """Returns the loaded configuration."""
     global _CONFIG
     if _CONFIG is None:
@@ -763,7 +764,7 @@ def _migrate_camera_url(config: dict) -> None:
     config["CAMERA_URL"] = video_source
 
 
-def _coerce_config_types(config):
+def _coerce_config_types(config: dict[str, Any]) -> None:
     """Validates and enforces expected types for core keys."""
     # Booleans
     for key in (
@@ -1012,7 +1013,7 @@ def _coerce_config_types(config):
         config["AESTHETIC_TAG_TIME"] = DEFAULTS.get("AESTHETIC_TAG_TIME", "02:10")
 
 
-def _coerce_bool(value):
+def _coerce_bool(value: Any) -> bool:
     if isinstance(value, bool):
         return value
     if isinstance(value, (int, float)):
@@ -1022,7 +1023,7 @@ def _coerce_bool(value):
     return False
 
 
-def get_settings_payload():
+def get_settings_payload() -> dict[str, Any]:
     """Provides settings including metadata for UI/API."""
     cfg = get_config()
     yaml_settings = load_settings_yaml(str(cfg["OUTPUT_DIR"]))
@@ -1087,7 +1088,9 @@ def get_settings_payload():
     return payload
 
 
-def validate_runtime_updates(updates):
+def validate_runtime_updates(
+    updates: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, str]]:
     """Validates runtime updates and returns (valid, errors)."""
     valid = {}
     errors = {}
@@ -1102,7 +1105,7 @@ def validate_runtime_updates(updates):
     return valid, errors
 
 
-def update_runtime_settings(updates):
+def update_runtime_settings(updates: dict[str, Any]) -> None:
     """Saves runtime settings and updates the running configuration.
 
     Persistence rule: an explicit user choice is ALWAYS written to
@@ -1130,7 +1133,7 @@ def update_runtime_settings(updates):
     cfg.update(next_cfg)
 
 
-def _validate_value(key, value):
+def _validate_value(key: str, value: Any) -> tuple[bool, Any]:
     if key in (
         "DAY_AND_NIGHT_CAPTURE",
         "TELEGRAM_ENABLED",
@@ -1369,7 +1372,7 @@ def _validate_value(key, value):
 
 
 # Backward-compatible alias
-def load_config():
+def load_config() -> dict[str, Any]:
     """Alias for legacy code; returns the shared configuration."""
     return get_config()
 

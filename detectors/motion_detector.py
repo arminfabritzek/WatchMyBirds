@@ -12,7 +12,7 @@ class MotionDetector:
     Designed to act as a pre-filter for heavier object detection models.
     """
 
-    def __init__(self, sensitivity=500, debug=False):
+    def __init__(self, sensitivity: int = 500, debug: bool = False) -> None:
         """
         Args:
             sensitivity (int): Minimum contour area to trigger motion.
@@ -24,12 +24,12 @@ class MotionDetector:
         self.previous_frame_gray = None
         self.kernel = np.ones((5, 5), np.uint8)
 
-    def reset(self):
+    def reset(self) -> None:
         """Resets the motion detector state. Call when video source changes."""
         self.previous_frame_gray = None
         logger.debug("MotionDetector state reset")
 
-    def detect(self, frame):
+    def detect(self, frame: np.ndarray) -> bool:
         """
         Detects motion in the provided frame compared to the previous frame.
 

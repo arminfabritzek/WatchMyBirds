@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import os
 import time
+from collections.abc import Iterator
 from datetime import datetime
+from typing import TYPE_CHECKING
 
 import cv2
 import numpy as np
@@ -11,17 +13,25 @@ from PIL import Image, ImageDraw, ImageFont
 
 from logging_config import get_logger
 
+if TYPE_CHECKING:
+    from camera.video_capture import VideoCapture
+
 logger = get_logger(__name__)
 
 
 class FrameGenerator:
     """Generates JPEG-encoded frames with timestamps."""
 
-    def __init__(self, video_capture):
+    def __init__(self, video_capture: VideoCapture) -> None:
         """Stores a reference to the VideoCapture instance."""
         self.video_capture = video_capture
 
-    def _draw_timestamp(self, image, padding_x_percent, padding_y_percent):
+    def _draw_timestamp(
+        self,
+        image: np.ndarray,
+        padding_x_percent: float,
+        padding_y_percent: float,
+    ) -> np.ndarray:
         """Adds a timestamp to the image."""
         pil_image = Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
         draw = ImageDraw.Draw(pil_image)
@@ -39,7 +49,12 @@ class FrameGenerator:
         draw.text((text_x, text_y), timestamp_text, font=custom_font, fill="white")
         return cv2.cvtColor(np.array(pil_image), cv2.COLOR_RGB2BGR)
 
-    def _generate_placeholder(self, placeholder, padding_x_percent, padding_y_percent):
+    def _generate_placeholder(
+        self,
+        placeholder: np.ndarray,
+        padding_x_percent: float,
+        padding_y_percent: float,
+    ) -> np.ndarray:
         """Generates a placeholder with noise and a timestamp."""
         placeholder_copy = placeholder.copy()
         noise = np.random.randint(-100, 20, placeholder_copy.shape, dtype=np.int16)
@@ -50,7 +65,9 @@ class FrameGenerator:
             placeholder_copy, padding_x_percent, padding_y_percent
         )
 
-    def generate_frames(self, output_resize_width, stream_fps):
+    def generate_frames(
+        self, output_resize_width: int, stream_fps: float
+    ) -> Iterator[bytes]:
         """Continuously yields JPEG-encoded frames."""
         static_placeholder_path = "assets/static_placeholder.jpg"
         if os.path.exists(static_placeholder_path):

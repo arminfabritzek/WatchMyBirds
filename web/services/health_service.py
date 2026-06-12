@@ -4,10 +4,12 @@ Health Service - Web Layer Service for System Health.
 Exposes system health status to the web interface.
 """
 
+from typing import Any
+
 from core import health_core
 
 
-def get_system_health() -> dict:
+def get_system_health() -> dict[str, Any]:
     """
     Get current system health status.
 

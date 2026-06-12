@@ -198,7 +198,7 @@ class PathManager:
 _instance = None
 
 
-def get_path_manager(output_dir: str = None) -> PathManager:
+def get_path_manager(output_dir: str | None = None) -> PathManager:
     global _instance
     if _instance is None:
         if output_dir is None:

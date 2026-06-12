@@ -19,9 +19,14 @@ import os
 import sys
 import tempfile
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import cv2
 import numpy as np
+
+if TYPE_CHECKING:
+    import sqlite3
+    from typing import Any
 
 # Ensure repository root is importable even when executed as a script.
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -59,7 +64,7 @@ _WEEKDAYS_EN = {
 }
 
 
-def _row_value(row, key: str, index: int, default=None):
+def _row_value(row: Any, key: str, index: int, default: Any = None) -> Any:
     """Read values from sqlite rows or plain tuples without caring about shape."""
     if row is None:
         return default
@@ -219,7 +224,7 @@ def render_species_photo_caption(common_name: str, count: int) -> str:
     return f"<b>{safe_name}</b>\n{count} {count_label} today · best photo of the day"
 
 
-def _fetch_species_best_photos(conn, date_iso: str) -> list[dict]:
+def _fetch_species_best_photos(conn: sqlite3.Connection, date_iso: str) -> list[dict]:
     """
     Fetch the best photo per species for a given date.
 
@@ -1209,7 +1214,7 @@ def send_species_best_photos_album(
     return all_responses
 
 
-def main(**_kwargs):
+def main(**_kwargs: Any) -> None:
     """Generate and send the evening Telegram report."""
     conn = get_connection()
 

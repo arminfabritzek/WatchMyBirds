@@ -1,8 +1,12 @@
 from pathlib import Path
+from typing import TYPE_CHECKING
 from xml.sax.saxutils import escape as _xml_escape
 
 import cv2
 import numpy as np
+
+if TYPE_CHECKING:
+    from core.event_metadata import EventMetadata
 
 # laplacian_sharpness() downsamples to this long-side first: bigger crops have
 # more raw Laplacian variance at the same perceptual sharpness, so a fixed
@@ -10,7 +14,12 @@ import numpy as np
 _SHARPNESS_REF_LONG_SIDE = 256
 
 
-def create_square_crop(image, bbox, margin_percent=0.2, pad_color=(0, 0, 0)):
+def create_square_crop(
+    image: np.ndarray,
+    bbox: tuple[int, int, int, int],
+    margin_percent: float = 0.2,
+    pad_color: tuple[int, int, int] = (0, 0, 0),
+) -> np.ndarray:
     """
     Creates a square crop centered on the object defined by bbox, adding padding if necessary
     so that the output is always a full square with the object centered.
@@ -216,7 +225,7 @@ def _rdf_bag(terms: list[str]) -> str:
     return f"<rdf:Bag>{items}</rdf:Bag>"
 
 
-def build_xmp_packet(metadata) -> str:
+def build_xmp_packet(metadata: "EventMetadata") -> str:
     """Build an RDF/XMP packet string from an ``EventMetadata`` envelope.
 
     Writes (all optional, emitted only when populated):

@@ -204,7 +204,7 @@ def insert_detection(
     od_conf: float,
     score: float,
     status: str = "active",
-    thumbnail_path: str = None,
+    thumbnail_path: str | None = None,
 ) -> int:
     """Insert a detection record and return its ID."""
     now = datetime.now().isoformat()
@@ -256,8 +256,8 @@ def generate_placeholder_image(
     path: Path,
     width: int,
     height: int,
-    species: str = None,
-    timestamp: str = None,
+    species: str | None = None,
+    timestamp: str | None = None,
     detection_index: int = 1,
 ) -> str:
     """Generate a placeholder image with species-colored rectangle and text."""

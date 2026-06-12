@@ -1,6 +1,7 @@
 import hashlib
 import logging
 import os
+import sqlite3
 from datetime import UTC, datetime
 
 import cv2
@@ -191,7 +192,7 @@ def _check_inbox_exif_requirements(
     return True, None, details
 
 
-def ingest_folder(folder_path: str, source_id: int, move_files: bool = False):
+def ingest_folder(folder_path: str, source_id: int, move_files: bool = False) -> None:
     """
     Recursively scans and ingests images from a folder.
     Args:
@@ -266,7 +267,7 @@ def ingest_folder(folder_path: str, source_id: int, move_files: bool = False):
     )
 
 
-def _handle_file_move(root: str, filename: str, status: str):
+def _handle_file_move(root: str, filename: str, status: str) -> None:
     """
     Moves file to appropriate subdirectory within the root.
     """
@@ -296,11 +297,11 @@ def _handle_file_move(root: str, filename: str, status: str):
 
 
 def ingest_file(
-    conn,
+    conn: sqlite3.Connection,
     filepath: str,
     source_id: int,
-    detector,
-    classifier,
+    detector: Detector,
+    classifier: ImageClassifier,
     det_meta: tuple[str, str] = ("unknown", "unknown"),
     cls_meta: tuple[str, str] = ("unknown", "unknown"),
 ) -> str:
@@ -601,7 +602,7 @@ def ingest_file(
     return "ingested"
 
 
-def ingest_inbox_folder(pending_dir: str, file_snapshot: list[str]):
+def ingest_inbox_folder(pending_dir: str, file_snapshot: list[str]) -> None:
     """
     Process inbox files from a pre-determined snapshot.
 

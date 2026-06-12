@@ -21,7 +21,7 @@ import yaml
 
 from utils.db import _get_db_path as get_db_path
 from utils.ingest import calculate_sha256
-from utils.path_manager import get_path_manager
+from utils.path_manager import PathManager, get_path_manager
 from utils.settings import get_settings_path
 
 logger = logging.getLogger(__name__)
@@ -69,7 +69,7 @@ def get_restore_status() -> dict:
     return _restore_lock.copy()
 
 
-def _set_restore_lock(active: bool, stage: str = None):
+def _set_restore_lock(active: bool, stage: str | None = None) -> None:
     """Sets the global restore lock state."""
     global _restore_lock
     _restore_lock["active"] = active
@@ -81,14 +81,14 @@ def _set_restore_lock(active: bool, stage: str = None):
 
 
 # Persistent restart-required marker functions
-def set_restart_required(pm) -> None:
+def set_restart_required(pm: PathManager) -> None:
     """Creates marker file indicating restart is required after restore."""
     marker = pm.get_restart_required_marker()
     marker.write_text(datetime.now(UTC).isoformat())
     logger.info(f"Restart required marker created: {marker}")
 
 
-def clear_restart_required(pm) -> None:
+def clear_restart_required(pm: PathManager) -> None:
     """Removes restart marker (called on fresh app start)."""
     marker = pm.get_restart_required_marker()
     if marker.exists():
@@ -96,7 +96,7 @@ def clear_restart_required(pm) -> None:
         logger.info("Restart required marker cleared")
 
 
-def is_restart_required(pm) -> bool:
+def is_restart_required(pm: PathManager) -> bool:
     """Returns True if restart is required after a previous restore."""
     return pm.get_restart_required_marker().exists()
 
@@ -367,7 +367,7 @@ def _check_disk_space(required_bytes: int, target_dir: Path) -> bool:
         return True
 
 
-def _create_rollback_snapshot(pm) -> tuple[Path | None, Path | None]:
+def _create_rollback_snapshot(pm: PathManager) -> tuple[Path | None, Path | None]:
     """
     Creates rollback snapshots of DB and settings before restore.
 
@@ -551,8 +551,8 @@ def restore_from_archive(
         total: int,
         message: str,
         completed: bool = False,
-        error: str = None,
-    ):
+        error: str | None = None,
+    ) -> None:
         result = {
             "stage": stage,
             "progress": progress,
@@ -806,7 +806,7 @@ def restore_from_archive(
         _set_restore_lock(False)
 
 
-def _import_original_file(filepath: Path, source_root: Path, pm) -> dict:
+def _import_original_file(filepath: Path, source_root: Path, pm: PathManager) -> dict:
     """
     Imports a single original file with hash-based dedup and conflict handling.
 
@@ -873,7 +873,7 @@ def _generate_conflict_filename(filename: str, content_hash: str) -> str:
     return f"{stem}__conflict_{short_hash}{suffix}"
 
 
-def _import_derivative_file(filepath: Path, source_root: Path, pm) -> bool:
+def _import_derivative_file(filepath: Path, source_root: Path, pm: PathManager) -> bool:
     """
     Imports a single derivative file.
     Derivatives can be overwritten since they're regeneratable.
@@ -1185,7 +1185,7 @@ def _merge_database(backup_db_path: Path) -> dict:
     return result
 
 
-def _replace_database(backup_db_path: Path, pm) -> dict:
+def _replace_database(backup_db_path: Path, pm: PathManager) -> dict:
     """
     Replaces the current DB with the backup DB.
     Requires restart after completion.
@@ -1239,7 +1239,7 @@ def _replace_database(backup_db_path: Path, pm) -> dict:
     return result
 
 
-def cleanup_restore_tmp(pm=None):
+def cleanup_restore_tmp(pm: PathManager | None = None) -> None:
     """
     Cleans up the restore temp directory.
     Should be called on application startup.

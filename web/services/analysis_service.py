@@ -3,6 +3,7 @@ import threading
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
+from typing import Any
 
 import cv2
 
@@ -175,8 +176,8 @@ def submit_moderation_rescan(
 
 
 def _build_detection_payload(
-    detection_manager,
-    frame,
+    detection_manager: Any,
+    frame: Any,
     raw_detection: dict,
 ) -> tuple[_DeepReviewDetectionData, str]:
     """
@@ -345,7 +346,7 @@ def _save_rescan_proposals(
 # ---------------------------------------------------------------------------
 
 
-def process_deep_analysis_job(detection_manager, job_data: dict):
+def process_deep_analysis_job(detection_manager: Any, job_data: dict) -> None:
     """Worker function to process analysis jobs.
 
     Supports two modes via ``job_data['mode']``:
@@ -534,7 +535,7 @@ def count_deep_scan_candidates() -> int:
 # ---------------------------------------------------------------------------
 
 
-def start_nightly_analysis_sweep(interval=900):
+def start_nightly_analysis_sweep(interval: int = 900) -> None:
     """
     Background thread that checks if it's night and enqueues review items.
     interval: check interval in seconds (default 15 minutes).
@@ -548,7 +549,7 @@ def start_nightly_analysis_sweep(interval=900):
 
     from web.services.weather_service import get_current_weather
 
-    def sweep_loop():
+    def sweep_loop() -> None:
         logger.info(f"Nightly scan sweep started (interval={interval}s)")
         while True:
             try:

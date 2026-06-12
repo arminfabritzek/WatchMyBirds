@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 logging.getLogger().setLevel(logging.DEBUG if _debug else logging.INFO)
 
 
-def _parse_chat_ids(chat_id_input):
+def _parse_chat_ids(chat_id_input: str | list[str] | None) -> list[str]:
     """
     Parses the chat ID input which can be a single ID (str/int) or a JSON list of IDs.
     Returns a list of strings/ints.
@@ -46,7 +46,7 @@ def _parse_chat_ids(chat_id_input):
     return [s_input]
 
 
-def send_telegram_message(text, photo_path=None, parse_mode=None):
+def send_telegram_message(text: str, photo_path: str | None = None, parse_mode: str | None = None) -> list | None:
     """
     Sends a message and optionally a photo to one or multiple Telegram chats.
     Credentials are read dynamically from get_config().
@@ -125,7 +125,7 @@ def send_telegram_message(text, photo_path=None, parse_mode=None):
     return responses
 
 
-def send_telegram_media_group(media_items, parse_mode="HTML"):
+def send_telegram_media_group(media_items: list[dict], parse_mode: str = "HTML") -> list:
     """
     Sends a group of photos as a Telegram media album (sendMediaGroup).
 

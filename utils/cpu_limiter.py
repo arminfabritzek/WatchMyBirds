@@ -27,7 +27,7 @@ def _available_cpu_ids(process: psutil.Process) -> list[int]:
     return list(range(multiprocessing.cpu_count()))
 
 
-def restrict_to_cpus(cpu_limit=None):
+def restrict_to_cpus(cpu_limit: int | None = None) -> None:
     """
     Restrict the process to only use the first `cpu_limit` CPUs.
     If no limit is provided, it uses the shared config `CPU_LIMIT`.

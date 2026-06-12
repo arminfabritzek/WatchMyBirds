@@ -21,7 +21,7 @@ def closing_connection():
 
 
 def fetch_detections_for_gallery(
-    conn, date_iso: str = None, limit: int = None, order_by: str = None
+    conn, date_iso: str | None = None, limit: int | None = None, order_by: str | None = None
 ) -> list:
     return db_core.fetch_detections_for_gallery(
         conn, date_iso, limit=limit, order_by=order_by

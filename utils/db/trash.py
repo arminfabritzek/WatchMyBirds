@@ -19,8 +19,8 @@ def fetch_trash_items(
     conn: sqlite3.Connection,
     page: int = 1,
     limit: int = 50,
-    species: str = None,
-    before_date: str = None,
+    species: str | None = None,
+    before_date: str | None = None,
 ) -> tuple[list[dict[str, Any]], int]:
     """
     Fetches trashed items with pagination and filters.

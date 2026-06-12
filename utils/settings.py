@@ -4,7 +4,7 @@ from typing import Any
 import yaml
 
 
-def mask_rtsp_url(url):
+def mask_rtsp_url(url: str | None) -> str | None:
     """
     Masks the password in an RTSP/HTTP URL.
     Format: scheme://user:password@host... -> scheme://user:*****@host...
@@ -46,7 +46,7 @@ def mask_rtsp_url(url):
     return f"{val[:start_auth]}{new_authority}{rest}"
 
 
-def unmask_rtsp_url(new_url, original_url):
+def unmask_rtsp_url(new_url: str | None, original_url: str | None) -> str | None:
     """
     Restores the original password if the new URL contains the placeholder '*****'.
     """
@@ -87,7 +87,7 @@ def unmask_rtsp_url(new_url, original_url):
     return new_url.replace("*****", original_password, 1)
 
 
-def get_settings_path(output_dir: str = None) -> Path:
+def get_settings_path(output_dir: str | None = None) -> Path:
     """Returns the path to the settings.yaml file."""
     if output_dir is None:
         from config import get_config
@@ -96,7 +96,7 @@ def get_settings_path(output_dir: str = None) -> Path:
     return Path(output_dir) / "settings.yaml"
 
 
-def load_settings_yaml(output_dir: str = None) -> dict[str, Any]:
+def load_settings_yaml(output_dir: str | None = None) -> dict[str, Any]:
     """Loads runtime settings from YAML; creates file if missing."""
     settings_path = get_settings_path(output_dir)
     settings_path.parent.mkdir(parents=True, exist_ok=True)
@@ -113,7 +113,9 @@ def load_settings_yaml(output_dir: str = None) -> dict[str, Any]:
         return {}
 
 
-def save_settings_yaml(settings_dict: dict[str, Any], output_dir: str = None) -> None:
+def save_settings_yaml(
+    settings_dict: dict[str, Any], output_dir: str | None = None
+) -> None:
     """Saves runtime settings as YAML (only given keys)."""
     settings_path = get_settings_path(output_dir)
     settings_path.parent.mkdir(parents=True, exist_ok=True)

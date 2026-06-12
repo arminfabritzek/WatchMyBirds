@@ -10,6 +10,7 @@ import threading
 import time
 import urllib.request
 from datetime import UTC, datetime
+from typing import Any
 
 from config import get_config
 from logging_config import get_logger
@@ -64,17 +65,17 @@ _current_weather_cache = {
 }
 
 
-def get_current_weather():
+def get_current_weather() -> dict[str, Any]:
     """Returns the cached current weather dict."""
     return dict(_current_weather_cache)
 
 
-def get_condition_info(code):
+def get_condition_info(code: int) -> tuple[str, str]:
     """Returns (text, emoji) for a WMO weather code."""
     return WMO_CODES.get(code, ("Unknown", "❓"))
 
 
-def fetch_weather_data():
+def fetch_weather_data() -> None:
     """Fetches current weather from Open-Meteo and stores in DB + cache."""
     cfg = get_config()
     location = cfg.get("LOCATION_DATA", {})
@@ -162,7 +163,7 @@ def fetch_weather_data():
         logger.error(f"Failed to fetch weather from Open-Meteo: {e}")
 
 
-def get_weather_history(hours=24):
+def get_weather_history(hours: int = 24) -> list[dict[str, Any]]:
     """Returns weather history from DB for the last N hours."""
     try:
         with db_service.closing_connection() as conn:
@@ -198,7 +199,7 @@ def get_weather_history(hours=24):
         return []
 
 
-def start_weather_loop(interval=1800):
+def start_weather_loop(interval: int = 1800) -> None:
     """Starts the background thread to fetch weather every `interval` seconds (default 30min)."""
 
     def loop():

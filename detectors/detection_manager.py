@@ -17,6 +17,8 @@ import time
 from collections import deque
 from datetime import UTC, datetime
 
+import numpy as np
+
 from camera.video_capture import VideoCapture
 from config import get_config
 from core.ptz_tracking_core import AutoPtzController
@@ -48,7 +50,7 @@ class DetectionManager:
     while maintaining the same lifecycle and threading model as the original.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize exactly like the original DetectionManager."""
         self.config = config
         self.model_choice = self.config["DETECTOR_MODEL_CHOICE"]
@@ -221,6 +223,7 @@ class DetectionManager:
         # web-layer dependencies (H-02).
         try:
             from core.ptz_empirical_probe import register_auto_ptz_controller
+
             register_auto_ptz_controller(self.auto_ptz_controller)
         except Exception:  # noqa: BLE001 — wizard registration is optional
             logger.debug("Empirical-probe wizard registration skipped")
@@ -298,7 +301,7 @@ class DetectionManager:
             non_bird_confirm_threshold_fn=non_bird_floor_for,
         )
 
-    def run_exhaustive_scan(self, frame):
+    def run_exhaustive_scan(self, frame: np.ndarray) -> list:
         """Compatibility adapter for orphan deep-scan workflows."""
         detections = self.detection_service.exhaustive_detect(frame)
         if not self.detector_model_id:
@@ -309,7 +312,7 @@ class DetectionManager:
     # LIFECYCLE
     # =========================================================================
 
-    def start(self):
+    def start(self) -> None:
         """Starts the DetectionManager."""
         self.stop_event.clear()
         self.frame_thread.start()
@@ -369,7 +372,7 @@ class DetectionManager:
             daemon=True,
         ).start()
 
-    def stop(self):
+    def stop(self) -> None:
         """Stops the DetectionManager."""
         self.stop_event.set()
 
@@ -393,7 +396,7 @@ class DetectionManager:
 
         logger.info("DetectionManager V2 stopped.")
 
-    def enter_deep_scan_mode(self):
+    def enter_deep_scan_mode(self) -> None:
         """Pause live loops while a manual/nightly deep scan is running."""
         with self._deep_scan_lock:
             if self._deep_scan_gate_count == 0:
@@ -402,7 +405,7 @@ class DetectionManager:
                 self._deep_scan_active = True
             self._deep_scan_gate_count += 1
 
-    def exit_deep_scan_mode(self):
+    def exit_deep_scan_mode(self) -> None:
         """Restore live loops after deep scan completes."""
         with self._deep_scan_lock:
             if self._deep_scan_gate_count <= 0:
@@ -585,16 +588,14 @@ class DetectionManager:
             "next_transition_utc": nt.isoformat() if nt is not None else None,
             "lat": lat,
             "lon": lon,
-            "twilight_mode": str(
-                self.config.get("OD_NIGHT_TWILIGHT_MODE", "civil")
-            ),
+            "twilight_mode": str(self.config.get("OD_NIGHT_TWILIGHT_MODE", "civil")),
         }
 
     # =========================================================================
     # COMPONENT INITIALIZATION
     # =========================================================================
 
-    def _initialize_components(self):
+    def _initialize_components(self) -> bool:
         """Lazy-init video capture and detector."""
         if self.stop_event.is_set():
             return False
@@ -624,7 +625,7 @@ class DetectionManager:
     # FRAME LOOP
     # =========================================================================
 
-    def _frame_update_loop(self):
+    def _frame_update_loop(self) -> None:
         """Continuously updates latest_raw_frame from VideoCapture."""
         while not self.stop_event.is_set():
             if self.paused:
@@ -660,7 +661,7 @@ class DetectionManager:
     # DETECTION LOOP
     # =========================================================================
 
-    def _detection_loop(self):
+    def _detection_loop(self) -> None:
         """Detection loop - exact behavior as original."""
         logger.info("Detection loop started.")
 
@@ -713,9 +714,7 @@ class DetectionManager:
             # next tick respects DETECTION_INTERVAL_SECONDS regardless
             # of whether we ran detection or not.
             if not self._should_run_od_now():
-                time.sleep(
-                    float(self.config.get("DETECTION_INTERVAL_SECONDS", 1.0))
-                )
+                time.sleep(float(self.config.get("DETECTION_INTERVAL_SECONDS", 1.0)))
                 continue
 
             # Motion detection gate
@@ -868,7 +867,7 @@ class DetectionManager:
 
         logger.info("Detection loop stopped.")
 
-    def _enqueue_processing_job(self, job):
+    def _enqueue_processing_job(self, job: dict[str, object]) -> None:
         """Enqueue job, drop oldest if full."""
         try:
             self.processing_queue.put_nowait(job)
@@ -1038,7 +1037,7 @@ class DetectionManager:
     # PROCESSING LOOP - Uses Services
     # =========================================================================
 
-    def _processing_loop(self):
+    def _processing_loop(self) -> None:
         """Process detections using Services."""
         logger.info("Processing loop started.")
 
@@ -1181,9 +1180,7 @@ class DetectionManager:
                 # short window is the same bird regardless of how CLS
                 # may flip-flop between Parus/Cyanistes per frame.
                 species_key_for_burst = "" if is_bird else od_class_name
-                if not self._same_bird_burst_admit(
-                    bbox_tuple, species_key_for_burst
-                ):
+                if not self._same_bird_burst_admit(bbox_tuple, species_key_for_burst):
                     continue
 
                 # Create crop for classification via CropService
@@ -1498,14 +1495,14 @@ class DetectionManager:
     # PUBLIC INTERFACE - Same as original
     # =========================================================================
 
-    def get_display_frame(self):
+    def get_display_frame(self) -> np.ndarray | None:
         """Returns the most recent frame for display."""
         with self.frame_lock:
             if self.latest_raw_frame is not None:
                 return self.latest_raw_frame.copy()
             return None
 
-    def update_source(self, new_source):
+    def update_source(self, new_source: str) -> None:
         """Updates video source at runtime."""
         logger.info(f"Updating video source to: {new_source}")
         self.video_source = new_source
@@ -1527,7 +1524,7 @@ class DetectionManager:
                 logger.error(f"Error stopping video capture: {e}")
             self.video_capture = None
 
-    def update_configuration(self, changes: dict):
+    def update_configuration(self, changes: dict) -> None:
         """Handles runtime config changes."""
         if "VIDEO_SOURCE" in changes:
             self.update_source(changes["VIDEO_SOURCE"])
@@ -1544,7 +1541,7 @@ class DetectionManager:
             self.exif_gps_enabled = changes["EXIF_GPS_ENABLED"]
             self.config["EXIF_GPS_ENABLED"] = self.exif_gps_enabled
 
-    def start_user_ingest(self, folder_path=None):
+    def start_user_ingest(self, folder_path: str | None = None) -> None:
         """Orchestrates User Ingest process."""
         from utils.db import get_or_create_user_import_source
         from utils.ingest import ingest_folder

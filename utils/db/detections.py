@@ -316,8 +316,8 @@ def insert_classification(conn: sqlite3.Connection, row: dict[str, Any]) -> int:
 
 def fetch_detections_for_gallery(
     conn: sqlite3.Connection,
-    date_str_iso: str = None,
-    limit: int = None,
+    date_str_iso: str | None = None,
+    limit: int | None = None,
     order_by: str = "score",
 ) -> list[sqlite3.Row]:
     """
@@ -1311,8 +1311,8 @@ def restore_detections(conn: sqlite3.Connection, detection_ids: Iterable[int]) -
 
 def purge_detections(
     conn: sqlite3.Connection,
-    detection_ids: Iterable[int] = None,
-    before_date: str = None,
+    detection_ids: Iterable[int] | None = None,
+    before_date: str | None = None,
     dry_run: bool = False,
 ) -> dict[str, Any]:
     """

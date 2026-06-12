@@ -8,7 +8,10 @@ Extracts persistence logic from DetectionManager for independent operation.
 import os
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    import numpy as np  # noqa: F401
 
 import cv2
 
@@ -65,7 +68,9 @@ def add_exif_metadata(
                 lat = float(location_config["latitude"])
                 lon = float(location_config["longitude"])
 
-                def degrees_to_dms_rational(degrees_float):
+                def degrees_to_dms_rational(
+                    degrees_float: float,
+                ) -> list[tuple[int, int]]:
                     degrees_float = abs(degrees_float)
                     d = int(degrees_float)
                     m_float = (degrees_float - d) * 60
@@ -122,7 +127,7 @@ class PersistenceService(PersistenceInterface):
         self,
         output_dir: str | None = None,
         ptz_controller: Any | None = None,
-    ):
+    ) -> None:
         """
         Initialize the persistence service.
 
@@ -151,7 +156,7 @@ class PersistenceService(PersistenceInterface):
         finally:
             self._db_conn = None
 
-    def __del__(self):
+    def __del__(self) -> None:
         """Best-effort cleanup for interpreter shutdown."""
         try:
             self.close()
@@ -160,7 +165,7 @@ class PersistenceService(PersistenceInterface):
 
     def save_image(
         self,
-        frame,  # np.ndarray
+        frame: "np.ndarray",  # np.ndarray
         capture_time: datetime,
         detector_model_id: str,
         classifier_model_id: str,
@@ -268,7 +273,7 @@ class PersistenceService(PersistenceInterface):
         self,
         image_filename: str,
         detection: DetectionData,
-        frame,  # np.ndarray
+        frame: "np.ndarray",  # np.ndarray
         detector_model_id: str,
         classifier_model_id: str,
         crop_index: int,
@@ -383,7 +388,7 @@ class PersistenceService(PersistenceInterface):
 
     def generate_thumbnail(
         self,
-        frame,  # np.ndarray
+        frame: "np.ndarray",  # np.ndarray
         bbox: tuple[int, int, int, int],
         output_path: Path,
         size: int = 256,

@@ -21,6 +21,7 @@ import weakref
 from datetime import datetime
 from pathlib import Path
 from threading import Event
+from typing import Any
 
 import cv2
 import numpy as np
@@ -44,7 +45,9 @@ class VideoCapture:
     _shutdown_hooks_registered = False
     _ffmpeg_version_cache = None
 
-    def __init__(self, source, debug=False, auto_start=False):
+    def __init__(
+        self, source: str | int, debug: bool = False, auto_start: bool = False
+    ) -> None:
         """
         Initializes the VideoCapture object and detects the stream type.
         """
@@ -57,7 +60,7 @@ class VideoCapture:
         self.ffmpeg_pid = None
         self.stream_width = None
         self.stream_height = None
-        self.q = queue.Queue(maxsize=1)
+        self.frame_queue = queue.Queue(maxsize=1)
         self.reader_thread = None
         self.last_frame_time = time.time()
         self.health_check_thread = None
@@ -170,7 +173,11 @@ class VideoCapture:
         logger.error(error_msg)
         raise ValueError(f"Unable to determine stream type for source: {self.source}")
 
-    def _setup_capture(self, require_initial_frame=False, initial_frame_wait_sec=None):
+    def _setup_capture(
+        self,
+        require_initial_frame: bool = False,
+        initial_frame_wait_sec: float | None = None,
+    ) -> None:
         logger.debug("Setting up video capture...")
         if self.stream_type == self.RTSP:
             try:
@@ -421,7 +428,7 @@ class VideoCapture:
             VideoCapture._ffmpeg_version_cache = None
         return VideoCapture._ffmpeg_version_cache
 
-    def _load_stream_settings_from_cache(self):
+    def _load_stream_settings_from_cache(self) -> dict[str, Any] | None:
         """Reads cached stream settings for the current source."""
         cache_path = self._stream_settings_path()
         if not cache_path.exists():
@@ -452,7 +459,7 @@ class VideoCapture:
         except Exception as cache_error:
             logger.debug(f"Invalid cached stream settings: {cache_error}")
 
-    def _cache_metadata_matches(self, cached):
+    def _cache_metadata_matches(self, cached: dict[str, Any]) -> bool:
         """Validates cached metadata (stream URL, type, FFmpeg version)."""
         try:
             if str(cached.get("stream_url")) != str(self.source):
@@ -531,7 +538,7 @@ class VideoCapture:
         except Exception as cache_error:
             logger.debug(f"Failed to persist stream settings: {cache_error}")
 
-    def _write_cache_atomically(self, cache_path, data):
+    def _write_cache_atomically(self, cache_path: Path, data: dict[str, Any]) -> None:
         """Writes cache atomically using a temp file and fsync."""
         tmp_path = cache_path.with_suffix(cache_path.suffix + ".tmp")
         try:
@@ -957,15 +964,15 @@ class VideoCapture:
                             pass
 
                         try:
-                            self.q.put(frame, block=False)
+                            self.frame_queue.put(frame, block=False)
                         except queue.Full:
                             try:
-                                self.q.get_nowait()
+                                self.frame_queue.get_nowait()
                             except queue.Empty:
                                 # Drained between Full and get; nothing to drop.
                                 pass
                             try:
-                                self.q.put(frame, block=False)
+                                self.frame_queue.put(frame, block=False)
                             except queue.Full:
                                 # Still full after one drop; skip this frame.
                                 pass
@@ -1034,7 +1041,7 @@ class VideoCapture:
         finally:
             logger.debug("Reader thread has exited.")
 
-    def _read_frame(self, decode=True):
+    def _read_frame(self, decode: bool = True) -> np.ndarray | str | None:
         if self.stream_type == self.RTSP and self.backend == self.BACKEND_FFMPEG:
             # FFmpeg always decodes; we must read to drain pipe regardless of 'decode' flag.
             return self._read_ffmpeg_frame(read_timeout_sec=1.0)
@@ -1188,7 +1195,7 @@ class VideoCapture:
             self.runtime_resolution_lock.release()
 
     def _read_ffmpeg_frame(self, read_timeout_sec=None):
-        frame_size = (
+        frame_size_bytes = (
             self.stream_width * self.stream_height * 3
         )  # For bgr24 (3 bytes per pixel)
         process = self.ffmpeg_process
@@ -1220,8 +1227,8 @@ class VideoCapture:
                     f"FFmpeg read readiness check failed; continuing with blocking read: {select_error}"
                 )
         try:
-            raw_frame = process.stdout.read(frame_size)
-            if len(raw_frame) != frame_size:
+            raw_frame = process.stdout.read(frame_size_bytes)
+            if len(raw_frame) != frame_size_bytes:
                 actual_size = len(raw_frame)
                 # New block: handle empty frame
                 if actual_size == 0:
@@ -1242,7 +1249,7 @@ class VideoCapture:
                             self._last_codec_switch_skip_logged = True
                     return None
                 logger.warning(
-                    f"FFmpeg produced incomplete frame: expected {frame_size} bytes, got {actual_size} bytes."
+                    f"FFmpeg produced incomplete frame: expected {frame_size_bytes} bytes, got {actual_size} bytes."
                 )
                 self.request_recovery(
                     trigger="ffmpeg_resolution_mismatch",
@@ -1470,7 +1477,7 @@ class VideoCapture:
         latest = None
         try:
             while True:
-                latest = self.q.get_nowait()
+                latest = self.frame_queue.get_nowait()
         except queue.Empty:
             pass
         return latest
@@ -1500,9 +1507,9 @@ class VideoCapture:
             else:
                 logger.debug("Skipping join on current thread (reader thread).")
 
-        while not self.q.empty():
+        while not self.frame_queue.empty():
             try:
-                self.q.get_nowait()
+                self.frame_queue.get_nowait()
             except queue.Empty:
                 break
 

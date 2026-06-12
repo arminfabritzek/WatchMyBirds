@@ -128,8 +128,8 @@ def _safe_delete(abs_path: Path, output_dir: Path) -> str:
 
 def hard_delete_detections(
     conn,
-    detection_ids: Iterable[int] = None,
-    before_date: str = None,
+    detection_ids: Iterable[int] | None = None,
+    before_date: str | None = None,
     dry_run: bool = False,
 ) -> dict[str, Any]:
     """
@@ -369,7 +369,7 @@ def hard_delete_detections(
 
 def hard_delete_images(
     conn,
-    filenames: Iterable[str] = None,
+    filenames: Iterable[str] | None = None,
     delete_all: bool = False,
     dry_run: bool = False,
 ) -> dict[str, Any]:

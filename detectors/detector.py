@@ -55,7 +55,7 @@ YOLOX_DEFAULT_IOU_THR = 0.50
 YOLOX_REQUIRED_BIRD_LABEL = "bird"
 
 
-def _normalize_class_names(raw_labels):
+def _normalize_class_names(raw_labels: dict | list) -> dict[str, str]:
     """Normalize labels payload to dict[str, str].
 
     Accepts:
@@ -76,7 +76,7 @@ def _normalize_class_names(raw_labels):
     )
 
 
-def _load_local_model_files(local_dir):
+def _load_local_model_files(local_dir: str) -> tuple[str, str, str | None]:
     """Return (weights_path, labels_path, metadata_path_or_None) for LOCAL_PATH override."""
     weights = os.path.join(local_dir, "best.onnx")
     labels = os.path.join(local_dir, "labels.json")
@@ -96,7 +96,9 @@ def _load_local_model_files(local_dir):
     return weights, labels, metadata if os.path.exists(metadata) else None
 
 
-def _detect_output_format(session, class_names):
+def _detect_output_format(
+    session: onnxruntime.InferenceSession, class_names: dict[str, str]
+) -> str:
     """Verify the ONNX output matches the YOLOX raw layout.
 
     YOLOX raw output: 3D tensor with last axis == 5 + len(labels), holding
@@ -135,7 +137,7 @@ def _detect_output_format(session, class_names):
     )
 
 
-def _assert_yolox_labels_compatible(class_names):
+def _assert_yolox_labels_compatible(class_names: dict[str, str]) -> None:
     """Model-Compatibility-Guard.
 
     The pipeline assumes exactly one OD class named 'bird' and a small number
@@ -159,10 +161,15 @@ def _assert_yolox_labels_compatible(class_names):
 # Base Detection Model Interface
 # ------------------------------------------------------------------------------
 class BaseDetectionModel:
-    def detect(self, frame, confidence_threshold):
-        """
-        Perform detection on the provided frame.
-        Must return a tuple: (annotated_frame, detection_info_list)
+    def detect(
+        self, frame: np.ndarray, confidence_threshold: float | None = None
+    ) -> list[dict[str, Any]]:
+        """Perform detection on *frame*.
+
+        Returns a list of detection dicts, each carrying at least
+        ``confidence``, ``class_name`` and bbox keys. An empty list means no
+        detections. Implementations decide whether ``confidence_threshold`` is
+        honoured or sourced from model metadata.
         """
         raise NotImplementedError
 
@@ -603,7 +610,9 @@ class ONNXDetectionModel(BaseDetectionModel):
     # --------------------------------------------------------------------
     # YOLOX preprocess / postprocess
     # --------------------------------------------------------------------
-    def preprocess_image_yolox(self, img):
+    def preprocess_image_yolox(
+        self, img: np.ndarray
+    ) -> tuple[np.ndarray, np.ndarray, float]:
         """Letterbox-resize to (input_size, input_size), BGR, float32, no /255.
 
         Pads top-left with 114 (matches YOLOX training pipeline and the
@@ -621,13 +630,13 @@ class ONNXDetectionModel(BaseDetectionModel):
 
     def postprocess_output_yolox(
         self,
-        raw,
-        scale,
-        original_width,
-        original_height,
-        conf_threshold,
-        iou_threshold,
-    ):
+        raw: np.ndarray,
+        scale: float,
+        original_width: int,
+        original_height: int,
+        conf_threshold: float,
+        iou_threshold: float,
+    ) -> list[dict[str, Any]]:
         """Decode YOLOX raw output [1, N, 5+C] into detection dicts.
 
         Assumes decode_in_inference=True at export time, so xywh is already in
@@ -783,7 +792,9 @@ class ONNXDetectionModel(BaseDetectionModel):
     # --------------------------------------------------------------------
     # YOLOX detect()
     # --------------------------------------------------------------------
-    def detect(self, frame, confidence_threshold=None):
+    def detect(
+        self, frame: np.ndarray, confidence_threshold: float | None = None
+    ) -> list[dict[str, Any]]:
         """Run YOLOX inference on *frame*.
 
         ``confidence_threshold`` is accepted for backwards compatibility with

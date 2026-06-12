@@ -3,6 +3,7 @@ import queue
 import threading
 import time
 from collections.abc import Callable
+from typing import Any
 
 from config import get_config
 from utils.log_safety import safe_log_value as _slv
@@ -11,7 +12,7 @@ logger = logging.getLogger(__name__)
 
 
 class AnalysisQueue:
-    def __init__(self):
+    def __init__(self) -> None:
         self._queue = queue.Queue()
         self._stop_event = threading.Event()
         self._worker_thread: threading.Thread | None = None
@@ -28,18 +29,24 @@ class AnalysisQueue:
     # Injection
     # ------------------------------------------------------------------
 
-    def set_detection_manager(self, dm) -> None:
-        """Inject DetectionManager for deep-scan gate control."""
+    def set_detection_manager(self, dm: Any) -> None:
+        """Inject the DetectionManager used for deep-scan gate control.
+
+        Typed ``Any`` deliberately: ``core`` does not import ``detectors`` —
+        the object is duck-typed and only needs ``enter_deep_scan_mode`` and
+        ``exit_deep_scan_mode``.
+        """
         self._detection_manager = dm
 
     # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
 
-    def start(self, processor_func: Callable):
-        """
-        Starts the background worker thread.
-        processor_func: Function to call for each item. Must accept (item) as argument.
+    def start(self, processor_func: Callable) -> None:
+        """Start the background worker thread.
+
+        ``processor_func`` is called once per dequeued item and must accept the
+        item (a job dict) as its single argument. No-op if already running.
         """
         if self._worker_thread and self._worker_thread.is_alive():
             logger.warning("AnalysisQueue worker already running")
@@ -53,7 +60,7 @@ class AnalysisQueue:
         self._worker_thread.start()
         logger.info("DeepAnalysisQueue worker started")
 
-    def stop(self):
+    def stop(self) -> None:
         """Stops the worker thread gracefully."""
         self._stop_event.set()
         if self._worker_thread:
@@ -64,8 +71,8 @@ class AnalysisQueue:
     # Enqueue with secondary dedup (Constraint #4 / #5)
     # ------------------------------------------------------------------
 
-    def enqueue(self, item) -> bool:
-        """Adds an item to the queue.  Returns False if the filename is already pending."""
+    def enqueue(self, item: dict) -> bool:
+        """Adds a job dict to the queue.  Returns False if its filename is already pending."""
         filename = item.get("filename", "") if isinstance(item, dict) else ""
         if filename:
             with self._pending_lock:
@@ -99,9 +106,16 @@ class AnalysisQueue:
 
     @property
     def _gate_enabled(self) -> bool:
+        """True when the DEEP_SCAN_GATE_ENABLED config flag is on (default True)."""
         return get_config().get("DEEP_SCAN_GATE_ENABLED", True)
 
-    def _worker_loop(self):
+    def _worker_loop(self) -> None:
+        """Run until stop is requested, processing one job at a time.
+
+        For each dequeued job: (optionally) raise the deep-scan gate to pause
+        live detection/classification, invoke the processor, then always lower
+        the gate and drop the filename from the dedup set — even on error.
+        """
         while not self._stop_event.is_set():
             try:
                 # Wait for an item, but check stop_event periodically

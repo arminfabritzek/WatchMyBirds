@@ -26,6 +26,7 @@ import logging
 import os
 import threading
 import time
+from collections.abc import Callable
 from datetime import UTC, date, datetime
 
 # Redirect HF cache to a writable location BEFORE huggingface_hub gets
@@ -231,7 +232,7 @@ def _run_tagger(
         return 1
 
 
-def _invoke_tagger(reason, main_with_args, argv: list[str]) -> int:
+def _invoke_tagger(reason: str, main_with_args: Callable, argv: list[str]) -> int:
     try:
         rc = main_with_args(argv)
         if rc == 0:
@@ -366,7 +367,7 @@ def _check_dependencies_available() -> bool:
         return False
 
 
-def start_aesthetic_tag_scheduler(check_interval: int = 30):
+def start_aesthetic_tag_scheduler(check_interval: int = 30) -> None:
     """
     Start the background scheduler thread.
 
@@ -399,7 +400,7 @@ def start_aesthetic_tag_scheduler(check_interval: int = 30):
     time_str = str(config.get("AESTHETIC_TAG_TIME", "02:10")).strip()
     scheduled_hour, scheduled_minute = _parse_time(time_str)
 
-    def _loop():
+    def _loop() -> None:
         logger.info(
             "Aesthetic tag scheduler started; daily run at %02d:%02d.",
             scheduled_hour,
