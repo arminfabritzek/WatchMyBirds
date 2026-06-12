@@ -350,10 +350,6 @@ def ingest_file(
 
     # CASE A: Detection Found
     if object_detected and detection_info_list:
-        # Identify Best
-        best_det = max(detection_info_list, key=lambda d: d["confidence"])
-        best_det["class_name"].replace(" ", "_")
-
         base_name = f"{timestamp_str}.jpg"
 
         original_name = base_name
