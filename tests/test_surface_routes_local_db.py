@@ -218,7 +218,7 @@ def test_local_sqlite_review_routes_render_real_continuity_batch(seeded_client):
     # `#reviewEventBrowser` rail lives behind ?layout=legacy. The grid
     # renders one `[data-review-grid-card]` per event with its own
     # `data-event-key`.
-    assert 'data-review-grid-card' in review_body
+    assert "data-review-grid-card" in review_body
     event_keys = re.findall(r'data-event-key="([^"]+)"', review_body)
     # Each grid card stamps `data-event-key` on the article root, on
     # every member tile, and (when a batch is present) on the
@@ -232,7 +232,7 @@ def test_local_sqlite_review_routes_render_real_continuity_batch(seeded_client):
     # event.members is populated. Without this, the cards would
     # render with empty grids (header only, no tiles). At least one
     # `review-grid__tile` must exist in the rendered HTML.
-    assert 'review-grid__tile' in review_body, (
+    assert "review-grid__tile" in review_body, (
         "Review Grid rendered card headers but no member tiles — "
         "the review_page() loader is probably back to include_detail=False."
     )
@@ -246,6 +246,20 @@ def test_local_sqlite_review_routes_render_real_continuity_batch(seeded_client):
     assert 'data-zoom-pref-key="wmb_review_zoom_pref"' in panel_body
     assert "data-species-colour=" in panel_body
     assert 'data-review-panel-action="trash_event"' in panel_body
+
+
+def test_authenticated_page_routes_render_without_build_errors(seeded_client):
+    # Single-blueprint unit tests can't catch cross-blueprint url_for() refs
+    # (e.g. settings.html → onvif_ingest.start_ingest_endpoint); render the
+    # heavy authenticated pages against the FULL app to surface BuildErrors.
+    client, _today_iso = seeded_client
+
+    for path in ("/settings", "/logs", "/privacy"):
+        resp = client.get(path)
+        assert resp.status_code == 200, (
+            f"{path} rendered {resp.status_code} (likely a url_for BuildError "
+            f"for a route that moved into a blueprint)"
+        )
 
 
 def test_static_file_routes_emit_browser_cache_headers(local_db_app):

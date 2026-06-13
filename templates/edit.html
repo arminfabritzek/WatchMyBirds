@@ -126,7 +126,7 @@
         <ul class="pagination justify-content-center">
             <li class="page-item {% if not pagination.has_prev %}disabled{% endif %}">
                 <a class="page-link"
-                    href="{{ url_for('edit_page', date_iso=date_iso, page=pagination.prev_num, **filters) }}"
+                    href="{{ url_for('gallery.edit_page', date_iso=date_iso, page=pagination.prev_num, **filters) }}"
                     tabindex="-1">Previous</a>
             </li>
             <li class="page-item disabled">
@@ -134,7 +134,7 @@
             </li>
             <li class="page-item {% if not pagination.has_next %}disabled{% endif %}">
                 <a class="page-link"
-                    href="{{ url_for('edit_page', date_iso=date_iso, page=pagination.next_num, **filters) }}">Next</a>
+                    href="{{ url_for('gallery.edit_page', date_iso=date_iso, page=pagination.next_num, **filters) }}">Next</a>
             </li>
         </ul>
     </nav>

@@ -19,7 +19,7 @@ def test_stream_tiles_link_to_species_overview():
 def test_stream_today_visitors_title_links_to_today_subgallery():
     content = _read_text("templates/stream.html")
 
-    assert 'href="{{ url_for(\'subgallery\', date=today_iso) }}"' in content
+    assert "href=\"{{ url_for('gallery.subgallery', date=today_iso) }}\"" in content
     assert '<a class="quiet-preview__all" href="/gallery">Gallery</a>' in content
 
 
@@ -27,7 +27,7 @@ def test_stream_today_visitors_tiles_focus_matching_detection_on_subgallery():
     content = _read_text("templates/stream.html")
 
     assert (
-        'href="{{ url_for(\'subgallery\', date=today_iso, focus=det.detection_id) }}"'
+        "href=\"{{ url_for('gallery.subgallery', date=today_iso, focus=det.detection_id) }}\""
         in content
     )
 
@@ -42,7 +42,7 @@ def test_species_tiles_link_to_species_overview():
 
 
 def test_species_overview_route_registered():
-    content = _read_text("web/web_interface.py")
+    content = _read_text("web/blueprints/gallery.py")
 
     assert '"/species/overview"' in content
     assert 'endpoint="species_overview"' in content

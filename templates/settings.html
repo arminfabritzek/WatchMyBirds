@@ -3330,7 +3330,7 @@
                 <strong class="d-block mb-2">Image Ingest</strong>
                 <p class="settings-field__help mb-2">Docker: Import images from mounted <code>/ingest</code> folder. For normal uploads use the <a href="/inbox">Inbox</a>.</p>
                 <button type="button" class="btn btn--secondary btn--sm"
-                    onclick="triggerIngestStart(this, '{{ url_for('start_ingest_endpoint') }}', '{{ csrf_token }}')">
+                    onclick="triggerIngestStart(this, '{{ url_for('onvif_ingest.start_ingest_endpoint') }}', '{{ csrf_token }}')">
                     Start Ingest from /ingest
                 </button>
             </div>

@@ -64,21 +64,21 @@ def test_single_image_observations_open_modal_instead_of_filmstrip():
 
 
 def test_subgallery_filmstrips_use_detection_timestamps_and_nav_uses_gallery_order():
-    content = (_project_root() / "web" / "web_interface.py").read_text(
+    content = (_project_root() / "web" / "blueprints" / "gallery.py").read_text(
         encoding="utf-8"
     )
 
     assert '"image_timestamp": ts,' in content
-    assert 'all_dets_enriched.sort(' in content
+    assert "all_dets_enriched.sort(" in content
     assert 'det.get("image_timestamp", "")' in content
     assert "nav_index_by_detection_id" in content
     assert "for obs in enriched_observations" in content
-    assert "for det in obs[\"all_detections\"]" in content
+    assert 'for det in obs["all_detections"]' in content
     assert "Modal navigation should follow the visible gallery sequence" in content
 
 
 def test_subgallery_time_sort_uses_observation_end_time():
-    content = (_project_root() / "web" / "web_interface.py").read_text(
+    content = (_project_root() / "web" / "blueprints" / "gallery.py").read_text(
         encoding="utf-8"
     )
 

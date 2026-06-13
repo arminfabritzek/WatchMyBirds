@@ -2251,7 +2251,7 @@
             <div class="quiet-preview__head">
                 <h3 class="quiet-preview__title">
                     {% if title == "Today's Visitors" and today_iso is defined %}
-                    <a class="quiet-preview__title-link" href="{{ url_for('subgallery', date=today_iso) }}">{{ title }}</a>
+                    <a class="quiet-preview__title-link" href="{{ url_for('gallery.subgallery', date=today_iso) }}">{{ title }}</a>
                     {% elif title_href %}
                     <a class="quiet-preview__title-link" href="{{ title_href }}">{{ title }}</a>
                     {% else %}
@@ -2292,7 +2292,7 @@
             <span class="quiet-preview__item fade-in-item wm-toolbox-host" hidden aria-hidden="true"></span>
             <div class="best-species-card__media wm-toolbox-host">
                 {% if modal_group == 'stream-summary' and det.gallery_date %}
-                <a hidden aria-hidden="true" href="{{ url_for('subgallery', date=today_iso, focus=det.detection_id) }}"></a>
+                <a hidden aria-hidden="true" href="{{ url_for('gallery.subgallery', date=today_iso, focus=det.detection_id) }}"></a>
                 {% endif %}
                 <button type="button" class="best-species-card__media-link"
                     style="border: 0; padding: 0; cursor: pointer;"
@@ -2362,8 +2362,8 @@
         {{ render_species_board(
             today_visitors_board, 'stream-summary',
             title="Today's Visitors",
-            title_href=url_for('subgallery', date=today_iso),
-            all_href=url_for('subgallery', date=today_iso),
+            title_href=url_for('gallery.subgallery', date=today_iso),
+            all_href=url_for('gallery.subgallery', date=today_iso),
             all_label='View Day'
         ) }}
         {% else %}
