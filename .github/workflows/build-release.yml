@@ -427,7 +427,21 @@ jobs:
           fi
 
           git commit -m "chore: set release version to ${RELEASED} [skip ci]" --only -- APP_VERSION
-          git push origin HEAD:main
+
+          # Rebasing onto a moved main never conflicts: nothing but this step
+          # writes APP_VERSION, so the bump is the only diff in flight.
+          for attempt in 1 2 3 4 5; do
+            if git push origin HEAD:main; then
+              break
+            fi
+            if [ "$attempt" -eq 5 ]; then
+              echo "push of APP_VERSION bump failed after 5 attempts" >&2
+              exit 1
+            fi
+            echo "push rejected (attempt ${attempt}/5); rebasing onto origin/main and retrying..."
+            git fetch origin main
+            git rebase origin/main
+          done
 
       - name: Cleanup old releases (keep last 5)
         env:
