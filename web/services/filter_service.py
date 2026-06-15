@@ -61,6 +61,9 @@ class FilterContext:
     min_conf: float = 0.0
     min_score_explicit: bool = False
 
+    # Favorites-only filter
+    favorites_only: bool = False
+
     # Edit-page status filter
     status_filter: str = "all"  # "all" | "downloaded" | "not_downloaded"
 
@@ -84,6 +87,7 @@ class FilterContext:
             min_score_explicit=min_score_explicit,
             status_filter=data.get("status_filter", "all"),
             sort=data.get("sort", "time_desc"),
+            favorites_only=bool(data.get("favorites_only")),
         )
 
 
@@ -139,15 +143,15 @@ def _resolve_gallery(ctx: FilterContext) -> ResolvedSelection:
 
     config = get_config()
     threshold = (
-        ctx.min_score
-        if ctx.min_score_explicit
-        else config["GALLERY_DISPLAY_THRESHOLD"]
+        ctx.min_score if ctx.min_score_explicit else config["GALLERY_DISPLAY_THRESHOLD"]
     )
 
     with db_service.closing_connection() as conn:
         rows = db_service.fetch_detections_for_gallery(conn, ctx.date, order_by="time")
 
     detections = [dict(row) for row in rows]
+    if ctx.favorites_only:
+        detections = [d for d in detections if gallery_service.is_favorite(d)]
     observations = gallery_service.group_detections_into_observations(detections)
 
     detection_ids = []
@@ -170,9 +174,7 @@ def _resolve_species_overview(ctx: FilterContext) -> ResolvedSelection:
 
     config = get_config()
     threshold = (
-        ctx.min_score
-        if ctx.min_score_explicit
-        else config["GALLERY_DISPLAY_THRESHOLD"]
+        ctx.min_score if ctx.min_score_explicit else config["GALLERY_DISPLAY_THRESHOLD"]
     )
 
     with db_service.closing_connection() as conn:
@@ -186,6 +188,8 @@ def _resolve_species_overview(ctx: FilterContext) -> ResolvedSelection:
             continue
         score = row_dict.get("score") or 0.0
         if threshold > 0 and score < threshold:
+            continue
+        if ctx.favorites_only and not gallery_service.is_favorite(row_dict):
             continue
         ids.append(row_dict["detection_id"])
 

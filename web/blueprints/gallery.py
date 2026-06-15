@@ -345,6 +345,10 @@ def species_route():
             d for d in all_detections if (d.get("score") or 0.0) >= current_threshold
         ]
 
+    favorites_only = bool(request.args.get("favorites", type=int))
+    if favorites_only:
+        all_detections = [d for d in all_detections if gallery_service.is_favorite(d)]
+
     species_candidates = {}
     for det in all_detections:
         species_key = view_helpers.get_species_key(det)
@@ -410,6 +414,7 @@ def species_route():
         image_width=IMAGE_WIDTH,
         current_threshold=current_threshold,
         species_count=len(detections),
+        favorites_only=favorites_only,
     )
 
 
@@ -434,6 +439,8 @@ def species_overview_route():
     else:
         current_threshold = config["GALLERY_DISPLAY_THRESHOLD"]
 
+    favorites_only = bool(request.args.get("favorites", type=int))
+
     all_detections = view_helpers.get_captured_detections()
 
     filtered = []
@@ -442,6 +449,8 @@ def species_overview_route():
         if det_species_key != species_key:
             continue
         if current_threshold > 0 and (det.get("score") or 0.0) < current_threshold:
+            continue
+        if favorites_only and not gallery_service.is_favorite(det):
             continue
         filtered.append(det)
 
@@ -551,6 +560,7 @@ def species_overview_route():
         total_items=total_items,
         pagination_range=pagination_range,
         image_width=IMAGE_WIDTH,
+        favorites_only=favorites_only,
     )
 
 
@@ -596,6 +606,7 @@ def subgallery_route(date):
 
     page = request.args.get("page", 1, type=int)
     sort_by = request.args.get("sort", "time_desc")
+    favorites_only = bool(request.args.get("favorites", type=int))
 
     try:
         min_score_param = request.args.get("min_score", type=float)
@@ -611,8 +622,14 @@ def subgallery_route(date):
         rows = db_service.fetch_detections_for_gallery(conn, date, order_by="time")
     detections_raw = [dict(row) for row in rows]
 
+    detections_for_gallery = detections_raw
+    if favorites_only:
+        detections_for_gallery = [
+            d for d in detections_raw if gallery_service.is_favorite(d)
+        ]
+
     observations_all = gallery_service.group_detections_into_observations(
-        detections_raw
+        detections_for_gallery
     )
     total_obs_unfiltered = len(observations_all)
 
@@ -659,7 +676,7 @@ def subgallery_route(date):
                 focus_observation_id = obs["observation_id"]
                 break
 
-    det_by_id = {d.get("detection_id"): d for d in detections_raw}
+    det_by_id = {d.get("detection_id"): d for d in detections_for_gallery}
 
     def enrich_detection(det):
         full_path = det.get("relative_path") or det.get("optimized_name_virtual", "")
@@ -810,7 +827,7 @@ def subgallery_route(date):
     species_of_day = []
     if page == 1:
         species_candidates = {}
-        for det in detections_raw:
+        for det in detections_for_gallery:
             species_key = view_helpers.get_species_key(det)
             species_candidates.setdefault(species_key, []).append(det)
 
@@ -877,6 +894,7 @@ def subgallery_route(date):
         total_items_unfiltered=total_obs_unfiltered,
         sort_by=sort_by,
         current_threshold=current_threshold,
+        favorites_only=favorites_only,
         observations=enriched_observations,
         visit_windows=visit_windows,
         species_of_day=species_of_day,

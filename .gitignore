@@ -293,3 +293,6 @@ infra/telemetry-worker/node_modules/
 # (/*.png) so genuine image assets under assets/, templates/, etc. are
 # unaffected. Keeps one-off PNGs out of git status and out of history.
 /*.png
+
+# Local scratch directory, not part of the distribution.
+docs/superpowers/

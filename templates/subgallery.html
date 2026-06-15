@@ -9,6 +9,7 @@
 {% block content %}
 {% from 'partials/tile_toolbox.html' import tile_toolbox %}
 {% set can_moderate = session.get('authenticated') %}
+{% set favorites_query = '&favorites=1' if favorites_only else '' %}
 <nav class="page-control-bar" role="navigation" aria-label="Gallery controls">
     <div class="page-control-bar__left">
         <span class="page-control-bar__title">{{ date }}</span>
@@ -163,6 +164,7 @@
 <section class="section">
     <h2 class="section__title">All observations from today</h2>
     <div class="gallery-grid" id="subgallery-grid">
+        {% if visit_windows %}
         {% for visit in visit_windows %}
         {% if visit|length > 1 %}
         {# Concurrent-visit shell: 2+ observations whose intervals overlap within ±5 min. #}
@@ -185,6 +187,12 @@
         {{ render_obs(obs, can_moderate) }}
         {% endif %}
         {% endfor %}
+        {% else %}
+        <div class="empty-state">
+            <div class="empty-state__icon">🐦</div>
+            <p>No observations match the filter.</p>
+        </div>
+        {% endif %}
     </div>
 </section>
 
@@ -193,7 +201,7 @@
 <nav class="pagination-wrapper" aria-label="Gallery pagination">
     <ul class="pagination">
         {% if page > 1 %}
-        <li><a href="/gallery/{{ date }}?page={{ page - 1 }}&sort={{ sort_by }}&min_score={{ current_threshold }}">«</a>
+        <li><a href="/gallery/{{ date }}?page={{ page - 1 }}&sort={{ sort_by }}&min_score={{ current_threshold }}{{ favorites_query }}">«</a>
         </li>
         {% endif %}
 
@@ -203,13 +211,13 @@
         {% elif p == page %}
         <li class="active"><span>{{ p }}</span></li>
         {% else %}
-        <li><a href="/gallery/{{ date }}?page={{ p }}&sort={{ sort_by }}&min_score={{ current_threshold }}">{{ p }}</a>
+        <li><a href="/gallery/{{ date }}?page={{ p }}&sort={{ sort_by }}&min_score={{ current_threshold }}{{ favorites_query }}">{{ p }}</a>
         </li>
         {% endif %}
         {% endfor %}
 
         {% if page < total_pages %} <li><a
-                href="/gallery/{{ date }}?page={{ page + 1 }}&sort={{ sort_by }}&min_score={{ current_threshold }}">»</a>
+                href="/gallery/{{ date }}?page={{ page + 1 }}&sort={{ sort_by }}&min_score={{ current_threshold }}{{ favorites_query }}">»</a>
             </li>
             {% endif %}
     </ul>
@@ -222,7 +230,8 @@
         surface: 'gallery',
         date: '{{ date }}',
         sort: '{{ sort_by }}',
-        min_score: '{{ current_threshold }}'
+        min_score: '{{ current_threshold }}',
+        favorites_only: {{ favorites_only | tojson }}
     };
 </script>
 {% include 'partials/inline_edit.html' %}

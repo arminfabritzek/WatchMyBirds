@@ -1,9 +1,12 @@
 {# Minimal Filter Bar - include on gallery pages #}
-{# Variables: current_threshold (float 0-1), sort_by (string), show_sort (bool, default true) #}
+{# Variables: current_threshold (float 0-1), sort_by (string), show_sort (bool, default true),
+   favorites_only (bool, default false), show_favorites (bool, default true) #}
 
 {% set threshold = current_threshold|default(0) %}
 {% set sort = sort_by|default('score') %}
 {% set enable_sort = show_sort|default(true) %}
+{% set fav_active = favorites_only|default(false) %}
+{% set enable_favorites = show_favorites|default(true) %}
 
 <div class="filter-bar-container">
     <div class="filter-pill">
@@ -30,6 +33,14 @@
             <option value="species" {% if sort=='species' %}selected{% endif %}>Species</option>
         </select>
         {% endif %}
+
+        {% if enable_favorites %}
+        {# Favorites Filter #}
+        <select id="filter-favorites-select" class="sort-select-minimal">
+            <option value="" {% if not fav_active %}selected{% endif %}>All photos</option>
+            <option value="1" {% if fav_active %}selected{% endif %}>⭐ Favorites only</option>
+        </select>
+        {% endif %}
     </div>
 </div>
 
@@ -39,6 +50,8 @@
         const slider = document.getElementById('filter-score-slider');
         const display = document.getElementById('filter-score-display');
         const sortSelect = document.getElementById('filter-sort-select');
+        const favSelect = document.getElementById('filter-favorites-select');
+        const FAV_STORAGE_KEY = 'wmb_filter_favorites_only';
         const btnMinus = document.getElementById('filter-btn-minus');
         const btnPlus = document.getElementById('filter-btn-plus');
         const btnSetDefault = document.getElementById('filter-set-default');
@@ -61,6 +74,17 @@
                     window.location.replace(reloadUrl.toString());
                     return; // Stop further execution
                 }
+            }
+        }
+
+        // Re-apply saved favorites choice when the URL has no explicit favorites param.
+        if (!urlParams.has('favorites')) {
+            const savedFav = localStorage.getItem(FAV_STORAGE_KEY);
+            if (savedFav === '1') {
+                const favUrl = new URL(window.location);
+                favUrl.searchParams.set('favorites', '1');
+                window.location.replace(favUrl.toString());
+                return;
             }
         }
 
@@ -114,10 +138,23 @@
             sortSelect.addEventListener('change', applyFilters);
         }
 
+        if (favSelect) {
+            favSelect.addEventListener('change', applyFilters);
+        }
+
         function applyFilters() {
             const url = new URL(window.location);
             url.searchParams.set('min_score', parseFloat(slider.value).toFixed(2));
             if (sortSelect) url.searchParams.set('sort', sortSelect.value);
+            if (favSelect) {
+                if (favSelect.value === '1') {
+                    url.searchParams.set('favorites', '1');
+                    localStorage.setItem(FAV_STORAGE_KEY, '1');
+                } else {
+                    url.searchParams.delete('favorites');
+                    localStorage.setItem(FAV_STORAGE_KEY, '0');
+                }
+            }
             url.searchParams.set('page', '1');
             window.location.href = url.toString();
         }

@@ -59,7 +59,7 @@ window.WmBatchActions = (function () {
         // Copy known filter keys
         var keys = [
             'date', 'species_key', 'status_filter',
-            'min_conf', 'sort', 'min_score'
+            'min_conf', 'sort', 'min_score', 'favorites_only'
         ];
         keys.forEach(function (k) {
             if (params[k] !== undefined && params[k] !== null) {

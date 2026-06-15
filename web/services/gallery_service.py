@@ -37,6 +37,11 @@ def get_captured_detections() -> list[dict]:
     return gallery_core.get_captured_detections()
 
 
+def is_favorite(det: dict) -> bool:
+    """True when a detection is manually marked as favorite."""
+    return gallery_core.is_favorite(det)
+
+
 def get_captured_detections_by_date() -> dict[str, list]:
     """
     Get detections grouped by date.

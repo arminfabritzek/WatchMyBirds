@@ -75,12 +75,13 @@
 </div>
 {% endif %}
 
+{% set favorites_query = '&favorites=1' if favorites_only else '' %}
 {% if total_pages > 1 %}
 <nav class="pagination-wrapper" aria-label="Species overview pagination">
     <ul class="pagination">
         {% if page > 1 %}
         <li><a
-                href="/species/overview?species_key={{ species_key | urlencode }}&page={{ page - 1 }}&min_score={{ current_threshold }}">«</a>
+                href="/species/overview?species_key={{ species_key | urlencode }}&page={{ page - 1 }}&min_score={{ current_threshold }}{{ favorites_query }}">«</a>
         </li>
         {% endif %}
 
@@ -91,14 +92,14 @@
         <li class="active"><span>{{ p }}</span></li>
         {% else %}
         <li><a
-                href="/species/overview?species_key={{ species_key | urlencode }}&page={{ p }}&min_score={{ current_threshold }}">{{
+                href="/species/overview?species_key={{ species_key | urlencode }}&page={{ p }}&min_score={{ current_threshold }}{{ favorites_query }}">{{
                 p }}</a>
         </li>
         {% endif %}
         {% endfor %}
 
         {% if page < total_pages %} <li><a
-                href="/species/overview?species_key={{ species_key | urlencode }}&page={{ page + 1 }}&min_score={{ current_threshold }}">»</a>
+                href="/species/overview?species_key={{ species_key | urlencode }}&page={{ page + 1 }}&min_score={{ current_threshold }}{{ favorites_query }}">»</a>
             </li>
             {% endif %}
     </ul>
@@ -110,7 +111,8 @@
     window.INLINE_EDIT_FILTER_CONTEXT = {
         surface: 'species_overview',
         species_key: '{{ species_key }}',
-        min_score: '{{ current_threshold }}'
+        min_score: '{{ current_threshold }}',
+        favorites_only: {{ favorites_only | tojson }}
     };
 </script>
 {% include 'partials/inline_edit.html' %}
