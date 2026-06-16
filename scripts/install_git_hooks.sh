@@ -12,6 +12,16 @@ chained="$hooks_dir/pre-push.local-previous"
 
 if [ -f "$target" ] && ! grep -q "security_sink_guard_prepush.sh" "$target"; then
   mv "$target" "$chained"
+  # A moved hook that self-delegated to pre-push.local-previous now recurses into
+  # itself (fork bomb); delete that `if ... fi` block. Chaining is the top hook's job.
+  if grep -q "pre-push.local-previous" "$chained"; then
+    awk '
+      /if \[ -f ".git\/hooks\/pre-push.local-previous" \]; then/ { skip=1 }
+      skip && /^fi$/ { skip=0; next }
+      !skip { print }
+    ' "$chained" > "$chained.tmp" && mv "$chained.tmp" "$chained"
+    chmod +x "$chained"
+  fi
 fi
 
 cat > "$target" <<EOF
