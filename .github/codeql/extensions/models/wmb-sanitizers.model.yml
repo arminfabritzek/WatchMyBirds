@@ -11,7 +11,7 @@ extensions:
       pack: codeql/python-all
       extensible: barrierModel
     data:
-      - ["web.security", "Member[safe_log_value].ReturnValue", "log-injection"]
+      - ["web.security", "Member[safe_log_value].ReturnValue", "log-injection", "manual"]
 
   # utils/log_safety.py — the non-web twin of safe_log_value (same neutralizer,
   # duplicated to avoid a utils -> web import cycle).
@@ -19,7 +19,7 @@ extensions:
       pack: codeql/python-all
       extensible: barrierModel
     data:
-      - ["utils.log_safety", "Member[safe_log_value].ReturnValue", "log-injection"]
+      - ["utils.log_safety", "Member[safe_log_value].ReturnValue", "log-injection", "manual"]
 
   # safe_validation_message() collapses any exception text to a value that is
   # statically bounded by a constant allow-list of prefixes, so its return is
@@ -28,7 +28,7 @@ extensions:
       pack: codeql/python-all
       extensible: barrierModel
     data:
-      - ["web.security", "Member[safe_validation_message].ReturnValue", "stack-trace-exposure"]
+      - ["web.security", "Member[safe_validation_message].ReturnValue", "stack-trace-exposure", "manual"]
 
   # camera/ptz_client.py — _slv (safe-log-value alias) neutralizes the same way
   # for the PTZ client's connection logs (py/log-injection,
@@ -38,7 +38,7 @@ extensions:
       pack: codeql/python-all
       extensible: barrierModel
     data:
-      - ["camera.ptz_client", "Member[_slv].ReturnValue", "log-injection"]
+      - ["camera.ptz_client", "Member[_slv].ReturnValue", "log-injection", "manual"]
 
   # core/usb_backup_core.py — _safe_snapshot_path() rejects separators, parent
   # refs, NUL bytes and anything that escapes SNAPSHOTS_DIR (relative_to check).
@@ -47,7 +47,7 @@ extensions:
       pack: codeql/python-all
       extensible: barrierModel
     data:
-      - ["core.usb_backup_core", "Member[_safe_snapshot_path].ReturnValue", "path-injection"]
+      - ["core.usb_backup_core", "Member[_safe_snapshot_path].ReturnValue", "path-injection", "manual"]
 
   # web/services/auth_service.py — get_redirect_target() returns a same-origin
   # relative path (callers additionally re-assert startswith('/') at the sink).
@@ -56,7 +56,7 @@ extensions:
       pack: codeql/python-all
       extensible: barrierModel
     data:
-      - ["web.services.auth_service", "Member[get_redirect_target].ReturnValue", "url-redirection"]
+      - ["web.services.auth_service", "Member[get_redirect_target].ReturnValue", "url-redirection", "manual"]
 
   # web/blueprints/gallery.py — _safe_date_redirect() returns a same-origin path
   # built only from a regex+strptime-validated ISO date, else a constant
@@ -65,7 +65,7 @@ extensions:
       pack: codeql/python-all
       extensible: barrierModel
     data:
-      - ["web.blueprints.gallery", "Member[_safe_date_redirect].ReturnValue", "url-redirection"]
+      - ["web.blueprints.gallery", "Member[_safe_date_redirect].ReturnValue", "url-redirection", "manual"]
 
   # web/view_helpers.py — _contained_static_path() returns a path proven to be
   # inside root_path (normpath + ..-reject + resolve()/relative_to). Safe
@@ -74,7 +74,7 @@ extensions:
       pack: codeql/python-all
       extensible: barrierModel
     data:
-      - ["web.view_helpers", "Member[_contained_static_path].ReturnValue", "path-injection"]
+      - ["web.view_helpers", "Member[_contained_static_path].ReturnValue", "path-injection", "manual"]
 
   # assets/js/gallery_utils.js — safeSameOriginPath() returns a same-origin
   # relative path or '' (origin/protocol/charset whitelist). Global function,
@@ -83,5 +83,5 @@ extensions:
       pack: codeql/javascript-all
       extensible: barrierModel
     data:
-      - ["global", "Member[safeSameOriginPath].ReturnValue", "html-injection"]
-      - ["global", "Member[safeSameOriginPath].ReturnValue", "url-redirection"]
+      - ["global", "Member[safeSameOriginPath].ReturnValue", "html-injection", "manual"]
+      - ["global", "Member[safeSameOriginPath].ReturnValue", "url-redirection", "manual"]
