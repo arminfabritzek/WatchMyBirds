@@ -575,9 +575,12 @@ def models_detector_precision():
             }
         )
     except ValueError as ve:
-        # ValueError here carries a deliberate, user-facing message
-        # raised by our own validation code — safe to surface.
-        return jsonify({"status": "error", "message": str(ve)}), 400
+        msg = _safe_validation_message(
+            ve,
+            allowed_prefixes=("precision must be", "model_id"),
+            fallback="Invalid precision request",
+        )
+        return jsonify({"status": "error", "message": msg}), 400
     except Exception as exc:
         return _error_response("models/detector/precision POST failed", exc)
 
