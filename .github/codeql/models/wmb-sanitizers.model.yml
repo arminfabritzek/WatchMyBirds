@@ -1,0 +1,87 @@
+# WatchMyBirds sanitizer barriers for CodeQL's default Python pack.
+# Each entry declares one hand-built choke-point as a barrier for a specific
+# vulnerability kind. The kind string MUST equal the kind the query checks, or
+# the barrier silently does nothing. This is the supported way to clear false
+# positives on code that is already correct.
+# https://docs.github.com/code-security/codeql-cli/using-the-advanced-functionality-of-the-codeql-cli/customizing-library-models-for-python
+
+extensions:
+  # safe_log_value() strips CR/LF/tab/control chars before logging.
+  - addsTo:
+      pack: codeql/python-all
+      extensible: barrierModel
+    data:
+      - ["web.security", "Member[safe_log_value].ReturnValue", "log-injection"]
+
+  # utils/log_safety.py — the non-web twin of safe_log_value (same neutralizer,
+  # duplicated to avoid a utils -> web import cycle).
+  - addsTo:
+      pack: codeql/python-all
+      extensible: barrierModel
+    data:
+      - ["utils.log_safety", "Member[safe_log_value].ReturnValue", "log-injection"]
+
+  # safe_validation_message() collapses any exception text to a value that is
+  # statically bounded by a constant allow-list of prefixes, so its return is
+  # safe to surface to the client (py/stack-trace-exposure).
+  - addsTo:
+      pack: codeql/python-all
+      extensible: barrierModel
+    data:
+      - ["web.security", "Member[safe_validation_message].ReturnValue", "stack-trace-exposure"]
+
+  # camera/ptz_client.py — _slv (safe-log-value alias) neutralizes the same way
+  # for the PTZ client's connection logs (py/log-injection,
+  # py/clear-text-logging-sensitive-data: the logged values are host:port, not
+  # the password, and are CR/LF-stripped).
+  - addsTo:
+      pack: codeql/python-all
+      extensible: barrierModel
+    data:
+      - ["camera.ptz_client", "Member[_slv].ReturnValue", "log-injection"]
+
+  # core/usb_backup_core.py — _safe_snapshot_path() rejects separators, parent
+  # refs, NUL bytes and anything that escapes SNAPSHOTS_DIR (relative_to check).
+  # Its return is a Path safe against py/path-injection.
+  - addsTo:
+      pack: codeql/python-all
+      extensible: barrierModel
+    data:
+      - ["core.usb_backup_core", "Member[_safe_snapshot_path].ReturnValue", "path-injection"]
+
+  # web/services/auth_service.py — get_redirect_target() returns a same-origin
+  # relative path (callers additionally re-assert startswith('/') at the sink).
+  # Its return is safe against py/url-redirection.
+  - addsTo:
+      pack: codeql/python-all
+      extensible: barrierModel
+    data:
+      - ["web.services.auth_service", "Member[get_redirect_target].ReturnValue", "url-redirection"]
+
+  # web/blueprints/gallery.py — _safe_date_redirect() returns a same-origin path
+  # built only from a regex+strptime-validated ISO date, else a constant
+  # fallback. Safe against py/url-redirection.
+  - addsTo:
+      pack: codeql/python-all
+      extensible: barrierModel
+    data:
+      - ["web.blueprints.gallery", "Member[_safe_date_redirect].ReturnValue", "url-redirection"]
+
+  # web/view_helpers.py — _contained_static_path() returns a path proven to be
+  # inside root_path (normpath + ..-reject + resolve()/relative_to). Safe
+  # against py/path-injection.
+  - addsTo:
+      pack: codeql/python-all
+      extensible: barrierModel
+    data:
+      - ["web.view_helpers", "Member[_contained_static_path].ReturnValue", "path-injection"]
+
+  # assets/js/gallery_utils.js — safeSameOriginPath() returns a same-origin
+  # relative path or '' (origin/protocol/charset whitelist). Global function,
+  # safe against DOM XSS and open redirect.
+  - addsTo:
+      pack: codeql/javascript-all
+      extensible: barrierModel
+    data:
+      - ["global", "Member[safeSameOriginPath].ReturnValue", "html-injection"]
+      - ["global", "Member[safeSameOriginPath].ReturnValue", "url-redirection"]

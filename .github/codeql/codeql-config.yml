@@ -1,0 +1,14 @@
+name: "WatchMyBirds CodeQL config"
+
+queries:
+  - uses: security-extended
+  - uses: security-and-quality
+
+# Local sanitizer model pack — neutralizes false positives on data that
+# already passes through the project's hand-built choke-points (see
+# models/wmb-sanitizers.model.yml).
+packs:
+  python:
+    - watchmybirds/codeql-sanitizer-models
+  javascript:
+    - watchmybirds/codeql-sanitizer-models
