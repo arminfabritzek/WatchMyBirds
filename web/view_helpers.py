@@ -66,15 +66,13 @@ def send_cached_static_file(
     return response
 
 
-def send_contained_upload(
-    root: os.PathLike,
-    relative: str,
-    *,
-    max_age: int,
-    private: bool = True,
-    immutable: bool = False,
-):
-    root_path = Path(root).resolve()
+def _contained_static_path(root_path: Path, relative: str) -> Path | None:
+    """Resolve ``relative`` under ``root_path`` or return None if it escapes.
+
+    Rejects NUL bytes, parent refs, and absolute inputs, then proves containment
+    via resolve()+relative_to. The returned Path is inside ``root_path`` by
+    construction (modelled as a path-injection barrier for CodeQL).
+    """
     if (
         not isinstance(relative, str)
         or not relative
@@ -84,16 +82,29 @@ def send_contained_upload(
         or relative.startswith("/")
         or relative.startswith("\\")
     ):
-        return "Not found", 404
+        return None
     safe_rel = os.path.normpath(relative).replace("\\", "/").lstrip("/")
     if safe_rel.startswith("..") or "/../" in safe_rel:
-        return "Not found", 404
+        return None
     try:
         candidate = (root_path / safe_rel).resolve()
         candidate.relative_to(root_path)
     except (ValueError, OSError):
-        return "Not found", 404
-    if not candidate.is_file():
+        return None
+    return candidate
+
+
+def send_contained_upload(
+    root: os.PathLike,
+    relative: str,
+    *,
+    max_age: int,
+    private: bool = True,
+    immutable: bool = False,
+):
+    root_path = Path(root).resolve()
+    candidate = _contained_static_path(root_path, relative)
+    if candidate is None or not candidate.is_file():
         return "Not found", 404
     rel = candidate.relative_to(root_path).as_posix()
     return send_cached_static_file(

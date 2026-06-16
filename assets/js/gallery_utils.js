@@ -17,6 +17,23 @@ function isAuthRedirect(resp) {
     return false;
 }
 
+// Return a same-origin relative path or '' — rejects cross-origin, non-http(s)
+// protocols, and any pathname outside the safe charset. CodeQL barrier for DOM
+// XSS / open redirect. Shared so tile_actions.js (loaded after) can reuse it.
+function safeSameOriginPath(rawUrl) {
+    try {
+        const parsed = new URL(rawUrl, window.location.origin);
+        if (parsed.origin !== window.location.origin) return '';
+        if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return '';
+        const pathname = parsed.pathname || '';
+        if (pathname[0] !== '/') return '';
+        if (!/^[A-Za-z0-9_\-./]+$/.test(pathname)) return '';
+        return pathname + parsed.search + parsed.hash;
+    } catch (e) {
+        return '';
+    }
+}
+
 function getViewerScope(el) {
     if (!el || !el.closest) return null;
     return el.closest('.wm-viewer-scope') || el.closest('.modal');

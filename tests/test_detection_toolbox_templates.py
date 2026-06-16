@@ -98,12 +98,38 @@ def test_deferred_viewer_images_use_same_origin_sanitizer():
 
 
 def test_tile_details_navigation_uses_same_origin_sanitizer():
+    # safeSameOriginPath now lives in gallery_utils.js (loaded first) so it can
+    # be modelled as a CodeQL barrier; tile_actions.js consumes it.
+    shared = _read("assets/js/gallery_utils.js")
     js = _read("assets/js/tile_actions.js")
 
-    assert "function safeSameOriginPath" in js
-    assert "parsed.origin !== window.location.origin" in js
+    assert "function safeSameOriginPath" in shared
+    assert "parsed.origin !== window.location.origin" in shared
+    assert "safeSameOriginPath(" in js
     assert "window.location.assign(safeDetailsPath)" in js
     assert "window.location.href = detailsHref" not in js
+
+
+def test_tile_actions_pages_load_gallery_utils_first():
+    """tile_actions.js depends on safeSameOriginPath from gallery_utils.js.
+
+    Every template that loads tile_actions.js must load gallery_utils.js before
+    it, or the shared sanitizer is undefined at runtime.
+    """
+    templates_dir = _project_root() / "templates"
+    offenders = []
+    for tpl in templates_dir.rglob("*.html"):
+        text = tpl.read_text(encoding="utf-8")
+        ta = text.find('src="/assets/js/tile_actions.js')
+        if ta == -1:
+            continue
+        gu = text.find('src="/assets/js/gallery_utils.js')
+        if gu == -1 or gu > ta:
+            offenders.append(str(tpl.relative_to(_project_root())))
+    assert not offenders, (
+        "These templates load tile_actions.js without gallery_utils.js first:\n  "
+        + "\n  ".join(offenders)
+    )
 
 
 def test_modal_action_bar_data_actions_are_dispatched():

@@ -38,6 +38,28 @@ config = get_config()
 
 gallery_bp = Blueprint("gallery", __name__)
 
+_DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
+
+
+def _safe_date_redirect(
+    prefix: str, date_iso: str | None, fallback: str = "/gallery"
+) -> str:
+    """Build a same-origin redirect path from a validated ISO date.
+
+    Returns ``{prefix}/{date}`` only when ``date_iso`` matches YYYY-MM-DD and
+    parses as a real date; otherwise ``fallback``. The return value is a
+    same-origin relative path by construction — it cannot carry an open-redirect
+    payload (modelled as a url-redirection barrier for CodeQL).
+    """
+    if date_iso and _DATE_RE.fullmatch(date_iso):
+        try:
+            datetime.strptime(date_iso, "%Y-%m-%d")
+        except (TypeError, ValueError):
+            return fallback
+        return f"{prefix}/{date_iso}"
+    return fallback
+
+
 IMAGE_WIDTH = 150
 PAGE_SIZE = 50
 
@@ -237,10 +259,10 @@ def edit_actions_route():
                 )
 
         gallery_service.invalidate_cache()
-        return redirect(f"/gallery/{safe_date}")
+        return redirect(_safe_date_redirect("/gallery", safe_date))
 
     if not det_ids:
-        return redirect(f"/edit/{safe_date}" if safe_date else "/gallery")
+        return redirect(_safe_date_redirect("/edit", safe_date))
 
     ids_int = [int(i) for i in det_ids]
 
@@ -249,7 +271,7 @@ def edit_actions_route():
             db_service.reject_detections(conn, ids_int)
 
         gallery_service.invalidate_cache()
-        return redirect(f"/edit/{safe_date}" if safe_date else "/gallery")
+        return redirect(_safe_date_redirect("/edit", safe_date))
 
     elif action == "download":
         import io
@@ -323,7 +345,7 @@ def edit_actions_route():
             download_name=download_name,
         )
 
-    return redirect(f"/edit/{date_iso}")
+    return redirect(_safe_date_redirect("/edit", date_iso))
 
 
 def species_route():
