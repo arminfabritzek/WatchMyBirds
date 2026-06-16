@@ -4,6 +4,6 @@ queries:
   - uses: security-extended
   - uses: security-and-quality
 
-# Sanitizer model pack lives in .github/codeql/extensions/ and is auto-discovered
-# by code scanning — it must NOT be listed under packs: (that resolves names from
-# ghcr.io and fails for a repo-local pack).
+# Do not auto-load repo-local CodeQL data extensions here. The former sanitizer
+# barrier pack under .github/codeql/extensions/ was incompatible with CodeQL
+# 2.25.6 and aborted the Python/JavaScript scans before analysis could finish.
