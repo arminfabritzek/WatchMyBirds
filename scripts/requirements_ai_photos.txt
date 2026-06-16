@@ -1,7 +1,7 @@
 torch>=2.11.0
 diffusers>=0.37.1
 transformers>=5.10.2
-accelerate>=0.30
+accelerate>=1.14.0
 safetensors>=0.7.0
 sentencepiece
 Pillow
