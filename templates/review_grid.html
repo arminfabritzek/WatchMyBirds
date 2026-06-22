@@ -53,9 +53,33 @@
                     title="Larger tiles (fewer per row)"
                     aria-label="Larger tiles">+</button>
         </div>
+        <button type="button"
+                class="btn btn--secondary"
+                id="reviewClearQueueBtn"
+                title="{{ 'Review queue is empty — nothing to clear' if not review_events else 'Move every item in the Review queue to Trash (reversible, no files deleted)' }}"
+                {{ 'disabled' if not review_events }}>🧹 Move Review Queue to Trash</button>
         <a href="/" class="btn btn--secondary" title="Back to live stream">← Stream</a>
     </div>
 </nav>
+
+<div class="review-cleanup-modal" id="reviewCleanupModal" hidden
+     role="dialog" aria-modal="true" aria-labelledby="reviewCleanupTitle">
+    <div class="review-cleanup-modal__backdrop" data-cleanup-dismiss></div>
+    <div class="review-cleanup-modal__panel" role="document">
+        <h3 class="review-cleanup-modal__title" id="reviewCleanupTitle">
+            Move Review Queue to Trash
+        </h3>
+        <div class="review-cleanup-modal__body" id="reviewCleanupBody">
+            <p class="review-cleanup-modal__loading">Counting review items…</p>
+        </div>
+        <div class="review-cleanup-modal__actions">
+            <button type="button" class="btn btn--secondary"
+                    data-cleanup-dismiss>Cancel</button>
+            <button type="button" class="btn btn--primary"
+                    id="reviewCleanupConfirmBtn" disabled>Move to Trash</button>
+        </div>
+    </div>
+</div>
 
 <section class="review-grid">
 
@@ -107,4 +131,5 @@
 <script src="/assets/js/batch_actions.js?v=1"></script>
 <script src="/assets/js/review_grid.js?v=20260525-trash-fix"></script>
 <script src="/assets/js/review_grid_keyboard.js?v=1"></script>
+<script src="/assets/js/review_cleanup.js?v=1"></script>
 {% endblock %}

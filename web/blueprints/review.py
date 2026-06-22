@@ -43,7 +43,12 @@ from utils.species_names import (
 )
 from web.blueprints.auth import login_required
 from web.security import error_response as _error_response
-from web.services import cache_service, db_service, gallery_service
+from web.services import (
+    cache_service,
+    db_service,
+    gallery_service,
+    review_cleanup_service,
+)
 from web.species_thumbnails import (
     get_species_thumbnail_map,
     resolve_species_thumbnail_url,
@@ -2189,6 +2194,33 @@ def review_decision():
 
     except Exception as e:
         return _error_response("Error in review decision", e)
+
+
+@review_bp.route("/api/review/cleanup/preview", methods=["GET"])
+@login_required
+def review_cleanup_preview():
+    """Dry-run for "Move Review Queue to Trash": queue counts + disclosure.
+
+    Read-only. Returns events/images/detections plus the favorites and
+    export-relevant sub-counts so the operator sees what the reversible
+    action will touch before running it.
+    """
+    return jsonify(review_cleanup_service.preview())
+
+
+@review_bp.route("/api/review/cleanup/run", methods=["POST"])
+@login_required
+@cache_service.invalidates("analytics.")
+def review_cleanup_run():
+    """Move the whole review queue to Trash (reversible, no file deletion)."""
+    result = review_cleanup_service.run()
+    gallery_service.invalidate_cache()
+    logger.info(
+        "review cleanup: images_moved=%s detections_moved=%s",
+        result.get("images_moved"),
+        result.get("detections_moved"),
+    )
+    return jsonify({"status": "success", **result})
 
 
 @review_bp.route("/api/review/bbox-review", methods=["POST"])

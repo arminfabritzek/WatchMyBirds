@@ -10905,3 +10905,66 @@ code {
     color: #fff;
     border-color: var(--color-primary, #53676b);
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   REVIEW CLEANUP MODAL — "Move Review Queue to Trash" preview/confirm
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.review-cleanup-modal {
+    position: fixed;
+    inset: 0;
+    z-index: 1100;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.review-cleanup-modal[hidden] {
+    display: none;
+}
+
+.review-cleanup-modal__backdrop {
+    position: absolute;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.45);
+}
+
+.review-cleanup-modal__panel {
+    position: relative;
+    max-width: 28rem;
+    width: calc(100% - 2rem);
+    background: var(--color-surface);
+    color: var(--color-text);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-xl);
+    padding: 1.25rem 1.4rem;
+}
+
+.review-cleanup-modal__title {
+    margin: 0 0 0.75rem;
+    font-size: 1.1rem;
+}
+
+.review-cleanup-modal__counts {
+    margin: 0.5rem 0;
+    padding-left: 1.1rem;
+}
+
+.review-cleanup-modal__note {
+    margin: 0.6rem 0;
+    color: var(--color-text-muted);
+}
+
+.review-cleanup-modal__reassure {
+    margin: 0.6rem 0 0;
+    color: var(--color-text-subtle);
+    font-size: 0.9em;
+}
+
+.review-cleanup-modal__actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.6rem;
+    margin-top: 1rem;
+}
