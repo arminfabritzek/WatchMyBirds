@@ -1203,6 +1203,52 @@
             .catch(err => { alert(`❌ Error: ${err.message || 'Connection failed'}`); console.error(err); if (btn) { btn.textContent = originalText; btn.disabled = false; } });
     }
 
+    function _fmtBytes(n) {
+        if (!n) return '0 B';
+        const u = ['B', 'KB', 'MB', 'GB', 'TB'];
+        let i = 0; let v = n;
+        while (v >= 1024 && i < u.length - 1) { v /= 1024; i++; }
+        return `${v.toFixed(1)} ${u[i]}`;
+    }
+
+    function retentionPreview() {
+        const out = document.getElementById('retentionResult');
+        out.textContent = 'Calculating…';
+        fetch('/api/v1/retention/preview')
+            .then(res => res.json())
+            .then(data => {
+                if (!data.enabled) {
+                    out.innerHTML = '⚠️ Retention is <strong>disabled</strong>. Enable it and Apply Settings, then preview again.';
+                    return;
+                }
+                const prot = data.protected || {};
+                const protLine = Object.keys(prot)
+                    .filter(k => prot[k] > 0)
+                    .map(k => `${k}: ${prot[k]}`)
+                    .join(', ') || 'none';
+                out.innerHTML =
+                    `Would delete <strong>${data.deletable.count}</strong> original(s), ` +
+                    `reclaiming <strong>${_fmtBytes(data.deletable.estimated_bytes)}</strong>.<br>` +
+                    `Protected: ${protLine}.`;
+            })
+            .catch(err => { out.textContent = `Error: ${err.message || 'request failed'}`; });
+    }
+
+    function retentionRun() {
+        if (!confirm('Delete the full-resolution originals selected by the retention policy? This cannot be undone (previews and metadata are kept).')) return;
+        const out = document.getElementById('retentionResult');
+        out.textContent = 'Cleaning up…';
+        fetch('/api/v1/retention/run', { method: 'POST' })
+            .then(res => res.json())
+            .then(data => {
+                out.innerHTML =
+                    `Deleted <strong>${data.deleted}</strong> original(s), ` +
+                    `freed <strong>${_fmtBytes(data.freed_bytes)}</strong>. ` +
+                    `Missing: ${data.missing}, errors: ${data.errors}.`;
+            })
+            .catch(err => { out.textContent = `Error: ${err.message || 'request failed'}`; });
+    }
+
     // Replaces the former nested <form action=...> for the /ingest
     // trigger. Nesting a form inside settingsForm auto-closed the
     // outer form in every browser, which silently killed the Apply
@@ -2339,6 +2385,63 @@
         </div>
     </div>
 
+
+    <div class="settings-panel" id="panelRetention">
+        <button type="button" class="settings-panel__trigger" onclick="togglePanel('panelRetention')"
+                title="Reclaim disk by deleting old full-resolution originals while keeping previews, thumbnails, crops, stats and favourites.">
+            Storage Retention
+            <span class="settings-panel__trigger-info">Delete old full-resolution originals; keep everything else</span>
+            <svg class="settings-panel__chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+        </button>
+        <div class="settings-panel__body">
+            <p class="settings-field__help mb-3">
+                When enabled, full-resolution originals older than the retention
+                window are deleted to reclaim disk. Observations, previews,
+                thumbnails, crops, statistics and favourites are always kept.
+                Favourites, unreviewed images and anything still needed for the
+                training export are protected. Use <strong>Preview</strong> first
+                to see exactly what would be removed.
+            </p>
+
+            <div class="settings-field">
+                <label class="settings-field__label" for="RETENTION_ENABLED">Enable retention</label>
+                <select name="RETENTION_ENABLED" id="RETENTION_ENABLED" class="form-control">
+                    <option value="true" {% if payload['RETENTION_ENABLED'].value %}selected{% endif %}>Enabled</option>
+                    <option value="false" {% if not payload['RETENTION_ENABLED'].value %}selected{% endif %}>Disabled</option>
+                </select>
+            </div>
+
+            <div class="settings-field mt-3">
+                <label class="settings-field__label" for="RETENTION_DAYS">Retention window (days)</label>
+                <input type="number" min="1" max="3650" step="1"
+                    name="RETENTION_DAYS" id="RETENTION_DAYS" class="form-control"
+                    value="{{ payload['RETENTION_DAYS'].value }}">
+                <div class="settings-field__help">Originals younger than this are always kept (1–3650).</div>
+            </div>
+
+            <div class="settings-field mt-3">
+                <label class="settings-field__label" for="RETENTION_PROTECT_FAVORITES">Protect favourites</label>
+                <select name="RETENTION_PROTECT_FAVORITES" id="RETENTION_PROTECT_FAVORITES" class="form-control">
+                    <option value="true" {% if payload['RETENTION_PROTECT_FAVORITES'].value %}selected{% endif %}>Protected</option>
+                    <option value="false" {% if not payload['RETENTION_PROTECT_FAVORITES'].value %}selected{% endif %}>Not protected</option>
+                </select>
+            </div>
+
+            <div class="settings-field mt-3">
+                <label class="settings-field__label" for="RETENTION_PROTECT_UNREVIEWED">Protect unreviewed images</label>
+                <select name="RETENTION_PROTECT_UNREVIEWED" id="RETENTION_PROTECT_UNREVIEWED" class="form-control">
+                    <option value="true" {% if payload['RETENTION_PROTECT_UNREVIEWED'].value %}selected{% endif %}>Protected</option>
+                    <option value="false" {% if not payload['RETENTION_PROTECT_UNREVIEWED'].value %}selected{% endif %}>Not protected</option>
+                </select>
+            </div>
+
+            <div class="d-flex gap-2 mt-4">
+                <button type="button" class="btn btn--secondary" onclick="retentionPreview()">Preview</button>
+                <button type="button" class="btn btn--danger" onclick="retentionRun()">Clean up now</button>
+            </div>
+            <div id="retentionResult" class="settings-field__help mt-3" role="status"></div>
+        </div>
+    </div>
 
 
     <!-- ╔══════════════════════════════════════════════════╗

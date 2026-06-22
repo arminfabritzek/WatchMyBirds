@@ -20,6 +20,7 @@ from utils.db.user_groundtruth import (
     fetch_favorites,
     fetch_hard_negatives,
     fetch_species_relabels,
+    is_export_relevant_any,
 )
 
 __all__ = [
@@ -28,4 +29,5 @@ __all__ = [
     "fetch_favorites",
     "fetch_hard_negatives",
     "fetch_species_relabels",
+    "is_export_relevant_any",
 ]

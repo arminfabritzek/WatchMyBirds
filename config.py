@@ -229,6 +229,11 @@ DEFAULTS = {
     # marks its detections as pending training-export. Off by default
     # so the export pool only grows deliberately.
     "TRAINING_EXPORT_AUTO_OPT_IN": False,
+    # Artifact retention (full-resolution originals only); ships OFF.
+    "RETENTION_ENABLED": False,
+    "RETENTION_DAYS": 90,
+    "RETENTION_PROTECT_FAVORITES": True,
+    "RETENTION_PROTECT_UNREVIEWED": True,
     "MOTION_DETECTION_ENABLED": False,
     "MOTION_SENSITIVITY": 500,
     "CAMERA_URL": "",
@@ -276,6 +281,10 @@ DEFAULTS = {
 
 RUNTIME_KEYS = {
     "EXPORT_BURN_IN_METADATA",
+    "RETENTION_ENABLED",
+    "RETENTION_DAYS",
+    "RETENTION_PROTECT_FAVORITES",
+    "RETENTION_PROTECT_UNREVIEWED",
     "SAVE_THRESHOLD",
     "SAVE_THRESHOLD_MODE",
     "NON_BIRD_CONFIRM_THRESHOLD",
@@ -777,9 +786,19 @@ def _coerce_config_types(config: dict[str, Any]) -> None:
         "MOTION_DETECTION_ENABLED",
         "ENABLE_NIGHTLY_DEEP_SCAN",
         "NON_BIRD_DROP_BELOW_CONFIRM",
+        "RETENTION_ENABLED",
+        "RETENTION_PROTECT_FAVORITES",
+        "RETENTION_PROTECT_UNREVIEWED",
     ):
         if key in config:
             config[key] = _coerce_bool(config.get(key))
+
+    # RETENTION_DAYS: positive int, capped at 3650 (~10 years).
+    try:
+        ret_days = int(float(config.get("RETENTION_DAYS", 90)))
+    except (TypeError, ValueError):
+        ret_days = 90
+    config["RETENTION_DAYS"] = max(1, min(3650, ret_days))
 
     # LOCATION_DATA: parse "lat, lon" strings into dict
     location_val = config.get("LOCATION_DATA")
@@ -1146,8 +1165,19 @@ def _validate_value(key: str, value: Any) -> tuple[bool, Any]:
         "TRAINING_EXPORT_AUTO_OPT_IN",
         "NON_BIRD_DROP_BELOW_CONFIRM",
         "PTZ_TRACKING_OVERLAY_ENABLED",
+        "RETENTION_ENABLED",
+        "RETENTION_PROTECT_FAVORITES",
+        "RETENTION_PROTECT_UNREVIEWED",
     ):
         return True, _coerce_bool(value)
+    if key == "RETENTION_DAYS":
+        try:
+            days = int(float(value))
+        except (TypeError, ValueError):
+            return False, None
+        if 1 <= days <= 3650:
+            return True, days
+        return False, None
     if key == "SAVE_THRESHOLD_MODE":
         val = str(value).strip().lower() if value is not None else ""
         if val in ("auto", "manual"):

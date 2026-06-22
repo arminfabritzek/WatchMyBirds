@@ -305,6 +305,12 @@ def _init_schema(conn: sqlite3.Connection) -> None:
         "CREATE INDEX IF NOT EXISTS idx_images_review_status_timestamp ON images(review_status, timestamp);"
     )
 
+    # Artifact retention: original-file presence marker (additive).
+    # original_present=1 for every existing row (the original is on disk);
+    # retention sets it to 0 and stamps original_deleted_at on removal.
+    _ensure_column_on_table(conn, "images", "original_present", "INTEGER DEFAULT 1")
+    _ensure_column_on_table(conn, "images", "original_deleted_at", "TEXT")
+
     # Deep Scan tracking (additive, no destructive migration)
     _ensure_column_on_table(conn, "images", "deep_scan_last_attempt_at", "TEXT")
     _ensure_column_on_table(conn, "images", "deep_scan_last_result", "TEXT")

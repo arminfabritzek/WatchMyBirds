@@ -1,4 +1,5 @@
 import io
+import os
 import re
 
 from flask import Blueprint, abort, send_file
@@ -7,12 +8,20 @@ from config import get_config
 from logging_config import get_logger
 from web import view_helpers
 from web.blueprints.auth import login_required
-from web.services import gallery_service, path_service
+from web.services import gallery_service, path_service, retention_service
 
 logger = get_logger(__name__)
 config = get_config()
 
 media_bp = Blueprint("media", __name__)
+
+# Returned when the full-resolution original was removed by the retention
+# policy. The preview/thumbnail derivatives are still served normally.
+_ORIGINAL_GONE = (
+    "Full-resolution original was removed by the retention policy; "
+    "the preview is still available.",
+    410,
+)
 
 
 def _output_dir() -> str:
@@ -25,8 +34,15 @@ def _path_mgr():
 
 @media_bp.route("/uploads/originals/<path:filename>")
 def serve_original(filename):
+    path_mgr = _path_mgr()
+    # Present is the hot path: serve it without touching the DB. Only when
+    # the original is actually missing do we consult the retention marker to
+    # distinguish "removed by retention" (410) from "never existed" (404).
+    if not (path_mgr.originals_dir / filename).is_file():
+        if retention_service.is_original_retention_deleted(os.path.basename(filename)):
+            return _ORIGINAL_GONE
     return view_helpers.send_contained_upload(
-        _path_mgr().originals_dir,
+        path_mgr.originals_dir,
         filename,
         max_age=view_helpers.IMAGE_CACHE_SECONDS,
         private=True,
@@ -53,6 +69,9 @@ def download_image_with_metadata(detection_id):
                 download_name=mx.export_filename(image_filename, timestamp),
             )
         except FileNotFoundError:
+            # Missing original: 410 if retention removed it, else 404.
+            if retention_service.is_original_retention_deleted(image_filename):
+                return _ORIGINAL_GONE
             abort(404)
         except Exception:
             logger.exception(
@@ -62,6 +81,8 @@ def download_image_with_metadata(detection_id):
 
     original_path = _path_mgr().get_original_path(image_filename)
     if not original_path.is_file():
+        if retention_service.is_original_retention_deleted(image_filename):
+            return _ORIGINAL_GONE
         abort(404)
     return send_file(
         str(original_path),

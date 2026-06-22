@@ -484,6 +484,45 @@ def _count_with(
         return int(row[0])
 
 
+def is_export_relevant_any(
+    conn: sqlite3.Connection,
+    filenames: list[str],
+) -> set[str]:
+    """Subset of ``filenames`` whose image has ANY detection in ANY export
+    bucket (all-time window).
+
+    This is the single source of truth for "is this frame needed for the
+    user-groundtruth training export?" — it is the UNION of the same four
+    bucket queries the export ships, so a retention protection built on it
+    can never drift from what the export actually selects. Consumed by the
+    artifact-retention P5 guard via ``core.user_groundtruth_core``.
+    """
+    if not filenames:
+        return set()
+
+    # All-time window: since=until=None makes every window predicate a no-op.
+    subqueries = [
+        _build_hard_negatives_query(None, None),
+        _build_confirmed_positives_query(None, None),
+        _build_species_relabels_query(None, None),
+        _build_favorites_query(None, None),
+    ]
+    union_sql = " UNION ALL ".join(f"SELECT image_filename FROM ({sql})" for sql, _ in subqueries)
+    params: list[Any] = []
+    for _, sub_params in subqueries:
+        params.extend(sub_params)
+
+    placeholders = ",".join("?" for _ in filenames)
+    wrapped = (
+        f"SELECT DISTINCT image_filename FROM ({union_sql}) "
+        f"WHERE image_filename IN ({placeholders})"
+    )
+    params.extend(filenames)
+
+    rows = conn.execute(wrapped, params).fetchall()
+    return {row["image_filename"] for row in rows}
+
+
 # ---------------------------------------------------------------------------
 # Row-to-dict converters — kept separate per bucket so the bucket constant
 # and any per-bucket post-processing live in exactly one place.

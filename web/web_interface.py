@@ -391,6 +391,10 @@ def create_web_interface(detection_manager, system_monitor=None):
     )
     server.register_blueprint(user_groundtruth_export_bp)
 
+    from web.blueprints.retention import retention_bp
+
+    server.register_blueprint(retention_bp)
+
 
     try:
         from web.blueprints.companion import (
