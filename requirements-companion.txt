@@ -9,4 +9,4 @@
 # Install:
 #   pip install -r requirements-companion.txt
 
-llama-cpp-python>=0.3.28,<0.4
+llama-cpp-python>=0.3.31,<0.4
