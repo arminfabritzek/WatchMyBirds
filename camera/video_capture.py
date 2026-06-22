@@ -281,6 +281,7 @@ class VideoCapture:
 
     def _setup_ffmpeg(self):
         self._terminate_ffmpeg_process(reason="preparing new FFmpeg start")
+        self._cleanup_children(kind="ffmpeg", reason="preparing new FFmpeg start")
         ffmpeg_cmd = [
             "ffmpeg",
             "-fflags",
@@ -401,6 +402,7 @@ class VideoCapture:
                 except OSError:
                     # ffmpeg already exited; stream descriptor stale.
                     pass
+            self._child_registry.pop(pid, None)
             self.ffmpeg_process = None
             self.ffmpeg_pid = None
 
@@ -1309,16 +1311,31 @@ class VideoCapture:
         handle = info["handle"]
         try:
             if handle.poll() is None:
-                handle.kill()
+                if hasattr(os, "killpg"):
+                    try:
+                        os.killpg(pid, signal.SIGKILL)
+                    except Exception as killpg_error:
+                        logger.debug(
+                            f"event=child_killpg_failed pid={pid} error={killpg_error}"
+                        )
+                        handle.kill()
+                else:
+                    handle.kill()
                 handle.wait(timeout=3)
         except Exception as e:
             logger.debug(f"event=child_kill_failed pid={pid} error={e}")
         logger.debug(f"event=child_killed pid={pid} reason={reason}")
 
+    def _cleanup_children(self, kind=None, reason=""):
+        """Terminate tracked live children, optionally filtered by kind."""
+        for pid, info in list(self._child_registry.items()):
+            if kind is not None and info.get("kind") != kind:
+                continue
+            self._force_kill_child(pid, reason=reason or "cleanup")
+
     def _cleanup_all_children(self):
         """Terminate all tracked children (shutdown hook)."""
-        for pid in list(self._child_registry):
-            self._force_kill_child(pid, reason="full cleanup")
+        self._cleanup_children(reason="full cleanup")
 
     # ------------------------------------------------------------------
     # Recovery Dispatcher (Steps 0-3, 5-6)

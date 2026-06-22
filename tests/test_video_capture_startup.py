@@ -35,6 +35,45 @@ class _FakeThread:
         self._alive = False
 
 
+class _FakeStream:
+    def __init__(self):
+        self.closed = False
+
+    def read(self):
+        return b""
+
+    def close(self):
+        self.closed = True
+
+
+class _FakeProcess:
+    def __init__(self, pid, running=True):
+        self.pid = pid
+        self._returncode = None if running else 0
+        self.stdout = _FakeStream()
+        self.stderr = _FakeStream()
+        self.kill_calls = 0
+        self.terminate_calls = 0
+        self.wait_calls = []
+
+    def poll(self):
+        return self._returncode
+
+    def kill(self):
+        self.kill_calls += 1
+        self._returncode = -9
+
+    def terminate(self):
+        self.terminate_calls += 1
+        self._returncode = -15
+
+    def wait(self, timeout=None):
+        self.wait_calls.append(timeout)
+        if self._returncode is None:
+            self._returncode = -9
+        return self._returncode
+
+
 def _build_capture(monkeypatch):
     monkeypatch.setattr(
         VideoCapture, "_register_instance_for_shutdown", lambda self: None
@@ -157,3 +196,32 @@ def test_stop_terminates_ffmpeg_before_reader_join(monkeypatch):
     assert order[:2] == ["terminate", "reader_join"]
     assert cap.reader_thread is None
     assert cap.health_check_thread is None
+
+
+def test_setup_ffmpeg_cleans_stale_ffmpeg_children_before_new_start(monkeypatch):
+    cap = _build_capture(monkeypatch)
+    old_a = _FakeProcess(pid=1001)
+    old_b = _FakeProcess(pid=1002)
+    new_process = _FakeProcess(pid=2001)
+
+    cap._child_registry = {
+        old_a.pid: {"handle": old_a, "start_ts": 1.0, "kind": "ffmpeg"},
+        old_b.pid: {"handle": old_b, "start_ts": 2.0, "kind": "ffmpeg"},
+    }
+
+    monkeypatch.setattr(vc_module.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(cap, "_can_use_ffmpeg_preexec_fn", lambda: False)
+    monkeypatch.setattr(
+        vc_module.os,
+        "killpg",
+        lambda _pid, _sig: (_ for _ in ()).throw(ProcessLookupError()),
+    )
+    monkeypatch.setattr(vc_module.subprocess, "Popen", lambda *_args, **_kw: new_process)
+
+    cap._setup_ffmpeg()
+
+    assert old_a.kill_calls == 1
+    assert old_b.kill_calls == 1
+    assert cap.ffmpeg_process is new_process
+    assert cap.ffmpeg_pid == new_process.pid
+    assert set(cap._child_registry) == {new_process.pid}
