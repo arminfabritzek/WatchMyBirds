@@ -1,6 +1,5 @@
 """Retention API — preview + run routes and missing-original (410) serving."""
 
-
 import pytest
 from flask import Flask
 
@@ -77,6 +76,41 @@ def test_preview_returns_counts_and_is_side_effect_free(client, output_dir):
     assert row["original_present"] == 1
 
 
+def test_preview_reports_posture(client):
+    resp = client.get("/api/v1/retention/preview")
+    data = resp.get_json()
+    # Legacy ENABLED_CFG (no posture, enabled=True) resolves to conservative.
+    assert data["posture"] == "conservative"
+
+
+def test_conservative_protects_unreviewed_but_reclaim_retires_it(
+    output_dir, monkeypatch
+):
+    fn = "20260101_120000_u.jpg"
+    with closing_connection() as conn:
+        seed_image(conn, fn, output_dir, review_status="untagged", orig_bytes=1000)
+
+    base = {"OUTPUT_DIR": str(output_dir), "RETENTION_DAYS": 90}
+
+    monkeypatch.setattr(
+        "config.get_config", lambda: {**base, "RETENTION_POSTURE": "conservative"}
+    )
+    from core import retention_core
+
+    cons = retention_core.preview()
+    assert cons["posture"] == "conservative"
+    assert cons["deletable"]["count"] == 0
+    assert cons["protected"]["unreviewed"] == 1
+
+    monkeypatch.setattr(
+        "config.get_config", lambda: {**base, "RETENTION_POSTURE": "reclaim"}
+    )
+    rec = retention_core.preview()
+    assert rec["posture"] == "reclaim"
+    assert rec["deletable"]["count"] == 1
+    assert rec["protected"]["unreviewed"] == 0
+
+
 def test_run_deletes_previewed_set_and_reports_counts(client, output_dir):
     fn = "20260101_120000_b.jpg"
     _seed_deletable(output_dir, fn)
@@ -89,7 +123,13 @@ def test_run_deletes_previewed_set_and_reports_counts(client, output_dir):
 
     assert not (output_dir / "originals" / "2026-01-01" / fn).exists()
     # Derivatives preserved.
-    assert (output_dir / "derivatives" / "optimized" / "2026-01-01" / "20260101_120000_b.webp").exists()
+    assert (
+        output_dir
+        / "derivatives"
+        / "optimized"
+        / "2026-01-01"
+        / "20260101_120000_b.webp"
+    ).exists()
 
 
 def test_serve_original_returns_410_when_retention_deleted(output_dir, monkeypatch):
@@ -135,15 +175,25 @@ def test_download_returns_410_when_retention_deleted(output_dir, monkeypatch):
             conn,
             {
                 "image_filename": fn,
-                "bbox_x": 0.1, "bbox_y": 0.1, "bbox_w": 0.2, "bbox_h": 0.2,
-                "od_class_name": "bird", "od_confidence": 0.9,
+                "bbox_x": 0.1,
+                "bbox_y": 0.1,
+                "bbox_w": 0.2,
+                "bbox_h": 0.2,
+                "od_class_name": "bird",
+                "od_confidence": 0.9,
             },
         )
-        conn.execute("UPDATE detections SET status='active' WHERE detection_id=?", (det,))
+        conn.execute(
+            "UPDATE detections SET status='active' WHERE detection_id=?", (det,)
+        )
         conn.commit()
         det_id = det
 
-    cfg = {"OUTPUT_DIR": str(output_dir), **ENABLED_CFG, "EXPORT_BURN_IN_METADATA": False}
+    cfg = {
+        "OUTPUT_DIR": str(output_dir),
+        **ENABLED_CFG,
+        "EXPORT_BURN_IN_METADATA": False,
+    }
     monkeypatch.setattr("config.get_config", lambda: cfg)
 
     app = Flask(__name__)

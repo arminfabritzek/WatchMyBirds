@@ -23,6 +23,44 @@ from utils.path_manager import PathManager
 
 Decision = tuple[str, str | None]
 
+VALID_POSTURES = ("off", "conservative", "reclaim")
+
+
+def resolve_posture_settings(settings: dict[str, Any]) -> dict[str, Any]:
+    """Resolve the operator-facing posture into the V1 boolean knobs.
+
+    ``RETENTION_POSTURE`` is the authority. When absent (legacy installs), it
+    derives from ``RETENTION_ENABLED``: false -> off, true -> conservative.
+    An explicit posture overrides the legacy flag; an unknown value falls
+    back to the conservative (safe) posture.
+
+    Returns a NEW settings dict with ``RETENTION_ENABLED`` and
+    ``RETENTION_PROTECT_UNREVIEWED`` set so the unchanged ``decide`` and
+    Planner consume posture without knowing it exists.
+    """
+    raw = settings.get("RETENTION_POSTURE", None)
+    posture = str(raw or "").strip().lower()
+    if raw is None or posture == "":
+        # Legacy install with no posture: derive from the boolean flag.
+        posture = (
+            "off" if not settings.get("RETENTION_ENABLED", False) else "conservative"
+        )
+    elif posture not in VALID_POSTURES:
+        # Explicit-but-invalid value falls back to the safe posture.
+        posture = "conservative"
+
+    resolved = dict(settings)
+    if posture == "off":
+        resolved["RETENTION_ENABLED"] = False
+    elif posture == "reclaim":
+        resolved["RETENTION_ENABLED"] = True
+        resolved["RETENTION_PROTECT_UNREVIEWED"] = False
+    else:  # conservative
+        resolved["RETENTION_ENABLED"] = True
+        resolved["RETENTION_PROTECT_UNREVIEWED"] = True
+    resolved["RETENTION_POSTURE"] = posture
+    return resolved
+
 
 def decide(facts: dict[str, Any], settings: dict[str, Any]) -> Decision:
     """Pure retention decision for a single original.
@@ -103,9 +141,7 @@ def _age_days(timestamp: str, now: dt.datetime) -> int:
     return max(0, (now - captured).days)
 
 
-def _derivatives_present(
-    path_mgr, filename: str, thumb_names: list[str]
-) -> bool:
+def _derivatives_present(path_mgr, filename: str, thumb_names: list[str]) -> bool:
     """The display derivatives that replace the original exist on disk.
 
     P3 safety valve: the original is the only regeneration source, so we
@@ -283,12 +319,17 @@ def _settings_from_config() -> dict[str, Any]:
     from config import get_config
 
     cfg = get_config()
-    return {
-        "RETENTION_ENABLED": cfg.get("RETENTION_ENABLED", False),
-        "RETENTION_DAYS": cfg.get("RETENTION_DAYS", 90),
-        "RETENTION_PROTECT_FAVORITES": cfg.get("RETENTION_PROTECT_FAVORITES", True),
-        "RETENTION_PROTECT_UNREVIEWED": cfg.get("RETENTION_PROTECT_UNREVIEWED", True),
-    }
+    return resolve_posture_settings(
+        {
+            "RETENTION_POSTURE": cfg.get("RETENTION_POSTURE"),
+            "RETENTION_ENABLED": cfg.get("RETENTION_ENABLED", False),
+            "RETENTION_DAYS": cfg.get("RETENTION_DAYS", 90),
+            "RETENTION_PROTECT_FAVORITES": cfg.get("RETENTION_PROTECT_FAVORITES", True),
+            "RETENTION_PROTECT_UNREVIEWED": cfg.get(
+                "RETENTION_PROTECT_UNREVIEWED", True
+            ),
+        }
+    )
 
 
 def preview() -> dict[str, Any]:
@@ -305,6 +346,7 @@ def preview() -> dict[str, Any]:
 
     protected = {k: plan.protected_counts.get(k, 0) for k in _PROTECTION_KEYS}
     return {
+        "posture": settings.get("RETENTION_POSTURE", "conservative"),
         "enabled": bool(settings["RETENTION_ENABLED"]),
         "retention_days": int(settings["RETENTION_DAYS"]),
         "deletable": {

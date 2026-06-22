@@ -230,6 +230,9 @@ DEFAULTS = {
     # so the export pool only grows deliberately.
     "TRAINING_EXPORT_AUTO_OPT_IN": False,
     # Artifact retention (full-resolution originals only); ships OFF.
+    # RETENTION_POSTURE is the authority; the booleans below are derived from
+    # it at decision time (resolve_posture_settings) and kept for backcompat.
+    "RETENTION_POSTURE": "conservative",
     "RETENTION_ENABLED": False,
     "RETENTION_DAYS": 90,
     "RETENTION_PROTECT_FAVORITES": True,
@@ -281,6 +284,7 @@ DEFAULTS = {
 
 RUNTIME_KEYS = {
     "EXPORT_BURN_IN_METADATA",
+    "RETENTION_POSTURE",
     "RETENTION_ENABLED",
     "RETENTION_DAYS",
     "RETENTION_PROTECT_FAVORITES",
@@ -800,6 +804,12 @@ def _coerce_config_types(config: dict[str, Any]) -> None:
         ret_days = 90
     config["RETENTION_DAYS"] = max(1, min(3650, ret_days))
 
+    # RETENTION_POSTURE: normalize; unknown -> conservative (safe default).
+    posture = str(config.get("RETENTION_POSTURE", "conservative")).strip().lower()
+    config["RETENTION_POSTURE"] = (
+        posture if posture in ("off", "conservative", "reclaim") else "conservative"
+    )
+
     # LOCATION_DATA: parse "lat, lon" strings into dict
     location_val = config.get("LOCATION_DATA")
     if isinstance(location_val, str):
@@ -1181,6 +1191,11 @@ def _validate_value(key: str, value: Any) -> tuple[bool, Any]:
     if key == "SAVE_THRESHOLD_MODE":
         val = str(value).strip().lower() if value is not None else ""
         if val in ("auto", "manual"):
+            return True, val
+        return False, None
+    if key == "RETENTION_POSTURE":
+        val = str(value).strip().lower() if value is not None else ""
+        if val in ("off", "conservative", "reclaim"):
             return True, val
         return False, None
     if key in (

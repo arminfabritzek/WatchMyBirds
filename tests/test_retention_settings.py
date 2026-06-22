@@ -73,3 +73,31 @@ def test_settings_round_trip_through_yaml(fresh_config):
     assert yaml_settings["RETENTION_DAYS"] == 45
     # In-memory config reflects the change too.
     assert fresh_config.get_config()["RETENTION_DAYS"] == 45
+
+
+# --- Posture (V2) ---------------------------------------------------------
+
+
+def test_posture_default_is_conservative(fresh_config):
+    assert fresh_config.get_config()["RETENTION_POSTURE"] == "conservative"
+
+
+def test_posture_is_runtime_editable(fresh_config):
+    assert "RETENTION_POSTURE" in fresh_config.RUNTIME_KEYS
+
+
+def test_posture_validation_accepts_known_values(fresh_config):
+    for val in ("off", "conservative", "reclaim"):
+        ok, coerced = fresh_config._validate_value("RETENTION_POSTURE", val)
+        assert ok is True
+        assert coerced == val
+
+
+def test_posture_validation_normalizes_case_and_whitespace(fresh_config):
+    ok, coerced = fresh_config._validate_value("RETENTION_POSTURE", "  Reclaim ")
+    assert ok is True
+    assert coerced == "reclaim"
+
+
+def test_posture_validation_rejects_unknown(fresh_config):
+    assert fresh_config._validate_value("RETENTION_POSTURE", "aggressive")[0] is False

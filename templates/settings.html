@@ -1218,7 +1218,7 @@
             .then(res => res.json())
             .then(data => {
                 if (!data.enabled) {
-                    out.innerHTML = '⚠️ Retention is <strong>disabled</strong>. Enable it and Apply Settings, then preview again.';
+                    out.innerHTML = '⚠️ Posture is <strong>Off</strong>. Choose Conservative or Reclaim and Apply Settings, then preview again.';
                     return;
                 }
                 const prot = data.protected || {};
@@ -1227,7 +1227,8 @@
                     .map(k => `${k}: ${prot[k]}`)
                     .join(', ') || 'none';
                 out.innerHTML =
-                    `Would delete <strong>${data.deletable.count}</strong> original(s), ` +
+                    `Posture: <strong>${data.posture}</strong>. ` +
+                    `Would retire <strong>${data.deletable.count}</strong> original(s), ` +
                     `reclaiming <strong>${_fmtBytes(data.deletable.estimated_bytes)}</strong>.<br>` +
                     `Protected: ${protLine}.`;
             })
@@ -2395,20 +2396,27 @@
         </button>
         <div class="settings-panel__body">
             <p class="settings-field__help mb-3">
-                When enabled, full-resolution originals older than the retention
-                window are deleted to reclaim disk. Observations, previews,
-                thumbnails, crops, statistics and favourites are always kept.
-                Favourites, unreviewed images and anything still needed for the
-                training export are protected. Use <strong>Preview</strong> first
-                to see exactly what would be removed.
+                Retention reclaims disk by deleting old full-resolution
+                originals only — metadata, statistics, previews, thumbnails,
+                crops and detection boxes always remain. Anything still needed
+                for the training export, and favourites, are never removed. Use
+                <strong>Preview</strong> first to see exactly what would be freed.
             </p>
 
+            {% set _posture = payload['RETENTION_POSTURE'].value if 'RETENTION_POSTURE' in payload else 'conservative' %}
             <div class="settings-field">
-                <label class="settings-field__label" for="RETENTION_ENABLED">Enable retention</label>
-                <select name="RETENTION_ENABLED" id="RETENTION_ENABLED" class="form-control">
-                    <option value="true" {% if payload['RETENTION_ENABLED'].value %}selected{% endif %}>Enabled</option>
-                    <option value="false" {% if not payload['RETENTION_ENABLED'].value %}selected{% endif %}>Disabled</option>
+                <label class="settings-field__label" for="RETENTION_POSTURE">Retention posture</label>
+                <select name="RETENTION_POSTURE" id="RETENTION_POSTURE" class="form-control">
+                    <option value="off" {% if _posture == 'off' %}selected{% endif %}>Off — keep everything</option>
+                    <option value="conservative" {% if _posture == 'conservative' %}selected{% endif %}>Conservative — also keep unreviewed images</option>
+                    <option value="reclaim" {% if _posture == 'reclaim' %}selected{% endif %}>Reclaim — retire old originals once a preview, crop and boxes exist</option>
                 </select>
+                <div class="settings-field__help">
+                    <strong>Reclaim</strong> retires full-resolution originals
+                    only; metadata, stats, previews, crops and boxes remain.
+                    Export-relevant frames and favourites stay protected in
+                    every posture.
+                </div>
             </div>
 
             <div class="settings-field mt-3">
@@ -2424,14 +2432,6 @@
                 <select name="RETENTION_PROTECT_FAVORITES" id="RETENTION_PROTECT_FAVORITES" class="form-control">
                     <option value="true" {% if payload['RETENTION_PROTECT_FAVORITES'].value %}selected{% endif %}>Protected</option>
                     <option value="false" {% if not payload['RETENTION_PROTECT_FAVORITES'].value %}selected{% endif %}>Not protected</option>
-                </select>
-            </div>
-
-            <div class="settings-field mt-3">
-                <label class="settings-field__label" for="RETENTION_PROTECT_UNREVIEWED">Protect unreviewed images</label>
-                <select name="RETENTION_PROTECT_UNREVIEWED" id="RETENTION_PROTECT_UNREVIEWED" class="form-control">
-                    <option value="true" {% if payload['RETENTION_PROTECT_UNREVIEWED'].value %}selected{% endif %}>Protected</option>
-                    <option value="false" {% if not payload['RETENTION_PROTECT_UNREVIEWED'].value %}selected{% endif %}>Not protected</option>
                 </select>
             </div>
 
