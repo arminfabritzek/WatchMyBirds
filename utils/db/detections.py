@@ -157,6 +157,17 @@ def table_columns(conn: sqlite3.Connection, table_name: str) -> set[str]:
     return columns
 
 
+def _original_present_sql(conn: sqlite3.Connection, image_alias: str = "i") -> str:
+    """SQL fragment for the original_present flag, resilient to legacy schemas.
+
+    The column is added to images by a runtime migration; minimal test/legacy
+    schemas may lack it, so degrade to a literal 1 ("present") when absent.
+    """
+    if "original_present" in table_columns(conn, "images"):
+        return f"COALESCE({image_alias}.original_present, 1)"
+    return "1"
+
+
 def effective_species_sql(det_alias: str = "d") -> str:
     return f"""
         COALESCE(
@@ -342,6 +353,9 @@ def fetch_detections_for_gallery(
         outer_order_clause = "ORDER BY v.score DESC, v.image_timestamp DESC"
 
     species_sql = _effective_species_joined_sql("d", "c")
+    # original_present is added to images by a runtime migration; legacy/test
+    # schemas may lack it. Introspect so the query degrades to "present" (1).
+    original_present_sql = _original_present_sql(conn)
     select_body = f"""
             d.detection_id,
             i.timestamp as image_timestamp,
@@ -360,6 +374,7 @@ def fetch_detections_for_gallery(
             (substr(i.timestamp, 1, 4) || '-' || substr(i.timestamp, 5, 2) || '-' || substr(i.timestamp, 7, 2) || '/' ||
              REPLACE(i.filename, '.jpg', '.webp')) AS relative_path,
             i.filename as original_name,
+            {original_present_sql} as original_present,
             i.downloaded_timestamp,
             i.review_status,
             d.manual_species_override,
@@ -1081,9 +1096,7 @@ def fetch_trash_candidate_selection_in_date_range(
     ).fetchall()
 
     detection_ids = [int(row["detection_id"]) for row in detection_rows]
-    detection_image_filenames = [
-        str(row["image_filename"]) for row in detection_rows
-    ]
+    detection_image_filenames = [str(row["image_filename"]) for row in detection_rows]
     orphan_image_filenames = [str(row["image_filename"]) for row in orphan_rows]
     image_filenames = list(
         dict.fromkeys([*detection_image_filenames, *orphan_image_filenames])
@@ -1174,9 +1187,7 @@ def fetch_trash_candidate_selection_by_source_type(
     ).fetchall()
 
     detection_ids = [int(row["detection_id"]) for row in detection_rows]
-    detection_image_filenames = [
-        str(row["image_filename"]) for row in detection_rows
-    ]
+    detection_image_filenames = [str(row["image_filename"]) for row in detection_rows]
     orphan_image_filenames = [str(row["image_filename"]) for row in orphan_rows]
     image_filenames = list(
         dict.fromkeys([*detection_image_filenames, *orphan_image_filenames])
@@ -1416,6 +1427,7 @@ def fetch_detections_last_24h(
         outer_order_clause = "ORDER BY v.score DESC, v.image_timestamp DESC"
 
     species_sql = _effective_species_joined_sql("d", "c")
+    original_present_sql = _original_present_sql(conn)
     select_body = f"""
             d.detection_id,
             i.timestamp as image_timestamp,
@@ -1433,6 +1445,7 @@ def fetch_detections_last_24h(
             (substr(i.timestamp, 1, 4) || '-' || substr(i.timestamp, 5, 2) || '-' || substr(i.timestamp, 7, 2) || '/' ||
              REPLACE(i.filename, '.jpg', '.webp')) AS relative_path,
             i.filename as original_name,
+            {original_present_sql} as original_present,
             i.downloaded_timestamp,
             i.review_status,
             d.manual_species_override,

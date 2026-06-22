@@ -18,6 +18,8 @@ Args:
 {% macro render_action_bar(
 detection_id,
 original_url=none,
+original_retired=false,
+optimized_url=none,
 bbox=none,
 siblings=none,
 show_nav=true,
@@ -43,7 +45,19 @@ show_close=true
             data-current-bbox='{{ (bbox | default({})) | tojson }}'
             title="Toggle bounding box overlay" aria-label="Toggle bounding box overlay">□ Boxes</button>
         {% endif %}
-        {% if show_download and (detection_id or original_url) %}
+        {% if show_download and original_retired %}
+        {# Retention retired the full-resolution original. Show the state and
+           offer the optimized preview instead of a button that 410s. The
+           backend /api/image/download still returns 410 — this only keeps
+           normal users from hitting it. #}
+        <span class="btn btn--secondary btn--sm" aria-disabled="true"
+            title="Full-resolution original is gone; preview remains">⃠ Original retired</span>
+        {% if optimized_url %}
+        <a href="{{ optimized_url }}" download class="btn btn--secondary btn--sm"
+            title="Download the optimized preview (full-resolution original is gone)"
+            aria-label="Download preview">↓ Download preview</a>
+        {% endif %}
+        {% elif show_download and (detection_id or original_url) %}
         {# When a detection_id is known, route through the metadata-aware
            download (burns species/location XMP into a copy at current DB
            state when the EXPORT_BURN_IN_METADATA setting is on; serves the
@@ -51,7 +65,7 @@ show_close=true
            for surfaces without a detection_id (e.g. orphan modal). #}
         <a href="{% if detection_id %}/api/image/download/{{ detection_id }}{% else %}{{ original_url }}{% endif %}"
             download class="btn btn--secondary btn--sm"
-            title="Download image" aria-label="Download image">↓ Download</a>
+            title="Download original image" aria-label="Download original image">↓ Download Original</a>
         {% endif %}
         {% if gallery_date %}
         <a href="/gallery/{{ gallery_date }}?focus={{ detection_id }}#detection-{{ detection_id }}"

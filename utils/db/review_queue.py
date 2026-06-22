@@ -22,9 +22,7 @@ def _detection_column_sql(
     return f"d.{column_name}" if column_name in detection_columns else fallback_sql
 
 
-def _ex_unclear_predicate_sql(
-    detection_columns: set[str], det_alias: str = "d"
-) -> str:
+def _ex_unclear_predicate_sql(detection_columns: set[str], det_alias: str = "d") -> str:
     """Return the WHERE-fragment that admits ex-Unclear detections.
 
     Returns ``"0"`` (SQL false) when ``decision_level`` is absent — keeps
@@ -127,6 +125,12 @@ def fetch_review_queue_images(
     Sorted by source image timestamp DESC (newest first).
     """
     detection_columns = table_columns(conn, "detections")
+    image_columns = table_columns(conn, "images")
+    original_present_sql = (
+        "COALESCE(i.original_present, 1)"
+        if "original_present" in image_columns
+        else "1"
+    )
     species_sql = effective_species_sql_for_columns("d", detection_columns)
     is_favorite_sql = _detection_column_sql(detection_columns, "is_favorite", "0")
     is_gallery_eligible_sql = _detection_column_sql(
@@ -192,6 +196,7 @@ def fetch_review_queue_images(
             i.filename as source_image_filename,
             i.timestamp,
             i.review_status,
+            {original_present_sql} as original_present,
             NULL as max_score,
             NULL as best_detection_id,
             NULL as active_detection_id,
@@ -228,6 +233,7 @@ def fetch_review_queue_images(
             i.filename as source_image_filename,
             i.timestamp,
             i.review_status,
+            {original_present_sql} as original_present,
             d.score as max_score,
             d.detection_id as best_detection_id,
             d.detection_id as active_detection_id,
@@ -319,6 +325,12 @@ def fetch_review_queue_item_by_identity(
     Returns ``None`` when the item is not in the queue (already resolved, etc.).
     """
     detection_columns = table_columns(conn, "detections")
+    image_columns = table_columns(conn, "images")
+    original_present_sql = (
+        "COALESCE(i.original_present, 1)"
+        if "original_present" in image_columns
+        else "1"
+    )
     species_sql = effective_species_sql_for_columns("d", detection_columns)
     is_favorite_sql = _detection_column_sql(detection_columns, "is_favorite", "0")
     is_gallery_eligible_sql = _detection_column_sql(
@@ -334,7 +346,7 @@ def fetch_review_queue_item_by_identity(
     ex_unclear_reason_case = _ex_unclear_reason_case_sql(detection_columns)
 
     if item_kind == "image":
-        query = """
+        query = f"""
         SELECT
             'image' as item_kind,
             i.filename as item_id,
@@ -342,6 +354,7 @@ def fetch_review_queue_item_by_identity(
             i.filename as source_image_filename,
             i.timestamp,
             i.review_status,
+            {original_present_sql} as original_present,
             NULL as max_score,
             NULL as best_detection_id,
             NULL as active_detection_id,
@@ -380,6 +393,7 @@ def fetch_review_queue_item_by_identity(
             i.filename as source_image_filename,
             i.timestamp,
             i.review_status,
+            {original_present_sql} as original_present,
             d.score as max_score,
             d.detection_id as best_detection_id,
             d.detection_id as active_detection_id,
@@ -709,7 +723,9 @@ def restore_no_bird_images(conn: sqlite3.Connection, filenames: Iterable[str]) -
 
 
 def delete_no_bird_images(
-    conn: sqlite3.Connection, filenames: Iterable[str] | None = None, delete_all: bool = False
+    conn: sqlite3.Connection,
+    filenames: Iterable[str] | None = None,
+    delete_all: bool = False,
 ) -> int:
     """
     Permanently deletes 'no_bird' images from the database.

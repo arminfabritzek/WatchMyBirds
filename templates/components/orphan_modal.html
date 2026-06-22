@@ -338,6 +338,8 @@
                     {{ render_action_bar(
                     detection_id=orphan.best_detection_id or 0,
                     original_url=orphan.full_url or none,
+                    original_retired=(orphan.original_present is defined and orphan.original_present == 0),
+                    optimized_url=orphan.optimized_url,
                     bbox={
                         'x': orphan.bbox_x,
                         'y': orphan.bbox_y,

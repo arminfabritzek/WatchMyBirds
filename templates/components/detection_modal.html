@@ -73,6 +73,8 @@ nav_index (int|None): Optional index within nav_scope
                     {{ render_action_bar(
                     detection_id=det.detection_id,
                     original_url=det.original_path,
+                    original_retired=(det.original_present is defined and det.original_present == 0),
+                    optimized_url=(det.optimized_path if det.optimized_path is defined and det.optimized_path else det.full_path),
                     bbox={
                     'x': det.bbox_x,
                     'y': det.bbox_y,

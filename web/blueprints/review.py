@@ -525,6 +525,7 @@ def _build_review_modal_detection(
     filename: str,
     full_url: str,
     thumb_url: str,
+    optimized_url: str = "",
     selected_species: str | None,
     selected_species_common: str | None,
     current_species: str | None,
@@ -594,6 +595,10 @@ def _build_review_modal_detection(
         "display_path": thumb_url,
         "full_path": full_url or thumb_url,
         "original_path": full_url or thumb_url,
+        "optimized_path": optimized_url or thumb_url,
+        "original_present": (
+            row["original_present"] if "original_present" in row.keys() else 1
+        ),
     }
 
 
@@ -716,6 +721,9 @@ def _build_review_item(
         "crop_url": crop_url,
         "full_url": full_url,
         "optimized_url": optimized_url,
+        "original_present": (
+            row["original_present"] if "original_present" in row.keys() else 1
+        ),
         "source_image_thumb_url": thumb_url,
         "source_image_full_url": full_url,
         "review_reason": review_reason,
@@ -784,6 +792,7 @@ def _build_review_item(
             filename=filename,
             full_url=full_url,
             thumb_url=thumb_url,
+            optimized_url=optimized_url,
             selected_species=selected_species,
             selected_species_common=selected_species_common,
             current_species=current_species,
@@ -1104,6 +1113,7 @@ def _build_review_event_member(
             filename=member["filename"],
             full_url=member.get("full_url") or "",
             thumb_url=member["thumb_url"],
+            optimized_url=member.get("optimized_url") or "",
             selected_species=member.get("candidate_species"),
             selected_species_common=member.get("candidate_species_common"),
             current_species=member.get("species_key"),
