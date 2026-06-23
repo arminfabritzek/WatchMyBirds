@@ -2,6 +2,47 @@
 
 ## Unreleased
 
+## 0.5.0 - 2026-06-23
+
+### Added
+
+- **Original-file retention lifecycle (default OFF).** An optional
+  policy that deletes full-resolution originals past a configurable age
+  while keeping their database rows, derivatives, favourites, and
+  statistics. Three postures — `off`, `conservative`, and `reclaim` —
+  let an operator choose how aggressively disk is freed; `conservative`
+  reproduces prior behaviour, `reclaim` stops treating "unreviewed" as a
+  reason to keep an original. Export-relevant training data, favourites,
+  unreviewed images (under `conservative`), and images whose display
+  derivatives don't yet exist are always protected. Originals are only
+  ever whole-file deleted, never modified. A retired original serves a
+  persistent "Original retired" state in the gallery — including inside
+  the detail modals — with a preview download in place of the dead
+  full-resolution button.
+- **Favorites-only gallery filter.** A "Favorites only" toggle on the
+  shared filter bar narrows `/species`, the species overview, and the
+  per-day gallery to favourited detections. Mixed events never leak
+  non-favourite members into a card, filmstrip, or modal, and the choice
+  persists per browser.
+- **Reversible "Move Review Queue to Trash" bulk action.** For operators
+  who don't work the Review desk, a preview-first action empties the
+  entire review queue into Trash using the existing reversible
+  primitives — no files are deleted, and items restore from Trash.
+
+### Fixed
+
+- Clean up stale `ffmpeg` child processes before a stream restart, so a
+  restart no longer leaves orphaned encoders behind.
+- Preserve the "retired original" state correctly inside gallery modals.
+
+### Security
+
+- The detector-precision endpoint no longer surfaces raw exception text
+  in its 400 response; error messages are routed through an allow-list
+  so unrelated internals cannot leak to the client.
+
+## 0.4.3 - 2026-06-13
+
 ### Added
 
 - **Telemetry — consent + aggregation + instant toggle.** Three
