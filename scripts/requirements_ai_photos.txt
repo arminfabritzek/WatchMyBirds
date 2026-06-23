@@ -1,6 +1,6 @@
 torch>=2.11.0
 diffusers>=0.38.0
-transformers>=5.10.2
+transformers>=5.12.1
 accelerate>=1.14.0
 safetensors>=0.7.0
 sentencepiece
