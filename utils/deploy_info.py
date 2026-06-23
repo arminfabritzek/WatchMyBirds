@@ -91,7 +91,7 @@ def _try_local_git(args: list[str]) -> str:
             if text:
                 return text
     except (OSError, subprocess.TimeoutExpired):
-        pass
+        logger.debug("git metadata read failed; using _UNKNOWN", exc_info=True)
     return _UNKNOWN
 
 

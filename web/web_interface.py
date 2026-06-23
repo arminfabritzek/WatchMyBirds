@@ -40,10 +40,6 @@ def invalidate_best_species_cache() -> None:
     _best_species_cache["payload"] = None
 
 
-_ANALYTICS_SUMMARY_CACHE_TTL_SECONDS = 5 * 60
-_analytics_summary_cache: dict = {"timestamp": 0.0, "payload": None}
-
-
 _TICKER_STATS_CACHE_TTL_SECONDS = 60
 _ticker_stats_cache: dict = {"key": None, "timestamp": 0.0, "payload": None}
 

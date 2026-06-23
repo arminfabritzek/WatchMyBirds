@@ -78,7 +78,7 @@ def system_versions_route():
     try:
         data["kernel"] = platform.release()
     except OSError:
-        pass
+        logger.debug("kernel read failed; keeping Unknown", exc_info=True)
 
     try:
         if os.path.exists("/etc/os-release"):
@@ -88,7 +88,7 @@ def system_versions_route():
                         data["os"] = line.split("=")[1].strip().strip('"')
                         break
     except OSError:
-        pass
+        logger.debug("/etc/os-release read failed; keeping Unknown", exc_info=True)
 
     try:
         import shutil
@@ -105,7 +105,7 @@ def system_versions_route():
                             data["bootloader"] = parts[1].strip()
                             break
     except (OSError, subprocess.SubprocessError):
-        pass
+        logger.debug("rpi-eeprom-update probe failed; keeping Unknown", exc_info=True)
 
     return jsonify(data)
 
@@ -151,9 +151,7 @@ def restart_route():
         logger.warning("System restart initiated via Web UI.")
 
         if not is_power_management_available():
-            logger.warning(
-                "Restart ignored: systemd not available (likely container)."
-            )
+            logger.warning("Restart ignored: systemd not available (likely container).")
             return (
                 jsonify(
                     {
@@ -198,7 +196,7 @@ def system_stats_route():
                 "percent": disk_usage.percent,
             }
         except (OSError, ValueError):
-            pass
+            logger.debug("disk stats unavailable; omitting disk key", exc_info=True)
 
         temp = None
         try:
@@ -222,7 +220,7 @@ def system_stats_route():
                             temp = entries[0].current
                             break
             except (AttributeError, OSError):
-                pass
+                logger.debug("no temp sensor; omitting temp key", exc_info=True)
 
         response = {"status": "success", "cpu": cpu_percent, "ram": mem.percent}
         if temp is not None:
@@ -261,7 +259,7 @@ def api_status():
                 _detection_manager.decision_state_counts
             )
         except (AttributeError, TypeError):
-            pass
+            logger.debug("decision-state counts unavailable; omitting", exc_info=True)
 
         return jsonify(response)
     except Exception as exc:
@@ -302,9 +300,7 @@ def detection_resume():
     try:
         if backup_restore_service.is_restore_active():
             return (
-                jsonify(
-                    {"error": "Cannot resume detection during restore operation"}
-                ),
+                jsonify({"error": "Cannot resume detection during restore operation"}),
                 409,
             )
 

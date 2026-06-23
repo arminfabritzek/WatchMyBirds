@@ -183,7 +183,10 @@ def compute_rating_lazy(det):
             finally:
                 conn.close()
     except Exception:
-        pass
+        logger.debug(
+            "auto-rating persistence failed; returning computed rating",
+            exc_info=True,
+        )
 
     return rating
 

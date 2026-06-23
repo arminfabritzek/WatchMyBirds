@@ -78,7 +78,7 @@ class ONVIFDiscovery:
                 try:
                     wsd.stop()
                 except Exception:
-                    pass
+                    logger.debug("ONVIF discovery: wsd.stop() failed", exc_info=True)
 
         with self._discovery_lock:
             self._discovered_cameras = discovered

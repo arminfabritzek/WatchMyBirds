@@ -56,8 +56,13 @@ def get_or_create_secret_key(config: dict[str, Any]) -> str:
             existing = secret_file.read_text().strip()
             if len(existing) >= 32:
                 return existing
-        except Exception:
-            pass
+        except Exception as e:
+            import sys
+
+            print(
+                f"Warning: Could not read existing secret key from {secret_file}: {e}. Using volatile key.",
+                file=sys.stderr,
+            )
     except Exception as e:
         print(
             f"Warning: Could not save persistent secret key to {secret_file}: {e}. Using volatile key."
