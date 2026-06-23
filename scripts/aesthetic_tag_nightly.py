@@ -11,15 +11,17 @@ Pigeons / large birds are intentionally NOT auto-tagged, because validation
 showed clip_facing_camera does not generalize to them (AUC 0.35 on 56-image
 out-of-sample test set).
 
-Usage (on RPi, run nightly via systemd timer):
-    /opt/app/.venv-aesthetic/bin/python /opt/app/scripts/aesthetic_tag_nightly.py
-    /opt/app/.venv-aesthetic/bin/python /opt/app/scripts/aesthetic_tag_nightly.py --since 2026-04-29
-    /opt/app/.venv-aesthetic/bin/python /opt/app/scripts/aesthetic_tag_nightly.py --dry-run
+In production this runs in-process via the app's daemon-thread scheduler
+(web/services/aesthetic_tag_scheduler.py), so the CLI below is for manual
+runs / backfills against the app's own venv:
+    /opt/app/.venv/bin/python /opt/app/scripts/aesthetic_tag_nightly.py
+    /opt/app/.venv/bin/python /opt/app/scripts/aesthetic_tag_nightly.py --since 2026-04-29
+    /opt/app/.venv/bin/python /opt/app/scripts/aesthetic_tag_nightly.py --dry-run
 
 Design notes:
-- Uses a SEPARATE venv from the main app, because torch+open_clip is heavy
-  (~1.5 GB) and we don't want to slow down the main detector pipeline. The
-  job is offline / non-realtime, so latency doesn't matter.
+- Runs offline / non-realtime, so latency doesn't matter; the heavy
+  torch+open_clip stack lives in the app venv but is only imported when
+  the scheduler actually fires.
 - Skips detections that already have aesthetic_score populated. Idempotent:
   re-runs are no-ops if all data is fresh.
 - Only writes is_favorite=1 (the auto tag) on detections in TAGGABLE_SPECIES.

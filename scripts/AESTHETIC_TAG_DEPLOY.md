@@ -9,9 +9,9 @@ been validated).
 
 The scheduler runs **inside the main app process** as a daemon thread
 (`web/services/aesthetic_tag_scheduler.py`) so Pi and Docker behave
-identically. The previous systemd-based design (`wmb-aesthetic-tag.timer`)
-is retained in the repo but no longer the production path; new image
-builds and Docker pulls do not enable it.
+identically. An earlier design ran the tagger from a systemd timer
+against a separate venv; that path was removed once the in-process
+scheduler became the single production path on both targets.
 
 Zero-touch deploy: `pip install -r requirements.txt -r requirements-aesthetic.txt`
 and start the app — the scheduler initialises, daemon thread polls
@@ -34,7 +34,6 @@ boots normally without the tagger.
 | `requirements-aesthetic.txt` | Optional torch + open_clip deps. |
 | `Dockerfile` | Pip-installs both requirement files in two RUN steps. |
 | `utils/db/connection.py` | Adds `aesthetic_score REAL` + `aesthetic_score_at TEXT` to `detections`. |
-| `rpi/systemd/wmb-aesthetic-tag.service` + `.timer` | **Deprecated** as of 2026-05-02. Kept in the repo for reference; not enabled in new images. |
 
 ## Schema additions
 
@@ -86,7 +85,7 @@ the user accepts ~33 % noise as the cost of system-wide species coverage.
 
 **Production default**: `TAGGABLE_SPECIES = set()` (empty, all species
 eligible). To restrict, populate with species names. The `MIN_SCORE_FOR_TAG`
-threshold (default 0.15) prevents "best-of-a-bad-day" tags on weak buckets.
+threshold (default 0.10) prevents "best-of-a-bad-day" tags on weak buckets.
 
 ## Resource estimates (Pi 5, CPU only)
 
@@ -95,13 +94,13 @@ threshold (default 0.15) prevents "best-of-a-bad-day" tags on weak buckets.
 | Model RAM (CLIP ViT-B/32) | ~700 MB |
 | Inference time per crop | ~0.7 s (1.4 img/s, measured 2026-05-01) |
 | 1000 crops/night | ~12 min |
-| Disk: separate venv | ~900 MB (`/opt/app/.venv-aesthetic`, with --index-url cpu) |
+| Disk: torch + open_clip stack | ~900 MB (in the app venv, `--index-url cpu`) |
 | Disk: HF model cache | ~340 MB |
-| systemd MemoryMax | 1200 MB |
+| App memory headroom | ~700 MB transient while CLIP is loaded |
 
 The job is single-threaded by default (`OMP_NUM_THREADS=2`). Don't push
 parallelism higher — the detector pipeline has priority during the day, the
-tagger runs at 02:00 when nothing else is happening.
+tagger runs at 02:10 when traffic is expected to be low.
 
 ## First-time deploy
 
@@ -131,18 +130,6 @@ python -c "import open_clip; open_clip.create_model_and_transforms('ViT-B-32', p
 | `AESTHETIC_TAG_ENABLED` | `True` | Master switch. Set `False` to disable the scheduler entirely. |
 | `AESTHETIC_TAG_TIME` | `"02:10"` | When to run, `HH:MM` 24h. |
 
-### Legacy systemd path (deprecated)
-
-For Pis with the old systemd-based setup that have not been re-flashed,
-disable the unit before relying on the in-app scheduler so the tagger
-doesn't run twice:
-
-```bash
-sudo systemctl disable --now wmb-aesthetic-tag.timer
-sudo rm /etc/systemd/system/wmb-aesthetic-tag.{service,timer}
-sudo systemctl daemon-reload
-```
-
 ## Smoke test before going live
 
 Check what the scheduler actually tagged after the first daily fire
@@ -163,8 +150,10 @@ ORDER BY day DESC, species;
 ```
 
 Expected: 3 per (species, day) for `Parus_major`, `Cyanistes_caeruleus`,
-and `Columba_palumbus`. Other species and `unknown` are not tagged
-(see `TAGGABLE_SPECIES` in `aesthetic_tag_nightly.py`).
+and `Columba_palumbus` when `TAGGABLE_SPECIES` is set to that conservative
+subset. With the current production default (`TAGGABLE_SPECIES = set()`),
+all CLS-labelled species are eligible; `unknown` is not tagged unless
+`TAG_UNKNOWN_SPECIES` is enabled.
 
 ## Operational notes
 
@@ -197,17 +186,17 @@ Then re-run the job.
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| `MemoryMax` exceeded | torch process leaked (rare with ViT-B/32) | Increase `MemoryMax=1500M`, restart |
-| Job takes > 60 min | Backlog, e.g. multi-day catch-up | Run with `--since` covering smaller window, or bump `TimeoutStartSec` |
+| App memory spikes while CLIP is loaded | Model stack needs ~700 MB transient RAM | Disable `AESTHETIC_TAG_ENABLED` on low-RAM hosts, or schedule during idle hours |
+| Job takes too long | Backlog, e.g. multi-day catch-up | Run manually with `--since` covering a smaller window |
 | All scores ~0.5 | CLIP loaded wrong weights | Delete `~/.cache/huggingface`, re-warm |
 | `crop missing for det N` warnings | Crop file deleted while DB row remained | Expected; the job logs and moves on |
-| Detector pipeline becomes slow | Concurrent CPU contention | Verify `Nice=15` and `IOSchedulingClass=idle` on the unit |
+| Detector pipeline becomes slow | Concurrent CPU contention | Lower `AESTHETIC_TAGGER_TORCH_THREADS` or raise `AESTHETIC_TAGGER_NICE` |
 
 ## Future work
 
-1. **Migrate to ONNX runtime** to drop the separate venv (~3 h engineering).
-   Pi already has `onnxruntime` for the main detector. CLIP-ViT-B/32 has
-   stable ONNX exports.
+1. **Migrate to ONNX runtime** to drop the ~900 MB torch + open_clip
+   stack (~3 h engineering). Pi already has `onnxruntime` for the main
+   detector. CLIP-ViT-B/32 has stable ONNX exports.
 2. **Per-species formulas** (e.g. `colorfulness + clip_with_food` for
    pigeons) once we have ≥ 100 labels per species.
 3. **Logistic-regression score** trained on accumulated user labels. The

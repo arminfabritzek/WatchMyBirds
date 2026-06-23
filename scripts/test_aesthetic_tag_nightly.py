@@ -142,7 +142,7 @@ class MockClipModel:
 
 
 def mock_score_image(model, preprocess, text_features, image_path, device):
-    """Deterministic scoring; values stay above MIN_SCORE_FOR_TAG (0.30).
+    """Deterministic scoring; values stay above MIN_SCORE_FOR_TAG (0.10).
 
     The range is intentionally [0.40, 0.95] so every mocked detection
     clears the production floor. Tests that need to probe the floor
@@ -373,7 +373,7 @@ def test_min_score_threshold() -> None:
     setup_schema(conn)
 
     # 3 detections of an obscure species, all of which the mock will score low.
-    # Use det_ids that mock to scores < 0.15 after being passed through the
+    # Use det_ids that mock to scores < 0.10 after being passed through the
     # mock formula. Easier: monkey-patch the scorer to return constants.
     for i in range(801, 804):
         insert_detection(conn, i, "Phoenicurus_sp.")
@@ -382,7 +382,7 @@ def test_min_score_threshold() -> None:
 
     # All scores below MIN_SCORE_FOR_TAG
     job.load_clip_model = mock_load_clip
-    job.score_image = lambda *a, **kw: 0.10  # below 0.15 threshold
+    job.score_image = lambda *a, **kw: 0.09  # below 0.10 threshold
 
     rc = job.main_with_args(["--since", "2026-04-29"])
     assert_eq(rc, 0, "exit code")
