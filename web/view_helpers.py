@@ -256,6 +256,11 @@ def build_detection_view_dict(
         "rating_source": det.get("rating_source", "auto"),
         "is_favorite": is_favorite(det),
         "is_gallery_eligible": is_gallery_eligible(det),
+        "original_present": (
+            1
+            if det.get("original_present", 1) is None
+            else int(det.get("original_present", 1))
+        ),
         "image_filename": (
             det.get("image_filename") or det.get("original_name") or ""
         ),

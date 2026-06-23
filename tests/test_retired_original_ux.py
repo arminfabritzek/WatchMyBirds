@@ -11,6 +11,8 @@ This is presentation only: the retention policy, the deletion logic, and the
 import sqlite3
 from pathlib import Path
 
+from flask import Flask, render_template_string
+
 from utils.db.detections import fetch_detections_for_gallery
 from utils.db.review_queue import fetch_review_queue_images
 
@@ -121,6 +123,74 @@ def test_detection_modal_passes_retired_and_optimized_to_action_bar():
     assert "original_retired=" in content
     assert "det.original_present" in content
     assert "optimized_url=" in content
+
+
+def test_detection_view_dict_preserves_retired_original_state():
+    from web import view_helpers
+
+    det = view_helpers.build_detection_view_dict(
+        {"detection_id": 3795, "original_present": 0},
+        species_key="Poecile_palustris",
+        common_name="Marsh Tit",
+    )
+
+    assert det["original_present"] == 0
+
+
+def test_detection_view_dict_defaults_original_present_for_legacy_payloads():
+    from web import view_helpers
+
+    det = view_helpers.build_detection_view_dict(
+        {"detection_id": 3796},
+        species_key="Poecile_palustris",
+        common_name="Marsh Tit",
+    )
+
+    assert det["original_present"] == 1
+
+
+def test_detection_modal_renders_preview_download_for_retired_original():
+    app = Flask(__name__, template_folder=str(Path(__file__).resolve().parents[1] / "templates"))
+    app.secret_key = "test"
+    app.jinja_env.globals["wikipedia_species_url"] = lambda *_args: None
+    det = {
+        "detection_id": 3795,
+        "species_key": "Poecile_palustris",
+        "common_name": "Marsh Tit",
+        "od_class_name": "bird",
+        "od_confidence": 0.89,
+        "cls_class_name": "Poecile_palustris",
+        "cls_confidence": 0.99,
+        "score": 0.89,
+        "formatted_date": "07.05.2026",
+        "formatted_time": "16:01:30",
+        "gallery_date": "2026-05-07",
+        "siblings": [],
+        "sibling_count": 1,
+        "bbox_x": 0.1,
+        "bbox_y": 0.1,
+        "bbox_w": 0.2,
+        "bbox_h": 0.2,
+        "is_favorite": False,
+        "image_filename": "20260507_160130_108499.jpg",
+        "original_path": "/uploads/originals/2026-05-07/20260507_160130_108499.jpg",
+        "full_path": "/uploads/derivatives/optimized/2026-05-07/20260507_160130_108499.webp",
+        "original_present": 0,
+        "decision_state": "confirmed",
+    }
+
+    with app.test_request_context("/gallery/2026-05-07"):
+        rendered = render_template_string(
+            """
+            {% from "components/detection_modal.html" import render_modal %}
+            {{ render_modal(det, "species_overview") }}
+            """,
+            det=det,
+        )
+
+    assert "Original retired" in rendered
+    assert "Download preview" in rendered
+    assert "/api/image/download/3795" not in rendered
 
 
 # --- review queue threading ----------------------------------------------
