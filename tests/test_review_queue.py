@@ -580,3 +580,112 @@ def test_review_queue_does_not_admit_gallery_eligible_confirmed_detections():
         assert "gallery.jpg" not in [row["filename"] for row in rows]
     finally:
         conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Lean summary path — feeds the "Move Review Queue to Trash" preview/run.
+# These functions MUST select the exact same queue membership as
+# fetch_review_queue_images (the rendered Review page), only cheaper.
+# ---------------------------------------------------------------------------
+
+
+def _seed_mixed_review_db(conn):
+    """Orphan untagged image + queued low-score detection + excluded rows."""
+    # Orphan (no detections) -> image item
+    conn.execute(
+        "INSERT INTO images (filename, timestamp, review_status) VALUES (?, ?, ?)",
+        ("orphan.jpg", "20260210_000000", "untagged"),
+    )
+    # Queued low-score detection -> detection item
+    conn.execute(
+        "INSERT INTO images (filename, timestamp, review_status) VALUES (?, ?, ?)",
+        ("low.jpg", "20260210_000100", "untagged"),
+    )
+    conn.execute(
+        "INSERT INTO detections (image_filename, od_confidence, score, od_model_id, decision_state) "
+        "VALUES (?, ?, ?, ?, ?)",
+        ("low.jpg", 0.80, 0.40, "yolo", "uncertain"),
+    )
+    det_id = conn.execute(
+        "SELECT detection_id FROM detections WHERE image_filename = 'low.jpg'"
+    ).fetchone()["detection_id"]
+    conn.execute(
+        "INSERT INTO classifications (detection_id, cls_class_name, cls_confidence, rank, status) "
+        "VALUES (?, ?, ?, ?, ?)",
+        (det_id, "Passer_domesticus", 0.5, 1, "active"),
+    )
+    # Excluded: confirmed high-score detection (gallery, not queue)
+    conn.execute(
+        "INSERT INTO images (filename, timestamp, review_status) VALUES (?, ?, ?)",
+        ("high.jpg", "20260210_000200", "untagged"),
+    )
+    conn.execute(
+        "INSERT INTO detections (image_filename, od_confidence, score, od_model_id, decision_state) "
+        "VALUES (?, ?, ?, ?, ?)",
+        ("high.jpg", 0.90, 0.95, "yolo", "confirmed"),
+    )
+    # Excluded: confirmed_bird image (resolved)
+    conn.execute(
+        "INSERT INTO images (filename, timestamp, review_status) VALUES (?, ?, ?)",
+        ("done.jpg", "20260210_000300", "confirmed_bird"),
+    )
+    conn.commit()
+
+
+def test_summary_rows_membership_equals_full_queue():
+    from utils.db.review_queue import fetch_review_queue_summary_rows
+
+    conn = _make_conn()
+    try:
+        _seed_mixed_review_db(conn)
+
+        full = fetch_review_queue_images(conn, gallery_threshold=0.7)
+        lean = fetch_review_queue_summary_rows(conn, gallery_threshold=0.7)
+
+        full_keys = {(r["item_kind"], str(r["item_id"])) for r in full}
+        lean_keys = {(r["item_kind"], str(r["item_id"])) for r in lean}
+        assert lean_keys == full_keys
+    finally:
+        conn.close()
+
+
+def test_summary_rows_carry_species_and_favorite():
+    from utils.db.review_queue import fetch_review_queue_summary_rows
+
+    conn = _make_conn()
+    try:
+        _seed_mixed_review_db(conn)
+        lean = fetch_review_queue_summary_rows(conn, gallery_threshold=0.7)
+
+        det = next(r for r in lean if r["item_kind"] == "detection")
+        # species resolved from the rank-1 classification
+        assert det["species_key"] == "Passer_domesticus"
+        # favorite column present and defaulted
+        assert det["is_favorite"] in (0, 1)
+        # clustering needs a timestamp and the source filename
+        assert det["filename"] == "low.jpg"
+        assert det["timestamp"] == "20260210_000100"
+    finally:
+        conn.close()
+
+
+def test_summary_counts_match_full_queue_partition():
+    from utils.db.review_queue import fetch_review_queue_summary
+
+    conn = _make_conn()
+    try:
+        _seed_mixed_review_db(conn)
+
+        full = fetch_review_queue_images(conn, gallery_threshold=0.7)
+        n_images = sum(1 for r in full if r["item_kind"] == "image")
+        n_dets = sum(1 for r in full if r["item_kind"] == "detection")
+        n_fav = sum(
+            1 for r in full if r["item_kind"] == "detection" and r["is_favorite"]
+        )
+
+        summary = fetch_review_queue_summary(conn, gallery_threshold=0.7)
+        assert summary["images"] == n_images
+        assert summary["detections"] == n_dets
+        assert summary["favorites"] == n_fav
+    finally:
+        conn.close()

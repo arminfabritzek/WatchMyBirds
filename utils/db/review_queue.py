@@ -60,6 +60,65 @@ def _ex_unclear_reason_case_sql(
     )
 
 
+def _queue_where_clauses(
+    detection_columns: set[str],
+    *,
+    exclude_deep_scanned: bool = False,
+    filename: str | None = None,
+) -> tuple[list[str], list[object], list[str], list[object]]:
+    """Build the orphan/detection WHERE fragments for the review queue.
+
+    Single source of truth for "what is in the review queue". Both the
+    full render query (``fetch_review_queue_images``) and the lean summary
+    path (``fetch_review_queue_summary_rows`` / ``fetch_review_queue_summary``)
+    consume this, so queue membership can never drift between the Review
+    page and the "Move Review Queue to Trash" action.
+
+    Returns ``(orphan_where, orphan_params, detection_where, detection_params)``
+    where the lists are AND-joinable WHERE fragments and their bound params
+    in order. The detection fragment binds ``gallery_threshold`` first.
+    """
+    ex_unclear_predicate = _ex_unclear_predicate_sql(detection_columns)
+
+    orphan_where = [
+        "(i.review_status IS NULL OR i.review_status = 'untagged')",
+        "NOT EXISTS (SELECT 1 FROM detections d WHERE d.image_filename = i.filename)",
+        "i.filename IS NOT NULL",
+    ]
+    orphan_params: list[object] = []
+
+    detection_where = [
+        "COALESCE(d.status, 'active') = 'active'",
+        "(i.review_status IS NULL OR i.review_status = 'untagged')",
+        f"""(
+            (
+                COALESCE(d.decision_state, '') NOT IN ('confirmed', 'rejected')
+                AND (
+                    COALESCE(d.score, 0.0) < ?
+                    OR d.decision_state IN ('uncertain', 'unknown')
+                )
+            )
+            OR {ex_unclear_predicate}
+        )""",
+        "i.filename IS NOT NULL",
+    ]
+    detection_params: list[object] = []
+
+    if exclude_deep_scanned:
+        orphan_where.append(
+            "NOT EXISTS (SELECT 1 FROM detections d WHERE d.image_filename = i.filename AND d.od_model_id LIKE 'deep_scan_%')"
+        )
+        detection_where.append("COALESCE(d.od_model_id, '') NOT LIKE 'deep_scan_%'")
+
+    if filename:
+        orphan_where.append("i.filename = ?")
+        orphan_params.append(filename)
+        detection_where.append("i.filename = ?")
+        detection_params.append(filename)
+
+    return orphan_where, orphan_params, detection_where, detection_params
+
+
 def fetch_orphan_images(conn: sqlite3.Connection) -> list[sqlite3.Row]:
     """
     Returns images that have no detections at all (true orphan images).
@@ -143,45 +202,17 @@ def fetch_review_queue_images(
     manual_bbox_sql = _detection_column_sql(detection_columns, "manual_bbox_review")
     frame_width_sql = _detection_column_sql(detection_columns, "frame_width")
     frame_height_sql = _detection_column_sql(detection_columns, "frame_height")
-    ex_unclear_predicate = _ex_unclear_predicate_sql(detection_columns)
     ex_unclear_predicate_ds = _ex_unclear_predicate_sql(detection_columns, "ds")
     ex_unclear_reason_case = _ex_unclear_reason_case_sql(detection_columns)
 
-    orphan_where = [
-        "(i.review_status IS NULL OR i.review_status = 'untagged')",
-        "NOT EXISTS (SELECT 1 FROM detections d WHERE d.image_filename = i.filename)",
-        "i.filename IS NOT NULL",
-    ]
-    orphan_params: list[object] = []
-
-    detection_where = [
-        "COALESCE(d.status, 'active') = 'active'",
-        "(i.review_status IS NULL OR i.review_status = 'untagged')",
-        f"""(
-            (
-                COALESCE(d.decision_state, '') NOT IN ('confirmed', 'rejected')
-                AND (
-                    COALESCE(d.score, 0.0) < ?
-                    OR d.decision_state IN ('uncertain', 'unknown')
-                )
-            )
-            OR {ex_unclear_predicate}
-        )""",
-        "i.filename IS NOT NULL",
-    ]
-    detection_params: list[object] = [gallery_threshold]
-
-    if exclude_deep_scanned:
-        orphan_where.append(
-            "NOT EXISTS (SELECT 1 FROM detections d WHERE d.image_filename = i.filename AND d.od_model_id LIKE 'deep_scan_%')"
+    orphan_where, orphan_params, detection_where, detection_params = (
+        _queue_where_clauses(
+            detection_columns,
+            exclude_deep_scanned=exclude_deep_scanned,
+            filename=filename,
         )
-        detection_where.append("COALESCE(d.od_model_id, '') NOT LIKE 'deep_scan_%'")
-
-    if filename:
-        orphan_where.append("i.filename = ?")
-        orphan_params.append(filename)
-        detection_where.append("i.filename = ?")
-        detection_params.append(filename)
+    )
+    detection_params = [gallery_threshold, *detection_params]
 
     orphan_where_sql = " AND ".join(orphan_where)
     detection_where_sql = " AND ".join(detection_where)
@@ -294,6 +325,127 @@ def fetch_review_queue_images(
     """
     cur = conn.execute(query, [*orphan_params, *detection_params])
     return cur.fetchall()
+
+
+def fetch_review_queue_summary_rows(
+    conn: sqlite3.Connection,
+    gallery_threshold: float = 0.7,
+    exclude_deep_scanned: bool = False,
+) -> list[sqlite3.Row]:
+    """Lean review-queue projection for the cleanup preview/run path.
+
+    Same membership as ``fetch_review_queue_images`` (shared WHERE via
+    ``_queue_where_clauses``), but selects ONLY the columns the cleanup
+    action and its event/export math need: item identity, the source
+    filename + timestamp, the bbox quartet and species for BirdEvent
+    clustering, and the favorite flag.
+
+    It deliberately drops the per-row correlated subqueries the render
+    query carries (cls_confidence, sibling_detection_count) — on a
+    spinning disk those are the dominant random-seek cost. The single
+    remaining correlated lookup is the species resolution, which is
+    intrinsic to the queue's meaning. No ORDER BY: callers aggregate,
+    they don't render a list.
+    """
+    detection_columns = table_columns(conn, "detections")
+    species_sql = effective_species_sql_for_columns("d", detection_columns)
+    is_favorite_sql = _detection_column_sql(detection_columns, "is_favorite", "0")
+
+    orphan_where, orphan_params, detection_where, detection_params = (
+        _queue_where_clauses(
+            detection_columns, exclude_deep_scanned=exclude_deep_scanned
+        )
+    )
+    detection_params = [gallery_threshold, *detection_params]
+
+    orphan_where_sql = " AND ".join(orphan_where)
+    detection_where_sql = " AND ".join(detection_where)
+
+    query = f"""
+        SELECT
+            'image' AS item_kind,
+            i.filename AS item_id,
+            NULL AS detection_id,
+            i.filename AS filename,
+            i.timestamp AS timestamp,
+            NULL AS bbox_x,
+            NULL AS bbox_y,
+            NULL AS bbox_w,
+            NULL AS bbox_h,
+            NULL AS species_key,
+            0 AS is_favorite
+        FROM images i
+        WHERE {orphan_where_sql}
+
+        UNION ALL
+
+        SELECT
+            'detection' AS item_kind,
+            CAST(d.detection_id AS TEXT) AS item_id,
+            d.detection_id AS detection_id,
+            i.filename AS filename,
+            i.timestamp AS timestamp,
+            d.bbox_x,
+            d.bbox_y,
+            d.bbox_w,
+            d.bbox_h,
+            {species_sql} AS species_key,
+            COALESCE({is_favorite_sql}, 0) AS is_favorite
+        FROM detections d
+        JOIN images i ON i.filename = d.image_filename
+        WHERE {detection_where_sql}
+    """
+    cur = conn.execute(query, [*orphan_params, *detection_params])
+    return cur.fetchall()
+
+
+def fetch_review_queue_summary(
+    conn: sqlite3.Connection,
+    gallery_threshold: float = 0.7,
+    exclude_deep_scanned: bool = False,
+) -> dict[str, int]:
+    """Count-only review-queue summary for the cleanup preview.
+
+    Returns ``{"images", "detections", "favorites"}`` using the shared
+    queue predicate. Pure aggregation — no rows materialised, no Python
+    loop over the queue. The favorites count covers detection items only
+    (orphan images carry no detection to favourite).
+    """
+    detection_columns = table_columns(conn, "detections")
+    is_favorite_sql = _detection_column_sql(detection_columns, "is_favorite", "0")
+
+    orphan_where, orphan_params, detection_where, detection_params = (
+        _queue_where_clauses(
+            detection_columns, exclude_deep_scanned=exclude_deep_scanned
+        )
+    )
+    detection_params = [gallery_threshold, *detection_params]
+
+    orphan_where_sql = " AND ".join(orphan_where)
+    detection_where_sql = " AND ".join(detection_where)
+
+    image_count = conn.execute(
+        f"SELECT COUNT(*) FROM images i WHERE {orphan_where_sql}",
+        orphan_params,
+    ).fetchone()[0]
+
+    det_row = conn.execute(
+        f"""
+        SELECT
+            COUNT(*) AS n,
+            COALESCE(SUM(CASE WHEN COALESCE({is_favorite_sql}, 0) THEN 1 ELSE 0 END), 0) AS fav
+        FROM detections d
+        JOIN images i ON i.filename = d.image_filename
+        WHERE {detection_where_sql}
+        """,
+        detection_params,
+    ).fetchone()
+
+    return {
+        "images": int(image_count or 0),
+        "detections": int(det_row["n"] or 0),
+        "favorites": int(det_row["fav"] or 0),
+    }
 
 
 def fetch_review_queue_image(

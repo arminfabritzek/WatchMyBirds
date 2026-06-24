@@ -25,7 +25,23 @@ from typing import Any
 
 from core import user_groundtruth_core
 from core.events import build_bird_events
-from utils.db.review_queue import fetch_review_queue_images
+from utils.db.review_queue import (
+    fetch_review_queue_summary,
+    fetch_review_queue_summary_rows,
+)
+
+
+@dataclass
+class ReviewCleanupActionPlan:
+    """The minimal payload the reversible move-to-Trash needs.
+
+    Only the two id buckets — no event/favorite/export counts. This is what
+    ``execute_plan`` builds fresh on every run, so the action always acts on
+    the queue as it is *now*, never on a stale preview snapshot.
+    """
+
+    image_filenames: list[str] = field(default_factory=list)
+    detection_ids: list[int] = field(default_factory=list)
 
 
 @dataclass
@@ -37,46 +53,83 @@ class ReviewCleanupPlan:
     export_relevant_count: int = 0
 
 
-def build_plan(conn, gallery_threshold: float = 0.7) -> ReviewCleanupPlan:
-    """Partition the live review queue into the two reversible buckets.
+def build_action_plan(conn, gallery_threshold: float = 0.7) -> ReviewCleanupActionPlan:
+    """Partition the live queue into the two reversible id buckets — lean.
 
-    Read-only: reads the queue and the export-relevance union, performs no
-    writes. ``image_filenames`` carries orphan/untagged queue images,
-    ``detection_ids`` carries active unresolved detections — exactly the two
-    payloads the reversible ``bulk_reject`` semantics accept.
+    Read-only, count-free. Uses the lean summary projection (shared queue
+    predicate, no sibling-count / cls-confidence subqueries), so the run
+    path pays only for the ids it is about to act on. ``image_filenames``
+    carries orphan/untagged queue images, ``detection_ids`` carries active
+    unresolved detections.
     """
-    rows = fetch_review_queue_images(conn, gallery_threshold=gallery_threshold)
+    rows = fetch_review_queue_summary_rows(conn, gallery_threshold=gallery_threshold)
 
     image_filenames: list[str] = []
     detection_ids: list[int] = []
-    detection_rows: list[dict[str, Any]] = []
-    favorite_count = 0
-    touched_filenames: set[str] = set()
+    for row in rows:
+        if row["item_kind"] == "image":
+            image_filenames.append(row["item_id"])
+        else:
+            detection_ids.append(int(row["item_id"]))
 
+    return ReviewCleanupActionPlan(
+        image_filenames=image_filenames,
+        detection_ids=detection_ids,
+    )
+
+
+def summarize_queue(conn, gallery_threshold: float = 0.7) -> dict[str, int]:
+    """Dry-run counts for the preview — lean, no per-row render work.
+
+    Returns ``{"events", "images", "detections", "favorites",
+    "export_relevant"}``. ``images``/``detections``/``favorites`` come from
+    a pure SQL aggregate; ``events`` clusters the lean detection projection
+    (timestamp + species + bbox is all ``build_bird_events`` reads for the
+    count); ``export_relevant`` is checked only over the queue's own touched
+    filenames, not the whole history.
+    """
+    counts = fetch_review_queue_summary(conn, gallery_threshold=gallery_threshold)
+    rows = fetch_review_queue_summary_rows(conn, gallery_threshold=gallery_threshold)
+
+    detection_rows: list[dict[str, Any]] = []
+    touched_filenames: set[str] = set()
     for row in rows:
         filename = row["filename"]
         if filename:
             touched_filenames.add(filename)
-        if row["item_kind"] == "image":
-            image_filenames.append(row["item_id"])
-        else:  # detection
-            detection_ids.append(int(row["item_id"]))
+        if row["item_kind"] != "image":
             detection_rows.append(dict(row))
-            if row["is_favorite"]:
-                favorite_count += 1
 
     export_relevant = user_groundtruth_core.is_export_relevant_any(
         conn, sorted(touched_filenames)
     )
 
-    plan = ReviewCleanupPlan(
-        image_filenames=image_filenames,
-        detection_ids=detection_ids,
-        event_count=len(build_bird_events(detection_rows)) if detection_rows else 0,
-        favorite_count=favorite_count,
-        export_relevant_count=len(export_relevant),
+    return {
+        "events": len(build_bird_events(detection_rows)) if detection_rows else 0,
+        "images": counts["images"],
+        "detections": counts["detections"],
+        "favorites": counts["favorites"],
+        "export_relevant": len(export_relevant),
+    }
+
+
+def build_plan(conn, gallery_threshold: float = 0.7) -> ReviewCleanupPlan:
+    """Full dry-run plan: id buckets + the five preview counts.
+
+    Read-only. Kept as the public composition of ``build_action_plan`` and
+    ``summarize_queue`` so existing callers and the parity tests keep a
+    single object to assert against. The run path uses ``build_action_plan``
+    directly; this is for the preview disclosure.
+    """
+    action = build_action_plan(conn, gallery_threshold=gallery_threshold)
+    summary = summarize_queue(conn, gallery_threshold=gallery_threshold)
+    return ReviewCleanupPlan(
+        image_filenames=action.image_filenames,
+        detection_ids=action.detection_ids,
+        event_count=summary["events"],
+        favorite_count=summary["favorites"],
+        export_relevant_count=summary["export_relevant"],
     )
-    return plan
 
 
 # ---------------------------------------------------------------------------
@@ -94,7 +147,7 @@ def execute_plan(conn, gallery_threshold: float = 0.7) -> dict[str, int]:
     from utils.db.detections import reject_detections
     from utils.db.review_queue import update_review_status
 
-    plan = build_plan(conn, gallery_threshold=gallery_threshold)
+    plan = build_action_plan(conn, gallery_threshold=gallery_threshold)
 
     detections_moved = 0
     if plan.detection_ids:
@@ -127,15 +180,7 @@ def preview() -> dict[str, Any]:
 
     threshold = _gallery_threshold()
     with closing_connection() as conn:
-        plan = build_plan(conn, gallery_threshold=threshold)
-
-    return {
-        "events": plan.event_count,
-        "images": len(plan.image_filenames),
-        "detections": len(plan.detection_ids),
-        "favorites": plan.favorite_count,
-        "export_relevant": plan.export_relevant_count,
-    }
+        return summarize_queue(conn, gallery_threshold=threshold)
 
 
 def run() -> dict[str, int]:
