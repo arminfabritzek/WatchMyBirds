@@ -30,6 +30,7 @@
         <button id="empty-trash-btn" class="btn btn--secondary" aria-label="Empty entire trash">
             Empty Trash
         </button>
+        <span id="empty-trash-status" class="trash-empty-status" role="status" aria-live="polite"></span>
         <a href="/gallery" class="btn btn--secondary">← Gallery</a>
     </div>
 </nav>
@@ -289,16 +290,45 @@
             performAction('purge', checked);
         });
 
+        const emptyStatus = document.getElementById('empty-trash-status');
+        let emptyInFlight = false;
         emptyBtn?.addEventListener('click', async () => {
+            if (emptyInFlight) return;
             if (!confirm('Permanently delete ALL items? This cannot be undone.')) return;
+
+            // Mass file deletion can run for minutes; lock + status line so the
+            // page never looks frozen and the operator can't re-fire it.
+            emptyInFlight = true;
+            emptyBtn.disabled = true;
+            const originalLabel = emptyBtn.textContent;
+            emptyBtn.textContent = 'Emptying…';
+            if (emptyStatus) {
+                emptyStatus.textContent = 'Deleting all items and their image files — this can take a while for large queues…';
+            }
+
             try {
                 const response = await fetch('/api/trash/empty', { method: 'POST' });
                 if (response.ok) {
                     const data = await response.json();
-                    alert(`Emptied: ${data?.result?.rows_deleted ?? 0} items`);
+                    const count = data?.result?.rows_deleted ?? 0;
+                    if (emptyStatus) emptyStatus.textContent = `Done — ${count} items deleted. Reloading…`;
                     location.reload();
+                } else {
+                    const data = await response.json().catch(() => ({}));
+                    if (emptyStatus) emptyStatus.textContent = '';
+                    alert('Failed to empty trash: ' + (data.message || data.error || 'Unknown error'));
+                    emptyInFlight = false;
+                    emptyBtn.disabled = false;
+                    emptyBtn.textContent = originalLabel;
                 }
-            } catch (e) { console.error(e); }
+            } catch (e) {
+                console.error(e);
+                if (emptyStatus) emptyStatus.textContent = '';
+                alert('Error emptying trash: ' + e.message);
+                emptyInFlight = false;
+                emptyBtn.disabled = false;
+                emptyBtn.textContent = originalLabel;
+            }
         });
 
         function resetDateRangePreview(message) {
