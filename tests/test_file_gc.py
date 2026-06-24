@@ -467,21 +467,15 @@ class TestHardDeleteDetections:
             mock_config.return_value = {"OUTPUT_DIR": str(temp_output_dir)}
             mock_get_pm.return_value = mock_pm
 
-            result = hard_delete_detections(
-                mock_db_connection, detection_ids=[2]
-            )
+            result = hard_delete_detections(mock_db_connection, detection_ids=[2])
 
         assert result["purged"] is True
         # Thumb must survive — detection 1 still references it.
         assert thumb_file.exists()
         # Original & optimized also survive (detection 1 still references the image).
-        assert (
-            temp_output_dir / "originals" / date_folder / f"{stem}.jpg"
-        ).exists()
+        assert (temp_output_dir / "originals" / date_folder / f"{stem}.jpg").exists()
 
-    def test_unshared_thumbnail_deleted(
-        self, mock_db_connection, temp_output_dir
-    ):
+    def test_unshared_thumbnail_deleted(self, mock_db_connection, temp_output_dir):
         """When the rejected detection is the sole owner of its thumb file,
         the file is deleted as before."""
         from utils.file_gc import hard_delete_detections
@@ -526,9 +520,7 @@ class TestHardDeleteDetections:
             mock_config.return_value = {"OUTPUT_DIR": str(temp_output_dir)}
             mock_get_pm.return_value = mock_pm
 
-            result = hard_delete_detections(
-                mock_db_connection, detection_ids=[10]
-            )
+            result = hard_delete_detections(mock_db_connection, detection_ids=[10])
 
         assert result["purged"] is True
         assert not thumb_file.exists()
@@ -584,3 +576,90 @@ class TestSafeDelete:
         result = _safe_delete(None, tmp_path)
 
         assert result == "skipped"
+
+    def test_refuses_symlink_escaping_output_dir(self, tmp_path):
+        """A symlink inside OUTPUT_DIR pointing outside must not be followed
+        into deleting the external target."""
+        from utils.file_gc import _safe_delete
+
+        output_dir = tmp_path / "output"
+        output_dir.mkdir()
+        external = tmp_path / "external_secret.txt"
+        external.write_text("must survive")
+
+        link = output_dir / "link.txt"
+        try:
+            link.symlink_to(external)
+        except (OSError, NotImplementedError):
+            import pytest
+
+            pytest.skip("symlinks not supported on this platform")
+
+        result = _safe_delete(link, output_dir)
+
+        # The external target must still exist regardless of how the link
+        # itself is treated — the escape must not delete outside OUTPUT_DIR.
+        assert external.exists()
+        assert result in ("error", "deleted", "missing")
+        if result == "deleted":
+            # If anything was removed it must have been the link, not the target.
+            assert not link.is_symlink() or not link.exists()
+
+    def test_refuses_sibling_dir_with_shared_prefix(self, tmp_path):
+        """OUTPUT_DIR='/x/out' must not authorise deletion in '/x/out_evil'.
+
+        A naive string-prefix check would pass the sibling; the guard must
+        treat path components, not raw string prefixes.
+        """
+        from utils.file_gc import _safe_delete
+
+        output_dir = tmp_path / "out"
+        output_dir.mkdir()
+        sibling = tmp_path / "out_evil"
+        sibling.mkdir()
+        victim = sibling / "victim.txt"
+        victim.write_text("must survive")
+
+        result = _safe_delete(victim, output_dir)
+
+        assert result == "error"
+        assert victim.exists()
+
+    def test_unlink_failure_returns_error(self, tmp_path, monkeypatch):
+        """A real unlink failure (e.g. permission) returns 'error', not a crash."""
+        from pathlib import Path
+
+        from utils.file_gc import _safe_delete
+
+        test_file = tmp_path / "locked.txt"
+        test_file.write_text("content")
+
+        def boom(self):
+            raise PermissionError("locked")
+
+        monkeypatch.setattr(Path, "unlink", boom)
+        result = _safe_delete(test_file, tmp_path)
+
+        assert result == "error"
+
+    def test_concurrent_disappearance_returns_missing(self, tmp_path, monkeypatch):
+        """If the file vanishes between resolve and unlink, report 'missing'.
+
+        This pins the race-safe behaviour the syscall-lean path relies on:
+        deletion is attempted directly and a FileNotFoundError is mapped to
+        'missing' instead of pre-checking with exists().
+        """
+        from pathlib import Path
+
+        from utils.file_gc import _safe_delete
+
+        test_file = tmp_path / "gone.txt"
+        test_file.write_text("content")
+
+        def vanish(self):
+            raise FileNotFoundError("already gone")
+
+        monkeypatch.setattr(Path, "unlink", vanish)
+        result = _safe_delete(test_file, tmp_path)
+
+        assert result == "missing"

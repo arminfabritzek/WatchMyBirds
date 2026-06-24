@@ -105,8 +105,9 @@ def _safe_delete(abs_path: Path, output_dir: Path) -> str:
         abs_path = abs_path.resolve()
         output_dir = output_dir.resolve()
 
-        # Verify safety: must be relative to output_dir
-        if not str(abs_path).startswith(str(output_dir)):
+        # Verify safety: must be *under* output_dir by path components, not by
+        # raw string prefix — else a sibling like '<out>_evil/x' would pass.
+        if not abs_path.is_relative_to(output_dir):
             logger.error(f"Refusing to delete outside OUTPUT_DIR: {abs_path}")
             return "error"
 
@@ -114,13 +115,14 @@ def _safe_delete(abs_path: Path, output_dir: Path) -> str:
         logger.error(f"Path verification error for {abs_path}: {e}")
         return "error"
 
+    # Unlink directly (no exists() pre-check): one fewer stat per file on
+    # bulk purges, and race-safe — vanished == 'missing', not 'error'.
     try:
-        if abs_path.exists():
-            abs_path.unlink()
-            return "deleted"
-        else:
-            logger.warning(f"File not found for deletion: {abs_path}")
-            return "missing"
+        abs_path.unlink()
+        return "deleted"
+    except FileNotFoundError:
+        logger.warning(f"File not found for deletion: {abs_path}")
+        return "missing"
     except Exception as e:
         logger.error(f"Failed to delete file: {abs_path} ({e})")
         return "error"
