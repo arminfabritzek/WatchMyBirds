@@ -4768,7 +4768,12 @@
 
         let statusLine;
         if (running && stopReq) {
-            statusLine = 'Stopping…';
+            // The CLIP tagger does not interrupt mid-image; stop takes
+            // effect only at the next per-image checkpoint. Say so
+            // instead of implying an instant halt.
+            statusLine = job.name === 'aesthetic_tagger'
+                ? 'Stopping after current image…'
+                : 'Stopping…';
         } else if (running) {
             const done = progress.done;
             const total = progress.total;
@@ -4826,6 +4831,11 @@
         stopBtn.className = 'btn btn--secondary btn--sm';
         stopBtn.textContent = 'Stop';
         stopBtn.disabled = !running;
+        if (jobName === 'aesthetic_tagger') {
+            stopBtn.title = 'Best-effort: the CLIP tagger finishes the '
+                + 'current image before stopping, so it may run a few '
+                + 'seconds longer.';
+        }
         stopBtn.addEventListener('click', () => nightlyStop(jobName));
 
         btnCol.appendChild(runBtn);
