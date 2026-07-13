@@ -18,9 +18,38 @@ and start the app — the scheduler initialises, daemon thread polls
 once per 30 s, fires `aesthetic_tag_nightly.main_with_args([])` once
 per day at the configured `AESTHETIC_TAG_TIME` (default 02:10).
 
-If `requirements-aesthetic.txt` is **not** installed (slim image
-variant), the scheduler logs a single warning and stays idle. The app
-boots normally without the tagger.
+**The tagger is a default-ON shipped feature.** Every standard build
+installs `requirements-aesthetic.txt`: the `Dockerfile`, both CI image
+workflows (`build-release.yml` / `build-dev.yml`), and the RPi OTA
+updater (`rpi/update.sh`). To turn it off, set
+`AESTHETIC_TAG_ENABLED=False` — that is the supported opt-out, not a
+separate image.
+
+### Why two requirement files
+
+The split exists for **CPU-index isolation**, not because the tagger
+is optional. `torch` / `torchvision` must resolve from the PyTorch CPU
+index (`--index-url https://download.pytorch.org/whl/cpu`); a bare
+`pip install torchvision` on PyPI drags ~3.8 GB of CUDA wheels onto the
+CPU-only Pi. Keeping that index directive in a separate `-r` file with
+its own header means the main `requirements.txt` resolver run is never
+forced through the PyTorch index. Merging the files would gain nothing
+(aesthetic ships everywhere regardless) and lose that isolation.
+
+If the packages are genuinely absent (a hand-stripped venv), the
+scheduler logs a single warning and stays idle; the app boots normally
+without the tagger. This is a safety net, not a shipped "slim" build.
+
+> **Deploy caveat.** A code-only deploy (copying source without
+> re-running `pip`) will not pick up a newly added aesthetic dependency
+> (e.g. `open_clip_torch`). The scheduler then silently falls back to
+> idle despite the flag being on. Only a fresh image build and the OTA
+> updater (`rpi/update.sh`) install aesthetic deps automatically. After
+> adding an aesthetic dependency, install it explicitly into the target
+> venv with the CPU index
+> (`pip install --index-url https://download.pytorch.org/whl/cpu ...`)
+> and verify the imported version — don't trust the pip success line
+> alone on a root-owned venv.
 
 ## What it ships
 
@@ -31,7 +60,7 @@ boots normally without the tagger.
 | `web/services/aesthetic_tag_scheduler.py` | Daemon-thread scheduler (replaces systemd). |
 | `tests/test_aesthetic_tag_scheduler.py` | Scheduler unit tests (8). |
 | `tests/test_aesthetic_integration.py` | UI ranking tests (10). |
-| `requirements-aesthetic.txt` | Optional torch + open_clip deps. |
+| `requirements-aesthetic.txt` | torch + open_clip deps, split out for CPU-index isolation (installed by every standard build). |
 | `Dockerfile` | Pip-installs both requirement files in two RUN steps. |
 | `utils/db/connection.py` | Adds `aesthetic_score REAL` + `aesthetic_score_at TEXT` to `detections`. |
 

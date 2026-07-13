@@ -21,9 +21,12 @@ the enforced invariants live in [`docs/INVARIANTS.md`](docs/INVARIANTS.md).
 - **Python:** 3.12+ (pinned in `pyproject.toml`, also pinned on the
   RPi build lane — do not bump unilaterally).
 - **Virtualenv:** prefer `.venv/` in the repo root when present.
-- **Dependencies:** `requirements.txt` is authoritative for runtime;
-  `requirements-aesthetic.txt` and `requirements-companion.txt` are
-  optional extras.
+- **Dependencies:** `requirements.txt` is authoritative for runtime.
+  `requirements-aesthetic.txt` is split out only for CPU-index isolation
+  (torch/open_clip); it is installed by every standard build and the
+  tagger is default-ON — opt out via `AESTHETIC_TAG_ENABLED=False`, not
+  by skipping the file. `requirements-companion.txt` is a genuine
+  optional extra (default-OFF LLM companion, not auto-installed).
 - **Entry point:** `python main.py` → web UI on `http://localhost:8050`.
 
 ## Tooling
