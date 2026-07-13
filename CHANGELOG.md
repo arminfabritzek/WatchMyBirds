@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+### Fixed
+
+- The "Stop" control on the nightly aesthetic (CLIP) tagger no longer
+  implies an instant halt. The worker finishes the current image before
+  stopping; the status text and button tooltip now say so.
+
+### Changed
+
+- Dependency and CI maintenance: numpy, torch, torchvision, safetensors,
+  llama-cpp-python, and several Docker/CI actions bumped to current
+  versions.
+- Corrected the aesthetic-tagger documentation: the tagger ships enabled
+  by default, and the separate `requirements-aesthetic.txt` exists for
+  CPU-index isolation, not because the feature is optional.
+
 ## 0.5.0 - 2026-06-23
 
 ### Added
