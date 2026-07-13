@@ -272,6 +272,10 @@ docker-compose.yml
 
 # Local-only agent metadata
 .agent/
+# Agent-harness config from other tools (Codex, agent skills/hooks) —
+# private tooling, never ships to the public repo (same class as .claude/).
+.agents/
+.codex/
 /_debug_logs
 tools/onvif_ptz_tester/.onvif_tester_settings.json
 
