@@ -25,6 +25,6 @@
 --index-url https://download.pytorch.org/whl/cpu
 --extra-index-url https://pypi.org/simple
 
-torch>=2.12.1
+torch>=2.13.0+cpu
 torchvision>=0.27.1
 open_clip_torch>=3.3.0
