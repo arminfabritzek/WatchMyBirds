@@ -1097,8 +1097,10 @@ def regenerate_derivative(
         if not original_filename:
             return False
 
-        original_path = path_mgr.get_original_path(original_filename)
-        if path_mgr.contained_path(original_path, path_mgr.originals_dir) is None:
+        original_path = path_mgr.contained_path(
+            path_mgr.get_original_path(original_filename), path_mgr.originals_dir
+        )
+        if original_path is None:
             logger.error(f"Rejected out-of-root original path: {_slv(filename)}")
             return False
 
@@ -1202,7 +1204,8 @@ def regenerate_derivative(
 
         # 5. Save
         if target_path and out_img is not None:
-            if path_mgr.contained_path(target_path, path_mgr.derivatives_dir) is None:
+            target_path = path_mgr.contained_path(target_path, path_mgr.derivatives_dir)
+            if target_path is None:
                 logger.error(f"Rejected out-of-root derivative path: {_slv(filename)}")
                 return False
             path_mgr.ensure_date_structure(

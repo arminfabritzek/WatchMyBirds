@@ -184,10 +184,14 @@ class PathManager:
         """Return ``candidate`` if it resolves inside ``root``, else None.
 
         Proves containment via resolve()+relative_to so a filename carrying
-        traversal segments cannot escape the media roots. Modelled as a
-        path-injection barrier for CodeQL; the twin of
-        ``web.view_helpers._contained_static_path`` for the non-web path
-        that regenerates derivatives.
+        traversal segments cannot escape the media roots. Callers must use
+        the returned path, not the one they passed in — that is what moves
+        the sink off the tainted value.
+
+        The twin of ``web.view_helpers._contained_static_path`` for the
+        non-web path that regenerates derivatives. CodeQL does not model
+        either of them as a barrier and flags the resolve() below on its
+        own; those helper-level alerts are triaged as false positives.
         """
         try:
             resolved = candidate.resolve()

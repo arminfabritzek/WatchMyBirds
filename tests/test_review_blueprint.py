@@ -1685,3 +1685,45 @@ def test_review_event_resolve_requires_species_and_bbox(client):
     )
     assert r2.status_code == 409
     assert "bounding box" in r2.get_json()["message"].lower()
+
+
+def test_review_thumb_rejects_out_of_root_path(client):
+    """A filename resolving outside the media roots must 404, never serve."""
+    escaping = Path("/etc/passwd")
+
+    with patch("web.blueprints.review.gallery_service") as mock_gallery:
+        mock_gallery.get_image_paths.return_value = {
+            "original": escaping,
+            "preview": escaping,
+        }
+        resp = client.get("/api/review-thumb/anything.jpg")
+
+    assert resp.status_code == 404
+    mock_gallery.generate_preview_thumbnail.assert_not_called()
+
+
+def test_review_thumb_serves_cached_preview_inside_root(client, tmp_path):
+    """A contained preview that already exists is served without regeneration."""
+    from utils.path_manager import PathManager
+
+    pm = PathManager(str(tmp_path))
+    preview = pm.thumbs_dir / "2026-01-01" / "20260101_120000_preview.webp"
+    preview.parent.mkdir(parents=True, exist_ok=True)
+    preview.write_bytes(b"webp-bytes")
+    original = pm.originals_dir / "2026-01-01" / "20260101_120000.jpg"
+    original.parent.mkdir(parents=True, exist_ok=True)
+    original.write_bytes(b"jpg-bytes")
+
+    with (
+        patch("web.blueprints.review.path_service") as mock_path_service,
+        patch("web.blueprints.review.gallery_service") as mock_gallery,
+    ):
+        mock_path_service.get_path_manager.return_value = pm
+        mock_gallery.get_image_paths.return_value = {
+            "original": original,
+            "preview": preview,
+        }
+        resp = client.get("/api/review-thumb/20260101_120000.jpg")
+
+    assert resp.status_code == 200
+    mock_gallery.generate_preview_thumbnail.assert_not_called()

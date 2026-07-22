@@ -47,6 +47,7 @@ from web.services import (
     cache_service,
     db_service,
     gallery_service,
+    path_service,
     review_cleanup_service,
 )
 from web.species_thumbnails import (
@@ -2067,10 +2068,13 @@ def review_event_panel_fragment(event_key):
 def review_thumb(filename):
     """On-demand thumbnail generation for orphan images."""
     output_dir = config.get("OUTPUT_DIR", "output")
+    path_mgr = path_service.get_path_manager(output_dir)
     paths = gallery_service.get_image_paths(output_dir, filename)
 
-    original_path = paths["original"]
-    preview_path = paths["preview"]
+    original_path = path_mgr.contained_path(paths["original"], path_mgr.originals_dir)
+    preview_path = path_mgr.contained_path(paths["preview"], path_mgr.thumbs_dir)
+    if original_path is None or preview_path is None:
+        return abort(404)
 
     # If preview already cached, serve it
     if preview_path.exists():
