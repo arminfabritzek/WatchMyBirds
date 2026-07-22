@@ -14,9 +14,10 @@
     "db:mau": "wrangler d1 execute watchmybirds-heartbeats --remote --command \"SELECT COUNT(DISTINCT installation_id) AS mau FROM heartbeats WHERE date >= date('now', '-30 days')\""
   },
   "devDependencies": {
-    "wrangler": "^4.103.0"
+    "wrangler": "^4.113.0"
   },
   "overrides": {
-    "esbuild": "^0.28.1"
+    "esbuild": "^0.28.1",
+    "sharp": "^0.35.0"
   }
 }
