@@ -24,6 +24,11 @@ from web.web_interface import create_web_interface
 
 logger = get_logger(__name__)
 
+# Keys whose values must never reach the log, even at debug level.
+_SENSITIVE_CONFIG_KEYS = frozenset(
+    {"EDIT_PASSWORD", "SECRET_KEY", "TELEGRAM_BOT_TOKEN"}
+)
+
 
 def _detect_runtime_environment():
     """Detect whether app runs on host or inside a container runtime."""
@@ -99,7 +104,10 @@ def _create_runtime():
     )
 
     logger.info(f"Debug mode is {'enabled' if debug_mode else 'disabled'}.")
-    logger.debug(f"Configuration: {json.dumps(config, indent=2)}")
+    _redacted_config = {
+        k: ("***" if k in _SENSITIVE_CONFIG_KEYS else v) for k, v in config.items()
+    }
+    logger.debug(f"Configuration: {json.dumps(_redacted_config, indent=2)}")
 
     # Security Audit Warning
     if config.get("EDIT_PASSWORD") == "watchmybirds":

@@ -1098,6 +1098,9 @@ def regenerate_derivative(
             return False
 
         original_path = path_mgr.get_original_path(original_filename)
+        if path_mgr.contained_path(original_path, path_mgr.originals_dir) is None:
+            logger.error(f"Rejected out-of-root original path: {_slv(filename)}")
+            return False
 
         if not original_path.exists():
             logger.error(
@@ -1199,11 +1202,14 @@ def regenerate_derivative(
 
         # 5. Save
         if target_path and out_img is not None:
+            if path_mgr.contained_path(target_path, path_mgr.derivatives_dir) is None:
+                logger.error(f"Rejected out-of-root derivative path: {_slv(filename)}")
+                return False
             path_mgr.ensure_date_structure(
                 path_mgr.extract_date_from_filename(filename)
             )
             cv2.imwrite(str(target_path), out_img, [int(cv2.IMWRITE_WEBP_QUALITY), 80])
-            logger.info(f"Regenerated missing derivative: {target_path}")
+            logger.info(f"Regenerated missing derivative: {_slv(target_path)}")
             return True
 
     except Exception as e:

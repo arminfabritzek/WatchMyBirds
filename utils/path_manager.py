@@ -180,6 +180,22 @@ class PathManager:
         preview_name = f"{file_stem}_preview.webp"
         return self.thumbs_dir / date_folder / preview_name
 
+    def contained_path(self, candidate: Path, root: Path) -> Path | None:
+        """Return ``candidate`` if it resolves inside ``root``, else None.
+
+        Proves containment via resolve()+relative_to so a filename carrying
+        traversal segments cannot escape the media roots. Modelled as a
+        path-injection barrier for CodeQL; the twin of
+        ``web.view_helpers._contained_static_path`` for the non-web path
+        that regenerates derivatives.
+        """
+        try:
+            resolved = candidate.resolve()
+            resolved.relative_to(root.resolve())
+        except (ValueError, OSError):
+            return None
+        return resolved
+
     def extract_date_from_filename(self, filename: str) -> str:
         """
         Extracts date from standard filename format: YYYYMMDD_HHMMSS_...
