@@ -126,6 +126,7 @@ addopts = "-v --tb=short"
 markers = [
     "arch_hard: blocking architecture invariants",
     "arch_soft: non-blocking architecture monitoring",
+    "host_env: depends on the host's mount table or civil-twilight clock; excluded on CI runners",
 ]
 filterwarnings = [
     "ignore::DeprecationWarning",

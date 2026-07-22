@@ -43,6 +43,7 @@ def test_master_switch_off_with_zero_location_defaults_to_run(manager):
     assert manager._should_run_od_now() is True
 
 
+@pytest.mark.host_env
 def test_night_with_location_pauses(monkeypatch, manager):
     """Master switch off, location set, is_daytime returns False → pause."""
     manager.config["DAY_AND_NIGHT_CAPTURE"] = False
@@ -69,6 +70,7 @@ def test_day_with_location_runs(monkeypatch, manager):
     assert manager._should_run_od_now() is True
 
 
+@pytest.mark.host_env
 def test_cache_avoids_repeated_calls_within_ttl(monkeypatch, manager):
     """Two calls within TTL → is_daytime called exactly once."""
     manager.config["DAY_AND_NIGHT_CAPTURE"] = False

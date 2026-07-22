@@ -38,5 +38,8 @@ jobs:
         continue-on-error: true
         run: ruff check .
 
+      # host_env covers tests asserting on the host's mount table or on civil
+      # twilight at the station's coordinates. They pass on a developer machine
+      # and on the appliance, but a hosted runner has neither.
       - name: Run test suite
-        run: pytest -q
+        run: pytest -q -m "not host_env"

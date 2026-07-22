@@ -121,6 +121,7 @@ class TestStickStatus:
         assert status.free_bytes is not None
         assert status.detail is None
 
+    @pytest.mark.host_env
     def test_missing_when_not_mounted(self, fake_stick, monkeypatch):
         monkeypatch.setattr(usb_backup_core, "_is_mounted", lambda p: False)
         status = usb_backup_core.get_stick_status()
@@ -146,6 +147,7 @@ class TestStickStatus:
         assert status.fstype == "exfat"
         assert "ext4" in (status.detail or "")
 
+    @pytest.mark.host_env
     def test_autofs_stub_is_treated_as_missing_not_wrong_fs(
         self, fake_stick, monkeypatch
     ):
@@ -405,6 +407,7 @@ class TestSummary:
             == "20260428_030000_scheduled"
         )
 
+    @pytest.mark.host_env
     def test_summary_handles_missing_stick(self, fake_stick, monkeypatch):
         monkeypatch.setattr(usb_backup_core, "_is_mounted", lambda p: False)
         summary = usb_backup_core.get_backup_summary()
