@@ -147,8 +147,11 @@ class CameraStorage:
     def _save_cameras(self, cameras: list[dict]) -> bool:
         """Save cameras to YAML file."""
         try:
+            # Holds ONVIF credentials in clear text, so the file is owner-only
+            # regardless of umask. chmod covers stores written before this.
             with open(self.storage_path, "w") as f:
                 yaml.dump({"cameras": cameras}, f, default_flow_style=False)
+            Path(self.storage_path).chmod(0o600)
             return True
         except Exception as e:
             logger.error(f"Failed to save cameras: {e}")
@@ -315,9 +318,7 @@ class CameraStorage:
 
         return self._save_cameras(cameras)
 
-    def update_overview_snapshot_path(
-        self, camera_id: int, relative_path: str
-    ) -> bool:
+    def update_overview_snapshot_path(self, camera_id: int, relative_path: str) -> bool:
         """Persist the relative path of the PTZ overview snapshot."""
         cameras = self._load_cameras()
         if camera_id < 0 or camera_id >= len(cameras):
@@ -338,9 +339,7 @@ class CameraStorage:
         cam = cameras[camera_id]
         ptz = dict(cam.get("ptz") or {})
         bucket = dict(ptz.get("preset_metadata") or {})
-        bucket[str(preset_token)] = {
-            str(k): v for k, v in (metadata or {}).items()
-        }
+        bucket[str(preset_token)] = {str(k): v for k, v in (metadata or {}).items()}
         ptz["preset_metadata"] = bucket
         cam["ptz"] = ptz
         return self._save_cameras(cameras)

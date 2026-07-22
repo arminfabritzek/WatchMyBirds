@@ -121,3 +121,6 @@ def save_settings_yaml(
     settings_path.parent.mkdir(parents=True, exist_ok=True)
     with settings_path.open("w", encoding="utf-8") as handle:
         yaml.safe_dump(settings_dict, handle, sort_keys=True)
+    # Runtime settings can carry EDIT_PASSWORD and TELEGRAM_BOT_TOKEN, so the
+    # file must not inherit a permissive umask.
+    settings_path.chmod(0o600)

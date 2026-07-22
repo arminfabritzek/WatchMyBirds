@@ -3,10 +3,18 @@ name: Dependency Security Scan
 on:
   push:
     branches: [main]
-    paths: [requirements.txt]
+    paths:
+      - requirements.txt
+      - requirements-aesthetic.txt
+      - requirements-companion.txt
+      - scripts/requirements_ai_photos.txt
   pull_request:
     branches: [main]
-    paths: [requirements.txt]
+    paths:
+      - requirements.txt
+      - requirements-aesthetic.txt
+      - requirements-companion.txt
+      - scripts/requirements_ai_photos.txt
   schedule:
     - cron: "0 8 * * 1" # Weekly on Mondays
 
@@ -26,5 +34,19 @@ jobs:
       - name: Install pip-audit
         run: pip install pip-audit
 
-      - name: Run pip-audit
+      - name: Run pip-audit (runtime)
         run: pip-audit -r requirements.txt --desc
+
+      # The optional lanes pull a much larger tree (torch/CLIP, llama_cpp) and
+      # are not installed on every deployment, so a finding here is reported
+      # without failing the run that guards the runtime requirements.
+      - name: Run pip-audit (optional lanes)
+        continue-on-error: true
+        run: |
+          for req in requirements-aesthetic.txt \
+                     requirements-companion.txt \
+                     scripts/requirements_ai_photos.txt; do
+            echo "::group::pip-audit $req"
+            pip-audit -r "$req" --desc || echo "::warning file=$req::pip-audit reported findings"
+            echo "::endgroup::"
+          done
