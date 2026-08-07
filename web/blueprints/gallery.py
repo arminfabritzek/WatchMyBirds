@@ -19,7 +19,6 @@ the factory's previous registrations.
 """
 
 import math
-import os
 import re
 from datetime import datetime
 
@@ -31,7 +30,7 @@ from logging_config import get_logger
 from web import view_helpers
 from web.blueprints.auth import login_required
 from web.security import safe_log_value as _slv
-from web.services import db_service, gallery_service
+from web.services import db_service, gallery_service, image_download_service
 
 logger = get_logger(__name__)
 config = get_config()
@@ -274,69 +273,12 @@ def edit_actions_route():
         return redirect(_safe_date_redirect("/edit", safe_date))
 
     elif action == "download":
-        import io
-        import zipfile
-
         from flask import send_file
 
-        from web.services import metadata_export_service as mx
+        zip_buffer = image_download_service.build_download_archive(ids_int)
+        if zip_buffer is None:
+            return redirect(_safe_date_redirect("/edit", safe_date))
 
-        burn_in = mx.burn_in_enabled()
-
-        with db_service.closing_connection() as conn:
-            placeholders = ",".join("?" for _ in ids_int)
-            query = f"""
-                SELECT d.detection_id, i.filename as original_name, i.timestamp
-                FROM detections d
-                JOIN images i ON d.image_filename = i.filename
-                WHERE d.detection_id IN ({placeholders})
-            """
-            rows = conn.execute(query, ids_int).fetchall()
-
-            output_dir = config.get("OUTPUT_DIR", "detections")
-            files_to_zip = []
-
-            seen_images: set[str] = set()
-
-            for r in rows:
-                original_name, ts = r["original_name"], r["timestamp"]
-                if not original_name or not ts:
-                    continue
-                if original_name in seen_images:
-                    continue
-                seen_images.add(original_name)
-
-                date_folder = f"{ts[:4]}-{ts[4:6]}-{ts[6:8]}" if len(ts) >= 8 else ""
-
-                abs_path = os.path.join(
-                    output_dir, "originals", date_folder, original_name
-                )
-                files_to_zip.append((abs_path, original_name, ts))
-
-            if files_to_zip:
-                download_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                filenames = [f[1] for f in files_to_zip]
-                db_service.update_downloaded_timestamp(conn, filenames, download_time)
-
-        zip_buffer = io.BytesIO()
-        with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
-            for abs_path, original_name, ts in files_to_zip:
-                if not os.path.exists(abs_path):
-                    continue
-                if burn_in:
-                    try:
-                        copy_bytes = mx.produce_copy_bytes(original_name)
-                        arcname = mx.export_filename(original_name, ts)
-                        zf.writestr(arcname, copy_bytes)
-                        continue
-                    except Exception:
-                        logger.exception(
-                            "metadata burn-in failed for %s; zipping raw original",
-                            original_name,
-                        )
-                zf.write(abs_path, arcname=original_name)
-
-        zip_buffer.seek(0)
         download_name = f"watchmybirds_{date_iso.replace('-', '')}_download.zip"
         return send_file(
             zip_buffer,

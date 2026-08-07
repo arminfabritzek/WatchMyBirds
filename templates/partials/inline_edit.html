@@ -57,6 +57,8 @@ relabel_selected_onclick='inlineEditRelabel()',
 relabel_filtered_onclick='inlineEditRelabelAllFiltered()',
 relabel_filtered_id='inlineRelabelAllBtn',
 relabel_filtered_hidden=true,
+download_onclick='inlineEditDownload()',
+download_label='Download Selected',
 cancel_onclick='inlineEditCancel()',
 cancel_label='Cancel'
 ) }}
@@ -196,6 +198,67 @@ cancel_label='Cancel'
             const checked = document.querySelectorAll('.inline-edit-checkbox:checked');
             document.getElementById('inlineEditCounter').textContent = checked.length + ' selected';
         }
+
+        // --- Batch Download via Moderation API ---
+        // Not routed through WmBatchActions.runBatchAction: that helper expects
+        // a JSON envelope, and this endpoint answers with a ZIP stream.
+        window.inlineEditDownload = async function () {
+            const selection = WmBatchActions.getExplicitSelection('.inline-edit-checkbox');
+            if (!selection.ids.length) {
+                if (window.wmToast) window.wmToast('Nothing selected', 'info', 2500);
+                return;
+            }
+
+            const btn = document.querySelector('#inlineEditFooter .btn--success');
+            const restoreLabel = btn ? btn.textContent : null;
+            if (btn) {
+                btn.disabled = true;
+                btn.textContent = '⏳ Preparing…';
+            }
+
+            try {
+                // base.html wraps fetch and attaches X-CSRF-Token from the
+                // <meta name="csrf-token"> tag on every non-GET request.
+                const res = await fetch('/api/moderation/bulk/download', {
+                    method: 'POST',
+                    credentials: 'same-origin',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ detection_ids: selection.ids })
+                });
+
+                if (!res.ok) {
+                    const err = await res.json().catch(function () { return {}; });
+                    throw new Error(err.message || ('HTTP ' + res.status));
+                }
+
+                const blob = await res.blob();
+                const disposition = res.headers.get('Content-Disposition') || '';
+                const match = disposition.match(/filename="?([^";]+)"?/);
+                const url = URL.createObjectURL(blob);
+                const link = document.createElement('a');
+                link.href = url;
+                link.download = match ? match[1] : 'watchmybirds_selection.zip';
+                document.body.appendChild(link);
+                link.click();
+                link.remove();
+                URL.revokeObjectURL(url);
+
+                if (window.wmToast) {
+                    window.wmToast(selection.ids.length + ' images downloaded', 'success', 3000);
+                }
+            } catch (e) {
+                if (window.wmToast) {
+                    window.wmToast('Download failed: ' + e.message, 'error', 4000);
+                } else {
+                    alert('Download failed: ' + e.message);
+                }
+            } finally {
+                if (btn) {
+                    btn.disabled = false;
+                    if (restoreLabel) btn.textContent = restoreLabel;
+                }
+            }
+        };
 
         // --- Batch Reject via Moderation API ---
         window.inlineEditTrash = async function () {

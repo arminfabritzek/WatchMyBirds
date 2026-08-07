@@ -5,6 +5,7 @@ Handles all bulk moderation routes:
 - POST /api/moderation/resolve-selection  — Resolve selection to concrete IDs
 - POST /api/moderation/bulk/relabel       — Bulk relabel detections
 - POST /api/moderation/bulk/reject        — Bulk reject detections / review items
+- POST /api/moderation/bulk/download      — ZIP the originals behind a selection
 - POST /api/moderation/bulk/rescan        — Queue async rescan jobs
 - GET  /api/moderation/rescan-jobs/<job_id>/status — Rescan job progress
 - POST /api/moderation/rescan-proposals/<id>/apply — Accept a rescan proposal
@@ -15,14 +16,19 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, jsonify, request, send_file
 
 from config import get_config
 from logging_config import get_logger
 from utils.species_names import build_species_picker_entries
 from web.blueprints.auth import login_required
 from web.security import safe_log_value as _slv
-from web.services import cache_service, db_service, gallery_service
+from web.services import (
+    cache_service,
+    db_service,
+    gallery_service,
+    image_download_service,
+)
 from web.services.filter_service import FilterContext, resolve_filtered_ids
 
 logger = get_logger(__name__)
@@ -290,6 +296,47 @@ def bulk_reject() -> tuple:
             "rejected_detections": rejected_detections,
             "rejected_images": rejected_images,
         }
+    )
+
+
+# ---------------------------------------------------------------------------
+# POST /api/moderation/bulk/download
+# ---------------------------------------------------------------------------
+
+
+@moderation_bp.route("/api/moderation/bulk/download", methods=["POST"])
+@login_required
+def bulk_download():
+    """Return a ZIP of the originals behind the given detections.
+
+    Date-independent, unlike the Gallery edit page's download: the Species
+    view selects across days, so the archive is named for the request date
+    rather than the frames' date.
+
+    Accepts:
+        { detection_ids: [int, ...] }
+    """
+    data = request.get_json() or {}
+    raw_ids = data.get("detection_ids") or data.get("ids") or []
+
+    try:
+        detection_ids = [int(i) for i in raw_ids]
+    except (TypeError, ValueError):
+        return jsonify({"status": "error", "message": "Invalid detection ids"}), 400
+
+    if not detection_ids:
+        return jsonify({"status": "error", "message": "No targets provided"}), 400
+
+    archive = image_download_service.build_download_archive(detection_ids)
+    if archive is None:
+        return jsonify({"status": "error", "message": "No downloadable images"}), 404
+
+    stamp = datetime.now().strftime("%Y%m%d")
+    return send_file(
+        archive,
+        mimetype="application/zip",
+        as_attachment=True,
+        download_name=f"watchmybirds_selection_{stamp}.zip",
     )
 
 
