@@ -44,7 +44,7 @@ no separate `.flake8` / `.isort.cfg` / `pytest.ini` files.
 
 Authority order when they disagree: **`INVARIANTS.md` > `ARCHITECTURE.md` > everything else.** `INVARIANTS.md` is schema-versioned and tracks what is actually enforced; the others are narrative.
 
-- [`docs/INVARIANTS.md`](docs/INVARIANTS.md) — schema-versioned (`v3`)
+- [`docs/INVARIANTS.md`](docs/INVARIANTS.md) — schema-versioned (`v4`)
   list of HARD / SOFT / OBSOLETE invariants. The canonical answer to
   "is this rule actually enforced?" Read first for any cross-cutting
   change.
@@ -62,15 +62,18 @@ Authority order when they disagree: **`INVARIANTS.md` > `ARCHITECTURE.md` > ever
 - [`docs/PRIVACY.md`](docs/PRIVACY.md) — privacy posture (local-only
   by default, opt-in heartbeat only).
 
-## Hard rules (HARD invariants from `INVARIANTS.md v3`)
+## Hard rules (HARD invariants from `INVARIANTS.md v4`)
 
 These are the rules whose violations are detected by tests. If you
 break one, CI catches you.
 
 - **`H-01` Web service import boundary.** `web/services/*.py` may
-  import from `core/*`, stdlib/typing, `config`, `logging_config`,
-  `utils.*`, and other `web.services.*` — **but never from `camera/*`
-  or `detectors/*`**.
+  import from `core/*`, stdlib/typing, `config`, `logging_config`, and
+  other `web.services.*` — **never from `camera/*`, `detectors/*`, or
+  `utils.*`**. Only two grandfathered exceptions exist
+  (`report_scheduler.py` → `utils.daily_report`, `telemetry_service.py`
+  → `utils.settings`); do not add a third. Need a small constant from
+  `utils`? Mirror it locally or route it through `core/`.
 - **`H-02` Core isolation.** `core/*.py` must not import `web/*`,
   `flask`, or `werkzeug`.
 - **`H-03` Detector service isolation.** `detectors/services/*.py`
@@ -156,8 +159,11 @@ a first-class target.
 - Replacing SQLite with a server DB.
 - Cloud storage as the primary tier.
 - Reintroducing Dash.
-- Adding a "manual labeling" workflow to the Review queue (Review
-  corrects, it doesn't enter labels from scratch).
+- Blank-canvas labeling: asking the operator to produce a label on a
+  frame where nothing was proposed. Correcting a proposal — confirm,
+  relabel, reject, drag the offered box — is in scope and is where
+  active work is heading. The line is the blank canvas, not the mouse.
+  See `agent_handoff/THE_FUTURE.md`.
 
 ## Where things live
 

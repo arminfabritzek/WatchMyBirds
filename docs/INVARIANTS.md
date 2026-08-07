@@ -1,4 +1,4 @@
-# INVARIANTS.md v3
+# INVARIANTS.md v4
 
 ## Rule lifecycle
 
@@ -36,10 +36,19 @@ DO:
   - `core/*` (business logic layer)
   - Python stdlib / `typing` modules
   - `config`, `logging_config` (project infrastructure)
-  - `utils.*` (shared utilities)
   - `web.services.*` (intra-package imports, e.g. `db_service`)
 DO NOT:
-- Import `camera/*` or `detectors/*` from `web/services/*.py`.
+- Import `camera/*`, `detectors/*`, or `utils.*` from
+  `web/services/*.py`.
+
+`utils.*` is forbidden, with exactly two grandfathered exceptions
+enumerated in the test: `report_scheduler.py` → `utils.daily_report`
+and `telemetry_service.py` → `utils.settings`. Do not add a third —
+mirror the constant locally or route it through `core/`.
+
+Corrected 2026-07-27: this entry previously listed `utils.*` as
+allowed, contradicting the test that enforces it since 2026-05-26.
+The test is authoritative.
 
 ### H-02 Core Isolation From Web Framework
 DO:
