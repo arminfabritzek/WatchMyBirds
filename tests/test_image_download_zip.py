@@ -24,12 +24,9 @@ from unittest.mock import MagicMock, patch
 import pytest
 from PIL import Image
 
-import config
-from utils import path_manager
+from tests.conftest import reset_config_in_place
 from utils.db import connection as db_connection
 from utils.db import insert_classification, insert_detection, insert_image
-from web.blueprints import gallery as gallery_blueprint
-from web.services import compute_lease_service
 from web.web_interface import create_web_interface
 
 SHARED_COLOUR = (200, 30, 30)
@@ -44,9 +41,7 @@ def _reset_test_config(monkeypatch, tmp_path):
     monkeypatch.setenv("OUTPUT_DIR", str(output_dir))
     monkeypatch.setenv("INGEST_DIR", str(ingest_dir))
     monkeypatch.setenv("EDIT_PASSWORD", "test-password")
-    config._CONFIG = None
-    db_connection._schema_initialized_paths.clear()
-    path_manager._instance = None
+    reset_config_in_place()
     return output_dir
 
 
@@ -139,23 +134,6 @@ def _assert_colour(raw: bytes, expected: tuple[int, int, int]) -> None:
     )
 
 
-@pytest.fixture(autouse=True)
-def _reset_process_globals():
-    """Drop process-global singletons around every test.
-
-    ``PathManager`` caches OUTPUT_DIR on first use, and the burn-in path
-    resolves originals through it rather than through the caller's path —
-    so a stale instance makes one test read the previous test's tmp_path.
-    The compute lease is global too and refuses a second init with a
-    different detection_manager.
-    """
-    compute_lease_service.reset_compute_lease_service_for_testing()
-    path_manager._instance = None
-    yield
-    compute_lease_service.reset_compute_lease_service_for_testing()
-    path_manager._instance = None
-
-
 @pytest.fixture
 def download_app(monkeypatch, tmp_path):
     output_dir = _reset_test_config(monkeypatch, tmp_path)
@@ -175,10 +153,6 @@ def download_app(monkeypatch, tmp_path):
     ):
         app = create_web_interface(detection_manager)
         app.config["TESTING"] = True
-        # gallery.py binds `config = get_config()` at import time, so the
-        # first test to import it would otherwise pin OUTPUT_DIR at its own
-        # tmp_path for the whole process.
-        monkeypatch.setitem(gallery_blueprint.config, "OUTPUT_DIR", str(output_dir))
         yield app, output_dir
 
 
