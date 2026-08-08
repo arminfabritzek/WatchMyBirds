@@ -11,6 +11,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse, urlunparse
 
 from onvif import ONVIFCamera
 from zeep.cache import InMemoryCache
@@ -22,7 +23,52 @@ logger = logging.getLogger(__name__)
 
 # zeep's default SqliteCache fails on hardened containers (root-owned /tmp);
 # InMemoryCache avoids the filesystem. Rationale: camera/network_scanner.py.
-_ZEEP_TRANSPORT = Transport(cache=InMemoryCache())
+#
+# Without a timeout an unreachable host pins the calling thread for the OS
+# SYN-retry budget (~2 min), long enough for tracking commands to pile up.
+_ONVIF_TIMEOUT_SEC = 8
+
+_ZEEP_TRANSPORT = Transport(
+    cache=InMemoryCache(),
+    timeout=_ONVIF_TIMEOUT_SEC,
+    operation_timeout=_ONVIF_TIMEOUT_SEC,
+)
+
+
+def _rewrite_xaddrs_to_host(camera: Any, host: str, port: int) -> int:
+    """Point every advertised service XAddr at ``host``, returning the count.
+
+    ``GetCapabilities`` may report URLs built from an address the camera has
+    configured internally rather than the one it answers on. python-onvif
+    resolves devicemgmt from the host we passed in but takes every other
+    service from those URLs, so a stale entry silently redirects media/ptz
+    calls to an unroutable address. Only the host is replaced — the camera
+    remains the authority on port and path.
+    """
+    xaddrs = getattr(camera, "xaddrs", None)
+    if not xaddrs:
+        return 0
+
+    rewritten = 0
+    for namespace, url in list(xaddrs.items()):
+        try:
+            parsed = urlparse(url)
+            if not parsed.hostname or parsed.hostname == host:
+                continue
+            netloc = f"{host}:{parsed.port or port}"
+            xaddrs[namespace] = urlunparse(parsed._replace(netloc=netloc))
+            rewritten += 1
+        except ValueError:
+            continue
+
+    if rewritten:
+        logger.warning(
+            "Camera %s advertises ONVIF services on a different host; "
+            "rewrote %d XAddr(s) to the configured address",
+            _slv(host),
+            rewritten,
+        )
+    return rewritten
 
 
 @dataclass(frozen=True)
@@ -141,6 +187,7 @@ class PtzClient:
 
         logger.debug("Connecting PTZ client for %s:%s", _slv(self.ip), _slv(self.port))
         self._camera = self._create_camera()
+        _rewrite_xaddrs_to_host(self._camera, self.ip, self.port)
         self._media = self._camera.create_media_service()
         self._ptz = self._camera.create_ptz_service()
 
