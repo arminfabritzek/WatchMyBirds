@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+
+{% block title %}Canonical Dataset{% endblock %}
+
+{% block content %}
+<main class="container py-4 canonical-dataset">
+    <header class="canonical-dataset__header">
+        <div>
+            <p class="canonical-dataset__eyebrow">Expert export</p>
+            <h1>Canonical Dataset</h1>
+            <p>Download the exact human facts and their independently derived OD and CLS views.</p>
+        </div>
+        <a class="btn btn-primary" href="/api/canonical-dataset/download">Download bundle</a>
+    </header>
+
+    <dl class="canonical-dataset__summary">
+        <div><dt>Bundle</dt><dd><code>{{ bundle.bundle_id[:12] }}</code></dd></div>
+        <div><dt>Subjects</dt><dd>{{ bundle.counts.subjects }}</dd></div>
+        <div><dt>Facts</dt><dd>{{ bundle.counts.facts }}</dd></div>
+        <div><dt>Unresolved boxes</dt><dd>{{ bundle.unresolved_detection_ids|length }}</dd></div>
+    </dl>
+
+    <section>
+        <h2>Included decisions</h2>
+        <div class="table-responsive">
+            <table class="table">
+                <thead><tr><th>View</th><th>Image</th><th>Detection</th><th>Reason</th></tr></thead>
+                <tbody>
+                {% for row in included %}
+                    <tr><td>{{ row.view }}</td><td>{{ row.image_filename }}</td><td>{{ row.detection_id or 'image' }}</td><td><code>{{ row.reasons|join(', ') }}</code></td></tr>
+                {% else %}
+                    <tr><td colspan="4">No included samples yet.</td></tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </section>
+
+    <details>
+        <summary>Excluded and unresolved decisions ({{ excluded|length }})</summary>
+        <div class="table-responsive">
+            <table class="table">
+                <thead><tr><th>View</th><th>Image</th><th>Detection</th><th>Reason</th></tr></thead>
+                <tbody>
+                {% for row in excluded %}
+                    <tr><td>{{ row.view }}</td><td>{{ row.image_filename }}</td><td>{{ row.detection_id or 'image' }}</td><td><code>{{ row.reasons|join(', ') }}</code></td></tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </details>
+</main>
+{% endblock %}

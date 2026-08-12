@@ -16,11 +16,8 @@ Three endpoints (all login-required):
   next batch's default ``since`` advances exactly to this one's
   ``until``.
 
-Distinct from ``training_export``: that one is per-detection
-approve-driven (operator picks species and counts in the modal).
-This one is whole-window driven (everything user-labelled since the
-last batch). They can coexist; this endpoint does not retire the older
-export.
+The export is whole-window driven: everything user-labelled since the
+last batch is considered under the service's explicit bucket rules.
 """
 
 from __future__ import annotations
@@ -60,8 +57,7 @@ logger = get_logger(__name__)
 user_groundtruth_export_bp = Blueprint("user_groundtruth_export", __name__)
 
 # Populated at register time so the blueprint has access to shared
-# app services. Mirrors the training_export pattern so tests can
-# inject mock paths without monkey-patching imports.
+# app services so tests can inject mock paths without monkey-patching imports.
 _shared: dict[str, object] = {}
 
 

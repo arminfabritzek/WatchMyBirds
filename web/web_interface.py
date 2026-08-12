@@ -1,6 +1,3 @@
-
-
-
 import logging
 import os
 import secrets
@@ -34,7 +31,6 @@ _best_species_cache: dict = {"timestamp": 0.0, "payload": None}
 
 
 def invalidate_best_species_cache() -> None:
-
 
     _best_species_cache["timestamp"] = 0.0
     _best_species_cache["payload"] = None
@@ -79,8 +75,6 @@ def _compute_ticker_dashboard_stats() -> dict:
             try:
                 stats["total_species"] = _dbs.fetch_gallery_total_species_count(conn)
             except Exception:
-
-
                 _module_logger.debug(
                     "ticker stats: total_species fetch failed", exc_info=True
                 )
@@ -119,9 +113,7 @@ def _compute_ticker_dashboard_stats() -> dict:
 
 def create_web_interface(detection_manager, system_monitor=None):
 
-
     logger = logging.getLogger(__name__)
-
 
     config = get_config()
 
@@ -144,7 +136,6 @@ def create_web_interface(detection_manager, system_monitor=None):
             "EDIT_PASSWORD not set securely in .env or settings.yaml. Access might be restricted or insecure."
         )
 
-
     try:
         from web.services import backup_restore_service
 
@@ -157,15 +148,12 @@ def create_web_interface(detection_manager, system_monitor=None):
     _species_locale = config.get("SPECIES_COMMON_NAME_LOCALE", "DE")
     view_helpers.init_common_names(_species_locale)
 
-
     project_root = os.path.dirname(os.path.dirname(__file__))
     template_folder = os.path.join(project_root, "templates")
     server = Flask(__name__, template_folder=template_folder)
 
-
     Compress(server)
     server.config["COMPRESS_MIMETYPES"] = ["text/html", "application/json"]
-
 
     server.jinja_env.globals["wikipedia_species_url"] = (
         gallery_service.get_species_wikipedia_url
@@ -176,12 +164,9 @@ def create_web_interface(detection_manager, system_monitor=None):
     server.jinja_env.globals["BBOX_REVIEW_CORRECT"] = BBOX_REVIEW_CORRECT
     server.jinja_env.globals["BBOX_REVIEW_WRONG"] = BBOX_REVIEW_WRONG
 
-
     server.config["MAX_CONTENT_LENGTH"] = 10 * 1024 * 1024 * 1024
 
-
     def _load_or_create_secret_key(key_file: Path) -> str:
-
 
         if key_file.exists():
             return key_file.read_text().strip()
@@ -204,7 +189,6 @@ def create_web_interface(detection_manager, system_monitor=None):
     server.config["SESSION_COOKIE_HTTPONLY"] = True
     server.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 
-
     from utils.deploy_info import read_build_metadata as _read_build_metadata
 
     _footer_meta = _read_build_metadata()
@@ -217,11 +201,9 @@ def create_web_interface(detection_manager, system_monitor=None):
         else _footer_meta["build_date"][:10]
     )
 
-
     @server.context_processor
     def inject_security_context():
         from web.services import auth_service as _auth
-
 
         if "_csrf_token" not in session:
             session["_csrf_token"] = secrets.token_hex(32)
@@ -235,18 +217,12 @@ def create_web_interface(detection_manager, system_monitor=None):
             "is_authenticated": is_authenticated,
             "can_moderate": is_authenticated,
             "station_name": str(config.get("STATION_NAME", "")),
-
-
             "ticker_dashboard_stats": _compute_ticker_dashboard_stats(),
-
-
             "footer_commit": _footer_commit,
             "footer_build_date": _footer_build_date,
         }
 
-
     _CSRF_EXEMPT_PATHS = frozenset()
-
 
     @server.before_request
     def check_csrf_token():
@@ -255,16 +231,13 @@ def create_web_interface(detection_manager, system_monitor=None):
         if request.path in _CSRF_EXEMPT_PATHS:
             return
 
-
         token = request.form.get("_csrf_token") or request.headers.get("X-CSRF-Token")
         if not token or token != session.get("_csrf_token"):
             from flask import abort
 
             abort(403)
 
-
     server.register_blueprint(auth_bp)
-
 
     from web.blueprints.api_v1 import init_api_v1
 
@@ -282,99 +255,72 @@ def create_web_interface(detection_manager, system_monitor=None):
         on_runtime_settings_applied=_on_runtime_settings_applied,
     )
 
-
     from web.blueprints.media import media_bp
 
     server.register_blueprint(media_bp)
-
 
     from web.blueprints.onvif_ingest import init_onvif_ingest_bp, onvif_ingest_bp
 
     init_onvif_ingest_bp(detection_manager=detection_manager)
     server.register_blueprint(onvif_ingest_bp)
 
-
     from web.blueprints.cameras import cameras_bp, init_cameras_bp
 
     init_cameras_bp(detection_manager=detection_manager)
     server.register_blueprint(cameras_bp)
-
 
     from web.blueprints.system import init_system_bp, system_bp
 
     init_system_bp(detection_manager=detection_manager)
     server.register_blueprint(system_bp)
 
-
     from web.blueprints.stream import init_stream_bp, stream_bp
 
     init_stream_bp(detection_manager=detection_manager)
     server.register_blueprint(stream_bp)
 
-
     from web.blueprints.pages import pages_bp
 
     server.register_blueprint(pages_bp)
-
 
     from web.blueprints.gallery import gallery_bp, init_gallery_bp
 
     init_gallery_bp(detection_manager=detection_manager)
     server.register_blueprint(gallery_bp)
 
-
     from web.blueprints.trash import trash_bp
 
     server.register_blueprint(trash_bp)
-
 
     from web.blueprints.live_stream import live_stream_bp
 
     server.register_blueprint(live_stream_bp)
 
-
     from web.blueprints.review import review_bp
 
     server.register_blueprint(review_bp)
-
 
     from web.blueprints.inbox import inbox_bp, init_inbox_bp
 
     init_inbox_bp(detection_manager)
     server.register_blueprint(inbox_bp)
 
-
     from web.blueprints.analytics import analytics_bp
 
     server.register_blueprint(analytics_bp)
-
 
     from web.blueprints.backup import backup_bp, init_backup_bp
 
     init_backup_bp(detection_manager)
     server.register_blueprint(backup_bp)
 
-
     from web.blueprints.moderation import moderation_bp
 
     server.register_blueprint(moderation_bp)
 
-
     from utils.deploy_info import read_build_metadata
-    from web.blueprints.training_export import (
-        init_training_export_bp,
-        training_export_bp,
-    )
-
 
     _build_meta = read_build_metadata()
-    init_training_export_bp(
-        output_dir=output_dir,
-        app_config=config,
-        app_version=str(_build_meta.get("app_version") or ""),
-    )
-    server.register_blueprint(training_export_bp)
-
 
     from web.blueprints.user_groundtruth_export import (
         init_user_groundtruth_export_bp,
@@ -386,6 +332,14 @@ def create_web_interface(detection_manager, system_monitor=None):
         app_version=str(_build_meta.get("app_version") or ""),
     )
     server.register_blueprint(user_groundtruth_export_bp)
+
+    from web.blueprints.canonical_dataset import (
+        canonical_dataset_bp,
+        init_canonical_dataset_bp,
+    )
+
+    init_canonical_dataset_bp(output_dir=output_dir)
+    server.register_blueprint(canonical_dataset_bp)
 
     from web.blueprints.human_labels import (
         human_labels_bp,
@@ -441,16 +395,12 @@ def create_web_interface(detection_manager, system_monitor=None):
     except Exception as exc:
         logger.error("Companion v1 backend registration failed: %s", exc, exc_info=True)
 
-
-
-
     from web.blueprints.index import index_bp, init_index_bp
 
     init_index_bp(detection_manager=detection_manager)
     server.register_blueprint(index_bp)
 
     security_logger = logging.getLogger("security.access")
-
 
     _LOG_SKIP_PREFIXES = (
         "/assets/",
@@ -466,7 +416,6 @@ def create_web_interface(detection_manager, system_monitor=None):
         "/api/v1/cameras",
         "/healthz",
         "/logs",
-
         "/api/inbox/status",
         "/api/v1/system/backup/status",
         "/api/v1/system/backup/format/status",
@@ -481,7 +430,6 @@ def create_web_interface(detection_manager, system_monitor=None):
     def log_request(response):
         if not request.path.startswith(_LOG_SKIP_PREFIXES):
             authenticated = session.get("authenticated")
-
 
             is_routine_get = (
                 authenticated
@@ -498,7 +446,6 @@ def create_web_interface(detection_manager, system_monitor=None):
                 "authenticated" if authenticated else "anonymous",
             )
         return response
-
 
     @server.after_request
     def set_security_headers(response):
@@ -519,6 +466,5 @@ def create_web_interface(detection_manager, system_monitor=None):
             "frame-ancestors 'none';"
         )
         return response
-
 
     return server

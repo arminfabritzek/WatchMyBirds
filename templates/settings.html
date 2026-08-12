@@ -2067,18 +2067,6 @@
                         <input type="text" name="EDIT_PASSWORD" id="EDIT_PASSWORD" class="form-control" value="{{ payload['EDIT_PASSWORD'].value }}">
                     </div>
                 </div>
-                <div class="col-md-6">
-                    <div class="settings-field">
-                        <label for="TRAINING_EXPORT_AUTO_OPT_IN" class="settings-field__label">Auto-Queue Approvals for Training</label>
-                        <select name="TRAINING_EXPORT_AUTO_OPT_IN" id="TRAINING_EXPORT_AUTO_OPT_IN" class="form-select">
-                            <option value="true" {% if payload.get('TRAINING_EXPORT_AUTO_OPT_IN', {}).get('value', False) %}selected{% endif %}>Enabled (Feed approved events into the training pool)</option>
-                            <option value="false" {% if not payload.get('TRAINING_EXPORT_AUTO_OPT_IN', {}).get('value', False) %}selected{% endif %}>Disabled</option>
-                        </select>
-                        <div class="settings-field__help">
-                            When on, every Approve-event click in the review queue also queues the detections for the next training export batch. Visible in <a href="/admin/export">/admin/export</a>.
-                        </div>
-                    </div>
-                </div>
                 {# Theme toggle — pure client-side, persisted in localStorage.
                    No backend round-trip: base.html hydrates the attribute
                    from localStorage before first paint. The three buttons

@@ -42,8 +42,8 @@
             href="/admin/review">
             Review
         </a>
-        <a class="app-bar__link app-bar__link--secondary{% if current_path in ['/admin/groundtruth-export', '/admin/export'] %} active{% endif %}"
-            href="/admin/groundtruth-export" title="Export user-reviewed groundtruth for model training">
+        <a class="app-bar__link app-bar__link--secondary{% if current_path == '/admin/canonical-dataset' %} active{% endif %}"
+            href="/admin/canonical-dataset" title="Inspect and download the canonical correction bundle">
             Export
         </a>
         <a class="app-bar__link app-bar__link--secondary{% if current_path == '/trash' %} active{% endif %}"

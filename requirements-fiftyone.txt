@@ -1,0 +1,2 @@
+# Optional developer-workstation dataset QA. Never installed on the RPi/runtime lane.
+fiftyone==1.19.0

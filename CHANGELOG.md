@@ -9,6 +9,10 @@
 - Direct bounding-box correction lets reviewers drag an offered box while
   preserving canonical human facts, detection presence, and refreshed crops
   for downstream training.
+- Canonical training bundles replace the legacy export pool with
+  schema-versioned OD, classifier, and negative views, explicit inclusion
+  reasons, and an optional FiftyOne inspection workflow.
+
 ### Fixed
 
 - Trash and rejected crops no longer create whole-image bird-absent labels;

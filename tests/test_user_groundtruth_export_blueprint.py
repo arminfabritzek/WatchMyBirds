@@ -232,7 +232,7 @@ def test_dry_run_page_requires_auth(unauth_client):
     assert r.status_code in (302, 401, 403)
 
 
-def test_appbar_export_link_points_to_groundtruth_export():
+def test_appbar_export_link_points_to_canonical_dataset():
     content = (
         Path(__file__).resolve().parent.parent
         / "templates"
@@ -240,27 +240,18 @@ def test_appbar_export_link_points_to_groundtruth_export():
         / "appbar.html"
     ).read_text(encoding="utf-8")
 
-    assert 'href="/admin/groundtruth-export"' in content
-    assert "Export user-reviewed groundtruth for model training" in content
-    assert "current_path in ['/admin/groundtruth-export', '/admin/export']" in content
+    assert 'href="/admin/canonical-dataset"' in content
+    assert "Inspect and download the canonical correction bundle" in content
+    assert "current_path == '/admin/canonical-dataset'" in content
 
 
-def test_legacy_training_export_links_to_new_groundtruth_export():
-    content = (
-        Path(__file__).resolve().parent.parent / "templates" / "training_export.html"
-    ).read_text(encoding="utf-8")
-
-    assert 'href="/admin/groundtruth-export"' in content
-    assert "New groundtruth export" in content
-
-
-def test_legacy_review_export_button_points_to_groundtruth_export():
+def test_review_export_button_points_to_canonical_dataset():
     content = (
         Path(__file__).resolve().parent.parent / "templates" / "orphans.html"
     ).read_text(encoding="utf-8")
 
-    assert 'href="/admin/groundtruth-export"' in content
-    assert "Export user-reviewed groundtruth for model training" in content
+    assert 'href="/admin/canonical-dataset"' in content
+    assert "Inspect and download the canonical correction bundle" in content
 
 
 def test_groundtruth_export_page_links_to_dry_run():

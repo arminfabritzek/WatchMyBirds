@@ -177,11 +177,11 @@
                         <button type="button"
                             class="review-stage-panel__toggle{% if orphan.selected_bbox_review == BBOX_REVIEW_CORRECT %} is-correct{% elif orphan.selected_bbox_review == BBOX_REVIEW_WRONG %} is-wrong{% endif %}"
                             data-bbox-review-toggle
-                            data-bbox-review-value="{{ orphan.selected_bbox_review or BBOX_REVIEW_CORRECT }}"
+                            data-bbox-review-value="{{ orphan.selected_bbox_review or '' }}"
                             aria-label="Toggle bbox review state">
                             <span class="review-stage-panel__toggle-title">BBox</span>
                             <span class="review-stage-panel__toggle-copy" data-bbox-review-copy>
-                                {% if orphan.selected_bbox_review == BBOX_REVIEW_WRONG %}Wrong{% else %}Correct{% endif %}
+                                {% if orphan.selected_bbox_review == BBOX_REVIEW_WRONG %}Wrong{% elif orphan.selected_bbox_review == BBOX_REVIEW_CORRECT %}Correct{% else %}Unreviewed{% endif %}
                             </span>
                         </button>
                     </div>

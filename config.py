@@ -230,10 +230,6 @@ DEFAULTS = {
     # original. Off restores the verbatim-original download. Runtime
     # (live-editable in Settings), not a boot ENV like EXIF_GPS_ENABLED.
     "EXPORT_BURN_IN_METADATA": True,
-    # When True, every "Approve event" click in the review queue also
-    # marks its detections as pending training-export. Off by default
-    # so the export pool only grows deliberately.
-    "TRAINING_EXPORT_AUTO_OPT_IN": False,
     # Artifact retention (full-resolution originals only); ships OFF.
     # RETENTION_POSTURE is the authority; the booleans below are derived from
     # it at decision time (resolve_posture_settings) and kept for backcompat.
@@ -356,7 +352,6 @@ RUNTIME_KEYS = {
     "MOTION_DETECTION_ENABLED",
     "MOTION_SENSITIVITY",
     "SPECIES_COMMON_NAME_LOCALE",
-    "TRAINING_EXPORT_AUTO_OPT_IN",
     # Burst-cap (Filter B) keys. Both are read live every detection cycle
     # from self.config in DetectionManager._burst_admit(), so UI changes
     # take effect on the next detection — no restart needed.
@@ -1177,7 +1172,6 @@ def _validate_value(key: str, value: Any) -> tuple[bool, Any]:
         "DEBUG_MODE",
         "EXIF_GPS_ENABLED",
         "EXPORT_BURN_IN_METADATA",
-        "TRAINING_EXPORT_AUTO_OPT_IN",
         "NON_BIRD_DROP_BELOW_CONFIRM",
         "PTZ_TRACKING_OVERLAY_ENABLED",
         "RETENTION_ENABLED",

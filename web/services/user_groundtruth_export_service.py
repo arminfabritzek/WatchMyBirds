@@ -28,8 +28,7 @@ unusable for box-supervised training.
 Frame-integrity policy: every frame that ships gets ALL its active
 detections included in the COCO annotations, regardless of whether
 the sibling detections individually qualified for a bucket. This
-matches the existing ``training_export_service`` policy (avoids
-training on a partial-box scene) and keeps the COCO file
+avoids training on a partial-box scene and keeps the COCO file
 self-consistent with the bird-detector's actual frame output.
 
 Batch construction is read-only against the live ``detections``/
@@ -1111,8 +1110,7 @@ operator.
 ## What is NOT in this batch
 
 - Detections that the pipeline confirmed as species but the user
-  never touched: those flow via the older `training_export` path
-  if you still consume it.
+  never touched: excluded because they are not human ground truth.
 - Bbox corrections (`manual_bbox_review`): not included yet — current
   batches use the original detector geometry.
 - Detections from frames the user later deleted (Trash): excluded
