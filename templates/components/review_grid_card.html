@@ -111,9 +111,9 @@
            label-selection` pair plus matching tooltip text. The JS
            handler getCardScopeIds() flips between the two based on
            whether any tile checkbox in the card is checked. The
-           Mark No Bird button uses an outline+warning style to stay
-           visually distinct from the filled-red Trash button — they
-           are semantically different (training signal vs. housekeeping). #}
+           No birds in full image uses an outline+warning style to stay
+           visually distinct from the filled-red Trash button — one records a
+           whole-image answer while the other is housekeeping. #}
         <div class="review-grid__card-actions">
             <button type="button"
                     class="btn btn--secondary btn--sm review-grid__card-invert"
@@ -146,21 +146,21 @@
                     class="btn btn--outline-warning btn--sm review-grid__card-no-bird"
                     data-review-grid-action="no_bird_event"
                     data-event-key="{{ event.event_key }}"
-                    data-scope-label-event="✗ No Bird"
-                    data-scope-label-selection="✗ No Bird ({N})"
-                    data-scope-tip-event="Mark every image in this event as No Bird — training signal for the detector (distinct from Trash housekeeping)"
-                    data-scope-tip-selection="Mark the {N} selected image(s) as No Bird — training signal (distinct from Trash)"
-                    {% if _review_members | length == 0 %}disabled title="No actionable frames to mark"{% else %}title="Mark every image in this event as No Bird — training signal for the detector (distinct from Trash housekeeping)"{% endif %}
-                    aria-label="Mark event as No Bird">✗ No Bird</button>
+                    data-scope-label-event="✗ No birds in full image"
+                    data-scope-label-selection="✗ No birds in full image ({N})"
+                    data-scope-tip-event="Record every whole image in this event as containing no bird (distinct from Trash)"
+                    data-scope-tip-selection="Record the {N} selected whole image(s) as containing no bird (distinct from Trash)"
+                    {% if _review_members | length == 0 %}disabled title="No actionable frames to mark"{% else %}title="Record every whole image in this event as containing no bird (distinct from Trash)"{% endif %}
+                    aria-label="No birds in full event images">✗ No birds in full image</button>
             <button type="button"
                     class="btn btn--danger btn--sm review-grid__card-trash"
                     data-review-grid-action="trash_event"
                     data-event-key="{{ event.event_key }}"
                     data-scope-label-event="🗑 Trash"
                     data-scope-label-selection="🗑 Trash ({N})"
-                    data-scope-tip-event="Move every actionable frame in this event to Trash (housekeeping — distinct from Mark No Bird training signal)"
-                    data-scope-tip-selection="Move the {N} selected frame(s) to Trash (housekeeping — distinct from Mark No Bird training signal)"
-                    title="Move every actionable frame in this event to Trash (housekeeping — distinct from Mark No Bird training signal)"
+                    data-scope-tip-event="Move every actionable frame in this event to Trash (not a no-bird label)"
+                    data-scope-tip-selection="Move the {N} selected frame(s) to Trash (not a no-bird label)"
+                    title="Move every actionable frame in this event to Trash (not a no-bird label)"
                     aria-label="Move event to Trash">🗑 Trash</button>
         </div>
     </header>

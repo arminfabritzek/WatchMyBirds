@@ -47,14 +47,28 @@ def app():
 
 @pytest.fixture
 def client(app):
-    with app.test_client() as client:
+    with (
+        patch(
+            "web.blueprints.review.human_label_service.record_answer",
+            return_value=[1],
+        ) as label_recorder,
+        app.test_client() as client,
+    ):
+        app.extensions["human_label_recorder"] = label_recorder
         with client.session_transaction() as sess:
             sess["authenticated"] = True
         yield client
 
 
+def _label_recorder(client):
+    return client.application.extensions["human_label_recorder"]
+
+
 def test_review_decision_accepts_trash_alias(client):
     mock_conn = MagicMock()
+    mock_conn.execute.return_value.fetchall.return_value = [
+        {"detection_id": 17, "image_filename": "review-item.jpg"}
+    ]
 
     with patch("web.blueprints.review.db_service") as mock_db:
         mock_db.get_connection.return_value = mock_conn
@@ -69,10 +83,9 @@ def test_review_decision_accepts_trash_alias(client):
     data = response.get_json()
     assert data["status"] == "success"
     assert data["action"] == "trash"
-    assert data["review_status"] == "no_bird"
-    mock_db.update_review_status.assert_called_once_with(
-        mock_conn, ["review-item.jpg"], "no_bird"
-    )
+    assert data["review_status"] is None
+    mock_db.reject_detections.assert_called_once_with(mock_conn, [17])
+    _label_recorder(client).assert_not_called()
     mock_conn.close.assert_called_once()
 
 
@@ -200,10 +213,10 @@ def test_review_approve_confirms_after_manual_species_and_bbox(client):
     mock_db.update_review_status.assert_called_once_with(
         mock_conn, ["review-item.jpg"], "confirmed_bird"
     )
-    executed_sql = "\n".join(
-        str(call.args[0]) for call in mock_conn.execute.call_args_list
-    )
-    assert "decision_level = 'species'" in executed_sql
+    answer = _label_recorder(client).call_args.args[1]
+    assert answer.object_bird_presence == "present"
+    assert answer.bbox_quality == "suitable"
+    assert answer.species_key == "Parus_major"
     mock_invalidate.assert_called_once()
 
 
@@ -435,17 +448,13 @@ def test_review_event_approve_confirms_event_and_recomputes_gallery_visibility(c
     data = response.get_json()
     assert data["status"] == "success"
     assert data["gallery_visible_filenames"] == ["review-item.jpg"]
-    mock_db.apply_species_override_many.assert_called_once_with(
-        mock_conn, [17], "Parus_major", "manual"
-    )
-    mock_db.set_manual_bbox_review.assert_called_once_with(mock_conn, 17, "correct")
+    answer = _label_recorder(client).call_args.args[1]
+    assert answer.detection_id == 17
+    assert answer.species_key == "Parus_major"
+    assert answer.bbox_quality == "suitable"
     mock_db.update_review_status.assert_called_once_with(
         mock_conn, ["review-item.jpg"], "confirmed_bird"
     )
-    executed_sql = "\n".join(
-        str(call.args[0]) for call in mock_conn.execute.call_args_list
-    )
-    assert "decision_level = 'species'" in executed_sql
     mock_invalidate.assert_called_once()
 
 
@@ -814,10 +823,10 @@ def test_review_event_approve_ignores_gallery_anchors_for_event_payload(client):
     data = response.get_json()
     assert data["status"] == "success"
     assert data["detection_ids"] == [17]
-    mock_db.apply_species_override_many.assert_called_once_with(
-        mock_conn, [17], "Parus_major", "manual"
-    )
-    mock_db.set_manual_bbox_review.assert_called_once_with(mock_conn, 17, "correct")
+    answer = _label_recorder(client).call_args.args[1]
+    assert answer.detection_id == 17
+    assert answer.species_key == "Parus_major"
+    assert answer.bbox_quality == "suitable"
 
 
 def test_review_event_approve_allows_user_selected_species_override(client):
@@ -875,9 +884,7 @@ def test_review_event_approve_allows_user_selected_species_override(client):
     assert response.status_code == 200
     data = response.get_json()
     assert data["status"] == "success"
-    mock_db.apply_species_override_many.assert_called_once_with(
-        mock_conn, [17], "Parus_major", "manual"
-    )
+    assert _label_recorder(client).call_args.args[1].species_key == "Parus_major"
 
 
 def test_review_event_approve_preserves_per_frame_manual_species(client):
@@ -969,14 +976,14 @@ def test_review_event_approve_preserves_per_frame_manual_species(client):
     assert response.status_code == 200
     data = response.get_json()
     assert data["status"] == "success"
-    # Only the non-manual frames (17, 18) get stamped with the event species.
-    # The manually-relabeled frames (19, 20) keep their per-frame override.
-    mock_db.apply_species_override_many.assert_called_once_with(
-        mock_conn, [17, 18], "Columba_livia", "manual"
-    )
-    # BBox review is an event-level decision and applies to every frame.
-    bbox_calls = [call.args[1] for call in mock_db.set_manual_bbox_review.call_args_list]
-    assert sorted(bbox_calls) == [17, 18, 19, 20]
+    answers = [call.args[1] for call in _label_recorder(client).call_args_list]
+    assert [answer.species_key for answer in answers] == [
+        "Columba_livia",
+        "Columba_livia",
+        "Felis_catus",
+        "Felis_catus",
+    ]
+    assert all(answer.bbox_quality == "suitable" for answer in answers)
 
 
 def test_review_event_trash_moves_images_without_active_detections_to_trash(client):
@@ -1019,12 +1026,14 @@ def test_review_event_trash_moves_images_without_active_detections_to_trash(clie
     assert response.status_code == 200
     data = response.get_json()
     assert data["status"] == "success"
-    assert data["review_status_by_filename"]["review-item.jpg"] == "no_bird"
-    assert data["trash_filenames"] == ["review-item.jpg"]
-    assert "no active detections left" in data["message"]
+    assert data["review_status_by_filename"]["review-item.jpg"] == "untagged"
+    assert data["trash_filenames"] == []
+    assert data["review_filenames"] == ["review-item.jpg"]
+    assert "explicit full-image answer" in data["message"]
+    _label_recorder(client).assert_not_called()
     mock_db.reject_detections.assert_called_once_with(mock_conn, [17])
     mock_db.update_review_status.assert_called_once_with(
-        mock_conn, ["review-item.jpg"], "no_bird"
+        mock_conn, ["review-item.jpg"], "untagged"
     )
     mock_invalidate.assert_called_once()
 
@@ -1074,6 +1083,7 @@ def test_review_event_trash_keeps_images_in_review_when_active_detections_remain
     assert data["review_status_by_filename"]["review-item.jpg"] == "untagged"
     assert data["trash_filenames"] == []
     assert data["review_filenames"] == ["review-item.jpg"]
+    _label_recorder(client).assert_not_called()
     mock_db.reject_detections.assert_called_once_with(mock_conn, [17])
     mock_db.update_review_status.assert_not_called()
 
@@ -1199,10 +1209,9 @@ def test_review_event_approve_batch_confirms_actionable_ids_without_event_key(cl
     assert data["status"] == "success"
     assert data["event_key"] is None
     assert sorted(data["detection_ids"]) == [17, 18]
-    mock_db.apply_species_override_many.assert_called_once_with(
-        mock_conn, [17, 18], "Pica_pica", "manual"
-    )
-    assert mock_db.set_manual_bbox_review.call_count == 2
+    answers = [call.args[1] for call in _label_recorder(client).call_args_list]
+    assert [answer.detection_id for answer in answers] == [17, 18]
+    assert all(answer.species_key == "Pica_pica" for answer in answers)
 
 
 # ---------------------------------------------------------------------------
@@ -1398,16 +1407,12 @@ def test_review_event_resolve_commits_keep_and_trash_in_one_call(client):
     assert data["keep_detection_ids"] == [17]
     assert data["trash_detection_ids"] == [18]
 
-    # Keep ids get species override; trash ids go through reject_detections.
-    mock_db.apply_species_override_many.assert_called_once_with(
-        mock_conn, [17], "Columba_palumbus", "manual"
-    )
-    mock_db.set_manual_bbox_review.assert_called_once_with(mock_conn, 17, "correct")
+    answers = [call.args[1] for call in _label_recorder(client).call_args_list]
+    assert answers[0].detection_id == 17
+    assert answers[0].object_bird_presence == "present"
+    assert answers[0].species_key == "Columba_palumbus"
+    assert len(answers) == 1
     mock_db.reject_detections.assert_called_once_with(mock_conn, [18])
-    executed_sql = "\n".join(
-        str(call.args[0]) for call in mock_conn.execute.call_args_list
-    )
-    assert "decision_level = 'species'" in executed_sql
     mock_invalidate.assert_called_once()
 
 
@@ -1596,15 +1601,12 @@ def test_review_event_resolve_preserves_per_frame_manual_override(client):
     data = response.get_json()
     assert data["status"] == "success"
 
-    # Only frame 18 (no prior manual override) should be stamped with
-    # the event-level species. Frame 17 keeps Columba_palumbus.
-    mock_db.apply_species_override_many.assert_called_once_with(
-        mock_conn, [18], "Pica_pica", "manual"
-    )
-    # bbox_review still applies to every keep frame regardless.
-    bbox_calls = mock_db.set_manual_bbox_review.call_args_list
-    bbox_ids = sorted(call.args[1] for call in bbox_calls)
-    assert bbox_ids == [17, 18]
+    answers = [call.args[1] for call in _label_recorder(client).call_args_list]
+    assert [answer.species_key for answer in answers] == [
+        "Columba_palumbus",
+        "Pica_pica",
+    ]
+    assert all(answer.bbox_quality == "suitable" for answer in answers)
 
 
 def test_review_event_resolve_preserves_override_when_all_keeps_are_manual(client):

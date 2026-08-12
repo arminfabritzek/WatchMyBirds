@@ -22,6 +22,7 @@ from flask import Blueprint, abort, jsonify, render_template, request, send_file
 
 from config import get_config
 from core.events import build_bird_events
+from core.human_label_core import HumanAnswer
 from logging_config import get_logger
 from utils.db import fetch_sibling_detections
 from utils.db.detections import table_columns
@@ -47,6 +48,7 @@ from web.services import (
     cache_service,
     db_service,
     gallery_service,
+    human_label_service,
     path_service,
     review_cleanup_service,
 )
@@ -674,12 +676,10 @@ def _build_review_item(
     selected_bbox_review = (
         manual_bbox_review
         if manual_bbox_review in VALID_BBOX_REVIEW_STATES
-        else (BBOX_REVIEW_CORRECT if best_detection_id else None)
+        else None
     )
     selected_bbox_review_origin = (
-        "manual"
-        if manual_bbox_review in VALID_BBOX_REVIEW_STATES
-        else ("default" if best_detection_id else None)
+        "manual" if manual_bbox_review in VALID_BBOX_REVIEW_STATES else None
     )
 
     thumb_url = f"/api/review-thumb/{filename}"
@@ -1300,7 +1300,7 @@ def _build_review_event(
         )
     )
     event_payload["members"] = members
-    event_payload["event_bbox_review"] = BBOX_REVIEW_CORRECT
+    event_payload["event_bbox_review"] = None
     return event_payload
 
 
@@ -1789,8 +1789,24 @@ def _refresh_review_image_visibility(
     ).fetchone()[0]
 
     if active_count == 0:
-        db_service.update_review_status(conn, [filename], REVIEW_STATUS_NO_BIRD)
-        return REVIEW_STATUS_NO_BIRD
+        image_fact = conn.execute(
+            """
+            SELECT answer_value
+            FROM current_human_label_facts
+            WHERE scope = 'image'
+              AND image_filename = ?
+              AND fact_type = 'bird_presence'
+            """,
+            (filename,),
+        ).fetchone()
+        if image_fact and image_fact[0] == "absent":
+            review_status = REVIEW_STATUS_NO_BIRD
+        elif image_fact and image_fact[0] == "present":
+            review_status = REVIEW_STATUS_CONFIRMED_BIRD
+        else:
+            review_status = REVIEW_STATUS_UNTAGGED
+        db_service.update_review_status(conn, [filename], review_status)
+        return review_status
 
     ex_unclear_predicate = _ex_unclear_predicate_sql(table_columns(conn, "detections"))
     unresolved = conn.execute(
@@ -2105,7 +2121,8 @@ def review_decision():
     Payload: { filenames: [...], action: "confirm" | "trash" | "no_bird" | "skip" }
 
     - confirm -> review_status = 'confirmed_bird'
-    - trash/no_bird -> review_status = 'no_bird' (soft-trash, no file deletion)
+    - trash -> reject active detections only (housekeeping, no training fact)
+    - no_bird -> review_status = 'no_bird' (explicit training fact)
     - skip -> no change
 
     Only updates images with review_status = 'untagged' (no way back).
@@ -2138,10 +2155,37 @@ def review_decision():
 
         requested_action = action
 
+        if action == "trash":
+            conn = db_service.get_connection()
+            try:
+                placeholders = ",".join("?" for _ in filenames)
+                rows = conn.execute(
+                    f"""
+                    SELECT detection_id, image_filename
+                    FROM detections
+                    WHERE image_filename IN ({placeholders})
+                      AND COALESCE(status, 'active') = 'active'
+                    """,
+                    filenames,
+                ).fetchall()
+                detection_ids = [int(row["detection_id"]) for row in rows]
+                db_service.reject_detections(conn, detection_ids)
+            finally:
+                conn.close()
+
+            gallery_service.invalidate_cache()
+            return jsonify(
+                {
+                    "status": "success",
+                    "updated": len(detection_ids),
+                    "action": requested_action,
+                    "review_status": None,
+                }
+            )
+
         # Map action to review_status
         status_map = {
             "confirm": REVIEW_STATUS_CONFIRMED_BIRD,
-            "trash": REVIEW_STATUS_NO_BIRD,
             "no_bird": REVIEW_STATUS_NO_BIRD,
         }
         new_status = status_map[action]
@@ -2180,7 +2224,28 @@ def review_decision():
                         409,
                     )
 
-            updated = db_service.update_review_status(conn, filenames, new_status)
+            placeholders = ",".join("?" for _ in filenames)
+            eligible_rows = conn.execute(
+                f"""
+                SELECT filename
+                FROM images
+                WHERE filename IN ({placeholders})
+                  AND (review_status IS NULL OR review_status = 'untagged')
+                """,
+                filenames,
+            ).fetchall()
+            presence = "present" if action == "confirm" else "absent"
+            for row in eligible_rows:
+                human_label_service.record_answer(
+                    conn,
+                    HumanAnswer(
+                        image_filename=str(row["filename"]),
+                        image_bird_presence=presence,
+                    ),
+                    source_ref=f"review-decision:{action}",
+                )
+            conn.commit()
+            updated = len(eligible_rows)
         finally:
             conn.close()
 
@@ -2276,7 +2341,27 @@ def update_bbox_review_state():
                     ),
                     404,
                 )
-            db_service.set_manual_bbox_review(conn, detection_id, bbox_review)
+            if bbox_review is None:
+                human_label_service.retract_bbox_quality(
+                    conn,
+                    image_filename=filename,
+                    detection_id=detection_id,
+                    source_ref="review:bbox-review-clear",
+                )
+            else:
+                human_label_service.record_answer(
+                    conn,
+                    HumanAnswer(
+                        image_filename=filename,
+                        detection_id=detection_id,
+                        bbox_quality=(
+                            "suitable"
+                            if bbox_review == BBOX_REVIEW_CORRECT
+                            else "unsuitable"
+                        ),
+                    ),
+                    source_ref="review:bbox-review",
+                )
 
         return jsonify(
             {
@@ -2353,36 +2438,23 @@ def review_quick_species():
                     400,
                 )
 
-            db_service.apply_species_override(conn, detection_id, species, "manual")
-            if bbox_review is not None:
-                db_service.set_manual_bbox_review(conn, detection_id, bbox_review)
-
-            conn.execute(
-                """
-                UPDATE detections
-                SET decision_state = 'confirmed',
-                    decision_level = 'species'
-                WHERE detection_id = ?
-                  AND COALESCE(status, 'active') = 'active'
-                """,
-                (detection_id,),
+            human_label_service.record_answer(
+                conn,
+                HumanAnswer(
+                    image_filename=filename,
+                    detection_id=detection_id,
+                    bbox_quality=(
+                        "suitable"
+                        if bbox_review == BBOX_REVIEW_CORRECT
+                        else "unsuitable"
+                        if bbox_review is not None
+                        else None
+                    ),
+                    species_identity="corrected",
+                    species_key=species,
+                ),
+                source_ref="review:quick-species",
             )
-            conn.commit()
-
-            # Auto-opt-in for the training pool. The strict predicate
-            # (species override AND bbox=correct) only holds when the
-            # operator also flipped bbox to 'correct' in this same
-            # call — so we gate the opt-in on that. Skipping the pool
-            # here keeps the dev from receiving rows where the bbox
-            # never got human confirmation.
-            if bbox_review == "correct":
-                from web.services.training_export_service import (
-                    auto_opt_in_if_enabled,
-                )
-
-                auto_opt_in_if_enabled(
-                    conn, [detection_id], config, source_tag="quick_species"
-                )
 
         gallery_service.invalidate_cache()
 
@@ -2486,40 +2558,22 @@ def review_approve():
                     404,
                 )
 
-            if (
-                row["manual_species_override"] != species
-                or row["species_source"] != "manual"
-            ):
-                db_service.apply_species_override(conn, detection_id, species, "manual")
-
-            if row["manual_bbox_review"] != bbox_review:
-                db_service.set_manual_bbox_review(conn, detection_id, bbox_review)
-
-            conn.execute(
-                """
-                UPDATE detections
-                SET decision_state = 'confirmed',
-                    decision_level = 'species'
-                WHERE detection_id = ?
-                  AND image_filename = ?
-                  AND COALESCE(status, 'active') = 'active'
-                """,
-                (detection_id, filename),
+            human_label_service.record_answer(
+                conn,
+                HumanAnswer(
+                    image_filename=filename,
+                    detection_id=detection_id,
+                    object_bird_presence="present",
+                    bbox_quality=(
+                        "suitable"
+                        if bbox_review == BBOX_REVIEW_CORRECT
+                        else "unsuitable"
+                    ),
+                    species_identity="corrected",
+                    species_key=species,
+                ),
+                source_ref="review:approve",
             )
-            # Auto-opt-in: the 409-gates above require species +
-            # bbox_review in VALID_BBOX_REVIEW_STATES ({'correct',
-            # 'wrong'}), so bbox='wrong' is a legal approval outcome
-            # — but Option-A-strict only accepts 'correct' for the
-            # training pool. Guard accordingly so a wrong-bbox
-            # approval does not leak into the dev's batch.
-            if bbox_review == "correct":
-                from web.services.training_export_service import (
-                    auto_opt_in_if_enabled,
-                )
-
-                auto_opt_in_if_enabled(
-                    conn, [detection_id], config, source_tag="per_det_approve"
-                )
             image_review_status = _refresh_review_image_visibility(
                 conn,
                 filename,
@@ -2594,12 +2648,12 @@ def review_event_approve():
             409,
         )
 
-    if bbox_review not in VALID_BBOX_REVIEW_STATES:
+    if bbox_review not in (None, *VALID_BBOX_REVIEW_STATES):
         return (
             jsonify(
                 {
                     "status": "error",
-                    "message": "Bounding box review is required before event approval",
+                    "message": f"Invalid bbox_review: {bbox_review}",
                 }
             ),
             409,
@@ -2762,49 +2816,33 @@ def review_event_approve():
                 except (KeyError, IndexError):
                     return None
 
-            manual_override_ids = {
-                int(row["detection_id"])
-                for row in rows
-                if str(_row_field(row, "manual_species_override") or "").strip()
-                and str(_row_field(row, "species_source") or "").strip() == "manual"
-            }
-            ids_to_stamp = [
-                detection_id
-                for detection_id in detection_ids
-                if detection_id not in manual_override_ids
-            ]
-            if ids_to_stamp:
-                db_service.apply_species_override_many(
-                    conn, ids_to_stamp, species, "manual"
+            for row in rows:
+                manual_species = str(
+                    _row_field(row, "manual_species_override") or ""
+                ).strip()
+                manual_source = str(_row_field(row, "species_source") or "").strip()
+                chosen_species = (
+                    manual_species
+                    if manual_species and manual_source == "manual"
+                    else species
                 )
-            for detection_id in detection_ids:
-                db_service.set_manual_bbox_review(conn, detection_id, bbox_review)
-
-            conn.execute(
-                f"""
-                UPDATE detections
-                SET decision_state = 'confirmed',
-                    decision_level = 'species'
-                WHERE detection_id IN ({placeholders})
-                  AND COALESCE(status, 'active') = 'active'
-                """,
-                detection_ids,
-            )
-            conn.commit()
-
-            # Auto-opt-in: every approve click can feed the training
-            # export pool. Gated on bbox_review='correct' because
-            # Option-A-strict needs both species-override (set above)
-            # AND bbox=correct. event-approve allows bbox='wrong' as
-            # a valid review outcome (user acknowledged the bbox is
-            # wrong), but those rows must not be shipped to the dev.
-            if bbox_review == "correct":
-                from web.services.training_export_service import (
-                    auto_opt_in_if_enabled,
-                )
-
-                auto_opt_in_if_enabled(
-                    conn, detection_ids, config, source_tag="event_approve"
+                human_label_service.record_answer(
+                    conn,
+                    HumanAnswer(
+                        image_filename=str(row["image_filename"]),
+                        detection_id=int(row["detection_id"]),
+                        object_bird_presence="present",
+                        bbox_quality=(
+                            "suitable"
+                            if bbox_review == BBOX_REVIEW_CORRECT
+                            else "unsuitable"
+                            if bbox_review is not None
+                            else None
+                        ),
+                        species_identity="corrected",
+                        species_key=chosen_species,
+                    ),
+                    source_ref="review:event-approve",
                 )
 
             touched_filenames = list(
@@ -2854,11 +2892,11 @@ def review_event_trash():
     """Reject every active detection in one BirdEvent.
 
     Semantic target: reject the event's detections, not the image files.
-    Image visibility is recomputed afterwards:
-    - if an image has no active detections left, it becomes `no_bird`
-      and surfaces in Trash
-    - otherwise it follows the state of its remaining active detections
-      (`untagged` or `confirmed_bird`)
+    Image visibility is recomputed afterwards. Zero active proposals does not
+    imply whole-image ``no_bird``: without an explicit image fact the frame
+    remains ``untagged``. Existing explicit image presence is projected to the
+    compatible review status; otherwise remaining active detections determine
+    visibility.
     """
     data = request.get_json() or {}
     event_key = str(data.get("event_key") or "").strip()
@@ -3018,9 +3056,11 @@ def review_event_trash():
         ]
 
         if touched_filenames and len(trash_filenames) == len(touched_filenames):
-            message = "Event moved to Trash. Every touched image now has no active detections left."
+            message = "Event rejected. Every touched image already has an explicit whole-image No Bird answer."
+        elif review_filenames:
+            message = "Event detections rejected. Images without an explicit full-image answer remain in Review."
         else:
-            message = "Event detections rejected. Images with no active detections left moved to Trash; other touched images now follow their remaining active detections."
+            message = "Event detections rejected. Touched images now follow their explicit image answers and remaining active detections."
 
         return jsonify(
             {
@@ -3050,8 +3090,9 @@ def review_event_resolve():
     ``species`` + ``bbox_review`` selection applies only to the Keep
     frames; Trash frames are rejected via the same code path as
     ``/api/review/event-trash`` so image visibility is recomputed
-    consistently (images with no remaining active detections fall to
-    Trash; other images follow their remaining actives).
+    consistently. Zero remaining detections is not treated as a whole-image
+    ``no bird`` statement; without an explicit image answer the frame remains
+    in Review.
 
     ``keep_detection_ids`` must not be empty: use the existing
     ``/api/review/event-trash`` shortcut for homogeneous all-wrong events.
@@ -3242,54 +3283,32 @@ def review_event_resolve():
                 if override and source == "manual":
                     manual_override_ids.add(row_id)
 
-            keep_ids_to_stamp = [
-                detection_id
-                for detection_id in keep_ids
-                if detection_id not in manual_override_ids
-            ]
-
-            # Keep frames without a per-cell override: apply event species
-            # + bbox review. Frames with a manual override keep their
-            # override but still get the bbox review state from the rail.
-            if keep_ids_to_stamp:
-                db_service.apply_species_override_many(
-                    conn, keep_ids_to_stamp, species, "manual"
-                )
+            rows_by_id = {int(row["detection_id"]): row for row in rows}
             for detection_id in keep_ids:
-                db_service.set_manual_bbox_review(conn, detection_id, bbox_review)
-            keep_placeholders = ",".join("?" for _ in keep_ids)
-            conn.execute(
-                f"""
-                UPDATE detections
-                SET decision_state = 'confirmed',
-                    decision_level = 'species'
-                WHERE detection_id IN ({keep_placeholders})
-                  AND COALESCE(status, 'active') = 'active'
-                """,
-                keep_ids,
-            )
-
-            # Trash frames: reject in the same transaction.
-            if trash_ids:
-                db_service.reject_detections(conn, trash_ids)
-
-            conn.commit()
-
-            # Auto-opt-in: mirror the event-approve hook so the
-            # mixed-resolve flow is consistent with full approval.
-            # Only keep_ids are eligible; trash_ids were rejected and
-            # cascade-delete their training_exports rows. The 'correct'
-            # check guards against resolve-with-bbox=wrong still
-            # stamping the pool — the predicate-at-query-time would
-            # filter them out anyway, but we avoid writing junk rows.
-            if bbox_review == "correct" and keep_ids:
-                from web.services.training_export_service import (
-                    auto_opt_in_if_enabled,
+                row = rows_by_id[detection_id]
+                chosen_species = (
+                    str(row["manual_species_override"]).strip()
+                    if detection_id in manual_override_ids
+                    else species
+                )
+                human_label_service.record_answer(
+                    conn,
+                    HumanAnswer(
+                        image_filename=str(row["image_filename"]),
+                        detection_id=detection_id,
+                        object_bird_presence="present",
+                        bbox_quality=(
+                            "suitable"
+                            if bbox_review == BBOX_REVIEW_CORRECT
+                            else "unsuitable"
+                        ),
+                        species_identity="corrected",
+                        species_key=chosen_species,
+                    ),
+                    source_ref="review:event-resolve:keep",
                 )
 
-                auto_opt_in_if_enabled(
-                    conn, keep_ids, config, source_tag="event_resolve"
-                )
+            db_service.reject_detections(conn, trash_ids)
 
             touched_filenames = list(
                 dict.fromkeys(

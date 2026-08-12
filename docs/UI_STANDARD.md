@@ -31,8 +31,9 @@ or changed in **one place** and instantly apply everywhere.
 2. **One toolbox.** Every image-bearing surface hosts the shared
    `tile_toolbox` macro (§5) inside a `wm-toolbox-host` container. The toolbox
    is the only place per-image actions live (Favorite, View Details,
-   Change Species, Move to Trash, Restore, Deep Scan, Mark No Bird, future
-   star ratings, Training Export, …). Surfaces may *omit* an action when the route does not
+   Change Species, Adjust Bounding Box, Move to Trash, Restore, Deep Scan,
+   No birds in full image, future
+   star ratings, …). Surfaces may *omit* an action when the route does not
    support it; they may **not** rename it, reorder it, or add a parallel
    surface-local button for the same action. See §0b for which actions
    render as primary vs. inside the overflow on each surface.
@@ -113,6 +114,30 @@ to discover that the frame had additional birds.
 ... bbox overlay behavior ... applied everywhere"; this section is
 the explicit form of that promise for the multi-detection case.
 
+## 0d. Direct Bounding-Box Correction (binding)
+
+Bounding-box correction is an ordinary image action inside the canonical
+detail modal. It is not a separate labeling mode or page.
+
+1. `Adjust Bounding Box` starts from the active detection's existing proposal.
+   Blank-canvas box creation is forbidden.
+2. The full image is visible while editing. Hovering and dragging a side moves
+   that side; corners move two sides; dragging inside moves the whole box.
+3. Geometry stays inside the image and retains a visible minimum size. The
+   shared math contract lives in `assets/js/bbox_editor_math.js`.
+4. Nothing is persisted during dragging. `Save box` explicitly records a
+   corrected, suitable box through `/api/labels/answer`; `Cancel` and `Escape`
+   discard the edit.
+5. Saving updates the active viewer, companion data, bbox toggle, and sibling
+   selector without overwriting the immutable proposal snapshot.
+6. Keyboard users can focus the box and move it with arrow keys; Shift uses a
+   larger step. Buttons and the action glyph carry labels and native tooltips.
+7. `Correction Details` is an optional overflow action for the active box. It
+   lists the exact current facts and derives OD and CLS readiness separately
+   from the same core reason-code contract used by dataset export. On images
+   with multiple proposals it states how many boxes have answers and makes
+   clear that other boxes are unchanged.
+
 ## 0a. Hover Tooltip Convention (binding)
 
 Every interactive control on an image-bearing surface — toolbox buttons,
@@ -180,14 +205,14 @@ stop being visually primary.
 
 | Surface                          | Primary (always visible)                 | Overflow                                                                                |
 |----------------------------------|------------------------------------------|-----------------------------------------------------------------------------------------|
-| Stream                           | Favorite, View Details                   | Change Species, Move to Trash, Deep Scan, Mark No Bird, Training Export                 |
-| Gallery                          | Favorite, View Details                   | Change Species, Move to Trash, Deep Scan, Mark No Bird, Training Export                 |
-| Subgallery                       | Favorite, View Details                   | Change Species, Move to Trash, Deep Scan, Mark No Bird, Training Export                 |
-| Species / Species Overview       | Favorite, View Details                   | Change Species, Move to Trash, Training Export                                          |
+| Stream                           | Favorite, View Details                   | Change Species, Move to Trash, Deep Scan, No birds in full image                        |
+| Gallery                          | Favorite, View Details                   | Change Species, Move to Trash, Deep Scan, No birds in full image                        |
+| Subgallery                       | Favorite, View Details                   | Change Species, Move to Trash, Deep Scan, No birds in full image                        |
+| Species / Species Overview       | Favorite, View Details                   | Change Species, Move to Trash                                                           |
 | Review event-level (rail outside tile_toolbox) | Approve Event, Move Event to Trash | — (lives in `review-stage-panel__action` rail, not the toolbox) |
-| Review per-member tile (inside tile_toolbox) | Favorite, Change Species, Move to Trash, Mark No Bird | View Details, Deep Scan, Training Export |
+| Review per-member tile (inside tile_toolbox) | Favorite, Change Species, Move to Trash, No birds in full image | View Details, Deep Scan |
 | Trash                            | Restore                                  | View Details, Change Species *(if exposed)* — Favorite is intentionally suppressed |
-| Detail modals (`surface='detail_modal'`) | Favorite, Change Species, Move to Trash | Deep Scan, Mark No Bird, Training Export                                                |
+| Detail modals (`surface='detail_modal'`) | Favorite, Change Species, Adjust Bounding Box | Correction Details, Move to Trash, No birds in full image                          |
 
 **Rules embedded in the table:**
 
@@ -202,7 +227,7 @@ stop being visually primary.
   on the card header — they are primary by virtue of being in their
   own row above the tiles, not by toolbox-priority rules. The
   per-member tile toolbox inside the card promotes Change Species,
-  Move to Trash, and Mark No Bird out of the overflow alongside
+  Move to Trash, and No birds in full image out of the overflow alongside
   Favorite — four primary actions for the per-tile case. The
   hover-only reveal is overridden by the Review Grid CSS so the
   buttons are always visible: the per-tile verdict is the
@@ -216,10 +241,10 @@ stop being visually primary.
   Stream and a modal opened from Trash both use the "Detail modals"
   row.
 - **Detail modals** are addressed by `surface='detail_modal'`.
-  The macro promotes Change Species and
-  Move to Trash to primary buttons on this surface in addition to
-  Favorite (which is primary by default rendering across all
-  surfaces that show it). The `frame_variant='bar'` rendering
+  The macro promotes Change Species and Adjust Bounding Box to primary
+  buttons on this surface in addition to Favorite (which is primary by
+  default rendering across all surfaces that show it). Move to Trash remains
+  in overflow. The `frame_variant='bar'` rendering
   remains available but is not required — the detail-modal split is
   driven by `surface`, not by frame variant.
 - Inbox, Orphans (top-level), and Restore are listed in `web/` as
@@ -317,9 +342,9 @@ The shared detection action frame is the canonical control surface for
 detection-bearing tiles, filmstrips, and modal/detail surfaces.
 
 - Canonical action vocabulary:
-  `View Details`, `Favorite`, `Training Export`, `Change Species`,
+  `View Details`, `Favorite`, `Change Species`, `Adjust Bounding Box`,
   `Move to Trash`, `Restore`, `Correct`, `Wrong`, `Approve`, `Deep Scan`,
-  `Mark No Bird`
+  `No birds in full image`
 - Surfaces may omit actions only when the subject identity or route does not
   support them. They must not rename the same underlying action on another
   surface.
@@ -342,7 +367,8 @@ detection-bearing tiles, filmstrips, and modal/detail surfaces.
 - Viewer/navigation controls such as zoom, close, next/previous, and download
   are not canonical detection actions. They may sit next to the frame, but they
   must not replace it.
-- In detail modals, object actions such as `Favorite` and `Change Species`
+- In detail modals, object actions such as `Favorite`, `Change Species`, and
+  `Adjust Bounding Box`
   should prefer the image hover toolbox itself. The modal footer should stay a
   calmer viewer/navigation strip instead of duplicating object actions.
 
@@ -407,7 +433,7 @@ frames render only the image in the body. Multi-detection frames add a
 slim sibling-selector strip below the image — clicking a strip chip
 *or* clicking a companion bbox on the canvas switches the active
 detection, which retargets the header action group (Trash, Boxes,
-Zoom).
+Zoom) and the image-toolbox correction action.
 
 ```html
 <div class="modal fade gallery-modal wm-modal"
@@ -467,7 +493,8 @@ companion bbox on the canvas or a `.sibling-card` chip dispatches
 `wmb:active-detection-change` on the modal root. The handler
 (`gallery_utils.js`) updates `.wm-image-viewer[data-bbox-*]`, the
 header `.bbox-toggle[data-detection-id]` + `data-current-bbox`, the
-header `[data-action="move-trash"][data-detection-id]`, redraws the
+header `[data-action="move-trash"][data-detection-id]`, the image-toolbox
+`[data-action="correct-bbox"][data-detection-id]`, redraws the
 canvas, and re-applies smart-zoom if active. Surfaces consuming
 `detection_modal.html` get this for free.
 
@@ -800,7 +827,7 @@ Smart-Mode scope, confirm dialogs and toasts are all inherited.
 | Key | Action |
 |---|---|
 | `↑` / `↓` | Move the event cursor to the previous / next card. The active card shows `.review-grid__card--kbd-active` (a blue focus ring inside the hard-black event outline) and scrolls to centre. |
-| `←` / `→` | Cycle the *armed* action within the active card: **Invert → Approve → Relabel → No Bird → Trash**. The armed button shows `.review-grid__card-action--armed`. Disabled verbs (e.g. Approve before a species is picked) are skipped. |
+| `←` / `→` | Cycle the *armed* action within the active card: **Invert → Approve → Relabel → No birds in full image → Trash**. The armed button shows `.review-grid__card-action--armed`. Disabled verbs (e.g. Approve before a species is picked) are skipped. |
 | `Space` | Fire the armed action (clicks the armed button). |
 | `Enter` | Open the active event's detail modal (first actionable tile). |
 
@@ -1182,12 +1209,12 @@ Each event card in the default Review Desk view (§6) carries one
 
 **Action verbs:** Each card header
 carries four Smart-Mode buttons: `✓ Approve`, `🏷️ Relabel`,
-`✗ No Bird`, `🗑 Trash`. Plus continuity-batch lead cards carry
+`✗ No birds in full image`, `🗑 Trash`. Plus continuity-batch lead cards carry
 `Apply <species> to all frames` and `Approve Batch` in the
 batch-strip below the header.
 
 The legacy bulk-action footer (`Trash Selected` / `Relabel Selected`
-/ `Mark No Bird Selected` / `Approve Selected`) is **retired** on
+/ `No birds in selected full images` / `Approve Selected`) is **retired** on
 the Review Desk surface. Cross-event bulk action is no longer
 reachable from `/admin/review`; the per-card workflow is the only
 path.
@@ -1208,19 +1235,19 @@ read by `refreshCardActionLabels` in `assets/js/review_grid.js`.
 Tooltips on every button per §0a — Approve disabled states explain
 *why* (`Pick a species before approving`).
 
-**Trash vs. Mark No Bird (binding):** `🗑 Trash` routes to
+**Trash vs. No birds in full image (binding):** `🗑 Trash` routes to
 `/api/review/event-trash` for event-wide and
 `/api/moderation/bulk/reject` for selection-scoped — both *reject
-the detections* (housekeeping). `✗ No Bird` (header and per-tile
+the detections* (housekeeping). `✗ No birds in full image` (header and per-tile
 toolbox) routes to `/api/review/decision` with
-`action=no_bird` (flags the image as no-bird training-export signal
+`action=no_bird` (records an explicit whole-image no-bird answer
 **without** rejecting the detection). These verbs stay verbally,
 behaviourally **and visually** distinct:
 
 - `🗑 Trash` is filled-red (`.btn--danger`), housekeeping language.
-- `✗ No Bird` is outline-yellow (`.btn--outline-warning`), training
-  language. Tooltip explicitly says *"training signal for the
-  detector (distinct from Trash housekeeping)"*.
+- `✗ No birds in full image` is outline-yellow (`.btn--outline-warning`), training
+  language. Tooltip explicitly says *"Record that this full image contains
+  no bird (training signal; not Trash)"*.
 
 The visual distinction is binding: future surfaces that expose both
 verbs must use the same outline-vs-filled, warning-vs-danger split.
@@ -1542,12 +1569,52 @@ database tables. No changes to `core/events.py`.
 
 ---
 
+## 6f. Canonical Human Corrections
+
+Human correction happens in the ordinary image UX. There is no
+`/admin/labeling` workspace and no training-language detour for routine image
+actions. Existing proposals are corrected in their detail modal; whole-image
+and species answers continue through their normal controls.
+
+**Full-image no-bird safety gate (binding):**
+
+- The canonical action label is `No birds in full image`.
+- Every invocation displays the complete affected image before confirmation,
+  even when the originating surface currently shows a crop. Multi-image
+  actions display each complete image before the request is sent.
+- The confirmation is never remembered in `localStorage`, `sessionStorage`, or
+  runtime state. Every invocation requires a fresh explicit confirmation.
+- `Cancel`, `Escape`, backdrop dismissal, an unavailable full-image preview,
+  or an unavailable dialog implementation must fail closed and send no write.
+- Only the affirmative button shown after the complete image may submit
+  `action=no_bird` to `/api/review/decision`.
+
+**Semantic contract:**
+
+- Image bird presence and proposed-object bird presence are separate questions.
+  Rejecting the outlined object must not record whole-image `No bird`.
+- Box quality, corrected coordinates, and species identity are independent.
+  Unanswered questions remain unknown and must not be inferred from another
+  answer.
+- A corrected box is rendered as the current answer without overwriting the
+  original proposal snapshot; its interaction follows binding §0d.
+- Species can be confirmed, corrected, marked wrong, or left unknown. A wrong
+  proposal never forces a replacement guess.
+- Unanswered axes remain unknown. Export or downstream consumers never create
+  or modify human facts.
+- Multiple proposals on one image are independent object subjects. The active
+  box action and its Expert details retarget together; partial progress is
+  shown as answered versus total proposed boxes without implying image-wide
+  completion.
+
+---
+
 ## Rules
 
 1. Every modal structure uses a defined type: `wm-modal` or `wm-modal wm-modal--form`.
 2. Every tile structure uses a defined type: `wm-tile`, `wm-tile wm-tile--review` (legacy), or `wm-tile wm-tile--bbox`.
 3. The Review workbench uses the `review-stage-panel` composition (§6), not standalone tiles.
-4. Every detection-bearing surface uses `tile_toolbox` (§5) for action overlays.
+4. Every detection-bearing browsing surface uses `tile_toolbox` (§5) for action overlays.
 5. No template may build its own modal, tile, or toolbox structures.
 6. Only these classes may be used.
 7. CSS refers exclusively to these classes.

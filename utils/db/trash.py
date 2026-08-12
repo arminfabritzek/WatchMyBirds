@@ -28,7 +28,7 @@ def fetch_trash_items(
     Trash contains only rejected detections (``trash_type='detection'``).
 
     ``review_status='no_bird'`` images are **not** trash — they are
-    user-verified false-positive crops kept for the training-export
+    user-verified false-positive crops kept for the training-data
     pipeline (``utils.db.user_groundtruth.fetch_hard_negatives``).
     Surfacing them here would invite an "Empty Trash" sweep that
     silently wipes the hard-negative corpus. The legacy UNION ALL

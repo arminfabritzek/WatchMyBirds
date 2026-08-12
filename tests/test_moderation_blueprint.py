@@ -363,18 +363,28 @@ class TestBulkRelabel:
             return_value=mock_conn
         )
         mock_db.closing_connection.return_value.__exit__ = MagicMock(return_value=False)
+        mock_conn.execute.return_value.fetchall.return_value = [
+            {"detection_id": detection_id, "image_filename": f"{detection_id}.jpg"}
+            for detection_id in (1, 2, 3)
+        ]
 
-        resp = client.post(
-            "/api/moderation/bulk/relabel",
-            json={"detection_ids": [1, 2, 3], "species": "Parus_major"},
-        )
+        with patch(
+            "web.blueprints.moderation.human_label_service.record_answer"
+        ) as mock_record:
+            resp = client.post(
+                "/api/moderation/bulk/relabel",
+                json={"detection_ids": [1, 2, 3], "species": "Parus_major"},
+            )
         assert resp.status_code == 200
         data = resp.get_json()
         assert data["status"] == "success"
         assert data["relabeled"] == 3
         assert data["new_species"] == "Parus_major"
-        mock_db.apply_species_override_many.assert_called_once_with(
-            mock_conn, [1, 2, 3], "Parus_major", "manual"
+        assert mock_record.call_count == 3
+        assert all(
+            call.args[1].species_identity == "corrected"
+            and call.args[1].species_key == "Parus_major"
+            for call in mock_record.call_args_list
         )
         mock_gallery.invalidate_cache.assert_called_once()
 
@@ -397,17 +407,23 @@ class TestBulkRelabel:
             return_value=mock_conn
         )
         mock_db.closing_connection.return_value.__exit__ = MagicMock(return_value=False)
+        mock_conn.execute.return_value.fetchall.return_value = [
+            {"detection_id": detection_id, "image_filename": f"{detection_id}.jpg"}
+            for detection_id in (1, 2, 3)
+        ]
 
-        resp = client.post(
-            "/api/moderation/bulk/relabel",
-            json={"detection_ids": [1, 2, 3], "species": "Parus_major"},
-        )
+        with patch(
+            "web.blueprints.moderation.human_label_service.record_answer"
+        ) as mock_record:
+            resp = client.post(
+                "/api/moderation/bulk/relabel",
+                json={"detection_ids": [1, 2, 3], "species": "Parus_major"},
+            )
         assert resp.status_code == 200
-        executed_sql = " ".join(
-            str(call.args[0]) for call in mock_conn.execute.call_args_list
+        assert all(
+            call.args[1].species_identity == "corrected"
+            for call in mock_record.call_args_list
         )
-        assert "decision_state = 'confirmed'" in executed_sql
-        assert "decision_level = 'species'" in executed_sql
 
 
 # ---------------------------------------------------------------------------
@@ -431,15 +447,23 @@ class TestBulkReject:
             return_value=mock_conn
         )
         mock_db.closing_connection.return_value.__exit__ = MagicMock(return_value=False)
+        mock_conn.execute.return_value.fetchall.return_value = [
+            {"detection_id": detection_id, "image_filename": f"{detection_id}.jpg"}
+            for detection_id in (5, 6, 7)
+        ]
 
-        resp = client.post(
-            "/api/moderation/bulk/reject",
-            json={"detection_ids": [5, 6, 7]},
-        )
+        with patch(
+            "web.blueprints.moderation.human_label_service.record_answer"
+        ) as mock_record:
+            resp = client.post(
+                "/api/moderation/bulk/reject",
+                json={"detection_ids": [5, 6, 7]},
+            )
         assert resp.status_code == 200
         data = resp.get_json()
         assert data["rejected_detections"] == 3
         mock_db.reject_detections.assert_called_once_with(mock_conn, [5, 6, 7])
+        mock_record.assert_not_called()
 
     @patch("web.blueprints.moderation.gallery_service")
     @patch("web.blueprints.moderation.db_service")
@@ -449,16 +473,24 @@ class TestBulkReject:
             return_value=mock_conn
         )
         mock_db.closing_connection.return_value.__exit__ = MagicMock(return_value=False)
+        mock_conn.execute.return_value.fetchall.return_value = [
+            {"detection_id": detection_id, "image_filename": f"{detection_id}.jpg"}
+            for detection_id in (8, 9)
+        ]
 
-        resp = client.post(
-            "/api/moderation/bulk/reject",
-            json={"ids": [8, 9]},
-        )
+        with patch(
+            "web.blueprints.moderation.human_label_service.record_answer"
+        ) as mock_record:
+            resp = client.post(
+                "/api/moderation/bulk/reject",
+                json={"ids": [8, 9]},
+            )
 
         assert resp.status_code == 200
         data = resp.get_json()
         assert data["rejected_detections"] == 2
         mock_db.reject_detections.assert_called_once_with(mock_conn, [8, 9])
+        mock_record.assert_not_called()
 
     @patch("web.blueprints.moderation.gallery_service")
     @patch("web.blueprints.moderation.db_service")
@@ -468,15 +500,23 @@ class TestBulkReject:
             return_value=mock_conn
         )
         mock_db.closing_connection.return_value.__exit__ = MagicMock(return_value=False)
-        mock_db.update_review_status.return_value = 2
+        mock_conn.execute.return_value.fetchall.return_value = [
+            {"detection_id": 11, "image_filename": "orphan1.jpg"},
+            {"detection_id": 12, "image_filename": "orphan2.jpg"},
+        ]
 
-        resp = client.post(
-            "/api/moderation/bulk/reject",
-            json={"image_filenames": ["orphan1.jpg", "orphan2.jpg"]},
-        )
+        with patch(
+            "web.blueprints.moderation.human_label_service.record_answer"
+        ) as mock_record:
+            resp = client.post(
+                "/api/moderation/bulk/reject",
+                json={"image_filenames": ["orphan1.jpg", "orphan2.jpg"]},
+            )
         assert resp.status_code == 200
         data = resp.get_json()
         assert data["rejected_images"] == 2
+        mock_db.reject_detections.assert_called_once_with(mock_conn, [11, 12])
+        mock_record.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

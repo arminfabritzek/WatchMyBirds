@@ -1,7 +1,7 @@
 """Regression tests for fetch_trash_items / fetch_trash_count.
 
 Covers the 2026-05-25 change: ``review_status='no_bird'`` images are
-the training-export hard-negative corpus, not trash. They must not
+the training-data hard-negative corpus, not trash. They must not
 appear in the trash grid or be counted toward the trash badge —
 otherwise a routine "Empty Trash" sweep silently wipes verified FP
 crops needed by the user-groundtruth export pipeline.
@@ -97,7 +97,7 @@ def test_fetch_trash_items_returns_rejected_detections_only(conn):
     types = {it["trash_type"] for it in items}
     assert "image" not in types, (
         "no_bird images must not appear in trash — they are the "
-        "training-export hard-negative corpus"
+        "training-data hard-negative corpus"
     )
 
 

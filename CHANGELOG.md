@@ -2,8 +2,20 @@
 
 ## Unreleased
 
+### Added
+
+- Selected images can be downloaded together as a ZIP from the species view,
+  including favourites collected across different days.
+- Direct bounding-box correction lets reviewers drag an offered box while
+  preserving canonical human facts, detection presence, and refreshed crops
+  for downstream training.
 ### Fixed
 
+- Trash and rejected crops no longer create whole-image bird-absent labels;
+  "No birds in full image" always previews the full frame and requires fresh
+  confirmation.
+- PTZ discovery rewrites camera-advertised ONVIF addresses to the configured
+  host when firmware reports an unreachable internal address.
 - The "Stop" control on the nightly aesthetic (CLIP) tagger no longer
   implies an instant halt. The worker finishes the current image before
   stopping; the status text and button tooltip now say so.

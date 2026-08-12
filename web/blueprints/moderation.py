@@ -19,6 +19,7 @@ from datetime import datetime
 from flask import Blueprint, jsonify, request, send_file
 
 from config import get_config
+from core.human_label_core import HumanAnswer
 from logging_config import get_logger
 from utils.species_names import build_species_picker_entries
 from web.blueprints.auth import login_required
@@ -27,6 +28,7 @@ from web.services import (
     cache_service,
     db_service,
     gallery_service,
+    human_label_service,
     image_download_service,
 )
 from web.services.filter_service import FilterContext, resolve_filtered_ids
@@ -217,24 +219,29 @@ def bulk_relabel() -> tuple:
         if new_species not in allowed_species:
             return jsonify({"status": "error", "message": "unknown species"}), 400
 
-        relabeled = db_service.apply_species_override_many(
-            conn, detection_ids, new_species, "manual"
-        )
-        if not isinstance(relabeled, int):
-            relabeled = len(detection_ids)
-
         placeholders = ",".join("?" for _ in detection_ids)
-        conn.execute(
+        rows = conn.execute(
             f"""
-            UPDATE detections
-            SET decision_state = 'confirmed',
-                decision_level = 'species'
+            SELECT detection_id, image_filename
+            FROM detections
             WHERE detection_id IN ({placeholders})
               AND COALESCE(status, 'active') = 'active'
             """,
             list(detection_ids),
-        )
-        conn.commit()
+        ).fetchall()
+        for row in rows:
+            human_label_service.record_answer(
+                conn,
+                HumanAnswer(
+                    image_filename=str(row["image_filename"]),
+                    detection_id=int(row["detection_id"]),
+                    species_identity="corrected",
+                    species_key=str(new_species),
+                ),
+                source_kind="watchmybirds_bulk_moderation",
+                source_ref="moderation:bulk-relabel",
+            )
+        relabeled = len(rows)
 
     # Invalidate gallery cache
     gallery_service.invalidate_cache()
@@ -277,13 +284,34 @@ def bulk_reject() -> tuple:
 
     with db_service.closing_connection() as conn:
         if detection_ids:
-            db_service.reject_detections(conn, detection_ids)
-            rejected_detections = len(detection_ids)
+            placeholders = ",".join("?" for _ in detection_ids)
+            rows = conn.execute(
+                f"""
+                SELECT detection_id, image_filename
+                FROM detections
+                WHERE detection_id IN ({placeholders})
+                  AND COALESCE(status, 'active') = 'active'
+                """,
+                detection_ids,
+            ).fetchall()
+            active_detection_ids = [int(row["detection_id"]) for row in rows]
+            db_service.reject_detections(conn, active_detection_ids)
+            rejected_detections = len(rows)
 
         if image_filenames:
-            rejected_images = db_service.update_review_status(
-                conn, image_filenames, "no_bird"
-            )
+            placeholders = ",".join("?" for _ in image_filenames)
+            rows = conn.execute(
+                f"""
+                SELECT detection_id, image_filename
+                FROM detections
+                WHERE image_filename IN ({placeholders})
+                  AND COALESCE(status, 'active') = 'active'
+                """,
+                image_filenames,
+            ).fetchall()
+            active_detection_ids = [int(row["detection_id"]) for row in rows]
+            db_service.reject_detections(conn, active_detection_ids)
+            rejected_images = len({str(row["image_filename"]) for row in rows})
 
     gallery_service.invalidate_cache()
 

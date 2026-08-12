@@ -1,14 +1,15 @@
 """Review-queue cleanup — Planner + Executor for "Move Review Queue to Trash".
 
 A reversible, file-free bulk action for operators who don't work the Review
-desk. It moves the *current review queue* into Trash via the existing
-reversible primitives — nothing is hard-deleted, no file is touched, and no
-retention/original state changes.
+desk. It moves the queue's active detections into Trash — nothing is
+hard-deleted, no file is touched, and no retention/original state changes.
 
 Semantics (V1):
-  - orphan / untagged queue images -> review_status='no_bird'
-  - active unresolved detections   -> status='rejected'
-Both are restorable from the Trash surface.
+  - active unresolved detections -> status='rejected'
+  - detection-less images stay untagged in Review
+
+``review_status='no_bird'`` is exclusively an explicit training answer and is
+never used as a housekeeping state.
 
 Queue membership is sourced from ``fetch_review_queue_images`` — the SAME
 predicate the Review page renders — so the dry-run preview can never drift
@@ -140,12 +141,11 @@ def build_plan(conn, gallery_threshold: float = 0.7) -> ReviewCleanupPlan:
 def execute_plan(conn, gallery_threshold: float = 0.7) -> dict[str, int]:
     """Move the live review queue to Trash via the reversible primitives.
 
-    ``reject_detections`` (status='rejected') + ``update_review_status``
-    (review_status='no_bird'). No file is deleted; both states restore from
-    the Trash surface. Returns {"images_moved", "detections_moved"}.
+    Only detections can enter Trash today. Detection-less images stay in Review
+    until a separate housekeeping state exists; ``no_bird`` is reserved for an
+    explicit training answer. No file is deleted.
     """
     from utils.db.detections import reject_detections
-    from utils.db.review_queue import update_review_status
 
     plan = build_action_plan(conn, gallery_threshold=gallery_threshold)
 
@@ -154,11 +154,7 @@ def execute_plan(conn, gallery_threshold: float = 0.7) -> dict[str, int]:
         reject_detections(conn, plan.detection_ids)
         detections_moved = len(plan.detection_ids)
 
-    images_moved = 0
-    if plan.image_filenames:
-        images_moved = update_review_status(conn, plan.image_filenames, "no_bird")
-
-    return {"images_moved": images_moved, "detections_moved": detections_moved}
+    return {"images_moved": 0, "detections_moved": detections_moved}
 
 
 # ---------------------------------------------------------------------------

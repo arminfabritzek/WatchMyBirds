@@ -331,7 +331,7 @@
                ambiguity by picking a species. #}
             data-event-ineligible="{% if event.eligibility != 'event_eligible' %}1{% else %}0{% endif %}"
             data-can-approve="{% if event.candidate_species or event.selected_species %}1{% else %}0{% endif %}"
-            data-bbox-review="correct"
+            data-bbox-review="{{ event.event_bbox_review or '' }}"
             data-selected-species-origin="{{ event.selected_species_origin or event.species_source or '' }}"
             {# Original species anchor for the Undo button. #}
             data-original-species="{{ event.candidate_species or '' }}"
@@ -422,13 +422,13 @@
             <div class="review-stage-panel__section">
                 <div class="review-stage-panel__section-label">BBox</div>
                 <button type="button"
-                    class="review-stage-panel__toggle is-correct"
+                    class="review-stage-panel__toggle{% if event.event_bbox_review == BBOX_REVIEW_CORRECT %} is-correct{% elif event.event_bbox_review == BBOX_REVIEW_WRONG %} is-wrong{% endif %}"
                     data-review-event-bbox-toggle
-                    data-bbox-review-value="correct"
+                    data-bbox-review-value="{{ event.event_bbox_review or '' }}"
                     aria-label="Toggle event bbox review state"
                     title="Toggle event bounding box review state">
                     <span class="review-stage-panel__toggle-title">BBox</span>
-                    <span class="review-stage-panel__toggle-copy" data-review-event-bbox-copy>Correct</span>
+                    <span class="review-stage-panel__toggle-copy" data-review-event-bbox-copy>{% if event.event_bbox_review == BBOX_REVIEW_WRONG %}Wrong{% elif event.event_bbox_review == BBOX_REVIEW_CORRECT %}Correct{% else %}Unreviewed{% endif %}</span>
                 </button>
             </div>
 

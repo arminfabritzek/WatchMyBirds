@@ -27,7 +27,6 @@ RUNTIME_BOOL_KEYS = {
     "INBOX_REQUIRE_EXIF_DATETIME",
     "INBOX_REQUIRE_EXIF_GPS",
     "MOTION_DETECTION_ENABLED",
-    "TRAINING_EXPORT_AUTO_OPT_IN",
     "EXPORT_BURN_IN_METADATA",
 }
 RUNTIME_NUMBER_KEYS = {
@@ -82,7 +81,6 @@ SETTING_LABELS = {
     "INBOX_REQUIRE_EXIF_DATETIME": "Inbox Require EXIF Date/Time (Skip imports without DateTimeOriginal/DateTimeDigitized)",
     "INBOX_REQUIRE_EXIF_GPS": "Inbox Require EXIF GPS (Skip imports without GPSLatitude/GPSLongitude)",
     "SPECIES_COMMON_NAME_LOCALE": "Species Common Names (Language for display names: DE=Deutsch, NO=Norsk)",
-    "TRAINING_EXPORT_AUTO_OPT_IN": "Auto-queue approvals for training export (Each approved event immediately joins the training export pool — visible in /admin/export)",
     "MAX_DETECTIONS_PER_BURST": "Burst Cap (Max detections persisted per rolling window — protects review queue from flocks; 0 disables)",
     "BURST_WINDOW_SECONDS": "Burst Window (Seconds for the rolling burst-cap window)",
 }
@@ -110,7 +108,6 @@ RUNTIME_KEYS_ORDER = [
     "INBOX_REQUIRE_EXIF_DATETIME",
     "INBOX_REQUIRE_EXIF_GPS",
     "SPECIES_COMMON_NAME_LOCALE",
-    "TRAINING_EXPORT_AUTO_OPT_IN",
     "TELEGRAM_COOLDOWN",
     "TELEGRAM_ENABLED",
     "GALLERY_DISPLAY_THRESHOLD",

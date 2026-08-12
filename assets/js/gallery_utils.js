@@ -675,6 +675,293 @@ function getWmRenderedImageGeometry(img) {
 
 window.getWmRenderedImageGeometry = getWmRenderedImageGeometry;
 
+/* =========================================
+   Direct-on-image bounding-box correction
+   ========================================= */
+
+function _readViewerBbox(viewer) {
+    if (!viewer) return null;
+    const box = {
+        x: parseFloat(viewer.dataset.bboxX),
+        y: parseFloat(viewer.dataset.bboxY),
+        w: parseFloat(viewer.dataset.bboxW),
+        h: parseFloat(viewer.dataset.bboxH)
+    };
+    if (!Object.values(box).every(Number.isFinite) || box.w <= 0 || box.h <= 0) return null;
+    return box;
+}
+
+function _replaceDetectionBbox(items, detectionId, box) {
+    if (!Array.isArray(items)) return [];
+    return items.map(function (item) {
+        if (Number(item.detection_id) !== detectionId) return item;
+        return Object.assign({}, item, {
+            bbox_x: box.x,
+            bbox_y: box.y,
+            bbox_w: box.w,
+            bbox_h: box.h
+        });
+    });
+}
+
+function _applyCorrectedBbox(host, detectionId, box) {
+    const viewer = host.querySelector('.wm-image-viewer');
+    const img = viewer && viewer.querySelector('.wm-image-viewer__img');
+    if (!viewer || !img) return;
+
+    viewer.dataset.bboxX = String(box.x);
+    viewer.dataset.bboxY = String(box.y);
+    viewer.dataset.bboxW = String(box.w);
+    viewer.dataset.bboxH = String(box.h);
+    img.dataset.detectionId = String(detectionId);
+
+    let siblings = [];
+    try { siblings = JSON.parse(viewer.dataset.siblings || '[]'); } catch (e) { /* ignore */ }
+    if (siblings.length) {
+        siblings = _replaceDetectionBbox(siblings, detectionId, box);
+        viewer.dataset.siblings = JSON.stringify(siblings);
+    }
+
+    const modal = host.closest('.gallery-modal');
+    const bboxToggle = modal && modal.querySelector('.bbox-toggle');
+    if (bboxToggle) {
+        let current = {};
+        try { current = JSON.parse(bboxToggle.dataset.currentBbox || '{}'); } catch (e) { /* ignore */ }
+        Object.assign(current, box, { id: detectionId });
+        bboxToggle.dataset.currentBbox = JSON.stringify(current);
+        if (siblings.length) bboxToggle.dataset.siblings = JSON.stringify(siblings);
+    }
+
+    const siblingCard = modal && modal.querySelector(
+        '.sibling-card[data-detection-id="' + detectionId + '"]'
+    );
+    if (siblingCard) {
+        siblingCard.dataset.bboxX = String(box.x);
+        siblingCard.dataset.bboxY = String(box.y);
+        siblingCard.dataset.bboxW = String(box.w);
+        siblingCard.dataset.bboxH = String(box.h);
+    }
+
+    host.dispatchEvent(new CustomEvent('wmb:bbox-correction-saved', {
+        detail: { detectionId: detectionId, bbox: box },
+        bubbles: true
+    }));
+}
+
+function startWmBboxEditor(actionEl) {
+    const host = actionEl && actionEl.closest('.wm-toolbox-host');
+    const viewer = host && host.querySelector('.wm-image-viewer');
+    const img = viewer && viewer.querySelector('.wm-image-viewer__img');
+    const detectionId = Number(actionEl && actionEl.dataset.detectionId);
+    const filename = actionEl && actionEl.dataset.filename;
+    const initialBox = _readViewerBbox(viewer);
+    const math = window.WmBboxMath;
+
+    if (!host || !viewer || !img || !Number.isFinite(detectionId) || !filename || !initialBox || !math) {
+        if (window.wmToast) window.wmToast('This box cannot be adjusted here.', 'error', 3200);
+        return;
+    }
+
+    const existing = viewer.querySelector('.wm-bbox-editor');
+    if (existing) existing.remove();
+
+    const scope = getViewerScope(viewer);
+    const zoomButton = resolveViewerToolButton(host, scope, '.smart-zoom-toggle');
+    const canvas = viewer.querySelector('.bbox-overlay');
+    const canvasDisplay = canvas ? canvas.style.display : '';
+    resetSmartZoomViewer(viewer, img);
+    if (zoomButton) {
+        zoomButton.classList.remove('active');
+        zoomButton.textContent = '🔍 Zoom';
+        applySmartZoomToggleState(zoomButton, false, true);
+    }
+    if (canvas) canvas.style.display = 'none';
+
+    const editor = document.createElement('div');
+    editor.className = 'wm-bbox-editor';
+    editor.setAttribute('aria-label', 'Adjust bounding box');
+
+    const boxEl = document.createElement('div');
+    boxEl.className = 'wm-bbox-editor__box';
+    boxEl.dataset.bboxHandle = 'move';
+    boxEl.tabIndex = 0;
+    boxEl.setAttribute('role', 'group');
+    boxEl.setAttribute('aria-label', 'Bounding box. Drag inside to move; drag an edge or corner to resize.');
+
+    ['n', 'e', 's', 'w'].forEach(function (handle) {
+        const edge = document.createElement('span');
+        edge.className = 'wm-bbox-editor__edge wm-bbox-editor__edge--' + handle;
+        edge.dataset.bboxHandle = handle;
+        edge.setAttribute('aria-hidden', 'true');
+        boxEl.appendChild(edge);
+    });
+    ['nw', 'ne', 'se', 'sw'].forEach(function (handle) {
+        const corner = document.createElement('span');
+        corner.className = 'wm-bbox-editor__corner wm-bbox-editor__corner--' + handle;
+        corner.dataset.bboxHandle = handle;
+        corner.setAttribute('aria-hidden', 'true');
+        boxEl.appendChild(corner);
+    });
+
+    const controls = document.createElement('div');
+    controls.className = 'wm-bbox-editor__controls';
+    const hint = document.createElement('span');
+    hint.className = 'wm-bbox-editor__hint';
+    hint.textContent = 'Drag a side or corner · drag inside to move';
+    const cancelButton = document.createElement('button');
+    cancelButton.type = 'button';
+    cancelButton.className = 'wm-bbox-editor__button';
+    cancelButton.textContent = 'Cancel';
+    const saveButton = document.createElement('button');
+    saveButton.type = 'button';
+    saveButton.className = 'wm-bbox-editor__button wm-bbox-editor__button--save';
+    saveButton.textContent = 'Save box';
+    controls.append(hint, cancelButton, saveButton);
+    editor.append(boxEl, controls);
+    viewer.appendChild(editor);
+    host.classList.add('is-bbox-editing');
+
+    let currentBox = Object.assign({}, initialBox);
+    let drag = null;
+    let saving = false;
+
+    function geometry() {
+        const rendered = getWmRenderedImageGeometry(img);
+        return Object.assign({}, rendered, {
+            left: (img.offsetLeft || 0) + rendered.contentX,
+            top: (img.offsetTop || 0) + rendered.contentY
+        });
+    }
+
+    function render() {
+        const g = geometry();
+        boxEl.style.left = (g.left + currentBox.x * g.contentW) + 'px';
+        boxEl.style.top = (g.top + currentBox.y * g.contentH) + 'px';
+        boxEl.style.width = (currentBox.w * g.contentW) + 'px';
+        boxEl.style.height = (currentBox.h * g.contentH) + 'px';
+    }
+
+    function finish() {
+        window.removeEventListener('resize', render);
+        document.removeEventListener('keydown', onDocumentKeydown, true);
+        host.classList.remove('is-bbox-editing');
+        editor.remove();
+        if (canvas) canvas.style.display = canvasDisplay;
+        applySmartZoomPreferenceToScope(scope);
+        const activeToggle = scope && scope.querySelector('.bbox-toggle.active');
+        if (activeToggle) requestAnimationFrame(function () { redrawBboxOverlay(activeToggle); });
+    }
+
+    function onDocumentKeydown(event) {
+        if (event.key !== 'Escape' || saving) return;
+        event.preventDefault();
+        finish();
+    }
+
+    editor.addEventListener('pointerdown', function (event) {
+        const handleEl = event.target.closest('[data-bbox-handle]');
+        if (!handleEl || saving) return;
+        event.preventDefault();
+        event.stopPropagation();
+        const g = geometry();
+        drag = {
+            pointerId: event.pointerId,
+            handle: handleEl.dataset.bboxHandle,
+            startX: event.clientX,
+            startY: event.clientY,
+            startBox: Object.assign({}, currentBox),
+            contentW: g.contentW,
+            contentH: g.contentH
+        };
+        editor.setPointerCapture(event.pointerId);
+        boxEl.classList.add('is-dragging');
+    });
+
+    editor.addEventListener('pointermove', function (event) {
+        if (!drag || drag.pointerId !== event.pointerId) return;
+        event.preventDefault();
+        const minSize = Math.max(8 / drag.contentW, 8 / drag.contentH, 0.002);
+        currentBox = math.resizeBox(
+            drag.startBox,
+            drag.handle,
+            (event.clientX - drag.startX) / drag.contentW,
+            (event.clientY - drag.startY) / drag.contentH,
+            minSize
+        );
+        render();
+    });
+
+    function endDrag(event) {
+        if (!drag || drag.pointerId !== event.pointerId) return;
+        drag = null;
+        boxEl.classList.remove('is-dragging');
+    }
+    editor.addEventListener('pointerup', endDrag);
+    editor.addEventListener('pointercancel', endDrag);
+
+    boxEl.addEventListener('keydown', function (event) {
+        if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) return;
+        event.preventDefault();
+        event.stopPropagation();
+        const step = event.shiftKey ? 0.01 : 0.002;
+        const dx = event.key === 'ArrowLeft' ? -step : event.key === 'ArrowRight' ? step : 0;
+        const dy = event.key === 'ArrowUp' ? -step : event.key === 'ArrowDown' ? step : 0;
+        currentBox = math.resizeBox(currentBox, 'move', dx, dy, 0.002);
+        render();
+    });
+
+    cancelButton.addEventListener('click', function (event) {
+        event.preventDefault();
+        event.stopPropagation();
+        if (!saving) finish();
+    });
+
+    saveButton.addEventListener('click', async function (event) {
+        event.preventDefault();
+        event.stopPropagation();
+        if (saving) return;
+        saving = true;
+        saveButton.disabled = true;
+        cancelButton.disabled = true;
+        saveButton.textContent = 'Saving…';
+        try {
+            const response = await fetch('/api/labels/answer', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    filename: filename,
+                    detection_id: detectionId,
+                    object_bird_presence: 'present',
+                    bbox_quality: 'suitable',
+                    bbox_correction: currentBox
+                })
+            });
+            const payload = await response.json();
+            if (!response.ok || payload.status !== 'success') {
+                throw new Error(payload.message || 'Unable to save box');
+            }
+            _applyCorrectedBbox(host, detectionId, currentBox);
+            finish();
+            if (window.wmToast) window.wmToast('Box saved', 'success', 2200);
+        } catch (error) {
+            saving = false;
+            saveButton.disabled = false;
+            cancelButton.disabled = false;
+            saveButton.textContent = 'Save box';
+            if (window.wmToast) {
+                window.wmToast(error.message || 'Unable to save box', 'error', 4200);
+            }
+        }
+    });
+
+    window.addEventListener('resize', render);
+    document.addEventListener('keydown', onDocumentKeydown, true);
+    render();
+    boxEl.focus({ preventScroll: true });
+}
+
+window.startWmBboxEditor = startWmBboxEditor;
+
 /**
  * Initialize bbox overlay canvas when image loads
  */
@@ -1637,6 +1924,8 @@ function _handleActiveDetectionChange(modal, detail) {
         viewer.dataset.bboxY = String(bbox.y);
         viewer.dataset.bboxW = String(bbox.w);
         viewer.dataset.bboxH = String(bbox.h);
+        const img = viewer.querySelector('.wm-image-viewer__img');
+        if (img) img.dataset.detectionId = String(detectionId);
     }
 
     // 2) Update bbox-toggle data so a subsequent toggle redraws against
@@ -1661,6 +1950,11 @@ function _handleActiveDetectionChange(modal, detail) {
             trashBtn.dataset.currentSpecies = species;
         }
     }
+
+    const correctBoxBtn = modal.querySelector('[data-action="correct-bbox"]');
+    if (correctBoxBtn) correctBoxBtn.dataset.detectionId = String(detectionId);
+    const correctionDetailsBtn = modal.querySelector('[data-action="correction-details"]');
+    if (correctionDetailsBtn) correctionDetailsBtn.dataset.detectionId = String(detectionId);
 
     // 4) Redraw the canvas with the new current id so the stroke
     //    treatment updates.

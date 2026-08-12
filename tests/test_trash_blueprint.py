@@ -195,8 +195,14 @@ def test_relabel_requires_detection_and_species(client):
 
 def test_relabel_updates_detection_and_classification(client):
     mock_conn = MagicMock()
+    mock_conn.execute.return_value.fetchone.return_value = {
+        "image_filename": "frame.jpg"
+    }
     with (
         patch("web.blueprints.trash.db_service.get_connection", return_value=mock_conn),
+        patch(
+            "web.blueprints.trash.human_label_service.record_answer"
+        ) as mock_record,
         patch(
             "web.blueprints.trash.build_species_picker_entries",
             return_value=[
@@ -220,8 +226,10 @@ def test_relabel_updates_detection_and_classification(client):
     assert data["status"] == "success"
     assert data["new_species"] == "False_Positive"
     assert mock_conn.execute.call_count == 1
-    assert "manual_species_override" in mock_conn.execute.call_args[0][0]
-    assert "UPDATE classifications" not in mock_conn.execute.call_args[0][0]
+    answer = mock_record.call_args.args[1]
+    assert answer.detection_id == 7
+    assert answer.species_identity == "corrected"
+    assert answer.species_key == "False_Positive"
     mock_conn.commit.assert_called_once()
     mock_conn.close.assert_called_once()
 
@@ -232,8 +240,14 @@ def test_relabel_flips_decision_level_to_species(client):
     Pre-fix, 377 rows drifted into species_review-after-confirm because
     only decision_state was set."""
     mock_conn = MagicMock()
+    mock_conn.execute.return_value.fetchone.return_value = {
+        "image_filename": "frame.jpg"
+    }
     with (
         patch("web.blueprints.trash.db_service.get_connection", return_value=mock_conn),
+        patch(
+            "web.blueprints.trash.human_label_service.record_answer"
+        ) as mock_record,
         patch(
             "web.blueprints.trash.build_species_picker_entries",
             return_value=[
@@ -248,9 +262,9 @@ def test_relabel_flips_decision_level_to_species(client):
         )
 
     assert response.status_code == 200
-    sql = mock_conn.execute.call_args[0][0]
-    assert "decision_state = 'confirmed'" in sql
-    assert "decision_level = 'species'" in sql
+    answer = mock_record.call_args.args[1]
+    assert answer.species_identity == "corrected"
+    assert answer.species_key == "Turdus_merula"
 
 
 def test_relabel_invalidates_best_species_cache(client):
@@ -265,8 +279,12 @@ def test_relabel_invalidates_best_species_cache(client):
     web_interface._best_species_cache["payload"] = {"board": "stale"}
 
     mock_conn = MagicMock()
+    mock_conn.execute.return_value.fetchone.return_value = {
+        "image_filename": "frame.jpg"
+    }
     with (
         patch("web.blueprints.trash.db_service.get_connection", return_value=mock_conn),
+        patch("web.blueprints.trash.human_label_service.record_answer"),
         patch(
             "web.blueprints.trash.build_species_picker_entries",
             return_value=[
@@ -365,6 +383,26 @@ def test_unauth_reject_redirects_to_login(unauth_client):
     )
     assert response.status_code == 302
     assert "/login" in response.headers["Location"]
+
+
+def test_reject_is_housekeeping_without_human_label(client):
+    mock_conn = MagicMock()
+    with (
+        patch("web.blueprints.trash.db_service") as mock_db,
+        patch("web.blueprints.trash.human_label_service.record_answer") as mock_record,
+    ):
+        mock_db.closing_connection.return_value.__enter__ = MagicMock(
+            return_value=mock_conn
+        )
+        mock_db.closing_connection.return_value.__exit__ = MagicMock(
+            return_value=False
+        )
+
+        response = client.post("/api/detections/reject", json={"ids": [7]})
+
+    assert response.status_code == 200
+    mock_db.reject_detections.assert_called_once_with(mock_conn, [7])
+    mock_record.assert_not_called()
 
 
 def test_unauth_relabel_redirects_to_login(unauth_client):

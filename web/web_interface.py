@@ -387,10 +387,20 @@ def create_web_interface(detection_manager, system_monitor=None):
     )
     server.register_blueprint(user_groundtruth_export_bp)
 
+    from web.blueprints.human_labels import (
+        human_labels_bp,
+        init_human_labels_bp,
+    )
+
+    init_human_labels_bp(
+        output_dir=output_dir,
+        app_version=str(_build_meta.get("app_version") or ""),
+    )
+    server.register_blueprint(human_labels_bp)
+
     from web.blueprints.retention import retention_bp
 
     server.register_blueprint(retention_bp)
-
 
     try:
         from web.blueprints.companion import (

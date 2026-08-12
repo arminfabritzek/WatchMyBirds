@@ -18,6 +18,38 @@ from utils.review_metadata import (
 from utils.species_names import UNKNOWN_SPECIES_KEY
 
 
+def effective_bbox_projection_sql(
+    conn: sqlite3.Connection,
+    det_alias: str = "d",
+    fact_alias: str = "bbox_fact",
+) -> tuple[tuple[str, str, str, str], str]:
+    """Return current display geometry plus its optional canonical-fact join.
+
+    Detection geometry remains the immutable machine proposal. Once a person
+    supplies a correction, image views project that current fact without
+    rewriting the proposal row. Minimal legacy schemas fall back cleanly.
+    """
+    view_exists = conn.execute(
+        """
+        SELECT 1 FROM sqlite_master
+        WHERE type = 'view' AND name = 'current_human_label_facts'
+        """
+    ).fetchone()
+    raw = tuple(f"{det_alias}.bbox_{axis}" for axis in ("x", "y", "w", "h"))
+    if view_exists is None:
+        return raw, ""
+    projected = tuple(
+        f"COALESCE({fact_alias}.bbox_{axis}, {det_alias}.bbox_{axis})"
+        for axis in ("x", "y", "w", "h")
+    )
+    join_sql = f"""
+        LEFT JOIN current_human_label_facts {fact_alias}
+          ON {fact_alias}.detection_id = {det_alias}.detection_id
+         AND {fact_alias}.fact_type = 'bbox_correction'
+    """
+    return projected, join_sql
+
+
 def _canonical_species_key_sql(expr: str) -> str:
     """SQL mirror of utils.species_names.canonical_species_key()."""
     return f"NULLIF(REPLACE(TRIM(COALESCE({expr}, '')), ' ', '_'), '')"
@@ -353,6 +385,7 @@ def fetch_detections_for_gallery(
         outer_order_clause = "ORDER BY v.score DESC, v.image_timestamp DESC"
 
     species_sql = _effective_species_joined_sql("d", "c")
+    bbox_sql, bbox_join_sql = effective_bbox_projection_sql(conn)
     # original_present is added to images by a runtime migration; legacy/test
     # schemas may lack it. Introspect so the query degrades to "present" (1).
     original_present_sql = _original_present_sql(conn)
@@ -361,10 +394,10 @@ def fetch_detections_for_gallery(
             i.timestamp as image_timestamp,
             d.created_at,
             d.image_filename,
-            d.bbox_x,
-            d.bbox_y,
-            d.bbox_w,
-            d.bbox_h,
+            {bbox_sql[0]} AS bbox_x,
+            {bbox_sql[1]} AS bbox_y,
+            {bbox_sql[2]} AS bbox_w,
+            {bbox_sql[3]} AS bbox_h,
             d.od_class_name,
             d.od_confidence,
             d.score,
@@ -420,6 +453,7 @@ def fetch_detections_for_gallery(
               ON c.detection_id = d.detection_id
              AND c.rank = 1
              AND COALESCE(c.status, 'active') = 'active'
+            {bbox_join_sql}
             {order_clause}
         """
         params.append(limit)
@@ -436,6 +470,7 @@ def fetch_detections_for_gallery(
               ON c.detection_id = d.detection_id
              AND c.rank = 1
              AND COALESCE(c.status, 'active') = 'active'
+            {bbox_join_sql}
             WHERE {where_sql}
         ),
         sibling_counts AS (
@@ -756,6 +791,7 @@ def fetch_sibling_detections(
     Includes bbox coordinates for bounding box visualization.
     """
     species_sql = _effective_species_joined_sql("d", "c")
+    bbox_sql, bbox_join_sql = effective_bbox_projection_sql(conn)
     query = f"""
         SELECT
             d.detection_id,
@@ -763,10 +799,10 @@ def fetch_sibling_detections(
             d.od_confidence,
             d.score,
             i.review_status,
-            d.bbox_x,
-            d.bbox_y,
-            d.bbox_w,
-            d.bbox_h,
+            {bbox_sql[0]} AS bbox_x,
+            {bbox_sql[1]} AS bbox_y,
+            {bbox_sql[2]} AS bbox_w,
+            {bbox_sql[3]} AS bbox_h,
             d.decision_state,
             d.manual_species_override,
             d.species_source,
@@ -781,6 +817,7 @@ def fetch_sibling_detections(
           ON c.detection_id = d.detection_id
          AND c.rank = 1
          AND COALESCE(c.status, 'active') = 'active'
+        {bbox_join_sql}
         WHERE d.image_filename = ? AND {_gallery_visibility_sql("d", "i")}
         ORDER BY d.score DESC
     """
@@ -808,6 +845,7 @@ def fetch_sibling_detections_batch(
         return {}
     placeholders = ",".join("?" * len(image_filenames))
     species_sql = _effective_species_joined_sql("d", "c")
+    bbox_sql, bbox_join_sql = effective_bbox_projection_sql(conn)
     query = f"""
         SELECT
             d.image_filename,
@@ -816,10 +854,10 @@ def fetch_sibling_detections_batch(
             d.od_confidence,
             d.score,
             i.review_status,
-            d.bbox_x,
-            d.bbox_y,
-            d.bbox_w,
-            d.bbox_h,
+            {bbox_sql[0]} AS bbox_x,
+            {bbox_sql[1]} AS bbox_y,
+            {bbox_sql[2]} AS bbox_w,
+            {bbox_sql[3]} AS bbox_h,
             d.decision_state,
             d.manual_species_override,
             d.species_source,
@@ -834,6 +872,7 @@ def fetch_sibling_detections_batch(
           ON c.detection_id = d.detection_id
          AND c.rank = 1
          AND COALESCE(c.status, 'active') = 'active'
+        {bbox_join_sql}
         WHERE d.image_filename IN ({placeholders}) AND {_gallery_visibility_sql("d", "i")}
         ORDER BY d.image_filename, d.score DESC
     """

@@ -14,10 +14,6 @@ def test_tile_toolbox_supports_details_href():
 
     assert "details_href=none" in content
     assert "allow_favorite=true" in content
-    # `allow_training_export=true` macro parameter intentionally kept so
-    # caller templates don't break; the button it gated was removed
-    # (one-click ground-truth poisoning risk).
-    assert "allow_training_export=true" in content
     assert "allow_details=true" in content
     assert "allow_change_species=true" in content
     assert "allow_move_to_trash=true" in content
@@ -25,13 +21,6 @@ def test_tile_toolbox_supports_details_href():
     assert "modal_target or details_href" in content
     assert "allow_details and (modal_target or details_href)" in content
     assert "data-details-href" in content
-    # The training-export button (data-action="training-export" with the
-    # "Confirm and add to training export" tooltip) was removed from the
-    # toolbox. The replacement is the /admin/groundtruth-export surface.
-    # The JS dispatch in tile_actions.js stays for now; a later cleanup
-    # removes the whole old training-export backend at once.
-    assert 'data-action="training-export"' not in content
-    assert "Confirm and add to training export" not in content
 
 
 def test_subgallery_cover_and_filmstrip_use_toolbox():
@@ -147,15 +136,6 @@ def test_modal_action_bar_data_actions_are_dispatched():
     assert "actionEl.closest('.modal-action-bar')" in js
 
 
-def test_tile_actions_dispatch_training_export_flag():
-    js = _read("assets/js/tile_actions.js")
-
-    assert "addDetectionToTrainingExport" in js
-    assert "'/api/training-export/add'" in js
-    assert "case 'training-export':" in js
-    assert "setTrainingExportState" in js
-
-
 def test_detection_info_hides_decision_badges_after_manual_species_review():
     content = _read("templates/components/modal_detection_info.html")
 
@@ -246,6 +226,8 @@ def test_review_modal_uses_quick_review_layout():
     css = _read("assets/design-system.css")
     review_page = _read("templates/orphans.html")
     review_js = _read("assets/js/review_workspace.js")
+    review_grid_js = _read("assets/js/review_grid.js")
+    event_content = _read("templates/components/review_event_panel.html")
 
     assert "review-stage-panel__canvas" in content
     assert 'render_orphan_modal(orphan, true)' in stage_content
@@ -280,6 +262,15 @@ def test_review_modal_uses_quick_review_layout():
     assert 'data-review-viewer-tool="bbox"' in content
     assert 'data-bbox-review-toggle' in content
     assert 'data-bbox-review-copy' in content
+    assert 'data-bbox-review="correct"' not in event_content
+    assert 'data-bbox-review-value="correct"' not in event_content
+    assert "bbox_review: 'correct'" not in review_js
+    assert "bbox_review: 'correct'" not in review_grid_js
+    toolbox = _read("templates/partials/tile_toolbox.html")
+    tile_actions = _read("assets/js/tile_actions.js")
+    assert 'data-action="correction-details"' in toolbox
+    assert "Correction details — this box only" in tile_actions
+    assert "/api/labels/state?" in tile_actions
     assert "review-stage-panel__image-frame" in content
     assert "review-stage-panel__facts-toggle" in css
     assert "review-stage-panel__facts-panel" in css
@@ -327,7 +318,7 @@ def test_review_modal_uses_quick_review_layout():
     assert "width: 44px;" in css
     assert "height: 44px;" in css
     assert "statusEl.hidden = true;" in review_js
-    assert "/assets/js/review_workspace.js?v=4" in review_page
+    assert "/assets/js/review_workspace.js?v=20260819-full-image-no-bird" in review_page
     assert "data-review-item" in review_page
     assert 'id="dsManualConfirmed"' in review_page
     assert 'onchange="toggleOrphanFilter(this)"' not in review_page
@@ -389,8 +380,11 @@ def test_review_modal_uses_quick_review_layout():
     assert "document.addEventListener('dblclick'" in review_js
     assert "Species selected. Click again to confirm." in review_js
     assert "Species confirmed. Approve when the review is complete." in review_js
-    assert "action === 'trash' || action === 'no_bird'" in review_js
-    assert "modalAction(itemKey, filename, action, detectionId);" in review_js
+    assert "if (action === 'no_bird')" in review_js
+    assert "window.wmConfirmFullImageNoBird" in review_js
+    assert "modalAction(itemKey, filename, action, detectionId, actionBtn);" in review_js
+    assert "noBirdConfirmed" not in review_js
+    assert "reviewTrashConfirmed" in review_js
     assert "waitForReviewDetectionControls(itemKey, filename);" in review_js
     assert "Deep Scan finished. BBox and species review are now available." in review_js
     assert "Status unavailable" not in review_js
@@ -408,7 +402,7 @@ def test_review_modal_uses_quick_review_layout():
 
 
 def test_no_bird_action_renders_on_browse_and_review_surfaces():
-    """Mark No Bird must be available on Review, Gallery, and detail modals when filename is present.
+    """The full-image action is available where its whole-frame scope is supported.
 
     Species is intentionally excluded: the user is already inside a
     single-species view and the action is frame-wide, which is the
@@ -421,6 +415,7 @@ def test_no_bird_action_renders_on_browse_and_review_surfaces():
     # Action attribute and filename binding are present
     assert 'data-action="review-no-bird"' in toolbox
     assert 'data-filename="{{ filename }}"' in toolbox
+    assert "No birds in full image" in toolbox
     # allow_review_no_bird parameter still guards the button
     assert "allow_review_no_bird" in toolbox
     # Trash and Species surfaces are excluded (not in the allowed tuple)
@@ -443,6 +438,58 @@ def test_no_bird_action_not_on_trash_or_species_surface():
     assert "'species'" not in gate
 
 
+def test_detail_modal_exposes_direct_bbox_correction_as_a_primary_action():
+    toolbox = _read("templates/partials/tile_toolbox.html")
+    modal = _read("templates/components/detection_modal.html")
+    base = _read("templates/base.html")
+
+    assert 'data-action="correct-bbox"' in toolbox
+    assert "surface == 'detail_modal'" in toolbox
+    assert 'data-filename="{{ filename }}"' in toolbox
+    assert "bbox_editor_math.js" in base
+    assert "startWmBboxEditor" in _read("assets/js/gallery_utils.js")
+    assert "filename=det.image_filename" in modal
+
+
+def test_saved_box_correction_also_states_the_bird_is_present():
+    """Without the presence axis the corrected box never reaches OD export."""
+    editor = _read("assets/js/gallery_utils.js")
+    payload = editor.split("/api/labels/answer")[1].split("})")[0]
+
+    assert "object_bird_presence: 'present'" in payload
+    assert "bbox_quality: 'suitable'" in payload
+
+
+def test_bbox_arrow_keys_do_not_reach_modal_navigation():
+    """Moving a focused box must not also switch to another detection."""
+    editor = _read("assets/js/gallery_utils.js")
+    keydown_handler = editor.split("boxEl.addEventListener('keydown'")[1].split(
+        "});", 1
+    )[0]
+
+    assert "event.preventDefault();" in keydown_handler
+    assert "event.stopPropagation();" in keydown_handler
+
+
+def test_gallery_utils_cache_key_includes_bbox_keyboard_fix():
+    """Every image surface must request the fixed keyboard handler."""
+    templates = (
+        "templates/edit.html",
+        "templates/orphans.html",
+        "templates/review_grid.html",
+        "templates/species.html",
+        "templates/species_overview.html",
+        "templates/stream.html",
+        "templates/subgallery.html",
+        "templates/trash.html",
+    )
+
+    for template in templates:
+        assert (
+            "gallery_utils.js?v=20260819-bbox-keyboard" in _read(template)
+        ), template
+
+
 def test_no_bird_js_fallback_is_surface_agnostic():
     """tile_actions.js must contain the noBirdFrame fallback for non-review surfaces."""
     js = _read("assets/js/tile_actions.js")
@@ -450,8 +497,9 @@ def test_no_bird_js_fallback_is_surface_agnostic():
     assert "async function noBirdFrame(" in js
     assert "'/api/review/decision'" in js
     assert "'no_bird'" in js
-    assert "localStorage.getItem('noBirdConfirmed')" in js or "localStorage.getItem(NO_BIRD_KEY)" in js
-    assert "localStorage.setItem" in js
+    assert "window.wmConfirmFullImageNoBird = confirmFullImageNoBird" in js
+    assert "noBirdConfirmed" not in js
+    assert "NO_BIRD_KEY" not in js
     # Confirmation flow must surface the frame-wide effect in plain
     # language (multi-detection count or generic "all detections").
     # Tolerates both the modal-with-full-frame UX and the legacy
@@ -463,18 +511,43 @@ def test_no_bird_js_fallback_is_surface_agnostic():
     # Modal must include a full-frame preview to prevent the UX trap
     # where the operator confirms based on the cropped tile view.
     assert "data-full-src" in js
+    assert "data-deferred-src" in js
+    assert "Full image preview is unavailable. Nothing was changed." in js
+    assert "A text-only fallback would recreate the crop-context trap." in js
+    assert "Confirm no birds in full image" in js
     # Tile fade-out on success
     assert "closest('.wm-tile')" in js
     assert "tile.style.opacity = '0'" in js
-    # Delegates to singleAction when on Review-Queue surface, falls back otherwise
-    assert "typeof singleAction === 'function'" in js
+    # Every surface must use the same safety gate; no legacy callback may bypass it.
+    assert "singleAction(filename, 'no_bird')" not in js
     assert "noBirdFrame(filename, actionEl)" in js
 
 
-def test_no_bird_review_surface_regression():
-    """Review-Queue still triggers singleAction (existing path must not regress)."""
-    js = _read("assets/js/tile_actions.js")
+def test_no_bird_review_surface_uses_full_image_gate():
+    tile_js = _read("assets/js/tile_actions.js")
+    grid_js = _read("assets/js/review_grid.js")
+    no_bird_flow = grid_js.split("async function noBirdEvent(card)")[1].split(
+        "/* Apple-Photos click semantics"
+    )[0]
 
-    assert "case 'review-no-bird':" in js
-    # singleAction delegate is still present
-    assert "singleAction(filename, 'no_bird')" in js
+    assert "case 'review-no-bird':" in tile_js
+    assert "await window.wmConfirmFullImageNoBird(frames, card)" in no_bird_flow
+    assert "image.getAttribute('data-full-src')" in no_bird_flow
+    assert "if (!confirmed) return;" in no_bird_flow
+    assert "confirm(promptText)" not in no_bird_flow
+
+
+def test_no_bird_asset_cache_key_reaches_every_image_surface():
+    templates = (
+        "templates/edit.html",
+        "templates/orphans.html",
+        "templates/review_grid.html",
+        "templates/species.html",
+        "templates/species_overview.html",
+        "templates/stream.html",
+        "templates/subgallery.html",
+        "templates/trash.html",
+    )
+
+    for template in templates:
+        assert "tile_actions.js?v=20260819-full-image-no-bird" in _read(template), template

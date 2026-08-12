@@ -1,8 +1,7 @@
-"""Review-cleanup Executor — reversible move-to-Trash.
+"""Review-cleanup Executor — reversible detection move-to-Trash.
 
-execute_plan moves the live review queue into Trash via the existing
-reversible primitives (detections->'rejected', images->'no_bird'). It must
-delete ZERO files and round-trip cleanly through the Trash restore path.
+execute_plan moves active detections into Trash without turning untagged images
+into No Bird training data. It must delete ZERO files.
 """
 
 import pytest
@@ -13,7 +12,6 @@ from utils.db.connection import closing_connection
 from utils.db.detections import restore_detections
 from utils.db.review_queue import (
     fetch_review_queue_images,
-    restore_no_bird_images,
 )
 
 THRESHOLD = 0.7
@@ -45,15 +43,17 @@ def _seed_mixed_queue(conn, output_dir):
     )
 
 
-def test_execute_empties_the_review_queue(output_dir):
+def test_execute_moves_detections_but_keeps_orphan_images(output_dir):
     with closing_connection() as conn:
         _seed_mixed_queue(conn, output_dir)
         result = review_cleanup_core.execute_plan(conn, gallery_threshold=THRESHOLD)
         conn.commit()
         remaining = fetch_review_queue_images(conn, gallery_threshold=THRESHOLD)
 
-    assert result == {"images_moved": 1, "detections_moved": 1}
-    assert remaining == []
+    assert result == {"images_moved": 0, "detections_moved": 1}
+    assert {(row["item_kind"], row["item_id"]) for row in remaining} == {
+        ("image", "20260101_120001_o.jpg")
+    }
 
 
 def test_execute_uses_reversible_states_not_deletion(output_dir):
@@ -71,7 +71,7 @@ def test_execute_uses_reversible_states_not_deletion(output_dir):
             ("20260101_120000_q.jpg",),
         ).fetchone()
 
-    assert img["review_status"] == "no_bird"
+    assert img["review_status"] == "untagged"
     assert det["status"] == "rejected"
 
 
@@ -98,7 +98,7 @@ def test_execute_deletes_no_files(output_dir, monkeypatch):
     assert all(t.exists() for t in paths["thumbs"])
 
 
-def test_moved_items_restore_from_trash(output_dir):
+def test_moved_detection_restores_while_orphan_stays_in_review(output_dir):
     with closing_connection() as conn:
         _seed_mixed_queue(conn, output_dir)
         review_cleanup_core.execute_plan(conn, gallery_threshold=THRESHOLD)
@@ -109,7 +109,6 @@ def test_moved_items_restore_from_trash(output_dir):
             ("20260101_120000_q.jpg",),
         ).fetchone()["detection_id"]
         restore_detections(conn, [det_id])
-        restore_no_bird_images(conn, ["20260101_120001_o.jpg"])
         conn.commit()
 
         restored = fetch_review_queue_images(conn, gallery_threshold=THRESHOLD)

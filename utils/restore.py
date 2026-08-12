@@ -16,6 +16,7 @@ import tarfile
 from collections.abc import Generator
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 import yaml
 
@@ -948,6 +949,226 @@ def _import_settings(new_settings_path: Path) -> dict:
     return result
 
 
+def _merge_human_label_tables(
+    conn: sqlite3.Connection,
+    *,
+    image_mapping: dict[str, str],
+    detection_mapping: dict[int, int],
+    result: dict[str, Any],
+) -> dict[str, int]:
+    """Merge canonical label histories after parent IDs have been mapped.
+
+    The attached source database must be named ``backup``. Conflicting current
+    chains are reported and left untouched; restore never invents a semantic
+    ordering between two independently edited histories.
+    """
+    source_tables = {
+        row[0]
+        for row in conn.execute(
+            "SELECT name FROM backup.sqlite_master WHERE type = 'table'"
+        ).fetchall()
+    }
+    destination_tables = {
+        row[0]
+        for row in conn.execute(
+            "SELECT name FROM main.sqlite_master WHERE type = 'table'"
+        ).fetchall()
+    }
+    required = {"label_subjects", "human_label_facts"}
+    if not required <= source_tables:
+        return {"subjects": 0, "facts": 0, "conflicts": 0}
+    if not required <= destination_tables:
+        result.setdefault("warnings", []).append(
+            "Current database has no canonical human-label schema; label facts skipped"
+        )
+        return {"subjects": 0, "facts": 0, "conflicts": 0}
+
+    subjects = conn.execute(
+        "SELECT * FROM backup.label_subjects ORDER BY subject_id"
+    ).fetchall()
+    subject_columns = [description[0] for description in conn.execute(
+        "SELECT * FROM backup.label_subjects LIMIT 0"
+    ).description]
+    subject_mapping: dict[int, int] = {}
+    imported_subjects = 0
+
+    for raw_subject in subjects:
+        subject = dict(zip(subject_columns, raw_subject, strict=True))
+        old_subject_id = int(subject["subject_id"])
+        source_filename = str(subject["image_filename"])
+        target_filename = image_mapping.get(source_filename)
+        if target_filename is None:
+            result.setdefault("warnings", []).append(
+                f"Label subject {old_subject_id} skipped: image was not mapped"
+            )
+            continue
+
+        target_detection_id: int | None = None
+        if subject["scope"] == "object":
+            source_detection_id = int(subject["detection_id"])
+            target_detection_id = detection_mapping.get(source_detection_id)
+            if target_detection_id is None:
+                result.setdefault("warnings", []).append(
+                    f"Label subject {old_subject_id} skipped: detection was not mapped"
+                )
+                continue
+
+        if target_detection_id is None:
+            existing = conn.execute(
+                """
+                SELECT subject_id FROM label_subjects
+                WHERE scope = 'image' AND image_filename = ?
+                """,
+                (target_filename,),
+            ).fetchone()
+        else:
+            existing = conn.execute(
+                """
+                SELECT subject_id FROM label_subjects
+                WHERE scope = 'object' AND detection_id = ?
+                """,
+                (target_detection_id,),
+            ).fetchone()
+
+        if existing is not None:
+            subject_mapping[old_subject_id] = int(existing[0])
+            continue
+
+        cursor = conn.execute(
+            """
+            INSERT INTO label_subjects (
+                scope, image_filename, detection_id,
+                proposal_bbox_x, proposal_bbox_y,
+                proposal_bbox_w, proposal_bbox_h,
+                proposal_coordinate_space, proposal_species_key,
+                detector_model_version, classifier_model_version, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                subject["scope"],
+                target_filename,
+                target_detection_id,
+                subject["proposal_bbox_x"],
+                subject["proposal_bbox_y"],
+                subject["proposal_bbox_w"],
+                subject["proposal_bbox_h"],
+                subject["proposal_coordinate_space"],
+                subject["proposal_species_key"],
+                subject["detector_model_version"],
+                subject["classifier_model_version"],
+                subject["created_at"],
+            ),
+        )
+        subject_mapping[old_subject_id] = int(cursor.lastrowid)
+        imported_subjects += 1
+
+    facts = conn.execute(
+        "SELECT * FROM backup.human_label_facts ORDER BY fact_id"
+    ).fetchall()
+    fact_columns = [description[0] for description in conn.execute(
+        "SELECT * FROM backup.human_label_facts LIMIT 0"
+    ).description]
+    grouped: dict[tuple[int, str], list[dict[str, Any]]] = {}
+    for raw_fact in facts:
+        fact = dict(zip(fact_columns, raw_fact, strict=True))
+        old_subject_id = int(fact["subject_id"])
+        if old_subject_id not in subject_mapping:
+            continue
+        grouped.setdefault((old_subject_id, str(fact["fact_type"])), []).append(fact)
+
+    imported_facts = 0
+    conflicts = 0
+    for (old_subject_id, fact_type), axis_facts in grouped.items():
+        target_subject_id = subject_mapping[old_subject_id]
+        existing_axis = conn.execute(
+            """
+            SELECT 1 FROM human_label_facts
+            WHERE subject_id = ? AND fact_type = ?
+            LIMIT 1
+            """,
+            (target_subject_id, fact_type),
+        ).fetchone()
+        if existing_axis is not None:
+            subject = conn.execute(
+                """
+                SELECT scope, image_filename, detection_id
+                FROM label_subjects WHERE subject_id = ?
+                """,
+                (target_subject_id,),
+            ).fetchone()
+            result.setdefault("conflicts", []).append(
+                {
+                    "type": "human_label_fact_axis",
+                    "scope": subject[0],
+                    "image_filename": subject[1],
+                    "detection_id": subject[2],
+                    "fact_type": fact_type,
+                    "message": "Destination and backup both contain label history",
+                }
+            )
+            conflicts += 1
+            continue
+
+        fact_mapping: dict[int, int] = {}
+        pending = list(axis_facts)
+        while pending:
+            progressed = False
+            for fact in list(pending):
+                old_predecessor = fact["supersedes_fact_id"]
+                if old_predecessor is not None and int(old_predecessor) not in fact_mapping:
+                    continue
+                target_predecessor = (
+                    fact_mapping[int(old_predecessor)]
+                    if old_predecessor is not None
+                    else None
+                )
+                cursor = conn.execute(
+                    """
+                    INSERT INTO human_label_facts (
+                        schema_version, subject_id, fact_type, assertion_state,
+                        answer_value, species_key, bbox_x, bbox_y, bbox_w, bbox_h,
+                        coordinate_space, context, source_kind, source_ref,
+                        installation_id, app_version, created_at,
+                        supersedes_fact_id
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        fact["schema_version"],
+                        target_subject_id,
+                        fact["fact_type"],
+                        fact["assertion_state"],
+                        fact["answer_value"],
+                        fact["species_key"],
+                        fact["bbox_x"],
+                        fact["bbox_y"],
+                        fact["bbox_w"],
+                        fact["bbox_h"],
+                        fact["coordinate_space"],
+                        fact["context"],
+                        fact["source_kind"],
+                        fact["source_ref"],
+                        fact["installation_id"],
+                        fact["app_version"],
+                        fact["created_at"],
+                        target_predecessor,
+                    ),
+                )
+                fact_mapping[int(fact["fact_id"])] = int(cursor.lastrowid)
+                imported_facts += 1
+                pending.remove(fact)
+                progressed = True
+            if not progressed:
+                raise sqlite3.IntegrityError(
+                    "backup human-label supersession chain is incomplete or cyclic"
+                )
+
+    return {
+        "subjects": imported_subjects,
+        "facts": imported_facts,
+        "conflicts": conflicts,
+    }
+
+
 def _merge_database(backup_db_path: Path) -> dict:
     """
     Merges backup DB into current DB.
@@ -976,43 +1197,58 @@ def _merge_database(backup_db_path: Path) -> dict:
         backup_counts = _get_db_row_counts(backup_db_path)
         result["stats"]["backup"] = backup_counts
 
-        # 1. Map sources (handle old schemas without id column)
-        source_mapping = {}  # old_id -> new_id
-
-        # Check if backup has sources table with id column
+        # 1. Map sources across both the old ``id`` and current ``source_id``
+        # schemas. The merge path accepts backups from either generation.
+        source_mapping: dict[int, int] = {}
         cursor.execute("PRAGMA backup.table_info(sources)")
-        backup_source_cols = {row[1] for row in cursor.fetchall()}  # column names
+        backup_source_cols = {row[1] for row in cursor.fetchall()}
+        cursor.execute("PRAGMA main.table_info(sources)")
+        destination_source_cols = {row[1] for row in cursor.fetchall()}
+        backup_source_pk = (
+            "source_id" if "source_id" in backup_source_cols else "id"
+        )
+        destination_source_pk = (
+            "source_id" if "source_id" in destination_source_cols else "id"
+        )
 
-        if "id" in backup_source_cols:
-            cursor.execute("SELECT id, name, type, uri FROM backup.sources")
+        if backup_source_pk in backup_source_cols:
+            cursor.execute(
+                f"SELECT {backup_source_pk}, name, type, uri FROM backup.sources"
+            )
             for row in cursor.fetchall():
                 old_id, name, source_type, uri = row
-
-                # Check if source exists
                 cursor.execute(
-                    "SELECT id FROM sources WHERE name = ? AND type = ? AND uri = ?",
+                    f"SELECT {destination_source_pk} FROM sources "
+                    "WHERE name = ? AND type = ? AND uri IS ?",
                     (name, source_type, uri),
                 )
                 existing = cursor.fetchone()
-
                 if existing:
-                    source_mapping[old_id] = existing[0]
+                    source_mapping[int(old_id)] = int(existing[0])
                 else:
-                    # Create new source
+                    columns = ["name", "type", "uri"]
+                    values: list[Any] = [name, source_type, uri]
+                    if "created_at" in destination_source_cols:
+                        columns.append("created_at")
+                        values.append(datetime.now(UTC).isoformat())
+                    placeholders = ", ".join("?" for _ in columns)
                     cursor.execute(
-                        "INSERT INTO sources (name, type, uri, created_at) "
-                        "VALUES (?, ?, ?, ?)",
-                        (name, source_type, uri, datetime.now(UTC).isoformat()),
+                        f"INSERT INTO sources ({', '.join(columns)}) "
+                        f"VALUES ({placeholders})",
+                        values,
                     )
-                    source_mapping[old_id] = cursor.lastrowid
+                    source_mapping[int(old_id)] = int(cursor.lastrowid)
         else:
             logger.warning(
-                "Backup sources table has no 'id' column - skipping source mapping"
+                "Backup sources table has no supported ID column; source mapping skipped"
             )
 
         # 2. Import images with hash-based dedup
         images_imported = 0
         images_skipped = 0
+        image_mapping: dict[str, str] = {}
+        cursor.execute("PRAGMA main.table_info(images)")
+        destination_image_cols = {row[1] for row in cursor.fetchall()}
 
         cursor.execute("SELECT * FROM backup.images")
         backup_images = cursor.fetchall()
@@ -1028,7 +1264,9 @@ def _merge_database(backup_db_path: Path) -> dict:
                     "SELECT filename FROM images WHERE content_hash = ?",
                     (content_hash,),
                 )
-                if cursor.fetchone():
+                hash_match = cursor.fetchone()
+                if hash_match:
+                    image_mapping[str(img["filename"])] = str(hash_match[0])
                     images_skipped += 1
                     continue
 
@@ -1040,6 +1278,7 @@ def _merge_database(backup_db_path: Path) -> dict:
             existing = cursor.fetchone()
 
             if existing:
+                image_mapping[str(img["filename"])] = str(existing[0])
                 if content_hash and existing[1] and content_hash != existing[1]:
                     # Same filename, different hash -> warning
                     result["conflicts"].append(
@@ -1056,27 +1295,19 @@ def _merge_database(backup_db_path: Path) -> dict:
             old_source_id = img.get("source_id")
             new_source_id = source_mapping.get(old_source_id, old_source_id)
 
-            # Insert image
+            image_values = dict(img)
+            image_values["source_id"] = new_source_id
+            columns = [
+                column
+                for column in image_columns
+                if column in destination_image_cols
+            ]
+            placeholders = ", ".join("?" for _ in columns)
             cursor.execute(
-                """INSERT INTO images (
-                    filename, timestamp, original_name, optimized_name,
-                    coco_json, source_id, content_hash, downloaded_at,
-                    detector_model_id, classifier_model_id, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (
-                    img["filename"],
-                    img.get("timestamp"),
-                    img.get("original_name"),
-                    img.get("optimized_name"),
-                    img.get("coco_json", "{}"),
-                    new_source_id,
-                    content_hash,
-                    img.get("downloaded_at"),
-                    img.get("detector_model_id"),
-                    img.get("classifier_model_id"),
-                    img.get("created_at", datetime.now(UTC).isoformat()),
-                ),
+                f"INSERT INTO images ({', '.join(columns)}) VALUES ({placeholders})",
+                [image_values.get(column) for column in columns],
             )
+            image_mapping[str(img["filename"])] = str(img["filename"])
             images_imported += 1
 
         result["stats"]["images_imported"] = images_imported
@@ -1084,6 +1315,11 @@ def _merge_database(backup_db_path: Path) -> dict:
 
         # 3. Import detections - need to match by image filename
         detections_imported = 0
+        detection_mapping: dict[int, int] = {}
+        cursor.execute("PRAGMA main.table_info(detections)")
+        destination_detection_cols = {row[1] for row in cursor.fetchall()}
+        cursor.execute("PRAGMA main.table_info(classifications)")
+        destination_classification_cols = {row[1] for row in cursor.fetchall()}
 
         cursor.execute("SELECT * FROM backup.detections")
         backup_detections = cursor.fetchall()
@@ -1091,59 +1327,47 @@ def _merge_database(backup_db_path: Path) -> dict:
 
         for det_row in backup_detections:
             det = dict(zip(det_columns, det_row, strict=False))
+            old_det_id_value = det.get("detection_id", det.get("id"))
+            if old_det_id_value is None:
+                result["warnings"].append("Detection skipped: source ID is missing")
+                continue
+            old_det_id = int(old_det_id_value)
+            target_filename = image_mapping.get(str(det["image_filename"]))
 
             # Check if image exists in current DB
-            cursor.execute(
-                "SELECT filename FROM images WHERE filename = ?",
-                (det["image_filename"],),
-            )
-            img_exists = cursor.fetchone()
-            if not img_exists:
+            if target_filename is None:
                 continue
 
             # Check for duplicate detection
             cursor.execute(
                 """SELECT detection_id FROM detections
                    WHERE image_filename = ? AND bbox_x = ? AND bbox_y = ?""",
-                (det["image_filename"], det.get("bbox_x"), det.get("bbox_y")),
+                (target_filename, det.get("bbox_x"), det.get("bbox_y")),
             )
-            if cursor.fetchone():
+            existing_detection = cursor.fetchone()
+            if existing_detection:
+                detection_mapping[old_det_id] = int(existing_detection[0])
                 continue
 
-            # Insert detection
+            detection_values = dict(det)
+            detection_values["image_filename"] = target_filename
+            columns = [
+                column
+                for column in det_columns
+                if column in destination_detection_cols
+                and column not in {"detection_id", "id"}
+            ]
+            placeholders = ", ".join("?" for _ in columns)
             cursor.execute(
-                """INSERT INTO detections (
-                    image_filename, image_timestamp, bbox_x, bbox_y, bbox_w, bbox_h,
-                    od_class_name, od_confidence, od_model_id, score, agreement_score,
-                    review_status, thumbnail_path, detector_model_name, detector_model_version,
-                    classifier_model_name, classifier_model_version, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (
-                    det["image_filename"],
-                    det.get("image_timestamp"),
-                    det.get("bbox_x"),
-                    det.get("bbox_y"),
-                    det.get("bbox_w"),
-                    det.get("bbox_h"),
-                    det.get("od_class_name"),
-                    det.get("od_confidence"),
-                    det.get("od_model_id"),
-                    det.get("score"),
-                    det.get("agreement_score"),
-                    det.get("review_status", "pending"),
-                    det.get("thumbnail_path"),
-                    det.get("detector_model_name"),
-                    det.get("detector_model_version"),
-                    det.get("classifier_model_name"),
-                    det.get("classifier_model_version"),
-                    det.get("created_at", datetime.now(UTC).isoformat()),
-                ),
+                f"INSERT INTO detections ({', '.join(columns)}) "
+                f"VALUES ({placeholders})",
+                [detection_values.get(column) for column in columns],
             )
-            new_det_id = cursor.lastrowid
+            new_det_id = int(cursor.lastrowid)
+            detection_mapping[old_det_id] = new_det_id
             detections_imported += 1
 
             # Import associated classifications
-            old_det_id = det["id"]
             cursor.execute(
                 "SELECT * FROM backup.classifications WHERE detection_id = ?",
                 (old_det_id,),
@@ -1151,22 +1375,28 @@ def _merge_database(backup_db_path: Path) -> dict:
             for cls_row in cursor.fetchall():
                 cls_columns = [desc[0] for desc in cursor.description]
                 cls = dict(zip(cls_columns, cls_row, strict=False))
-
+                classification_values = dict(cls)
+                classification_values["detection_id"] = new_det_id
+                columns = [
+                    column
+                    for column in cls_columns
+                    if column in destination_classification_cols
+                    and column not in {"classification_id", "id"}
+                ]
+                placeholders = ", ".join("?" for _ in columns)
                 cursor.execute(
-                    """INSERT INTO classifications (
-                        detection_id, cls_class_name, cls_confidence,
-                        cls_model_id, created_at
-                    ) VALUES (?, ?, ?, ?, ?)""",
-                    (
-                        new_det_id,
-                        cls.get("cls_class_name"),
-                        cls.get("cls_confidence"),
-                        cls.get("cls_model_id"),
-                        cls.get("created_at"),
-                    ),
+                    f"INSERT INTO classifications ({', '.join(columns)}) "
+                    f"VALUES ({placeholders})",
+                    [classification_values.get(column) for column in columns],
                 )
 
         result["stats"]["detections_imported"] = detections_imported
+        result["stats"]["human_labels"] = _merge_human_label_tables(
+            conn,
+            image_mapping=image_mapping,
+            detection_mapping=detection_mapping,
+            result=result,
+        )
 
         # Commit and cleanup
         conn.commit()

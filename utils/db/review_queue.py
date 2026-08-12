@@ -11,6 +11,7 @@ from datetime import UTC, datetime, timedelta
 
 from utils.db.detections import (
     UNKNOWN_SPECIES_KEY,
+    effective_bbox_projection_sql,
     effective_species_sql_for_columns,
     table_columns,
 )
@@ -191,6 +192,7 @@ def fetch_review_queue_images(
         else "1"
     )
     species_sql = effective_species_sql_for_columns("d", detection_columns)
+    bbox_sql, bbox_join_sql = effective_bbox_projection_sql(conn)
     is_favorite_sql = _detection_column_sql(detection_columns, "is_favorite", "0")
     is_gallery_eligible_sql = _detection_column_sql(
         detection_columns, "is_gallery_eligible", "0"
@@ -268,10 +270,10 @@ def fetch_review_queue_images(
             d.score as max_score,
             d.detection_id as best_detection_id,
             d.detection_id as active_detection_id,
-            d.bbox_x,
-            d.bbox_y,
-            d.bbox_w,
-            d.bbox_h,
+            {bbox_sql[0]} AS bbox_x,
+            {bbox_sql[1]} AS bbox_y,
+            {bbox_sql[2]} AS bbox_w,
+            {bbox_sql[3]} AS bbox_h,
             CASE
                 WHEN d.decision_state = 'unknown' THEN 'unknown_species'
                 WHEN d.decision_state = 'uncertain' THEN 'uncertain'
@@ -319,6 +321,7 @@ def fetch_review_queue_images(
             {frame_height_sql} as frame_height
         FROM detections d
         JOIN images i ON i.filename = d.image_filename
+        {bbox_join_sql}
         WHERE {detection_where_sql}
     ) review_items
     ORDER BY timestamp DESC, item_kind DESC, COALESCE(max_score, 0) DESC, CAST(COALESCE(active_detection_id, 0) AS INTEGER) ASC;
@@ -349,6 +352,7 @@ def fetch_review_queue_summary_rows(
     """
     detection_columns = table_columns(conn, "detections")
     species_sql = effective_species_sql_for_columns("d", detection_columns)
+    bbox_sql, bbox_join_sql = effective_bbox_projection_sql(conn)
     is_favorite_sql = _detection_column_sql(detection_columns, "is_favorite", "0")
 
     orphan_where, orphan_params, detection_where, detection_params = (
@@ -385,14 +389,15 @@ def fetch_review_queue_summary_rows(
             d.detection_id AS detection_id,
             i.filename AS filename,
             i.timestamp AS timestamp,
-            d.bbox_x,
-            d.bbox_y,
-            d.bbox_w,
-            d.bbox_h,
+            {bbox_sql[0]} AS bbox_x,
+            {bbox_sql[1]} AS bbox_y,
+            {bbox_sql[2]} AS bbox_w,
+            {bbox_sql[3]} AS bbox_h,
             {species_sql} AS species_key,
             COALESCE({is_favorite_sql}, 0) AS is_favorite
         FROM detections d
         JOIN images i ON i.filename = d.image_filename
+        {bbox_join_sql}
         WHERE {detection_where_sql}
     """
     cur = conn.execute(query, [*orphan_params, *detection_params])
@@ -484,6 +489,7 @@ def fetch_review_queue_item_by_identity(
         else "1"
     )
     species_sql = effective_species_sql_for_columns("d", detection_columns)
+    bbox_sql, bbox_join_sql = effective_bbox_projection_sql(conn)
     is_favorite_sql = _detection_column_sql(detection_columns, "is_favorite", "0")
     is_gallery_eligible_sql = _detection_column_sql(
         detection_columns, "is_gallery_eligible", "0"
@@ -549,10 +555,10 @@ def fetch_review_queue_item_by_identity(
             d.score as max_score,
             d.detection_id as best_detection_id,
             d.detection_id as active_detection_id,
-            d.bbox_x,
-            d.bbox_y,
-            d.bbox_w,
-            d.bbox_h,
+            {bbox_sql[0]} AS bbox_x,
+            {bbox_sql[1]} AS bbox_y,
+            {bbox_sql[2]} AS bbox_w,
+            {bbox_sql[3]} AS bbox_h,
             CASE
                 WHEN d.decision_state = 'unknown' THEN 'unknown_species'
                 WHEN d.decision_state = 'uncertain' THEN 'uncertain'
@@ -598,6 +604,7 @@ def fetch_review_queue_item_by_identity(
             COALESCE({is_gallery_eligible_sql}, 0) as is_gallery_eligible
         FROM detections d
         JOIN images i ON i.filename = d.image_filename
+        {bbox_join_sql}
         WHERE COALESCE(d.status, 'active') = 'active'
           AND (i.review_status IS NULL OR i.review_status = 'untagged')
           AND (
@@ -690,6 +697,7 @@ def fetch_review_cluster_context(
 
     detection_columns = table_columns(conn, "detections")
     species_sql = effective_species_sql_for_columns("d", detection_columns)
+    bbox_sql, bbox_join_sql = effective_bbox_projection_sql(conn)
     is_favorite_sql = _detection_column_sql(detection_columns, "is_favorite", "0")
     is_gallery_eligible_sql = _detection_column_sql(
         detection_columns, "is_gallery_eligible", "0"
@@ -713,10 +721,10 @@ def fetch_review_cluster_context(
         d.score as max_score,
         d.detection_id as best_detection_id,
         d.detection_id as active_detection_id,
-        d.bbox_x,
-        d.bbox_y,
-        d.bbox_w,
-        d.bbox_h,
+        {bbox_sql[0]} AS bbox_x,
+        {bbox_sql[1]} AS bbox_y,
+        {bbox_sql[2]} AS bbox_w,
+        {bbox_sql[3]} AS bbox_h,
         'context' as review_reason,
         d.decision_state,
         d.bbox_quality,
@@ -748,6 +756,7 @@ def fetch_review_cluster_context(
         COALESCE({is_gallery_eligible_sql}, 0) as is_gallery_eligible
     FROM detections d
     JOIN images i ON i.filename = d.image_filename
+    {bbox_join_sql}
     WHERE COALESCE(d.status, 'active') = 'active'
       AND i.review_status = 'confirmed_bird'
       AND i.timestamp IS NOT NULL

@@ -166,7 +166,7 @@
 
     /* Smart-Mode for card-header buttons.
      *
-     * Card-header Approve / Relabel / Trash / Mark No Bird now respect
+     * Card-header Approve / Relabel / Trash / No birds in full image now respect
      * the operator's selection: if any tile checkbox in the card is
      * checked, the action targets only those frames. If nothing is
      * checked, it falls back to every actionable frame in the event
@@ -295,7 +295,6 @@
         try {
             const payload = {
                 species: species,
-                bbox_review: 'correct',
                 detection_ids: scope.ids
             };
             // Selection-scoped approval is intentionally ID-scoped.
@@ -367,7 +366,7 @@
             if (window.wmToast) window.wmToast('Nothing to mark.', 'warning', 2500);
             return;
         }
-        // Mark No Bird is per-image-filename, not per-detection. Resolve
+        // No birds in full image is per-image-filename, not per-detection. Resolve
         // the checked tiles back to their image filenames so the
         // /api/review/decision endpoint can flag the source images.
         const tilesInScope = scope.isSelectionScoped
@@ -382,10 +381,22 @@
             if (window.wmToast) window.wmToast('No image filenames found.', 'error', 3500);
             return;
         }
-        const promptText = scope.isSelectionScoped
-            ? 'Mark ' + filenames.length + ' selected image(s) as No Bird? (Training signal — distinct from Trash)'
-            : 'Mark every image in this event as No Bird? (Training signal — distinct from Trash)';
-        if (!confirm(promptText)) return;
+        if (typeof window.wmConfirmFullImageNoBird !== 'function') {
+            if (window.wmToast) {
+                window.wmToast('Full-image confirmation is unavailable. Nothing was changed.', 'error', 4000);
+            }
+            return;
+        }
+        const frames = tilesInScope.map(function (tile) {
+            const image = tile.querySelector('img[data-full-src], .review-grid__tile-image');
+            return {
+                filename: tile.dataset.imageFilename,
+                fullSrc: image && (image.getAttribute('data-full-src') || image.getAttribute('src')),
+                triggerEl: tile
+            };
+        });
+        const confirmed = await window.wmConfirmFullImageNoBird(frames, card);
+        if (!confirmed) return;
         try {
             await postJson('/api/review/decision', {
                 filenames: filenames,
@@ -394,12 +405,12 @@
             const ids = scope.ids;
             if (scope.isSelectionScoped) {
                 removeTilesByDetectionIds(ids);
-                if (window.wmToast) window.wmToast(filenames.length + ' image(s) marked No Bird', 'success', 2500);
+                if (window.wmToast) window.wmToast(filenames.length + ' full image(s) recorded as containing no birds', 'success', 2500);
             } else {
-                removeCard(card, filenames.length + ' image(s) marked No Bird');
+                removeCard(card, filenames.length + ' full image(s) recorded as containing no birds');
             }
         } catch (err) {
-            if (window.wmToast) window.wmToast('Mark No Bird failed: ' + err.message, 'error', 4000);
+            if (window.wmToast) window.wmToast('Full-image no-bird action failed: ' + err.message, 'error', 4000);
         }
     }
 
@@ -725,7 +736,6 @@
             // §6c rule 7: POST without event_key.
             await postJson('/api/review/event-approve', {
                 species: species,
-                bbox_review: 'correct',
                 detection_ids: reviewIds
             });
             cards.forEach(function (card) { removeCard(card, null); });
@@ -740,7 +750,7 @@
      *
      * Selection is page-scoped: a Trash Selected can span multiple
      * events. Approve Selected groups picks by event_key and posts
-     * one /api/review/event-approve per event. Mark No Bird Selected
+     * one /api/review/event-approve per event. No birds in full image Selected
      * resolves the picks to image filenames via
      * /api/moderation/resolve-selection, then POSTs /api/review/decision
      * with action=no_bird. Relabel Selected reuses the existing

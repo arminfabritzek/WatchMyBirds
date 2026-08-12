@@ -1,8 +1,9 @@
-/* "Move Review Queue to Trash" — preview-first, reversible bulk cleanup.
+/* "Move Review Detections to Trash" — preview-first bulk housekeeping.
  *
  * Fetches the dry-run count, shows the disclosure (favorites / export-relevant
  * are included but counted), then on confirm POSTs the reversible run. Deletes
- * no files; everything lands in Trash and restores from there.
+ * no files. Detection-less images stay in Review because No Bird is an
+ * explicit training answer, never a Trash implementation detail.
  */
 (function () {
     "use strict";
@@ -32,14 +33,14 @@
                   }.</p>`
                 : "";
         body.innerHTML =
-            `<p>This moves the whole Review queue to Trash:</p>` +
+            `<p>This moves every active detection in Review to Trash:</p>` +
             `<ul class="review-cleanup-modal__counts">` +
             `<li><strong>${p.events}</strong> event${p.events === 1 ? "" : "s"}</li>` +
             `<li><strong>${p.images}</strong> image${p.images === 1 ? "" : "s"}</li>` +
             `<li><strong>${p.detections}</strong> detection${p.detections === 1 ? "" : "s"}</li>` +
             `</ul>` +
             disclosure +
-            `<p class="review-cleanup-modal__reassure">No files will be deleted. Items can be restored from Trash.</p>`;
+            `<p class="review-cleanup-modal__reassure">No files or training labels are changed. Detection-less images stay in Review.</p>`;
         const nothing = !p.events && !p.images && !p.detections;
         confirmBtn.disabled = nothing;
         if (nothing) {

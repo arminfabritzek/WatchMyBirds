@@ -423,32 +423,6 @@ def _init_schema(conn: sqlite3.Connection) -> None:
         "CREATE INDEX IF NOT EXISTS idx_rescan_proposals_job_id ON rescan_proposals(job_id);"
     )
 
-    # Training-Data Export (opt-in crowdsourcing of reviewed labels
-    # to the upstream training dev). Rows get added either by an
-    # explicit Export-modal selection or — when the auto-opt-in
-    # setting is on — automatically each time the operator approves
-    # a review event. The CSV / ZIP build path flips ``export_status``
-    # from 'pending' to 'exported' after a successful download.
-    # UNIQUE(detection_id) enforces at-most-one pool entry per
-    # detection; INSERT OR IGNORE in the approval path relies on it.
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS training_exports (
-            export_id INTEGER PRIMARY KEY AUTOINCREMENT,
-            batch_id TEXT NOT NULL,
-            detection_id INTEGER NOT NULL,
-            export_status TEXT NOT NULL DEFAULT 'pending',
-            exported_at TEXT,
-            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            UNIQUE(detection_id),
-            FOREIGN KEY(detection_id) REFERENCES detections(detection_id) ON DELETE CASCADE
-        );
-    """)
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_training_exports_batch_id ON training_exports(batch_id);"
-    )
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_training_exports_status ON training_exports(export_status);"
-    )
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_rescan_proposals_status ON rescan_proposals(status);"
     )
@@ -460,10 +434,7 @@ def _init_schema(conn: sqlite3.Connection) -> None:
     # the next batch's natural ``since_at`` so consecutive batches
     # don't double-count user actions.
     #
-    # Distinct from the older ``training_exports`` table: that one
-    # tracks per-detection state (pending/exported), this one tracks
-    # per-batch state (manifest of what was shipped). Both can coexist;
-    # the new export pipeline does not write into training_exports.
+    # Each row is per-batch state: a manifest of what was shipped.
     conn.execute("""
         CREATE TABLE IF NOT EXISTS export_batches (
             batch_id TEXT PRIMARY KEY,
@@ -581,7 +552,306 @@ def _init_schema(conn: sqlite3.Connection) -> None:
         "CREATE INDEX IF NOT EXISTS idx_reject_audit_bbox ON reject_audit(bbox_x, bbox_y);"
     )
 
+    _init_human_label_schema(conn)
+
     conn.commit()
+
+
+def _init_human_label_schema(conn: sqlite3.Connection) -> None:
+    """Install the additive canonical human-label schema."""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS label_subjects (
+            subject_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            scope TEXT NOT NULL CHECK(scope IN ('image', 'object')),
+            image_filename TEXT NOT NULL,
+            detection_id INTEGER,
+            proposal_bbox_x REAL,
+            proposal_bbox_y REAL,
+            proposal_bbox_w REAL,
+            proposal_bbox_h REAL,
+            proposal_coordinate_space TEXT,
+            proposal_species_key TEXT,
+            detector_model_version TEXT,
+            classifier_model_version TEXT,
+            created_at TEXT NOT NULL,
+            CHECK(
+                (
+                    scope = 'image'
+                    AND detection_id IS NULL
+                    AND proposal_bbox_x IS NULL
+                    AND proposal_bbox_y IS NULL
+                    AND proposal_bbox_w IS NULL
+                    AND proposal_bbox_h IS NULL
+                    AND proposal_coordinate_space IS NULL
+                )
+                OR
+                (
+                    scope = 'object'
+                    AND detection_id IS NOT NULL
+                    AND proposal_bbox_x BETWEEN 0.0 AND 1.0
+                    AND proposal_bbox_y BETWEEN 0.0 AND 1.0
+                    AND proposal_bbox_w > 0.0 AND proposal_bbox_w <= 1.0
+                    AND proposal_bbox_h > 0.0 AND proposal_bbox_h <= 1.0
+                    AND proposal_coordinate_space = 'frame_fraction_xywh_v1'
+                )
+            ),
+            FOREIGN KEY(image_filename) REFERENCES images(filename)
+                ON DELETE CASCADE,
+            FOREIGN KEY(detection_id) REFERENCES detections(detection_id)
+                ON DELETE CASCADE
+        );
+        """
+    )
+    conn.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_label_subjects_image_unique
+        ON label_subjects(image_filename)
+        WHERE scope = 'image';
+        """
+    )
+    conn.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_label_subjects_detection_unique
+        ON label_subjects(detection_id)
+        WHERE scope = 'object';
+        """
+    )
+    conn.execute(
+        """
+        CREATE TRIGGER IF NOT EXISTS trg_label_subject_object_matches_image
+        BEFORE INSERT ON label_subjects
+        WHEN NEW.scope = 'object'
+         AND NOT EXISTS (
+             SELECT 1
+             FROM detections d
+             WHERE d.detection_id = NEW.detection_id
+               AND d.image_filename = NEW.image_filename
+         )
+        BEGIN
+            SELECT RAISE(ABORT, 'object subject does not match detection image');
+        END;
+        """
+    )
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS human_label_facts (
+            fact_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            schema_version INTEGER NOT NULL DEFAULT 1
+                CHECK(schema_version = 1),
+            subject_id INTEGER NOT NULL,
+            fact_type TEXT NOT NULL CHECK(fact_type IN (
+                'bird_presence',
+                'bbox_quality',
+                'bbox_correction',
+                'species_identity',
+                'detector_miss'
+            )),
+            assertion_state TEXT NOT NULL
+                CHECK(assertion_state IN ('asserted', 'retracted')),
+            answer_value TEXT,
+            species_key TEXT,
+            bbox_x REAL,
+            bbox_y REAL,
+            bbox_w REAL,
+            bbox_h REAL,
+            coordinate_space TEXT,
+            context TEXT NOT NULL
+                CHECK(context IN ('normal_correction', 'targeted_training')),
+            source_kind TEXT NOT NULL CHECK(length(trim(source_kind)) > 0),
+            source_ref TEXT,
+            installation_id TEXT NOT NULL
+                CHECK(length(trim(installation_id)) > 0),
+            app_version TEXT NOT NULL CHECK(length(trim(app_version)) > 0),
+            created_at TEXT NOT NULL CHECK(length(trim(created_at)) > 0),
+            supersedes_fact_id INTEGER,
+            CHECK(supersedes_fact_id IS NULL OR supersedes_fact_id != fact_id),
+            CHECK(
+                (
+                    assertion_state = 'retracted'
+                    AND answer_value IS NULL
+                    AND species_key IS NULL
+                    AND bbox_x IS NULL AND bbox_y IS NULL
+                    AND bbox_w IS NULL AND bbox_h IS NULL
+                    AND coordinate_space IS NULL
+                )
+                OR
+                (
+                    assertion_state = 'asserted'
+                    AND (
+                        (
+                            fact_type = 'bird_presence'
+                            AND answer_value IN ('present', 'absent')
+                            AND species_key IS NULL
+                            AND bbox_x IS NULL AND bbox_y IS NULL
+                            AND bbox_w IS NULL AND bbox_h IS NULL
+                            AND coordinate_space IS NULL
+                        )
+                        OR
+                        (
+                            fact_type = 'bbox_quality'
+                            AND answer_value IN ('suitable', 'unsuitable')
+                            AND species_key IS NULL
+                            AND bbox_x IS NULL AND bbox_y IS NULL
+                            AND bbox_w IS NULL AND bbox_h IS NULL
+                            AND coordinate_space IS NULL
+                        )
+                        OR
+                        (
+                            fact_type = 'bbox_correction'
+                            AND answer_value = 'provided'
+                            AND species_key IS NULL
+                            AND bbox_x BETWEEN 0.0 AND 1.0
+                            AND bbox_y BETWEEN 0.0 AND 1.0
+                            AND bbox_w > 0.0 AND bbox_w <= 1.0
+                            AND bbox_h > 0.0 AND bbox_h <= 1.0
+                            AND bbox_x + bbox_w <= 1.0
+                            AND bbox_y + bbox_h <= 1.0
+                            AND coordinate_space = 'frame_fraction_xywh_v1'
+                        )
+                        OR
+                        (
+                            fact_type = 'species_identity'
+                            AND (
+                                (
+                                    answer_value IN ('confirmed', 'corrected')
+                                    AND length(trim(species_key)) > 0
+                                )
+                                OR
+                                (
+                                    answer_value IN ('wrong', 'unknown')
+                                    AND species_key IS NULL
+                                )
+                            )
+                            AND bbox_x IS NULL AND bbox_y IS NULL
+                            AND bbox_w IS NULL AND bbox_h IS NULL
+                            AND coordinate_space IS NULL
+                        )
+                        OR
+                        (
+                            fact_type = 'detector_miss'
+                            AND answer_value = 'reported'
+                            AND species_key IS NULL
+                            AND bbox_x IS NULL AND bbox_y IS NULL
+                            AND bbox_w IS NULL AND bbox_h IS NULL
+                            AND coordinate_space IS NULL
+                        )
+                    )
+                )
+            ),
+            FOREIGN KEY(subject_id) REFERENCES label_subjects(subject_id)
+                ON DELETE CASCADE,
+            FOREIGN KEY(supersedes_fact_id) REFERENCES human_label_facts(fact_id)
+                ON DELETE CASCADE
+        );
+        """
+    )
+    conn.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_human_label_facts_root_unique
+        ON human_label_facts(subject_id, fact_type)
+        WHERE supersedes_fact_id IS NULL;
+        """
+    )
+    conn.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_human_label_facts_successor_unique
+        ON human_label_facts(supersedes_fact_id)
+        WHERE supersedes_fact_id IS NOT NULL;
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_human_label_facts_subject_type
+        ON human_label_facts(subject_id, fact_type, fact_id);
+        """
+    )
+    conn.execute(
+        """
+        CREATE TRIGGER IF NOT EXISTS trg_human_label_fact_scope
+        BEFORE INSERT ON human_label_facts
+        WHEN NOT EXISTS (
+            SELECT 1
+            FROM label_subjects s
+            WHERE s.subject_id = NEW.subject_id
+              AND (
+                  (s.scope = 'image' AND NEW.fact_type IN (
+                      'bird_presence', 'detector_miss'
+                  ))
+                  OR
+                  (s.scope = 'object' AND NEW.fact_type IN (
+                      'bird_presence', 'bbox_quality',
+                      'bbox_correction', 'species_identity'
+                  ))
+              )
+        )
+        BEGIN
+            SELECT RAISE(ABORT, 'fact type is invalid for subject scope');
+        END;
+        """
+    )
+    conn.execute(
+        """
+        CREATE TRIGGER IF NOT EXISTS trg_human_label_fact_supersession_axis
+        BEFORE INSERT ON human_label_facts
+        WHEN NEW.supersedes_fact_id IS NOT NULL
+         AND NOT EXISTS (
+             SELECT 1
+             FROM human_label_facts previous
+             WHERE previous.fact_id = NEW.supersedes_fact_id
+               AND previous.subject_id = NEW.subject_id
+               AND previous.fact_type = NEW.fact_type
+         )
+        BEGIN
+            SELECT RAISE(ABORT, 'superseded fact belongs to another axis');
+        END;
+        """
+    )
+    conn.execute(
+        """
+        CREATE VIEW IF NOT EXISTS current_human_label_facts AS
+        SELECT
+            f.fact_id,
+            f.schema_version,
+            f.subject_id,
+            s.scope,
+            s.image_filename,
+            s.detection_id,
+            f.fact_type,
+            f.assertion_state,
+            f.answer_value,
+            f.species_key,
+            f.bbox_x,
+            f.bbox_y,
+            f.bbox_w,
+            f.bbox_h,
+            f.coordinate_space,
+            f.context,
+            f.source_kind,
+            f.source_ref,
+            f.installation_id,
+            f.app_version,
+            f.created_at,
+            f.supersedes_fact_id,
+            s.proposal_bbox_x,
+            s.proposal_bbox_y,
+            s.proposal_bbox_w,
+            s.proposal_bbox_h,
+            s.proposal_coordinate_space,
+            s.proposal_species_key,
+            s.detector_model_version,
+            s.classifier_model_version
+        FROM human_label_facts f
+        JOIN label_subjects s ON s.subject_id = f.subject_id
+        WHERE f.assertion_state = 'asserted'
+          AND NOT EXISTS (
+              SELECT 1
+              FROM human_label_facts successor
+              WHERE successor.supersedes_fact_id = f.fact_id
+          );
+        """
+    )
 
 
 def get_or_create_default_source(conn: sqlite3.Connection) -> int:

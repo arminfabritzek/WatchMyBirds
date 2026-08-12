@@ -56,8 +56,8 @@
         <button type="button"
                 class="btn btn--secondary"
                 id="reviewClearQueueBtn"
-                title="{{ 'Review queue is empty — nothing to clear' if not review_events else 'Move every item in the Review queue to Trash (reversible, no files deleted)' }}"
-                {{ 'disabled' if not review_events }}>🧹 Move Review Queue to Trash</button>
+                title="{{ 'Review queue is empty — nothing to clear' if not review_events else 'Move active Review detections to Trash without creating training labels' }}"
+                {{ 'disabled' if not review_events }}>🧹 Move Review Detections to Trash</button>
         <a href="/" class="btn btn--secondary" title="Back to live stream">← Stream</a>
     </div>
 </nav>
@@ -67,7 +67,7 @@
     <div class="review-cleanup-modal__backdrop" data-cleanup-dismiss></div>
     <div class="review-cleanup-modal__panel" role="document">
         <h3 class="review-cleanup-modal__title" id="reviewCleanupTitle">
-            Move Review Queue to Trash
+            Move Review Detections to Trash
         </h3>
         <div class="review-cleanup-modal__body" id="reviewCleanupBody">
             <p class="review-cleanup-modal__loading">Counting review items…</p>
@@ -125,11 +125,11 @@
 {% endblock %}
 
 {% block scripts %}
-<script src="/assets/js/gallery_utils.js?v=20260616-saneorigin"></script>
-<script src="/assets/js/tile_actions.js?v=20260616-saneorigin"></script>
+<script src="/assets/js/gallery_utils.js?v=20260819-bbox-keyboard"></script>
+<script src="/assets/js/tile_actions.js?v=20260819-full-image-no-bird"></script>
 <script src="/assets/js/species_picker.js?v=3"></script>
 <script src="/assets/js/batch_actions.js?v=1"></script>
-<script src="/assets/js/review_grid.js?v=20260525-trash-fix"></script>
+<script src="/assets/js/review_grid.js?v=20260819-full-image-no-bird"></script>
 <script src="/assets/js/review_grid_keyboard.js?v=1"></script>
-<script src="/assets/js/review_cleanup.js?v=1"></script>
+<script src="/assets/js/review_cleanup.js?v=2-trash-housekeeping"></script>
 {% endblock %}

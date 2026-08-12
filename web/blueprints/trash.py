@@ -19,6 +19,7 @@ from flask import Blueprint, jsonify, render_template, request
 
 from config import get_config
 from core import gallery_core as gallery_service
+from core.human_label_core import HumanAnswer
 from core.species_colours import assign_species_colours as _assign_species_colours
 from logging_config import get_logger
 from utils.review_metadata import format_review_timestamp
@@ -30,7 +31,12 @@ from utils.species_names import (
 from web.blueprints.auth import login_required
 from web.security import error_response
 from web.security import safe_log_value as _slv
-from web.services import cache_service, db_service, detections_service
+from web.services import (
+    cache_service,
+    db_service,
+    detections_service,
+    human_label_service,
+)
 
 logger = get_logger(__name__)
 
@@ -224,7 +230,7 @@ def trash_empty():
     """Empties trash (rejected detections only).
 
     ``review_status='no_bird'`` images are intentionally preserved:
-    they are the training-export hard-negative corpus
+    they are the training-data hard-negative corpus
     (``utils.db.user_groundtruth.fetch_hard_negatives``). Wiping them
     here would silently destroy verified FP crops. Per-item purge of
     no_bird images is still possible via ``/api/trash/purge`` with
@@ -269,16 +275,13 @@ def trash_empty():
 @cache_service.invalidates("analytics.")
 @login_required
 def reject_detection():
-    """Rejects detections (moves them to trash)."""
+    """Move detections to Trash without asserting a training label."""
     data = request.get_json() or {}
     ids = data.get("ids", [])
     if not ids:
         return jsonify({"error": "No IDs provided"}), 400
-    conn = db_service.get_connection()
-    try:
+    with db_service.closing_connection() as conn:
         db_service.reject_detections(conn, ids)
-    finally:
-        conn.close()
     return jsonify({"status": "success"})
 
 
@@ -330,18 +333,26 @@ def relabel_detection():
         if new_species not in allowed_species:
             return jsonify({"error": "unknown species"}), 400
 
-        conn.execute(
+        row = conn.execute(
             """
-            UPDATE detections
-            SET manual_species_override = ?,
-                species_source = 'manual',
-                species_updated_at = datetime('now'),
-                decision_state = 'confirmed',
-                decision_level = 'species'
+            SELECT image_filename
+            FROM detections
             WHERE detection_id = ?
               AND COALESCE(status, 'active') = 'active'
             """,
-            (new_species, detection_id),
+            (detection_id,),
+        ).fetchone()
+        if row is None:
+            return jsonify({"error": "Detection not found"}), 404
+        human_label_service.record_answer(
+            conn,
+            HumanAnswer(
+                image_filename=str(row["image_filename"]),
+                detection_id=int(detection_id),
+                species_identity="corrected",
+                species_key=str(new_species),
+            ),
+            source_ref="detections:relabel",
         )
         conn.commit()
 

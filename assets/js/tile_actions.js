@@ -48,14 +48,6 @@
         }
     }
 
-    function setTrainingExportState(btn) {
-        if (!btn || !btn.classList) return;
-        btn.classList.add('wm-toolbox__training--active');
-        btn.classList.add('wm-toolbox__btn--toggled');
-        btn.setAttribute('aria-pressed', 'true');
-        btn.setAttribute('title', 'Already in training export pool');
-    }
-
     // safeSameOriginPath is provided globally by gallery_utils.js (loaded first
     // on every page that loads this file).
 
@@ -73,24 +65,47 @@
      * carry several more detections.
      *
      * Returns a Promise that resolves with `true` (confirmed) or
-     * `false` (cancelled). Honors the localStorage 'noBirdConfirmed'
-     * once-per-session flag: when set, returns true without prompting.
+     * `false` (cancelled). The confirmation is deliberately never
+     * remembered: every whole-image assertion must show its full frame.
      */
-    function confirmFrameNoBird(filename, triggerEl) {
-        const NO_BIRD_KEY = 'noBirdConfirmed';
-        if (localStorage.getItem(NO_BIRD_KEY) === 'true') {
-            return Promise.resolve(true);
-        }
+    function confirmFrameNoBird(filename, triggerEl, fullSrcOverride, progressLabel) {
 
         // Resolve the full-image URL from the nearest tile's <img>.
         // data-full-src is set by every wm-tile in subgallery / species /
         // species_overview templates and points at the optimized full
         // frame (not the crop).
-        const tileNode = triggerEl && triggerEl.closest('.wm-tile');
-        const tileImg = tileNode && tileNode.querySelector('.wm-tile__image');
-        const fullSrc = (tileImg && tileImg.getAttribute('data-full-src'))
-            || (tileImg && tileImg.getAttribute('src'))
+        const localRoot = triggerEl && triggerEl.closest(
+            '.wm-tile, .review-grid__tile, .wm-modal, .review-stage-panel, .wm-toolbox-host'
+        );
+        const localImg = localRoot && localRoot.querySelector(
+            'img[data-full-src], img[data-deferred-src], .wm-image-viewer__img, .wm-tile__image, .review-grid__tile-image'
+        );
+        let fullSrc = fullSrcOverride
+            || (localImg && localImg.getAttribute('data-full-src'))
+            || (localImg && localImg.getAttribute('data-deferred-src'))
+            || (localImg && localImg.getAttribute('src'))
             || '';
+
+        if (!fullSrc && filename) {
+            const stem = filename.replace(/\.(jpg|jpeg|png|webp)$/i, '');
+            const images = document.querySelectorAll('img[data-full-src], img[data-deferred-src]');
+            for (let index = 0; index < images.length; index += 1) {
+                const candidate = images[index].getAttribute('data-full-src')
+                    || images[index].getAttribute('data-deferred-src')
+                    || '';
+                if (candidate.indexOf(stem) !== -1) {
+                    fullSrc = candidate;
+                    break;
+                }
+            }
+        }
+        const safeFullSrc = fullSrc ? safeSameOriginPath(fullSrc) : '';
+        if (!safeFullSrc) {
+            if (window.wmToast) {
+                window.wmToast('Full image preview is unavailable. Nothing was changed.', 'error', 4000);
+            }
+            return Promise.resolve(false);
+        }
 
         // Count siblings on the same frame so the warning can be honest:
         // "you are about to flag N detections, not 1". We approximate
@@ -124,7 +139,8 @@
             body.style.cssText = 'display: flex; flex-direction: column; gap: 12px; padding: 16px;';
 
             const heading = document.createElement('h2');
-            heading.textContent = 'Mark this frame as no bird?';
+            heading.textContent = 'No birds in this full image?'
+                + (progressLabel ? ' · ' + progressLabel : '');
             heading.style.cssText = 'margin: 0; font-size: 18px; font-weight: 600;';
             body.appendChild(heading);
 
@@ -142,27 +158,24 @@
             // Sanitise fullSrc through the same same-origin path validator
             // used for navigation. Co-located at the sink so the guard is
             // visible next to the .src assignment.
-            const safeFullSrc = fullSrc ? safeSameOriginPath(fullSrc) : '';
-            if (safeFullSrc) {
-                const preview = document.createElement('img');
-                preview.src = safeFullSrc;
-                preview.alt = 'Full frame preview';
-                preview.style.cssText = [
-                    'width: 100%',
-                    'height: auto',
-                    'max-height: 60vh',
-                    'object-fit: contain',
-                    'background: #000',
-                    'border-radius: 4px',
-                    'display: block',
-                ].join('; ');
-                body.appendChild(preview);
-            }
+            const preview = document.createElement('img');
+            preview.src = safeFullSrc;
+            preview.alt = 'Full image: ' + filename;
+            preview.style.cssText = [
+                'width: 100%',
+                'height: auto',
+                'max-height: 60vh',
+                'object-fit: contain',
+                'background: #000',
+                'border-radius: 4px',
+                'display: block',
+            ].join('; ');
+            body.appendChild(preview);
 
             const hint = document.createElement('p');
             hint.style.cssText = 'margin: 0; font-size: 12px; color: var(--color-text-muted, #888);';
-            hint.textContent = 'Feeds into the next model training batch as hard-negatives. '
-                + '(This confirmation appears only once per session.)';
+            hint.textContent = 'This records that the entire image contains no bird. '
+                + 'Review the complete frame above, not only the crop.';
             body.appendChild(hint);
 
             const actions = document.createElement('div');
@@ -180,7 +193,7 @@
 
             const confirmBtn = document.createElement('button');
             confirmBtn.type = 'button';
-            confirmBtn.textContent = 'Yes, mark as no bird';
+            confirmBtn.textContent = 'Confirm no birds in full image';
             confirmBtn.className = 'btn btn--danger';
             confirmBtn.style.cssText = 'padding: 8px 16px; cursor: pointer; '
                 + 'background: var(--color-danger, #dc2626); color: white; border: none; border-radius: 4px;';
@@ -195,7 +208,6 @@
 
             dlg.addEventListener('close', function () {
                 const ok = dlg.returnValue === 'confirm';
-                if (ok) localStorage.setItem(NO_BIRD_KEY, 'true');
                 dlg.remove();
                 resolve(ok);
             });
@@ -209,19 +221,46 @@
             if (typeof dlg.showModal === 'function') {
                 dlg.showModal();
             } else {
-                // Very old browsers: fall back to native confirm() and
-                // remove the unsupported dialog node.
+                // A text-only fallback would recreate the crop-context trap.
+                // Fail closed when the browser cannot show the full image.
                 dlg.remove();
-                resolve(window.confirm(
-                    'Mark this entire frame as no bird?\n\n'
-                    + 'ALL ' + detectionCount + ' detection(s) will be flagged as false-positives.'
-                ));
+                resolve(false);
             }
         });
     }
 
+    async function confirmFullImageNoBird(frames, triggerEl) {
+        const requested = Array.isArray(frames) ? frames : [frames];
+        const targets = [];
+        const seen = new Set();
+        requested.forEach(function (frame) {
+            const item = typeof frame === 'string' ? { filename: frame } : (frame || {});
+            const filename = String(item.filename || '').trim();
+            if (!filename || seen.has(filename)) return;
+            seen.add(filename);
+            targets.push(item);
+        });
+
+        for (let index = 0; index < targets.length; index += 1) {
+            const target = targets[index];
+            const progressLabel = targets.length > 1
+                ? (String(index + 1) + ' of ' + String(targets.length))
+                : '';
+            const confirmed = await confirmFrameNoBird(
+                target.filename,
+                target.triggerEl || triggerEl,
+                target.fullSrc || '',
+                progressLabel
+            );
+            if (!confirmed) return false;
+        }
+        return targets.length > 0;
+    }
+
+    window.wmConfirmFullImageNoBird = confirmFullImageNoBird;
+
     async function noBirdFrame(filename, triggerEl) {
-        const confirmed = await confirmFrameNoBird(filename, triggerEl);
+        const confirmed = await confirmFullImageNoBird([{ filename: filename }], triggerEl);
         if (!confirmed) return;
 
         try {
@@ -246,7 +285,7 @@
             }
 
             if (window.wmToast) {
-                window.wmToast('Frame marked as no-bird', 'success', 2800);
+                window.wmToast('Full image recorded as containing no birds', 'success', 2800);
             }
         } catch (error) {
             console.error('[tile-actions] no-bird error:', error);
@@ -258,51 +297,115 @@
         }
     }
 
-    async function addDetectionToTrainingExport(detectionId, btn) {
-        const currentSpecies = btn ? (btn.getAttribute('data-current-species') || '').trim() : '';
-        try {
-            const response = await fetch('/api/training-export/add', {
-                method: 'POST',
-                credentials: 'same-origin',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    detection_ids: [Number(detectionId)],
-                    confirm_current_species: Boolean(currentSpecies),
-                    current_species: currentSpecies
-                })
-            });
-            if (typeof isAuthRedirect === 'function' && isAuthRedirect(response)) {
-                if (typeof redirectToLogin === 'function') redirectToLogin();
-                return;
-            }
-
-            const data = await response.json().catch(function () { return {}; });
-            if (!response.ok) {
-                throw new Error(data.message || ('HTTP ' + response.status));
-            }
-
-            const queued = Number(data.added || 0) > 0 || Number(data.already_in_pool || 0) > 0 || Number(data.eligible || 0) > 0;
-            if (queued) {
-                document.querySelectorAll(`.wm-toolbox__training[data-detection-id="${detectionId}"]`).forEach(function (toolboxBtn) {
-                    setTrainingExportState(toolboxBtn);
-                });
-            }
-
-            if (window.wmToast) {
-                if (Number(data.added || 0) > 0) {
-                    window.wmToast('Added to training export pool', 'success', 2600);
-                } else if (Number(data.already_in_pool || 0) > 0) {
-                    window.wmToast('Already in training export pool', 'info', 2600);
-                } else {
-                    window.wmToast('Not eligible yet: confirm species and all boxes first', 'info', 4200);
-                }
-            }
-        } catch (error) {
-            console.error('Training export add error:', error);
-            if (window.wmToast) {
-                window.wmToast('Training export failed: ' + (error.message || String(error)), 'error', 5000);
-            }
+    function correctionFactValue(fact) {
+        if (fact.fact_type === 'bbox_correction') {
+            return [fact.bbox_x, fact.bbox_y, fact.bbox_w, fact.bbox_h]
+                .map(function (value) { return Number(value).toFixed(4); })
+                .join(', ');
         }
+        if (fact.fact_type === 'species_identity' && fact.species_key) {
+            return String(fact.answer_value) + ' · ' + String(fact.species_key);
+        }
+        return String(fact.answer_value || 'unknown');
+    }
+
+    function readinessCopy(readiness) {
+        const labels = {
+            object_bird_presence_unknown: 'bird presence unanswered',
+            object_bird_absent: 'object marked as not a bird',
+            bbox_quality_unknown: 'box quality unanswered',
+            bbox_unsuitable: 'box marked unsuitable',
+            species_identity_unknown: 'species unanswered',
+            species_unknown: 'species marked unknown',
+            species_wrong: 'species marked wrong',
+            species_identity_unsupported: 'species answer unsupported',
+            species_key_missing: 'species name missing'
+        };
+        if (!readiness || readiness.ready) return 'Ready';
+        return (readiness.reasons || []).map(function (reason) {
+            return labels[reason] || reason;
+        }).join(' · ');
+    }
+
+    async function showCorrectionDetails(filename, detectionId) {
+        const params = new URLSearchParams({
+            filename: filename,
+            detection_id: String(detectionId)
+        });
+        const response = await fetch('/api/labels/state?' + params.toString(), {
+            credentials: 'same-origin'
+        });
+        const data = await response.json().catch(function () { return {}; });
+        if (!response.ok || data.status !== 'success') {
+            throw new Error(data.message || ('HTTP ' + response.status));
+        }
+
+        const dialog = document.createElement('dialog');
+        dialog.className = 'wm-correction-details';
+        const panel = document.createElement('div');
+        panel.className = 'wm-correction-details__panel';
+
+        const heading = document.createElement('h2');
+        heading.textContent = 'Correction details — this box only';
+        panel.appendChild(heading);
+
+        const progress = data.object_progress || {};
+        const scope = document.createElement('p');
+        scope.className = 'wm-correction-details__scope';
+        scope.textContent = Number(progress.total || 0) > 1
+            ? (String(progress.answered || 0) + ' of ' + String(progress.total)
+                + ' boxes on this image have recorded answers. Other boxes are unchanged.')
+            : 'Answers here apply only to the offered box. Full-image answers are listed separately.';
+        panel.appendChild(scope);
+
+        const readiness = document.createElement('div');
+        readiness.className = 'wm-correction-details__readiness';
+        ['od', 'cls'].forEach(function (kind) {
+            const item = document.createElement('div');
+            const status = data.readiness && data.readiness[kind];
+            item.className = 'wm-correction-details__readiness-item'
+                + (status && status.ready ? ' is-ready' : '');
+            const title = document.createElement('strong');
+            title.textContent = kind.toUpperCase() + ': ';
+            item.appendChild(title);
+            item.appendChild(document.createTextNode(readinessCopy(status)));
+            readiness.appendChild(item);
+        });
+        panel.appendChild(readiness);
+
+        const facts = Array.isArray(data.facts) ? data.facts : [];
+        const list = document.createElement('dl');
+        list.className = 'wm-correction-details__facts';
+        facts.forEach(function (fact) {
+            const term = document.createElement('dt');
+            term.textContent = String(fact.scope) + ' · ' + String(fact.fact_type);
+            const value = document.createElement('dd');
+            value.textContent = correctionFactValue(fact);
+            list.appendChild(term);
+            list.appendChild(value);
+        });
+        if (facts.length === 0) {
+            const empty = document.createElement('p');
+            empty.className = 'wm-correction-details__empty';
+            empty.textContent = 'No explicit answers recorded yet.';
+            panel.appendChild(empty);
+        } else {
+            panel.appendChild(list);
+        }
+
+        const close = document.createElement('button');
+        close.type = 'button';
+        close.className = 'btn btn--secondary wm-correction-details__close';
+        close.textContent = 'Close';
+        close.addEventListener('click', function () { dialog.close(); });
+        panel.appendChild(close);
+        dialog.appendChild(panel);
+        dialog.addEventListener('close', function () { dialog.remove(); });
+        dialog.addEventListener('click', function (event) {
+            if (event.target === dialog) dialog.close();
+        });
+        document.body.appendChild(dialog);
+        dialog.showModal();
     }
 
     /* =========================================
@@ -361,15 +464,18 @@
                 }
                 break;
 
+            case 'correction-details':
+                showCorrectionDetails(filename, Number(detectionId)).catch(function (error) {
+                    console.error('[tile-actions] correction details error:', error);
+                    if (window.wmToast) {
+                        window.wmToast('Could not load correction details.', 'error', 3500);
+                    }
+                });
+                break;
+
             case 'favorite':
                 if (typeof toggleFavorite === 'function' && detectionId) {
                     toggleFavorite(null, detectionId, actionEl);
-                }
-                break;
-
-            case 'training-export':
-                if (detectionId) {
-                    addDetectionToTrainingExport(detectionId, actionEl);
                 }
                 break;
 
@@ -378,6 +484,14 @@
                 if (typeof relabelDetection === 'function' && detectionId) {
                     var currentSpecies = actionEl.getAttribute('data-current-species') || '';
                     relabelDetection(null, parseInt(detectionId, 10), currentSpecies);
+                }
+                break;
+
+            case 'correct-bbox':
+                if (typeof window.startWmBboxEditor === 'function') {
+                    window.startWmBboxEditor(actionEl);
+                } else if (window.wmToast) {
+                    window.wmToast('Box editor is unavailable.', 'error', 3200);
                 }
                 break;
 
@@ -416,14 +530,9 @@
 
             case 'review-no-bird':
                 if (filename) {
-                    if (typeof singleAction === 'function') {
-                        // Review-Queue surface: delegate to review_workspace.js (handles nav advance)
-                        singleAction(filename, 'no_bird');
-                    } else {
-                        // Browse surfaces (Gallery, Subgallery, Species, Detection-Modal):
-                        // use the surface-agnostic fallback defined in this file
-                        noBirdFrame(filename, actionEl);
-                    }
+                    // Every surface uses the same full-image safety gate.
+                    // No legacy review callback may bypass the preview.
+                    noBirdFrame(filename, actionEl);
                 }
                 break;
 

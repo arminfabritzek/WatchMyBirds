@@ -1,8 +1,7 @@
 (function () {
     'use strict';
 
-    let noBirdConfirmed = localStorage.getItem('noBirdConfirmed') === 'true'
-        || localStorage.getItem('reviewTrashConfirmed') === 'true';
+    let reviewTrashConfirmed = localStorage.getItem('reviewTrashConfirmed') === 'true';
     let reviewMetricsExpanded = localStorage.getItem('reviewMetricsExpanded') !== 'false';
     const REVIEW_PENDING_SPECIES_KEY = 'reviewPendingSpeciesV1';
     const reviewQueueDataEl = document.getElementById('review-queue-data');
@@ -640,13 +639,18 @@
             btn.classList.toggle('is-wrong', bboxReview === 'wrong');
             const copy = btn.querySelector('[data-bbox-review-copy]');
             if (copy) {
-                copy.textContent = bboxReview === 'wrong' ? 'Wrong' : 'Correct';
+                copy.textContent = bboxReview === 'wrong'
+                    ? 'Wrong'
+                    : bboxReview === 'correct'
+                        ? 'Correct'
+                        : 'Unreviewed';
             }
         });
         updateReviewApproveState(controls);
     }
 
     function getNextReviewBboxState(currentState) {
+        if (!currentState) return 'correct';
         return currentState === 'wrong' ? 'correct' : 'wrong';
     }
 
@@ -1009,7 +1013,11 @@
             btn.classList.toggle('is-wrong', bboxReview === 'wrong');
             const copy = btn.querySelector('[data-review-event-bbox-copy]');
             if (copy) {
-                copy.textContent = bboxReview === 'wrong' ? 'Wrong' : 'Correct';
+                copy.textContent = bboxReview === 'wrong'
+                    ? 'Wrong'
+                    : bboxReview === 'correct'
+                        ? 'Correct'
+                        : 'Unreviewed';
             }
         });
         updateReviewApproveState(controls);
@@ -2102,12 +2110,11 @@
             return false;
         }
 
-        if (!noBirdConfirmed) {
+        if (!reviewTrashConfirmed) {
             if (!confirm('Reject every review detection in this event?\n\nGallery-anchor frames (the ones with the "In Gallery" badge) are not touched — they stay in the Gallery.\n\nImages that only had review detections go to Trash. Images that also have detections in other events keep those and stay.\n\n(This confirmation appears only once per session.)')) {
                 return false;
             }
-            noBirdConfirmed = true;
-            localStorage.setItem('noBirdConfirmed', 'true');
+            reviewTrashConfirmed = true;
             localStorage.setItem('reviewTrashConfirmed', 'true');
         }
 
@@ -2349,8 +2356,7 @@
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     detection_ids: submitIds,
-                    species: state.species,
-                    bbox_review: 'correct'
+                    species: state.species
                 })
             });
             const data = await response.json();
@@ -2530,13 +2536,29 @@
         return true;
     }
 
-    function modalAction(itemKey, filename, action, detectionId) {
-        if ((action === 'trash' || action === 'no_bird') && !noBirdConfirmed) {
+    function modalAction(itemKey, filename, action, detectionId, triggerEl) {
+        if (action === 'no_bird') {
+            if (typeof window.wmConfirmFullImageNoBird !== 'function') {
+                if (window.wmToast) {
+                    window.wmToast('Full-image confirmation is unavailable. Nothing was changed.', 'error', 4000);
+                }
+                return false;
+            }
+            return withNextReviewItem(itemKey, async () => {
+                const confirmed = await window.wmConfirmFullImageNoBird(
+                    [{ filename: filename, triggerEl: triggerEl }],
+                    triggerEl
+                );
+                if (!confirmed) return false;
+                return sendReviewDecision([filename], action);
+            });
+        }
+
+        if (action === 'trash' && !reviewTrashConfirmed) {
             if (!confirm('Move this image to Trash?\n\nIt can still be restored there first and deleted permanently later.\n\n(This confirmation appears only once per session.)')) {
                 return;
             }
-            noBirdConfirmed = true;
-            localStorage.setItem('noBirdConfirmed', 'true');
+            reviewTrashConfirmed = true;
             localStorage.setItem('reviewTrashConfirmed', 'true');
         }
 
@@ -2663,7 +2685,7 @@
         const bboxBtn = event.target.closest('[data-bbox-review-toggle]');
         if (bboxBtn) {
             event.preventDefault();
-            setReviewBboxState(bboxBtn, getNextReviewBboxState(bboxBtn.dataset.bboxReviewValue || 'correct'));
+            setReviewBboxState(bboxBtn, getNextReviewBboxState(bboxBtn.dataset.bboxReviewValue || ''));
             return;
         }
 
@@ -2672,7 +2694,7 @@
             event.preventDefault();
             const controls = eventBboxBtn.closest('[data-review-event-controls]');
             if (!controls) return;
-            applyReviewEventBboxUi(controls, getNextReviewBboxState(controls.dataset.bboxReview || 'correct'));
+            applyReviewEventBboxUi(controls, getNextReviewBboxState(controls.dataset.bboxReview || ''));
             return;
         }
 
@@ -2877,7 +2899,7 @@
         if (action === 'trash' || action === 'no_bird') {
             event.preventDefault();
             const detectionId = Number(actionBtn.dataset.detectionId || panel.querySelector('[data-review-controls]')?.dataset.detectionId || 0);
-            modalAction(itemKey, filename, action, detectionId);
+            modalAction(itemKey, filename, action, detectionId, actionBtn);
             return;
         }
 
