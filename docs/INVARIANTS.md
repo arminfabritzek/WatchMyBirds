@@ -16,8 +16,8 @@ Rules live in one of three sections, by enforcement strength:
 
 **Demoting a rule** (HARD→SOFT, SOFT→OBSOLETE) is a deliberate
 architectural decision — never an automatic consequence. In
-particular, neither "THE_FUTURE.md endorses a change that this rule
-blocks" nor "the enforcement test is firing" is, on its own, a
+particular, neither "a roadmap endorses a change that this rule blocks"
+nor "the enforcement test is firing" is, on its own, a
 sufficient reason: a firing test may mean the test is wrong, not the
 rule. Demotion requires all of:
 

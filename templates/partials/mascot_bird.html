@@ -2853,16 +2853,16 @@
         },
         {
             // ShakeOff: dog-style full-body shake to fling water off.
-            // Phase 1 (0..0.4 s): wind-up — body crouches, wings come
+            // Wind-up (0..0.4 s): body crouches, wings come
             //   in close, eyes squint shut for the impact.
-            // Phase 2 (0.4..2.0 s): the actual shake. bodyRot oscillates
+            // Shake (0.4..2.0 s): bodyRot oscillates
             //   at ~14 Hz; the head counter-rotates at the same speed
             //   so it appears to stay roughly upright (real dogs do
             //   exactly this — flying ears, still snout). Wings flick
             //   in counter-phase, tail whips with the body. Splash
             //   droplets fly off the feet via the existing 'splash'
             //   particle stream (already used by PuddleSplash).
-            // Phase 3 (2.0..2.8 s): wind-down — amplitude decays to
+            // Wind-down (2.0..2.8 s): amplitude decays to
             //   zero, beak opens once for a relieved exhale, eyes
             //   reopen, the bird straightens back to neutral.
             name: 'ShakeOff',

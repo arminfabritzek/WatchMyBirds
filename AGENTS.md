@@ -163,7 +163,6 @@ a first-class target.
   frame where nothing was proposed. Correcting a proposal — confirm,
   relabel, reject, drag the offered box — is in scope and is where
   active work is heading. The line is the blank canvas, not the mouse.
-  See `agent_handoff/THE_FUTURE.md`.
 
 ## Where things live
 
