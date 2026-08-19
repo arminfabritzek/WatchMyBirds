@@ -4,6 +4,8 @@
 
 ### Added
 
+- Species display names can now be switched to English in Settings,
+  alongside German and Norwegian.
 - Selected images can be downloaded together as a ZIP from the species view,
   including favourites collected across different days.
 - Direct bounding-box correction lets reviewers drag an offered box while

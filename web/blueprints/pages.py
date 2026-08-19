@@ -80,7 +80,7 @@ SETTING_LABELS = {
     "EXPORT_BURN_IN_METADATA": "Burn Metadata Into Downloads (Embed species name + location into downloaded copies for iNaturalist re-import; the stored original is never changed. Off downloads the raw original)",
     "INBOX_REQUIRE_EXIF_DATETIME": "Inbox Require EXIF Date/Time (Skip imports without DateTimeOriginal/DateTimeDigitized)",
     "INBOX_REQUIRE_EXIF_GPS": "Inbox Require EXIF GPS (Skip imports without GPSLatitude/GPSLongitude)",
-    "SPECIES_COMMON_NAME_LOCALE": "Species Common Names (Language for display names: DE=Deutsch, NO=Norsk)",
+    "SPECIES_COMMON_NAME_LOCALE": "Species Common Names (Language for display names: DE=Deutsch, EN=English, NO=Norsk)",
     "MAX_DETECTIONS_PER_BURST": "Burst Cap (Max detections persisted per rolling window — protects review queue from flocks; 0 disables)",
     "BURST_WINDOW_SECONDS": "Burst Window (Seconds for the rolling burst-cap window)",
 }

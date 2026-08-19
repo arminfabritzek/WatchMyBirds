@@ -6,8 +6,8 @@ names according to the active SPECIES_COMMON_NAME_LOCALE setting.
 
 Strategy:
   1. Always load DE base map (``assets/common_names_DE.json``).
-  2. If locale is ``NO``, overlay ``assets/common_names_NO.json`` on top.
-  3. Missing NO keys fall back to DE silently.
+  2. For EN or NO, overlay the matching locale map on top.
+  3. Missing overlay keys fall back to DE silently.
 """
 
 from __future__ import annotations
@@ -98,6 +98,7 @@ def species_key_from_candidates(
 
     return UNKNOWN_SPECIES_KEY
 
+
 _ASSETS_DIR = (
     Path(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))) / "assets"
 )
@@ -174,10 +175,11 @@ def load_common_names(locale: str = "DE") -> dict[str, str]:
     Parameters
     ----------
     locale:
-        ``"DE"`` (default) or ``"NO"``.  Unknown values fall back to DE.
+        ``"DE"`` (default), ``"EN"``, or ``"NO"``. Unknown values fall
+        back to DE.
     """
     locale = str(locale).strip().upper()
-    if locale not in ("DE", "NO"):
+    if locale not in ("DE", "EN", "NO"):
         locale = "DE"
 
     # 1. Base map — always DE
@@ -192,15 +194,17 @@ def load_common_names(locale: str = "DE") -> dict[str, str]:
     if locale == "DE":
         return names
 
-    # 2. Overlay NO
-    overlay_path = _ASSETS_DIR / "common_names_NO.json"
+    # 2. Overlay the selected non-default locale.
+    overlay_path = _ASSETS_DIR / f"common_names_{locale}.json"
     if overlay_path.exists():
         try:
             with open(overlay_path, encoding="utf-8") as f:
                 overlay: dict[str, str] = json.load(f)
             names.update(overlay)
         except Exception as exc:
-            logger.warning("Failed to load NO overlay from %s: %s", overlay_path, exc)
+            logger.warning(
+                "Failed to load %s overlay from %s: %s", locale, overlay_path, exc
+            )
 
     return names
 
@@ -215,10 +219,11 @@ def load_extended_species(locale: str = "DE") -> list[dict[str, str]]:
     Species already covered by the model/common-name base map are excluded.
     Locale fallback order:
     - DE: common_de -> common_en -> scientific name with spaces
+    - EN: common_en -> common_de -> scientific name with spaces
     - NO: common_nb -> common_en -> common_de -> scientific name with spaces
     """
     locale = str(locale).strip().upper()
-    if locale not in ("DE", "NO"):
+    if locale not in ("DE", "EN", "NO"):
         locale = "DE"
 
     asset_path = _ASSETS_DIR / "extended_species_global.json"
@@ -245,6 +250,12 @@ def load_extended_species(locale: str = "DE") -> list[dict[str, str]]:
             common = (
                 item.get("common_nb")
                 or item.get("common_en")
+                or item.get("common_de")
+                or scientific.replace("_", " ")
+            )
+        elif locale == "EN":
+            common = (
+                item.get("common_en")
                 or item.get("common_de")
                 or scientific.replace("_", " ")
             )

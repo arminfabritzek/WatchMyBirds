@@ -131,6 +131,7 @@ Returns current application settings.
 
 #### POST `/api/v1/settings`
 Updates application settings. Only runtime-modifiable keys are accepted.
+`SPECIES_COMMON_NAME_LOCALE` accepts `DE`, `EN`, or `NO`.
 
 **Request Body:**
 ```json

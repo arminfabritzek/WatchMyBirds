@@ -2047,6 +2047,7 @@
                         <label for="SPECIES_COMMON_NAME_LOCALE" class="settings-field__label">Species Common Names</label>
                         <select name="SPECIES_COMMON_NAME_LOCALE" id="SPECIES_COMMON_NAME_LOCALE" class="form-select">
                             <option value="DE" {% if payload.get('SPECIES_COMMON_NAME_LOCALE', {}).get('value', 'DE') == 'DE' %}selected{% endif %}>Deutsch (DE)</option>
+                            <option value="EN" {% if payload.get('SPECIES_COMMON_NAME_LOCALE', {}).get('value', 'DE') == 'EN' %}selected{% endif %}>English (EN)</option>
                             <option value="NO" {% if payload.get('SPECIES_COMMON_NAME_LOCALE', {}).get('value', 'DE') == 'NO' %}selected{% endif %}>Norsk (NO)</option>
                         </select>
                         <div class="settings-field__help">Language for species display names.</div>

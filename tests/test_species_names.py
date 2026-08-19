@@ -141,6 +141,85 @@ def test_load_extended_species_uses_de_fallback_order(tmp_path, monkeypatch):
     assert common_by_scientific["Species_only"] == "Species only"
 
 
+def test_load_common_names_uses_english_overlay(tmp_path, monkeypatch):
+    assets_dir = tmp_path / "assets"
+    assets_dir.mkdir()
+
+    (assets_dir / "common_names_DE.json").write_text(
+        json.dumps(
+            {
+                "Unknown_species": "Vogel (Art unklar)",
+                "Parus_major": "Kohlmeise",
+            }
+        ),
+        encoding="utf-8",
+    )
+    (assets_dir / "common_names_EN.json").write_text(
+        json.dumps(
+            {
+                "Unknown_species": "Bird (species uncertain)",
+                "Parus_major": "Great Tit",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(species_names, "_ASSETS_DIR", assets_dir)
+
+    assert species_names.load_common_names("EN") == {
+        "Unknown_species": "Bird (species uncertain)",
+        "Parus_major": "Great Tit",
+    }
+
+
+def test_load_extended_species_uses_en_fallback_order(tmp_path, monkeypatch):
+    assets_dir = tmp_path / "assets"
+    assets_dir.mkdir()
+
+    (assets_dir / "common_names_DE.json").write_text(
+        json.dumps({"Unknown_species": "Vogel (Art unklar)"}),
+        encoding="utf-8",
+    )
+    (assets_dir / "common_names_EN.json").write_text(
+        json.dumps({"Unknown_species": "Bird (species uncertain)"}),
+        encoding="utf-8",
+    )
+    (assets_dir / "extended_species_global.json").write_text(
+        json.dumps(
+            [
+                {
+                    "scientific": "Species_en",
+                    "common_de": "Deutsch",
+                    "common_en": "English",
+                    "common_nb": "Norsk",
+                },
+                {
+                    "scientific": "Species_de",
+                    "common_de": "Deutsch only",
+                    "common_en": "",
+                    "common_nb": "",
+                },
+                {
+                    "scientific": "Species_only",
+                    "common_de": "",
+                    "common_en": "",
+                    "common_nb": "",
+                },
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(species_names, "_ASSETS_DIR", assets_dir)
+
+    entries = species_names.load_extended_species("EN")
+    common_by_scientific = {row["scientific"]: row["common"] for row in entries}
+
+    assert common_by_scientific["Species_en"] == "English"
+    assert common_by_scientific["Species_de"] == "Deutsch only"
+    assert common_by_scientific["Species_only"] == "Species only"
+
+
 def test_load_common_names_result_survives_caller_inplace_refresh(
     tmp_path, monkeypatch
 ):

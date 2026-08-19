@@ -163,6 +163,12 @@ class TestTemplateStructure:
         assert 'id="settingsSendReportButton"' in content
         assert 'id="settingsSendReportStatus"' in content
 
+    def test_settings_species_locale_offers_english(self):
+        """The species-name language selector must expose English."""
+        content = self.get_template_content("settings.html")
+        assert '<option value="EN"' in content
+        assert "English (EN)" in content
+
     def test_base_has_navigation(self):
         """base.html must contain navigation structure."""
         content = self.get_template_content("base.html")

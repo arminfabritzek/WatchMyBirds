@@ -528,6 +528,13 @@ class TestValidateNewKeys:
         assert ok is True
         assert val == "NO"
 
+    def test_species_locale_en_valid(self):
+        from config import _validate_value
+
+        ok, val = _validate_value("SPECIES_COMMON_NAME_LOCALE", "en")
+        assert ok is True
+        assert val == "EN"
+
     def test_species_locale_invalid_rejected(self):
         from config import _validate_value
 
@@ -656,4 +663,4 @@ class TestSettingsPayload:
         payload = get_settings_payload()
         lc = payload.get("SPECIES_COMMON_NAME_LOCALE", {})
         assert lc.get("editable") is True
-        assert lc.get("value") in ("DE", "NO")
+        assert lc.get("value") in ("DE", "EN", "NO")

@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pytest
 
-_ASSETS = Path(__file__).resolve().parents[1] / "assets" / "common_names_DE.json"
+_ASSETS_DIR = Path(__file__).resolve().parents[1] / "assets"
 
 
 # Species observed at a real station. Extend when new species
@@ -46,8 +46,18 @@ SPECIES_IN_USE = [
 
 
 def _load_de_names() -> dict[str, str]:
-    with _ASSETS.open(encoding="utf-8") as fh:
+    with (_ASSETS_DIR / "common_names_DE.json").open(encoding="utf-8") as fh:
         return json.load(fh)
+
+
+def test_english_map_covers_every_model_species():
+    """English must be a complete display locale, not a partial fallback."""
+    de = _load_de_names()
+    with (_ASSETS_DIR / "common_names_EN.json").open(encoding="utf-8") as fh:
+        en = json.load(fh)
+
+    assert list(en) == list(de)
+    assert all(en.values())
 
 
 @pytest.mark.parametrize("species_key", SPECIES_IN_USE)

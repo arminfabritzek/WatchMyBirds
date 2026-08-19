@@ -967,9 +967,9 @@ def _coerce_config_types(config: dict[str, Any]) -> None:
     else:
         config["GO2RTC_CONFIG_PATH"] = "./go2rtc.yaml"
 
-    # SPECIES_COMMON_NAME_LOCALE: uppercase, only DE or NO
+    # SPECIES_COMMON_NAME_LOCALE: uppercase, only DE, EN, or NO
     locale_val = str(config.get("SPECIES_COMMON_NAME_LOCALE", "DE")).strip().upper()
-    if locale_val not in ("DE", "NO"):
+    if locale_val not in ("DE", "EN", "NO"):
         locale_val = "DE"
     config["SPECIES_COMMON_NAME_LOCALE"] = locale_val
 
@@ -1393,7 +1393,7 @@ def _validate_value(key: str, value: Any) -> tuple[bool, Any]:
     if key == "SPECIES_COMMON_NAME_LOCALE":
         if isinstance(value, str):
             normalized = value.strip().upper()
-            if normalized in ("DE", "NO"):
+            if normalized in ("DE", "EN", "NO"):
                 return True, normalized
         return False, None
 

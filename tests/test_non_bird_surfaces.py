@@ -1,7 +1,7 @@
 """Non-bird surfaces first-class.
 
 Covers:
-- common_names_DE and common_names_NO carry the 4 non-bird keys
+- all common-name locale maps carry the 4 non-bird keys
 - review_species placeholder assets exist for all 4 non-bird classes
 - events._resolve_detection_species uses 'detector' source for non-bird
 - daily_report._fetch_species_best_photos filters UNKNOWN_SPECIES_KEY
@@ -21,7 +21,7 @@ NON_BIRD_KEYS = ("squirrel", "cat", "marten_mustelid", "hedgehog")
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
-@pytest.mark.parametrize("locale", ["DE", "NO"])
+@pytest.mark.parametrize("locale", ["DE", "EN", "NO"])
 @pytest.mark.parametrize("key", NON_BIRD_KEYS)
 def test_common_names_contain_non_bird(locale, key):
     # Bypass lru_cache because the assets JSONs may have been edited during
