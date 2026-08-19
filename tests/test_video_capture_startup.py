@@ -153,6 +153,7 @@ def test_reinitialize_camera_uses_strict_initial_frame_validation(monkeypatch):
 
     monkeypatch.setattr(cap, "stop", lambda: None)
     monkeypatch.setattr(vc_module.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(cap, "_ensure_current_rtsp_stream_settings", lambda: None)
     monkeypatch.setattr(cap, "_start_reader_thread", lambda: None)
     monkeypatch.setattr(cap, "_start_health_check_thread", lambda: None)
 

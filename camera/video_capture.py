@@ -121,13 +121,8 @@ class VideoCapture:
             logger.debug("VideoCapture already running.")
             return
         if self.stream_type == self.RTSP:
-            if not self.stream_settings_loaded:
-                self._get_stream_resolution_ffprobe()
-                logger.debug(f"Initial resolution: {self.resolution}")
-            else:
-                logger.debug(
-                    f"Using cached stream settings without re-probe: resolution={self.resolution}"
-                )
+            self._ensure_current_rtsp_stream_settings()
+            logger.debug(f"Current RTSP resolution: {self.resolution}")
         try:
             self._setup_capture()
         except Exception as start_error:
@@ -502,6 +497,17 @@ class VideoCapture:
                 f"Cached stream settings validation failed: {validation_error}"
             )
             return False
+
+    def _ensure_current_rtsp_stream_settings(self) -> None:
+        """Establish current RTSP dimensions before starting raw-frame capture."""
+        if self.stream_settings_loaded:
+            if not self._validate_cached_stream_settings():
+                raise RuntimeError(
+                    "Unable to validate cached RTSP stream settings; "
+                    "refusing to start capture with unverified dimensions."
+                )
+            return
+        self._get_stream_resolution_ffprobe()
 
     def _persist_stream_settings(self):
         """Persists discovered stream settings to speed up future startups."""
@@ -1472,6 +1478,8 @@ class VideoCapture:
 
             self.stop_event.clear()
             self.stop_flag = False
+            if self.stream_type == self.RTSP:
+                self._ensure_current_rtsp_stream_settings()
             self._setup_capture(
                 require_initial_frame=True,
                 initial_frame_wait_sec=self._recovery_initial_frame_wait_sec,

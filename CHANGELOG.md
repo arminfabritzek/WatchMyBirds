@@ -15,6 +15,9 @@
 
 ### Fixed
 
+- RTSP startup and recovery now revalidate the camera's current resolution
+  before reading raw FFmpeg frames, preventing stale cached dimensions from
+  combining parts of consecutive frames after a camera resolution change.
 - Trash and rejected crops no longer create whole-image bird-absent labels;
   "No birds in full image" always previews the full frame and requires fresh
   confirmation.
