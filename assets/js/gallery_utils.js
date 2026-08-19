@@ -771,8 +771,6 @@ function startWmBboxEditor(actionEl) {
     const canvasDisplay = canvas ? canvas.style.display : '';
     resetSmartZoomViewer(viewer, img);
     if (zoomButton) {
-        zoomButton.classList.remove('active');
-        zoomButton.textContent = '🔍 Zoom';
         applySmartZoomToggleState(zoomButton, false, true);
     }
     if (canvas) canvas.style.display = 'none';
@@ -1511,13 +1509,9 @@ function applySmartZoomPreferenceToScope(scope) {
         zoomBtn.style.display = '';
         if (storedPref === 'full') {
             resetSmartZoomViewer(viewer, img);
-            zoomBtn.classList.remove('active');
-            zoomBtn.textContent = '🔍 Zoom';
             applySmartZoomToggleState(zoomBtn, false, true);
         } else {
             applySmartZoom(viewer, img, state.bx, state.by, state.bw, state.bh);
-            zoomBtn.classList.add('active');
-            zoomBtn.textContent = '🖼 Full';
             applySmartZoomToggleState(zoomBtn, true, true);
         }
     });
@@ -1549,8 +1543,6 @@ function initSmartZoom(img) {
         // Ensure full-image state
         resetSmartZoomViewer(viewer, img);
         if (zoomBtn) {
-            zoomBtn.classList.remove('active');
-            zoomBtn.textContent = '🔍 Zoom';
             applySmartZoomToggleState(zoomBtn, false, true);
         }
         return;
@@ -1627,21 +1619,11 @@ function applySmartZoom(viewer, img, bx, by, bw, bh) {
         canvas.style.transform = transformCSS;
     }
 
-    // Update button state
-    const host = getViewerHost(viewer);
-    if (host) {
-        const scope = getViewerScope(viewer);
-        const zoomBtn = resolveViewerToolButton(host, scope, '.smart-zoom-toggle');
-        if (zoomBtn) {
-            zoomBtn.classList.add('active');
-            zoomBtn.textContent = '🖼 Full';
-        }
-    }
 }
 
 /**
- * Reflect the current zoom state on a `.smart-zoom-toggle` button so
- * pressed-state is visible without rewriting the zoom math.
+ * Reflect the current zoom state on either the direct Focus/Full segmented
+ * control or a legacy `.smart-zoom-toggle` button.
  *
  * Contract:
  *   - aria-pressed mirrors the viewer's zoomed state
@@ -1653,14 +1635,25 @@ function applySmartZoom(viewer, img, bx, by, bw, bh) {
  *         persisted intent is 'zoom' but the current viewer has no bbox
  *
  * `hasBbox` distinguishes "truly zoomable" (real bbox data on the
- * viewer) from "no bbox visible, button stays pressed as intent". The
- * emoji label swap on `textContent` stays for cross-surface
- * consistency with Gallery/Stream viewers.
+ * viewer) from "no bbox visible, button stays pressed as intent".
  */
 function applySmartZoomToggleState(btn, isZoomed, hasBbox) {
     if (!btn) return;
+
+    if (btn.classList.contains('wm-view-mode-toggle')) {
+        btn.dataset.viewMode = isZoomed ? 'focus' : 'full';
+        btn.querySelectorAll('[data-view-mode]').forEach(function (option) {
+            const isActive = option.dataset.viewMode === (isZoomed ? 'zoom' : 'full');
+            option.classList.toggle('is-active', isActive);
+            option.setAttribute('aria-pressed', String(isActive));
+        });
+        return;
+    }
+
     btn.classList.toggle('wm-toolbox__btn--toggled', isZoomed);
+    btn.classList.toggle('active', isZoomed);
     btn.setAttribute('aria-pressed', String(isZoomed));
+    btn.textContent = isZoomed ? '🖼 Full' : '🔍 Zoom';
     if (isZoomed && !hasBbox) {
         btn.title = 'No bounding box — zoom unavailable for this frame';
     } else if (isZoomed) {
@@ -1712,6 +1705,18 @@ function toggleSmartZoom(btn) {
 
     const prefs = getViewerPrefKeys(scope);
     const nextPref = localStorage.getItem(prefs.zoom) === 'zoom' ? 'full' : 'zoom';
+    setSmartZoomMode(btn, nextPref);
+}
+
+/**
+ * Select an explicit image-view mode from the direct Focus/Full control.
+ */
+function setSmartZoomMode(btn, mode) {
+    const scope = getViewerScope(btn);
+    if (!scope) return;
+
+    const prefs = getViewerPrefKeys(scope);
+    const nextPref = mode === 'full' ? 'full' : 'zoom';
     localStorage.setItem(prefs.zoom, nextPref);
     applySmartZoomPreferenceToScope(scope);
 
@@ -1941,20 +1946,21 @@ function _handleActiveDetectionChange(modal, detail) {
         } catch (e) { /* ignore */ }
     }
 
-    // 3) Header Trash button retargets the active detection.
-    const trashBtn = modal.querySelector('.modal-action-bar [data-action="move-trash"]');
-    if (trashBtn) {
-        trashBtn.dataset.detectionId = String(detectionId);
-        if (sib) {
-            const species = sib.species_key || sib.cls_class_name || sib.od_class_name || '';
-            trashBtn.dataset.currentSpecies = species;
+    // 3) Every object action in the image toolbox follows the selected box.
+    // Viewer utilities in the header are intentionally detection-neutral,
+    // apart from the bbox toggle updated above.
+    const objectActions = modal.querySelectorAll(
+        '.wm-modal__image .wm-toolbox [data-detection-id]'
+    );
+    objectActions.forEach(function (action) {
+        action.dataset.detectionId = String(detectionId);
+        if (sib && action.hasAttribute('data-current-species')) {
+            action.dataset.currentSpecies = sib.species_key
+                || sib.cls_class_name
+                || sib.od_class_name
+                || '';
         }
-    }
-
-    const correctBoxBtn = modal.querySelector('[data-action="correct-bbox"]');
-    if (correctBoxBtn) correctBoxBtn.dataset.detectionId = String(detectionId);
-    const correctionDetailsBtn = modal.querySelector('[data-action="correction-details"]');
-    if (correctionDetailsBtn) correctionDetailsBtn.dataset.detectionId = String(detectionId);
+    });
 
     // 4) Redraw the canvas with the new current id so the stroke
     //    treatment updates.
@@ -1962,13 +1968,9 @@ function _handleActiveDetectionChange(modal, detail) {
         redrawBboxOverlay(bboxToggle);
     }
 
-    // 5) If smart-zoom is currently active, re-zoom to the new bbox.
-    if (viewer && viewer.classList.contains('wm-image-viewer--zoomed')) {
-        const img = viewer.querySelector('.bbox-base-image');
-        if (img && typeof applySmartZoom === 'function') {
-            applySmartZoom(viewer, img, bbox.x, bbox.y, bbox.w, bbox.h);
-        }
-    }
+    // 5) Re-apply the stored view intent. In Focus mode this centres the
+    //    newly active bird; in Full mode it keeps the complete frame visible.
+    applySmartZoomPreferenceToScope(modal);
 
     // 6) Mark the active sibling-card in the strip (recovery read it).
     const cards = modal.querySelectorAll('.sibling-card');

@@ -439,6 +439,30 @@
                 toggleMenu(actionEl);
                 return; // Don't close menu, we just opened it
 
+            case 'toggle-smart-zoom':
+                if (typeof toggleSmartZoom === 'function') {
+                    toggleSmartZoom(actionEl);
+                }
+                break;
+
+            case 'set-smart-zoom':
+                if (typeof setSmartZoomMode === 'function') {
+                    setSmartZoomMode(actionEl, actionEl.getAttribute('data-view-mode'));
+                }
+                break;
+
+            case 'toggle-bbox-overlay':
+                if (typeof toggleBboxOverlay === 'function') {
+                    toggleBboxOverlay(actionEl);
+                }
+                break;
+
+            case 'toggle-modal-maximize':
+                if (typeof toggleModalMaximize === 'function') {
+                    toggleModalMaximize(actionEl);
+                }
+                break;
+
             case 'details':
             case 'view-details':
                 var modalTarget = actionEl.getAttribute('data-modal-target');
@@ -564,7 +588,8 @@
         var actionEl = event.target.closest('[data-action]');
         var actionSurface = actionEl && (
             actionEl.closest('.wm-toolbox') ||
-            actionEl.closest('.modal-action-bar')
+            actionEl.closest('.modal-action-bar') ||
+            actionEl.closest('.wm-view-mode-toggle')
         );
         if (actionEl && actionSurface) {
             event.preventDefault();
@@ -584,13 +609,20 @@
        ========================================= */
 
     document.addEventListener('keydown', function (event) {
-        // Escape closes open menus
-        if (event.key === 'Escape') {
+        var openDropdown = document.querySelector('.wm-toolbox__dropdown--open');
+
+        // Consume Escape before Bootstrap sees it. The first Escape closes
+        // only the disclosure menu; a second Escape may then close the modal.
+        if (event.key === 'Escape' && openDropdown) {
+            event.preventDefault();
+            event.stopPropagation();
+            var toggle = openDropdown.previousElementSibling;
             closeAllMenus(null);
+            if (toggle && typeof toggle.focus === 'function') toggle.focus();
+            return;
         }
 
         // Arrow keys navigate within dropdown
-        var openDropdown = document.querySelector('.wm-toolbox__dropdown--open');
         if (!openDropdown) return;
 
         var items = Array.from(openDropdown.querySelectorAll('[role="menuitem"]'));
@@ -598,13 +630,15 @@
 
         if (event.key === 'ArrowDown') {
             event.preventDefault();
+            event.stopPropagation();
             var next = focusedIndex < items.length - 1 ? focusedIndex + 1 : 0;
             items[next].focus();
         } else if (event.key === 'ArrowUp') {
             event.preventDefault();
+            event.stopPropagation();
             var prev = focusedIndex > 0 ? focusedIndex - 1 : items.length - 1;
             items[prev].focus();
         }
-    });
+    }, true); // Capture before Bootstrap modal Escape handling
 
 })();

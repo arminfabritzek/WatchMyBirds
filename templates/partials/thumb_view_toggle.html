@@ -3,8 +3,15 @@ Thumbnail View Toggle - switches between BBox crop thumbnails and full (optimize
 Reads/writes preference to localStorage('wmb_thumb_view').
 Include this partial wherever a gallery grid appears.
 #}
-<button type="button" class="btn btn--secondary thumb-view-toggle" id="thumbViewToggle" onclick="toggleThumbView()"
-    title="Thumbnail-Ansicht umschalten">🔳 Crop</button>
+<div class="wm-view-mode-toggle wm-view-mode-toggle--gallery thumb-view-toggle" id="thumbViewToggle"
+    role="group" aria-label="Gallery image view">
+    <button type="button" class="wm-view-mode-toggle__option is-active"
+        data-thumb-view-mode="crop" aria-label="Show detection crops" aria-pressed="true"
+        title="Show detection crops">Crop</button>
+    <button type="button" class="wm-view-mode-toggle__option"
+        data-thumb-view-mode="full" aria-label="Show complete frames" aria-pressed="false"
+        title="Show complete frames">Full</button>
+</div>
 
 <script>
     (function () {
@@ -12,21 +19,32 @@ Include this partial wherever a gallery grid appears.
         const pref = localStorage.getItem(STORAGE_KEY) || 'crop';
 
         function applyThumbView(mode) {
+            const normalizedMode = mode === 'full' ? 'full' : 'crop';
             document.querySelectorAll('img[data-thumb-src][data-full-src]').forEach(img => {
-                img.src = mode === 'full' ? img.dataset.fullSrc : img.dataset.thumbSrc;
+                img.src = normalizedMode === 'full' ? img.dataset.fullSrc : img.dataset.thumbSrc;
             });
-            const btn = document.getElementById('thumbViewToggle');
-            if (btn) {
-                btn.textContent = mode === 'full' ? '🖼 Full' : '🔳 Crop';
-                btn.classList.toggle('active', mode === 'full');
-            }
+            document.querySelectorAll('#thumbViewToggle [data-thumb-view-mode]').forEach(btn => {
+                const isActive = btn.dataset.thumbViewMode === normalizedMode;
+                btn.classList.toggle('is-active', isActive);
+                btn.setAttribute('aria-pressed', String(isActive));
+            });
         }
 
+        window.setThumbView = function (mode) {
+            const normalizedMode = mode === 'full' ? 'full' : 'crop';
+            localStorage.setItem(STORAGE_KEY, normalizedMode);
+            applyThumbView(normalizedMode);
+        };
+
+        document.getElementById('thumbViewToggle')?.addEventListener('click', event => {
+            const option = event.target.closest('[data-thumb-view-mode]');
+            if (option) window.setThumbView(option.dataset.thumbViewMode);
+        });
+
+        // Kept for callers outside this partial during the migration window.
         window.toggleThumbView = function () {
             const current = localStorage.getItem(STORAGE_KEY) || 'crop';
-            const next = current === 'crop' ? 'full' : 'crop';
-            localStorage.setItem(STORAGE_KEY, next);
-            applyThumbView(next);
+            window.setThumbView(current === 'crop' ? 'full' : 'crop');
         };
 
         // Apply on page load

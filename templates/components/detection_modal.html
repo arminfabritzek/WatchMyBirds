@@ -86,12 +86,8 @@ nav_index (int|None): Optional index within nav_scope
                     siblings=det.siblings,
                     show_nav=show_nav,
                     show_bbox_toggle=true,
-                    show_trash=true,
                     show_download=true,
                     gallery_date=det.gallery_date,
-                    is_favorite=det.is_favorite,
-                    can_moderate=can_moderate,
-                    current_species=det.species_key or det.manual_species_override or det.cls_class_name or det.od_class_name,
                     in_header=true,
                     show_maximize=true,
                     show_close=true
@@ -108,7 +104,8 @@ nav_index (int|None): Optional index within nav_scope
                     bbox={'x': det.bbox_x, 'y': det.bbox_y, 'w': det.bbox_w, 'h': det.bbox_h},
                     siblings=det.siblings,
                     dismissable=true,
-                    defer_src=true
+                    defer_src=true,
+                    show_view_mode=true
                     ) }}
                     {{ tile_toolbox(
                     detection_id=det.detection_id,

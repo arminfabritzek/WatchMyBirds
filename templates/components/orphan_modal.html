@@ -353,9 +353,6 @@
                     show_bbox_toggle=has_bbox,
                     show_download=orphan.full_url,
                     gallery_date=orphan.gallery_date,
-                    is_favorite=false,
-                    can_moderate=true,
-                    current_species=orphan.selected_species or orphan.species_key,
                     in_header=true,
                     show_maximize=true,
                     show_close=true
@@ -370,7 +367,8 @@
                     image_alt=orphan.current_species_common or orphan.source_image_filename,
                     detection_id=orphan.best_detection_id or 0,
                     bbox={'x': orphan.bbox_x, 'y': orphan.bbox_y, 'w': orphan.bbox_w, 'h': orphan.bbox_h} if has_bbox else none,
-                    dismissable=false
+                    dismissable=false,
+                    show_view_mode=has_bbox
                     ) }}
                     {{ tile_toolbox(
                     detection_id=orphan.best_detection_id,

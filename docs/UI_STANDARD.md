@@ -56,6 +56,11 @@ or changed in **one place** and instantly apply everywhere.
    PRs that introduce a new image view must reuse `render_image_viewer` +
    `tile_toolbox`. If a real exception is needed, this section must be
    updated in the same change.
+8. **View mode is an explicit choice.** Gallery grids use a segmented
+   `Crop | Full` control. Detail viewers with a valid detection box use
+   `Focus | Full`, centred 12 px above the bottom image edge. View mode is a
+   viewer concern and therefore stays separate from the bottom-right
+   detection-action toolbox.
 
 **Why this matters:** the explicit goal is that adding a new per-image
 affordance — for example star ratings — becomes a single edit to the toolbox
@@ -212,7 +217,7 @@ stop being visually primary.
 | Review event-level (rail outside tile_toolbox) | Approve Event, Move Event to Trash | — (lives in `review-stage-panel__action` rail, not the toolbox) |
 | Review per-member tile (inside tile_toolbox) | Favorite, Change Species, Move to Trash, No birds in full image | View Details, Deep Scan |
 | Trash                            | Restore                                  | View Details, Change Species *(if exposed)* — Favorite is intentionally suppressed |
-| Detail modals (`surface='detail_modal'`) | Favorite, Change Species, Adjust Bounding Box | Correction Details, Move to Trash, No birds in full image                          |
+| Detail modals (`surface='detail_modal'`) | Favorite                                 | Change Species, Adjust Bounding Box, Correction Details, Move to Trash, No birds in full image |
 
 **Rules embedded in the table:**
 
@@ -241,10 +246,10 @@ stop being visually primary.
   Stream and a modal opened from Trash both use the "Detail modals"
   row.
 - **Detail modals** are addressed by `surface='detail_modal'`.
-  The macro promotes Change Species and Adjust Bounding Box to primary
-  buttons on this surface in addition to Favorite (which is primary by
-  default rendering across all surfaces that show it). Move to Trash remains
-  in overflow. The `frame_variant='bar'` rendering
+  The image itself is the primary content, so Favorite is the only
+  always-visible object action. Change Species, Adjust Bounding Box,
+  Correction Details, Move to Trash, and No birds in full image live in the
+  shared overflow. The `frame_variant='bar'` rendering
   remains available but is not required — the detail-modal split is
   driven by `surface`, not by frame variant.
 - Inbox, Orphans (top-level), and Restore are listed in `web/` as
@@ -364,13 +369,15 @@ detection-bearing tiles, filmstrips, and modal/detail surfaces.
 - Review quick-species state should be legible at a glance: the default
   suggestion and the current selection should use distinct visual markers
   instead of relying on helper copy alone.
-- Viewer/navigation controls such as zoom, close, next/previous, and download
-  are not canonical detection actions. They may sit next to the frame, but they
-  must not replace it.
+- Viewer/navigation controls such as view mode, close, next/previous, and download
+  are not canonical detection actions. Previous, Next, More, and Close form the
+  compact header navigation. The frequent `Focus | Full` choice sits directly
+  on the image; lower-frequency viewer utilities live in More. They must not
+  replace or duplicate the detection-action frame.
 - In detail modals, object actions such as `Favorite`, `Change Species`, and
   `Adjust Bounding Box`
-  should prefer the image hover toolbox itself. The modal footer should stay a
-  calmer viewer/navigation strip instead of duplicating object actions.
+  belong to the image hover toolbox. The compact modal header stays a
+  viewer/navigation surface and never duplicates object actions.
 
 ## Detection Presentation Anti-Drift Rules
 
@@ -427,13 +434,13 @@ To prevent future drift between surfaces:
 
 ### 1.1 Standard Modal (wm-modal) — two-stockwork layout
 
-The detail modal is **header + body**. The action group lives in the
+The detail modal is **header + body**. A compact navigation group lives in the
 header (right slot); there is no separate footer row. Single-detection
 frames render only the image in the body. Multi-detection frames add a
 slim sibling-selector strip below the image — clicking a strip chip
 *or* clicking a companion bbox on the canvas switches the active
-detection, which retargets the header action group (Trash, Boxes,
-Zoom) and the image-toolbox correction action.
+detection, which retargets the header viewer state and every active
+detection action in the image toolbox.
 
 ```html
 <div class="modal fade gallery-modal wm-modal"
@@ -457,13 +464,13 @@ Zoom) and the image-toolbox correction action.
         </div>
         <div class="wm-modal__header-actions">
           <!-- modal_action_bar.html with in_header=true, show_maximize=true, show_close=true -->
-          <!-- Zoom · Boxes · Download · Day · Trash | Prev · Next · ⛶ · ✕ Close -->
+          <!-- Prev · Next | More (Boxes / Full screen / Download / Day) · Close -->
         </div>
       </div>
 
       <div class="wm-modal__body">
         <div class="wm-modal__image wm-toolbox-host">
-          <!-- render_image_viewer + tile_toolbox (surface='detail_modal') -->
+          <!-- render_image_viewer(show_view_mode=true) + tile_toolbox (surface='detail_modal') -->
         </div>
         {# Multi-bird frames only: #}
         <div class="wm-modal__sibling-strip">
@@ -482,19 +489,20 @@ The image inside `.wm-modal__image .wm-image-viewer__img` is capped at
 `object-fit: contain`, where `--wm-modal-chrome` defaults to `10rem`
 (header + padding budget) and shrinks to `4rem` in maximized mode.
 
-**Action group placement is binding.** All detail-modal verbs (Zoom,
-Boxes, Download, Day, Trash, Prev, Next, Maximize, Close) live in
-`.wm-modal__header-actions` (rendered by `modal_action_bar.html` with
-`in_header=true`). No surface re-introduces a `.wm-modal__action`
-footer row.
+**Action hierarchy is binding.** Previous, Next, More, and Close are the only
+always-visible header controls. The frequent `Focus | Full` view choice floats
+at the bottom centre of the image. Boxes, Maximize, Download, and Day live in
+the header's single More menu. Detection mutations never live in this
+viewer-navigation group; Favorite and the detection-action overflow stay at
+the bottom right in the shared image toolbox. No surface re-introduces a
+`.wm-modal__action` footer row or a parallel row of utility pills.
 
 **Active-detection contract (multi-bird).** Clicking either a
 companion bbox on the canvas or a `.sibling-card` chip dispatches
 `wmb:active-detection-change` on the modal root. The handler
 (`gallery_utils.js`) updates `.wm-image-viewer[data-bbox-*]`, the
-header `.bbox-toggle[data-detection-id]` + `data-current-bbox`, the
-header `[data-action="move-trash"][data-detection-id]`, the image-toolbox
-`[data-action="correct-bbox"][data-detection-id]`, redraws the
+header `.bbox-toggle[data-detection-id]` + `data-current-bbox`, all active
+image-toolbox actions carrying `[data-detection-id]`, redraws the
 canvas, and re-applies smart-zoom if active. Surfaces consuming
 `detection_modal.html` get this for free.
 
@@ -535,9 +543,13 @@ canvas, and re-applies smart-zoom if active. Surfaces consuming
   below the image on multi-detection frames. Hosts `.sibling-card`
   chips without per-card action buttons.
 - `wm-modal--maximized` — full-viewport modifier (see above).
-- `modal-action-bar--in-header` — variant of the action bar with
-  the footer chrome dropped (no gradient, no top-border, tighter
-  padding) so it sits cleanly inside the header.
+- `modal-action-bar--in-header` — compact navigation variant with Previous,
+  Next, More, and Close. Its More menu owns viewer utilities and destinations;
+  it never duplicates detection mutations from the image toolbox.
+- `wm-view-mode-toggle--viewer` — direct `Focus | Full` segmented choice,
+  centred near the bottom edge of detection-backed detail images.
+- `wm-view-mode-toggle--gallery` — direct `Crop | Full` segmented choice for
+  gallery-grid thumbnails.
 
 ---
 
@@ -691,15 +703,19 @@ canvas, and re-applies smart-zoom if active. Surfaces consuming
 
 ```html
 <div class="modal-action-bar">
-  <div class="modal-action-bar__group">
-    <!-- left buttons -->
+  <div class="modal-action-bar__group modal-action-bar__nav">
+    <!-- Previous · Next -->
   </div>
 
   <div class="modal-action-bar__group">
-    <!-- navigation + close -->
+    <!-- More menu · Close -->
   </div>
 </div>
 ```
+
+The detail-modal header deliberately exposes only four controls. The More menu
+uses the same keyboard behavior as the shared toolbox overflow: Enter/Space
+opens it, Escape closes it, and Arrow Up/Down moves through menu items.
 
 ---
 
@@ -714,8 +730,18 @@ canvas, and re-applies smart-zoom if active. Surfaces consuming
        data-bs-dismiss="modal">
 
   <canvas class="wm-image-viewer__overlay bbox-overlay"></canvas>
+
+  <div class="wm-view-mode-toggle wm-view-mode-toggle--viewer smart-zoom-toggle"
+       role="group" aria-label="Image view">
+    <button data-view-mode="zoom" aria-pressed="true">Focus</button>
+    <button data-view-mode="full" aria-pressed="false">Full</button>
+  </div>
 </div>
 ```
+
+The segmented view control is rendered only when a valid bbox exists. Its
+saved preference follows the viewer scope, and `Focus` is re-applied to the
+active box after `wmb:active-detection-change`.
 
 ---
 
@@ -746,7 +772,7 @@ filmstrip items, and modal image viewers. It is rendered by the
 | `wm-toolbox__item` | Individual dropdown menu item |
 
 **Stateful toolbox buttons:** any
-toolbox button that carries an on/off state — the smart-zoom toggle,
+toolbox button that carries an on/off state — the legacy Review smart-zoom toggle,
 the bbox-overlay toggle, future star ratings — must mirror its state
 on **all three** of the following at the same time:
 
@@ -759,12 +785,11 @@ on **all three** of the following at the same time:
    becomes a state explanation (`No bounding box — zoom unavailable
    for this frame`).
 
-The smart-zoom toggle is the canonical reference implementation
-(`assets/js/gallery_utils.js:applySmartZoomToggleState`). It also
-keeps the existing emoji-label swap (`🔍 Zoom` ↔ `🖼 Full`) for
-cross-surface consistency with the Gallery / Stream viewers — the
-binding pressed-state contract above is the new layer, not a
-replacement of the label swap.
+`assets/js/gallery_utils.js:applySmartZoomToggleState` is the canonical state
+implementation. It supports both the direct `Focus | Full` segmented control
+in detail viewers and the legacy single-button Review control. Segmented
+options expose one `aria-pressed="true"` choice; the legacy button retains the
+pressed modifier, state-aware title, and emoji-label swap.
 
 **Workspace-scoped persistence:** stateful
 toolbox toggles that persist their state across rail navigation must

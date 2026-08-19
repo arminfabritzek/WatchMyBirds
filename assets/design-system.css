@@ -5109,7 +5109,11 @@ body {
 }
 
 .modal-action-bar--in-header .modal-action-bar__group {
-    gap: 6px;
+    gap: 4px;
+}
+
+.modal-action-bar__nav {
+    gap: 0 !important;
 }
 
 .modal-action-bar .btn,
@@ -5159,6 +5163,83 @@ body {
 .modal-action-bar a.btn:focus-visible {
     outline: 2px solid rgba(122, 109, 66, 0.72);
     outline-offset: 2px;
+}
+
+/* The header exposes only navigation, one disclosure control, and Close.
+   Utility labels move into the menu so the title and image keep priority. */
+.modal-action-bar--in-header .modal-action-bar__icon {
+    width: 38px;
+    min-width: 38px;
+    min-height: 38px;
+    padding: 0;
+    border-radius: 11px;
+    font-size: 1rem;
+    letter-spacing: 0;
+    box-shadow: none;
+}
+
+.modal-action-bar__nav .btn:first-child {
+    border-radius: 11px 0 0 11px;
+}
+
+.modal-action-bar__nav .btn:last-child {
+    margin-left: -1px;
+    border-radius: 0 11px 11px 0;
+}
+
+.modal-action-bar__more {
+    font-size: 0.78rem !important;
+    font-weight: 800;
+}
+
+.modal-action-bar__close {
+    font-size: 1.35rem !important;
+    font-weight: 500 !important;
+}
+
+.modal-action-bar__close:hover {
+    border-color: rgba(159, 75, 45, 0.34) !important;
+    color: var(--color-danger, #9f4b2d) !important;
+}
+
+.modal-action-bar__menu {
+    position: relative;
+}
+
+.modal-action-bar .modal-action-bar__dropdown {
+    top: calc(100% + 8px);
+    right: 0;
+    bottom: auto;
+    min-width: 224px;
+    margin-bottom: 0;
+    overflow: hidden;
+    text-align: left;
+}
+
+.modal-action-bar__dropdown a.wm-toolbox__item {
+    text-decoration: none;
+}
+
+.modal-action-bar__menu-label {
+    display: block;
+    padding: 7px 12px 4px;
+    color: var(--color-text-muted);
+    font-size: 0.65rem;
+    font-weight: 800;
+    letter-spacing: 0.12em;
+    line-height: 1;
+    text-transform: uppercase;
+}
+
+.modal-action-bar__menu-label--separated {
+    margin-top: 4px;
+    padding-top: 10px;
+    border-top: 1px solid var(--color-border-light);
+}
+
+.modal-action-bar__item--disabled {
+    cursor: default;
+    opacity: 0.58;
 }
 
 /* Favorite button: ensure minimum touch target */
@@ -5216,6 +5297,8 @@ body {
 }
 
 .wm-modal__header {
+    position: relative;
+    z-index: 30;
     display: flex;
     justify-content: space-between;
     align-items: center;
@@ -5257,9 +5340,8 @@ body {
     flex-shrink: 0;
 }
 
-/* Header-action slot. Holds the consolidated action group
-   (Zoom / Boxes / Download / Day / Trash / Prev / Next /
-   Maximize / Close) inside .wm-modal__header. Title gets flex: 1 above
+/* Header-action slot. Holds compact navigation (Previous / Next / More /
+   Close) inside .wm-modal__header. Title gets flex: 1 above
    so a long species name truncates with ellipsis instead of pushing
    the buttons off-screen. */
 .wm-modal__header-actions {
@@ -5413,19 +5495,19 @@ body {
     border-color: var(--color-accent, #c97c2a);
 }
 
-/* Mobile: header collapses to action overflow under ~900px;
-   below 480px the dialog goes edge-to-edge. */
+/* The compact header stays on one line down to phone widths; utility actions
+   are already collapsed into More. Below 480px the dialog goes edge-to-edge. */
 @media (max-width: 900px) {
     .wm-modal__header {
-        flex-wrap: wrap;
+        flex-wrap: nowrap;
     }
 
     .wm-modal__header-actions {
-        flex-basis: 100%;
+        flex-basis: auto;
     }
 
     .modal-action-bar--in-header {
-        justify-content: flex-start;
+        justify-content: flex-end;
     }
 }
 
@@ -5764,6 +5846,100 @@ body {
 .wm-image-viewer--zoomed .wm-image-viewer__img {
     /* transform is set dynamically via JS */
     will-change: transform;
+}
+
+/* Explicit image-view choices. The detail variant floats over the image at
+   bottom centre; the gallery variant uses the same interaction language in
+   the page toolbar. Neither belongs to the detection-action toolbox. */
+.wm-view-mode-toggle {
+    --wm-view-mode-bg: rgba(47, 39, 27, 0.84);
+    --wm-view-mode-border: rgba(255, 255, 255, 0.2);
+    --wm-view-mode-text: rgba(255, 255, 255, 0.82);
+    --wm-view-mode-active-bg: rgba(250, 247, 240, 0.96);
+    --wm-view-mode-active-text: #3d3020;
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    padding: 3px;
+    border: 1px solid var(--wm-view-mode-border);
+    border-radius: 13px;
+    background: var(--wm-view-mode-bg);
+    box-shadow: 0 6px 18px rgba(24, 18, 10, 0.26);
+}
+
+.wm-view-mode-toggle--viewer {
+    position: absolute;
+    z-index: 16;
+    left: 50%;
+    bottom: 12px;
+    transform: translateX(-50%);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+}
+
+.wm-view-mode-toggle__option {
+    appearance: none;
+    min-width: 62px;
+    min-height: 34px;
+    padding: 0 12px;
+    border: 0;
+    border-radius: 9px;
+    background: transparent;
+    color: var(--wm-view-mode-text);
+    font: inherit;
+    font-size: 0.76rem;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    line-height: 1;
+    cursor: pointer;
+    transition: background-color 140ms ease, color 140ms ease, box-shadow 140ms ease;
+}
+
+.wm-view-mode-toggle__option:hover {
+    color: #fff;
+    background: rgba(255, 255, 255, 0.12);
+}
+
+.wm-view-mode-toggle__option.is-active {
+    color: var(--wm-view-mode-active-text);
+    background: var(--wm-view-mode-active-bg);
+    box-shadow: 0 1px 4px rgba(31, 24, 14, 0.18);
+}
+
+.wm-view-mode-toggle__option:focus-visible {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 1px;
+}
+
+.wm-view-mode-toggle--gallery {
+    --wm-view-mode-bg: rgba(246, 242, 233, 0.96);
+    --wm-view-mode-border: rgba(95, 71, 37, 0.2);
+    --wm-view-mode-text: #66543a;
+    --wm-view-mode-active-bg: #66583d;
+    --wm-view-mode-active-text: #fffdf8;
+    box-shadow: 0 2px 7px rgba(61, 45, 24, 0.08);
+}
+
+.wm-view-mode-toggle--gallery .wm-view-mode-toggle__option:hover {
+    color: #3d3020;
+    background: rgba(95, 71, 37, 0.09);
+}
+
+.wm-view-mode-toggle--gallery .wm-view-mode-toggle__option.is-active {
+    color: var(--wm-view-mode-active-text);
+    background: var(--wm-view-mode-active-bg);
+}
+
+@media (max-width: 480px) {
+    .wm-view-mode-toggle--viewer {
+        bottom: 8px;
+    }
+
+    .wm-view-mode-toggle__option {
+        min-width: 56px;
+        min-height: 32px;
+        padding-inline: 10px;
+    }
 }
 
 /* Favorite Toggle Button (❤️) */

@@ -728,11 +728,14 @@ def test_review_workspace_js_handles_species_change_receipt():
 
 
 def test_smart_zoom_toggle_pressed_state_and_state_aware_title():
-    """Smart zoom exposes pressed state, toggled styling, and state-aware copy."""
+    """Smart zoom syncs both segmented and legacy button presentations."""
     js = _read("assets/js/gallery_utils.js")
 
     # The shared state setter exists and reflects all three contract bits.
     assert "function applySmartZoomToggleState" in js
+    assert "wm-view-mode-toggle" in js
+    assert "[data-view-mode]" in js
+    assert "is-active" in js
     assert "wm-toolbox__btn--toggled" in js
     assert "aria-pressed" in js
     assert "Show full image" in js

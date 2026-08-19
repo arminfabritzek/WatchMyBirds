@@ -32,28 +32,23 @@ class TestModalDetectionInfoGuard:
 
     def test_no_per_card_action_buttons(self):
         """Per-card Change-Species/Trash buttons are removed. The header
-        action group (modal_action_bar.html) now hosts these verbs and
-        acts on the active detection (selected via canvas-click or
-        sibling-card body click). TestModalActionBarGuard below verifies
-        the header guard. This test guarantees we do not silently
-        re-introduce un-guarded per-card action buttons in the sibling
-        strip."""
+        action group no longer hosts object actions either. The shared image
+        toolbox acts on the active detection selected via canvas or sibling
+        chip. This test guarantees we do not silently re-introduce unguarded
+        per-card action buttons in the sibling strip."""
         content = _read_template("components/modal_detection_info.html")
         assert 'data-action="change-species"' not in content
         assert 'data-action="move-trash"' not in content
         assert 'sibling-card__action' not in content
 
 
-class TestModalActionBarGuard:
-    """Trash button in action bar must require can_moderate."""
+class TestModalActionSeparation:
+    """The header is viewer navigation; object actions stay in the toolbox."""
 
-    def test_macro_signature_has_can_moderate(self):
+    def test_action_bar_has_no_detection_mutation(self):
         content = _read_template("components/modal_action_bar.html")
-        assert "can_moderate=false" in content
-
-    def test_trash_button_gated_on_can_moderate(self):
-        content = _read_template("components/modal_action_bar.html")
-        assert "show_trash and can_moderate" in content
+        assert 'data-action="move-trash"' not in content
+        assert 'data-action="change-species"' not in content
 
 
 class TestDetectionModalPassthrough:
@@ -67,11 +62,11 @@ class TestDetectionModalPassthrough:
         content = _read_template("components/detection_modal.html")
         assert "can_moderate=can_moderate" in content
 
-    def test_can_moderate_passed_to_action_bar(self):
+    def test_can_moderate_passed_to_shared_modal_components(self):
         content = _read_template("components/detection_modal.html")
-        # Find can_moderate=can_moderate in the render_action_bar call
+        # Moderation state feeds the shared info/toolbox composition.
         assert content.count("can_moderate=can_moderate") >= 2, (
-            "can_moderate must be passed to both render_detection_info and render_action_bar"
+            "can_moderate must be passed to both render_detection_info and tile_toolbox"
         )
 
 

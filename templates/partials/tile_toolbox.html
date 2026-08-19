@@ -57,15 +57,17 @@ allow_review_no_bird=true
 {#Restore renders as primary on the Trash surface — it is
    the single most-reached-for action there. #}
 {% set restore_is_primary = show_restore %}
-{# Inside a detail modal, Favorite, Change Species, and Correct Box are the
-   three primary actions. Move to Trash remains available in overflow.
+{# Inside a detail modal, Favorite is the only persistent object action.
+   Editing and destructive actions stay together in overflow so the image
+   remains visually primary.
 
    The Review surface also promotes the destructive verdict actions to
    primary so they are reachable in one click on the busy Review Grid,
    where hover-only affordances are too fragile (touch devices, fast
    scanning). The Review per-member tile row gains Move
    to Trash + No birds in full image as primary alongside Favorite. #}
-{% set change_species_is_primary = show_change_species and surface in ['detail_modal', 'review'] %}
+{% set change_species_is_primary = show_change_species and surface == 'review' %}
+{% set correct_bbox_is_primary = false %}
 {% set move_to_trash_is_primary = show_move_to_trash and surface == 'review' %}
 {% set no_bird_is_primary = surface == 'review' and filename and allow_review_no_bird %}
 
@@ -135,7 +137,7 @@ allow_review_no_bird=true
     </button>
     {% endif %}
 
-    {% if show_correct_bbox %}
+    {% if show_correct_bbox and correct_bbox_is_primary %}
     <button type="button"
         class="wm-toolbox__btn wm-toolbox__correct-bbox{% if not can_moderate %} wm-toolbox__btn--locked{% endif %}"
         data-action="correct-bbox" data-detection-id="{{ detection_id }}"
@@ -182,6 +184,7 @@ allow_review_no_bird=true
     {% set show_no_bird_in_overflow = show_no_bird and not no_bird_is_primary %}
     {% if (can_open_details and not details_is_primary)
         or (show_change_species and not change_species_is_primary)
+        or (show_correct_bbox and not correct_bbox_is_primary)
         or (show_move_to_trash and not move_to_trash_is_primary)
         or (show_restore and not restore_is_primary)
         or show_deep_scan
@@ -192,14 +195,6 @@ allow_review_no_bird=true
             aria-expanded="false" aria-label="More actions" title="More actions">⋮</button>
 
         <div class="wm-toolbox__dropdown" role="menu" aria-label="Actions">
-            {% if show_correction_details %}
-            <button type="button" class="wm-toolbox__item" role="menuitem"
-                data-action="correction-details" data-detection-id="{{ detection_id }}"
-                data-filename="{{ filename }}" aria-label="Correction details">
-                ◫ <span>Correction Details</span>
-            </button>
-            {% endif %}
-
             {# Details — opens the detection modal (Top-K, Confidences, Wiki).
                Skipped when rendered as a primary button above. #}
             {% if can_open_details and not details_is_primary %}
@@ -220,6 +215,25 @@ allow_review_no_bird=true
                 {% if not can_moderate %}data-login-required="true" aria-disabled="true"{% endif %}
                 aria-label="Change species">
                 🏷️ <span>Change Species</span>
+            </button>
+            {% endif %}
+
+            {% if show_correct_bbox and not correct_bbox_is_primary %}
+            <button type="button"
+                class="wm-toolbox__item{% if not can_moderate %} wm-toolbox__item--disabled{% endif %}"
+                role="menuitem" data-action="correct-bbox" data-detection-id="{{ detection_id }}"
+                data-filename="{{ filename }}"
+                {% if not can_moderate %}data-login-required="true" aria-disabled="true"{% endif %}
+                aria-label="Adjust bounding box">
+                ⌗ <span>Adjust Bounding Box</span>
+            </button>
+            {% endif %}
+
+            {% if show_correction_details %}
+            <button type="button" class="wm-toolbox__item" role="menuitem"
+                data-action="correction-details" data-detection-id="{{ detection_id }}"
+                data-filename="{{ filename }}" aria-label="Correction details">
+                ◫ <span>Correction Details</span>
             </button>
             {% endif %}
 

@@ -123,6 +123,8 @@ def test_tile_actions_pages_load_gallery_utils_first():
 
 def test_modal_action_bar_data_actions_are_dispatched():
     action_bar = _read("templates/components/modal_action_bar.html")
+    viewer = _read("templates/components/modal_image_viewer.html")
+    detection_modal = _read("templates/components/detection_modal.html")
     js = _read("assets/js/tile_actions.js")
 
     # The bar has an in_header variant
@@ -132,8 +134,41 @@ def test_modal_action_bar_data_actions_are_dispatched():
     # in-header variant lives on the same element.
     assert 'class="modal-action-bar' in action_bar
     assert 'modal-action-bar--in-header' in action_bar
-    assert 'data-action="move-trash"' in action_bar
+    assert 'data-action="toggle-menu"' in action_bar
+    assert 'data-action="toggle-smart-zoom"' not in action_bar
+    assert 'data-action="toggle-bbox-overlay"' in action_bar
+    assert 'data-action="toggle-modal-maximize"' in action_bar
+    assert 'data-action="move-trash"' not in action_bar
+    assert 'data-action="set-smart-zoom"' in viewer
+    assert 'data-view-mode="zoom"' in viewer
+    assert 'data-view-mode="full"' in viewer
+    assert "show_view_mode=true" in detection_modal
     assert "actionEl.closest('.modal-action-bar')" in js
+    assert "actionEl.closest('.wm-view-mode-toggle')" in js
+    assert "case 'set-smart-zoom':" in js
+    assert "case 'toggle-bbox-overlay':" in js
+    assert "case 'toggle-modal-maximize':" in js
+
+
+def test_gallery_view_mode_is_an_explicit_segmented_choice():
+    toggle = _read("templates/partials/thumb_view_toggle.html")
+    css = _read("assets/design-system.css")
+
+    assert 'data-thumb-view-mode="crop"' in toggle
+    assert 'data-thumb-view-mode="full"' in toggle
+    assert "window.setThumbView" in toggle
+    assert "wmb_thumb_view" in toggle
+    assert ".wm-view-mode-toggle--gallery" in css
+    assert ".wm-view-mode-toggle--viewer" in css
+
+
+def test_toolbox_escape_closes_only_the_open_menu():
+    js = _read("assets/js/tile_actions.js")
+
+    assert "if (event.key === 'Escape' && openDropdown)" in js
+    assert "event.stopPropagation();" in js
+    assert "toggle.focus();" in js
+    assert "}, true); // Capture before Bootstrap modal Escape handling" in js
 
 
 def test_detection_info_hides_decision_badges_after_manual_species_review():
@@ -438,13 +473,15 @@ def test_no_bird_action_not_on_trash_or_species_surface():
     assert "'species'" not in gate
 
 
-def test_detail_modal_exposes_direct_bbox_correction_as_a_primary_action():
+def test_detail_modal_keeps_bbox_correction_in_the_overflow_menu():
     toolbox = _read("templates/partials/tile_toolbox.html")
     modal = _read("templates/components/detection_modal.html")
     base = _read("templates/base.html")
 
     assert 'data-action="correct-bbox"' in toolbox
     assert "surface == 'detail_modal'" in toolbox
+    assert "correct_bbox_is_primary" in toolbox
+    assert "show_correct_bbox and not correct_bbox_is_primary" in toolbox
     assert 'data-filename="{{ filename }}"' in toolbox
     assert "bbox_editor_math.js" in base
     assert "startWmBboxEditor" in _read("assets/js/gallery_utils.js")
@@ -471,8 +508,8 @@ def test_bbox_arrow_keys_do_not_reach_modal_navigation():
     assert "event.stopPropagation();" in keydown_handler
 
 
-def test_gallery_utils_cache_key_includes_bbox_keyboard_fix():
-    """Every image surface must request the fixed keyboard handler."""
+def test_gallery_utils_cache_key_reaches_every_image_surface():
+    """Every image surface must request the current shared viewer logic."""
     templates = (
         "templates/edit.html",
         "templates/orphans.html",
@@ -486,7 +523,7 @@ def test_gallery_utils_cache_key_includes_bbox_keyboard_fix():
 
     for template in templates:
         assert (
-            "gallery_utils.js?v=20260819-bbox-keyboard" in _read(template)
+            "gallery_utils.js?v=20260820-view-modes" in _read(template)
         ), template
 
 
@@ -537,7 +574,7 @@ def test_no_bird_review_surface_uses_full_image_gate():
     assert "confirm(promptText)" not in no_bird_flow
 
 
-def test_no_bird_asset_cache_key_reaches_every_image_surface():
+def test_tile_action_cache_key_reaches_every_image_surface():
     templates = (
         "templates/edit.html",
         "templates/orphans.html",
@@ -550,4 +587,4 @@ def test_no_bird_asset_cache_key_reaches_every_image_surface():
     )
 
     for template in templates:
-        assert "tile_actions.js?v=20260819-full-image-no-bird" in _read(template), template
+        assert "tile_actions.js?v=20260820-view-modes" in _read(template), template

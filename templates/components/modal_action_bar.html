@@ -1,19 +1,16 @@
 {#
 Modal Action Bar Component
 
-Compact single-row action group using Design System buttons (pill style).
-By default renders into the modal HEADER right slot (in_header=true from
-detection_modal.html). The legacy footer-rendered form is kept for
-orphan_modal.html and any other consumer that opts out via in_header=false.
+Compact modal navigation with one progressively disclosed utility menu.
+By default it renders into the modal header's right slot. Detection mutations
+belong to the shared image toolbox, never to this viewer-navigation component.
 
 Args:
   in_header (bool): When true, renders as a slim header-action group
                     (no footer chrome, no top-border). When false, renders
                     as the legacy footer bar.
   show_maximize (bool): When true, includes the ⛶ Maximize toggle.
-  show_close (bool): When true, includes the ✕ Close button at the end.
-                     For the legacy footer variant this is always true
-                     (kept for backward compatibility).
+  show_close (bool): When true, includes the icon-only Close button.
 #}
 {% macro render_action_bar(
 detection_id,
@@ -24,82 +21,76 @@ bbox=none,
 siblings=none,
 show_nav=true,
 show_bbox_toggle=true,
-show_trash=true,
 show_download=true,
 gallery_date=none,
-is_favorite=false,
-can_moderate=false,
-current_species=none,
 in_header=false,
 show_maximize=false,
 show_close=true
 ) %}
 <div class="modal-action-bar{% if in_header %} modal-action-bar--in-header{% endif %}">
-    {# Left: Viewer actions #}
-    <div class="modal-action-bar__group">
-        <button type="button" class="btn btn--secondary btn--sm smart-zoom-toggle" onclick="toggleSmartZoom(this)"
-            title="Toggle between bird close-up and full image" aria-label="Toggle smart zoom">⌕ Zoom</button>
-        {% if show_bbox_toggle %}
-        <button type="button" class="btn btn--secondary btn--sm bbox-toggle" onclick="toggleBboxOverlay(this)"
-            data-detection-id="{{ detection_id }}" data-siblings='{{ (siblings | default([])) | tojson }}'
-            data-current-bbox='{{ (bbox | default({})) | tojson }}'
-            title="Toggle bounding box overlay" aria-label="Toggle bounding box overlay">□ Boxes</button>
-        {% endif %}
-        {% if show_download and original_retired %}
-        {# Retention retired the full-resolution original. Show the state and
-           offer the optimized preview instead of a button that 410s. The
-           backend /api/image/download still returns 410 — this only keeps
-           normal users from hitting it. #}
-        <span class="btn btn--secondary btn--sm" aria-disabled="true"
-            title="Full-resolution original is gone; preview remains">⃠ Original retired</span>
-        {% if optimized_url %}
-        <a href="{{ optimized_url }}" download class="btn btn--secondary btn--sm"
-            title="Download the optimized preview (full-resolution original is gone)"
-            aria-label="Download preview">↓ Download preview</a>
-        {% endif %}
-        {% elif show_download and (detection_id or original_url) %}
-        {# When a detection_id is known, route through the metadata-aware
-           download (burns species/location XMP into a copy at current DB
-           state when the EXPORT_BURN_IN_METADATA setting is on; serves the
-           verbatim original otherwise). Falls back to the raw original URL
-           for surfaces without a detection_id (e.g. orphan modal). #}
-        <a href="{% if detection_id %}/api/image/download/{{ detection_id }}{% else %}{{ original_url }}{% endif %}"
-            download class="btn btn--secondary btn--sm"
-            title="Download original image" aria-label="Download original image">↓ Download Original</a>
-        {% endif %}
-        {% if gallery_date %}
-        <a href="/gallery/{{ gallery_date }}?focus={{ detection_id }}#detection-{{ detection_id }}"
-            class="btn btn--secondary btn--sm" title="Open this day in Gallery" aria-label="Open this day in Gallery">📅 Day</a>
-        {% endif %}
-        {% if show_trash and can_moderate %}
-        <button type="button"
-            class="btn btn--danger btn--sm"
-            data-action="move-trash"
-            data-detection-id="{{ detection_id }}"
-            data-current-species="{{ current_species or '' }}"
-            title="Move to Trash" aria-label="Move to Trash">🗑 Trash</button>
-        {% endif %}
-    </div>
-
-    {# Right: Navigation + Maximize + Close #}
-    <div class="modal-action-bar__group">
-        {% if show_nav %}
-        <button type="button" class="btn btn--secondary btn--sm prev-btn"
+    {% if show_nav %}
+    <div class="modal-action-bar__group modal-action-bar__nav" aria-label="Detection navigation">
+        <button type="button" class="btn btn--secondary btn--sm modal-action-bar__icon prev-btn"
             onclick="navigateModal(this, 'prev')"
-            title="Previous detection" aria-label="Previous detection">← Prev</button>
-        <button type="button" class="btn btn--secondary btn--sm next-btn"
+            title="Show previous detection" aria-label="Previous detection">←</button>
+        <button type="button" class="btn btn--secondary btn--sm modal-action-bar__icon next-btn"
             onclick="navigateModal(this, 'next')"
-            title="Next detection" aria-label="Next detection">→ Next</button>
-        {% endif %}
-        {% if show_maximize %}
-        <button type="button" class="btn btn--secondary btn--sm wm-modal__maximize-btn"
-            onclick="toggleModalMaximize(this)"
-            title="Maximize image (toggle)" aria-label="Maximize image"
-            data-maximize-label-on="⛶" data-maximize-label-off="⛶">⛶</button>
-        {% endif %}
+            title="Show next detection" aria-label="Next detection">→</button>
+    </div>
+    {% endif %}
+
+    <div class="modal-action-bar__group modal-action-bar__utilities">
+        <div class="wm-toolbox__menu modal-action-bar__menu" role="group" aria-label="More viewer actions">
+            <button type="button"
+                class="btn btn--secondary btn--sm modal-action-bar__icon modal-action-bar__more wm-toolbox__more"
+                data-action="toggle-menu" aria-haspopup="true" aria-expanded="false"
+                title="Open viewer actions" aria-label="More viewer actions">•••</button>
+
+            <div class="wm-toolbox__dropdown modal-action-bar__dropdown" role="menu" aria-label="Viewer actions">
+                <span class="modal-action-bar__menu-label" role="presentation">View</span>
+                {% if show_bbox_toggle %}
+                <button type="button" class="wm-toolbox__item bbox-toggle"
+                    data-action="toggle-bbox-overlay" role="menuitem"
+                    data-detection-id="{{ detection_id }}" data-siblings='{{ (siblings | default([])) | tojson }}'
+                    data-current-bbox='{{ (bbox | default({})) | tojson }}'
+                    title="Toggle bounding boxes" aria-label="Toggle bounding box overlay">
+                    □ <span>Bounding boxes</span>
+                </button>
+                {% endif %}
+                {% if show_maximize %}
+                <button type="button" class="wm-toolbox__item wm-modal__maximize-btn"
+                    data-action="toggle-modal-maximize" role="menuitem"
+                    title="Toggle full-screen viewer" aria-label="Maximize image">
+                    ⛶ <span>Full screen</span>
+                </button>
+                {% endif %}
+
+                {% if show_download or gallery_date %}
+                <span class="modal-action-bar__menu-label modal-action-bar__menu-label--separated" role="presentation">Image</span>
+                {% endif %}
+                {% if show_download and original_retired %}
+                <span class="wm-toolbox__item modal-action-bar__item--disabled" role="menuitem" aria-disabled="true"
+                    title="Full-resolution original is gone">⃠ <span>Original retired</span></span>
+                {% if optimized_url %}
+                <a href="{{ optimized_url }}" download class="wm-toolbox__item" role="menuitem"
+                    title="Download optimized preview" aria-label="Download preview">↓ <span>Download preview</span></a>
+                {% endif %}
+                {% elif show_download and (detection_id or original_url) %}
+                <a href="{% if detection_id %}/api/image/download/{{ detection_id }}{% else %}{{ original_url }}{% endif %}"
+                    download class="wm-toolbox__item" role="menuitem"
+                    title="Download original image" aria-label="Download original image">↓ <span>Download original</span></a>
+                {% endif %}
+                {% if gallery_date %}
+                <a href="/gallery/{{ gallery_date }}?focus={{ detection_id }}#detection-{{ detection_id }}"
+                    class="wm-toolbox__item" role="menuitem"
+                    title="Open this day in Gallery" aria-label="Open this day in Gallery">📅 <span>Open day</span></a>
+                {% endif %}
+            </div>
+        </div>
+
         {% if show_close %}
-        <button type="button" class="btn btn--primary btn--sm" data-bs-dismiss="modal"
-            title="Close" aria-label="Close">✕ Close</button>
+        <button type="button" class="btn btn--secondary btn--sm modal-action-bar__icon modal-action-bar__close"
+            data-bs-dismiss="modal" title="Close viewer" aria-label="Close">×</button>
         {% endif %}
     </div>
 </div>
