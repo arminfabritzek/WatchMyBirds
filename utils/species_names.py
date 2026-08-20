@@ -112,11 +112,26 @@ def resolve_common_name(
     species_key = canonical_species_key(raw_name)
     if not species_key:
         return ""
-    return (
-        common_names.get(raw_name)
-        or common_names.get(species_key)
-        or species_key.replace("_", " ")
-    )
+    resolved = common_names.get(raw_name) or common_names.get(species_key)
+    if resolved:
+        return resolved
+
+    # The iNaturalist label map arrives lazily with the model, after the
+    # process-wide UI dict may already have been mounted. Re-read the cached
+    # per-locale map on a miss so newly installed global taxa gain their
+    # localized extended-catalog name without a service restart.
+    try:
+        from config import get_config
+
+        config = get_config()
+        if str(config.get("CLASSIFIER_BACKEND", "inat_tflite")) == "inat_tflite":
+            locale = str(config.get("SPECIES_COMMON_NAME_LOCALE", "DE"))
+            resolved = _load_active_inat_common_names(locale).get(species_key)
+        else:
+            resolved = None
+    except Exception:
+        resolved = None
+    return resolved or species_key.replace("_", " ")
 
 
 # Non-bird OD class names that are valid species identities in their own
@@ -191,12 +206,9 @@ def load_common_names(locale: str = "DE") -> dict[str, str]:
         logger.error("Failed to load DE common names from %s: %s", base_path, exc)
         return {}
 
-    if locale == "DE":
-        return names
-
     # 2. Overlay the selected non-default locale.
     overlay_path = _ASSETS_DIR / f"common_names_{locale}.json"
-    if overlay_path.exists():
+    if locale != "DE" and overlay_path.exists():
         try:
             with open(overlay_path, encoding="utf-8") as f:
                 overlay: dict[str, str] = json.load(f)
@@ -206,7 +218,79 @@ def load_common_names(locale: str = "DE") -> dict[str, str]:
                 "Failed to load %s overlay from %s: %s", locale, overlay_path, exc
             )
 
+    names.update(_load_active_inat_common_names(locale))
+
     return names
+
+
+def _load_active_inat_common_names(locale: str) -> dict[str, str]:
+    """Load names for the selected iNaturalist backend from its local cache."""
+
+    try:
+        from config import get_config
+
+        config = get_config()
+        if str(config.get("CLASSIFIER_BACKEND", "inat_tflite")) != "inat_tflite":
+            return {}
+        labels_path = (
+            Path(str(config.get("MODEL_BASE_PATH", "./data/models")))
+            / "classifier"
+            / "inat_bird_mobilenet_v2"
+            / "inat_bird_labels.txt"
+        )
+        if not labels_path.is_file():
+            return {}
+        raw_labels = labels_path.read_text(encoding="utf-8").splitlines()
+    except Exception as exc:
+        logger.debug("Could not load cached iNaturalist labels: %s", exc)
+        return {}
+
+    extended_by_key: dict[str, dict[str, str]] = {}
+    extended_path = _ASSETS_DIR / "extended_species_global.json"
+    try:
+        with extended_path.open(encoding="utf-8") as handle:
+            extended_by_key = {
+                str(item.get("scientific")): item
+                for item in json.load(handle)
+                if isinstance(item, dict) and item.get("scientific")
+            }
+    except Exception as exc:
+        logger.debug("Could not localize iNaturalist labels: %s", exc)
+
+    result: dict[str, str] = {}
+    for raw_label in raw_labels:
+        label = raw_label.strip()
+        if not label or label.casefold() == "background":
+            continue
+        scientific, separator, common_suffix = label.rpartition(" (")
+        if not separator or not common_suffix.endswith(")"):
+            scientific = label
+            common_en = ""
+        else:
+            common_en = common_suffix[:-1].strip()
+        key = "_".join(scientific.strip().split())
+        extended = extended_by_key.get(key, {})
+        if locale == "NO":
+            common = (
+                extended.get("common_nb")
+                or common_en
+                or extended.get("common_en")
+                or extended.get("common_de")
+            )
+        elif locale == "EN":
+            common = common_en or extended.get("common_en") or extended.get("common_de")
+        else:
+            common = extended.get("common_de") or common_en or extended.get("common_en")
+        result[key] = str(common or key.replace("_", " "))
+    return result
+
+
+def clear_species_name_caches() -> None:
+    """Invalidate locale maps after a classifier backend/cache change."""
+
+    load_common_names.cache_clear()
+    load_extended_species.cache_clear()
+    _extended_species_keys.cache_clear()
 
 
 @lru_cache(maxsize=4)

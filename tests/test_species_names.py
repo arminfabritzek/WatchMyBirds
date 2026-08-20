@@ -172,6 +172,57 @@ def test_load_common_names_uses_english_overlay(tmp_path, monkeypatch):
     }
 
 
+def test_active_inat_labels_extend_known_species_and_localized_names(
+    tmp_path, monkeypatch
+):
+    import config as config_module
+
+    assets_dir = tmp_path / "assets"
+    assets_dir.mkdir()
+    (assets_dir / "common_names_DE.json").write_text(
+        json.dumps({"Unknown_species": "Vogel (Art unklar)"}),
+        encoding="utf-8",
+    )
+    (assets_dir / "extended_species_global.json").write_text(
+        json.dumps(
+            [
+                {
+                    "scientific": "Cyanocitta_cristata",
+                    "common_de": "Blauhäher",
+                    "common_en": "Blue Jay",
+                    "common_nb": "Blåskrike",
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    labels_dir = tmp_path / "models" / "classifier" / "inat_bird_mobilenet_v2"
+    labels_dir.mkdir(parents=True)
+    (labels_dir / "inat_bird_labels.txt").write_text(
+        "Cyanocitta cristata (Blue Jay)\n"
+        "Picoides pubescens (Downy Woodpecker)\n"
+        "background\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(species_names, "_ASSETS_DIR", assets_dir)
+    monkeypatch.setattr(
+        config_module,
+        "get_config",
+        lambda: {
+            "CLASSIFIER_BACKEND": "inat_tflite",
+            "MODEL_BASE_PATH": str(tmp_path / "models"),
+        },
+    )
+    species_names.clear_species_name_caches()
+
+    names = species_names.load_common_names("DE")
+
+    assert names["Cyanocitta_cristata"] == "Blauhäher"
+    assert names["Picoides_pubescens"] == "Downy Woodpecker"
+    assert species_names.is_known_species("Picoides_pubescens", "DE") is True
+    assert "background" not in names
+
+
 def test_load_extended_species_uses_en_fallback_order(tmp_path, monkeypatch):
     assets_dir = tmp_path / "assets"
     assets_dir.mkdir()

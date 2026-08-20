@@ -16,6 +16,16 @@ classification. These models are NOT part of this project and are licensed
 separately by their respective authors. Refer to the upstream model
 repositories for applicable license terms before redistribution.
 
+  - Google Coral iNaturalist Birds MobileNet-v2 model and label data —
+    downloaded on demand from the google-coral/test_data repository at a
+    pinned revision. The upstream repository is licensed under the Apache
+    License 2.0. Copyright Google LLC and contributors.
+    See: https://github.com/google-coral/test_data
+
+  - Google AI Edge LiteRT — local TensorFlow Lite model runtime, installed as
+    the ai-edge-litert Python package and licensed under Apache-2.0.
+    See: https://github.com/google-ai-edge/LiteRT
+
 
 Data Sources
 ------------

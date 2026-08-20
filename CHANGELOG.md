@@ -4,6 +4,9 @@
 
 ### Added
 
+- A selectable iNaturalist Birds classifier now identifies 964 bird taxa
+  locally and is the default, while the original WatchMyBirds ONNX classifier
+  remains available in Settings.
 - Species display names can now be switched to English in Settings,
   alongside German and Norwegian.
 - Selected images can be downloaded together as a ZIP from the species view,
@@ -31,6 +34,9 @@
 
 ### Changed
 
+- Gallery thumbnails and detail modals now offer direct `Crop | Full` and
+  `Focus | Full` view controls, with compact modal navigation and secondary
+  detection actions collected in overflow menus.
 - Dependency and CI maintenance: numpy, torch, torchvision, safetensors,
   llama-cpp-python, and several Docker/CI actions bumped to current
   versions.

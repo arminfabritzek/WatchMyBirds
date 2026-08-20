@@ -770,6 +770,19 @@ def build_classifier_registry_payload(classifier: Any | None) -> dict[str, Any]:
     currently advertises plus the one that is actually loaded.
     """
     model_dir = _classifier_model_dir()
+    config = get_config()
+    backend_name = str(config.get("CLASSIFIER_BACKEND", "inat_tflite"))
+    model_base = str(config.get("MODEL_BASE_PATH", "models"))
+    inat_dir = os.path.join(
+        model_base,
+        "classifier",
+        "inat_bird_mobilenet_v2",
+    )
+    inat_model_path = os.path.join(
+        inat_dir,
+        "mobilenet_v2_1.0_224_inat_bird_quant.tflite",
+    )
+    inat_labels_path = os.path.join(inat_dir, "inat_bird_labels.txt")
     latest = _read_classifier_latest_models(model_dir)
 
     hf_latest_id: str | None = _resolve_hf_latest_id(latest)
@@ -858,7 +871,7 @@ def build_classifier_registry_payload(classifier: Any | None) -> dict[str, Any]:
         }
 
     variants: list[dict[str, Any]] = []
-    base = get_config().get("MODEL_BASE_PATH", "models")
+    base = model_base
     for mid, payload in sorted(variant_entries.items()):
         if not isinstance(payload, dict):
             continue
@@ -875,7 +888,9 @@ def build_classifier_registry_payload(classifier: Any | None) -> dict[str, Any]:
             "classes_path": classes_rel,
             "weights_exists": bool(weights_abs) and os.path.exists(weights_abs),
             "classes_exists": bool(classes_abs) and os.path.exists(classes_abs),
-            "is_active": (mid == (runtime_id or active_on_disk_id)),
+            "is_active": (
+                backend_name == "wmb_onnx" and mid == (runtime_id or active_on_disk_id)
+            ),
             "is_hf_latest": (mid == hf_latest_id),
             "metadata": _build_classifier_variant_metadata(model_dir, mid),
         }
@@ -902,6 +917,27 @@ def build_classifier_registry_payload(classifier: Any | None) -> dict[str, Any]:
 
     return {
         "model_dir": model_dir,
+        "backend": {
+            "active": backend_name,
+            "options": [
+                {
+                    "id": "wmb_onnx",
+                    "label": "WatchMyBirds",
+                    "installed": True,
+                    "runtime": "ONNX Runtime",
+                },
+                {
+                    "id": "inat_tflite",
+                    "label": "iNaturalist Birds",
+                    "installed": os.path.isfile(inat_model_path)
+                    and os.path.isfile(inat_labels_path),
+                    "runtime": "LiteRT CPU",
+                    "num_outputs": 965,
+                    "num_bird_taxa": 964,
+                    "input_size": [224, 224],
+                },
+            ],
+        },
         "active": {
             "id": runtime_id or active_on_disk_id,
             "source": active_source,

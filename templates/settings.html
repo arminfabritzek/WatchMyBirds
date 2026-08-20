@@ -1806,6 +1806,32 @@
             <!-- Classifier sub-section (parallel to Detector). No precision
                  chips, no int8 variants — classifier only ships fp32. -->
             <hr class="my-4">
+            <div class="settings-field mb-3">
+                <label class="settings-field__label" for="CLASSIFIER_BACKEND"
+                    title="Choose which local runtime identifies detected birds">
+                    Bird identification backend
+                </label>
+                <select name="CLASSIFIER_BACKEND" id="CLASSIFIER_BACKEND" class="form-control">
+                    <option value="wmb_onnx"
+                        {% if payload.get('CLASSIFIER_BACKEND', {}).get('value', 'inat_tflite') == 'wmb_onnx' %}selected{% endif %}>
+                        WatchMyBirds · locally trained species
+                    </option>
+                    <option value="inat_tflite"
+                        {% if payload.get('CLASSIFIER_BACKEND', {}).get('value', 'inat_tflite') == 'inat_tflite' %}selected{% endif %}>
+                        iNaturalist Birds · 964 bird taxa
+                    </option>
+                </select>
+                <div class="settings-field__help">
+                    <strong>WatchMyBirds</strong> keeps the calibrated ONNX
+                    classifier and its species/genus/reject policy.
+                    <strong>iNaturalist Birds</strong> is a lightweight 224px
+                    uint8 MobileNet for broader geographic coverage. Its
+                    3.5&nbsp;MB model and labels are downloaded once from the
+                    pinned Google Coral release, verified by SHA-256, and then
+                    run fully locally with LiteRT. Applying this setting switches
+                    the next classification cycle without restarting the detector.
+                </div>
+            </div>
             <div class="ai-active-card" id="clsActiveCard">
                 <div class="ai-active-card__label">Active classifier</div>
                 <div class="ai-active-card__id" id="clsActiveId">Loading…</div>
@@ -4185,6 +4211,19 @@
     }
 
     function _renderClassifierActiveCard(payload) {
+        const backend = payload.backend || {};
+        if (backend.active === 'inat_tflite') {
+            const option = (backend.options || []).find(v => v.id === 'inat_tflite') || {};
+            document.getElementById('clsActiveId').textContent = 'iNaturalist Birds';
+            const bits = [
+                (option.num_bird_taxa || 964) + ' bird taxa',
+                '224²',
+                option.runtime || 'LiteRT CPU',
+                option.installed ? 'cached locally' : 'downloads on first use',
+            ];
+            document.getElementById('clsActiveMeta').textContent = bits.join(' · ');
+            return;
+        }
         const active = payload.active || {};
         const runtime = payload.runtime || {};
         const activeVariant = (payload.variants || []).find(v => v.is_active) || {};

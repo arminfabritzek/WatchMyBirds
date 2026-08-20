@@ -14,6 +14,17 @@ if TYPE_CHECKING:
 _SHARPNESS_REF_LONG_SIDE = 256
 
 
+def resize_model_input(
+    image: np.ndarray,
+    *,
+    width: int,
+    height: int,
+) -> np.ndarray:
+    """Resize an in-memory image for a model while preserving channel order."""
+
+    return cv2.resize(image, (width, height), interpolation=cv2.INTER_LINEAR)
+
+
 def create_square_crop(
     image: np.ndarray,
     bbox: tuple[int, int, int, int],

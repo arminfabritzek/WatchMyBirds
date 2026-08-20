@@ -23,6 +23,7 @@ from camera.video_capture import VideoCapture
 from config import get_config
 from core.ptz_tracking_core import AutoPtzController
 from detectors.classifier import ImageClassifier
+from detectors.classifier_backends.factory import build_classifier_backend
 from detectors.interfaces.classification import DecisionState
 from detectors.motion_detector import MotionDetector
 from detectors.od_classes import is_bird_od_class
@@ -62,8 +63,15 @@ class DetectionManager:
 
         # Classifier (lazy-loaded)
         self.classifier = ImageClassifier()
-        # Wrap classifier with ClassificationService for clean interface
-        self.classification_service = ClassificationService(self.classifier)
+        self.classifier_backend_name = str(
+            self.config.get("CLASSIFIER_BACKEND", "inat_tflite")
+        )
+        self.classification_service = ClassificationService(
+            backend=build_classifier_backend(
+                self.config,
+                wmb_classifier=self.classifier,
+            )
+        )
         self.classifier_model_id = ""
 
         # Load common names
@@ -1402,9 +1410,8 @@ class DetectionManager:
                         from utils.live_event_bus import get_bus
 
                         _species_latin = cls_name or det_data.class_name
-                        _species_common = self.common_names.get(
-                            _species_latin,
-                            _species_latin.replace("_", " "),
+                        _species_common = self.notification_service.get_common_name(
+                            _species_latin
                         )
                         get_bus().publish(
                             {
@@ -1540,6 +1547,27 @@ class DetectionManager:
         if "EXIF_GPS_ENABLED" in changes:
             self.exif_gps_enabled = changes["EXIF_GPS_ENABLED"]
             self.config["EXIF_GPS_ENABLED"] = self.exif_gps_enabled
+
+        if "CLASSIFIER_BACKEND" in changes:
+            self.set_classifier_backend(str(changes["CLASSIFIER_BACKEND"]))
+
+    def set_classifier_backend(self, backend_name: str) -> None:
+        """Switch the species classifier without restarting the detector."""
+
+        normalized = backend_name.strip().lower()
+        if normalized == self.classifier_backend_name:
+            return
+        next_config = dict(self.config)
+        next_config["CLASSIFIER_BACKEND"] = normalized
+        backend = build_classifier_backend(
+            next_config,
+            wmb_classifier=self.classifier,
+        )
+        self.classification_service.replace_backend(backend)
+        self.classifier_backend_name = normalized
+        self.classifier_model_id = ""
+        self.config["CLASSIFIER_BACKEND"] = normalized
+        logger.info("Classifier backend switched to %s", normalized)
 
     def start_user_ingest(self, folder_path: str | None = None) -> None:
         """Orchestrates User Ingest process."""

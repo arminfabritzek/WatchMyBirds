@@ -529,6 +529,7 @@ def test_classifier_payload_tags_hf_latest_when_local_active_diverges(tmp_path: 
     def fake_config():
         real = dict(original())
         real["MODEL_BASE_PATH"] = str(tmp_path)
+        real["CLASSIFIER_BACKEND"] = "wmb_onnx"
         return real
 
     monkeypatch.setattr(svc, "get_config", fake_config)

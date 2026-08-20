@@ -592,6 +592,14 @@ class TestCoercionNewKeys:
         _coerce_config_types(cfg)
         assert cfg["SPECIES_COMMON_NAME_LOCALE"] == "DE"
 
+    def test_classifier_backend_defaults_to_inaturalist(self):
+        from config import DEFAULTS, _coerce_config_types
+
+        assert DEFAULTS["CLASSIFIER_BACKEND"] == "inat_tflite"
+        cfg = dict(DEFAULTS, CLASSIFIER_BACKEND="unsupported")
+        _coerce_config_types(cfg)
+        assert cfg["CLASSIFIER_BACKEND"] == "inat_tflite"
+
 
 # ---------------------------------------------------------------------------
 # get_settings_payload – VIDEO_SOURCE internal flag
@@ -664,3 +672,24 @@ class TestSettingsPayload:
         lc = payload.get("SPECIES_COMMON_NAME_LOCALE", {})
         assert lc.get("editable") is True
         assert lc.get("value") in ("DE", "EN", "NO")
+
+
+def test_validate_classifier_backend_accepts_supported_values():
+    from config import _validate_value
+
+    for raw, expected in (
+        ("wmb_onnx", "wmb_onnx"),
+        ("INAT_TFLITE", "inat_tflite"),
+    ):
+        ok, value = _validate_value("CLASSIFIER_BACKEND", raw)
+        assert ok is True
+        assert value == expected
+
+
+def test_validate_classifier_backend_rejects_unknown_value():
+    from config import _validate_value
+
+    ok, value = _validate_value("CLASSIFIER_BACKEND", "bioclip")
+
+    assert ok is False
+    assert value is None

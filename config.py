@@ -86,6 +86,9 @@ DEFAULTS = {
     # picks it up on the next page reload.
     "STATION_NAME": "",
     "DETECTOR_MODEL_CHOICE": "yolo",
+    # Species-classifier runtime. The detector remains unchanged; only the
+    # crop classifier is selected here.
+    "CLASSIFIER_BACKEND": "inat_tflite",  # "wmb_onnx" | "inat_tflite"
     # Detection-confidence floor is now model-owned (read from the active
     # model_metadata.json). CONFIDENCE_THRESHOLD_DETECTION has been retired.
     "SAVE_THRESHOLD": 0.65,
@@ -284,6 +287,7 @@ DEFAULTS = {
 }
 
 RUNTIME_KEYS = {
+    "CLASSIFIER_BACKEND",
     "EXPORT_BURN_IN_METADATA",
     "RETENTION_POSTURE",
     "RETENTION_ENABLED",
@@ -399,6 +403,7 @@ def _load_config() -> dict[str, Any]:
 
     for key in (
         "DETECTOR_MODEL_CHOICE",
+        "CLASSIFIER_BACKEND",
         "MODEL_BASE_PATH",
         "DAY_AND_NIGHT_CAPTURE_LOCATION",
         "EDIT_PASSWORD",
@@ -973,6 +978,13 @@ def _coerce_config_types(config: dict[str, Any]) -> None:
         locale_val = "DE"
     config["SPECIES_COMMON_NAME_LOCALE"] = locale_val
 
+    classifier_backend = (
+        str(config.get("CLASSIFIER_BACKEND", "inat_tflite")).strip().lower()
+    )
+    if classifier_backend not in ("wmb_onnx", "inat_tflite"):
+        classifier_backend = "inat_tflite"
+    config["CLASSIFIER_BACKEND"] = classifier_backend
+
     # DEVICE_NAME: trimmed string, capped at 64 chars (shown in every message prefix)
     device_name = config.get("DEVICE_NAME", "")
     if device_name is None:
@@ -1251,6 +1263,11 @@ def _validate_value(key: str, value: Any) -> tuple[bool, Any]:
     if key == "DAY_AND_NIGHT_CAPTURE_LOCATION":
         if isinstance(value, str) and value.strip():
             return True, value.strip()
+        return False, None
+    if key == "CLASSIFIER_BACKEND":
+        normalized = str(value).strip().lower() if value is not None else ""
+        if normalized in ("wmb_onnx", "inat_tflite"):
+            return True, normalized
         return False, None
     if key == "VIDEO_SOURCE":
         # Integer string "0", "1" -> int

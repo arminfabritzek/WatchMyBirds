@@ -1,14 +1,11 @@
-"""
-Classification Service - Bird Species Classification.
-
-Implements ClassificationInterface by wrapping the existing ImageClassifier.
-Provides a clean interface for the detection pipeline.
-"""
+"""Backend-neutral bird species classification service."""
 
 import cv2
 import numpy as np
 
 from detectors.classifier import ImageClassifier
+from detectors.classifier_backends.base import ClassifierBackend
+from detectors.classifier_backends.wmb_onnx import WMBOnnxClassifierBackend
 from detectors.interfaces.classification import (
     ClassificationInterface,
     ClassificationResult,
@@ -22,22 +19,48 @@ class ClassificationService(ClassificationInterface):
     """
     Handles bird species classification on image crops.
 
-    Wraps the existing ImageClassifier with a clean interface.
+    Wraps a classifier backend with a stable pipeline interface.
     Features:
     - Lazy model loading (on first use)
     - RGB and BGR input support
     - Automatic crop preprocessing
     """
 
-    def __init__(self, classifier: ImageClassifier = None):
+    def __init__(
+        self,
+        classifier: ImageClassifier | None = None,
+        *,
+        backend: ClassifierBackend | None = None,
+    ) -> None:
         """
         Initialize the classification service.
 
         Args:
-            classifier: Optional existing classifier instance.
-                       Creates new one if not provided.
+            classifier: Optional legacy ONNX classifier instance.
+            backend: Optional explicit backend. Takes precedence over classifier.
         """
-        self._classifier = classifier or ImageClassifier()
+        self._backend = (
+            backend
+            if backend is not None
+            else WMBOnnxClassifierBackend(
+                classifier if classifier is not None else ImageClassifier()
+            )
+        )
+
+    @property
+    def backend(self) -> ClassifierBackend:
+        return self._backend
+
+    def replace_backend(self, backend: ClassifierBackend) -> None:
+        """Atomically route future classifications to a new backend."""
+
+        self._backend = backend
+        try:
+            from utils.species_names import clear_species_name_caches
+
+            clear_species_name_caches()
+        except Exception as exc:
+            logger.debug("Species-name cache refresh skipped: %s", exc)
 
     def classify(self, crop: np.ndarray) -> ClassificationResult:
         """
@@ -50,45 +73,16 @@ class ClassificationService(ClassificationInterface):
             ClassificationResult with species name and confidence.
         """
         try:
-            top_k_indices, top_k_confs, class_name, confidence = (
-                self._classifier.predict_from_image(crop)
-            )
-
-            # When a decision config was loaded, the classifier stamps
-            # ``last_decision`` on itself with the species/genus/reject
-            # resolution. For legacy classifiers without a config,
-            # last_decision still gets populated (level="species") so
-            # this branch is uniform — no None-guard needed.
-            decision = getattr(self._classifier, "last_decision", None)
-            if decision:
-                shown_label = decision.get("label") or ""
-                # For genus-level results the probability is the summed
-                # sibling mass, which is more meaningful to show
-                # downstream than the top-1 confidence. For species /
-                # reject we keep the top-1 confidence so legacy
-                # callers see unchanged numbers.
-                if decision.get("level") == "genus":
-                    shown_conf = float(decision.get("prob", confidence))
-                else:
-                    shown_conf = float(confidence)
-                decision_level = str(decision.get("level", "species"))
-                raw_species = str(decision.get("raw_species", class_name))
-            else:
-                shown_label = class_name
-                shown_conf = float(confidence)
-                decision_level = "species"
-                raw_species = class_name
+            prediction = self._backend.predict_rgb(crop)
 
             return ClassificationResult(
-                class_name=shown_label,
-                confidence=shown_conf,
-                model_id=self.get_model_id(),
-                top_k_classes=[
-                    self._classifier.classes[int(idx)] for idx in top_k_indices
-                ],
-                top_k_confidences=[float(c) for c in top_k_confs],
-                decision_level=decision_level,
-                raw_species_name=raw_species,
+                class_name=prediction.class_name,
+                confidence=prediction.confidence,
+                model_id=prediction.model_id,
+                top_k_classes=prediction.top_k_classes,
+                top_k_confidences=prediction.top_k_confidences,
+                decision_level=prediction.decision_level,
+                raw_species_name=prediction.raw_species_name,
             )
         except Exception as e:
             logger.error(f"Classification error: {e}")
@@ -128,7 +122,7 @@ class ClassificationService(ClassificationInterface):
         Returns:
             String identifying the model (path, name, or version).
         """
-        return getattr(self._classifier, "model_id", "") or ""
+        return self._backend.get_model_id()
 
     def is_ready(self) -> bool:
         """
@@ -137,4 +131,4 @@ class ClassificationService(ClassificationInterface):
         Returns:
             True if model is loaded and ready.
         """
-        return getattr(self._classifier, "_initialized", False)
+        return self._backend.is_ready()

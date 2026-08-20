@@ -8,9 +8,11 @@ import cv2
 import piexif
 
 from config import get_config
-from detectors.classifier import ImageClassifier
+from detectors.classifier_backends.factory import build_classifier_backend
 from detectors.detector import Detector
+from detectors.interfaces.classification import ClassificationInterface
 from detectors.od_classes import is_bird_od_class
+from detectors.services.classification_service import ClassificationService
 from utils.db import (
     check_image_exists_by_hash,
     get_connection,
@@ -215,9 +217,9 @@ def ingest_folder(folder_path: str, source_id: int, move_files: bool = False) ->
     det_model_name = config["DETECTOR_MODEL_CHOICE"]
     det_model_version = det_model_id
 
-    classifier = ImageClassifier()
-    cls_model_id = getattr(classifier, "model_id", "unknown")
-    cls_model_name = "classifier"  # Default name
+    classifier = ClassificationService(backend=build_classifier_backend(config))
+    cls_model_id = classifier.get_model_id() or "unknown"
+    cls_model_name = str(config.get("CLASSIFIER_BACKEND", "inat_tflite"))
     cls_model_version = cls_model_id
 
     conn = get_connection()
@@ -301,7 +303,7 @@ def ingest_file(
     filepath: str,
     source_id: int,
     detector: Detector,
-    classifier: ImageClassifier,
+    classifier: ClassificationInterface,
     det_meta: tuple[str, str] = ("unknown", "unknown"),
     cls_meta: tuple[str, str] = ("unknown", "unknown"),
 ) -> str:
@@ -401,10 +403,9 @@ def ingest_file(
                     crop, (SAVE_RESOLUTION_CROP, SAVE_RESOLUTION_CROP)
                 )
                 crop_rgb = cv2.cvtColor(crop_resized, cv2.COLOR_BGR2RGB)
-                # Classifier predict
-                _, _, det_cls_name, det_cls_conf = classifier.predict_from_image(
-                    crop_rgb
-                )
+                classification = classifier.classify(crop_rgb)
+                det_cls_name = classification.class_name
+                det_cls_conf = classification.confidence
 
             # --- GENERATE SQUARE THUMBNAIL (Match Live Stream: _crop_{i}) ---
             thumb_filename = f"{timestamp_str}_crop_{i}.webp"
@@ -517,7 +518,7 @@ def ingest_file(
                 "source_id": source_id,
                 "content_hash": content_hash,
                 "detector_model_id": getattr(detector, "model_id", "unknown"),
-                "classifier_model_id": getattr(classifier, "model_id", "unknown"),
+                "classifier_model_id": classifier.get_model_id() or "unknown",
             },
         )
 
@@ -559,7 +560,7 @@ def ingest_file(
                         "detection_id": det_id,
                         "cls_class_name": enriched_det["cls_class_name"],
                         "cls_confidence": enriched_det["cls_confidence"],
-                        "cls_model_id": getattr(classifier, "model_id", "unknown"),
+                        "cls_model_id": classifier.get_model_id() or "unknown",
                         "created_at": created_at_iso,
                     },
                 )
@@ -594,7 +595,7 @@ def ingest_file(
                 "content_hash": content_hash,
                 "coco_json": "{}",
                 "detector_model_id": getattr(detector, "model_id", "unknown"),
-                "classifier_model_id": getattr(classifier, "model_id", "unknown"),
+                "classifier_model_id": classifier.get_model_id() or "unknown",
             },
         )
         logger.debug(f"Ingested (No Detection) {filepath}")
@@ -631,9 +632,9 @@ def ingest_inbox_folder(pending_dir: str, file_snapshot: list[str]) -> None:
     det_model_name = config["DETECTOR_MODEL_CHOICE"]
     det_model_version = det_model_id
 
-    classifier = ImageClassifier()
-    cls_model_id = getattr(classifier, "model_id", "unknown")
-    cls_model_name = "classifier"
+    classifier = ClassificationService(backend=build_classifier_backend(config))
+    cls_model_id = classifier.get_model_id() or "unknown"
+    cls_model_name = str(config.get("CLASSIFIER_BACKEND", "inat_tflite"))
     cls_model_version = cls_model_id
 
     conn = get_connection()

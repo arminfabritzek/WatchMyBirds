@@ -11,7 +11,7 @@ import time
 from config import get_config
 from detectors.interfaces.notification import NotificationInterface, SpeciesInfo
 from logging_config import get_logger
-from utils.species_names import is_known_species
+from utils.species_names import is_known_species, resolve_common_name
 from utils.telegram_notifier import send_telegram_message
 
 logger = get_logger(__name__)
@@ -288,7 +288,7 @@ class NotificationService(NotificationInterface):
         Returns:
             Common name if available, otherwise formatted Latin name.
         """
-        return self._common_names.get(latin_name, latin_name.replace("_", " "))
+        return resolve_common_name(latin_name, self._common_names)
 
     def create_species_info(
         self, latin_name: str, score: float, image_path: str

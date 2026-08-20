@@ -66,6 +66,7 @@ Deployment-specific `GO2RTC_CONFIG_PATH` values:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
+| `CLASSIFIER_BACKEND` | `inat_tflite` | Species-classifier backend: `wmb_onnx` or `inat_tflite`. Runtime-editable in Settings; the next classification uses the selected backend. |
 | `DETECTION_INTERVAL_SECONDS` | `2.0` | Pause between detection cycles (seconds) |
 | `SAVE_THRESHOLD` | `0.65` | Minimum confidence to save an image. Only used when `SAVE_THRESHOLD_MODE=manual`. |
 | `SAVE_THRESHOLD_MODE` | `auto` | `auto` (save = model's detection floor + 0.10) or `manual` (honour `SAVE_THRESHOLD` verbatim) |
@@ -82,6 +83,21 @@ Deployment-specific `GO2RTC_CONFIG_PATH` values:
 > want a tighter or looser persistence policy; a warning appears in
 > the UI when the manual value sits below the detection floor (in
 > which case the gate has no effect).
+
+### Classifier Backends
+
+- `inat_tflite` is the default. It is Google Coral's quantized iNaturalist
+  Birds MobileNet-v2. It has 965 outputs: 964 bird taxa plus `background`.
+  The pinned 3.5 MB model and label file are downloaded on first use into
+  `MODEL_BASE_PATH/classifier/inat_bird_mobilenet_v2/`, verified with SHA-256,
+  and then run locally via LiteRT on CPU. No network connection is used for
+  inference.
+- `wmb_onnx` is the original WatchMyBirds classifier. It retains the
+  calibrated temperature and species/genus/reject decision layer shipped with
+  each WMB model variant.
+
+The object detector and its thresholds are unaffected by classifier-backend
+changes.
 
 ### Location & Daylight
 
@@ -199,6 +215,9 @@ GO2RTC_CONFIG_PATH=/output/go2rtc.yaml
 STREAM_FPS_CAPTURE=5.0
 
 # Detection
+# Species classifier: wmb_onnx or inat_tflite
+CLASSIFIER_BACKEND=inat_tflite
+
 # Detection floor is model-owned — nothing to set here. To tune it,
 # switch model variants in the AI panel at /settings.
 SAVE_THRESHOLD_MODE=auto   # or "manual"
