@@ -4,6 +4,15 @@
 
 ### Added
 
+- Field benchmark tools can now export confirmed station evidence and compare
+  detector variants or wildlife models across false-positive and provisional
+  recall trade-offs.
+- Compatible PTZ cameras now expose autofocus and manual focus controls in the
+  live stream, while unsupported controls stay hidden.
+- Analytics now includes an evidence-backed station report that records
+  measured station effort and admits only explicitly supported observations.
+- Gallery and review surfaces now share full-image no-bird confirmation,
+  per-box species decisions, and canonical review progress.
 - A selectable iNaturalist Birds classifier now identifies 964 bird taxa
   locally and is the default, while the original WatchMyBirds ONNX classifier
   remains available in Settings.
@@ -34,6 +43,11 @@
 
 ### Changed
 
+- The Canonical Dataset page now leads with the open review queue and keeps
+  inclusion and exclusion manifests collapsed until they are needed.
+- PTZ follow mode now performs a short, bounded search along the bird's recent
+  trajectory when detections briefly disappear, then stops safely if the target
+  is not reacquired.
 - Gallery thumbnails and detail modals now offer direct `Crop | Full` and
   `Focus | Full` view controls, with compact modal navigation and secondary
   detection actions collected in overflow menus.
