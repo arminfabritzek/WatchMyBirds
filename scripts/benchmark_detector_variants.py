@@ -65,12 +65,15 @@ from pathlib import Path
 from typing import Any
 
 # Make the app importable when the script is invoked from anywhere.
-APP_ROOT = Path("/opt/app")
+APP_ROOT = Path(os.environ.get("WMB_APP_ROOT", "/opt/app"))
 if str(APP_ROOT) not in sys.path:
     sys.path.insert(0, str(APP_ROOT))
 
 os.environ.setdefault("OUTPUT_DIR", str(APP_ROOT / "data" / "output"))
-os.environ.setdefault("MODEL_BASE_PATH", str(APP_ROOT / "data" / "models"))
+default_model_base = APP_ROOT / "data" / "models"
+if not default_model_base.exists() and (APP_ROOT / "models").exists():
+    default_model_base = APP_ROOT / "models"
+os.environ.setdefault("MODEL_BASE_PATH", str(default_model_base))
 
 import cv2  # noqa: E402
 import numpy as np  # noqa: E402
@@ -311,7 +314,7 @@ def _sample_frames(
 ) -> tuple[list[str], list[str]]:
     """Return (multi_frame_paths, single_frame_paths) from the DB over the
     last ``days`` days of captured frames."""
-    originals = APP_ROOT / "data" / "output" / "originals"
+    originals = Path(os.environ["OUTPUT_DIR"]) / "originals"
     conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
     try:
         # Multi-detection frames — the critical ones.
@@ -384,6 +387,8 @@ def _benchmark_variant(
     second_confs: list[float] = []
     latencies_ms: list[float] = []
     unique_classes: set[str] = set()
+    bird_frame_count = 0
+    bird_detection_count = 0
 
     for i, path in enumerate(frames):
         img = cv2.imread(path)
@@ -399,6 +404,16 @@ def _benchmark_variant(
         latencies_ms.append((time.perf_counter() - t0) * 1000)
         det_counts.append(len(dets))
 
+        bird_detections = [
+            detection
+            for detection in dets
+            if 0 <= detection["class_id"] < len(labels)
+            and labels[detection["class_id"]].strip().casefold() == "bird"
+        ]
+        if bird_detections:
+            bird_frame_count += 1
+            bird_detection_count += len(bird_detections)
+
         sorted_dets = sorted(dets, key=lambda d: d["confidence"], reverse=True)
         if sorted_dets:
             top_confs.append(sorted_dets[0]["confidence"])
@@ -411,7 +426,8 @@ def _benchmark_variant(
             sys.stdout.write(f"    {variant['id']}: {i+1}/{len(frames)}\n")
             sys.stdout.flush()
 
-    total = len(det_counts) or 1
+    frames_processed = len(det_counts)
+    total = frames_processed or 1
     multi = sum(1 for n in det_counts if n >= 2)
     three_plus = sum(1 for n in det_counts if n >= 3)
 
@@ -423,7 +439,10 @@ def _benchmark_variant(
         "conf_thr": conf_thr,
         "iou_thr": iou_thr,
         "input_size": f"{in_w}x{in_h}",
-        "frames_processed": total,
+        "frames_processed": frames_processed,
+        "bird_frames": bird_frame_count,
+        "bird_detections": bird_detection_count,
+        "bird_frame_rate_pct": round(100.0 * bird_frame_count / total, 2),
         "avg_detections_per_frame": _mean([float(n) for n in det_counts]),
         "frames_with_>=2": multi,
         "pct_multi": round(100.0 * multi / total, 2),
@@ -477,6 +496,9 @@ def _write_csv(path: Path, results: list[dict[str, Any]]) -> None:
         "conf_thr",
         "iou_thr",
         "frames_processed",
+        "bird_frames",
+        "bird_detections",
+        "bird_frame_rate_pct",
         "avg_detections_per_frame",
         "frames_with_>=2",
         "pct_multi",
