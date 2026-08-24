@@ -553,6 +553,8 @@ def _init_schema(conn: sqlite3.Connection) -> None:
     )
 
     _init_human_label_schema(conn)
+    _init_station_event_review_schema(conn)
+    _init_station_runtime_schema(conn)
 
     conn.commit()
 
@@ -850,6 +852,100 @@ def _init_human_label_schema(conn: sqlite3.Connection) -> None:
               FROM human_label_facts successor
               WHERE successor.supersedes_fact_id = f.fact_id
           );
+        """
+    )
+
+
+def _init_station_event_review_schema(conn: sqlite3.Connection) -> None:
+    """Install append-only biological event assessments.
+
+    Human-label facts remain the authority for object presence and species
+    identity.  This table records the additional event-level statement that
+    cannot be projected from those independent axes: whether the reviewed
+    evidence is diagnostically usable for the station report.
+    """
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS station_event_reviews (
+            review_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_key_snapshot TEXT NOT NULL,
+            anchor_detection_id INTEGER NOT NULL,
+            outcome TEXT NOT NULL CHECK(outcome IN (
+                'verified_species', 'unresolved_bird', 'no_bird'
+            )),
+            candidate_species_key TEXT,
+            species_key TEXT,
+            evidence_quality TEXT NOT NULL CHECK(evidence_quality IN (
+                'diagnostic', 'limited', 'insufficient'
+            )),
+            event_start TEXT NOT NULL,
+            event_end TEXT NOT NULL,
+            source_kind TEXT NOT NULL CHECK(length(trim(source_kind)) > 0),
+            source_ref TEXT,
+            installation_id TEXT NOT NULL CHECK(length(trim(installation_id)) > 0),
+            app_version TEXT NOT NULL CHECK(length(trim(app_version)) > 0),
+            created_at TEXT NOT NULL CHECK(length(trim(created_at)) > 0),
+            CHECK(
+                (outcome = 'verified_species' AND length(trim(species_key)) > 0)
+                OR (outcome != 'verified_species' AND species_key IS NULL)
+            ),
+            FOREIGN KEY(anchor_detection_id) REFERENCES detections(detection_id)
+                ON DELETE CASCADE
+        );
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS station_event_review_members (
+            review_id INTEGER NOT NULL,
+            detection_id INTEGER NOT NULL,
+            PRIMARY KEY(review_id, detection_id),
+            FOREIGN KEY(review_id) REFERENCES station_event_reviews(review_id)
+                ON DELETE CASCADE,
+            FOREIGN KEY(detection_id) REFERENCES detections(detection_id)
+                ON DELETE CASCADE
+        );
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_station_event_review_members_detection
+        ON station_event_review_members(detection_id, review_id DESC);
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_station_event_reviews_created
+        ON station_event_reviews(created_at DESC);
+        """
+    )
+
+
+def _init_station_runtime_schema(conn: sqlite3.Connection) -> None:
+    """Install the local observation-effort sample stream."""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS station_runtime_samples (
+            sample_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            sampled_at TEXT NOT NULL,
+            sample_interval_seconds REAL NOT NULL
+                CHECK(sample_interval_seconds > 0),
+            app_online INTEGER NOT NULL CHECK(app_online IN (0, 1)),
+            camera_online INTEGER NOT NULL CHECK(camera_online IN (0, 1)),
+            stream_online INTEGER NOT NULL CHECK(stream_online IN (0, 1)),
+            detector_ready INTEGER NOT NULL CHECK(detector_ready IN (0, 1)),
+            detector_active INTEGER NOT NULL CHECK(detector_active IN (0, 1)),
+            od_active INTEGER NOT NULL CHECK(od_active IN (0, 1)),
+            od_reason TEXT,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+        """
+    )
+    _ensure_column_on_table(conn, "station_runtime_samples", "ptz_state", "TEXT")
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_station_runtime_samples_time
+        ON station_runtime_samples(sampled_at ASC);
         """
     )
 

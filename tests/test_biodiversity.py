@@ -9,6 +9,7 @@ from core.biodiversity import (
     chao1_richness,
     diel_activity_curve,
     hill_numbers,
+    is_resolved_species,
     observed_richness,
     pielou_evenness,
     relative_activity_index,
@@ -51,6 +52,14 @@ def test_species_event_counts_drops_unknown():
 def test_observed_richness_distinct_species():
     assert observed_richness([_ev("A"), _ev("A"), _ev("B")]) == 2
     assert observed_richness([]) == 0
+
+
+def test_resolved_species_rejects_genus_placeholders():
+    assert is_resolved_species("Parus_major") is True
+    assert is_resolved_species("Sylvia_sp.") is False
+    assert is_resolved_species("Passer_sp") is False
+    assert is_resolved_species("Unknown_species") is False
+    assert is_resolved_species(None) is False
 
 
 # --- diversity indices ---------------------------------------------------------

@@ -27,6 +27,8 @@ def _make_conn() -> sqlite3.Connection:
             score REAL,
             status TEXT NOT NULL DEFAULT 'active',
             decision_state TEXT,
+            decision_level TEXT,
+            quality_gallery_ok INTEGER DEFAULT 1,
             manual_species_override TEXT,
             species_source TEXT
         );
@@ -57,6 +59,8 @@ def _insert_detection(
     *,
     review_status: str = "confirmed_bird",
     decision_state: str | None = "confirmed",
+    decision_level: str | None = "species",
+    quality_gallery_ok: int = 1,
 ) -> None:
     filename = f"{det_id:04d}.webp"
     conn.execute(
@@ -70,11 +74,12 @@ def _insert_detection(
         """
         INSERT INTO detections(
             detection_id, image_filename, bbox_x, bbox_y, bbox_w, bbox_h,
-            od_class_name, score, status, decision_state
+            od_class_name, score, status, decision_state, decision_level,
+            quality_gallery_ok
         )
-        VALUES (?, ?, 0.1, 0.1, 0.2, 0.2, 'bird', 0.95, 'active', ?)
+        VALUES (?, ?, 0.1, 0.1, 0.2, 0.2, 'bird', 0.95, 'active', ?, ?, ?)
         """,
-        (det_id, filename, decision_state),
+        (det_id, filename, decision_state, decision_level, quality_gallery_ok),
     )
     conn.execute(
         """
@@ -147,6 +152,41 @@ def test_event_intelligence_summary_excludes_trash_and_unknown_decisions():
             "20260425_120200",
             "Parus_major",
             decision_state="unknown",
+        )
+        conn.commit()
+
+        data = fetch_event_intelligence_summary(conn)
+
+        assert data["summary"]["event_count"] == 1
+        assert data["summary"]["detection_count"] == 1
+        assert data["largest_events"][0]["species"] == "Parus_major"
+    finally:
+        conn.close()
+
+
+def test_event_intelligence_uses_confirmed_eligible_cohort_not_thumbnail_quality():
+    conn = _make_conn()
+    try:
+        _insert_detection(
+            conn,
+            1,
+            "20260425_120000",
+            "Parus_major",
+            quality_gallery_ok=0,
+        )
+        _insert_detection(
+            conn,
+            2,
+            "20260425_130000",
+            "Cyanistes_caeruleus",
+            decision_level="reject",
+        )
+        _insert_detection(
+            conn,
+            3,
+            "20260425_140000",
+            "Turdus_merula",
+            decision_state=None,
         )
         conn.commit()
 

@@ -1000,8 +1000,26 @@
             // set before the button is clickable.
             const canApprove = controls.dataset.canApprove === '1';
             const selectedSpecies = controls.dataset.species || controls.dataset.selectedSpecies || '';
-            approveEventBtn.disabled = !canApprove || !selectedSpecies || !['correct', 'wrong'].includes(bboxReview);
+            const evidenceQuality = controls.dataset.evidenceQuality || '';
+            approveEventBtn.disabled = !canApprove || !selectedSpecies
+                || !['correct', 'wrong'].includes(bboxReview) || !evidenceQuality;
         }
+
+        const unresolvedEventBtn = controls.querySelector('[data-review-panel-action="unresolved_event"]');
+        if (unresolvedEventBtn) {
+            unresolvedEventBtn.disabled = !(controls.dataset.evidenceQuality || '');
+        }
+    }
+
+    function applyReviewEvidenceUi(controls, evidenceQuality) {
+        if (!controls) return;
+        controls.dataset.evidenceQuality = evidenceQuality || '';
+        controls.querySelectorAll('[data-review-evidence-quality]').forEach(function (btn) {
+            const selected = btn.dataset.reviewEvidenceQuality === evidenceQuality;
+            btn.classList.toggle('is-selected', selected);
+            btn.setAttribute('aria-pressed', selected ? 'true' : 'false');
+        });
+        updateReviewApproveState(controls);
     }
 
     function applyReviewEventBboxUi(controls, bboxReview) {
@@ -1923,7 +1941,8 @@
     async function reviewResolveEvent(eventKey, controls, decisions) {
         const species = controls.dataset.species || '';
         const bboxReview = controls.dataset.bboxReview || '';
-        if (!species || !bboxReview) {
+        const evidenceQuality = controls.dataset.evidenceQuality || '';
+        if (!species || !bboxReview || !evidenceQuality) {
             alert('Event review selection is incomplete.');
             return false;
         }
@@ -1942,7 +1961,8 @@
                     keep_detection_ids: decisions.keep,
                     trash_detection_ids: decisions.trash,
                     species: species,
-                    bbox_review: bboxReview
+                    bbox_review: bboxReview,
+                    evidence_quality: evidenceQuality
                 })
             });
             const data = await response.json();
@@ -1985,12 +2005,13 @@
 
         const species = controls.dataset.species || '';
         const bboxReview = controls.dataset.bboxReview || '';
+        const evidenceQuality = controls.dataset.evidenceQuality || '';
         const detectionIds = (controls.dataset.detectionIds || '')
             .split(',')
             .map(function (value) { return Number(value); })
             .filter(function (value) { return Number.isFinite(value) && value > 0; });
 
-        if (!species || !bboxReview || detectionIds.length === 0) {
+        if (!species || !bboxReview || !evidenceQuality || detectionIds.length === 0) {
             alert('Event review selection is incomplete.');
             return false;
         }
@@ -2030,6 +2051,7 @@
         const fastpathBody = {
             species: species,
             bbox_review: bboxReview,
+            evidence_quality: evidenceQuality,
         };
         if (isEventIneligible) {
             if (actionableIds.length === 0) {
@@ -2150,6 +2172,48 @@
             console.error('Event trash error:', error);
             if (handleStaleEventRaceError(error)) return false;
             alert(error.message || 'Event trash failed.');
+            return false;
+        }
+    }
+
+    async function reviewUnresolvedEvent(eventKey) {
+        const panel = getReviewStagePanel();
+        const controls = panel?.querySelector('[data-review-event-controls]');
+        if (!controls) return false;
+        const evidenceQuality = controls.dataset.evidenceQuality || '';
+        const detectionIds = (controls.dataset.actionableDetectionIds || '')
+            .split(',')
+            .map(function (value) { return Number(value); })
+            .filter(function (value) { return Number.isFinite(value) && value > 0; });
+        if (!evidenceQuality || detectionIds.length === 0) {
+            alert('Assess diagnostic evidence before closing this event.');
+            return false;
+        }
+        const nextEventKey = getNextReviewEventKey(eventKey, 1);
+        try {
+            const response = await fetch('/api/review/event-unresolved', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    event_key: eventKey,
+                    detection_ids: detectionIds,
+                    evidence_quality: evidenceQuality
+                })
+            });
+            const data = await response.json();
+            if (data.status !== 'success') throw new Error(data.message || 'Event update failed');
+            reviewPanelCache.clear();
+            detectionIds.forEach(function (detectionId) {
+                removeReviewNodes(getReviewItemKey('detection', detectionId));
+            });
+            await applyReviewEventDomRemoval(eventKey, nextEventKey);
+            updateReviewMeta();
+            if (window.wmToast) window.wmToast(data.message, 'info', 4200);
+            return true;
+        } catch (error) {
+            console.error('Unresolved event error:', error);
+            if (handleStaleEventRaceError(error)) return false;
+            alert(error.message || 'Event update failed.');
             return false;
         }
     }
@@ -2698,6 +2762,14 @@
             return;
         }
 
+        const evidenceBtn = event.target.closest('[data-review-evidence-quality]');
+        if (evidenceBtn) {
+            event.preventDefault();
+            const controls = evidenceBtn.closest('[data-review-event-controls]');
+            applyReviewEvidenceUi(controls, evidenceBtn.dataset.reviewEvidenceQuality || '');
+            return;
+        }
+
         const reviewItem = event.target.closest('[data-review-item]');
         if (reviewItem) {
             event.preventDefault();
@@ -2781,6 +2853,12 @@
         if (action === 'trash_event') {
             event.preventDefault();
             reviewTrashEvent(actionBtn.dataset.eventKey || panel.dataset.eventKey || '');
+            return;
+        }
+
+        if (action === 'unresolved_event') {
+            event.preventDefault();
+            reviewUnresolvedEvent(actionBtn.dataset.eventKey || panel.dataset.eventKey || '');
             return;
         }
 

@@ -504,6 +504,25 @@ def test_review_grid_selected_approve_is_detection_id_scoped():
     assert "Review changed — reloading events" in content
 
 
+def test_review_grid_requires_evidence_for_event_level_biology():
+    template = _read("templates/components/review_grid_card.html")
+    legacy_panel = _read("templates/components/review_event_panel.html")
+    script = _read("assets/js/review_grid.js")
+
+    assert 'data-review-grid-evidence-quality="diagnostic"' in template
+    assert 'data-review-grid-evidence-quality="limited"' in template
+    assert 'data-review-grid-evidence-quality="insufficient"' in template
+    for quality in ("diagnostic", "limited", "insufficient"):
+        label = f'aria-label="Assess evidence as {quality}"'
+        assert label in template
+        assert label in legacy_panel
+    assert 'data-review-grid-action="unresolved_event"' in template
+    assert "payload.evidence_quality = evidenceQuality;" in script
+    assert "postJson('/api/review/event-unresolved'" in script
+    assert "Assess evidence before approving this event" in script
+    assert "Model proposal only — not a biological station record" in template
+
+
 def test_review_grid_tile_removal_keeps_card_scope_fresh():
     """After partial Trash/Approve the remaining event actions must not target stale IDs."""
     content = _read("assets/js/review_grid.js")

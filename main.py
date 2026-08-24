@@ -178,6 +178,17 @@ def _create_runtime():
     system_monitor.start()
     atexit.register(system_monitor.stop)
 
+    # Record real observation effort. Samples are local DB metadata; gaps are
+    # preserved as gaps and never reconstructed from image dates.
+    try:
+        from utils.station_effort_monitor import StationEffortMonitor
+
+        effort_monitor = StationEffortMonitor(detection_manager, interval_seconds=60.0)
+        effort_monitor.start()
+        atexit.register(effort_monitor.stop)
+    except Exception as e:
+        logger.warning(f"Station effort monitor failed to start: {e}")
+
     # Start Weather background service (polls Open-Meteo every 30 min)
     try:
         from web.services.weather_service import start_weather_loop

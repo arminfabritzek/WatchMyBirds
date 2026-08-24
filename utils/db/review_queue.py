@@ -921,6 +921,8 @@ def update_review_status(
     filenames: Iterable[str],
     new_status: str,
     updated_at: str | None = None,
+    *,
+    commit: bool = True,
 ) -> int:
     """
     Updates review_status for specified images.
@@ -951,5 +953,6 @@ def update_review_status(
         """,
         params,
     )
-    conn.commit()
+    if commit:
+        conn.commit()
     return cur.rowcount

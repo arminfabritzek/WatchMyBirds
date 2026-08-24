@@ -48,6 +48,7 @@
          data-event-key="{{ event.event_key }}"
          data-actionable-detection-ids="{{ _review_members | map(attribute='best_detection_id') | select | join(',') }}"
          data-species="{{ event.selected_species or event.candidate_species or '' }}"
+         data-evidence-quality=""
          data-event-eligible="{% if not is_ineligible %}1{% else %}0{% endif %}"
          data-fallback-reason="{{ event.fallback_reason or '' }}"
          data-approve-blocked-reason="{{ approve_blocked_reason }}"
@@ -70,6 +71,8 @@
                (date · time · count) drops to a muted sub-line. The operator reads the species name first,
                not the timestamp. #}
             <div class="review-grid__card-species-row">
+                <span class="review-grid__card-proposal"
+                      title="Model proposal only — not a biological station record">Model proposal</span>
                 <span class="review-grid__card-species"
                       {% if event.species_colour is not none %}
                       data-species-colour="{{ event.species_colour }}"
@@ -114,6 +117,30 @@
            No birds in full image uses an outline+warning style to stay
            visually distinct from the filled-red Trash button — one records a
            whole-image answer while the other is housekeeping. #}
+        <fieldset class="review-grid__evidence" data-review-grid-evidence>
+            <legend>Evidence quality</legend>
+            <div class="review-grid__evidence-options" role="group" aria-label="Evidence quality for this event">
+                <button type="button"
+                        class="review-grid__evidence-option"
+                        data-review-grid-evidence-quality="diagnostic"
+                        aria-label="Assess evidence as diagnostic"
+                        aria-pressed="false"
+                        title="Multiple clear views or one decisive view support identification">Diagnostic</button>
+                <button type="button"
+                        class="review-grid__evidence-option"
+                        data-review-grid-evidence-quality="limited"
+                        aria-label="Assess evidence as limited"
+                        aria-pressed="false"
+                        title="A bird is visible, but the available views do not securely support species identification">Limited</button>
+                <button type="button"
+                        class="review-grid__evidence-option"
+                        data-review-grid-evidence-quality="insufficient"
+                        aria-label="Assess evidence as insufficient"
+                        aria-pressed="false"
+                        title="The event does not provide usable biological evidence">Insufficient</button>
+            </div>
+        </fieldset>
+
         <div class="review-grid__card-actions">
             <button type="button"
                     class="btn btn--secondary btn--sm review-grid__card-invert"
@@ -129,8 +156,16 @@
                     data-scope-label-selection="✓ Approve ({N})"
                     data-scope-tip-event="Approve every actionable frame in this event"
                     data-scope-tip-selection="Approve the {N} selected frame(s) in this event"
-                    {% if not can_approve %}disabled title="{{ approve_blocked_reason }}"{% else %}title="Approve every actionable frame in this event"{% endif %}
+                    disabled
+                    title="{% if not can_approve %}{{ approve_blocked_reason }}{% else %}Assess evidence before approving this event{% endif %}"
                     aria-label="Approve event">✓ Approve</button>
+            <button type="button"
+                    class="btn btn--outline-primary btn--sm review-grid__card-unresolved"
+                    data-review-grid-action="unresolved_event"
+                    data-event-key="{{ event.event_key }}"
+                    disabled
+                    title="Record bird presence without asserting a species"
+                    aria-label="Record bird with unresolved species">Bird · species unresolved</button>
             <button type="button"
                     class="btn btn--outline-primary btn--sm review-grid__card-relabel"
                     data-review-grid-action="relabel_event"

@@ -23,6 +23,10 @@ from flask import Blueprint, abort, jsonify, render_template, request, send_file
 from config import get_config
 from core.events import build_bird_events
 from core.human_label_core import HumanAnswer
+from core.station_report import (
+    build_candidate_review_priorities,
+    fetch_current_station_event_reviews,
+)
 from logging_config import get_logger
 from utils.db import fetch_sibling_detections
 from utils.db.detections import table_columns
@@ -1452,6 +1456,11 @@ def _load_review_events(
         common_names=common_names,
     )
     continuity_batches = build_review_continuity_batches(raw_events)
+    completed_review_snapshots = fetch_current_station_event_reviews(conn)
+    priority_by_event = {
+        str(item["event_key"]): item
+        for item in build_candidate_review_priorities(conn, raw_events)
+    }
     batch_lookup_by_event_key: dict[str, dict] = {}
     for batch in continuity_batches:
         for event_key in batch.get("event_keys") or []:
@@ -1472,6 +1481,15 @@ def _load_review_events(
 
     events: list[dict] = []
     for raw_event in raw_events:
+        completed_review = completed_review_snapshots.get(
+            frozenset(raw_event.detection_ids)
+        )
+        if completed_review is not None and completed_review.outcome in {
+            "verified_species",
+            "unresolved_bird",
+            "no_bird",
+        }:
+            continue
         if (
             raw_event.context_only_count > 0
             and raw_event.context_only_count == raw_event.photo_count
@@ -1501,7 +1519,14 @@ def _load_review_events(
                 batch["review_detection_ids"]
             )
         _stamp_species_display_on_event(event, workspace_colour_map)
+        event["review_priority"] = priority_by_event.get(raw_event.event_key, {})
         events.append(event)
+    events.sort(
+        key=lambda item: (
+            -int((item.get("review_priority") or {}).get("priority_score") or 0),
+            item.get("start_time") or "",
+        )
+    )
     return events, continuity_batches, context_truncated, workspace_species_keys
 
 
@@ -1805,7 +1830,19 @@ def _refresh_review_image_visibility(
             review_status = REVIEW_STATUS_CONFIRMED_BIRD
         else:
             review_status = REVIEW_STATUS_UNTAGGED
-        db_service.update_review_status(conn, [filename], review_status)
+        if review_status == REVIEW_STATUS_UNTAGGED:
+            conn.execute(
+                """
+                UPDATE images
+                SET review_status = 'untagged'
+                WHERE filename = ?
+                """,
+                (filename,),
+            )
+        else:
+            db_service.update_review_status(
+                conn, [filename], review_status, commit=False
+            )
         return review_status
 
     ex_unclear_predicate = _ex_unclear_predicate_sql(table_columns(conn, "detections"))
@@ -1830,7 +1867,9 @@ def _refresh_review_image_visibility(
     ).fetchone()[0]
 
     if unresolved == 0:
-        db_service.update_review_status(conn, [filename], REVIEW_STATUS_CONFIRMED_BIRD)
+        db_service.update_review_status(
+            conn, [filename], REVIEW_STATUS_CONFIRMED_BIRD, commit=False
+        )
         return REVIEW_STATUS_CONFIRMED_BIRD
 
     conn.execute(
@@ -1841,7 +1880,6 @@ def _refresh_review_image_visibility(
         """,
         (filename,),
     )
-    conn.commit()
     return REVIEW_STATUS_UNTAGGED
 
 
@@ -2612,6 +2650,7 @@ def review_event_approve():
     data = request.get_json() or {}
     species = str(data.get("species") or "").strip()
     bbox_review = (data.get("bbox_review") or "").strip().lower() or None
+    evidence_quality = str(data.get("evidence_quality") or "").strip().lower()
     event_key = str(data.get("event_key") or "").strip()
     raw_detection_ids = data.get("detection_ids") or []
 
@@ -2659,6 +2698,22 @@ def review_event_approve():
             409,
         )
 
+    valid_evidence_qualities = {"diagnostic", "limited", "insufficient"}
+    if (event_key and evidence_quality not in valid_evidence_qualities) or (
+        not event_key
+        and evidence_quality
+        and evidence_quality not in valid_evidence_qualities
+    ):
+        return (
+            jsonify(
+                {
+                    "status": "error",
+                    "message": "Assess diagnostic evidence before event approval",
+                }
+            ),
+            409,
+        )
+
     try:
         with db_service.closing_connection() as conn:
             locale = config.get("SPECIES_COMMON_NAME_LOCALE", "DE")
@@ -2671,6 +2726,7 @@ def review_event_approve():
 
             output_dir = config.get("OUTPUT_DIR", "output")
             common_names = load_common_names(locale)
+            event = None
             if event_key:
                 event = _load_single_review_event(
                     conn,
@@ -2842,6 +2898,35 @@ def review_event_approve():
                         species_identity="corrected",
                         species_key=chosen_species,
                     ),
+                    source_ref="review:event-approve",
+                )
+
+            if event_key:
+                timestamps = conn.execute(
+                    f"""
+                    SELECT MIN(i.timestamp) AS event_start, MAX(i.timestamp) AS event_end
+                    FROM detections d
+                    JOIN images i ON i.filename = d.image_filename
+                    WHERE d.detection_id IN ({placeholders})
+                    """,
+                    detection_ids,
+                ).fetchone()
+                anchor_detection_id = int(
+                    event.get("cover_detection_id") or detection_ids[0]
+                )
+                if anchor_detection_id not in detection_ids:
+                    anchor_detection_id = detection_ids[0]
+                human_label_service.record_event_review(
+                    conn,
+                    event_key=event_key,
+                    detection_ids=detection_ids,
+                    anchor_detection_id=anchor_detection_id,
+                    outcome="verified_species",
+                    evidence_quality=evidence_quality,
+                    event_start=str(timestamps["event_start"] or ""),
+                    event_end=str(timestamps["event_end"] or ""),
+                    candidate_species_key=event.get("candidate_species"),
+                    species_key=species,
                     source_ref="review:event-approve",
                 )
 
@@ -3021,7 +3106,40 @@ def review_event_trash():
                     409,
                 )
 
-            db_service.reject_detections(conn, detection_ids)
+            for row in rows:
+                human_label_service.record_answer(
+                    conn,
+                    HumanAnswer(
+                        image_filename=str(row["image_filename"]),
+                        detection_id=int(row["detection_id"]),
+                        object_bird_presence="absent",
+                    ),
+                    source_ref="review:event-no-bird",
+                )
+            # Keep the established rejection projection for compatibility
+            # with callers that provide an alternative label recorder.
+            db_service.reject_detections(conn, detection_ids, commit=False)
+
+            timestamps = conn.execute(
+                f"""
+                SELECT MIN(i.timestamp) AS event_start, MAX(i.timestamp) AS event_end
+                FROM detections d
+                JOIN images i ON i.filename = d.image_filename
+                WHERE d.detection_id IN ({placeholders})
+                """,
+                detection_ids,
+            ).fetchone()
+            human_label_service.record_event_review(
+                conn,
+                event_key=event_key or f"manual-event-{detection_ids[0]}",
+                detection_ids=detection_ids,
+                anchor_detection_id=detection_ids[0],
+                outcome="no_bird",
+                evidence_quality="insufficient",
+                event_start=str(timestamps["event_start"] or ""),
+                event_end=str(timestamps["event_end"] or ""),
+                source_ref="review:event-no-bird",
+            )
 
             touched_filenames = list(
                 dict.fromkeys(
@@ -3079,6 +3197,146 @@ def review_event_trash():
         return _error_response("Error trashing review event", e)
 
 
+@review_bp.route("/api/review/event-unresolved", methods=["POST"])
+@login_required
+@cache_service.invalidates("analytics.")
+def review_event_unresolved():
+    """Close an event as bird-present without asserting a species."""
+    data = request.get_json() or {}
+    event_key = str(data.get("event_key") or "").strip()
+    evidence_quality = str(data.get("evidence_quality") or "").strip().lower()
+    detection_ids: list[int] = []
+    for value in data.get("detection_ids") or []:
+        try:
+            detection_id = int(value)
+        except (TypeError, ValueError):
+            continue
+        if detection_id > 0:
+            detection_ids.append(detection_id)
+    detection_ids = list(dict.fromkeys(detection_ids))
+
+    if not event_key or not detection_ids:
+        return jsonify({"status": "error", "message": "event is required"}), 400
+    if evidence_quality not in {"diagnostic", "limited", "insufficient"}:
+        return (
+            jsonify(
+                {
+                    "status": "error",
+                    "message": "Assess diagnostic evidence before closing the event",
+                }
+            ),
+            409,
+        )
+
+    try:
+        with db_service.closing_connection() as conn:
+            locale = config.get("SPECIES_COMMON_NAME_LOCALE", "DE")
+            event = _load_single_review_event(
+                conn,
+                event_key=event_key,
+                gallery_threshold=config["GALLERY_DISPLAY_THRESHOLD"],
+                output_dir=config.get("OUTPUT_DIR", "output"),
+                species_locale=locale,
+                common_names=load_common_names(locale),
+            )
+            if not event:
+                return (
+                    jsonify(
+                        {"status": "error", "message": "Review event no longer exists"}
+                    ),
+                    409,
+                )
+            actionable_ids = sorted(
+                int(member.get("best_detection_id") or 0)
+                for member in event.get("members") or []
+                if not member.get("context_only")
+                and int(member.get("best_detection_id") or 0) > 0
+            )
+            if sorted(detection_ids) != actionable_ids:
+                return (
+                    jsonify(
+                        {
+                            "status": "error",
+                            "message": "Review event changed and must be reloaded",
+                        }
+                    ),
+                    409,
+                )
+
+            placeholders = ",".join("?" for _ in detection_ids)
+            rows = conn.execute(
+                f"""
+                SELECT d.detection_id, d.image_filename, i.timestamp
+                FROM detections d
+                JOIN images i ON i.filename = d.image_filename
+                WHERE d.detection_id IN ({placeholders})
+                  AND COALESCE(d.status, 'active') = 'active'
+                """,
+                detection_ids,
+            ).fetchall()
+            if len(rows) != len(detection_ids):
+                return (
+                    jsonify(
+                        {
+                            "status": "error",
+                            "message": "One or more detections are no longer available",
+                        }
+                    ),
+                    409,
+                )
+
+            for row in rows:
+                human_label_service.record_answer(
+                    conn,
+                    HumanAnswer(
+                        image_filename=str(row["image_filename"]),
+                        detection_id=int(row["detection_id"]),
+                        object_bird_presence="present",
+                        species_identity="unknown",
+                    ),
+                    source_ref="review:event-unresolved",
+                )
+
+            timestamps = [str(row["timestamp"] or "") for row in rows]
+            human_label_service.record_event_review(
+                conn,
+                event_key=event_key,
+                detection_ids=detection_ids,
+                anchor_detection_id=detection_ids[0],
+                outcome="unresolved_bird",
+                evidence_quality=evidence_quality,
+                event_start=min(timestamps),
+                event_end=max(timestamps),
+                candidate_species_key=event.get("candidate_species"),
+                source_ref="review:event-unresolved",
+            )
+
+            touched_filenames = list(
+                dict.fromkeys(str(row["image_filename"]) for row in rows)
+            )
+            review_status_by_filename = {
+                filename: _refresh_review_image_visibility(
+                    conn,
+                    filename,
+                    config["GALLERY_DISPLAY_THRESHOLD"],
+                )
+                for filename in touched_filenames
+            }
+
+        gallery_service.invalidate_cache()
+        return jsonify(
+            {
+                "status": "success",
+                "event_key": event_key,
+                "detection_ids": detection_ids,
+                "review_status_by_filename": review_status_by_filename,
+                "message": "Event saved as bird present; species remains unresolved.",
+            }
+        )
+    except Exception as e:
+        return _error_response("Error closing unresolved review event", e)
+
+
 @review_bp.route("/api/review/event-resolve", methods=["POST"])
 @login_required
 @cache_service.invalidates("analytics.")
@@ -3100,6 +3358,7 @@ def review_event_resolve():
     data = request.get_json() or {}
     species = str(data.get("species") or "").strip()
     bbox_review = (data.get("bbox_review") or "").strip().lower() or None
+    evidence_quality = str(data.get("evidence_quality") or "").strip().lower()
     event_key = str(data.get("event_key") or "").strip()
     raw_keep = data.get("keep_detection_ids") or []
     raw_trash = data.get("trash_detection_ids") or []
@@ -3167,6 +3426,17 @@ def review_event_resolve():
             409,
         )
 
+    if evidence_quality not in {"diagnostic", "limited", "insufficient"}:
+        return (
+            jsonify(
+                {
+                    "status": "error",
+                    "message": "Assess diagnostic evidence before event resolve",
+                }
+            ),
+            409,
+        )
+
     all_ids = keep_ids + trash_ids
 
     try:
@@ -3182,6 +3452,7 @@ def review_event_resolve():
             output_dir = config.get("OUTPUT_DIR", "output")
             common_names = load_common_names(locale)
 
+            event = None
             if event_key:
                 event = _load_single_review_event(
                     conn,
@@ -3223,7 +3494,8 @@ def review_event_resolve():
                        d.image_filename,
                        d.manual_species_override,
                        d.species_source,
-                       i.review_status
+                       i.review_status,
+                       i.timestamp
                 FROM detections d
                 JOIN images i ON i.filename = d.image_filename
                 WHERE d.detection_id IN ({placeholders})
@@ -3308,7 +3580,28 @@ def review_event_resolve():
                     source_ref="review:event-resolve:keep",
                 )
 
-            db_service.reject_detections(conn, trash_ids)
+            db_service.reject_detections(conn, trash_ids, commit=False)
+
+            keep_timestamps = []
+            for detection_id in keep_ids:
+                try:
+                    timestamp = rows_by_id[detection_id]["timestamp"]
+                except (KeyError, IndexError):
+                    timestamp = event.get("start_time", "") if event else ""
+                keep_timestamps.append(str(timestamp or ""))
+            human_label_service.record_event_review(
+                conn,
+                event_key=event_key or f"manual-event-{keep_ids[0]}",
+                detection_ids=keep_ids,
+                anchor_detection_id=keep_ids[0],
+                outcome="verified_species",
+                evidence_quality=evidence_quality,
+                event_start=min(keep_timestamps),
+                event_end=max(keep_timestamps),
+                candidate_species_key=(event.get("candidate_species") if event else None),
+                species_key=species,
+                source_ref="review:event-resolve",
+            )
 
             touched_filenames = list(
                 dict.fromkeys(

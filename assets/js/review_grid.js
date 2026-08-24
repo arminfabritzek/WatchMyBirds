@@ -250,10 +250,21 @@
 
     function updateCardApproveState(card, scope) {
         const approveBtn = card.querySelector('[data-review-grid-action="approve_event"]');
+        const unresolvedBtn = card.querySelector('[data-review-grid-action="unresolved_event"]');
         if (!approveBtn) return;
 
         const species = (card.dataset.species || '').trim();
+        const evidenceQuality = (card.dataset.evidenceQuality || '').trim();
         const blockedReason = card.dataset.approveBlockedReason || 'Select frames before approving this event';
+
+        if (unresolvedBtn) {
+            unresolvedBtn.disabled = !scope || scope.count === 0 || scope.isSelectionScoped || !evidenceQuality;
+            unresolvedBtn.title = scope && scope.isSelectionScoped
+                ? 'Species unresolved is an event-wide decision'
+                : !evidenceQuality
+                    ? 'Assess evidence before closing this event'
+                    : 'Record bird presence without asserting a species';
+        }
 
         if (!species) {
             approveBtn.disabled = true;
@@ -274,8 +285,13 @@
             approveBtn.title = blockedReason;
             return;
         }
+        if (!evidenceQuality) {
+            approveBtn.disabled = true;
+            approveBtn.title = 'Assess evidence before approving this event';
+            return;
+        }
         approveBtn.disabled = false;
-        if (blockedReason) approveBtn.title = blockedReason;
+        approveBtn.title = 'Approve this event with ' + evidenceQuality + ' evidence';
     }
 
     async function approveEvent(card) {
@@ -283,6 +299,7 @@
         const species = card.dataset.species;
         const scope = getCardScopeIds(card);
         const eventEligible = card.dataset.eventEligible === '1';
+        const evidenceQuality = (card.dataset.evidenceQuality || '').trim();
         const blockedReason = card.dataset.approveBlockedReason || 'Select frames before approving this event';
         if (!eventKey || !species || scope.count === 0) {
             if (window.wmToast) window.wmToast('Approve refused — missing event key, species, or detections', 'error', 3500);
@@ -290,6 +307,10 @@
         }
         if (!scope.isSelectionScoped && !eventEligible) {
             if (window.wmToast) window.wmToast(blockedReason, 'warning', 3500);
+            return;
+        }
+        if (!scope.isSelectionScoped && !evidenceQuality) {
+            if (window.wmToast) window.wmToast('Assess evidence before approving this event', 'warning', 3500);
             return;
         }
         try {
@@ -302,6 +323,7 @@
             // event-key safety gate.
             if (!scope.isSelectionScoped && eventEligible) {
                 payload.event_key = eventKey;
+                payload.evidence_quality = evidenceQuality;
             }
             await postJson('/api/review/event-approve', payload);
             if (scope.isSelectionScoped) {
@@ -318,6 +340,34 @@
                 return;
             }
             if (window.wmToast) window.wmToast('Approve failed: ' + err.message, 'error', 4000);
+        }
+    }
+
+    async function unresolvedEvent(card) {
+        const eventKey = card.dataset.eventKey;
+        const evidenceQuality = (card.dataset.evidenceQuality || '').trim();
+        const scope = getCardScopeIds(card);
+        if (scope.isSelectionScoped) {
+            if (window.wmToast) window.wmToast('Species unresolved is an event-wide decision', 'warning', 3500);
+            return;
+        }
+        if (!eventKey || !evidenceQuality || scope.count === 0) {
+            if (window.wmToast) window.wmToast('Assess evidence before closing this event', 'warning', 3500);
+            return;
+        }
+        try {
+            await postJson('/api/review/event-unresolved', {
+                event_key: eventKey,
+                detection_ids: scope.ids,
+                evidence_quality: evidenceQuality
+            });
+            removeCard(card, 'Bird recorded; species remains unresolved');
+        } catch (err) {
+            if (isStaleReviewEventError(err)) {
+                reloadReviewEventsSoon('Review changed — reloading events…', 'info');
+                return;
+            }
+            if (window.wmToast) window.wmToast('Could not close event: ' + err.message, 'error', 4000);
         }
     }
 
@@ -526,6 +576,22 @@
     });
 
     document.addEventListener('click', function (event) {
+        const evidenceBtn = event.target.closest('[data-review-grid-evidence-quality]');
+        if (evidenceBtn) {
+            event.preventDefault();
+            const card = evidenceBtn.closest('[data-review-grid-card]');
+            if (!card) return;
+            const quality = evidenceBtn.dataset.reviewGridEvidenceQuality || '';
+            card.dataset.evidenceQuality = quality;
+            card.querySelectorAll('[data-review-grid-evidence-quality]').forEach(function (btn) {
+                const selected = btn === evidenceBtn;
+                btn.classList.toggle('is-selected', selected);
+                btn.setAttribute('aria-pressed', selected ? 'true' : 'false');
+            });
+            refreshCardActionLabels(card);
+            return;
+        }
+
         const sizeBtn = event.target.closest('[data-review-grid-size-action]');
         if (sizeBtn) {
             event.preventDefault();
@@ -542,6 +608,8 @@
             const verb = actionBtn.dataset.reviewGridAction;
             if (verb === 'approve_event' && card) {
                 approveEvent(card);
+            } else if (verb === 'unresolved_event' && card) {
+                unresolvedEvent(card);
             } else if (verb === 'trash_event' && card) {
                 trashEvent(card);
             } else if (verb === 'relabel_event' && card) {

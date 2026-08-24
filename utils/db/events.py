@@ -56,8 +56,9 @@ def fetch_events_for_analysis(
 
     This is the sole entry point both dashboards should use for event-based
     metrics. It reuses the visibility predicate and species resolution logic
-    that the rest of the app depends on, so the same detection that is
-    hidden in the Gallery is also absent from Analytics and Insights.
+    that the rest of the app depends on. Moderation exclusions apply here,
+    while aesthetic thumbnail quality deliberately does not erase a valid
+    confirmed event from Analytics or Insights.
     """
     rows = _fetch_event_intelligence_rows(conn, min_score=min_score)
     if not rows:

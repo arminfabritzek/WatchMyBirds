@@ -74,6 +74,12 @@
                             <span class="review-stage-panel__facts-label">Files</span>
                             <span class="review-stage-panel__facts-value">{{ event.touched_filenames|length }}</span>
                         </div>
+                        {% if event.review_priority and event.review_priority.flags %}
+                        <div class="review-stage-panel__facts-item">
+                            <span class="review-stage-panel__facts-label">Review priority</span>
+                            <span class="review-stage-panel__facts-value">{{ event.review_priority.flags | join(', ') | replace('_', ' ') }}</span>
+                        </div>
+                        {% endif %}
                     </div>
                 </div>
                 {# Equal-size detection grid: every member is a first-class
@@ -332,6 +338,7 @@
             data-event-ineligible="{% if event.eligibility != 'event_eligible' %}1{% else %}0{% endif %}"
             data-can-approve="{% if event.candidate_species or event.selected_species %}1{% else %}0{% endif %}"
             data-bbox-review="{{ event.event_bbox_review or '' }}"
+            data-evidence-quality=""
             data-selected-species-origin="{{ event.selected_species_origin or event.species_source or '' }}"
             {# Original species anchor for the Undo button. #}
             data-original-species="{{ event.candidate_species or '' }}"
@@ -432,6 +439,31 @@
                 </button>
             </div>
 
+            <div class="review-stage-panel__section review-stage-panel__section--evidence">
+                <div class="review-stage-panel__section-label">Diagnostic evidence</div>
+                <div class="review-event-panel__evidence-options" role="group" aria-label="Diagnostic evidence quality">
+                    <button type="button" class="review-event-panel__evidence-option"
+                        data-review-evidence-quality="diagnostic"
+                        aria-label="Assess evidence as diagnostic" aria-pressed="false"
+                        title="Use this event in verified biological results">
+                        <strong>Diagnostic</strong><span>Species traits are visible</span>
+                    </button>
+                    <button type="button" class="review-event-panel__evidence-option"
+                        data-review-evidence-quality="limited"
+                        aria-label="Assess evidence as limited" aria-pressed="false"
+                        title="Keep the review but exclude it from biological results">
+                        <strong>Limited</strong><span>Plausible, not conclusive</span>
+                    </button>
+                    <button type="button" class="review-event-panel__evidence-option"
+                        data-review-evidence-quality="insufficient"
+                        aria-label="Assess evidence as insufficient" aria-pressed="false"
+                        title="Mark the image evidence as insufficient">
+                        <strong>Insufficient</strong><span>No reliable diagnosis</span>
+                    </button>
+                </div>
+                <p class="review-stage-panel__hint">Only a human-confirmed species with diagnostic evidence enters the station report.</p>
+            </div>
+
             <div class="review-stage-panel__section review-stage-panel__section--utilities">
                 <div class="review-stage-panel__section-label">Utilities</div>
                 <button type="button"
@@ -462,6 +494,13 @@
                         {% if not (event.candidate_species or event.selected_species) %}disabled{% endif %}>
                         <span class="review-stage-panel__action-icon">✓</span>
                         <span class="review-stage-panel__action-copy">Approve Event</span>
+                    </button>
+                    <button type="button" class="review-stage-panel__action"
+                        data-review-panel-action="unresolved_event"
+                        data-event-key="{{ event.event_key }}"
+                        title="Confirm a bird without assigning a species">
+                        <span class="review-stage-panel__action-icon">?</span>
+                        <span class="review-stage-panel__action-copy">Bird · species unresolved</span>
                     </button>
                     <button type="button" class="review-stage-panel__action review-stage-panel__action--danger"
                         data-review-panel-action="trash_event"

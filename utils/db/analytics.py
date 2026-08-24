@@ -6,7 +6,10 @@ and reporting functionality.
 """
 
 import sqlite3
+from bisect import bisect_left
 from collections import Counter
+from datetime import datetime
+from statistics import median
 from typing import Any
 
 
@@ -203,8 +206,11 @@ def _fetch_event_intelligence_rows(
             "(i.review_status IS NULL OR i.review_status != 'no_bird')"
         )
     if "decision_state" in detection_columns:
+        where_clauses.append("lower(COALESCE(d.decision_state, '')) = 'confirmed'")
+    if "decision_level" in detection_columns:
         where_clauses.append(
-            "lower(COALESCE(d.decision_state, '')) NOT IN ('uncertain', 'unknown')"
+            "(d.decision_level IS NULL OR "
+            "lower(d.decision_level) NOT IN ('reject', 'species_review'))"
         )
     if "score" in detection_columns:
         where_clauses.append("(d.score IS NULL OR d.score >= ?)")
@@ -688,9 +694,6 @@ def fetch_weather_analytics(conn: sqlite3.Connection) -> dict:
             # Find max values for bar scaling
             max_precip_day = max(r["total_precip"] or 0 for r in weekly_rows) or 1
 
-            # Ensure temp_min/temp_max encompass the full weekly range.
-            # The 24h timeline may set narrower bounds, but the weekly summary
-            # bars need the global min/max across all 7 days.
             weekly_mins = [
                 r["min_temp"] for r in weekly_rows if r["min_temp"] is not None
             ]
@@ -699,14 +702,12 @@ def fetch_weather_analytics(conn: sqlite3.Connection) -> dict:
             ]
             if weekly_mins:
                 wk_min = round(min(weekly_mins), 1)
-                result["temp_min"] = (
-                    min(result["temp_min"], wk_min) if "temp_min" in result else wk_min
-                )
+                result["weekly_temp_min"] = wk_min
+                result.setdefault("temp_min", wk_min)
             if weekly_maxs:
                 wk_max = round(max(weekly_maxs), 1)
-                result["temp_max"] = (
-                    max(result["temp_max"], wk_max) if "temp_max" in result else wk_max
-                )
+                result["weekly_temp_max"] = wk_max
+                result.setdefault("temp_max", wk_max)
 
             for r in weekly_rows:
                 precip = r["total_precip"] or 0
@@ -762,6 +763,194 @@ def fetch_weather_analytics(conn: sqlite3.Connection) -> dict:
         pass  # Graceful fallback – weather_logs table might not exist yet
 
     return result
+
+
+def _parse_weather_timestamp(value: Any) -> datetime | None:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is not None:
+        # Event timestamps come from station-local filenames. Weather readings
+        # are stored as UTC ISO strings, so compare both on the local timeline.
+        parsed = parsed.astimezone().replace(tzinfo=None)
+    return parsed
+
+
+def _parse_event_timestamp(value: Any) -> datetime | None:
+    raw = str(value or "")
+    try:
+        return datetime.strptime(raw[:15], "%Y%m%d_%H%M%S")
+    except (TypeError, ValueError):
+        return None
+
+
+def match_events_to_weather_exposure(events, weather_rows) -> dict[str, Any]:
+    """Return event rates by weather condition, normalized by exposure time.
+
+    Each event is matched to the nearest weather reading within 30 minutes.
+    Exposure hours are reconstructed from the reading cadence so a common
+    condition does not look biologically important merely because it occurred
+    more often.
+    """
+
+    descriptions = {
+        0: ("Clear sky", "☀️"),
+        1: ("Mainly clear", "🌤️"),
+        2: ("Partly cloudy", "⛅"),
+        3: ("Overcast", "☁️"),
+        45: ("Fog", "🌫️"),
+        48: ("Rime fog", "🌫️"),
+        51: ("Light drizzle", "🌦️"),
+        53: ("Drizzle", "🌦️"),
+        55: ("Dense drizzle", "🌧️"),
+        61: ("Slight rain", "🌦️"),
+        63: ("Moderate rain", "🌧️"),
+        65: ("Heavy rain", "🌧️"),
+        71: ("Slight snow", "🌨️"),
+        73: ("Moderate snow", "🌨️"),
+        75: ("Heavy snow", "❄️"),
+        80: ("Rain showers", "🌦️"),
+        81: ("Heavy showers", "🌧️"),
+        82: ("Violent showers", "⛈️"),
+        95: ("Thunderstorm", "⛈️"),
+        96: ("T-storm + hail", "⛈️"),
+        99: ("T-storm + heavy hail", "⛈️"),
+    }
+
+    readings: list[tuple[datetime, Any]] = []
+    for row in weather_rows:
+        timestamp = _parse_weather_timestamp(row["timestamp"])
+        if timestamp is not None:
+            readings.append((timestamp, row))
+    readings.sort(key=lambda item: item[0])
+    if not readings:
+        return {
+            "conditions": [],
+            "matched_events": 0,
+            "unmatched_events": len(list(events)),
+            "window_start": None,
+            "window_end": None,
+        }
+
+    positive_gaps = [
+        (readings[index + 1][0] - readings[index][0]).total_seconds() / 3600.0
+        for index in range(len(readings) - 1)
+        if 0 < (readings[index + 1][0] - readings[index][0]).total_seconds() <= 21600
+    ]
+    cadence_hours = median(positive_gaps) if positive_gaps else 1.0
+    cadence_hours = max(1 / 60, min(float(cadence_hours), 6.0))
+
+    condition_stats: dict[int, dict[str, Any]] = {}
+    for index, (timestamp, row) in enumerate(readings):
+        if index + 1 < len(readings):
+            observed_hours = (readings[index + 1][0] - timestamp).total_seconds() / 3600.0
+            duration_hours = min(max(observed_hours, 0.0), cadence_hours * 2)
+        else:
+            duration_hours = cadence_hours
+        code = int(row["condition_code"] or 0)
+        bucket = condition_stats.setdefault(
+            code,
+            {"event_count": 0, "exposure_hours": 0.0, "temps": [], "winds": []},
+        )
+        bucket["exposure_hours"] += duration_hours
+
+    reading_times = [item[0] for item in readings]
+    matched_events = 0
+    unmatched_events = 0
+    for event in events:
+        event_time = _parse_event_timestamp(getattr(event, "start_time", None))
+        if event_time is None:
+            unmatched_events += 1
+            continue
+        insertion = bisect_left(reading_times, event_time)
+        candidates = []
+        if insertion < len(readings):
+            candidates.append(readings[insertion])
+        if insertion > 0:
+            candidates.append(readings[insertion - 1])
+        nearest = min(
+            candidates,
+            key=lambda item: abs((item[0] - event_time).total_seconds()),
+            default=None,
+        )
+        if nearest is None or abs((nearest[0] - event_time).total_seconds()) > 1800:
+            unmatched_events += 1
+            continue
+
+        matched_events += 1
+        row = nearest[1]
+        code = int(row["condition_code"] or 0)
+        bucket = condition_stats[code]
+        bucket["event_count"] += 1
+        if row["temp_c"] is not None:
+            bucket["temps"].append(float(row["temp_c"]))
+        if row["wind_kph"] is not None:
+            bucket["winds"].append(float(row["wind_kph"]))
+
+    conditions = []
+    for code, stats in condition_stats.items():
+        exposure = round(stats["exposure_hours"], 1)
+        event_count = int(stats["event_count"])
+        rate = round((event_count / exposure) * 100.0, 1) if exposure > 0 else 0.0
+        text, emoji = descriptions.get(code, ("Unknown", "❓"))
+        conditions.append(
+            {
+                "condition_code": code,
+                "condition_text": text,
+                "condition_emoji": emoji,
+                "event_count": event_count,
+                "exposure_hours": exposure,
+                "events_per_100_hours": rate,
+                "avg_temp": round(sum(stats["temps"]) / len(stats["temps"]), 1)
+                if stats["temps"]
+                else None,
+                "avg_wind": round(sum(stats["winds"]) / len(stats["winds"]), 1)
+                if stats["winds"]
+                else None,
+            }
+        )
+    conditions.sort(
+        key=lambda item: (item["events_per_100_hours"], item["event_count"]),
+        reverse=True,
+    )
+    max_rate = max((item["events_per_100_hours"] for item in conditions), default=0.0)
+    for item in conditions:
+        item["bar_pct"] = (
+            round((item["events_per_100_hours"] / max_rate) * 100.0, 1)
+            if max_rate
+            else 0.0
+        )
+
+    return {
+        "conditions": conditions,
+        "matched_events": matched_events,
+        "unmatched_events": unmatched_events,
+        "window_start": readings[0][0].isoformat(timespec="minutes"),
+        "window_end": readings[-1][0].isoformat(timespec="minutes"),
+    }
+
+
+def fetch_weather_event_activity(conn: sqlite3.Connection, events) -> dict[str, Any]:
+    """Fetch weather readings and calculate exposure-normalized event rates."""
+
+    try:
+        rows = conn.execute(
+            "SELECT timestamp, condition_code, temp_c, wind_kph "
+            "FROM weather_logs ORDER BY timestamp ASC"
+        ).fetchall()
+    except sqlite3.Error:
+        return {
+            "conditions": [],
+            "matched_events": 0,
+            "unmatched_events": len(events),
+            "window_start": None,
+            "window_end": None,
+        }
+    return match_events_to_weather_exposure(events, rows)
 
 
 def fetch_weather_detection_correlation(conn: sqlite3.Connection) -> list[dict]:

@@ -52,9 +52,14 @@ def client(app):
             "web.blueprints.review.human_label_service.record_answer",
             return_value=[1],
         ) as label_recorder,
+        patch(
+            "web.blueprints.review.human_label_service.record_event_review",
+            return_value=1,
+        ) as event_review_recorder,
         app.test_client() as client,
     ):
         app.extensions["human_label_recorder"] = label_recorder
+        app.extensions["event_review_recorder"] = event_review_recorder
         with client.session_transaction() as sess:
             sess["authenticated"] = True
         yield client
@@ -62,6 +67,10 @@ def client(app):
 
 def _label_recorder(client):
     return client.application.extensions["human_label_recorder"]
+
+
+def _event_review_recorder(client):
+    return client.application.extensions["event_review_recorder"]
 
 
 def test_review_decision_accepts_trash_alias(client):
@@ -211,7 +220,7 @@ def test_review_approve_confirms_after_manual_species_and_bbox(client):
     assert data["gallery_visible"] is True
     assert "now visible in the gallery" in data["message"]
     mock_db.update_review_status.assert_called_once_with(
-        mock_conn, ["review-item.jpg"], "confirmed_bird"
+        mock_conn, ["review-item.jpg"], "confirmed_bird", commit=False
     )
     answer = _label_recorder(client).call_args.args[1]
     assert answer.object_bird_presence == "present"
@@ -441,6 +450,7 @@ def test_review_event_approve_confirms_event_and_recomputes_gallery_visibility(c
                 "detection_ids": [17],
                 "species": "Parus_major",
                 "bbox_review": "correct",
+                "evidence_quality": "diagnostic",
             },
         )
 
@@ -453,7 +463,7 @@ def test_review_event_approve_confirms_event_and_recomputes_gallery_visibility(c
     assert answer.species_key == "Parus_major"
     assert answer.bbox_quality == "suitable"
     mock_db.update_review_status.assert_called_once_with(
-        mock_conn, ["review-item.jpg"], "confirmed_bird"
+        mock_conn, ["review-item.jpg"], "confirmed_bird", commit=False
     )
     mock_invalidate.assert_called_once()
 
@@ -480,6 +490,7 @@ def test_review_event_approve_returns_conflict_when_event_disappears(client):
                 "detection_ids": [17],
                 "species": "Parus_major",
                 "bbox_review": "correct",
+                "evidence_quality": "diagnostic",
             },
         )
 
@@ -487,6 +498,22 @@ def test_review_event_approve_returns_conflict_when_event_disappears(client):
     data = response.get_json()
     assert data["status"] == "error"
     assert "no longer exists" in data["message"]
+
+
+def test_review_event_approve_requires_explicit_event_evidence(client):
+    response = client.post(
+        "/api/review/event-approve",
+        json={
+            "event_key": "bird-event-abc123",
+            "detection_ids": [17],
+            "species": "Parus_major",
+        },
+    )
+
+    assert response.status_code == 409
+    assert "evidence" in response.get_json()["message"].lower()
+    _label_recorder(client).assert_not_called()
+    _event_review_recorder(client).assert_not_called()
 
 
 def test_compute_queue_orphans_drops_detection_orphans_inside_events():
@@ -756,6 +783,7 @@ def test_review_event_approve_keeps_images_hidden_when_open_detections_remain(cl
                 "detection_ids": [17],
                 "species": "Parus_major",
                 "bbox_review": "correct",
+                "evidence_quality": "diagnostic",
             },
         )
 
@@ -816,6 +844,7 @@ def test_review_event_approve_ignores_gallery_anchors_for_event_payload(client):
                 "detection_ids": [17, 42],
                 "species": "Parus_major",
                 "bbox_review": "correct",
+                "evidence_quality": "diagnostic",
             },
         )
 
@@ -878,6 +907,7 @@ def test_review_event_approve_allows_user_selected_species_override(client):
                 "detection_ids": [17],
                 "species": "Parus_major",
                 "bbox_review": "correct",
+                "evidence_quality": "diagnostic",
             },
         )
 
@@ -970,6 +1000,7 @@ def test_review_event_approve_preserves_per_frame_manual_species(client):
                 "detection_ids": [17, 18, 19, 20],
                 "species": "Columba_livia",
                 "bbox_review": "correct",
+                "evidence_quality": "diagnostic",
             },
         )
 
@@ -1030,11 +1061,10 @@ def test_review_event_trash_moves_images_without_active_detections_to_trash(clie
     assert data["trash_filenames"] == []
     assert data["review_filenames"] == ["review-item.jpg"]
     assert "explicit full-image answer" in data["message"]
-    _label_recorder(client).assert_not_called()
-    mock_db.reject_detections.assert_called_once_with(mock_conn, [17])
-    mock_db.update_review_status.assert_called_once_with(
-        mock_conn, ["review-item.jpg"], "untagged"
-    )
+    answer = _label_recorder(client).call_args.args[1]
+    assert answer.object_bird_presence == "absent"
+    mock_db.reject_detections.assert_called_once_with(mock_conn, [17], commit=False)
+    mock_db.update_review_status.assert_not_called()
     mock_invalidate.assert_called_once()
 
 
@@ -1083,8 +1113,9 @@ def test_review_event_trash_keeps_images_in_review_when_active_detections_remain
     assert data["review_status_by_filename"]["review-item.jpg"] == "untagged"
     assert data["trash_filenames"] == []
     assert data["review_filenames"] == ["review-item.jpg"]
-    _label_recorder(client).assert_not_called()
-    mock_db.reject_detections.assert_called_once_with(mock_conn, [17])
+    answer = _label_recorder(client).call_args.args[1]
+    assert answer.object_bird_presence == "absent"
+    mock_db.reject_detections.assert_called_once_with(mock_conn, [17], commit=False)
     mock_db.update_review_status.assert_not_called()
 
 
@@ -1212,6 +1243,7 @@ def test_review_event_approve_batch_confirms_actionable_ids_without_event_key(cl
     answers = [call.args[1] for call in _label_recorder(client).call_args_list]
     assert [answer.detection_id for answer in answers] == [17, 18]
     assert all(answer.species_key == "Pica_pica" for answer in answers)
+    _event_review_recorder(client).assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -1398,6 +1430,7 @@ def test_review_event_resolve_commits_keep_and_trash_in_one_call(client):
                 "trash_detection_ids": [18],
                 "species": "Columba_palumbus",
                 "bbox_review": "correct",
+                "evidence_quality": "diagnostic",
             },
         )
 
@@ -1412,7 +1445,7 @@ def test_review_event_resolve_commits_keep_and_trash_in_one_call(client):
     assert answers[0].object_bird_presence == "present"
     assert answers[0].species_key == "Columba_palumbus"
     assert len(answers) == 1
-    mock_db.reject_detections.assert_called_once_with(mock_conn, [18])
+    mock_db.reject_detections.assert_called_once_with(mock_conn, [18], commit=False)
     mock_invalidate.assert_called_once()
 
 
@@ -1480,6 +1513,7 @@ def test_review_event_resolve_rejects_partial_event_coverage(client):
                 "trash_detection_ids": [18],
                 "species": "Columba_palumbus",
                 "bbox_review": "correct",
+                "evidence_quality": "diagnostic",
             },
         )
 
@@ -1532,6 +1566,7 @@ def test_review_event_resolve_refuses_gallery_anchors(client):
                 "trash_detection_ids": [18],
                 "species": "Columba_palumbus",
                 "bbox_review": "correct",
+                "evidence_quality": "diagnostic",
             },
         )
 
@@ -1594,6 +1629,7 @@ def test_review_event_resolve_preserves_per_frame_manual_override(client):
                 "trash_detection_ids": [],
                 "species": "Pica_pica",
                 "bbox_review": "correct",
+                "evidence_quality": "diagnostic",
             },
         )
 
@@ -1656,6 +1692,7 @@ def test_review_event_resolve_preserves_override_when_all_keeps_are_manual(clien
                 "trash_detection_ids": [],
                 "species": "Pica_pica",
                 "bbox_review": "correct",
+                "evidence_quality": "diagnostic",
             },
         )
 

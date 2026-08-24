@@ -10,6 +10,7 @@ Handles analytics routes:
 """
 
 from calendar import month_abbr, monthrange
+from collections import Counter
 from datetime import date, datetime, timedelta
 
 import numpy as np
@@ -18,26 +19,31 @@ from flask import Blueprint, jsonify, render_template, request
 from config import get_config
 from core.biodiversity import (
     _parse_event_start,
-    chao1_richness,
     hill_numbers,
+    is_resolved_species,
     pielou_evenness,
-    relative_activity_index,
+    resolved_species_event_counts,
     sample_coverage,
     shannon_entropy,
     simpson_index,
     species_event_counts,
     species_niche_pca,
 )
+from core.station_report import (
+    ObservationEffort,
+    build_candidate_review_priorities,
+    build_model_validation,
+    calculate_observation_effort,
+    partition_events_by_evidence,
+)
 from logging_config import get_logger
 from utils.db.analytics import (
-    fetch_all_time_daily_counts,
-    fetch_bird_visits,
     fetch_event_intelligence_summary,
     fetch_simulation_data,
     fetch_weather_analytics,
-    fetch_weather_detection_correlation,
+    fetch_weather_event_activity,
 )
-from utils.db.events import calculate_effort, get_events_cached
+from utils.db.events import EffortStats, calculate_effort, get_events_cached
 from web.security import error_response_simple as _error_response_simple
 from web.services import cache_service, db_service
 
@@ -49,6 +55,103 @@ analytics_bp = Blueprint("analytics", __name__)
 # acceptable because review/moderation routes drop the cache via
 # @invalidates("analytics.") on every state change.
 _ANALYTICS_TTL = 300  # 5 minutes
+_ACTIVITY_MIN_EVENTS = 20
+_ACTIVITY_MIN_DAYS = 5
+
+
+def _empty_observation_effort() -> ObservationEffort:
+    return ObservationEffort(
+        available=False,
+        sample_count=0,
+        coverage_start=None,
+        coverage_end=None,
+        window_hours=0.0,
+        app_hours=0.0,
+        camera_hours=0.0,
+        stream_hours=0.0,
+        detector_hours=0.0,
+        observation_hours=0.0,
+        day_observation_hours=0.0,
+        night_observation_hours=0.0,
+        unknown_light_hours=0.0,
+        ptz_active_hours=0.0,
+        outage_hours=0.0,
+        weather_exposure_hours={},
+    )
+
+
+def _load_station_report_cohorts(conn, min_score: float):
+    model_events = get_events_cached(conn, min_score=min_score)
+    verified, candidates, evidence = partition_events_by_evidence(conn, model_events)
+    return verified, candidates, evidence
+
+
+def _event_day_count(events) -> int:
+    return len(
+        {
+            parsed.date()
+            for event in events
+            if (parsed := _parse_event_start(event.start_time)) is not None
+        }
+    )
+
+
+def _events_within_effort(events, effort: ObservationEffort):
+    if not effort.available or not effort.coverage_start or not effort.coverage_end:
+        return []
+    try:
+        start = datetime.fromisoformat(effort.coverage_start).astimezone().replace(tzinfo=None)
+        end = datetime.fromisoformat(effort.coverage_end).astimezone().replace(tzinfo=None)
+    except ValueError:
+        return []
+    return [
+        event
+        for event in events
+        if (parsed := _parse_event_start(event.start_time)) is not None
+        and start <= parsed <= end
+    ]
+
+
+def _apply_observation_weather_exposure(
+    weather_activity: dict, effort: ObservationEffort
+) -> dict:
+    if not effort.available:
+        return {
+            "conditions": [],
+            "matched_events": 0,
+            "unmatched_events": 0,
+            "effort_available": False,
+        }
+    conditions = []
+    for condition in weather_activity.get("conditions", []):
+        code = int(condition.get("condition_code") or 0)
+        exposure = float(effort.weather_exposure_hours.get(code, 0.0))
+        if exposure <= 0:
+            continue
+        event_count = int(condition.get("event_count") or 0)
+        sufficient = event_count >= 5 and exposure >= 5.0
+        item = dict(condition)
+        item["exposure_hours"] = round(exposure, 1)
+        item["events_per_100_hours"] = (
+            round((event_count / exposure) * 100.0, 1) if sufficient else None
+        )
+        item["sufficient"] = sufficient
+        conditions.append(item)
+    numeric_rates = [
+        item["events_per_100_hours"]
+        for item in conditions
+        if item["events_per_100_hours"] is not None
+    ]
+    max_rate = max(numeric_rates, default=0.0)
+    for item in conditions:
+        rate = item["events_per_100_hours"]
+        item["bar_pct"] = round((rate / max_rate) * 100.0, 1) if rate and max_rate else 0.0
+    return {
+        **weather_activity,
+        "conditions": conditions,
+        "effort_available": True,
+        "effort_basis": "verified events per measured observation hour",
+    }
 
 
 def _cached_event_intelligence(
@@ -84,27 +187,16 @@ def _cached_simulation_data(exclude: str | None) -> dict:
     return cache_service.cached(key, _ANALYTICS_TTL, build)
 
 
-def _cached_weather_correlation() -> list:
+def _cached_weather_correlation(min_score: float) -> dict:
     def build():
         conn = db_service.get_connection()
         try:
-            return fetch_weather_detection_correlation(conn)
+            events, _, _ = _load_station_report_cohorts(conn, min_score)
+            return fetch_weather_event_activity(conn, events)
         finally:
             conn.close()
 
-    return cache_service.cached("analytics.weather_correlation", _ANALYTICS_TTL, build)
-
-
-def _cached_all_detection_times(min_score: float) -> list:
-    key = f"analytics.detection_times:{min_score}"
-
-    def build():
-        conn = db_service.get_connection()
-        try:
-            return db_service.fetch_all_detection_times(conn, min_score=min_score)
-        finally:
-            conn.close()
-
+    key = f"analytics.weather_event_activity:{min_score}"
     return cache_service.cached(key, _ANALYTICS_TTL, build)
 
 
@@ -131,13 +223,132 @@ def _sort_species_activity_by_peak_hour(items: list[dict]) -> list[dict]:
     )
 
 
+def _event_hour(event) -> float | None:
+    parsed = _parse_event_start(event.start_time)
+    if parsed is None:
+        return None
+    return parsed.hour + parsed.minute / 60.0 + parsed.second / 3600.0
+
+
+def _event_report_summary(events, effort) -> dict:
+    resolved_counts = resolved_species_event_counts(events)
+    all_counts = species_event_counts(events)
+    unresolved = sorted(
+        species for species in all_counts if not is_resolved_species(species)
+    )
+    timestamps = [
+        parsed
+        for event in events
+        if (parsed := _parse_event_start(event.start_time)) is not None
+    ]
+    return {
+        "total_events": len(events),
+        "total_photos": sum(event.photo_count for event in events),
+        "total_species": len(resolved_counts),
+        "unresolved_taxa": unresolved,
+        "unresolved_taxa_count": len(unresolved),
+        "active_days": effort.active_days,
+        "total_days": effort.total_days,
+        "date_range": {
+            "first": min(timestamps).date().isoformat() if timestamps else None,
+            "last": max(timestamps).date().isoformat() if timestamps else None,
+        },
+        # Compatibility aliases for the public summary API.
+        "total_detections": sum(event.photo_count for event in events),
+        "event_count": len(events),
+    }
+
+
+def _build_time_of_day(events) -> dict:
+    day_count = _event_day_count(events)
+    if len(events) < _ACTIVITY_MIN_EVENTS or day_count < _ACTIVITY_MIN_DAYS:
+        return {
+            "histogram": [],
+            "peak_hour": None,
+            "peak_hour_formatted": "—",
+            "available": False,
+            "event_count": len(events),
+            "day_count": day_count,
+            "minimum_events": _ACTIVITY_MIN_EVENTS,
+            "minimum_days": _ACTIVITY_MIN_DAYS,
+        }
+    hours = [hour for event in events if (hour := _event_hour(event)) is not None]
+    if not hours:
+        return {
+            "histogram": [],
+            "peak_hour": None,
+            "peak_hour_formatted": "—",
+            "available": False,
+        }
+    hist, _ = np.histogram(hours, bins=24, range=(0, 24))
+    max_count = max(hist) if max(hist) > 0 else 1
+    peak_idx = int(np.argmax(hist))
+    return {
+        "histogram": [
+            {
+                "hour": hour,
+                "count": int(count),
+                "height_pct": round((count / max_count) * 100, 1),
+            }
+            for hour, count in enumerate(hist)
+        ],
+        "peak_hour": peak_idx,
+        "peak_hour_formatted": f"{peak_idx:02d}:00",
+        "available": True,
+        "event_count": len(events),
+        "day_count": day_count,
+    }
+
+
+def _build_species_activity(events) -> list[dict]:
+    species_hours: dict[str, list[float]] = {}
+    for event in events:
+        if not is_resolved_species(event.species):
+            continue
+        hour = _event_hour(event)
+        if hour is not None:
+            species_hours.setdefault(event.species, []).append(hour)
+
+    series = []
+    for species, hours in species_hours.items():
+        species_events = [event for event in events if event.species == species]
+        if (
+            len(species_events) < _ACTIVITY_MIN_EVENTS
+            or _event_day_count(species_events) < _ACTIVITY_MIN_DAYS
+        ):
+            continue
+        hist, _ = np.histogram(hours, bins=24, range=(0, 24))
+        max_value = max(hist) if max(hist) > 0 else 1
+        normalized = hist / max_value
+        points = [
+            f"{'M' if index == 0 else 'L'} {(index / 23) * 200:.1f} {30 - (value * 28):.1f}"
+            for index, value in enumerate(normalized)
+        ]
+        peak_hour = int(np.argmax(hist))
+        series.append(
+            {
+                "species": species,
+                "count": len(hours),
+                "peak_hour": peak_hour,
+                "peak_hour_formatted": f"{peak_hour:02d}:00",
+                "sparkline_path": " ".join(points),
+            }
+        )
+    return _sort_species_activity_by_peak_hour(series)
+
+
 @analytics_bp.route("/api/analytics/summary", methods=["GET"])
 def analytics_summary():
     cfg = get_config()
     min_score = cfg["GALLERY_DISPLAY_THRESHOLD"]
     conn = db_service.get_connection()
     try:
-        summary = db_service.fetch_analytics_summary(conn, min_score=min_score)
+        events, candidates, evidence = _load_station_report_cohorts(conn, min_score)
+        summary = _event_report_summary(events, calculate_effort(conn))
+        summary.update(evidence)
+        summary["model_candidate_photos"] = sum(
+            event.photo_count for event in candidates
+        )
     finally:
         conn.close()
     return jsonify(summary)
@@ -147,31 +358,18 @@ def analytics_summary():
 def analytics_time_of_day():
     cfg = get_config()
     min_score = cfg["GALLERY_DISPLAY_THRESHOLD"]
-    rows = _cached_all_detection_times(min_score)
+    conn = db_service.get_connection()
+    try:
+        events, _, _ = _load_station_report_cohorts(conn, min_score)
+    finally:
+        conn.close()
 
-    if not rows:
+    if not events:
         return jsonify({"points": [], "peak_hour": None, "histogram": []})
 
-    # Parse Times to Float Hours
-    hours_float = []
-    for row in rows:
-        t_str = row["time_str"]  # "HHMMSS"
-        if len(t_str) == 6:
-            h = int(t_str[0:2])
-            m = int(t_str[2:4])
-            s = int(t_str[4:6])
-            val = h + m / 60.0 + s / 3600.0
-            hours_float.append(val)
-        elif len(t_str) == 8:  # HH:MM:SS fallback
-            try:
-                h = int(t_str[0:2])
-                m = int(t_str[3:5])
-                s = int(t_str[6:8])
-                val = h + m / 60.0 + s / 3600.0
-                hours_float.append(val)
-            except (ValueError, IndexError):
-                # Malformed HH:MM:SS string; skip this row.
-                pass
+    hours_float = [
+        hour for event in events if (hour := _event_hour(event)) is not None
+    ]
 
     if not hours_float:
         return jsonify({"points": [], "peak_hour": None, "histogram": []})
@@ -229,26 +427,17 @@ def analytics_species_activity():
     min_score = cfg["GALLERY_DISPLAY_THRESHOLD"]
     conn = db_service.get_connection()
     try:
-        rows = db_service.fetch_species_timestamps(conn, min_score=min_score)
+        events, _, _ = _load_station_report_cohorts(conn, min_score)
     finally:
         conn.close()
 
-    # Group by species
-    species_times = {}
-    for r in rows:
-        sp = r["species"]
-        t_str = (
-            r["image_timestamp"][9:15] if len(r["image_timestamp"]) >= 15 else ""
-        )  # YYYYMMDD_HHMMSS
-        if len(t_str) == 6:
-            try:
-                h = int(t_str[0:2]) + int(t_str[2:4]) / 60.0 + int(t_str[4:6]) / 3600.0
-                if sp not in species_times:
-                    species_times[sp] = []
-                species_times[sp].append(h)
-            except (ValueError, IndexError):
-                # Malformed HHMMSS substring; skip this row.
-                pass
+    species_times: dict[str, list[float]] = {}
+    for event in events:
+        if not is_resolved_species(event.species):
+            continue
+        hour = _event_hour(event)
+        if hour is not None:
+            species_times.setdefault(event.species, []).append(hour)
 
     series = []
     for sp, times in species_times.items():
@@ -306,21 +495,40 @@ def analytics_species_activity():
 
 @analytics_bp.route("/api/analytics/visits", methods=["GET"])
 def analytics_visits_api():
-    """Return bird visit clustering (read-only, no DB writes)."""
+    """Compatibility endpoint backed by the canonical BirdEvent pipeline."""
     try:
+        min_score = get_config()["GALLERY_DISPLAY_THRESHOLD"]
         conn = db_service.get_connection()
         try:
-            data = fetch_bird_visits(conn)
+            events, _, _ = _load_station_report_cohorts(conn, min_score)
         finally:
             conn.close()
-        # Strip per-visit detection_ids for the summary response (keep it lean)
-        summary = data["summary"]
-        # Return top-10 longest visits for quick inspection
-        top_visits = sorted(
-            data["visits"], key=lambda v: v["duration_sec"], reverse=True
-        )[:10]
-        for v in top_visits:
-            v.pop("detection_ids", None)
+        species_counts = species_event_counts(events)
+        summary = {
+            "total_visits": len(events),
+            "total_events": len(events),
+            "total_detections": sum(event.photo_count for event in events),
+            "species_visit_counts": species_counts,
+            "avg_visit_duration_sec": round(
+                sum(event.duration_sec for event in events) / len(events), 1
+            )
+            if events
+            else 0.0,
+            "definition": "BirdEvent",
+        }
+        top_visits = [
+            {
+                "species": event.species,
+                "start_time": event.start_time,
+                "end_time": event.end_time,
+                "duration_sec": event.duration_sec,
+                "photo_count": event.photo_count,
+                "grouping_profile": event.grouping_profile,
+            }
+            for event in sorted(events, key=lambda item: item.duration_sec, reverse=True)[
+                :10
+            ]
+        ]
         return jsonify({"summary": summary, "top_visits": top_visits})
     except Exception as exc:
         return _error_response_simple("Visits API error", exc)
@@ -359,9 +567,10 @@ def analytics_simulation_api():
 
 
 def _build_diversity(events) -> dict:
-    counts = species_event_counts(events)
+    counts = resolved_species_event_counts(events)
     hills = hill_numbers(counts)
-    chao_est, chao_se = chao1_richness(counts)
+    event_count = sum(counts.values())
+    effective_available = event_count >= 30 and len(counts) >= 2
 
     if hills[0.0] >= 2 and hills[1.0] / hills[0.0] < 0.5:
         dominance_label = "Dominated by a few species"
@@ -372,15 +581,18 @@ def _build_diversity(events) -> dict:
 
     return {
         "richness": int(hills[0.0]),
-        "hill_q1": round(hills[1.0], 2),
-        "hill_q2": round(hills[2.0], 2),
+        "hill_q1": round(hills[1.0], 2) if effective_available else None,
+        "hill_q2": round(hills[2.0], 2) if effective_available else None,
         "shannon": round(shannon_entropy(counts), 3),
         "simpson": round(simpson_index(counts), 3),
         "pielou_evenness": round(pielou_evenness(counts), 3),
-        "sample_coverage": round(sample_coverage(counts), 3),
-        "chao1_richness": round(chao_est, 1),
-        "chao1_se": round(chao_se, 2),
+        "sample_coverage": (
+            round(sample_coverage(counts), 3) if effective_available else None
+        ),
         "dominance_label": dominance_label,
+        "effective_diversity_available": effective_available,
+        "event_count": event_count,
+        "minimum_events": 30,
     }
 
 
@@ -415,45 +627,119 @@ def _build_pca(events, *, min_events_per_species: int = 3) -> dict:
     }
 
 
-def _build_species_table(events, effort) -> list[dict]:
+def _build_species_table(events, effort, *, rate_events=None) -> list[dict]:
     """One row per observed species, sorted by event count descending."""
-    counts = species_event_counts(events)
+    counts = resolved_species_event_counts(events)
     if not counts:
         return []
     total_events = sum(counts.values())
-    rai_map: dict[str, float] = {}
-    if effort.active_days > 0:
-        rai_map = relative_activity_index(events, effort.active_days)
-
+    rate_counts = resolved_species_event_counts(rate_events or [])
     photo_by_species: dict[str, int] = {}
     hours_by_species: dict[str, list[int]] = {}
+    dates_by_species: dict[str, list[date]] = {}
+    evidence_by_species: dict[str, dict[str, object]] = {}
     for ev in events:
         sp = ev.species
-        if not sp:
+        if not is_resolved_species(sp):
             continue
         photo_by_species[sp] = photo_by_species.get(sp, 0) + ev.photo_count
         dt = _parse_event_start(ev.start_time)
         if dt is not None:
             hours_by_species.setdefault(sp, []).append(dt.hour)
+            dates_by_species.setdefault(sp, []).append(dt.date())
+            current_evidence = evidence_by_species.get(sp)
+            if current_evidence is None or dt.date() < current_evidence["date"]:
+                evidence_by_species[sp] = {
+                    "date": dt.date(),
+                    "detection_id": ev.cover_detection_id,
+                }
+
+    latest_date = max(
+        (day for days in dates_by_species.values() for day in days),
+        default=None,
+    )
 
     rows = []
     for species, event_count in counts.items():
         hours = hours_by_species.get(species, [])
-        peak_hour = max(set(hours), key=hours.count) if hours else None
+        dates = sorted(set(dates_by_species.get(species, [])))
+        activity_available = event_count >= _ACTIVITY_MIN_EVENTS and len(dates) >= _ACTIVITY_MIN_DAYS
+        peak_hour = max(set(hours), key=hours.count) if hours and activity_available else None
+        span_days = (dates[-1] - dates[0]).days + 1 if dates else 0
+        occurrence_pattern = (
+            "recurring" if len(dates) >= 3 and span_days >= 14 else "sporadic"
+        )
         rows.append(
             {
                 "species": species,
                 "events": event_count,
                 "photos": photo_by_species.get(species, 0),
-                "rai_per_100_days": round(rai_map.get(species, 0.0), 1),
+                "events_per_camera_hour": (
+                    round(rate_counts.get(species, 0) / effort.observation_hours, 3)
+                    if getattr(effort, "available", False)
+                    and effort.observation_hours > 0
+                    else None
+                ),
+                "rate_event_count": rate_counts.get(species, 0),
                 "peak_hour": peak_hour,
+                "activity_available": activity_available,
                 "share_pct": round(100.0 * event_count / total_events, 1)
                 if total_events
                 else 0.0,
+                "first_record": dates[0].isoformat() if dates else None,
+                "last_record": dates[-1].isoformat() if dates else None,
+                "days_present": len(dates),
+                "days_since_last": (
+                    (latest_date - dates[-1]).days if latest_date and dates else None
+                ),
+                "occurrence_pattern": occurrence_pattern,
+                "evidence_detection_id": (
+                    evidence_by_species.get(species, {}).get("detection_id")
+                ),
+                "evidence_date": (
+                    evidence_by_species.get(species, {}).get("date").isoformat()
+                    if evidence_by_species.get(species, {}).get("date")
+                    else None
+                ),
             }
         )
     rows.sort(key=lambda r: (-r["events"], r["species"]))
     return rows
+
+
+def _build_presence_calendar(events) -> dict:
+    parsed = [
+        (event, timestamp)
+        for event in events
+        if is_resolved_species(event.species)
+        and (timestamp := _parse_event_start(event.start_time)) is not None
+    ]
+    if not parsed:
+        return {"months": [], "species": []}
+    month_keys = sorted({timestamp.strftime("%Y-%m") for _, timestamp in parsed})[-12:]
+    counts: dict[str, Counter[str]] = {}
+    for event, timestamp in parsed:
+        month_key = timestamp.strftime("%Y-%m")
+        if month_key not in month_keys:
+            continue
+        counts.setdefault(str(event.species), Counter())[month_key] += 1
+    rows = [
+        {
+            "species": species,
+            "counts": [species_counts.get(month, 0) for month in month_keys],
+            "total": sum(species_counts.values()),
+        }
+        for species, species_counts in counts.items()
+    ]
+    rows.sort(key=lambda item: (-int(item["total"]), str(item["species"])))
+    return {
+        "months": month_keys,
+        "species": rows,
+        "monthly_totals": [
+            sum(row["counts"][index] for row in rows)
+            for index in range(len(month_keys))
+        ],
+    }
 
 
 def _build_quality_metrics(conn) -> dict:
@@ -490,14 +776,15 @@ def _empty_diversity() -> dict:
     return {
         "richness": 0,
         "hill_q1": 0.0,
-        "hill_q2": 0.0,
+        "hill_q2": None,
         "shannon": 0.0,
         "simpson": 0.0,
         "pielou_evenness": 0.0,
-        "sample_coverage": 0.0,
-        "chao1_richness": 0.0,
-        "chao1_se": 0.0,
+        "sample_coverage": None,
         "dominance_label": "No data yet",
+        "effective_diversity_available": False,
+        "event_count": 0,
+        "minimum_events": 30,
     }
 
 
@@ -509,7 +796,7 @@ def analytics_diversity_api():
     try:
         conn = db_service.get_connection()
         try:
-            events = get_events_cached(conn, min_score=min_score)
+            events, _, _ = _load_station_report_cohorts(conn, min_score)
         finally:
             conn.close()
         return jsonify(_build_diversity(events) if events else _empty_diversity())
@@ -525,7 +812,7 @@ def analytics_species_pca_api():
     try:
         conn = db_service.get_connection()
         try:
-            events = get_events_cached(conn, min_score=min_score)
+            events, _, _ = _load_station_report_cohorts(conn, min_score)
         finally:
             conn.close()
         return jsonify(_build_pca(events))
@@ -541,8 +828,8 @@ def analytics_species_table_api():
     try:
         conn = db_service.get_connection()
         try:
-            events = get_events_cached(conn, min_score=min_score)
-            effort = calculate_effort(conn)
+            events, _, _ = _load_station_report_cohorts(conn, min_score)
+            effort = calculate_observation_effort(conn)
         finally:
             conn.close()
         return jsonify({"rows": _build_species_table(events, effort)})
@@ -566,35 +853,59 @@ def analytics_quality_metrics_api():
 
 @analytics_bp.route("/analytics", methods=["GET"])
 def analytics_page():
-    """Server-rendered analytics dashboard."""
-    # 1. Summary Stats
-    summary = {
-        "total_detections": 0,
-        "total_species": 0,
-        "date_range": {"first": None, "last": None},
-    }
+    """Render the station report from one canonical BirdEvent cohort."""
     cfg = get_config()
     min_score = cfg["GALLERY_DISPLAY_THRESHOLD"]
+    events = []
+    candidate_events = []
+    evidence_metrics = {
+        "candidate_events": 0,
+        "verified_events": 0,
+        "assessed_current_events": 0,
+        "limited_current_events": 0,
+        "human_labeled_candidate_events": 0,
+        "human_labeled_candidate_objects": 0,
+        "review_actions": 0,
+        "rejected_review_actions": 0,
+        "unresolved_review_actions": 0,
+        "diagnostic_review_actions": 0,
+        "limited_review_actions": 0,
+        "rejection_rate_pct": 0.0,
+        "review_progress_pct": 0.0,
+    }
+    effort = EffortStats(first_ts=None, last_ts=None, total_days=0, active_days=0)
+    observation_effort = _empty_observation_effort()
+    model_validation = {
+        "available": False,
+        "reviewed_predictions": 0,
+        "species": [],
+        "confidence_bins": [],
+        "quality_strata": [],
+        "holdout": {"available": False},
+    }
+    review_priorities = []
     try:
         conn = db_service.get_connection()
         try:
-            summary = db_service.fetch_analytics_summary(conn, min_score=min_score)
+            events, candidate_events, evidence_metrics = _load_station_report_cohorts(
+                conn, min_score
+            )
+            effort = calculate_effort(conn)
+            observation_effort = calculate_observation_effort(conn)
+            model_validation = build_model_validation(conn)
+            review_priorities = build_candidate_review_priorities(
+                conn, candidate_events
+            )[:8]
         finally:
             conn.close()
     except Exception as e:
-        logger.error(f"Error fetching analytics summary: {e}")
+        logger.error(f"Error fetching station report events: {e}")
 
-    # 1b. Override total_detections with visit-grouped total_visits
-    try:
-        conn = db_service.get_connection()
-        try:
-            visit_data = fetch_bird_visits(conn)
-            visit_summary = visit_data.get("summary", {})
-            summary["total_detections"] = visit_summary.get("total_visits", 0)
-        finally:
-            conn.close()
-    except Exception as e:
-        logger.error(f"Error fetching all-time visits for analytics: {e}")
+    summary = _event_report_summary(events, effort)
+    summary.update(evidence_metrics)
+    summary["model_candidate_photos"] = sum(
+        event.photo_count for event in candidate_events
+    )
 
     # 1c. Event intelligence and representative-retention estimate
     event_intelligence = {
@@ -622,47 +933,7 @@ def analytics_page():
     except Exception as e:
         logger.error(f"Error fetching event intelligence summary: {e}")
 
-    # 2. Time of Day Histogram (24 hourly bins)
-    time_of_day = {
-        "histogram": [],
-        "peak_hour": None,
-        "peak_hour_formatted": "—",
-    }
-    try:
-        rows = _cached_all_detection_times(min_score)
-
-        hours_float = []
-        for row in rows:
-            t_str = row["time_str"]
-            if len(t_str) == 6:
-                h = int(t_str[0:2])
-                m = int(t_str[2:4])
-                hours_float.append(h + m / 60.0)
-
-        if hours_float:
-            # Create 24 hourly bins
-            hist, edges = np.histogram(hours_float, bins=24, range=(0, 24))
-            max_count = max(hist) if max(hist) > 0 else 1
-
-            histogram_data = []
-            for i, count in enumerate(hist):
-                histogram_data.append(
-                    {
-                        "hour": i,
-                        "count": int(count),
-                        "height_pct": (
-                            round((count / max_count) * 100, 1) if max_count > 0 else 0
-                        ),
-                    }
-                )
-            time_of_day["histogram"] = histogram_data
-
-            # Peak hour
-            peak_idx = np.argmax(hist)
-            time_of_day["peak_hour"] = peak_idx
-            time_of_day["peak_hour_formatted"] = f"{peak_idx:02d}:00"
-    except Exception as e:
-        logger.error(f"Error fetching time of day data: {e}")
+    time_of_day = _build_time_of_day(events)
 
     # 2b. Activity by Date (toggle: daily/weekly/monthly)
     activity_granularity = (
@@ -702,21 +973,19 @@ def analytics_page():
         "window_end": None,
     }
     try:
-        conn = db_service.get_connection()
-        try:
-            daily_rows = fetch_all_time_daily_counts(conn)
-        finally:
-            conn.close()
+        counts_by_date: dict[str, int] = {}
+        for event in events:
+            parsed = _parse_event_start(event.start_time)
+            if parsed is not None:
+                date_iso = parsed.date().isoformat()
+                counts_by_date[date_iso] = counts_by_date.get(date_iso, 0) + 1
 
-        if daily_rows:
-            total_days = len(daily_rows)
-            counts_by_date: dict[str, int] = {}
-            all_dates: list[date] = []
-            for row in daily_rows:
-                date_iso = row["date_iso"]
-                count = int(row["count"] or 0)
-                counts_by_date[date_iso] = count
-                all_dates.append(datetime.strptime(date_iso, "%Y-%m-%d").date())
+        if counts_by_date:
+            total_days = len(counts_by_date)
+            all_dates = [
+                datetime.strptime(date_iso, "%Y-%m-%d").date()
+                for date_iso in counts_by_date
+            ]
 
             all_dates.sort()
             last_detection_date = all_dates[-1]
@@ -872,122 +1141,36 @@ def analytics_page():
     except Exception as e:
         logger.error(f"Error fetching daily activity: {e}")
 
-    # 3. Species Activity with Sparklines
-    species_activity = []
-    try:
-        conn = db_service.get_connection()
-        try:
-            cfg = get_config()
-            min_score = cfg["GALLERY_DISPLAY_THRESHOLD"]
-            rows = db_service.fetch_species_timestamps(conn, min_score=min_score)
-        finally:
-            conn.close()
-
-        # Group by species
-        species_times = {}
-        for r in rows:
-            sp = r["species"]
-            t_str = (
-                r["image_timestamp"][9:15] if len(r["image_timestamp"]) >= 15 else ""
-            )
-            if len(t_str) == 6:
-                try:
-                    h = int(t_str[0:2]) + int(t_str[2:4]) / 60.0
-                    if sp not in species_times:
-                        species_times[sp] = []
-                    species_times[sp].append(h)
-                except (ValueError, IndexError):
-                    # Malformed HHMMSS substring; skip this row.
-                    pass
-
-        for sp, times in species_times.items():
-            if len(times) < 1:
-                continue
-
-            # Create histogram for sparkline
-            hist, edges = np.histogram(times, bins=24, range=(0, 24))
-            max_val = max(hist) if max(hist) > 0 else 1
-            normalized = hist / max_val
-
-            # Generate SVG path for sparkline
-            points = []
-            for i, y in enumerate(normalized):
-                x = (i / 23) * 200  # Scale to SVG viewBox width
-                y_coord = 30 - (y * 28)  # Invert Y, leave some margin
-                prefix = "M" if i == 0 else "L"
-                points.append(f"{prefix} {x:.1f} {y_coord:.1f}")
-            sparkline_path = " ".join(points)
-
-            # Peak hour
-            peak_idx = np.argmax(hist)
-            peak_formatted = f"{peak_idx:02d}:00"
-
-            species_activity.append(
-                {
-                    "species": sp,
-                    "count": len(times),
-                    "peak_hour_formatted": peak_formatted,
-                    "sparkline_path": sparkline_path,
-                }
-            )
-
-        species_activity = _sort_species_activity_by_peak_hour(species_activity)
-    except Exception as e:
-        logger.error(f"Error fetching species activity: {e}")
+    species_activity = _build_species_activity(events)
 
     # 4. Weather Analytics
     weather = {"has_data": False}
-    weather_correlation = []
+    weather_correlation = {
+        "conditions": [],
+        "matched_events": 0,
+        "unmatched_events": len(events),
+        "window_minutes": 30,
+    }
     try:
         conn = db_service.get_connection()
         try:
             weather = fetch_weather_analytics(conn)
+            effort_events = _events_within_effort(events, observation_effort)
+            weather_correlation = _apply_observation_weather_exposure(
+                fetch_weather_event_activity(conn, effort_events),
+                observation_effort,
+            )
         finally:
             conn.close()
-        weather_correlation = _cached_weather_correlation()
     except Exception as e:
         logger.error(f"Error fetching weather analytics: {e}")
 
-    # 6. Species Removal Simulation (initial load, no species excluded)
-    simulation = {
-        "species_list": [],
-        "daily_series": [],
-        "biodiversity_real": {},
-        "biodiversity_sim": {},
-        "delta": {},
-        "excluded_species": None,
-    }
-    try:
-        simulation = _cached_simulation_data(None)
-    except Exception as e:
-        logger.error(f"Error fetching simulation data: {e}")
-
-    # 7. Biological Insights — diversity profile, species PCA, species table,
-    #    quality snapshot. All read-only, computed via the shared event layer
-    #    so totals match Event Intelligence above.
-    diversity = _empty_diversity()
-    pca: dict = {
-        "ok": False,
-        "points": [],
-        "variance_pct": [0.0, 0.0],
-        "min_events_filter": 3,
-    }
-    species_rows: list[dict] = []
-    quality_metrics = {"review_status": {}, "decision_state": {}, "override_rate": 0.0}
-    try:
-        conn = db_service.get_connection()
-        try:
-            bio_events = get_events_cached(conn, min_score=min_score)
-            effort = calculate_effort(conn)
-            if bio_events:
-                diversity = _build_diversity(bio_events)
-                pca = _build_pca(bio_events)
-                species_rows = _build_species_table(bio_events, effort)
-            quality_metrics = _build_quality_metrics(conn)
-        finally:
-            conn.close()
-    except Exception as e:
-        logger.error(f"Error fetching biological insights: {e}")
+    diversity = _build_diversity(events) if events else _empty_diversity()
+    effort_events = _events_within_effort(events, observation_effort)
+    species_rows = _build_species_table(
+        events, observation_effort, rate_events=effort_events
+    )
+    presence_calendar = _build_presence_calendar(events)
 
     return render_template(
         "analytics.html",
@@ -1000,10 +1183,12 @@ def analytics_page():
         event_intelligence=event_intelligence,
         weather=weather,
         weather_correlation=weather_correlation,
-        simulation=simulation,
         diversity=diversity,
-        species_pca=pca,
         species_rows=species_rows,
-        quality_metrics=quality_metrics,
+        effort=effort,
+        observation_effort=observation_effort,
+        model_validation=model_validation,
+        review_priorities=review_priorities,
+        presence_calendar=presence_calendar,
         current_path="/analytics",
     )

@@ -34,6 +34,8 @@ def _make_conn() -> sqlite3.Connection:
             score REAL,
             status TEXT NOT NULL DEFAULT 'active',
             decision_state TEXT,
+            decision_level TEXT,
+            quality_gallery_ok INTEGER DEFAULT 1,
             manual_species_override TEXT,
             species_source TEXT
         );
@@ -64,6 +66,8 @@ def _insert(
     *,
     review_status: str = "confirmed_bird",
     decision_state: str | None = "confirmed",
+    decision_level: str | None = "species",
+    quality_gallery_ok: int = 1,
 ) -> None:
     filename = f"{det_id:04d}.webp"
     conn.execute(
@@ -75,10 +79,11 @@ def _insert(
         """
         INSERT INTO detections(
             detection_id, image_filename, bbox_x, bbox_y, bbox_w, bbox_h,
-            od_class_name, score, status, decision_state
-        ) VALUES (?, ?, 0.1, 0.1, 0.2, 0.2, 'bird', 0.95, 'active', ?)
+            od_class_name, score, status, decision_state, decision_level,
+            quality_gallery_ok
+        ) VALUES (?, ?, 0.1, 0.1, 0.2, 0.2, 'bird', 0.95, 'active', ?, ?, ?)
         """,
-        (det_id, filename, decision_state),
+        (det_id, filename, decision_state, decision_level, quality_gallery_ok),
     )
     conn.execute(
         "INSERT INTO classifications(detection_id, cls_class_name, "
@@ -88,6 +93,40 @@ def _insert(
 
 
 # --- fetch_events_for_analysis -------------------------------------------------
+
+
+def test_analysis_cohort_keeps_valid_low_quality_photos_but_excludes_review_rows():
+    conn = _make_conn()
+    try:
+        _insert(
+            conn,
+            1,
+            "20260420_060000",
+            "Parus_major",
+            quality_gallery_ok=0,
+        )
+        _insert(
+            conn,
+            2,
+            "20260420_070000",
+            "Cyanistes_caeruleus",
+            decision_level="species_review",
+        )
+        _insert(
+            conn,
+            3,
+            "20260420_080000",
+            "Turdus_merula",
+            decision_state=None,
+        )
+        conn.commit()
+
+        events = fetch_events_for_analysis(conn, min_score=0.0)
+
+        assert [event.species for event in events] == ["Parus_major"]
+        assert events[0].photo_count == 1
+    finally:
+        conn.close()
 
 
 def test_fetch_events_empty_db_returns_empty_list():

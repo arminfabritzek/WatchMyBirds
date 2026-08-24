@@ -1241,7 +1241,12 @@ def fetch_trash_candidate_selection_by_source_type(
     }
 
 
-def reject_detections(conn: sqlite3.Connection, detection_ids: Iterable[int]) -> None:
+def reject_detections(
+    conn: sqlite3.Connection,
+    detection_ids: Iterable[int],
+    *,
+    commit: bool = True,
+) -> None:
     """
     Semantic Reject: Sets status of specific detections to 'rejected'.
     Does not delete files.
@@ -1260,7 +1265,8 @@ def reject_detections(conn: sqlite3.Connection, detection_ids: Iterable[int]) ->
         f"UPDATE classifications SET status = 'rejected' WHERE detection_id IN ({placeholders})",
         ids,
     )
-    conn.commit()
+    if commit:
+        conn.commit()
 
 
 def apply_species_override(

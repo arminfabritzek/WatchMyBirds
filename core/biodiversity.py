@@ -53,6 +53,20 @@ def _parse_event_start(ts: str | None) -> datetime | None:
 # --- core counting -------------------------------------------------------------
 
 
+def is_resolved_species(species: str | None) -> bool:
+    """Return whether a taxon label identifies a species rather than a bucket.
+
+    Classifier fallbacks such as ``Sylvia_sp.`` are useful operational labels,
+    but treating them as an additional species beside ``Sylvia_borin`` would
+    inflate richness and diversity metrics.
+    """
+
+    token = str(species or "").strip().replace(" ", "_").lower().rstrip(".")
+    if not token or token in {"bird", "unknown", "unknown_species", "unclassified"}:
+        return False
+    return not token.endswith("_sp")
+
+
 def species_event_counts(events: Iterable[BirdEvent]) -> dict[str, int]:
     """Number of events per resolved species. Unknown species are dropped."""
     counts: Counter[str] = Counter()
@@ -60,6 +74,16 @@ def species_event_counts(events: Iterable[BirdEvent]) -> dict[str, int]:
         if ev.species:
             counts[ev.species] += 1
     return dict(counts)
+
+
+def resolved_species_event_counts(events: Iterable[BirdEvent]) -> dict[str, int]:
+    """Number of events per species, excluding unresolved genus buckets."""
+
+    return {
+        species: count
+        for species, count in species_event_counts(events).items()
+        if is_resolved_species(species)
+    }
 
 
 def observed_richness(events: Iterable[BirdEvent]) -> int:

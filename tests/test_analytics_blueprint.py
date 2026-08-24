@@ -1,10 +1,43 @@
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
 from flask import Flask
 
+from core.station_report import ObservationEffort
 from web.blueprints import analytics as analytics_module
-from web.blueprints.analytics import _sort_species_activity_by_peak_hour, analytics_bp
+from web.blueprints.analytics import (
+    _apply_observation_weather_exposure,
+    _build_diversity,
+    _build_presence_calendar,
+    _build_time_of_day,
+    _event_report_summary,
+    _sort_species_activity_by_peak_hour,
+    analytics_bp,
+)
+
+
+def _effort(**overrides):
+    values = {
+        "available": True,
+        "sample_count": 10,
+        "coverage_start": "2026-08-01T00:00:00+00:00",
+        "coverage_end": "2026-08-31T00:00:00+00:00",
+        "window_hours": 720.0,
+        "app_hours": 100.0,
+        "camera_hours": 90.0,
+        "stream_hours": 80.0,
+        "detector_hours": 70.0,
+        "observation_hours": 60.0,
+        "day_observation_hours": 40.0,
+        "night_observation_hours": 20.0,
+        "unknown_light_hours": 0.0,
+        "ptz_active_hours": 2.0,
+        "outage_hours": 620.0,
+        "weather_exposure_hours": {2: 4.9, 3: 10.0},
+    }
+    values.update(overrides)
+    return ObservationEffort(**values)
 
 
 @pytest.fixture
@@ -35,28 +68,99 @@ def test_sort_species_activity_by_peak_hour_orders_by_peak_then_species():
     ]
 
 
+def test_station_report_summary_separates_events_photos_and_unresolved_taxa():
+    events = [
+        SimpleNamespace(
+            species="Parus_major", start_time="20260311_071000", photo_count=4
+        ),
+        SimpleNamespace(
+            species="Passer_sp.", start_time="20260312_081000", photo_count=2
+        ),
+    ]
+    effort = SimpleNamespace(active_days=2, total_days=5)
+
+    summary = _event_report_summary(events, effort)
+
+    assert summary["total_events"] == 2
+    assert summary["total_photos"] == 6
+    assert summary["total_species"] == 1
+    assert summary["unresolved_taxa"] == ["Passer_sp."]
+    assert summary["active_days"] == 2
+    assert summary["total_days"] == 5
+
+
+def test_activity_and_diversity_stay_hidden_below_evidence_thresholds():
+    events = [
+        SimpleNamespace(
+            species="Parus_major",
+            start_time=f"202608{day:02d}_080000",
+            photo_count=1,
+        )
+        for day in range(1, 5)
+        for _ in range(4)
+    ]
+
+    timing = _build_time_of_day(events)
+    diversity = _build_diversity(events)
+
+    assert timing["available"] is False
+    assert timing["histogram"] == []
+    assert diversity["effective_diversity_available"] is False
+    assert diversity["hill_q1"] is None
+    assert diversity["hill_q2"] is None
+
+
+def test_presence_calendar_counts_verified_event_inputs_by_month():
+    events = [
+        SimpleNamespace(species="Parus_major", start_time="20260701_080000"),
+        SimpleNamespace(species="Parus_major", start_time="20260801_080000"),
+        SimpleNamespace(species="Parus_major", start_time="20260802_080000"),
+        SimpleNamespace(species="Passer_sp.", start_time="20260803_080000"),
+    ]
+
+    calendar = _build_presence_calendar(events)
+
+    assert calendar["months"] == ["2026-07", "2026-08"]
+    assert calendar["species"] == [
+        {"species": "Parus_major", "counts": [1, 2], "total": 3}
+    ]
+    assert calendar["monthly_totals"] == [1, 2]
+
+
+def test_weather_rates_require_events_and_measured_exposure():
+    result = _apply_observation_weather_exposure(
+        {
+            "conditions": [
+                {"condition_code": 2, "event_count": 10},
+                {"condition_code": 3, "event_count": 5},
+            ],
+            "matched_events": 15,
+        },
+        _effort(),
+    )
+
+    assert result["conditions"][0]["events_per_100_hours"] is None
+    assert result["conditions"][0]["sufficient"] is False
+    assert result["conditions"][1]["events_per_100_hours"] == 50.0
+    assert result["conditions"][1]["sufficient"] is True
+
+
 def test_species_activity_api_sorts_by_peak_hour(monkeypatch, client):
     mock_conn = MagicMock()
-    rows = [
-        {"species": "Phoenicurus_ochruros", "image_timestamp": "20260311_081500"},
-        {"species": "Phoenicurus_ochruros", "image_timestamp": "20260311_082500"},
-        {"species": "Phoenicurus_ochruros", "image_timestamp": "20260311_084500"},
-        {"species": "Dendrocopos_major", "image_timestamp": "20260311_050500"},
-        {"species": "Dendrocopos_major", "image_timestamp": "20260311_051000"},
-        {"species": "Dendrocopos_major", "image_timestamp": "20260311_053500"},
-        {"species": "Erithacus_rubecula", "image_timestamp": "20260311_071000"},
-        {"species": "Erithacus_rubecula", "image_timestamp": "20260311_072000"},
-        {"species": "Erithacus_rubecula", "image_timestamp": "20260311_075500"},
-        {"species": "Passer_domesticus", "image_timestamp": "20260311_080500"},
-        {"species": "Passer_domesticus", "image_timestamp": "20260311_081000"},
-        {"species": "Passer_domesticus", "image_timestamp": "20260311_085500"},
+    events = [
+        SimpleNamespace(species="Phoenicurus_ochruros", start_time="20260311_081500"),
+        SimpleNamespace(species="Dendrocopos_major", start_time="20260311_050500"),
+        SimpleNamespace(species="Erithacus_rubecula", start_time="20260311_071000"),
+        SimpleNamespace(species="Passer_domesticus", start_time="20260311_080500"),
     ]
 
     monkeypatch.setattr(
         analytics_module.db_service, "get_connection", lambda: mock_conn
     )
     monkeypatch.setattr(
-        analytics_module.db_service, "fetch_species_timestamps", lambda conn, **kw: rows
+        analytics_module,
+        "_load_station_report_cohorts",
+        lambda conn, min_score: (events, [], {"verified_events": len(events)}),
     )
 
     response = client.get("/api/analytics/species-activity")
@@ -223,6 +327,15 @@ def bio_client(monkeypatch):
     monkeypatch.setattr(
         analytics_module, "get_config", lambda: {"GALLERY_DISPLAY_THRESHOLD": 0.0}
     )
+    monkeypatch.setattr(
+        analytics_module,
+        "_load_station_report_cohorts",
+        lambda db_conn, min_score: (
+            analytics_module.get_events_cached(db_conn, min_score=min_score),
+            [],
+            {},
+        ),
+    )
 
     app = Flask(__name__)
     app.config["TESTING"] = True
@@ -239,6 +352,15 @@ def bio_empty_client(monkeypatch):
     monkeypatch.setattr(analytics_module.db_service, "get_connection", lambda: wrapped)
     monkeypatch.setattr(
         analytics_module, "get_config", lambda: {"GALLERY_DISPLAY_THRESHOLD": 0.0}
+    )
+    monkeypatch.setattr(
+        analytics_module,
+        "_load_station_report_cohorts",
+        lambda db_conn, min_score: (
+            analytics_module.get_events_cached(db_conn, min_score=min_score),
+            [],
+            {},
+        ),
     )
 
     app = Flask(__name__)
@@ -263,7 +385,7 @@ def test_diversity_api_with_data_returns_hill_numbers(bio_client):
     assert "hill_q1" in body
     assert "hill_q2" in body
     assert "sample_coverage" in body
-    assert "chao1_richness" in body
+    assert "chao1_richness" not in body
 
 
 def test_species_pca_api_empty_returns_not_ok(bio_empty_client):
@@ -300,7 +422,7 @@ def test_species_table_api_sorted_by_events_desc(bio_client):
     counts = [row["events"] for row in rows]
     assert counts == sorted(counts, reverse=True)
     for row in rows:
-        assert "rai_per_100_days" in row
+        assert "events_per_camera_hour" in row
         assert "peak_hour" in row
         assert "share_pct" in row
 

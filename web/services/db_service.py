@@ -60,8 +60,10 @@ def fetch_trash_candidate_selection_by_source_type(conn, source_type: str) -> di
     return db_core.fetch_trash_candidate_selection_by_source_type(conn, source_type)
 
 
-def reject_detections(conn, detection_ids: list[int]) -> None:
-    db_core.reject_detections(conn, detection_ids)
+def reject_detections(
+    conn, detection_ids: list[int], *, commit: bool = True
+) -> None:
+    db_core.reject_detections(conn, detection_ids, commit=commit)
 
 
 def apply_species_override(conn, detection_id: int, species: str, source: str) -> None:
@@ -84,8 +86,10 @@ def restore_detections(conn, detection_ids: list[int]) -> None:
     db_core.restore_detections(conn, detection_ids)
 
 
-def update_review_status(conn, filenames, new_status: str) -> int:
-    return db_core.update_review_status(conn, filenames, new_status)
+def update_review_status(
+    conn, filenames, new_status: str, *, commit: bool = True
+) -> int:
+    return db_core.update_review_status(conn, filenames, new_status, commit=commit)
 
 
 def update_downloaded_timestamp(conn, filenames, download_time) -> None:
