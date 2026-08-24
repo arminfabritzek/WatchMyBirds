@@ -63,6 +63,24 @@ def test_detection_modal_supports_optional_nav_scope_and_index():
     assert "wikipedia_species_url(det.common_name, title_species)" in content
 
 
+def test_detection_modal_offers_scoped_interactive_bbox_labels():
+    modal = _read("templates/components/detection_modal.html")
+    viewer = _read("templates/components/modal_image_viewer.html")
+    gallery_js = _read("assets/js/gallery_utils.js")
+
+    assert "interactive_labels=interactive_labels" in modal
+    assert 'data-interactive-labels="true"' in viewer
+    assert "wm-bbox-label-layer" in viewer
+    assert "confirmBboxSpecies" in gallery_js
+    confirm_body = gallery_js.split("async function confirmBboxSpecies", 1)[1]
+    confirm_body = confirm_body.split("\n}", 1)[0]
+    assert "'/api/labels/answer'" in confirm_body
+    assert "object_bird_presence: 'present'" in confirm_body
+    assert "species_identity: 'confirmed'" in confirm_body
+    assert "bbox_quality" not in confirm_body
+    assert "image_bird_presence" not in confirm_body
+
+
 def test_detection_modals_defer_full_image_load_until_modal_open():
     detection_modal = _read("templates/components/detection_modal.html")
     viewer = _read("templates/components/modal_image_viewer.html")
@@ -523,13 +541,16 @@ def test_gallery_utils_cache_key_reaches_every_image_surface():
 
     for template in templates:
         assert (
-            "gallery_utils.js?v=20260820-view-modes" in _read(template)
+            "gallery_utils.js?v=20260820-interactive-labels" in _read(template)
         ), template
 
 
 def test_no_bird_js_fallback_is_surface_agnostic():
     """tile_actions.js must contain the noBirdFrame fallback for non-review surfaces."""
     js = _read("assets/js/tile_actions.js")
+    base = _read("templates/base.html")
+    dialog = _read("templates/partials/no_bird_confirm_dialog.html")
+    css = _read("assets/design-system.css")
 
     assert "async function noBirdFrame(" in js
     assert "'/api/review/decision'" in js
@@ -551,7 +572,22 @@ def test_no_bird_js_fallback_is_surface_agnostic():
     assert "data-deferred-src" in js
     assert "Full image preview is unavailable. Nothing was changed." in js
     assert "A text-only fallback would recreate the crop-context trap." in js
-    assert "Confirm no birds in full image" in js
+    assert "{% include 'partials/no_bird_confirm_dialog.html' %}" in base
+    assert 'class="wm-modal wm-no-bird-confirm"' in dialog
+    assert "Confirm no birds in full image" in dialog
+    assert 'aria-label="Cancel full-image no-bird confirmation"' in dialog
+    assert 'aria-label="Confirm no birds in full image"' in dialog
+    no_bird_dialog_flow = js.split("function confirmFrameNoBird", 1)[1].split(
+        "async function confirmFullImageNoBird", 1
+    )[0]
+    assert "document.createElement('dialog')" not in no_bird_dialog_flow
+    assert "style.cssText" not in no_bird_dialog_flow
+    # The safety preview must use the available viewport instead of shrinking
+    # the evidence into the former 720 px confirmation-dialog limit.
+    assert ".wm-no-bird-confirm" in css
+    assert "width: 95vw" in css
+    assert "max-width: none" in css
+    assert "min(720px, 95vw)" not in css
     # Tile fade-out on success
     assert "closest('.wm-tile')" in js
     assert "tile.style.opacity = '0'" in js
@@ -587,4 +623,4 @@ def test_tile_action_cache_key_reaches_every_image_surface():
     )
 
     for template in templates:
-        assert "tile_actions.js?v=20260820-view-modes" in _read(template), template
+        assert "tile_actions.js?v=20260823-full-frame-confirm" in _read(template), template

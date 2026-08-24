@@ -1001,7 +1001,8 @@ function initBboxOverlay(img) {
             }
         } catch (e) { /* ignore */ }
 
-        if (multiBird || localStorage.getItem(prefs.bbox) === 'on') {
+        const interactiveLabels = container.dataset.interactiveLabels === 'true';
+        if (multiBird || interactiveLabels || localStorage.getItem(prefs.bbox) === 'on') {
             const btn = resolveViewerToolButton(host, scope, '.bbox-toggle');
             if (btn) {
                 if (!btn.classList.contains('active')) toggleBboxOverlay(btn);
@@ -1082,6 +1083,8 @@ function toggleBboxOverlay(btn) {
     if (isVisible) {
         // Hide overlay
         canvas.style.display = 'none';
+        const labelLayer = container.querySelector('.wm-bbox-label-layer');
+        if (labelLayer) labelLayer.hidden = true;
         btn.textContent = 'Boxes';
         btn.classList.remove('active', 'btn-secondary', 'btn--secondary');
         btn.classList.add('btn-outline-secondary', 'btn--outline-secondary');
@@ -1113,10 +1116,13 @@ function toggleBboxOverlay(btn) {
                 h: sib.bbox_h,
                 name: sib.common_name,
                 id: sib.detection_id,
-                isCurrent: sib.detection_id === currentBbox.id
+                isCurrent: sib.detection_id === currentBbox.id,
+                reviewState: sib.human_review_state,
+                speciesKey: sib.human_species_key || sib.species_key,
+                filename: sib.image_filename
             }));
         } else if (currentBbox.x !== undefined) {
-            boxes = [{
+            boxes = [_enrichInteractiveBox(container, {
                 x: currentBbox.x,
                 y: currentBbox.y,
                 w: currentBbox.w,
@@ -1124,7 +1130,7 @@ function toggleBboxOverlay(btn) {
                 name: currentBbox.name,
                 id: currentBbox.id,
                 isCurrent: true
-            }];
+            })];
         }
 
         drawBoundingBoxes(canvas, img, boxes, currentBbox.id);
@@ -1173,18 +1179,177 @@ function redrawBboxOverlay(btn) {
                 ? Number(sib.species_colour)
                 : fallbackSlot;
             return { x: sib.bbox_x, y: sib.bbox_y, w: sib.bbox_w, h: sib.bbox_h,
-                     name: sib.common_name, id: sib.detection_id,
+                     name: sib.human_common_name || sib.common_name, id: sib.detection_id,
                      speciesColour: sibSlot,
+                     reviewState: sib.human_review_state,
+                     speciesKey: sib.human_species_key || sib.species_key,
+                     filename: sib.image_filename,
                      isCurrent: sib.detection_id === currentBbox.id };
         });
     } else if (currentBbox.x !== undefined) {
-        boxes = [{ x: currentBbox.x, y: currentBbox.y, w: currentBbox.w, h: currentBbox.h,
+        boxes = [_enrichInteractiveBox(container, { x: currentBbox.x, y: currentBbox.y, w: currentBbox.w, h: currentBbox.h,
                    name: currentBbox.name, id: currentBbox.id,
                    speciesColour: currentSlot,
-                   isCurrent: true }];
+                   isCurrent: true })];
     }
 
     drawBoundingBoxes(canvas, img, boxes, currentBbox.id);
+}
+
+function _interactiveDetectionData(viewer, detectionId) {
+    if (!viewer) return null;
+    let current = null;
+    let siblings = [];
+    try { current = JSON.parse(viewer.dataset.currentDetection || 'null'); } catch (e) { /* ignore */ }
+    try { siblings = JSON.parse(viewer.dataset.siblings || '[]'); } catch (e) { /* ignore */ }
+    return siblings.find(function (item) {
+        return Number(item.detection_id) === Number(detectionId);
+    }) || (current && Number(current.detection_id) === Number(detectionId) ? current : null);
+}
+
+function _enrichInteractiveBox(viewer, box) {
+    const data = _interactiveDetectionData(viewer, box.id) || {};
+    return Object.assign({}, box, {
+        name: data.human_common_name || data.common_name || box.name || 'Detection',
+        reviewState: data.human_review_state || box.reviewState || 'unreviewed',
+        speciesKey: data.human_species_key || data.species_key || box.speciesKey || '',
+        filename: data.image_filename || box.filename || '',
+        speciesColour: data.species_colour !== undefined
+            ? data.species_colour
+            : box.speciesColour
+    });
+}
+
+function _setInteractiveReviewState(viewer, detectionId, state, speciesKey) {
+    if (!viewer) return;
+    let current = null;
+    let siblings = [];
+    try { current = JSON.parse(viewer.dataset.currentDetection || 'null'); } catch (e) { /* ignore */ }
+    try { siblings = JSON.parse(viewer.dataset.siblings || '[]'); } catch (e) { /* ignore */ }
+
+    if (current && Number(current.detection_id) === Number(detectionId)) {
+        current.human_review_state = state;
+        current.human_species_key = speciesKey;
+        viewer.dataset.currentDetection = JSON.stringify(current);
+    }
+    if (Array.isArray(siblings)) {
+        siblings.forEach(function (item) {
+            if (Number(item.detection_id) !== Number(detectionId)) return;
+            item.human_review_state = state;
+            item.human_species_key = speciesKey;
+        });
+        if (siblings.length) viewer.dataset.siblings = JSON.stringify(siblings);
+    }
+}
+
+async function confirmBboxSpecies(event, viewer, box) {
+    event.preventDefault();
+    event.stopPropagation();
+    const button = event.currentTarget;
+    if (!box.filename || !box.speciesKey || button.disabled) return;
+    button.disabled = true;
+
+    try {
+        const response = await fetch('/api/labels/answer', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                filename: box.filename,
+                detection_id: box.id,
+                object_bird_presence: 'present',
+                species_identity: 'confirmed',
+                species_key: box.speciesKey
+            })
+        });
+        const payload = await response.json();
+        if (!response.ok || payload.status !== 'success') {
+            throw new Error(payload.message || 'Unable to confirm species');
+        }
+        _setInteractiveReviewState(viewer, box.id, 'confirmed', box.speciesKey);
+        const toggle = viewer.closest('.wm-toolbox-host')?.querySelector('.bbox-toggle.active')
+            || viewer.closest('.wm-modal')?.querySelector('.bbox-toggle.active');
+        if (toggle) redrawBboxOverlay(toggle);
+        if (window.wmToast) window.wmToast('Species confirmed', 'success', 2200);
+    } catch (error) {
+        button.disabled = false;
+        if (window.wmToast) {
+            window.wmToast(error.message || 'Unable to confirm species', 'error', 4200);
+        }
+    }
+}
+
+function _renderInteractiveBboxLabels(canvas, img, boxes, geometry, zoomScale) {
+    const viewer = img.closest('.wm-image-viewer');
+    const layer = viewer?.querySelector('.wm-bbox-label-layer');
+    if (!layer || viewer.dataset.interactiveLabels !== 'true') return;
+
+    layer.replaceChildren();
+    layer.hidden = false;
+    layer.style.left = (img.offsetLeft || 0) + 'px';
+    layer.style.top = (img.offsetTop || 0) + 'px';
+    layer.style.width = geometry.elementW + 'px';
+    layer.style.height = geometry.elementH + 'px';
+    layer.style.transformOrigin = '0 0';
+    layer.style.transform = img.style.transform || '';
+
+    const canModerate = viewer.dataset.canModerate === 'true';
+    const inv = 1 / zoomScale;
+    boxes.forEach(function (rawBox, index) {
+        const box = _enrichInteractiveBox(viewer, rawBox);
+        if (!box.w || !box.h) return;
+        const x = geometry.contentX + box.x * geometry.contentW;
+        const y = geometry.contentY + box.y * geometry.contentH;
+        const h = box.h * geometry.contentH;
+        const label = document.createElement('div');
+        const state = box.reviewState || 'unreviewed';
+        const reviewed = state !== 'unreviewed';
+        label.className = 'wm-bbox-label' + (reviewed ? ' is-reviewed' : '')
+            + (state === 'corrected' ? ' is-corrected' : '')
+            + (box.isCurrent ? ' is-current' : '');
+        label.dataset.detectionId = String(box.id || '');
+        label.dataset.reviewState = state;
+        label.style.left = x + 'px';
+        label.style.top = Math.max(0, y - (34 * inv)) + 'px';
+        label.style.transform = 'scale(' + inv + ')';
+        label.style.setProperty('--bbox-label-colour', resolveBboxColour(box, index));
+
+        const statusText = state === 'reviewed_negative'
+            ? 'No bird'
+            : state === 'reviewed_unknown'
+                ? 'Species unknown'
+                : box.name;
+        if (!reviewed && canModerate && box.speciesKey && box.filename) {
+            const confirmButton = document.createElement('button');
+            confirmButton.type = 'button';
+            confirmButton.className = 'wm-bbox-label__confirm';
+            confirmButton.textContent = statusText;
+            confirmButton.setAttribute('aria-label', 'Confirm species: ' + statusText);
+            confirmButton.title = 'Confirm this species';
+            confirmButton.addEventListener('click', function (event) {
+                confirmBboxSpecies(event, viewer, box);
+            });
+            label.appendChild(confirmButton);
+        } else {
+            const status = document.createElement('span');
+            status.className = 'wm-bbox-label__status';
+            status.textContent = (reviewed ? '✓ ' : '') + statusText;
+            label.appendChild(status);
+        }
+
+        if (canModerate) {
+            const pickerButton = document.createElement('button');
+            pickerButton.type = 'button';
+            pickerButton.className = 'wm-bbox-label__picker';
+            pickerButton.textContent = '▾';
+            pickerButton.setAttribute('aria-label', 'Change species for ' + statusText);
+            pickerButton.title = 'Choose a different species';
+            pickerButton.addEventListener('click', function (event) {
+                relabelDetection(event, box.id, box.speciesKey || '');
+            });
+            label.appendChild(pickerButton);
+        }
+        layer.appendChild(label);
+    });
 }
 
 /**
@@ -1298,6 +1463,7 @@ function drawBoundingBoxes(canvas, img, boxes, currentDetectionId) {
     // node; replaced on every draw.
     const hitTestBoxes = [];
 
+    const interactiveLabels = viewer?.dataset.interactiveLabels === 'true';
     boxes.forEach((box, idx) => {
         if (!box.x && !box.y && !box.w && !box.h) return; // Skip empty boxes
 
@@ -1338,7 +1504,7 @@ function drawBoundingBoxes(canvas, img, boxes, currentDetectionId) {
             : fullLabel;
         const label = truncateBboxLabel(startingLabel, labelMaxWidth, ctx);
 
-        if (label) {
+        if (label && !interactiveLabels) {
             const textMetrics = ctx.measureText(label);
             const labelWidth = textMetrics.width + labelPadX * 2;
 
@@ -1367,6 +1533,7 @@ function drawBoundingBoxes(canvas, img, boxes, currentDetectionId) {
     canvas._hitTestBoxes = hitTestBoxes.slice().sort(function (a, b) {
         return a.area - b.area;
     });
+    _renderInteractiveBboxLabels(canvas, img, boxes, geometry, zoomScale);
 }
 
 // Re-draw boxes on window resize
@@ -1379,9 +1546,7 @@ window.addEventListener('resize', function () {
 
     const btn = openModal.querySelector('.bbox-toggle.active');
     if (btn) {
-        // Re-trigger drawing with current state
-        canvas.style.display = 'none';
-        toggleBboxOverlay(btn);
+        redrawBboxOverlay(btn);
     }
 });
 
@@ -1470,6 +1635,11 @@ function resetSmartZoomViewer(viewer, img) {
     if (canvas) {
         canvas.style.transform = '';
         canvas.style.transformOrigin = '';
+    }
+    const labelLayer = viewer.querySelector('.wm-bbox-label-layer');
+    if (labelLayer) {
+        labelLayer.style.transform = '';
+        labelLayer.style.transformOrigin = '';
     }
 }
 
@@ -1617,6 +1787,11 @@ function applySmartZoom(viewer, img, bx, by, bw, bh) {
     if (canvas) {
         canvas.style.transformOrigin = '0 0';
         canvas.style.transform = transformCSS;
+    }
+    const labelLayer = viewer.querySelector('.wm-bbox-label-layer');
+    if (labelLayer) {
+        labelLayer.style.transformOrigin = '0 0';
+        labelLayer.style.transform = transformCSS;
     }
 
 }

@@ -25,9 +25,11 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 import config
+from tests.labeling_helpers import post
 from utils import path_manager
 from utils.db import connection as db_connection
 from utils.db import insert_classification, insert_detection, insert_image
+from web.services import human_label_service
 from web.web_interface import create_web_interface
 
 
@@ -156,6 +158,7 @@ def seeded_client(local_db_app):
     with local_db_app.test_client() as client:
         with client.session_transaction() as session:
             session["authenticated"] = True
+            session["_csrf_token"] = "test-csrf-token"
         yield client, today_iso
 
 
@@ -270,3 +273,94 @@ def test_subgallery_route_rejects_bad_date(seeded_client):
     response = client.get("/gallery/not-a-date")
 
     assert response.status_code == 400
+
+
+def test_gallery_review_progress_uses_canonical_human_facts(seeded_client):
+    client, today_iso = seeded_client
+
+    initial_gallery = client.get("/gallery").get_data(as_text=True)
+    initial_subgallery = client.get(f"/gallery/{today_iso}").get_data(as_text=True)
+
+    # Both seeded rows are AI-confirmed, but neither was touched by a person.
+    assert 'data-review-progress="0/2"' in initial_gallery
+    assert initial_subgallery.count('data-review-progress="0/1"') == 2
+
+    with db_connection.closing_connection() as conn:
+        row = conn.execute(
+            """
+            SELECT d.detection_id, d.image_filename, c.cls_class_name
+            FROM detections d
+            JOIN classifications c ON c.detection_id = d.detection_id
+            ORDER BY d.detection_id
+            LIMIT 1
+            """
+        ).fetchone()
+
+    response = post(
+        client,
+        "/api/labels/answer",
+        {
+            "filename": row["image_filename"],
+            "detection_id": row["detection_id"],
+            "object_bird_presence": "present",
+            "species_identity": "confirmed",
+            "species_key": row["cls_class_name"],
+        },
+    )
+    assert response.status_code == 200, response.get_data(as_text=True)
+
+    reviewed_gallery = client.get("/gallery").get_data(as_text=True)
+    reviewed_subgallery = client.get(f"/gallery/{today_iso}").get_data(as_text=True)
+
+    assert 'data-review-progress="1/2"' in reviewed_gallery
+    assert 'data-review-progress="1/1"' in reviewed_subgallery
+    assert reviewed_subgallery.count('data-review-progress="0/1"') == 1
+    assert 'data-interactive-labels="true"' in reviewed_subgallery
+    assert 'data-human-review-state="confirmed"' in reviewed_subgallery
+
+    relabeled = post(
+        client,
+        "/api/detections/relabel",
+        {
+            "detection_id": row["detection_id"],
+            "species": "Cyanistes_caeruleus",
+        },
+    )
+    assert relabeled.status_code == 200, relabeled.get_data(as_text=True)
+    corrected_subgallery = client.get(f"/gallery/{today_iso}").get_data(as_text=True)
+    assert 'data-human-review-state="corrected"' in corrected_subgallery
+
+    with db_connection.closing_connection() as conn:
+        other = conn.execute(
+            """
+            SELECT detection_id, image_filename
+            FROM detections
+            WHERE detection_id != ?
+            ORDER BY detection_id
+            LIMIT 1
+            """,
+            (row["detection_id"],),
+        ).fetchone()
+
+    negative = post(
+        client,
+        "/api/labels/answer",
+        {
+            "filename": other["image_filename"],
+            "image_bird_presence": "absent",
+        },
+    )
+    assert negative.status_code == 200, negative.get_data(as_text=True)
+
+    with db_connection.closing_connection() as conn:
+        negative_state = human_label_service.fetch_detection_review_states(
+            conn, [other["detection_id"]]
+        )
+    assert negative_state[other["detection_id"]]["state"] == "reviewed_negative"
+
+    complete_gallery = client.get("/gallery").get_data(as_text=True)
+    complete_subgallery = client.get(f"/gallery/{today_iso}").get_data(as_text=True)
+    # The explicit no-bird image leaves the visible bird gallery entirely;
+    # the remaining visible detection is still honestly complete.
+    assert 'data-review-progress="1/1"' in complete_gallery
+    assert complete_subgallery.count('data-review-progress="1/1"') == 1

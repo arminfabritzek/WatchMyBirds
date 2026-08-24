@@ -122,109 +122,72 @@
             if (n > 0) detectionCount = n;
         }
 
+        const dlg = document.getElementById('wm-no-bird-confirm');
+        const title = dlg && dlg.querySelector('[data-no-bird-confirm-title]');
+        const summary = dlg && dlg.querySelector('[data-no-bird-confirm-summary]');
+        const preview = dlg && dlg.querySelector('[data-no-bird-confirm-preview]');
+        const cancelBtn = dlg && dlg.querySelector('[data-no-bird-confirm-cancel]');
+        const confirmBtn = dlg && dlg.querySelector('[data-no-bird-confirm-submit]');
+
+        if (!dlg || !title || !summary || !preview || !cancelBtn || !confirmBtn
+            || typeof dlg.showModal !== 'function' || dlg.open) {
+            // A text-only fallback would recreate the crop-context trap.
+            // Fail closed when the shared full-image dialog is unavailable.
+            return Promise.resolve(false);
+        }
+
+        title.textContent = 'No birds in this full image?'
+            + (progressLabel ? ' · ' + progressLabel : '');
+        summary.textContent = detectionCount > 1
+            ? ('This frame carries ' + detectionCount
+                + ' detections — ALL will be flagged as false-positives.')
+            : 'All detections on this frame will be flagged as false-positives.';
+
+        // Sanitise fullSrc through the same same-origin path validator used
+        // for navigation. Co-located at the sink so the guard is visible next
+        // to the .src assignment.
+        preview.src = safeFullSrc;
+        preview.alt = 'Full image: ' + filename;
+
         return new Promise(function (resolve) {
-            const dlg = document.createElement('dialog');
-            dlg.className = 'wm-no-bird-confirm';
-            dlg.style.cssText = [
-                'padding: 0',
-                'border: 1px solid var(--color-border, #444)',
-                'border-radius: 8px',
-                'max-width: min(720px, 95vw)',
-                'max-height: 90vh',
-                'background: var(--color-surface, #1a1a1a)',
-                'color: var(--color-text, #eee)',
-            ].join('; ');
+            let settled = false;
 
-            const body = document.createElement('div');
-            body.style.cssText = 'display: flex; flex-direction: column; gap: 12px; padding: 16px;';
+            function finish(confirmed) {
+                if (settled) return;
+                settled = true;
+                cancelBtn.removeEventListener('click', cancel);
+                confirmBtn.removeEventListener('click', confirm);
+                dlg.removeEventListener('click', cancelOnBackdrop);
+                dlg.removeEventListener('close', settleFromClose);
+                resolve(confirmed);
+            }
 
-            const heading = document.createElement('h2');
-            heading.textContent = 'No birds in this full image?'
-                + (progressLabel ? ' · ' + progressLabel : '');
-            heading.style.cssText = 'margin: 0; font-size: 18px; font-weight: 600;';
-            body.appendChild(heading);
-
-            const subline = document.createElement('p');
-            subline.style.cssText = 'margin: 0; color: var(--color-text-muted, #aaa); font-size: 14px;';
-            subline.textContent = detectionCount > 1
-                ? ('This frame carries ' + detectionCount
-                    + ' detections — ALL will be flagged as false-positives.')
-                : 'All detections on this frame will be flagged as false-positives.';
-            body.appendChild(subline);
-
-            // Full-frame preview — the whole point of this dialog. If the
-            // image is not yet cached, the operator sees a placeholder
-            // background until the optimized version downloads.
-            // Sanitise fullSrc through the same same-origin path validator
-            // used for navigation. Co-located at the sink so the guard is
-            // visible next to the .src assignment.
-            const preview = document.createElement('img');
-            preview.src = safeFullSrc;
-            preview.alt = 'Full image: ' + filename;
-            preview.style.cssText = [
-                'width: 100%',
-                'height: auto',
-                'max-height: 60vh',
-                'object-fit: contain',
-                'background: #000',
-                'border-radius: 4px',
-                'display: block',
-            ].join('; ');
-            body.appendChild(preview);
-
-            const hint = document.createElement('p');
-            hint.style.cssText = 'margin: 0; font-size: 12px; color: var(--color-text-muted, #888);';
-            hint.textContent = 'This records that the entire image contains no bird. '
-                + 'Review the complete frame above, not only the crop.';
-            body.appendChild(hint);
-
-            const actions = document.createElement('div');
-            actions.style.cssText = 'display: flex; gap: 8px; justify-content: flex-end; margin-top: 4px;';
-
-            const cancelBtn = document.createElement('button');
-            cancelBtn.type = 'button';
-            cancelBtn.textContent = 'Cancel';
-            cancelBtn.className = 'btn btn--secondary';
-            cancelBtn.style.cssText = 'padding: 8px 16px; cursor: pointer;';
-            cancelBtn.addEventListener('click', function () {
+            function cancel() {
                 dlg.close('cancel');
-            });
-            actions.appendChild(cancelBtn);
+            }
 
-            const confirmBtn = document.createElement('button');
-            confirmBtn.type = 'button';
-            confirmBtn.textContent = 'Confirm no birds in full image';
-            confirmBtn.className = 'btn btn--danger';
-            confirmBtn.style.cssText = 'padding: 8px 16px; cursor: pointer; '
-                + 'background: var(--color-danger, #dc2626); color: white; border: none; border-radius: 4px;';
-            confirmBtn.addEventListener('click', function () {
+            function confirm() {
                 dlg.close('confirm');
-            });
-            actions.appendChild(confirmBtn);
+            }
 
-            body.appendChild(actions);
-            dlg.appendChild(body);
-            document.body.appendChild(dlg);
-
-            dlg.addEventListener('close', function () {
-                const ok = dlg.returnValue === 'confirm';
-                dlg.remove();
-                resolve(ok);
-            });
-
-            // Backdrop click cancels — the operator clicking outside the
-            // dialog means "I changed my mind".
-            dlg.addEventListener('click', function (event) {
+            function cancelOnBackdrop(event) {
                 if (event.target === dlg) dlg.close('cancel');
-            });
+            }
 
-            if (typeof dlg.showModal === 'function') {
+            function settleFromClose() {
+                finish(dlg.returnValue === 'confirm');
+            }
+
+            cancelBtn.addEventListener('click', cancel);
+            confirmBtn.addEventListener('click', confirm);
+            dlg.addEventListener('click', cancelOnBackdrop);
+            dlg.addEventListener('close', settleFromClose);
+            dlg.returnValue = 'cancel';
+
+            try {
                 dlg.showModal();
-            } else {
-                // A text-only fallback would recreate the crop-context trap.
-                // Fail closed when the browser cannot show the full image.
-                dlg.remove();
-                resolve(false);
+            } catch (error) {
+                finish(false);
             }
         });
     }

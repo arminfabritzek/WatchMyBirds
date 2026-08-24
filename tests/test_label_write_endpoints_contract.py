@@ -342,6 +342,7 @@ def test_event_resolve_confirms_keeps_and_rejects_trash_together(seeded):
             "trash_detection_ids": [seeded["a2"]],
             "species": TARGET_SPECIES,
             "bbox_review": "correct",
+            "evidence_quality": "diagnostic",
         },
     )
 
@@ -484,6 +485,7 @@ def test_event_resolve_does_not_overwrite_a_per_frame_relabel(seeded):
             "trash_detection_ids": [seeded["a2"]],
             "species": TARGET_SPECIES,
             "bbox_review": "correct",
+            "evidence_quality": "diagnostic",
         },
     )
 

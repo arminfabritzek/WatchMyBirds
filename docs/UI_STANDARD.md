@@ -35,8 +35,9 @@ or changed in **one place** and instantly apply everywhere.
    No birds in full image, future
    star ratings, …). Surfaces may *omit* an action when the route does not
    support it; they may **not** rename it, reorder it, or add a parallel
-   surface-local button for the same action. See §0b for which actions
-   render as primary vs. inside the overflow on each surface.
+   surface-local button for the same action. The offered-box species control
+   defined in §0e is the sole object-anchored exception. See §0b for which
+   actions render as primary vs. inside the overflow on each surface.
 3. **One action vocabulary.** The canonical verbs in §"Detection Action Frame
    Contract" are the only allowed labels. Adding a new image action means
    adding it to the toolbox macro and to this section, never as a one-off in a
@@ -143,6 +144,76 @@ detail modal. It is not a separate labeling mode or page.
    with multiple proposals it states how many boxes have answers and makes
    clear that other boxes are unchanged.
 
+## 0e. Offered-Box Species Confirmation (binding)
+
+Gallery detail modals may attach one compact species control directly to each
+offered detection box. This is an object selector and one-tap answer, not a
+second toolbox or a blank-canvas labeling mode.
+
+1. The primary segment shows the localized proposed species. Activating it
+   records only object bird presence plus species confirmation for that
+   detection through `/api/labels/answer`. It never confirms bbox quality,
+   image-level bird presence, or sibling detections.
+2. The secondary `▾` segment opens the existing shared species picker for that
+   detection. It does not introduce a second picker implementation.
+3. A check mark means canonical current human evidence exists. AI decision
+   state and legacy review columns must never create the check appearance.
+4. Confirmed and corrected controls retain the species colour. Confirmation is
+   distinguished by check state and outline, not by turning every species box
+   the same colour.
+5. Gallery tiles remain read-only. They may show aggregate `reviewed / total`
+   progress, but all fact-writing controls stay inside the detail modal or the
+   established Review workflow.
+6. Every segment is keyboard focusable, carries an accessible name, and keeps
+   a practical touch target. Focus/Full transforms, resizing, and active-box
+   switching must keep labels aligned with their boxes.
+
+**Class vocabulary:**
+
+| Class | Role |
+|---|---|
+| `wm-bbox-label-layer` | Viewer-aligned overlay layer that hosts offered-box species controls |
+| `wm-bbox-label` | One species control aligned to a proposed detection box |
+| `wm-bbox-label__confirm` | Primary segment that confirms the proposed species |
+| `wm-bbox-label__status` | Read-only species/status segment when direct confirmation is unavailable |
+| `wm-bbox-label__picker` | Secondary segment that opens the shared species picker |
+| `is-reviewed` | Current canonical species evidence exists for this box |
+| `is-corrected` | The current human species answer differs from the proposal |
+
+## 0f. Biological Event Evidence Decision (binding)
+
+The Review Desk is the only surface that turns model-proposed events into
+biological station records.
+
+1. Event approval requires an explicit diagnostic-evidence assessment:
+   `Diagnostic`, `Limited`, or `Insufficient`. No option is preselected.
+2. `Diagnostic` means visible traits support the asserted species. `Limited`
+   and `Insufficient` preserve the human review but never enter verified
+   biological metrics.
+3. The decision vocabulary is `Approve Event`, `Bird · species unresolved`,
+   and `Move Event to Trash`. The unresolved action asserts bird presence but
+   deliberately leaves species identity unknown.
+4. Model confidence, automated decision state, image aesthetics, and legacy
+   review columns may provide context but can never select an evidence option
+   or create a verified event.
+5. Evidence controls live in the established event control rail. They are not
+   per-image toolbox actions and do not create another image viewer.
+6. Every Review Desk layout that exposes an event-level decision MUST expose
+   the same unselected evidence control. The server rejects event approval or
+   resolution when that explicit value is absent; no legacy/default value is
+   inferred.
+
+**Class vocabulary:**
+
+| Class | Role |
+|---|---|
+| `review-grid__evidence` | Evidence-quality fieldset in the default Review Grid card header |
+| `review-grid__evidence-options` | Segmented option group for the three evidence levels |
+| `review-grid__evidence-option` | One Review Grid evidence-quality choice |
+| `review-event-panel__evidence-options` | Evidence option group in the retained event-panel fragment |
+| `review-event-panel__evidence-option` | One retained event-panel evidence-quality choice |
+| `is-selected` | Explicit operator selection; never inferred from model state |
+
 ## 0a. Hover Tooltip Convention (binding)
 
 Every interactive control on an image-bearing surface — toolbox buttons,
@@ -183,9 +254,14 @@ stop being visually primary.
 
 **The rule:**
 
-1. **At most 3 primary actions per surface.** Two is the typical case;
-   three only when the surface has a genuinely distinct decide-action
-   (Review) or restore-action (Trash, Restore).
+1. **At most 3 primary actions per surface, with one explicit Review
+   exception.** Two is the typical case; three is reserved for a genuinely
+   distinct decide-action or restore-action. Review per-member tiles expose
+   four primary actions (`Favorite`, `Change Species`, `Move to Trash`, and
+   `No birds in full image`) because those high-frequency verdict actions must
+   remain directly reachable during fast scanning and on touch devices. No
+   other surface may exceed three without updating this rule and the table
+   below in the same change.
 2. **One overflow control.** A single `⋮` button (`wm-toolbox__more`)
    opens a dropdown (`wm-toolbox__menu`) that holds every action the
    surface supports but does not promote to primary.
@@ -348,8 +424,8 @@ detection-bearing tiles, filmstrips, and modal/detail surfaces.
 
 - Canonical action vocabulary:
   `View Details`, `Favorite`, `Change Species`, `Adjust Bounding Box`,
-  `Move to Trash`, `Restore`, `Correct`, `Wrong`, `Approve`, `Deep Scan`,
-  `No birds in full image`
+  `Correction Details`, `Move to Trash`, `Restore`, `Correct`, `Wrong`,
+  `Approve`, `Deep Scan`, `No birds in full image`
 - Surfaces may omit actions only when the subject identity or route does not
   support them. They must not rename the same underlying action on another
   surface.
@@ -1614,6 +1690,27 @@ and species answers continue through their normal controls.
 - Only the affirmative button shown after the complete image may submit
   `action=no_bird` to `/api/review/decision`.
 
+**Component ownership:**
+
+- `templates/partials/no_bird_confirm_dialog.html` owns the single shared
+  dialog structure and is mounted once from `templates/base.html`.
+- `assets/design-system.css` owns the `wm-no-bird-confirm` presentation,
+  including viewport sizing and backdrop treatment. Dialog layout must not be
+  rebuilt with JavaScript inline styles.
+- `assets/js/tile_actions.js` resolves the safe full-image URL, populates the
+  shared dialog, and owns its sequential multi-image and fail-closed behavior.
+
+**Class vocabulary:**
+
+| Class | Role |
+|---|---|
+| `wm-no-bird-confirm` | Shared native dialog and canonical `wm-modal` variant |
+| `wm-no-bird-confirm__content` | Dialog content stack |
+| `wm-no-bird-confirm__summary` | Frame-wide impact statement |
+| `wm-no-bird-confirm__preview` | Complete affected frame preview |
+| `wm-no-bird-confirm__hint` | Whole-image scope reminder |
+| `wm-no-bird-confirm__actions` | Cancel and affirmative action row |
+
 **Semantic contract:**
 
 - Image bird presence and proposed-object bird presence are separate questions.
@@ -1638,7 +1735,10 @@ and species answers continue through their normal controls.
 
 1. Every modal structure uses a defined type: `wm-modal` or `wm-modal wm-modal--form`.
 2. Every tile structure uses a defined type: `wm-tile`, `wm-tile wm-tile--review` (legacy), or `wm-tile wm-tile--bbox`.
-3. The Review workbench uses the `review-stage-panel` composition (§6), not standalone tiles.
+3. The default Review workbench uses the `review-grid` event-card composition
+   (§6 and §6bb). The retired `review-stage-panel` composition remains only for
+   fragment endpoints, orphan-modal hosting, and explicit legacy-layout
+   verification; new default Review Desk work must not extend it.
 4. Every detection-bearing browsing surface uses `tile_toolbox` (§5) for action overlays.
 5. No template may build its own modal, tile, or toolbox structures.
 6. Only these classes may be used.

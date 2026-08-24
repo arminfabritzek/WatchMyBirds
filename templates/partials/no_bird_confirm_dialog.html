@@ -1,0 +1,26 @@
+{# Shared full-frame safety gate for the canonical "No birds in full image" action. #}
+<dialog id="wm-no-bird-confirm" class="wm-modal wm-no-bird-confirm"
+    aria-labelledby="wm-no-bird-confirm-title"
+    aria-describedby="wm-no-bird-confirm-summary wm-no-bird-confirm-hint">
+    <div class="wm-no-bird-confirm__content">
+        <h2 id="wm-no-bird-confirm-title" data-no-bird-confirm-title>No birds in this full image?</h2>
+        <p id="wm-no-bird-confirm-summary" class="wm-no-bird-confirm__summary"
+            data-no-bird-confirm-summary></p>
+        <img class="wm-no-bird-confirm__preview" data-no-bird-confirm-preview
+            src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw=="
+            alt="Full image preview">
+        <p id="wm-no-bird-confirm-hint" class="wm-no-bird-confirm__hint">
+            This records that the entire image contains no bird. Review the complete frame above, not only the crop.
+        </p>
+        <div class="wm-no-bird-confirm__actions">
+            <button type="button" class="btn btn--secondary" data-no-bird-confirm-cancel
+                aria-label="Cancel full-image no-bird confirmation"
+                title="Keep this image unchanged">Cancel</button>
+            <button type="button" class="btn btn--danger" data-no-bird-confirm-submit
+                aria-label="Confirm no birds in full image"
+                title="Record that the full image contains no birds">
+                Confirm no birds in full image
+            </button>
+        </div>
+    </div>
+</dialog>

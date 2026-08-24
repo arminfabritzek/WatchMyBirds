@@ -18,8 +18,10 @@ nav_index (int|None): Optional index within nav_scope
 {% macro render_modal(det, group_id, nav_scope=none, nav_index=none) %}
 {% set can_moderate = session.get('authenticated') %}
 {% set show_nav = kwargs.show_nav if kwargs.show_nav is defined else true %}
+{% set interactive_labels = kwargs.interactive_labels if kwargs.interactive_labels is defined else false %}
 <div class="modal fade gallery-modal wm-modal" id="modal-{{ group_id }}-{{ det.detection_id }}" tabindex="-1"
     aria-hidden="true" data-modal-group="{{ group_id }}" data-image-path="{{ det.full_path }}"
+    {% if interactive_labels %}data-human-review-state="{{ det.human_review_state | default('unreviewed') }}"{% endif %}
     {% if nav_scope %}data-nav-scope="{{ nav_scope }}"{% endif %}
     {% if nav_index is not none %}data-nav-index="{{ nav_index }}"{% endif %}>
 
@@ -105,7 +107,17 @@ nav_index (int|None): Optional index within nav_scope
                     siblings=det.siblings,
                     dismissable=true,
                     defer_src=true,
-                    show_view_mode=true
+                    show_view_mode=true,
+                    interactive_labels=interactive_labels,
+                    can_moderate=can_moderate,
+                    current_detection={
+                    'detection_id': det.detection_id,
+                    'image_filename': det.image_filename,
+                    'species_key': det.human_species_key or det.species_key or det.manual_species_override or det.cls_class_name or det.od_class_name,
+                    'common_name': det.human_common_name or det.common_name,
+                    'human_review_state': det.human_review_state | default('unreviewed'),
+                    'species_colour': det.species_colour | default(none)
+                    }
                     ) }}
                     {{ tile_toolbox(
                     detection_id=det.detection_id,

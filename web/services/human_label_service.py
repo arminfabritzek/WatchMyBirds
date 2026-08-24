@@ -20,6 +20,7 @@ from core.human_label_core import (
 from core.human_label_core import (
     retract_bbox_quality as retract_bbox_quality_core,
 )
+from core.station_report import record_station_event_review
 
 
 def _app_version(explicit_version: str = "") -> str:
@@ -53,6 +54,47 @@ def record_answer(
         source_ref=source_ref,
     )
     return record_human_answer(conn, answer, provenance)
+
+
+def record_event_review(
+    conn: sqlite3.Connection,
+    *,
+    event_key: str,
+    detection_ids: list[int],
+    anchor_detection_id: int,
+    outcome: str,
+    evidence_quality: str,
+    event_start: str,
+    event_end: str,
+    candidate_species_key: str | None = None,
+    species_key: str | None = None,
+    source_ref: str | None = None,
+    app_version: str = "",
+) -> int:
+    """Append the event-level diagnostic-evidence statement."""
+    cfg = get_config()
+    provenance = LabelProvenance(
+        installation_id=get_or_create_labeling_installation_id(
+            str(cfg["OUTPUT_DIR"])
+        ),
+        app_version=_app_version(app_version),
+        context="normal_correction",
+        source_kind="watchmybirds_ui",
+        source_ref=source_ref,
+    )
+    return record_station_event_review(
+        conn,
+        event_key=event_key,
+        detection_ids=detection_ids,
+        anchor_detection_id=anchor_detection_id,
+        outcome=outcome,
+        evidence_quality=evidence_quality,
+        event_start=event_start,
+        event_end=event_end,
+        provenance=provenance,
+        candidate_species_key=candidate_species_key,
+        species_key=species_key,
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -115,6 +157,116 @@ def fetch_current_facts(
         params,
     ).fetchall()
     return [dict(row) for row in rows]
+
+
+def fetch_detection_review_states(
+    conn: sqlite3.Connection,
+    detection_ids: list[int],
+) -> dict[int, dict[str, object]]:
+    """Return canonical human species-review state for offered detections.
+
+    AI decision state and legacy review columns are intentionally absent from
+    this projection. An explicit image-level no-bird answer is a reviewed
+    negative for every offered detection on that image, but it remains an
+    image-scoped fact in storage.
+    """
+    ids = sorted({int(detection_id) for detection_id in detection_ids if detection_id})
+    states: dict[int, dict[str, object]] = {
+        detection_id: {
+            "state": "unreviewed",
+            "reviewed": False,
+            "species_key": None,
+        }
+        for detection_id in ids
+    }
+    if not ids:
+        return states
+
+    priority = {
+        "unreviewed": 0,
+        "reviewed_unknown": 1,
+        "confirmed": 2,
+        "corrected": 3,
+        "reviewed_negative": 4,
+    }
+
+    for start in range(0, len(ids), 500):
+        chunk = ids[start : start + 500]
+        placeholders = ",".join("?" for _ in chunk)
+        object_rows = conn.execute(
+            f"""
+            SELECT current.detection_id, current.scope, current.fact_type,
+                   current.assertion_state, current.answer_value,
+                   current.species_key
+            FROM current_human_label_facts current
+            WHERE current.scope = 'object'
+              AND current.detection_id IN ({placeholders})
+              AND current.fact_type IN ('bird_presence', 'species_identity')
+            """,
+            chunk,
+        ).fetchall()
+        image_rows = conn.execute(
+            f"""
+            SELECT d.detection_id, current.scope, current.fact_type,
+                   current.assertion_state, current.answer_value,
+                   current.species_key
+            FROM detections d
+            JOIN current_human_label_facts current
+              ON current.scope = 'image'
+             AND current.image_filename = d.image_filename
+             AND current.fact_type = 'bird_presence'
+            WHERE d.detection_id IN ({placeholders})
+            """,
+            chunk,
+        ).fetchall()
+
+        for row in (*object_rows, *image_rows):
+            if row["assertion_state"] != "asserted":
+                continue
+            next_state: str | None = None
+            if (
+                row["fact_type"] == "bird_presence"
+                and row["answer_value"] == "absent"
+            ):
+                next_state = "reviewed_negative"
+            elif row["fact_type"] == "species_identity":
+                if row["answer_value"] in {"confirmed", "corrected"}:
+                    next_state = str(row["answer_value"])
+                elif row["answer_value"] == "unknown":
+                    next_state = "reviewed_unknown"
+
+            if next_state is None:
+                continue
+            detection_id = int(row["detection_id"])
+            current_state = str(states[detection_id]["state"])
+            if priority[next_state] < priority[current_state]:
+                continue
+            states[detection_id] = {
+                "state": next_state,
+                "reviewed": True,
+                "species_key": (
+                    row["species_key"]
+                    if next_state in {"confirmed", "corrected"}
+                    else None
+                ),
+            }
+
+    return states
+
+
+def summarize_detection_review_progress(
+    review_states: dict[int, dict[str, object]],
+    detection_ids: list[int],
+) -> dict[str, int | bool]:
+    """Count reviewed offered detections without implying wider scope."""
+    ids = {int(detection_id) for detection_id in detection_ids if detection_id}
+    reviewed = sum(bool(review_states.get(detection_id, {}).get("reviewed")) for detection_id in ids)
+    total = len(ids)
+    return {
+        "reviewed": reviewed,
+        "total": total,
+        "complete": total > 0 and reviewed == total,
+    }
 
 
 def summarize_object_state(

@@ -16,8 +16,9 @@ defer_src (bool): If true, keep the real image URL in data-deferred-src
                   until the modal opens. Prevents hidden modals from
                   preloading every full image on Gallery day pages.
 show_view_mode (bool): If true, show the direct Focus/Full view control.
+interactive_labels (bool): Render accessible species controls for offered boxes.
 #}
-{% macro render_image_viewer(image_url, image_alt, detection_id, bbox=none, siblings=none, dismissable=true, defer_src=false, show_view_mode=false) %}
+{% macro render_image_viewer(image_url, image_alt, detection_id, bbox=none, siblings=none, dismissable=true, defer_src=false, show_view_mode=false, interactive_labels=false, can_moderate=false, current_detection=none) %}
 {% set placeholder_src = "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==" %}
 <div class="modal-image-viewer wm-image-viewer{% if defer_src %} wm-image-viewer--loading{% endif %}" {% if bbox and bbox.x is not none and bbox.w and bbox.w> 0 %}
     data-bbox-x="{{ bbox.x }}"
@@ -26,6 +27,10 @@ show_view_mode (bool): If true, show the direct Focus/Full view control.
     data-bbox-h="{{ bbox.h }}"
     {% endif %}{% if siblings %}
     data-siblings='{{ siblings | tojson }}'
+    {% endif %}{% if interactive_labels %}
+    data-interactive-labels="true"
+    data-can-moderate="{{ 'true' if can_moderate else 'false' }}"
+    data-current-detection='{{ (current_detection or {}) | tojson }}'
     {% endif %}>
     <img class="wm-image-viewer__img bbox-base-image"
         src="{{ placeholder_src if defer_src else image_url }}"
@@ -35,6 +40,10 @@ show_view_mode (bool): If true, show the direct Focus/Full view control.
         aria-label="Close" title="Click to close" {% endif %}>
 
     <canvas class="wm-image-viewer__overlay bbox-overlay"></canvas>
+
+    {% if interactive_labels %}
+    <div class="wm-bbox-label-layer" aria-label="Species labels for detected birds"></div>
+    {% endif %}
 
     {% if show_view_mode and bbox and bbox.x is not none and bbox.w and bbox.w > 0 %}
     <div class="wm-view-mode-toggle wm-view-mode-toggle--viewer smart-zoom-toggle"

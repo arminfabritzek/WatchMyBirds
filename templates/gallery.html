@@ -15,7 +15,8 @@
 {% if days %}
 <div class="date-grid">
     {% for day in days %}
-    <a href="/gallery/{{ day.date }}" class="date-card fade-in-item">
+    <a href="/gallery/{{ day.date }}" class="date-card fade-in-item"
+        data-review-progress="{{ day.review_progress.reviewed }}/{{ day.review_progress.total }}">
         <div class="date-card__image">
             <img loading="lazy" src="{{ day.cover_path }}" alt="{{ day.date }}">
             <span class="date-card__count">{{ day.count }}</span>
@@ -25,6 +26,14 @@
             {% endif %}
         </div>
         <div class="date-card__label">{{ day.date }}</div>
+        <div class="wm-review-progress{% if day.review_progress.complete %} is-complete{% endif %}"
+            aria-label="{{ day.review_progress.reviewed }} of {{ day.review_progress.total }} species labels checked">
+            <span class="wm-review-progress__mark" aria-hidden="true">{% if day.review_progress.complete %}✓{% endif %}</span>
+            <span>{{ day.review_progress.reviewed }}/{{ day.review_progress.total }} checked</span>
+            <span class="wm-review-progress__track" aria-hidden="true">
+                <span style="width: {{ (day.review_progress.reviewed * 100 / day.review_progress.total) if day.review_progress.total else 0 }}%"></span>
+            </span>
+        </div>
     </a>
     {% endfor %}
 </div>

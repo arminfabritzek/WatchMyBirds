@@ -254,7 +254,7 @@ def test_authenticated_page_routes_render_without_build_errors(seeded_client):
     # heavy authenticated pages against the FULL app to surface BuildErrors.
     client, _today_iso = seeded_client
 
-    for path in ("/settings", "/logs", "/privacy"):
+    for path in ("/settings", "/logs", "/privacy", "/analytics"):
         resp = client.get(path)
         assert resp.status_code == 200, (
             f"{path} rendered {resp.status_code} (likely a url_for BuildError "

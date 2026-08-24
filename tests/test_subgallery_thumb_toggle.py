@@ -45,6 +45,18 @@ def test_subgallery_uses_today_specific_heading():
     assert "All Observations" not in content
 
 
+def test_species_of_day_latin_name_uses_effective_species():
+    content = (_project_root() / "templates" / "subgallery.html").read_text(
+        encoding="utf-8"
+    )
+
+    assert "{{ det.species_key | replace('_', ' ') }}" in content
+    stale_model_label = (
+        "{{ (det.cls_class_name or det.od_class_name) | replace('_', ' ') }}"
+    )
+    assert stale_model_label not in content
+
+
 def test_single_image_observations_open_modal_instead_of_filmstrip():
     content = (_project_root() / "templates" / "subgallery.html").read_text(
         encoding="utf-8"

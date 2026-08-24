@@ -30,7 +30,12 @@ from logging_config import get_logger
 from web import view_helpers
 from web.blueprints.auth import login_required
 from web.security import safe_log_value as _slv
-from web.services import db_service, gallery_service, image_download_service
+from web.services import (
+    db_service,
+    gallery_service,
+    human_label_service,
+    image_download_service,
+)
 
 logger = get_logger(__name__)
 config = get_config()
@@ -531,6 +536,17 @@ def species_overview_route():
 def gallery_route():
 
     daily_covers = view_helpers.get_daily_covers()
+    detections_by_date = view_helpers.get_captured_detections_by_date()
+    all_detection_ids = [
+        int(det["detection_id"])
+        for detections in detections_by_date.values()
+        for det in detections
+        if det.get("detection_id")
+    ]
+    with db_service.closing_connection() as conn:
+        review_states = human_label_service.fetch_detection_review_states(
+            conn, all_detection_ids
+        )
     sorted_dates = sorted(daily_covers.keys(), reverse=True)
 
     days = []
@@ -545,6 +561,14 @@ def gallery_route():
         except Exception:
             display_date = date_str
 
+        day_detection_ids = [
+            int(det["detection_id"])
+            for det in detections_by_date.get(date_str, [])
+            if det.get("detection_id")
+        ]
+        review_progress = human_label_service.summarize_detection_review_progress(
+            review_states, day_detection_ids
+        )
         days.append(
             {
                 "date": date_str,
@@ -552,6 +576,7 @@ def gallery_route():
                 "cover_path": data.get("path", ""),
                 "count": data.get("count", 0),
                 "cover_detection_id": data.get("detection_id"),
+                "review_progress": review_progress,
             }
         )
 
@@ -584,6 +609,10 @@ def subgallery_route(date):
 
     with db_service.closing_connection() as conn:
         rows = db_service.fetch_detections_for_gallery(conn, date, order_by="time")
+        review_states = human_label_service.fetch_detection_review_states(
+            conn,
+            [int(row["detection_id"]) for row in rows if row["detection_id"]],
+        )
     detections_raw = [dict(row) for row in rows]
 
     detections_for_gallery = detections_raw
@@ -642,6 +671,24 @@ def subgallery_route(date):
 
     det_by_id = {d.get("detection_id"): d for d in detections_for_gallery}
 
+    def human_review_extra(det: dict) -> dict:
+        detection_id = int(det.get("detection_id") or 0)
+        state = review_states.get(
+            detection_id,
+            {"state": "unreviewed", "reviewed": False, "species_key": None},
+        )
+        human_species_key = state.get("species_key")
+        return {
+            "human_review_state": state["state"],
+            "human_reviewed": state["reviewed"],
+            "human_species_key": human_species_key,
+            "human_common_name": (
+                view_helpers.get_common_name(str(human_species_key))
+                if human_species_key
+                else ""
+            ),
+        }
+
     def enrich_detection(det):
         full_path = det.get("relative_path") or det.get("optimized_name_virtual", "")
 
@@ -688,6 +735,7 @@ def subgallery_route(date):
                                     if sib_thumb
                                     else ""
                                 ),
+                                **human_review_extra(sib),
                             },
                         )
                     )
@@ -710,6 +758,7 @@ def subgallery_route(date):
                 "display_path": display_url,
                 "full_path": full_url,
                 "original_path": original_url,
+                **human_review_extra(det),
             },
         )
 
@@ -759,6 +808,11 @@ def subgallery_route(date):
                 "detection_ids": obs["detection_ids"],
                 "start_time": obs["start_time"],
                 "end_time": obs["end_time"],
+                "review_progress": (
+                    human_label_service.summarize_detection_review_progress(
+                        review_states, obs["detection_ids"]
+                    )
+                ),
             }
         )
 

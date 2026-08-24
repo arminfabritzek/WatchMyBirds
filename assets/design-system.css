@@ -5442,6 +5442,71 @@ body {
     box-shadow: 0 0 0 2px rgba(201, 124, 42, 0.18);
 }
 
+/* Shared full-frame safety gate. This native dialog is mounted once by
+   base.html and populated by tile_actions.js for every no-bird decision. */
+.wm-no-bird-confirm {
+    box-sizing: border-box;
+    width: 95vw;
+    max-width: none;
+    max-height: 94vh;
+    padding: 0;
+    overflow: auto;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-lg);
+    background: var(--color-surface);
+    color: var(--color-text);
+}
+
+.wm-no-bird-confirm::backdrop {
+    background: rgb(0 0 0 / 72%);
+}
+
+.wm-no-bird-confirm__content {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-md);
+    padding: var(--space-md);
+}
+
+.wm-no-bird-confirm__content h2,
+.wm-no-bird-confirm__summary,
+.wm-no-bird-confirm__hint {
+    margin: 0;
+}
+
+.wm-no-bird-confirm__content h2 {
+    font-size: var(--font-size-lg);
+    font-weight: 600;
+}
+
+.wm-no-bird-confirm__summary {
+    color: var(--color-text-muted);
+    font-size: var(--font-size-sm);
+}
+
+.wm-no-bird-confirm__preview {
+    display: block;
+    width: 100%;
+    height: auto;
+    max-height: calc(94vh - 190px);
+    border-radius: var(--radius-sm);
+    background: #000;
+    object-fit: contain;
+}
+
+.wm-no-bird-confirm__hint {
+    color: var(--color-text-muted);
+    font-size: var(--font-size-xs);
+}
+
+.wm-no-bird-confirm__actions {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: var(--space-sm);
+    margin-top: var(--space-xs);
+}
+
 /* Maximized variant. Toggled via the ⛶ button in
    the header action group (toggleModalMaximize in gallery_utils.js).
    Dialog fills the viewport, header chrome shrinks to icons + title-only,
@@ -5975,6 +6040,99 @@ body {
     left: 0;
     pointer-events: none;
     display: none;
+}
+
+.wm-bbox-label-layer {
+    position: absolute;
+    z-index: 14;
+    overflow: visible;
+    pointer-events: none;
+}
+
+.wm-bbox-label {
+    position: absolute;
+    display: inline-flex;
+    max-width: min(260px, 72vw);
+    min-height: 32px;
+    overflow: hidden;
+    transform-origin: 0 0;
+    border: 2px solid var(--bbox-label-colour, #f5c84c);
+    border-radius: 8px;
+    background: var(--bbox-label-colour, #f5c84c);
+    color: #101412;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.38);
+    font-size: 0.78rem;
+    font-weight: 750;
+    line-height: 1;
+    pointer-events: auto;
+    white-space: nowrap;
+}
+
+.wm-bbox-label.is-reviewed {
+    box-shadow:
+        0 0 0 2px rgba(255, 255, 255, 0.92),
+        0 0 0 4px rgba(32, 116, 75, 0.92),
+        0 3px 10px rgba(0, 0, 0, 0.42);
+}
+
+.wm-bbox-label.is-corrected {
+    box-shadow:
+        0 0 0 2px rgba(255, 255, 255, 0.92),
+        0 0 0 4px rgba(55, 105, 150, 0.92),
+        0 3px 10px rgba(0, 0, 0, 0.42);
+}
+
+.wm-bbox-label__confirm,
+.wm-bbox-label__status,
+.wm-bbox-label__picker {
+    min-height: 30px;
+    border: 0;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+}
+
+.wm-bbox-label__confirm,
+.wm-bbox-label__status {
+    display: inline-flex;
+    min-width: 0;
+    align-items: center;
+    padding: 0 10px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.wm-bbox-label__confirm {
+    cursor: pointer;
+}
+
+.wm-bbox-label__confirm:hover {
+    background: rgba(255, 255, 255, 0.28);
+}
+
+.wm-bbox-label__confirm:disabled {
+    cursor: wait;
+    opacity: 0.7;
+}
+
+.wm-bbox-label__picker {
+    flex: 0 0 34px;
+    width: 34px;
+    padding: 0;
+    border-left: 1px solid rgba(16, 20, 18, 0.38);
+    cursor: pointer;
+}
+
+.wm-bbox-label__picker:hover {
+    background: rgba(255, 255, 255, 0.34);
+}
+
+.wm-bbox-label__confirm:focus-visible,
+.wm-bbox-label__picker:focus-visible {
+    position: relative;
+    z-index: 1;
+    outline: 3px solid #fff;
+    outline-offset: -3px;
 }
 
 /* Direct correction sits on the canonical image viewer. The visible border
@@ -8986,6 +9144,49 @@ img.review-species-ref {
 .wm-tile__meta {
     font-size: var(--font-size-xs);
     color: var(--color-text-muted);
+}
+
+.wm-review-progress {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--color-text-muted);
+    font-size: var(--font-size-xs);
+    font-variant-numeric: tabular-nums;
+}
+
+.wm-review-progress.is-complete {
+    color: #236b49;
+    font-weight: 700;
+}
+
+.wm-review-progress__mark {
+    width: 1em;
+    color: #236b49;
+    font-weight: 800;
+}
+
+.wm-review-progress__track {
+    width: 56px;
+    height: 4px;
+    overflow: hidden;
+    border-radius: 999px;
+    background: rgba(95, 71, 37, 0.14);
+}
+
+.wm-review-progress__track > span {
+    display: block;
+    height: 100%;
+    border-radius: inherit;
+    background: #2f7d57;
+}
+
+.date-card > .wm-review-progress {
+    padding: 0 var(--space-sm) var(--space-sm);
+}
+
+.wm-review-progress--observation {
+    justify-content: center;
 }
 
 .wm-tile__meta-row {
