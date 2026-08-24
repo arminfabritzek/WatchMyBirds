@@ -785,6 +785,59 @@ class TestApiV1PtzManualMove:
         assert response.status_code == 200
         mock_ptz.stop.assert_called_once_with(0)
 
+    def test_focus_capabilities_endpoint(self, client):
+        """The UI can discover focus support without moving the lens."""
+        from web.blueprints import api_v1 as api_v1_module
+
+        expected = {"continuous": True, "autofocus": True}
+        with patch.object(api_v1_module, "ptz_service") as mock_ptz:
+            mock_ptz.get_focus_capabilities.return_value = expected
+            response = client.get("/api/v1/cameras/0/focus/capabilities")
+
+        assert response.status_code == 200
+        assert response.get_json() == {"status": "success", "data": expected}
+
+    def test_focus_move_clamps_speed_and_duration(self, client):
+        """Manual focus uses the same bounded dead-man window as PTZ."""
+        from web.blueprints import api_v1 as api_v1_module
+
+        with patch.object(api_v1_module, "ptz_service") as mock_ptz:
+            response = client.post(
+                "/api/v1/cameras/0/focus/move",
+                json={"speed": 7.0, "duration_ms": 5000},
+            )
+
+        assert response.status_code == 200
+        mock_ptz.focus_move.assert_called_once_with(
+            0, mode="continuous", speed=1.0, distance=0.0, duration_ms=500
+        )
+
+    def test_focus_move_prefers_bounded_relative_step(self, client):
+        from web.blueprints import api_v1 as api_v1_module
+
+        with patch.object(api_v1_module, "ptz_service") as mock_ptz:
+            response = client.post(
+                "/api/v1/cameras/0/focus/move",
+                json={"mode": "relative", "distance": -4.0, "speed": 0.5},
+            )
+
+        assert response.status_code == 200
+        mock_ptz.focus_move.assert_called_once_with(
+            0, mode="relative", speed=0.5, distance=-1.0, duration_ms=250
+        )
+
+    def test_focus_stop_and_autofocus_endpoints(self, client):
+        from web.blueprints import api_v1 as api_v1_module
+
+        with patch.object(api_v1_module, "ptz_service") as mock_ptz:
+            stop_response = client.post("/api/v1/cameras/0/focus/stop")
+            auto_response = client.post("/api/v1/cameras/0/focus/auto")
+
+        assert stop_response.status_code == 200
+        assert auto_response.status_code == 200
+        mock_ptz.focus_stop.assert_called_once_with(0)
+        mock_ptz.set_autofocus.assert_called_once_with(0, True)
+
     def test_preset_metadata_includes_current_frame_size(self, client):
         """Preset metadata exposes camera frame size for PTZ overlays."""
         from web.blueprints import api_v1 as api_v1_module

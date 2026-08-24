@@ -334,6 +334,113 @@ def test_follow_mode_no_detection_only_stops_once_not_every_frame():
     assert len(stop_cmds) == 1
 
 
+def test_follow_mode_lost_target_continues_along_recent_trajectory():
+    """Two coherent target positions seed a short predictive search.
+
+    The first missing frame should move toward the extrapolated position
+    instead of stopping on the last observed bounding box. Lost-search moves
+    never zoom because target size is unknown once the detector loses it.
+    """
+    clock = FakeClock()
+    commands = []
+    controller = AutoPtzController(
+        camera_provider=lambda: _camera(mode="follow", acquire_frames=1),
+        command_runner=commands.append,
+        clock=clock,
+        worker_enabled=False,
+    )
+
+    controller.handle_detections(
+        frame_shape=(100, 100, 3),
+        detections=[_follow_detection(25, 40, 45, 60)],
+    )
+    clock.advance(0.5)
+    controller.handle_detections(
+        frame_shape=(100, 100, 3),
+        detections=[_follow_detection(45, 40, 65, 60)],
+    )
+    commands_before_lost = len(commands)
+
+    clock.advance(0.1)
+    controller.handle_no_detection()
+
+    assert len(commands) == commands_before_lost + 1
+    search = commands[-1]
+    assert search.action == "move"
+    assert search.pan > 0.0
+    assert search.tilt == 0.0
+    assert search.zoom == 0.0
+    status = controller.status()
+    assert status["state"] == "lost_grace"
+    assert status["prediction_active"] is True
+    assert status["predicted_target_center"][0] > 0.55
+
+
+def test_follow_mode_predictive_search_is_bounded_then_stops_once():
+    """Lost pursuit emits at most two moves, then explicitly halts."""
+    clock = FakeClock()
+    commands = []
+    controller = AutoPtzController(
+        camera_provider=lambda: _camera(mode="follow", acquire_frames=1),
+        command_runner=commands.append,
+        clock=clock,
+        worker_enabled=False,
+    )
+
+    controller.handle_detections(
+        frame_shape=(100, 100, 3),
+        detections=[_follow_detection(25, 40, 45, 60)],
+    )
+    clock.advance(0.5)
+    controller.handle_detections(
+        frame_shape=(100, 100, 3),
+        detections=[_follow_detection(45, 40, 65, 60)],
+    )
+    moves_before_lost = len([c for c in commands if c.action == "move"])
+
+    clock.advance(0.1)
+    controller.handle_no_detection()  # first predictive pulse
+    clock.advance(0.8)
+    controller.handle_no_detection()  # second predictive pulse
+    clock.advance(0.8)
+    controller.handle_no_detection()  # search window expired → stop
+    controller.handle_no_detection()  # stop remains edge-triggered
+
+    lost_moves = len([c for c in commands if c.action == "move"]) - moves_before_lost
+    assert lost_moves == 2
+    assert len([c for c in commands if c.action == "stop"]) == 1
+    assert controller.status()["prediction_active"] is False
+
+
+def test_follow_mode_target_jump_does_not_seed_predictive_search():
+    """A large position jump is another bird, not a usable trajectory."""
+    clock = FakeClock()
+    commands = []
+    controller = AutoPtzController(
+        camera_provider=lambda: _camera(mode="follow", acquire_frames=1),
+        command_runner=commands.append,
+        clock=clock,
+        worker_enabled=False,
+    )
+
+    controller.handle_detections(
+        frame_shape=(100, 100, 3),
+        detections=[_follow_detection(0, 40, 20, 60)],
+    )
+    clock.advance(0.5)
+    controller.handle_detections(
+        frame_shape=(100, 100, 3),
+        detections=[_follow_detection(80, 40, 100, 60)],
+    )
+    commands_before_lost = len(commands)
+
+    controller.handle_no_detection()
+
+    assert len(commands) == commands_before_lost + 1
+    assert commands[-1].action == "stop"
+    assert controller.status()["prediction_active"] is False
+
+
 def test_follow_mode_uses_low_p_gain_to_avoid_overshoot():
     """The follow-mode P-gain (0.8) is well below the hybrid-mode gain
     (2.0). Reason: cheap cams run each Continuous burst for ~800-1000ms

@@ -1,5 +1,5 @@
 """
-ONVIF PTZ client helpers.
+ONVIF PTZ and lens-focus client helpers.
 
 This module owns the low-level camera protocol calls. Higher layers should use
 ``core.ptz_core`` instead of importing this module directly from web code.
@@ -142,7 +142,7 @@ def _get_value(obj: Any, name: str, default: Any = None) -> Any:
 
 
 class PtzClient:
-    """Small ONVIF PTZ adapter for one camera/profile."""
+    """Small ONVIF camera-control adapter for one camera/profile."""
 
     def __init__(
         self,
@@ -160,7 +160,10 @@ class PtzClient:
         self._camera: ONVIFCamera | None = None
         self._media: Any | None = None
         self._ptz: Any | None = None
+        self._imaging: Any | None = None
         self._profile_token: str | None = None
+        self._video_source_token: str | None = None
+        self._focus_stop_uses_zero_speed = False
 
     def _create_camera(self) -> ONVIFCamera:
         wsdl_dir = _resolve_onvif_wsdl_dir()
@@ -202,7 +205,139 @@ class PtzClient:
             raise RuntimeError("Selected media profile has no token")
 
         self._profile_token = str(token)
+        source_config = _get_value(profile, "VideoSourceConfiguration")
+        source_token = _get_value(source_config, "SourceToken")
+        if source_token:
+            self._video_source_token = str(source_token)
         return self._ptz, self._profile_token
+
+    def _ensure_imaging_service(self) -> tuple[Any, str]:
+        """Return the ONVIF Imaging service and selected video-source token."""
+        self._ensure_services()
+        if self._camera is None:
+            raise RuntimeError("Camera connection is not initialized")
+
+        if self._imaging is None:
+            self._imaging = self._camera.create_imaging_service()
+
+        if not self._video_source_token:
+            assert self._media is not None
+            sources = self._media.GetVideoSources() or []
+            if sources:
+                source_token = _get_value(sources[0], "token")
+                if source_token:
+                    self._video_source_token = str(source_token)
+
+        if not self._video_source_token:
+            raise RuntimeError("Selected media profile has no video source token")
+        return self._imaging, self._video_source_token
+
+    def get_focus_capabilities(self) -> dict[str, Any]:
+        """Return declared ONVIF Imaging focus controls for the video source."""
+        imaging, source_token = self._ensure_imaging_service()
+
+        move_request = imaging.create_type("GetMoveOptions")
+        move_request.VideoSourceToken = source_token
+        move_response = imaging.GetMoveOptions(move_request)
+        move_options = _get_value(move_response, "MoveOptions", move_response)
+        continuous = _get_value(move_options, "Continuous")
+        relative = _get_value(move_options, "Relative")
+        absolute = _get_value(move_options, "Absolute")
+
+        speed_range = _get_value(continuous, "Speed")
+
+        def _float_or_none(value: Any) -> float | None:
+            try:
+                return float(value) if value is not None else None
+            except (TypeError, ValueError):
+                return None
+
+        autofocus = False
+        try:
+            options_request = imaging.create_type("GetOptions")
+            options_request.VideoSourceToken = source_token
+            options_response = imaging.GetOptions(options_request)
+            imaging_options = _get_value(
+                options_response, "ImagingOptions", options_response
+            )
+            focus_options = _get_value(imaging_options, "Focus")
+            raw_modes = _get_value(focus_options, "AutoFocusModes", []) or []
+            modes = raw_modes if isinstance(raw_modes, (list, tuple)) else [raw_modes]
+            autofocus = any(str(mode).upper() == "AUTO" for mode in modes)
+        except Exception as exc:  # noqa: BLE001 — focus move may still work
+            logger.debug("ONVIF autofocus option probe failed: %s", _slv(str(exc)))
+
+        return {
+            "continuous": continuous is not None,
+            "relative": relative is not None,
+            "absolute": absolute is not None,
+            "autofocus": autofocus,
+            "speed_min": _float_or_none(_get_value(speed_range, "Min")),
+            "speed_max": _float_or_none(_get_value(speed_range, "Max")),
+        }
+
+    def continuous_focus(
+        self, *, speed: float, duration_ms: int = 250
+    ) -> None:
+        """Move the lens focus briefly, then stop as a dead-man backstop."""
+        imaging, source_token = self._ensure_imaging_service()
+        speed = max(-1.0, min(1.0, float(speed)))
+        duration_sec = max(0.05, min(0.5, int(duration_ms or 250) / 1000.0))
+
+        request = imaging.create_type("Move")
+        request.VideoSourceToken = source_token
+        request.Focus = {"Continuous": {"Speed": speed}}
+        imaging.Move(request)
+        time.sleep(duration_sec)
+        self.stop_focus()
+
+    def relative_focus(
+        self, *, distance: float, speed: float | None = None
+    ) -> None:
+        """Move focus by one bounded relative step without a Stop command."""
+        imaging, source_token = self._ensure_imaging_service()
+        distance = max(-1.0, min(1.0, float(distance)))
+        relative: dict[str, float] = {"Distance": distance}
+        if speed is not None:
+            relative["Speed"] = max(0.0, min(1.0, float(speed)))
+
+        request = imaging.create_type("Move")
+        request.VideoSourceToken = source_token
+        request.Focus = {"Relative": relative}
+        imaging.Move(request)
+
+    def stop_focus(self) -> None:
+        imaging, source_token = self._ensure_imaging_service()
+        if not self._focus_stop_uses_zero_speed:
+            request = imaging.create_type("Stop")
+            request.VideoSourceToken = source_token
+            try:
+                imaging.Stop(request)
+                return
+            except Exception as exc:
+                if "not implemented" not in str(exc).lower():
+                    raise
+                self._focus_stop_uses_zero_speed = True
+                logger.warning(
+                    "Camera %s does not implement Imaging Stop; using zero-speed Move",
+                    _slv(self.ip),
+                )
+
+        request = imaging.create_type("Move")
+        request.VideoSourceToken = source_token
+        request.Focus = {"Continuous": {"Speed": 0.0}}
+        imaging.Move(request)
+
+    def set_autofocus(self, enabled: bool) -> None:
+        """Switch the lens between ONVIF automatic and manual focus."""
+        imaging, source_token = self._ensure_imaging_service()
+        request = imaging.create_type("SetImagingSettings")
+        request.VideoSourceToken = source_token
+        request.ImagingSettings = {
+            "Focus": {"AutoFocusMode": "AUTO" if enabled else "MANUAL"}
+        }
+        request.ForcePersistence = False
+        imaging.SetImagingSettings(request)
 
     def list_presets(self) -> list[PtzPreset]:
         ptz, profile_token = self._ensure_services()

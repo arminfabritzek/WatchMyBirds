@@ -848,6 +848,82 @@ def stop(camera_id: int) -> None:
     _run_ptz_command(camera_id, lambda client: client.stop())
 
 
+def get_focus_capabilities(camera_id: int) -> dict[str, Any]:
+    """Return ONVIF Imaging focus support for a saved camera."""
+    result: dict[str, Any] = {}
+    _run_ptz_command(
+        camera_id,
+        lambda client: result.update(client.get_focus_capabilities()),
+    )
+    return result
+
+
+def continuous_focus(
+    camera_id: int, *, speed: float, duration_ms: int = 250
+) -> None:
+    """Run one bounded manual-focus movement on the shared camera client."""
+    if not _reserve_move_slot(camera_id):
+        logger.debug("Focus move coalesced (slot busy) camera_id=%s", _slv(camera_id))
+        return
+
+    generation = _current_stop_generation(camera_id)
+    logger.info(
+        "Focus move camera_id=%s speed=%.3f duration=%sms",
+        _slv(camera_id),
+        speed,
+        duration_ms,
+    )
+    try:
+        _run_ptz_command(
+            camera_id,
+            lambda client: client.continuous_focus(
+                speed=speed, duration_ms=duration_ms
+            ),
+            skip_if_superseded=generation,
+        )
+    finally:
+        _release_move_slot(camera_id)
+
+
+def relative_focus(
+    camera_id: int, *, distance: float, speed: float | None = None
+) -> None:
+    """Run one focus step for cameras whose Imaging Stop is unreliable."""
+    if not _reserve_move_slot(camera_id):
+        logger.debug("Focus step coalesced (slot busy) camera_id=%s", _slv(camera_id))
+        return
+
+    generation = _current_stop_generation(camera_id)
+    logger.info(
+        "Focus step camera_id=%s distance=%.3f speed=%s",
+        _slv(camera_id),
+        distance,
+        speed,
+    )
+    try:
+        _run_ptz_command(
+            camera_id,
+            lambda client: client.relative_focus(distance=distance, speed=speed),
+            skip_if_superseded=generation,
+        )
+    finally:
+        _release_move_slot(camera_id)
+
+
+def stop_focus(camera_id: int) -> None:
+    """Stop lens movement and supersede focus commands queued before release."""
+    _bump_stop_generation(camera_id)
+    logger.info("Focus stop camera_id=%s", _slv(camera_id))
+    _run_ptz_command(camera_id, lambda client: client.stop_focus())
+
+
+def set_autofocus(camera_id: int, enabled: bool) -> None:
+    logger.info(
+        "Autofocus camera_id=%s enabled=%s", _slv(camera_id), bool(enabled)
+    )
+    _run_ptz_command(camera_id, lambda client: client.set_autofocus(bool(enabled)))
+
+
 def find_auto_ptz_camera() -> dict[str, Any] | None:
     """Return the first enabled PTZ camera matching the active stream URL."""
     global _auto_camera_cache_ts, _auto_camera_cache_value

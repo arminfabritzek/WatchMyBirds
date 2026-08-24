@@ -2139,6 +2139,65 @@ def camera_ptz_stop(camera_id: int):
         return _error_response("PTZ stop error", exc)
 
 
+@api_v1.route("/cameras/<int:camera_id>/focus/capabilities", methods=["GET"])
+@login_required
+def camera_focus_capabilities(camera_id: int):
+    """Return read-only ONVIF Imaging focus capabilities."""
+    try:
+        data = ptz_service.get_focus_capabilities(camera_id)
+        return jsonify({"status": "success", "data": data})
+    except Exception as exc:
+        return _error_response("Camera focus capability error", exc)
+
+
+@api_v1.route("/cameras/<int:camera_id>/focus/move", methods=["POST"])
+@login_required
+def camera_focus_move(camera_id: int):
+    """Send a bounded continuous lens-focus command."""
+    try:
+        data = request.get_json() or {}
+        mode = str(data.get("mode") or "continuous").strip().lower()
+        if mode not in {"continuous", "relative"}:
+            return jsonify(
+                {"status": "error", "message": "mode must be continuous or relative"}
+            ), 400
+        speed = max(-1.0, min(1.0, float(data.get("speed") or 0.0)))
+        distance = max(-1.0, min(1.0, float(data.get("distance") or 0.0)))
+        duration_ms = max(50, min(500, int(data.get("duration_ms") or 250)))
+        ptz_service.focus_move(
+            camera_id,
+            mode=mode,
+            speed=speed,
+            distance=distance,
+            duration_ms=duration_ms,
+        )
+        return jsonify({"status": "success"})
+    except Exception as exc:
+        return _error_response("Camera focus move error", exc)
+
+
+@api_v1.route("/cameras/<int:camera_id>/focus/stop", methods=["POST"])
+@login_required
+def camera_focus_stop(camera_id: int):
+    """Stop manual lens-focus movement."""
+    try:
+        ptz_service.focus_stop(camera_id)
+        return jsonify({"status": "success"})
+    except Exception as exc:
+        return _error_response("Camera focus stop error", exc)
+
+
+@api_v1.route("/cameras/<int:camera_id>/focus/auto", methods=["POST"])
+@login_required
+def camera_focus_auto(camera_id: int):
+    """Return the camera lens to autofocus mode."""
+    try:
+        ptz_service.set_autofocus(camera_id, True)
+        return jsonify({"status": "success"})
+    except Exception as exc:
+        return _error_response("Camera autofocus error", exc)
+
+
 @api_v1.route("/cameras/<int:camera_id>/ptz/capabilities", methods=["GET"])
 @login_required
 def camera_ptz_capabilities(camera_id: int):

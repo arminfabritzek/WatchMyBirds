@@ -44,6 +44,34 @@ def stop(camera_id: int) -> None:
     ptz_core.stop(camera_id)
 
 
+def get_focus_capabilities(camera_id: int) -> dict[str, Any]:
+    return ptz_core.get_focus_capabilities(camera_id)
+
+
+def focus_move(
+    camera_id: int,
+    *,
+    mode: str,
+    speed: float,
+    distance: float,
+    duration_ms: int = 250,
+) -> None:
+    if mode == "relative":
+        ptz_core.relative_focus(camera_id, distance=distance, speed=abs(speed))
+        return
+    ptz_core.continuous_focus(
+        camera_id, speed=speed, duration_ms=duration_ms
+    )
+
+
+def focus_stop(camera_id: int) -> None:
+    ptz_core.stop_focus(camera_id)
+
+
+def set_autofocus(camera_id: int, enabled: bool) -> None:
+    ptz_core.set_autofocus(camera_id, enabled)
+
+
 def capture_overview_snapshot(camera_id: int) -> dict[str, Any] | None:
     return ptz_core.capture_overview_snapshot(camera_id)
 

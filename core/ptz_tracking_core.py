@@ -8,6 +8,7 @@ for a background worker so object detection never waits on ONVIF I/O.
 import queue
 import threading
 import time
+from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Literal
@@ -31,6 +32,22 @@ logger = get_logger(__name__)
 # (they reflect operator joystick state) and must not be replayed.
 _GOTO_RETRY_ATTEMPTS = 2  # additional attempts after the first → 3 total
 _GOTO_RETRY_BACKOFF_SEC = 0.8
+
+# Follow-mode reacquisition policy. The controller extrapolates a short,
+# coherent target trajectory after the detector loses the bird. It may issue
+# two pan/tilt-only pulses, then stops and lets the normal lost-timeout return
+# the camera to overview. The deliberately small budget avoids turning a
+# momentary occlusion into an open-loop sweep on cameras without PTZ position
+# feedback.
+_TARGET_MOTION_HISTORY_SIZE = 5
+_TARGET_MOTION_MAX_GAP_SEC = 1.5
+_TARGET_REASSOCIATION_MAX_DISTANCE = 0.45
+_LOST_SEARCH_WINDOW_SEC = 1.5
+_LOST_SEARCH_PREDICT_AHEAD_SEC = 0.6
+_LOST_SEARCH_MAX_BURSTS = 2
+_LOST_SEARCH_MIN_INTERVAL_SEC = 0.35
+_LOST_SEARCH_DEADBAND = 0.04
+_LOST_SEARCH_MIN_COMMAND_SPEED = 0.08
 
 PtzState = Literal[
     "idle", "overview", "settling", "acquiring", "tracking", "lost_grace", "returning"
@@ -81,6 +98,15 @@ class AutoPtzController:
         self._last_preset = ""
         self._acquire_count = 0
         self._last_target_center: tuple[float, float] | None = None
+        self._target_motion_samples: deque[tuple[float, float, float]] = deque(
+            maxlen=_TARGET_MOTION_HISTORY_SIZE
+        )
+        self._lost_search_started_mono = 0.0
+        self._lost_search_last_command_mono = 0.0
+        self._lost_search_bursts = 0
+        self._lost_search_stop_sent = False
+        self._lost_search_velocity: tuple[float, float] | None = None
+        self._predicted_target_center: tuple[float, float] | None = None
         # Normalised (x, y, w, h) bbox of the current target, surfaced in
         # status() for the live tracking overlay. Set alongside
         # _last_target_center; held through lost_grace; cleared on the
@@ -237,6 +263,10 @@ class AutoPtzController:
         if not target:
             self.handle_no_detection()
             return
+
+        self._record_target_observation(
+            now=self._clock(), center=(target[0], target[1])
+        )
 
         # Grid mode is a separate dispatch — different routing math,
         # different cooldown, different "zone" semantics. Kept out of
@@ -651,6 +681,177 @@ class AutoPtzController:
         )
         return True
 
+    def _record_target_observation(
+        self, *, now: float, center: tuple[float, float]
+    ) -> None:
+        """Add one target position to the short-horizon motion estimator.
+
+        A large spatial jump is treated as a different bird, and a detection
+        after ``lost_grace`` starts a fresh trajectory. Both guards keep the
+        open-loop reacquisition pulse from inheriting another target's motion.
+        """
+        with self._lock:
+            if self._state == "lost_grace":
+                self._target_motion_samples.clear()
+
+            if self._target_motion_samples:
+                previous_at, previous_x, previous_y = self._target_motion_samples[-1]
+                elapsed = now - previous_at
+                distance_sq = (center[0] - previous_x) ** 2 + (
+                    center[1] - previous_y
+                ) ** 2
+                if (
+                    elapsed > _TARGET_MOTION_MAX_GAP_SEC
+                    or distance_sq > _TARGET_REASSOCIATION_MAX_DISTANCE**2
+                ):
+                    self._target_motion_samples.clear()
+                elif elapsed <= 0:
+                    self._target_motion_samples[-1] = (now, center[0], center[1])
+                    self._reset_lost_search_locked()
+                    return
+
+            self._target_motion_samples.append((now, center[0], center[1]))
+            self._reset_lost_search_locked()
+
+    def _estimate_target_velocity_locked(
+        self, *, now: float
+    ) -> tuple[float, float] | None:
+        """Least-squares velocity in normalised frame units per second."""
+        samples = list(self._target_motion_samples)
+        if len(samples) < 2 or now - samples[-1][0] > _TARGET_MOTION_MAX_GAP_SEC:
+            return None
+
+        mean_t = sum(sample[0] for sample in samples) / len(samples)
+        variance_t = sum((sample[0] - mean_t) ** 2 for sample in samples)
+        if variance_t <= 0.0025:  # less than roughly 50 ms of useful history
+            return None
+
+        mean_x = sum(sample[1] for sample in samples) / len(samples)
+        mean_y = sum(sample[2] for sample in samples) / len(samples)
+        velocity_x = sum(
+            (sample[0] - mean_t) * (sample[1] - mean_x) for sample in samples
+        ) / variance_t
+        velocity_y = sum(
+            (sample[0] - mean_t) * (sample[2] - mean_y) for sample in samples
+        ) / variance_t
+        # A target switch that slipped past the distance gate must not create
+        # an extreme command. One frame-width per second is already a fast
+        # bird for this deliberately short reacquisition horizon.
+        return (
+            max(-1.0, min(1.0, velocity_x)),
+            max(-1.0, min(1.0, velocity_y)),
+        )
+
+    def _continue_lost_follow_search(
+        self,
+        *,
+        camera_id: int,
+        config: dict[str, Any],
+        now: float,
+    ) -> bool:
+        """Continue a bounded trajectory search; return whether it is active."""
+        command: PtzCommand | None = None
+        with self._lock:
+            if self._lost_search_started_mono <= 0:
+                velocity = self._estimate_target_velocity_locked(now=now)
+                if velocity is None or not self._target_motion_samples:
+                    return False
+                self._lost_search_started_mono = now
+                self._lost_search_velocity = velocity
+
+            elapsed_search = now - self._lost_search_started_mono
+            if elapsed_search >= _LOST_SEARCH_WINDOW_SEC:
+                self._predicted_target_center = None
+                return False
+
+            cooldown_sec = max(
+                _LOST_SEARCH_MIN_INTERVAL_SEC,
+                int(config["command_cooldown_ms"]) / 1000.0,
+            )
+            if (
+                self._lost_search_bursts >= _LOST_SEARCH_MAX_BURSTS
+                or (
+                    self._lost_search_last_command_mono > 0
+                    and now - self._lost_search_last_command_mono < cooldown_sec
+                )
+            ):
+                return True
+
+            last_at, last_x, last_y = self._target_motion_samples[-1]
+            velocity_x, velocity_y = self._lost_search_velocity or (0.0, 0.0)
+            horizon = max(0.0, now - last_at) + _LOST_SEARCH_PREDICT_AHEAD_SEC
+            predicted_x = max(0.02, min(0.98, last_x + velocity_x * horizon))
+            predicted_y = max(0.02, min(0.98, last_y + velocity_y * horizon))
+            self._predicted_target_center = (predicted_x, predicted_y)
+
+            offset_x = predicted_x - 0.5
+            offset_y = predicted_y - 0.5
+            max_speed = float(config["max_speed"])
+
+            def search_speed(offset: float, *, invert: bool = False) -> float:
+                if abs(offset) <= _LOST_SEARCH_DEADBAND:
+                    return 0.0
+                magnitude = min(
+                    max_speed,
+                    max(_LOST_SEARCH_MIN_COMMAND_SPEED, abs(offset) * max_speed),
+                )
+                direction = -1.0 if offset < 0 else 1.0
+                if invert:
+                    direction *= -1.0
+                return direction * magnitude
+
+            pan = search_speed(offset_x)
+            tilt = search_speed(offset_y, invert=True)
+            if pan == 0.0 and tilt == 0.0:
+                return False
+
+            self._lost_search_bursts += 1
+            self._lost_search_last_command_mono = now
+            self._last_command_mono = now
+            burst_number = self._lost_search_bursts
+            predicted_center = self._predicted_target_center
+            search_velocity = self._lost_search_velocity
+            command = PtzCommand(
+                action="move",
+                camera_id=camera_id,
+                pan=pan,
+                tilt=tilt,
+                zoom=0.0,
+                duration_ms=int(config["move_duration_ms"]),
+            )
+
+        assert command is not None
+        assert predicted_center is not None
+        assert search_velocity is not None
+        self._enqueue(command)
+        logger.info(
+            "Auto PTZ predictive reacquisition burst=%d center=(%.3f, %.3f) "
+            "velocity=(%.3f, %.3f) pan=%.3f tilt=%.3f",
+            burst_number,
+            predicted_center[0],
+            predicted_center[1],
+            search_velocity[0],
+            search_velocity[1],
+            command.pan,
+            command.tilt,
+        )
+        return True
+
+    def _stop_lost_follow_motion_once(self, *, camera_id: int) -> None:
+        with self._lock:
+            if self._lost_search_stop_sent:
+                return
+            self._lost_search_stop_sent = True
+        self._enqueue(PtzCommand(action="stop", camera_id=camera_id))
+
+    def _reset_lost_search_locked(self) -> None:
+        self._lost_search_started_mono = 0.0
+        self._lost_search_last_command_mono = 0.0
+        self._lost_search_bursts = 0
+        self._lost_search_stop_sent = False
+        self._lost_search_velocity = None
+        self._predicted_target_center = None
+
     def handle_no_detection(self) -> None:
         with self._lock:
             # External pause owns the camera — no auto-return either.
@@ -659,6 +860,8 @@ class AutoPtzController:
             if self._state not in {"acquiring", "tracking", "lost_grace"}:
                 return
             was_tracking = self._state == "tracking"
+            predictive_search_active = self._lost_search_started_mono > 0
+            manual_view_active = self._manual_view_until > 0
 
         camera = self._camera_provider()
         if not camera:
@@ -670,23 +873,18 @@ class AutoPtzController:
             self._set_idle("Auto PTZ disabled")
             return
 
-        # Follow-mode specific: halt any in-flight continuous burst the
-        # moment we lose the bird. Without this, the cam runs out its
-        # firmware-dictated ~800-1000ms burst even though the target is
-        # gone — looks like the cam is "still following the old bbox"
-        # to the operator. Stop() is idempotent and harmless on cams
-        # that already finished the burst. Only fire on the tracking→
-        # lost_grace transition, not on every subsequent no-detection
-        # frame, to avoid hammering the cam with Stop()s.
-        if was_tracking and config.get("mode") == "follow":
-            self._enqueue(
-                PtzCommand(
-                    action="stop",
-                    camera_id=int(camera["id"]),
-                )
-            )
-
         now = self._clock()
+        if (
+            config.get("mode") == "follow"
+            and not manual_view_active
+            and (was_tracking or predictive_search_active)
+        ):
+            search_active = self._continue_lost_follow_search(
+                camera_id=int(camera["id"]), config=config, now=now
+            )
+            if not search_active:
+                self._stop_lost_follow_motion_once(camera_id=int(camera["id"]))
+
         with self._lock:
             if self._last_seen_mono <= 0:
                 return
@@ -731,6 +929,8 @@ class AutoPtzController:
             self._acquire_count = 0
             # Returning to overview — no current target, drop the overlay box.
             self._last_target_bbox = None
+            self._target_motion_samples.clear()
+            self._reset_lost_search_locked()
             self._lost_cooldown_until = now + lost_cd
             # Overview is the one absolute reference point the lens has;
             # clearing the zoom-in budget here gives the next bird a
@@ -770,6 +970,8 @@ class AutoPtzController:
         with self._lock:
             self._last_preset = str(preset_token)
             self._last_zone = "manual"
+            self._target_motion_samples.clear()
+            self._reset_lost_search_locked()
             # Honor the command cooldown: a manual goto IS a command,
             # so subsequent detection-driven gotos must wait the same
             # cooldown_sec before they can fire. Without this, the
@@ -905,6 +1107,8 @@ class AutoPtzController:
             self._last_preset = ""  # no preset — operator is freely steering
             self._state = "lost_grace"
             self._acquire_count = 0
+            self._target_motion_samples.clear()
+            self._reset_lost_search_locked()
 
         if is_new_drive_session:
             self._publish_movement_event(kind="manual", estimated_sec=view_sec)
@@ -948,6 +1152,9 @@ class AutoPtzController:
                 )
             was_paused = bool(current)
             self._external_pause_reason = reason_str
+            if not was_paused:
+                self._target_motion_samples.clear()
+                self._reset_lost_search_locked()
         if not was_paused:
             logger.info("AutoPtzController paused (reason=%s)", reason_str)
         return not was_paused
@@ -1100,6 +1307,8 @@ class AutoPtzController:
             self._acquire_count = 0
             # Returning to overview — no current target, drop the overlay box.
             self._last_target_bbox = None
+            self._target_motion_samples.clear()
+            self._reset_lost_search_locked()
             # Same race-protection as notify_external_goto: an active
             # return-to-overview is a command, so block detection-driven
             # gotos for the cooldown window while the camera is flying
@@ -1134,6 +1343,14 @@ class AutoPtzController:
                 # Normalised (x, y, w, h) bbox of the current target for the
                 # live tracking overlay; None when there is no target.
                 "last_bbox": self._last_target_bbox,
+                "predicted_target_center": self._predicted_target_center,
+                "prediction_active": bool(
+                    state == "lost_grace"
+                    and self._predicted_target_center is not None
+                    and self._lost_search_started_mono > 0
+                    and self._clock() - self._lost_search_started_mono
+                    < _LOST_SEARCH_WINDOW_SEC
+                ),
                 # Surfaced for the Stream-page banner: when set, the UI
                 # shows "Auto-PTZ paused — <reason>" so it's clear why
                 # detections aren't triggering moves.
@@ -1635,6 +1852,8 @@ class AutoPtzController:
             self._acquire_count = 0
             # No current target in idle — drop the overlay box.
             self._last_target_bbox = None
+            self._target_motion_samples.clear()
+            self._reset_lost_search_locked()
 
     def _update_status(
         self,
@@ -1648,6 +1867,9 @@ class AutoPtzController:
             self._last_error = error
             if target_center is not None:
                 self._last_target_center = target_center
+            if state == "idle":
+                self._target_motion_samples.clear()
+                self._reset_lost_search_locked()
 
     def snapshot_for_image_persistence(self) -> dict[str, Any]:
         """Return the PTZ context to record on a captured frame.
