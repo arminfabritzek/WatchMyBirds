@@ -77,11 +77,32 @@ def test_preview_and_download_share_bundle_and_do_not_write(canonical_client) ->
 
 
 def test_canonical_dataset_page_is_the_export_navigation_target(canonical_client) -> None:
-    client, _ = canonical_client
+    client, filename = canonical_client
+    with db_connection.closing_connection() as conn:
+        _seed(conn, filename=filename, timestamp=datetime.now().strftime("%Y%m%d_%H%M%S"))
+
     page = client.get("/admin/canonical-dataset")
 
     assert page.status_code == 200
-    assert "Canonical Dataset" in page.get_data(as_text=True)
+    content = page.get_data(as_text=True)
+    assert "Canonical Dataset" in content
+    assert "Ready for another bird?" in content
+    assert 'href="/admin/review"' in content
+    assert 'aria-label="Review the next bird"' in content
     appbar = open("templates/partials/appbar.html", encoding="utf-8").read()
     assert 'href="/admin/canonical-dataset"' in appbar
     assert 'href="/admin/groundtruth-export"' not in appbar
+
+
+def test_canonical_dataset_page_links_to_gallery_when_queue_is_clear(
+    canonical_client,
+) -> None:
+    client, _ = canonical_client
+
+    page = client.get("/admin/canonical-dataset")
+
+    content = page.get_data(as_text=True)
+    assert page.status_code == 200
+    assert "All caught up" in content
+    assert 'href="/gallery"' in content
+    assert 'aria-label="Open bird gallery"' in content
