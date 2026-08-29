@@ -12,49 +12,26 @@ def test_normalize_ptz_config_clamps_tracking_values():
     config = normalize_ptz_config(
         {
             "enabled": True,
-            "mode": "hybrid",
-            "acquire_frames": 99,
             "lost_timeout_sec": -4,
             "command_cooldown_ms": 1,
             "deadband": 2,
             "max_speed": 4,
             "move_duration_ms": 9999,
-            "zones": [
-                {
-                    "name": "left",
-                    "preset": "preset-left",
-                    "x_min": 0,
-                    "y_min": 0,
-                    "x_max": 0.5,
-                    "y_max": 1,
-                }
-            ],
+            "mode": "hybrid",
+            "grid_cells": {"r0_c0": "Preset001"},
+            "zones": [{"preset": "Preset002"}],
         }
     )
 
     assert config["enabled"] is True
-    assert config["mode"] == "hybrid"
-    assert config["acquire_frames"] == 10
     assert config["lost_timeout_sec"] == 1.0
     assert config["command_cooldown_ms"] == 100
     assert config["deadband"] == 0.4
     assert config["max_speed"] == 1.0
     assert config["move_duration_ms"] == 2000
-    assert config["zones"][0]["preset"] == "preset-left"
-
-
-def test_normalize_ptz_config_grid_acquire_frames_default_and_clamp():
-    """Grid-mode hurdle defaults to 1 frame (vs preset's 2). Clamped to [1, 10]."""
-    config = normalize_ptz_config({"mode": "grid"})
-    assert config["grid_acquire_frames"] == 1
-
-    config = normalize_ptz_config({"mode": "grid", "grid_acquire_frames": 3})
-    assert config["grid_acquire_frames"] == 3
-
-    config = normalize_ptz_config({"mode": "grid", "grid_acquire_frames": 0})
-    assert config["grid_acquire_frames"] == 1
-    config = normalize_ptz_config({"mode": "grid", "grid_acquire_frames": 99})
-    assert config["grid_acquire_frames"] == 10
+    assert "mode" not in config
+    assert "grid_cells" not in config
+    assert "zones" not in config
 
 
 def test_normalize_ptz_config_manual_burst_defaults_and_clamp():
@@ -104,15 +81,9 @@ def test_normalize_ptz_config_move_duration_multiplier_defaults_and_clamp():
     assert config["manual_move_duration_multiplier"] == 5.0
 
 
-def test_normalize_ptz_config_follow_mode_is_valid():
-    """Follow mode is a first-class option, not a fallthrough."""
-    config = normalize_ptz_config({"mode": "follow"})
-    assert config["mode"] == "follow"
-
-
 def test_normalize_ptz_config_follow_zoom_defaults_and_clamp():
-    """Follow-mode zoom fields default sanely and clamp to safe ranges."""
-    config = normalize_ptz_config({"mode": "follow"})
+    """Auto-follow zoom fields default sanely and clamp to safe ranges."""
+    config = normalize_ptz_config({})
     assert config["follow_zoom_target_pct"] == 0.18
     assert config["follow_zoom_deadband_pct"] == 0.05
     assert config["follow_zoom_speed"] == 0.3
@@ -121,7 +92,6 @@ def test_normalize_ptz_config_follow_zoom_defaults_and_clamp():
     # extremes anyway, but the controller should never enqueue a value
     # outside ONVIF's [-1, 1] range).
     config = normalize_ptz_config({
-        "mode": "follow",
         "follow_zoom_target_pct": 5.0,
         "follow_zoom_deadband_pct": -1.0,
         "follow_zoom_speed": 99.0,
@@ -175,13 +145,13 @@ def test_find_auto_ptz_camera_strips_password():
 # list_presets_with_metadata filter tests
 # Cheap PTZ cams report all 256 ONVIF slot stubs as existing. The filter
 # must show only operator-configured presets — anything in
-# preset_metadata, overview_preset, or grid_cells — and hide the
+# preset_metadata or overview_preset — and hide the
 # generic stubs. This is what the empirical-probe wizard relies on so
 # the operator sees a sane preset list instead of 256 fake entries.
 # ---------------------------------------------------------------------------
 
 
-def _stub_storage_for_presets(metadata=None, overview="", grid_cells=None):
+def _stub_storage_for_presets(metadata=None, overview=""):
     """Build a CameraStorage mock that exposes a single camera with
     the given ptz config."""
     from unittest.mock import MagicMock
@@ -196,7 +166,6 @@ def _stub_storage_for_presets(metadata=None, overview="", grid_cells=None):
             "enabled": True,
             "overview_preset": overview,
             "preset_metadata": metadata or {},
-            "grid_cells": grid_cells or {},
         },
     }
     storage = MagicMock()
@@ -272,26 +241,6 @@ def test_list_presets_includes_overview_preset_even_without_metadata():
     assert "Preset020" in tokens
 
 
-def test_list_presets_includes_grid_cell_targets():
-    """grid_cells values are operator-assigned preset tokens for the
-    grid-zoom-mode wizard. Same intent as overview_preset — show them
-    even when preset_metadata is empty."""
-    grid_cells = {"r0_c0": "Preset011", "r1_c2": "Preset018"}
-    with (
-        patch(
-            "core.ptz_core.get_camera_storage",
-            return_value=_stub_storage_for_presets(grid_cells=grid_cells),
-        ),
-        patch(
-            "core.ptz_core.list_presets",
-            return_value=_stub_256_generic_presets(),
-        ),
-    ):
-        result = list_presets_with_metadata(0, show_all=False)
-    tokens = {p["token"] for p in result}
-    assert tokens == {"Preset011", "Preset018"}
-
-
 def test_list_presets_show_all_returns_every_stub():
     """show_all=True is the diagnostic mode — Settings power users may
     want to see every ONVIF-reported slot even if WMB hasn't tagged
@@ -310,18 +259,15 @@ def test_list_presets_show_all_returns_every_stub():
     assert len(result) == 256
 
 
-def test_list_presets_union_of_all_three_sources():
-    """End-to-end: metadata + overview + grid_cells all contribute to
-    the in-use set, no duplicates."""
+def test_list_presets_union_of_metadata_and_overview():
+    """Metadata plus overview contribute to the in-use set without duplicates."""
     metadata = {"Preset001": {"label": "1"}, "Preset002": {"label": "2"}}
-    grid_cells = {"r0_c0": "Preset002", "r0_c1": "Preset011"}  # Preset002 overlaps
     with (
         patch(
             "core.ptz_core.get_camera_storage",
             return_value=_stub_storage_for_presets(
                 metadata=metadata,
                 overview="Preset020",
-                grid_cells=grid_cells,
             ),
         ),
         patch(
@@ -331,6 +277,4 @@ def test_list_presets_union_of_all_three_sources():
     ):
         result = list_presets_with_metadata(0, show_all=False)
     tokens = {p["token"] for p in result}
-    # 4 unique tokens across 3 sources (Preset002 appears in both
-    # metadata and grid_cells but must not duplicate).
-    assert tokens == {"Preset001", "Preset002", "Preset011", "Preset020"}
+    assert tokens == {"Preset001", "Preset002", "Preset020"}

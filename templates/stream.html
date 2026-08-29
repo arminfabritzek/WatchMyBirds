@@ -53,10 +53,23 @@
                     <button type="button" class="stream-ptz-joybtn" data-axis="zoom" data-dir="1" title="Zoom in" aria-label="Zoom in">+</button>
                     <button type="button" class="stream-ptz-joybtn" data-axis="zoom" data-dir="-1" title="Zoom out" aria-label="Zoom out">−</button>
                 </div>
+                <div class="stream-ptz-dpad__aim">
+                    <button type="button" class="stream-ptz-joybtn stream-ptz-joybtn--aim" id="ptzAimToggle"
+                            title="Aim camera at a point in the live view" aria-label="Aim camera at a point in the live view"
+                            aria-pressed="false">◎&nbsp; Aim</button>
+                </div>
                 <div class="stream-ptz-dpad__focus" id="ptzFocusControls" hidden>
                     <button type="button" class="stream-ptz-joybtn" data-axis="focus" data-dir="1" title="Adjust focus +" aria-label="Adjust focus plus">F+</button>
                     <button type="button" class="stream-ptz-joybtn stream-ptz-joybtn--autofocus" id="ptzAutoFocus" title="Return lens to autofocus" aria-label="Enable autofocus">AF</button>
                     <button type="button" class="stream-ptz-joybtn" data-axis="focus" data-dir="-1" title="Adjust focus −" aria-label="Adjust focus minus">F−</button>
+                </div>
+            </div>
+            <div id="ptzAimOverlay" class="ptz-aim-overlay" hidden aria-label="Select a point for camera aiming">
+                <div id="ptzAimReticle" class="ptz-aim-reticle" hidden aria-hidden="true"></div>
+                <div class="ptz-aim-status" role="status" aria-live="polite">
+                    <span class="ptz-aim-status__pulse" aria-hidden="true"></span>
+                    <span id="ptzAimStatusText">Click a point to aim</span>
+                    <span id="ptzAimEvidence" class="ptz-aim-status__evidence"></span>
                 </div>
             </div>
             {% endif %}
@@ -207,44 +220,9 @@
             <img id="ptzMinimapImg" alt="Home overview" class="ptz-minimap__img">
             <svg id="ptzMinimapSvg" class="ptz-minimap__svg" preserveAspectRatio="none" viewBox="0 0 100 100"></svg>
         </div>
-        <div id="ptzGridWizardOverlay" class="ptz-grid-wizard" hidden aria-label="Grid setup wizard">
-            <div class="ptz-grid-wizard__cells" id="ptzGridWizardCells"></div>
-        </div>
         {% endif %}
 
     </div>
-    {% if can_moderate %}
-    <!-- Grid Setup Wizard panel: sits in normal document flow between
-         the stream and the action bar so it can never get clipped by an
-         ancestor's overflow:hidden or stacking context. Toggled hidden
-         by JS when the wizard is not active. -->
-    <div id="ptzGridWizardPanel" class="ptz-grid-wizard-panel" hidden role="dialog" aria-label="Grid setup wizard">
-        <div class="ptz-grid-wizard-panel__status">
-            <span class="ptz-grid-wizard-panel__title" id="ptzGridWizardTitle">Grid setup — pick a cell</span>
-            <span class="ptz-grid-wizard-panel__hint" id="ptzGridWizardHint">Click a cell, aim with the joystick, then Save.</span>
-        </div>
-        <div class="ptz-grid-wizard-panel__actions">
-            <!--
-                Two ways to map a cell:
-                  1. Aim with joystick + click "Save current view" — creates
-                     a fresh ONVIF preset slot and links it.
-                  2. Pick an existing preset from the dropdown + click "Link"
-                     — reuses the operator's earlier presets (1–7, 8, etc.).
-                     Multiple cells can link to the same preset; routing
-                     treats duplicates as a feature.
-            -->
-            <button type="button" class="ptz-grid-wizard-btn ptz-grid-wizard-btn--primary" id="ptzGridWizardSave" disabled title="Save the camera's current pan/tilt/zoom as a new preset for this cell">Save current view</button>
-            <span class="ptz-grid-wizard-panel__sep" aria-hidden="true">or</span>
-            <select class="ptz-grid-wizard-select" id="ptzGridWizardPresetSelect" disabled aria-label="Link to existing preset">
-                <option value="">— pick a preset —</option>
-            </select>
-            <button type="button" class="ptz-grid-wizard-btn" id="ptzGridWizardLink" disabled title="Link this cell to the selected existing preset">Link</button>
-            <button type="button" class="ptz-grid-wizard-btn ptz-grid-wizard-btn--danger" id="ptzGridWizardClear" disabled>Clear</button>
-            <button type="button" class="ptz-grid-wizard-btn" id="ptzGridWizardHide" title="Hide grid lines so you can interact with the stream">Hide grid</button>
-            <button type="button" class="ptz-grid-wizard-btn" id="ptzGridWizardExit">Done</button>
-        </div>
-    </div>
-    {% endif %}
     <div class="stream-actions" aria-label="Stream actions">
         {% if can_moderate %}
         <!--
@@ -505,142 +483,6 @@
             0%, 100% { opacity: 1; }
             50% { opacity: 0.4; }
         }
-        .ptz-grid-wizard {
-            position: absolute;
-            inset: 0;
-            /* Overlay itself is click-through; only the per-cell label
-               chip catches clicks. The rest of each cell is transparent
-               to the iframe so the operator can still click Start /
-               interact with the live stream while the wizard is open. */
-            pointer-events: none;
-            z-index: 6;
-        }
-        .ptz-grid-wizard[hidden] { display: none; }
-        .ptz-grid-wizard__cells {
-            position: absolute;
-            inset: 0;
-            display: grid;
-            gap: 0;
-        }
-        .ptz-grid-cell {
-            position: relative;
-            border: 1.5px dashed rgba(255, 255, 255, 0.60);
-            background: transparent;
-            color: rgba(255, 255, 255, 0.95);
-            font-family: inherit;
-            font-size: 12px;
-            font-weight: 600;
-            pointer-events: none;  /* cell body is click-through */
-            transition: border-color 0.1s ease;
-            display: flex;
-            align-items: flex-start;
-            justify-content: flex-start;
-            padding: 4px 6px;
-        }
-        .ptz-grid-cell[data-state="set"] {
-            border-color: rgba(60, 180, 100, 0.85);
-            border-style: solid;
-        }
-        .ptz-grid-cell[data-state="active"] {
-            border-color: rgba(80, 170, 255, 1.0);
-            border-width: 2.5px;
-            border-style: solid;
-        }
-        .ptz-grid-cell__label {
-            background: rgba(0, 0, 0, 0.65);
-            padding: 3px 7px;
-            border-radius: 3px;
-            line-height: 1.3;
-            font-size: 12px;
-            font-weight: 600;
-            cursor: pointer;
-            pointer-events: auto;  /* the label chip is the only clickable region */
-            user-select: none;
-            -webkit-user-select: none;
-        }
-        .ptz-grid-cell__label:hover { background: rgba(0, 0, 0, 0.85); }
-        .ptz-grid-cell[data-state="active"] .ptz-grid-cell__label {
-            background: rgba(40, 110, 200, 0.95);
-        }
-        .ptz-grid-wizard-panel {
-            /* Lives in document flow between the stream and the action
-               bar. No absolute/fixed positioning so it can never get
-               clipped by overflow:hidden or hidden behind a stacking
-               context. Toggled visible via [hidden] attribute. */
-            margin: 8px auto 0;
-            max-width: 100%;
-            background: rgba(20, 20, 25, 0.97);
-            color: #fff;
-            border-radius: 10px;
-            padding: 10px 14px;
-            box-shadow: 0 6px 22px rgba(0, 0, 0, 0.45);
-            display: flex;
-            align-items: center;
-            flex-wrap: wrap;
-            gap: 10px;
-            font-size: 13px;
-            border: 1px solid rgba(120, 200, 255, 0.55);
-        }
-        .ptz-grid-wizard-panel[hidden] { display: none; }
-        .ptz-grid-wizard-panel__status {
-            display: flex;
-            flex-direction: column;
-            gap: 2px;
-            flex: 1;
-        }
-        .ptz-grid-wizard-panel__title { font-weight: 600; }
-        .ptz-grid-wizard-panel__hint {
-            font-size: 11px;
-            color: rgba(255, 255, 255, 0.65);
-        }
-        .ptz-grid-wizard-panel__actions {
-            display: flex;
-            gap: 6px;
-        }
-        .ptz-grid-wizard-btn {
-            padding: 5px 10px;
-            border-radius: 4px;
-            border: 1px solid rgba(255, 255, 255, 0.25);
-            background: rgba(255, 255, 255, 0.08);
-            color: #fff;
-            font-size: 12px;
-            font-weight: 500;
-            cursor: pointer;
-        }
-        .ptz-grid-wizard-btn:hover:not(:disabled) { background: rgba(255, 255, 255, 0.18); }
-        .ptz-grid-wizard-btn:disabled { opacity: 0.4; cursor: not-allowed; }
-        .ptz-grid-wizard-btn--primary {
-            background: rgba(60, 140, 220, 0.85);
-            border-color: rgba(60, 140, 220, 1.0);
-        }
-        .ptz-grid-wizard-btn--primary:hover:not(:disabled) { background: rgba(80, 160, 240, 0.95); }
-        .ptz-grid-wizard-btn--danger {
-            background: rgba(200, 70, 70, 0.85);
-            border-color: rgba(200, 70, 70, 1.0);
-        }
-        .ptz-grid-wizard-panel__sep {
-            font-size: 11px;
-            color: rgba(255, 255, 255, 0.55);
-            padding: 0 2px;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-        }
-        .ptz-grid-wizard-select {
-            padding: 5px 8px;
-            border-radius: 4px;
-            border: 1px solid rgba(255, 255, 255, 0.25);
-            background: rgba(255, 255, 255, 0.08);
-            color: #fff;
-            font-size: 12px;
-            font-family: inherit;
-            cursor: pointer;
-            max-width: 180px;
-        }
-        .ptz-grid-wizard-select option {
-            background: #1e1e23;
-            color: #fff;
-        }
-        .ptz-grid-wizard-select:disabled { opacity: 0.4; cursor: not-allowed; }
         .stream-ptz-dpad {
             display: inline-flex;
             align-items: center;
@@ -662,7 +504,7 @@
             position: absolute;
             right: 12px;
             bottom: 56px;
-            z-index: 5;
+            z-index: 7;
             background: rgba(0, 0, 0, 0.55);
             border-color: rgba(255, 255, 255, 0.15);
             box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
@@ -715,6 +557,20 @@
             grid-template-columns: 30px;
             gap: 2px;
         }
+        .stream-ptz-dpad__aim {
+            display: grid;
+            grid-template-columns: 58px;
+        }
+        .stream-ptz-dpad--overlay .stream-ptz-joybtn--aim {
+            width: 58px;
+            color: #ffe29a;
+            border-color: rgba(255, 194, 51, 0.48);
+        }
+        .stream-ptz-dpad--overlay .stream-ptz-joybtn--aim[aria-pressed="true"] {
+            background: rgba(255, 174, 0, 0.28);
+            border-color: rgba(255, 208, 92, 0.9);
+            box-shadow: 0 0 0 2px rgba(255, 186, 30, 0.18);
+        }
         .stream-ptz-dpad__focus {
             display: grid;
             grid-template-rows: repeat(3, 30px);
@@ -759,8 +615,72 @@
             border-color: rgba(60, 140, 220, 0.7);
         }
         .stream-ptz-joybtn:disabled { opacity: 0.45; cursor: not-allowed; }
+        .ptz-aim-overlay {
+            position: absolute;
+            z-index: 6;
+            cursor: crosshair;
+            touch-action: none;
+            background: radial-gradient(circle at center, transparent 0, transparent 52%, rgba(0, 0, 0, 0.08) 100%);
+        }
+        .ptz-aim-overlay[hidden] { display: none; }
+        .ptz-aim-reticle {
+            position: absolute;
+            width: 34px;
+            height: 34px;
+            margin: -17px 0 0 -17px;
+            border: 2px solid #ffc247;
+            border-radius: 50%;
+            box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.5), 0 0 18px rgba(255, 176, 0, 0.42);
+            pointer-events: none;
+            transition: left 180ms ease, top 180ms ease, border-color 180ms ease;
+        }
+        .ptz-aim-reticle::before,
+        .ptz-aim-reticle::after {
+            content: '';
+            position: absolute;
+            background: #ffc247;
+            box-shadow: 0 0 1px rgba(0, 0, 0, 0.8);
+        }
+        .ptz-aim-reticle::before { left: 15px; top: -7px; width: 2px; height: 46px; }
+        .ptz-aim-reticle::after { left: -7px; top: 15px; width: 46px; height: 2px; }
+        .ptz-aim-reticle[data-state="centered"] {
+            border-color: #64e6a5;
+            box-shadow: 0 0 0 5px rgba(100, 230, 165, 0.15), 0 0 22px rgba(100, 230, 165, 0.52);
+        }
+        .ptz-aim-status {
+            position: absolute;
+            left: 12px;
+            top: 12px;
+            display: inline-flex;
+            align-items: center;
+            gap: 7px;
+            min-height: 30px;
+            padding: 5px 10px;
+            border: 1px solid rgba(255, 255, 255, 0.22);
+            border-radius: 999px;
+            background: rgba(12, 14, 17, 0.78);
+            color: #fff;
+            font-size: 12px;
+            line-height: 1.2;
+            pointer-events: none;
+            backdrop-filter: blur(6px);
+        }
+        .ptz-aim-status__pulse {
+            width: 7px;
+            height: 7px;
+            border-radius: 50%;
+            background: #ffc247;
+            box-shadow: 0 0 0 0 rgba(255, 194, 71, 0.55);
+            animation: ptz-aim-pulse 1.4s ease-out infinite;
+        }
+        .ptz-aim-status__evidence { color: rgba(255, 255, 255, 0.66); }
+        @keyframes ptz-aim-pulse {
+            70% { box-shadow: 0 0 0 7px rgba(255, 194, 71, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(255, 194, 71, 0); }
+        }
         @media (prefers-reduced-motion: reduce) {
-            .stream-ptz-joybtn { transition: none; }
+            .stream-ptz-joybtn, .ptz-aim-reticle { transition: none; }
+            .ptz-aim-status__pulse { animation: none; }
         }
         /* Phones: shrink the overlay D-pad so it doesn't cover half the
            stream. Buttons drop from 30px to 22px, padding and corner
@@ -781,6 +701,11 @@
                 grid-template-rows: repeat(2, 22px);
                 grid-template-columns: 22px;
                 gap: 1px;
+            }
+            .stream-ptz-dpad__aim { grid-template-columns: 46px; }
+            .stream-ptz-dpad--overlay .stream-ptz-joybtn--aim {
+                width: 46px;
+                font-size: 9px;
             }
             .stream-ptz-dpad__focus {
                 grid-template-rows: repeat(3, 22px);
@@ -865,6 +790,15 @@
             const iframeEl = document.getElementById('go2rtc-frame');
             const editCanvasEl = document.getElementById('ptzEditCanvas');
             const fallbackVideoEl = document.getElementById('video-feed-fallback');
+            const aimToggleEl = document.getElementById('ptzAimToggle');
+            const aimOverlayEl = document.getElementById('ptzAimOverlay');
+            const aimReticleEl = document.getElementById('ptzAimReticle');
+            const aimStatusTextEl = document.getElementById('ptzAimStatusText');
+            const aimEvidenceEl = document.getElementById('ptzAimEvidence');
+            let aimArmed = false;
+            let aimSessionActive = false;
+            let aimCameraId = null;
+            let aimPollTimer = null;
             let cameraAspectDims = null;
             const aspectProbeFailedAtByKey = new Map();
             const aspectProbeInFlightKeys = new Set();
@@ -889,7 +823,6 @@
                 const nextAspect = w / h;
                 if (!prev || Math.abs(prevAspect - nextAspect) > 0.0005) {
                     syncOverlayToCanvas();
-                    syncWizardOverlayToVideo();
                 }
             }
 
@@ -1169,7 +1102,6 @@
                             editCanvasEl.dataset.prefetchedAspect = snapshotUrl;
                             editCanvasEl.addEventListener('load', function () {
                                 syncOverlayToCanvas();
-                                syncWizardOverlayToVideo();
                             }, { once: true });
                             editCanvasEl.src = snapshotUrl;
                         }
@@ -1190,8 +1122,8 @@
             //
             // The container is laid out 16:9 (or whatever the iframe
             // negotiates). When the real video aspect differs, the
-            // video is centered with black bars. Overlays — preset
-            // boxes, grid wizard cells — must clamp to this rectangle
+            // video is centered with black bars. Preset-box overlays
+            // must clamp to this rectangle
             // and NOT to the full container, or operator-placed
             // coordinates land on the bars instead of on actual pixels.
             //
@@ -1226,8 +1158,7 @@
             }
 
             // Position any overlay element to the video rectangle.
-            // Called for both ptzBoxOverlay (preset boxes) and the
-            // grid-wizard overlay so they share the same letterbox math.
+            // Shared letterbox math for the PTZ box overlay.
             function applyVideoRectToOverlay(el) {
                 if (!el) return;
                 const rect = getVideoRect();
@@ -1261,6 +1192,7 @@
 
             function syncOverlayToCanvas() {
                 syncTrackingOverlay();
+                applyVideoRectToOverlay(aimOverlayEl);
                 if (!overlayEl) return;
                 if (mode === MODE_EDIT && editCanvasEl && !editCanvasEl.hidden) {
                     applyVideoRectToOverlay(editCanvasEl);
@@ -1275,7 +1207,8 @@
 
             function applyModeStyles() {
                 const isEdit = mode === MODE_EDIT;
-                if (iframeEl) iframeEl.style.pointerEvents = isEdit ? 'none' : '';
+                if (isEdit && aimArmed) cancelAim();
+                if (iframeEl) iframeEl.style.pointerEvents = (isEdit || aimArmed) ? 'none' : '';
                 if (streamEmbedEl) streamEmbedEl.classList.toggle('stream-embed--ptz-edit', isEdit);
                 if (editCanvasEl) {
                     if (isEdit && snapshotUrl) {
@@ -1354,6 +1287,10 @@
                         && !!snapshotUrl
                         && cameraId !== null;
                     minimapEl.hidden = !showMinimap;
+                }
+                if (aimToggleEl) {
+                    aimToggleEl.disabled = ((cameraId === null) || isEdit) && !PTZ_DEBUG;
+                    aimToggleEl.setAttribute('aria-pressed', aimArmed ? 'true' : 'false');
                 }
             }
 
@@ -1503,6 +1440,7 @@
 
             function gotoPreset(token) {
                 if (cameraId === null) return;
+                if (aimArmed) cancelAim();
                 lastPreset = token;
                 optimisticUntil = performance.now() + OPTIMISTIC_HOLD_MS;
                 recomputeHomeState();
@@ -1695,6 +1633,177 @@
             //   the camera self-stops within MOVE_DURATION_MS. The explicit
             //   /ptz/stop on release is the fast path; the auto-stop is the
             //   backstop.
+            const AIM_POLL_MS = 350;
+
+            function positionAimReticle(x, y) {
+                if (!aimReticleEl || !Number.isFinite(x) || !Number.isFinite(y)) return;
+                aimReticleEl.style.left = Math.max(0, Math.min(1, x)) * 100 + '%';
+                aimReticleEl.style.top = Math.max(0, Math.min(1, y)) * 100 + '%';
+                aimReticleEl.hidden = false;
+            }
+
+            function disarmAimUi() {
+                aimArmed = false;
+                aimSessionActive = false;
+                if (aimPollTimer) window.clearTimeout(aimPollTimer);
+                aimPollTimer = null;
+                aimCameraId = null;
+                if (aimOverlayEl) aimOverlayEl.hidden = true;
+                if (aimReticleEl) {
+                    aimReticleEl.hidden = true;
+                    aimReticleEl.removeAttribute('data-state');
+                }
+                if (aimToggleEl) aimToggleEl.setAttribute('aria-pressed', 'false');
+                if (iframeEl) iframeEl.style.pointerEvents = mode === MODE_EDIT ? 'none' : '';
+            }
+
+            function armAimUi() {
+                if (!aimOverlayEl || mode === MODE_EDIT || (cameraId === null && !PTZ_DEBUG)) return;
+                aimArmed = true;
+                aimSessionActive = false;
+                aimCameraId = cameraId;
+                aimOverlayEl.hidden = false;
+                applyVideoRectToOverlay(aimOverlayEl);
+                if (aimReticleEl) aimReticleEl.hidden = true;
+                if (aimStatusTextEl) aimStatusTextEl.textContent = 'Click a point to aim';
+                if (aimEvidenceEl) aimEvidenceEl.textContent = 'Esc stops';
+                if (aimToggleEl) aimToggleEl.setAttribute('aria-pressed', 'true');
+                if (iframeEl) iframeEl.style.pointerEvents = 'none';
+            }
+
+            function aimStateLabel(state) {
+                return ({
+                    matching: 'Matching',
+                    moving: 'Moving',
+                    verifying: 'Verifying',
+                    centered: 'Centered',
+                    cancelling: 'Stopping',
+                    cancelled: 'Stopped',
+                    target_lost: 'Target lost',
+                    safety_stop: 'Safety stop',
+                })[state] || 'Aiming';
+            }
+
+            function paintAimStatus(aim) {
+                if (!aim) return;
+                const state = String(aim.state || 'matching');
+                if (aimStatusTextEl) aimStatusTextEl.textContent = aimStateLabel(state);
+                if (aimReticleEl) aimReticleEl.dataset.state = state;
+                if (aim.mapped_x !== null && aim.mapped_y !== null) {
+                    positionAimReticle(Number(aim.mapped_x), Number(aim.mapped_y));
+                }
+                const evidence = [];
+                if (Number.isFinite(Number(aim.quality))) {
+                    evidence.push('Q ' + Math.round(Number(aim.quality) * 100) + '%');
+                }
+                if (Number(aim.inliers) > 0) evidence.push(Number(aim.inliers) + ' inliers');
+                if (Number(aim.iteration) > 0) {
+                    evidence.push(Number(aim.iteration) + '/' + Number(aim.max_iterations || 5));
+                }
+                if (aimEvidenceEl) aimEvidenceEl.textContent = evidence.join(' · ');
+                aimSessionActive = !!aim.active;
+                if (!aim.active && state !== 'idle') {
+                    window.setTimeout(disarmAimUi, state === 'centered' ? 1400 : 2200);
+                }
+            }
+
+            function pollAimStatus() {
+                if (!aimArmed || cameraId === null) return;
+                fetch('/api/v1/cameras/' + cameraId + '/ptz/aim', { cache: 'no-store' })
+                    .then(function (r) { return r.ok ? r.json() : null; })
+                    .then(function (data) {
+                        if (!data || !data.aim) throw new Error('aim status unavailable');
+                        paintAimStatus(data.aim);
+                        if (data.aim.active && aimArmed) {
+                            aimPollTimer = window.setTimeout(pollAimStatus, AIM_POLL_MS);
+                        }
+                    })
+                    .catch(function () {
+                        aimSessionActive = false;
+                        if (aimStatusTextEl) aimStatusTextEl.textContent = 'Target lost';
+                        if (aimEvidenceEl) aimEvidenceEl.textContent = 'No visual confirmation';
+                        window.setTimeout(disarmAimUi, 2200);
+                    });
+            }
+
+            function cancelAim() {
+                const stopCameraId = aimCameraId;
+                const shouldStop = aimSessionActive && stopCameraId !== null;
+                if (!shouldStop) {
+                    disarmAimUi();
+                    return;
+                }
+                aimArmed = false;
+                aimSessionActive = false;
+                if (aimPollTimer) window.clearTimeout(aimPollTimer);
+                aimPollTimer = null;
+                if (aimToggleEl) aimToggleEl.setAttribute('aria-pressed', 'false');
+                if (aimStatusTextEl) aimStatusTextEl.textContent = 'Stopping';
+                if (aimEvidenceEl) aimEvidenceEl.textContent = 'PTZ stop requested';
+                fetch('/api/v1/cameras/' + stopCameraId + '/ptz/aim', {
+                    method: 'DELETE',
+                    headers: csrfHeaders(),
+                })
+                    .then(function (response) {
+                        if (!response.ok) throw new Error('aim stop failed');
+                        if (aimStatusTextEl) aimStatusTextEl.textContent = 'Stopped';
+                        if (aimEvidenceEl) aimEvidenceEl.textContent = '';
+                    })
+                    .catch(function () {
+                        if (aimStatusTextEl) aimStatusTextEl.textContent = 'Safety stop';
+                        if (aimEvidenceEl) {
+                            aimEvidenceEl.textContent = 'Movement timeout is the backstop';
+                        }
+                    })
+                    .finally(function () {
+                        window.setTimeout(disarmAimUi, 700);
+                    });
+            }
+
+            if (aimToggleEl) {
+                aimToggleEl.addEventListener('click', function () {
+                    if (aimArmed) cancelAim();
+                    else armAimUi();
+                });
+            }
+            if (aimOverlayEl) {
+                aimOverlayEl.addEventListener('click', function (event) {
+                    if (!aimArmed || aimSessionActive || cameraId === null) return;
+                    const rect = aimOverlayEl.getBoundingClientRect();
+                    if (rect.width <= 0 || rect.height <= 0) return;
+                    const x = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width));
+                    const y = Math.max(0, Math.min(1, (event.clientY - rect.top) / rect.height));
+                    positionAimReticle(x, y);
+                    aimSessionActive = true;
+                    if (aimStatusTextEl) aimStatusTextEl.textContent = 'Matching';
+                    if (aimEvidenceEl) aimEvidenceEl.textContent = '0/5';
+                    fetch('/api/v1/cameras/' + cameraId + '/ptz/aim', {
+                        method: 'POST',
+                        headers: csrfHeaders({ 'Content-Type': 'application/json' }),
+                        body: JSON.stringify({ x: x, y: y }),
+                    })
+                        .then(function (r) {
+                            return r.json().then(function (data) { return { ok: r.ok, data: data }; });
+                        })
+                        .then(function (response) {
+                            if (!response.ok || !response.data.aim) {
+                                throw new Error((response.data && response.data.message) || 'aim failed');
+                            }
+                            paintAimStatus(response.data.aim);
+                            aimPollTimer = window.setTimeout(pollAimStatus, AIM_POLL_MS);
+                        })
+                        .catch(function () {
+                            aimSessionActive = false;
+                            if (aimStatusTextEl) aimStatusTextEl.textContent = 'Aim unavailable';
+                            if (aimEvidenceEl) aimEvidenceEl.textContent = 'Camera was not moved';
+                            window.setTimeout(disarmAimUi, 2200);
+                        });
+                });
+            }
+            document.addEventListener('keydown', function (event) {
+                if (event.key === 'Escape' && aimArmed) cancelAim();
+            });
+
             const joystickEl = document.getElementById('ptzJoystick');
             if (joystickEl) {
                 const JOY_SPEED = 0.5;          // ONVIF velocity magnitude
@@ -1815,6 +1924,7 @@
                 }
 
                 function startHold(btn, pointerId) {
+                    if (aimArmed) cancelAim();
                     if (activeBtn) stopHold();
                     activeBtn = btn;
                     activePointerId = pointerId;
@@ -1910,9 +2020,11 @@
                 // auto-stop catches the rest within MOVE_DURATION_MS.
                 document.addEventListener('visibilitychange', function () {
                     if (document.hidden && activeBtn) stopHold();
+                    if (document.hidden && aimArmed) cancelAim();
                 });
                 window.addEventListener('blur', function () {
                     if (activeBtn) stopHold();
+                    if (aimArmed) cancelAim();
                 });
 
                 // Always-visible policy: the joystick stays mounted, the
@@ -1937,6 +2049,9 @@
                     });
                     if (dpadHomeBtn) {
                         dpadHomeBtn.disabled = dis || !overviewPreset;
+                    }
+                    if (aimToggleEl) {
+                        aimToggleEl.disabled = (dis || mode === MODE_EDIT) && !PTZ_DEBUG;
                     }
                     if (cameraId !== null && cameraId !== lastBurstCamId) {
                         lastBurstCamId = cameraId;
@@ -1967,335 +2082,6 @@
                 }
             }
 
-            // ---- Grid Setup Wizard ----------------------------------------
-            //
-            // Triggered by URL ?ptz_grid_setup=<camId>. Renders an N×M cell
-            // overlay over the live video, each cell clickable. Operator
-            // picks a cell, aims with the joystick, hits Save — the
-            // current camera position is saved as that cell's preset.
-            const wizardOverlayEl = document.getElementById('ptzGridWizardOverlay');
-            const wizardCellsEl = document.getElementById('ptzGridWizardCells');
-            const wizardPanelEl = document.getElementById('ptzGridWizardPanel');
-            const wizardTitleEl = document.getElementById('ptzGridWizardTitle');
-            const wizardHintEl = document.getElementById('ptzGridWizardHint');
-            const wizardSaveBtn = document.getElementById('ptzGridWizardSave');
-            const wizardClearBtn = document.getElementById('ptzGridWizardClear');
-            const wizardExitBtn = document.getElementById('ptzGridWizardExit');
-            const wizardPresetSelect = document.getElementById('ptzGridWizardPresetSelect');
-            const wizardLinkBtn = document.getElementById('ptzGridWizardLink');
-
-            let wizardActive = false;
-            let wizardCamId = null;
-            let wizardShape = [3, 3];
-            let wizardCells = {};   // {"r0_c0": "PresetToken", ...}
-            let wizardSelected = null;  // [row, col] or null
-            let wizardSaving = false;
-            let wizardPresetList = [];  // [{token, name}, ...] from ONVIF
-
-            function getWizardCamIdFromUrl() {
-                const params = new URLSearchParams(window.location.search);
-                const raw = params.get('ptz_grid_setup');
-                if (raw === null) return null;
-                const id = parseInt(raw, 10);
-                return Number.isFinite(id) && id >= 0 ? id : null;
-            }
-
-            function renderWizardCells() {
-                if (!wizardCellsEl) return;
-                const [rows, cols] = wizardShape;
-                wizardCellsEl.style.gridTemplateRows = `repeat(${rows}, 1fr)`;
-                wizardCellsEl.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
-                // Clear via DOM API — no innerHTML, no XSS surface.
-                while (wizardCellsEl.firstChild) {
-                    wizardCellsEl.removeChild(wizardCellsEl.firstChild);
-                }
-                for (let r = 0; r < rows; r++) {
-                    for (let c = 0; c < cols; c++) {
-                        const cellKey = `r${r}_c${c}`;
-                        const isSet = Object.prototype.hasOwnProperty.call(wizardCells, cellKey);
-                        const isActive = wizardSelected && wizardSelected[0] === r && wizardSelected[1] === c;
-                        const cell = document.createElement('div');
-                        cell.className = 'ptz-grid-cell';
-                        if (isActive) cell.setAttribute('data-state', 'active');
-                        else if (isSet) cell.setAttribute('data-state', 'set');
-                        const label = document.createElement('span');
-                        label.className = 'ptz-grid-cell__label';
-                        label.textContent = `${r},${c}${isSet ? ' ✓' : ''}${isActive ? ' ◀' : ''}`;
-                        label.title = `Select cell (${r}, ${c}) — aim with the joystick, then Save`;
-                        // The label chip is the only clickable region of
-                        // the cell; the cell body is pointer-events:none
-                        // so iframe clicks (e.g. Start Stream) still work.
-                        label.addEventListener('click', function (ev) {
-                            ev.stopPropagation();
-                            wizardSelectCell(r, c);
-                        });
-                        cell.appendChild(label);
-                        cell.dataset.row = String(r);
-                        cell.dataset.col = String(c);
-                        wizardCellsEl.appendChild(cell);
-                    }
-                }
-            }
-
-            function updateWizardPanel() {
-                if (!wizardPanelEl) return;
-                const total = wizardShape[0] * wizardShape[1];
-                const set = Object.keys(wizardCells).length;
-                const hasPresets = wizardPresetList.length > 0;
-                const selectedToken = wizardPresetSelect
-                    ? String(wizardPresetSelect.value || '')
-                    : '';
-                if (wizardSelected) {
-                    const [r, c] = wizardSelected;
-                    const cellKey = `r${r}_c${c}`;
-                    const isSet = Object.prototype.hasOwnProperty.call(wizardCells, cellKey);
-                    const linkedToken = isSet ? wizardCells[cellKey] : '';
-                    wizardTitleEl.textContent = `Cell (${r}, ${c}) — ${isSet ? 'linked to ' + linkedToken : 'empty'} — ${set}/${total} done`;
-                    wizardHintEl.textContent = isSet
-                        ? 'Aim + Save to overwrite, OR pick a preset and Link. Clear removes the mapping.'
-                        : 'Aim with the joystick + Save, OR pick a preset and Link.';
-                    wizardSaveBtn.disabled = wizardSaving;
-                    wizardClearBtn.disabled = !isSet || wizardSaving;
-                    if (wizardPresetSelect) wizardPresetSelect.disabled = !hasPresets || wizardSaving;
-                    if (wizardLinkBtn) wizardLinkBtn.disabled = !selectedToken || wizardSaving;
-                } else {
-                    wizardTitleEl.textContent = `Grid setup — pick a cell — ${set}/${total} done`;
-                    wizardHintEl.textContent = 'Click a cell, then either aim + Save or pick a preset + Link.';
-                    wizardSaveBtn.disabled = true;
-                    wizardClearBtn.disabled = true;
-                    if (wizardPresetSelect) wizardPresetSelect.disabled = true;
-                    if (wizardLinkBtn) wizardLinkBtn.disabled = true;
-                }
-            }
-
-            function wizardLoadPresetList() {
-                if (!wizardPresetSelect || wizardCamId === null) {
-                    return Promise.resolve();
-                }
-                return fetch(`/api/v1/cameras/${wizardCamId}/ptz/presets`)
-                    .then(function (r) { return r.ok ? r.json() : { presets: [] }; })
-                    .then(function (data) {
-                        wizardPresetList = (data.status === 'success' && Array.isArray(data.presets))
-                            ? data.presets
-                            : [];
-                        // Clear previous options (except the placeholder).
-                        while (wizardPresetSelect.firstChild) {
-                            wizardPresetSelect.removeChild(wizardPresetSelect.firstChild);
-                        }
-                        const placeholder = document.createElement('option');
-                        placeholder.value = '';
-                        placeholder.textContent = wizardPresetList.length
-                            ? '— pick a preset —'
-                            : '— no presets —';
-                        wizardPresetSelect.appendChild(placeholder);
-                        wizardPresetList.forEach(function (p) {
-                            const opt = document.createElement('option');
-                            opt.value = String(p.token || '');
-                            const name = String(p.name || p.token || '');
-                            opt.textContent = name === p.token ? name : `${name} (${p.token})`;
-                            wizardPresetSelect.appendChild(opt);
-                        });
-                    })
-                    .catch(function () { wizardPresetList = []; });
-            }
-
-            function wizardLinkSelectedPreset() {
-                if (!wizardSelected || wizardCamId === null || wizardSaving) return;
-                const token = wizardPresetSelect ? String(wizardPresetSelect.value || '') : '';
-                if (!token) return;
-                const [r, c] = wizardSelected;
-                wizardSaving = true;
-                updateWizardPanel();
-                fetch(`/api/v1/cameras/${wizardCamId}/ptz/grid/cells/${r}/${c}`, {
-                    method: 'PUT',
-                    headers: csrfHeaders({ 'Content-Type': 'application/json' }),
-                    body: JSON.stringify({ preset_token: token }),
-                })
-                    .then(function (r) { return r.json(); })
-                    .then(function (data) {
-                        if (!data || data.status !== 'success') {
-                            wizardHintEl.textContent = `Link failed: ${(data && data.message) || 'unknown error'}`;
-                            return;
-                        }
-                        wizardCells[`r${r}_c${c}`] = token;
-                        // Auto-advance like Save does — keeps the flow snappy
-                        // when the operator is mapping many cells in a row.
-                        const next = findNextEmptyCell(r, c);
-                        wizardSelected = next;
-                        renderWizardCells();
-                        updateWizardPanel();
-                    })
-                    .catch(function (err) {
-                        wizardHintEl.textContent = `Link error: ${(err && err.message) || err}`;
-                    })
-                    .finally(function () {
-                        wizardSaving = false;
-                        updateWizardPanel();
-                    });
-            }
-
-            function wizardSelectCell(r, c) {
-                wizardSelected = [r, c];
-                renderWizardCells();
-                updateWizardPanel();
-            }
-
-            function wizardLoadState() {
-                if (wizardCamId === null) return Promise.resolve();
-                return fetch(`/api/v1/cameras/${wizardCamId}/ptz/grid/state`)
-                    .then(function (r) { return r.json(); })
-                    .then(function (data) {
-                        if (!data || data.status !== 'success' || !data.grid) return;
-                        const g = data.grid;
-                        wizardShape = [g.rows, g.cols];
-                        wizardCells = g.cells || {};
-                        renderWizardCells();
-                        updateWizardPanel();
-                    })
-                    .catch(function () { /* silent — keep prior state */ });
-            }
-
-            function wizardSaveCell() {
-                if (!wizardSelected || wizardCamId === null || wizardSaving) return;
-                const [r, c] = wizardSelected;
-                wizardSaving = true;
-                updateWizardPanel();
-                fetch(`/api/v1/cameras/${wizardCamId}/ptz/grid/cells/${r}/${c}`, {
-                    method: 'PUT',
-                    headers: csrfHeaders({ 'Content-Type': 'application/json' }),
-                })
-                    .then(function (r) { return r.json(); })
-                    .then(function (data) {
-                        if (!data || data.status !== 'success') {
-                            wizardHintEl.textContent = `Save failed: ${(data && data.message) || 'unknown error'}`;
-                            return;
-                        }
-                        wizardCells[`r${r}_c${c}`] = (data.cell && data.cell.preset_token) || '';
-                        if (data.cell && data.cell.mode_auto_set) {
-                            wizardHintEl.textContent = 'Auto-PTZ mode switched to Grid.';
-                        }
-                        // Auto-advance: pick the next empty cell, if any.
-                        const next = findNextEmptyCell(r, c);
-                        wizardSelected = next;
-                        renderWizardCells();
-                        updateWizardPanel();
-                    })
-                    .catch(function (err) {
-                        wizardHintEl.textContent = `Save error: ${(err && err.message) || err}`;
-                    })
-                    .finally(function () {
-                        wizardSaving = false;
-                        updateWizardPanel();
-                    });
-            }
-
-            function wizardClearCell() {
-                if (!wizardSelected || wizardCamId === null || wizardSaving) return;
-                const [r, c] = wizardSelected;
-                wizardSaving = true;
-                updateWizardPanel();
-                fetch(`/api/v1/cameras/${wizardCamId}/ptz/grid/cells/${r}/${c}`, {
-                    method: 'DELETE',
-                    headers: csrfHeaders(),
-                })
-                    .then(function (r) { return r.json(); })
-                    .then(function (data) {
-                        if (!data || data.status !== 'success') {
-                            wizardHintEl.textContent = `Clear failed: ${(data && data.message) || 'unknown error'}`;
-                            return;
-                        }
-                        delete wizardCells[`r${r}_c${c}`];
-                        renderWizardCells();
-                        updateWizardPanel();
-                    })
-                    .catch(function (err) {
-                        wizardHintEl.textContent = `Clear error: ${(err && err.message) || err}`;
-                    })
-                    .finally(function () {
-                        wizardSaving = false;
-                        updateWizardPanel();
-                    });
-            }
-
-            function findNextEmptyCell(curR, curC) {
-                const [rows, cols] = wizardShape;
-                // Scan row-major starting after the current cell.
-                for (let i = 1; i <= rows * cols; i++) {
-                    const idx = (curR * cols + curC + i) % (rows * cols);
-                    const r = Math.floor(idx / cols);
-                    const c = idx % cols;
-                    if (!Object.prototype.hasOwnProperty.call(wizardCells, `r${r}_c${c}`)) {
-                        return [r, c];
-                    }
-                }
-                return null;  // grid full
-            }
-
-            function syncWizardOverlayToVideo() {
-                if (!wizardOverlayEl || wizardOverlayEl.hidden) return;
-                applyVideoRectToOverlay(wizardOverlayEl);
-            }
-
-            function startWizard(camId) {
-                wizardCamId = camId;
-                wizardActive = true;
-                if (wizardOverlayEl) wizardOverlayEl.hidden = false;
-                if (wizardPanelEl) {
-                    // Panel lives in document flow between stream and
-                    // action bar — just unhide it. No DOM moves, no
-                    // stacking-context games.
-                    wizardPanelEl.hidden = false;
-                }
-                syncWizardOverlayToVideo();
-                // Kick off preset-list load in parallel with state load
-                // so the dropdown is populated by the time the operator
-                // clicks a cell.
-                wizardLoadPresetList();
-                wizardLoadState().then(function () {
-                    if (!wizardSelected) {
-                        wizardSelected = findNextEmptyCell(0, -1);
-                        renderWizardCells();
-                        updateWizardPanel();
-                    }
-                });
-            }
-
-            function exitWizard() {
-                wizardActive = false;
-                if (wizardOverlayEl) wizardOverlayEl.hidden = true;
-                if (wizardPanelEl) wizardPanelEl.hidden = true;
-                // Strip the URL param so a refresh doesn't reopen the wizard.
-                const url = new URL(window.location.href);
-                url.searchParams.delete('ptz_grid_setup');
-                window.history.replaceState({}, '', url.toString());
-            }
-
-            function toggleGridOverlay() {
-                if (!wizardOverlayEl) return;
-                const willHide = !wizardOverlayEl.hidden;
-                wizardOverlayEl.hidden = willHide;
-                if (!willHide) syncWizardOverlayToVideo();
-                const hideBtn = document.getElementById('ptzGridWizardHide');
-                if (hideBtn) hideBtn.textContent = willHide ? 'Show grid' : 'Hide grid';
-            }
-
-            if (wizardSaveBtn) wizardSaveBtn.addEventListener('click', wizardSaveCell);
-            if (wizardClearBtn) wizardClearBtn.addEventListener('click', wizardClearCell);
-            if (wizardExitBtn) wizardExitBtn.addEventListener('click', exitWizard);
-            if (wizardLinkBtn) wizardLinkBtn.addEventListener('click', wizardLinkSelectedPreset);
-            if (wizardPresetSelect) {
-                // Update Link button enabled-state on every select change.
-                wizardPresetSelect.addEventListener('change', updateWizardPanel);
-            }
-            const wizardHideBtn = document.getElementById('ptzGridWizardHide');
-            if (wizardHideBtn) wizardHideBtn.addEventListener('click', toggleGridOverlay);
-
-            // Auto-launch when ?ptz_grid_setup=<id> is in the URL.
-            const wizardUrlCamId = getWizardCamIdFromUrl();
-            if (wizardUrlCamId !== null) {
-                window.setTimeout(function () { startWizard(wizardUrlCamId); }, 50);
-            }
-
             // Boot: poll status + load presets, then redraw.
             function refresh() {
                 fetchStatus().then(fetchPresets).then(function () {
@@ -2307,17 +2093,12 @@
             refresh();
             window.setInterval(fetchStatus, STATUS_POLL_MS);
             window.addEventListener('resize', function () {
-                // Both overlays must reflow to the new video rectangle —
-                // the preset-box overlay always, the wizard overlay only
-                // when it's active. Cheap calls, fire both.
                 syncOverlayToCanvas();
-                syncWizardOverlayToVideo();
             });
             // Letterbox dimensions are unknown until the iframe layout
             // settles; reflow once shortly after boot.
             window.setTimeout(function () {
                 syncOverlayToCanvas();
-                syncWizardOverlayToVideo();
             }, 250);
         })();
     </script>

@@ -58,10 +58,9 @@ SETTINGS_FILE = Path(__file__).resolve().parent / ".ptz_probe_settings.json"
 # MoveStatus feedback.
 HOME_SETTLE_SEC = 2.0
 
-# Default preset slot for the probe's own Home preset. Operator's slot
-# convention: 1–7 = preset-mode zones, 8 = auto-re-focus, 11–17 = grid-mode
-# cells. Slots 20+ are free for ad-hoc use. Cam declares max 32 presets, so
-# slot 20 is safely inside the physical limit AND clear of all conventions.
+# Default preset slot for the probe's own Home preset. Existing installations
+# may still have operator presets in lower slots. Slot 20 stays away from those
+# while remaining inside this camera's declared 32-preset limit.
 DEFAULT_HOME_SLOT = 20
 
 logger = logging.getLogger("ptz_probe")
@@ -285,7 +284,7 @@ def run_probe(args: argparse.Namespace) -> int:
         print(f"    [ ] Camera is powered on and reachable at {ip}:{port}")
         print("    [ ] You have a live view of the camera (cam app, RTSP")
         print("        viewer, or WMB stream page) so you can SEE moves")
-        print("    [ ] Operator preset slots 1–7, 8, 11–17 are intact")
+        print("    [ ] Existing operator preset slots are intact")
         print(f"        and you accept that slot {DEFAULT_HOME_SLOT} will be")
         print("        overwritten with the probe's Home preset")
         print("    [ ] You can stop the probe at any time with Ctrl-C —")
@@ -616,15 +615,11 @@ def _ensure_home_preset(
         return None
 
     print()
-    print("  Operator's slot convention:")
-    print("    1–7   preset-mode zones")
-    print("    8     auto-re-focus")
-    print("    11–17 grid-mode cells")
-    print("    20+   free for ad-hoc use")
+    print("  Existing lower preset slots are left untouched.")
     print()
     print("  Cam declares max 32 presets but lists 256 — slots above ~32 may")
     print(f"  silently no-op or modulo-map. Default slot {DEFAULT_HOME_SLOT} is")
-    print("  clear of all conventions AND well within the 32-slot hardware limit.")
+    print("  away from the lower slots AND within the 32-slot hardware limit.")
     print()
     slot_str = ask("Which preset slot to use for Home?", str(DEFAULT_HOME_SLOT))
     try:

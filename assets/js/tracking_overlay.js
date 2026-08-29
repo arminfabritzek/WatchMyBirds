@@ -27,13 +27,11 @@
     // State → colour + label. States with no entry draw no box (idle,
     // overview, returning).
     var COLOURS = {
-        acquiring: "#f5a623",   // amber
         tracking: "#2ecc71",    // green
         settling: "#b8860b",    // dimmed amber
         lost_grace: "#e67e22",  // orange
     };
     var LABEL = {
-        acquiring: "ACQUIRING",
         tracking: "TRACKING",
         settling: "SETTLING",
         lost_grace: "LOST",

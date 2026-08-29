@@ -20,37 +20,33 @@ DEFAULT_CAMERAS_FILE = "output/cameras.yaml"
 
 DEFAULT_PTZ_CONFIG: dict = {
     "enabled": False,
-    "mode": "preset",
     "profile_index": 0,
     "overview_preset": "",
     "overview_snapshot_path": "",
-    "acquire_frames": 2,
-    "lost_timeout_sec": 6.0,
+    "lost_timeout_sec": 10.0,
     "manual_view_sec": 15.0,
     "settle_max_sec": 8.0,
-    "command_cooldown_ms": 10000,
-    "deadband": 0.12,
+    "command_cooldown_ms": 800,
+    "deadband": 0.04,
     "max_speed": 0.35,
     "move_duration_ms": 250,
-    # Grid-mode additions (mode == "grid"). Operator picks shape once
-    # via setup wizard; runtime uses grid_cells map and the grid-mode
-    # cooldown, which is shorter than the preset-mode cooldown because
-    # adjacent-cell switching is the normal flow. The hysteresis margin
-    # prevents flap when a bird sits on a cell boundary.
-    "grid_shape": [3, 3],
-    "grid_cells": {},  # {"r{row}_c{col}": "<onvif_preset_token>"}
-    "grid_command_cooldown_ms": 4000,
-    "grid_hysteresis_margin": 0.05,
-    "grid_acquire_frames": 1,
-    # Follow-mode additions (mode == "follow"). Detection-driven
-    # continuous pan/tilt centres the bbox; continuous zoom-in/out
-    # keeps the bbox area near `follow_zoom_target_pct` of the frame.
+    # Detection-driven continuous pan/tilt centres the bbox;
+    # continuous zoom-in/out keeps the bbox area near
+    # `follow_zoom_target_pct` of the frame.
     # No presets are used for the active tracking — only the overview
     # preset on lost-timeout return. Designed for cams where the probe
     # confirmed continuous_works + continuous_zoom.
     "follow_zoom_target_pct": 0.18,
     "follow_zoom_deadband_pct": 0.05,
     "follow_zoom_speed": 0.3,
+    "follow_pan_rate_per_sec": 0.075,
+    "follow_tilt_rate_per_sec": 0.15,
+    "follow_tilt_max_duration_ms": 500,
+    "follow_zoom_duration_ms": 750,
+    "follow_lost_hold_sec": 2.0,
+    "follow_search_sec": 8.0,
+    "follow_search_burst_ms": 400,
+    "follow_search_zoom_out_ms": 250,
     # Lens-protection knob for follow-mode. The controller has no
     # absolute zoom feedback on most cheap PTZ cams (GetStatus returns
     # 0.0), so we cap the total *time* spent driving zoom-in since the
@@ -78,32 +74,7 @@ DEFAULT_PTZ_CONFIG: dict = {
     # both at the same time, the effective movement per move-command
     # is `burst × (duration × multiplier)`. 1.0 = legacy behaviour.
     "manual_move_duration_multiplier": 1.0,
-    "zones": [
-        {
-            "name": "left",
-            "preset": "",
-            "x_min": 0.0,
-            "y_min": 0.0,
-            "x_max": 0.33,
-            "y_max": 1.0,
-        },
-        {
-            "name": "center",
-            "preset": "",
-            "x_min": 0.33,
-            "y_min": 0.0,
-            "x_max": 0.67,
-            "y_max": 1.0,
-        },
-        {
-            "name": "right",
-            "preset": "",
-            "x_min": 0.67,
-            "y_min": 0.0,
-            "x_max": 1.0,
-            "y_max": 1.0,
-        },
-    ],
+    "preset_metadata": {},
 }
 
 
@@ -359,58 +330,6 @@ class CameraStorage:
             return self._save_cameras(cameras)
         return True
 
-    def set_grid_cell(self, camera_id: int, cell_key: str, preset_token: str) -> bool:
-        """Map a grid cell key ('r{row}_c{col}') to an ONVIF preset token.
-
-        The cell_key string is the canonical form used by the grid-mode
-        routing path in `core.ptz_tracking_core._handle_detections_grid`.
-        Stored under `ptz.grid_cells` so the controller reads it on the
-        next normalize_ptz_config() refresh.
-        """
-        cameras = self._load_cameras()
-        if camera_id < 0 or camera_id >= len(cameras):
-            return False
-        cam = cameras[camera_id]
-        ptz = dict(cam.get("ptz") or {})
-        bucket = dict(ptz.get("grid_cells") or {})
-        bucket[str(cell_key)] = str(preset_token)
-        ptz["grid_cells"] = bucket
-        cam["ptz"] = ptz
-        return self._save_cameras(cameras)
-
-    def delete_grid_cell(self, camera_id: int, cell_key: str) -> bool:
-        """Unmap a grid cell; safe no-op if the entry is absent."""
-        cameras = self._load_cameras()
-        if camera_id < 0 or camera_id >= len(cameras):
-            return False
-        cam = cameras[camera_id]
-        ptz = dict(cam.get("ptz") or {})
-        bucket = dict(ptz.get("grid_cells") or {})
-        if str(cell_key) in bucket:
-            del bucket[str(cell_key)]
-            ptz["grid_cells"] = bucket
-            cam["ptz"] = ptz
-            return self._save_cameras(cameras)
-        return True
-
-    def set_grid_shape(self, camera_id: int, rows: int, cols: int) -> bool:
-        """Persist the operator's chosen grid shape (rows × cols).
-
-        Validated against `core.ptz_grid.ALLOWED_GRID_SHAPES` upstream
-        in the service layer; this method just writes what it's given.
-        Clearing all grid_cells when the shape changes is a service-
-        layer concern, not done here — there are legitimate reasons to
-        switch shape and re-use overlapping cells (e.g. 2x3 → 3x3).
-        """
-        cameras = self._load_cameras()
-        if camera_id < 0 or camera_id >= len(cameras):
-            return False
-        cam = cameras[camera_id]
-        ptz = dict(cam.get("ptz") or {})
-        ptz["grid_shape"] = [int(rows), int(cols)]
-        cam["ptz"] = ptz
-        return self._save_cameras(cameras)
-
     def get_credentials(self, camera_id: int) -> tuple[str, str]:
         """Get stored credentials for a camera."""
         cam = self.get_camera(camera_id, include_password=True)
@@ -419,36 +338,16 @@ class CameraStorage:
         return "", ""
 
     def _merged_ptz_config(self, ptz_config: dict | None) -> dict:
-        """Return PTZ config with defaults filled in and legacy gaps tolerated."""
+        """Return the supported PTZ config and discard retired mode fields."""
         config = DEFAULT_PTZ_CONFIG.copy()
-        config["zones"] = [zone.copy() for zone in DEFAULT_PTZ_CONFIG["zones"]]
+        config["preset_metadata"] = {}
 
         if not isinstance(ptz_config, dict):
             return config
 
-        for key, value in ptz_config.items():
-            if key == "zones":
-                continue
-            config[key] = value
-
-        raw_zones = ptz_config.get("zones")
-        if isinstance(raw_zones, list) and raw_zones:
-            zones: list[dict] = []
-            for zone in raw_zones:
-                if not isinstance(zone, dict):
-                    continue
-                zones.append(
-                    {
-                        "name": str(zone.get("name") or f"zone_{len(zones) + 1}"),
-                        "preset": str(zone.get("preset") or ""),
-                        "x_min": float(zone.get("x_min", 0.0)),
-                        "y_min": float(zone.get("y_min", 0.0)),
-                        "x_max": float(zone.get("x_max", 1.0)),
-                        "y_max": float(zone.get("y_max", 1.0)),
-                    }
-                )
-            if zones:
-                config["zones"] = zones
+        for key in config:
+            if key in ptz_config:
+                config[key] = ptz_config[key]
 
         return config
 
@@ -456,9 +355,7 @@ class CameraStorage:
         config = self._merged_ptz_config(ptz_config)
         return {
             "enabled": bool(config.get("enabled")),
-            "mode": config.get("mode", "preset"),
             "overview_preset": config.get("overview_preset", ""),
-            "zones": config.get("zones", []),
         }
 
 

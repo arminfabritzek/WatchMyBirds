@@ -12,47 +12,19 @@ class FakeClock:
         self.now += seconds
 
 
-def _camera(mode: str = "preset", acquire_frames: int = 2) -> dict:
+def _camera() -> dict:
     return {
         "id": 0,
         "name": "Garden PTZ",
         "ip": "198.51.100.10",
         "ptz": {
             "enabled": True,
-            "mode": mode,
             "overview_preset": "overview_token",
-            "acquire_frames": acquire_frames,
             "lost_timeout_sec": 6.0,
             "command_cooldown_ms": 700,
             "deadband": 0.12,
             "max_speed": 0.35,
             "move_duration_ms": 250,
-            "zones": [
-                {
-                    "name": "left",
-                    "preset": "left_token",
-                    "x_min": 0.0,
-                    "y_min": 0.0,
-                    "x_max": 0.33,
-                    "y_max": 1.0,
-                },
-                {
-                    "name": "center",
-                    "preset": "center_token",
-                    "x_min": 0.33,
-                    "y_min": 0.0,
-                    "x_max": 0.67,
-                    "y_max": 1.0,
-                },
-                {
-                    "name": "right",
-                    "preset": "right_token",
-                    "x_min": 0.67,
-                    "y_min": 0.0,
-                    "x_max": 1.0,
-                    "y_max": 1.0,
-                },
-            ],
         },
     }
 
@@ -68,78 +40,6 @@ def _detection(x1: int, x2: int) -> dict:
     }
 
 
-def test_preset_mode_queues_zone_preset_after_stable_acquisition():
-    clock = FakeClock()
-    commands = []
-    controller = AutoPtzController(
-        camera_provider=lambda: _camera(mode="preset", acquire_frames=2),
-        command_runner=commands.append,
-        clock=clock,
-        worker_enabled=False,
-    )
-
-    controller.handle_detections(
-        frame_shape=(100, 100, 3), detections=[_detection(0, 20)]
-    )
-    assert commands == []
-
-    clock.advance(0.8)
-    controller.handle_detections(
-        frame_shape=(100, 100, 3), detections=[_detection(0, 20)]
-    )
-
-    assert len(commands) == 1
-    assert commands[0].action == "goto"
-    assert commands[0].preset_token == "left_token"
-
-
-def test_preset_mode_returns_to_overview_after_lost_timeout():
-    clock = FakeClock()
-    commands = []
-    controller = AutoPtzController(
-        camera_provider=lambda: _camera(mode="preset", acquire_frames=1),
-        command_runner=commands.append,
-        clock=clock,
-        worker_enabled=False,
-    )
-
-    controller.handle_detections(
-        frame_shape=(100, 100, 3), detections=[_detection(0, 20)]
-    )
-    clock.advance(6.1)
-    controller.handle_no_detection()
-
-    assert [command.preset_token for command in commands] == [
-        "left_token",
-        "overview_token",
-    ]
-
-
-def test_hybrid_mode_queues_move_after_preset_and_cooldown():
-    clock = FakeClock()
-    commands = []
-    controller = AutoPtzController(
-        camera_provider=lambda: _camera(mode="hybrid", acquire_frames=1),
-        command_runner=commands.append,
-        clock=clock,
-        worker_enabled=False,
-    )
-
-    controller.handle_detections(
-        frame_shape=(100, 100, 3), detections=[_detection(80, 96)]
-    )
-    clock.advance(0.8)
-    controller.handle_detections(
-        frame_shape=(100, 100, 3), detections=[_detection(80, 96)]
-    )
-
-    assert commands[0].action == "goto"
-    assert commands[0].preset_token == "right_token"
-    assert commands[1].action == "move"
-    assert commands[1].pan > 0
-    assert commands[1].tilt == 0.0
-
-
 def _follow_detection(x1: int, y1: int, x2: int, y2: int) -> dict:
     """Like _detection but with explicit y coords so bbox area is tunable.
 
@@ -148,7 +48,10 @@ def _follow_detection(x1: int, y1: int, x2: int, y2: int) -> dict:
     zoom-in vs zoom-out branches in isolation.
     """
     return {
-        "x1": x1, "y1": y1, "x2": x2, "y2": y2,
+        "x1": x1,
+        "y1": y1,
+        "x2": x2,
+        "y2": y2,
         "confidence": 0.9,
         "class_name": "bird",
     }
@@ -160,7 +63,7 @@ def test_follow_mode_steers_pan_tilt_toward_center():
     clock = FakeClock()
     commands = []
     controller = AutoPtzController(
-        camera_provider=lambda: _camera(mode="follow", acquire_frames=1),
+        camera_provider=lambda: _camera(),
         command_runner=commands.append,
         clock=clock,
         worker_enabled=False,
@@ -182,7 +85,10 @@ def test_follow_mode_steers_pan_tilt_toward_center():
     assert cmd.tilt > 0
     # Bbox area = 20×20 / (100×100) = 0.04, below the 0.18 target by
     # more than the 0.05 deadband → zoom IN (positive).
-    assert cmd.zoom > 0
+    assert cmd.zoom == 0.0
+    # Tilt is active, so the tighter tilt safety cap applies (not the
+    # 2000ms pan-only ceiling).
+    assert cmd.duration_ms == 500
     assert controller.status()["state"] == "tracking"
 
 
@@ -191,7 +97,7 @@ def test_follow_mode_zoom_out_when_bird_too_big():
     clock = FakeClock()
     commands = []
     controller = AutoPtzController(
-        camera_provider=lambda: _camera(mode="follow", acquire_frames=1),
+        camera_provider=lambda: _camera(),
         command_runner=commands.append,
         clock=clock,
         worker_enabled=False,
@@ -221,7 +127,7 @@ def test_follow_mode_no_move_when_centred_and_size_matches():
     clock = FakeClock()
     commands = []
     controller = AutoPtzController(
-        camera_provider=lambda: _camera(mode="follow", acquire_frames=1),
+        camera_provider=lambda: _camera(),
         command_runner=commands.append,
         clock=clock,
         worker_enabled=False,
@@ -243,11 +149,11 @@ def test_follow_mode_cooldown_blocks_back_to_back_moves():
     """Two detection frames within the cooldown → exactly one move enqueued.
 
     Cheap continuous-zoom cams can't queue back-to-back commands; the
-    cooldown protects them just like in preset/hybrid mode."""
+    cooldown protects them from overlapping firmware commands."""
     clock = FakeClock()
     commands = []
     controller = AutoPtzController(
-        camera_provider=lambda: _camera(mode="follow", acquire_frames=1),
+        camera_provider=lambda: _camera(),
         command_runner=commands.append,
         clock=clock,
         worker_enabled=False,
@@ -266,20 +172,12 @@ def test_follow_mode_cooldown_blocks_back_to_back_moves():
     assert len(commands) == 1
 
 
-def test_follow_mode_no_detection_stops_camera_immediately():
-    """When follow-mode loses the bird mid-tracking, fire Stop() right
-    away so the cam halts its in-flight continuous burst instead of
-    completing it on the stale bbox target.
-
-    Many cheap PTZ firmwares ignore the ONVIF duration_sec parameter
-    and run each Continuous burst for ~800-1000ms. Without an explicit
-    Stop() the cam keeps moving on the last bbox target for hundreds
-    of milliseconds after the bird left — the operator sees this as
-    'cam still following the old bbox'."""
+def test_follow_mode_no_detection_holds_before_searching():
+    """One missing low-FPS frame does not cancel the active acquisition."""
     clock = FakeClock()
     commands = []
     controller = AutoPtzController(
-        camera_provider=lambda: _camera(mode="follow", acquire_frames=1),
+        camera_provider=lambda: _camera(),
         command_runner=commands.append,
         clock=clock,
         worker_enabled=False,
@@ -296,26 +194,20 @@ def test_follow_mode_no_detection_stops_camera_immediately():
     # Next detection cycle: bird is gone.
     controller.handle_no_detection()
 
-    # A Stop() command was enqueued on the tracking→lost_grace transition.
+    # The camera's bounded ContinuousMove stops itself. Do not enqueue a
+    # competing Stop merely because one inference frame missed the bird.
     stop_cmds = [c for c in commands if c.action == "stop"]
-    assert len(stop_cmds) == 1, (
-        f"expected exactly one Stop on no-detection, got: "
-        f"{[(c.action, getattr(c, 'preset_token', '')) for c in commands]}"
-    )
+    assert stop_cmds == []
     # No new Move was issued.
     move_count_after = len([c for c in commands if c.action == "move"])
     assert move_count_after == move_count_before
 
 
-def test_follow_mode_no_detection_only_stops_once_not_every_frame():
-    """The Stop()-on-no-detection fires on the tracking→lost_grace
-    transition only. Subsequent no-detection frames during lost_grace
-    must NOT keep hammering Stop() at the cam — that would spam ONVIF
-    and the cam log."""
+def test_follow_mode_no_detection_hold_does_not_spam_stop():
     clock = FakeClock()
     commands = []
     controller = AutoPtzController(
-        camera_provider=lambda: _camera(mode="follow", acquire_frames=1),
+        camera_provider=lambda: _camera(),
         command_runner=commands.append,
         clock=clock,
         worker_enabled=False,
@@ -331,20 +223,20 @@ def test_follow_mode_no_detection_only_stops_once_not_every_frame():
     controller.handle_no_detection()
 
     stop_cmds = [c for c in commands if c.action == "stop"]
-    assert len(stop_cmds) == 1
+    assert stop_cmds == []
 
 
 def test_follow_mode_lost_target_continues_along_recent_trajectory():
     """Two coherent target positions seed a short predictive search.
 
     The first missing frame should move toward the extrapolated position
-    instead of stopping on the last observed bounding box. Lost-search moves
-    never zoom because target size is unknown once the detector loses it.
+    instead of stopping on the last observed bounding box. Directional search
+    stays pan/tilt-only; a separate bounded zoom-out may widen the view later.
     """
     clock = FakeClock()
     commands = []
     controller = AutoPtzController(
-        camera_provider=lambda: _camera(mode="follow", acquire_frames=1),
+        camera_provider=lambda: _camera(),
         command_runner=commands.append,
         clock=clock,
         worker_enabled=False,
@@ -354,7 +246,7 @@ def test_follow_mode_lost_target_continues_along_recent_trajectory():
         frame_shape=(100, 100, 3),
         detections=[_follow_detection(25, 40, 45, 60)],
     )
-    clock.advance(0.5)
+    clock.advance(2.1)  # sample after the prior PTZ move has finished
     controller.handle_detections(
         frame_shape=(100, 100, 3),
         detections=[_follow_detection(45, 40, 65, 60)],
@@ -362,6 +254,8 @@ def test_follow_mode_lost_target_continues_along_recent_trajectory():
     commands_before_lost = len(commands)
 
     clock.advance(0.1)
+    controller.handle_no_detection()
+    clock.advance(2.1)
     controller.handle_no_detection()
 
     assert len(commands) == commands_before_lost + 1
@@ -377,11 +271,11 @@ def test_follow_mode_lost_target_continues_along_recent_trajectory():
 
 
 def test_follow_mode_predictive_search_is_bounded_then_stops_once():
-    """Lost pursuit emits at most two moves, then explicitly halts."""
+    """Lost pursuit emits at most four moves, then explicitly halts."""
     clock = FakeClock()
     commands = []
     controller = AutoPtzController(
-        camera_provider=lambda: _camera(mode="follow", acquire_frames=1),
+        camera_provider=lambda: _camera(),
         command_runner=commands.append,
         clock=clock,
         worker_enabled=False,
@@ -399,25 +293,28 @@ def test_follow_mode_predictive_search_is_bounded_then_stops_once():
     moves_before_lost = len([c for c in commands if c.action == "move"])
 
     clock.advance(0.1)
+    controller.handle_no_detection()  # begin hold window
+    clock.advance(2.1)
     controller.handle_no_detection()  # first predictive pulse
-    clock.advance(0.8)
-    controller.handle_no_detection()  # second predictive pulse
-    clock.advance(0.8)
+    for _ in range(3):
+        clock.advance(0.8)
+        controller.handle_no_detection()
+    clock.advance(5.0)
     controller.handle_no_detection()  # search window expired → stop
     controller.handle_no_detection()  # stop remains edge-triggered
 
     lost_moves = len([c for c in commands if c.action == "move"]) - moves_before_lost
-    assert lost_moves == 2
+    assert lost_moves == 4
     assert len([c for c in commands if c.action == "stop"]) == 1
     assert controller.status()["prediction_active"] is False
 
 
-def test_follow_mode_target_jump_does_not_seed_predictive_search():
-    """A large position jump is another bird, not a usable trajectory."""
+def test_follow_mode_target_jump_does_not_continue_stale_trajectory():
+    """A target switch drops velocity history rather than chasing the old bird."""
     clock = FakeClock()
     commands = []
     controller = AutoPtzController(
-        camera_provider=lambda: _camera(mode="follow", acquire_frames=1),
+        camera_provider=lambda: _camera(),
         command_runner=commands.append,
         clock=clock,
         worker_enabled=False,
@@ -435,34 +332,27 @@ def test_follow_mode_target_jump_does_not_seed_predictive_search():
     commands_before_lost = len(commands)
 
     controller.handle_no_detection()
+    clock.advance(2.1)
+    controller.handle_no_detection()
 
     assert len(commands) == commands_before_lost + 1
     assert commands[-1].action == "stop"
     assert controller.status()["prediction_active"] is False
 
 
-def test_follow_mode_uses_low_p_gain_to_avoid_overshoot():
-    """The follow-mode P-gain (0.8) is well below the hybrid-mode gain
-    (2.0). Reason: cheap cams run each Continuous burst for ~800-1000ms
-    regardless of duration_sec, so a 2.0 gain on the operator's cam
-    over-corrects past the centre, the next detection sees the bird on
-    the OTHER side, fires the opposite move, and the camera oscillates."""
+def test_follow_mode_uses_full_direction_with_bounded_duration():
+    """Duration controls distance when camera velocity scaling is ineffective."""
     clock = FakeClock()
     commands = []
     controller = AutoPtzController(
-        camera_provider=lambda: _camera(mode="follow", acquire_frames=1),
+        camera_provider=lambda: _camera(),
         command_runner=commands.append,
         clock=clock,
         worker_enabled=False,
     )
 
-    # Bird at the extreme right edge: offset_x = +0.40, well above the
-    # 0.12 deadband. With max_speed=0.35 and P-gain=0.8, the expected
-    # pan command is 0.40 * 0.35 * 0.8 = 0.112. With the old P-gain of
-    # 2.0 it would have been 0.280 — i.e. nearly the full max_speed for
-    # what should be a moderate correction. The lower gain damps the
-    # response so two cycles of motion are needed to centre instead of
-    # one overshoot.
+    # The measured camera ignores velocity magnitude, so a large horizontal
+    # error uses full direction and expresses distance as a bounded duration.
     controller.handle_detections(
         frame_shape=(100, 100, 3),
         detections=[_follow_detection(85, 40, 95, 60)],
@@ -470,12 +360,199 @@ def test_follow_mode_uses_low_p_gain_to_avoid_overshoot():
 
     move_cmds = [c for c in commands if c.action == "move"]
     assert len(move_cmds) == 1
-    pan = move_cmds[0].pan
-    # P-gain * max_speed * 2.0 (old) would give ~0.28; with the 0.8
-    # gain we expect ~0.11. Hard upper bound at 0.15 catches a
-    # regression to the old gain without being brittle to small
-    # bbox tweaks.
-    assert 0 < pan < 0.15, f"expected damped pan correction, got {pan}"
+    assert move_cmds[0].pan == 0.35
+    assert move_cmds[0].duration_ms == 2000
+
+
+def test_follow_mode_uses_adaptive_duration_for_dominant_axis():
+    """Large diagonal errors move both axes; duration is calibrated to
+    whichever axis needs the longer command."""
+    clock = FakeClock()
+    commands = []
+    camera = _camera()
+    camera["ptz"].update(
+        {
+            "deadband": 0.04,
+            "follow_pan_rate_per_sec": 0.075,
+            "follow_tilt_rate_per_sec": 0.15,
+        }
+    )
+    controller = AutoPtzController(
+        camera_provider=lambda: camera,
+        command_runner=commands.append,
+        clock=clock,
+        worker_enabled=False,
+    )
+
+    controller.handle_detections(
+        frame_shape=(100, 100, 3),
+        detections=[_follow_detection(70, 10, 90, 30)],
+    )
+
+    command = commands[-1]
+    assert command.pan == camera["ptz"]["max_speed"]
+    assert command.tilt == camera["ptz"]["max_speed"]
+    assert command.zoom == 0.0
+    # Tilt is active, so the tighter tilt safety cap applies (not the
+    # 2000ms pan-only ceiling).
+    assert command.duration_ms == 500
+
+
+def test_follow_mode_zooms_aggressively_only_after_centering():
+    clock = FakeClock()
+    commands = []
+    camera = _camera()
+    camera["ptz"].update(
+        {
+            "deadband": 0.04,
+            "follow_zoom_duration_ms": 500,
+        }
+    )
+    controller = AutoPtzController(
+        camera_provider=lambda: camera,
+        command_runner=commands.append,
+        clock=clock,
+        worker_enabled=False,
+    )
+
+    controller.handle_detections(
+        frame_shape=(100, 100, 3),
+        detections=[_follow_detection(45, 45, 55, 55)],
+    )
+
+    command = commands[-1]
+    assert command.pan == 0.0
+    assert command.tilt == 0.0
+    assert command.zoom > 0.0
+    assert command.duration_ms == 500
+
+
+def test_follow_mode_caps_tilt_until_fresh_visual_feedback():
+    clock = FakeClock()
+    commands = []
+    camera = _camera()
+    camera["ptz"].update(
+        {
+            "deadband": 0.04,
+            "follow_tilt_rate_per_sec": 0.15,
+            "follow_tilt_max_duration_ms": 500,
+        }
+    )
+    controller = AutoPtzController(
+        camera_provider=lambda: camera,
+        command_runner=commands.append,
+        clock=clock,
+        worker_enabled=False,
+    )
+
+    controller.handle_detections(
+        frame_shape=(100, 100, 3),
+        detections=[_follow_detection(45, 80, 55, 100)],
+    )
+
+    command = commands[-1]
+    assert command.pan == 0.0
+    assert command.tilt < 0.0
+    assert command.duration_ms == 500
+
+
+def test_follow_mode_single_observation_seeds_bounded_lost_search():
+    clock = FakeClock()
+    commands = []
+    camera = _camera()
+    camera["ptz"].update(
+        {
+            "deadband": 0.04,
+            "follow_lost_hold_sec": 2.0,
+            "follow_search_sec": 8.0,
+        }
+    )
+    controller = AutoPtzController(
+        camera_provider=lambda: camera,
+        command_runner=commands.append,
+        clock=clock,
+        worker_enabled=False,
+    )
+
+    controller.handle_detections(
+        frame_shape=(100, 100, 3),
+        detections=[_follow_detection(70, 40, 90, 60)],
+    )
+    moves_before_loss = len([c for c in commands if c.action == "move"])
+
+    controller.handle_no_detection()
+    clock.advance(2.1)
+    controller.handle_no_detection()
+
+    lost_moves = [c for c in commands if c.action == "move"][moves_before_loss:]
+    assert len(lost_moves) == 1
+    assert lost_moves[0].pan > 0.0
+    assert lost_moves[0].zoom == 0.0
+
+
+def test_follow_lost_search_zooms_out_once_to_widen_reacquisition_view():
+    clock = FakeClock()
+    commands = []
+    camera = _camera()
+    camera["ptz"].update(
+        {
+            "follow_lost_hold_sec": 2.0,
+            "follow_search_sec": 8.0,
+            "follow_search_zoom_out_ms": 250,
+        }
+    )
+    controller = AutoPtzController(
+        camera_provider=lambda: camera,
+        command_runner=commands.append,
+        clock=clock,
+        worker_enabled=False,
+    )
+    controller.handle_detections(
+        frame_shape=(100, 100, 3),
+        detections=[_follow_detection(70, 40, 90, 60)],
+    )
+    controller.handle_no_detection()
+
+    clock.advance(5.0)
+    controller.handle_no_detection()
+    controller.handle_no_detection()
+
+    zoom_out = [c for c in commands if c.action == "move" and c.zoom < 0]
+    assert len(zoom_out) == 1
+    assert zoom_out[0].duration_ms == 250
+
+
+def test_follow_lost_timeout_starts_after_planned_tracking_move():
+    clock = FakeClock()
+    commands = []
+    camera = _camera()
+    camera["ptz"].update(
+        {
+            "deadband": 0.04,
+            "lost_timeout_sec": 6.0,
+            "follow_pan_rate_per_sec": 0.075,
+        }
+    )
+    controller = AutoPtzController(
+        camera_provider=lambda: camera,
+        command_runner=commands.append,
+        clock=clock,
+        worker_enabled=False,
+    )
+
+    controller.handle_detections(
+        frame_shape=(100, 100, 3),
+        detections=[_follow_detection(70, 40, 90, 60)],
+    )
+    assert commands[-1].duration_ms == 2000
+
+    clock.advance(6.1)
+    controller.handle_no_detection()
+    assert not [command for command in commands if command.action == "goto"]
+
+    clock.advance(2.0)
+    controller.handle_no_detection()
+    assert [command for command in commands if command.action == "goto"]
 
 
 def test_min_confidence_filters_weak_detections():
@@ -489,7 +566,7 @@ def test_min_confidence_filters_weak_detections():
     clock = FakeClock()
     commands = []
     controller = AutoPtzController(
-        camera_provider=lambda: _camera(mode="follow", acquire_frames=1),
+        camera_provider=lambda: _camera(),
         command_runner=commands.append,
         clock=clock,
         worker_enabled=False,
@@ -515,7 +592,7 @@ def test_min_confidence_accepts_strong_detections():
     clock = FakeClock()
     commands = []
     controller = AutoPtzController(
-        camera_provider=lambda: _camera(mode="follow", acquire_frames=1),
+        camera_provider=lambda: _camera(),
         command_runner=commands.append,
         clock=clock,
         worker_enabled=False,
@@ -540,7 +617,7 @@ def test_min_confidence_mixed_keeps_only_strong():
     clock = FakeClock()
     commands = []
     controller = AutoPtzController(
-        camera_provider=lambda: _camera(mode="follow", acquire_frames=1),
+        camera_provider=lambda: _camera(),
         command_runner=commands.append,
         clock=clock,
         worker_enabled=False,
@@ -570,7 +647,7 @@ def test_min_confidence_zero_disables_filter():
     clock = FakeClock()
     commands = []
     controller = AutoPtzController(
-        camera_provider=lambda: _camera(mode="follow", acquire_frames=1),
+        camera_provider=lambda: _camera(),
         command_runner=commands.append,
         clock=clock,
         worker_enabled=False,
@@ -605,7 +682,7 @@ def test_lost_detection_cooldown_blocks_new_moves_until_overview_arrives():
     clock = FakeClock()
     commands = []
     controller = AutoPtzController(
-        camera_provider=lambda: _camera(mode="follow", acquire_frames=1),
+        camera_provider=lambda: _camera(),
         command_runner=commands.append,
         clock=clock,
         worker_enabled=False,
@@ -618,7 +695,7 @@ def test_lost_detection_cooldown_blocks_new_moves_until_overview_arrives():
     )
     # 2. Bird disappears. Advance past lost_timeout_sec (6s) so the
     # next no-detection call fires goto(overview).
-    clock.advance(7.0)
+    clock.advance(9.0)
     controller.handle_no_detection()
 
     goto_cmds = [c for c in commands if c.action == "goto"]
@@ -647,7 +724,7 @@ def test_lost_detection_cooldown_expires_after_lost_timeout():
     clock = FakeClock()
     commands = []
     controller = AutoPtzController(
-        camera_provider=lambda: _camera(mode="follow", acquire_frames=1),
+        camera_provider=lambda: _camera(),
         command_runner=commands.append,
         clock=clock,
         worker_enabled=False,
@@ -657,12 +734,12 @@ def test_lost_detection_cooldown_expires_after_lost_timeout():
         frame_shape=(100, 100, 3),
         detections=[_follow_detection(70, 10, 90, 30)],
     )
-    clock.advance(7.0)
+    clock.advance(9.0)
     controller.handle_no_detection()
 
     # Advance past the cooldown window (lost_timeout_sec from the
     # goto-overview point).
-    clock.advance(7.0)
+    clock.advance(9.0)
     fresh = _follow_detection(40, 40, 60, 60)
     fresh["confidence"] = 0.95
     moves_before = len([c for c in commands if c.action == "move"])
@@ -681,7 +758,7 @@ def test_manual_drive_overrides_lost_detection_cooldown():
     clock = FakeClock()
     commands = []
     controller = AutoPtzController(
-        camera_provider=lambda: _camera(mode="follow", acquire_frames=1),
+        camera_provider=lambda: _camera(),
         command_runner=commands.append,
         clock=clock,
         worker_enabled=False,
@@ -692,7 +769,7 @@ def test_manual_drive_overrides_lost_detection_cooldown():
         frame_shape=(100, 100, 3),
         detections=[_follow_detection(70, 10, 90, 30)],
     )
-    clock.advance(7.0)
+    clock.advance(9.0)
     controller.handle_no_detection()
     assert controller._lost_cooldown_until > 0
 
@@ -704,13 +781,12 @@ def test_manual_drive_overrides_lost_detection_cooldown():
 def test_follow_mode_lost_timeout_returns_to_overview():
     """No detection past lost_timeout_sec → goto(overview_preset).
 
-    Follow mode reuses the existing handle_no_detection path. This test
-    proves the path still works for a mode that never enqueued a preset
-    goto during tracking (only continuous moves)."""
+    Auto-follow only enqueues a preset goto for the overview return;
+    normal tracking uses continuous moves."""
     clock = FakeClock()
     commands = []
     controller = AutoPtzController(
-        camera_provider=lambda: _camera(mode="follow", acquire_frames=1),
+        camera_provider=lambda: _camera(),
         command_runner=commands.append,
         clock=clock,
         worker_enabled=False,
@@ -734,7 +810,7 @@ def test_non_bird_detection_does_not_trigger_ptz_command():
     clock = FakeClock()
     commands = []
     controller = AutoPtzController(
-        camera_provider=lambda: _camera(mode="preset", acquire_frames=1),
+        camera_provider=lambda: _camera(),
         command_runner=commands.append,
         clock=clock,
         worker_enabled=False,
@@ -754,7 +830,7 @@ def test_idle_no_detection_does_not_query_camera_provider():
     def camera_provider() -> dict:
         nonlocal calls
         calls += 1
-        return _camera(mode="preset", acquire_frames=1)
+        return _camera()
 
     controller = AutoPtzController(
         camera_provider=camera_provider,
@@ -767,162 +843,6 @@ def test_idle_no_detection_does_not_query_camera_provider():
     assert calls == 0
     assert controller.status()["state"] == "idle"
     assert calls == 1
-
-
-def test_preset_metadata_box_match_overrides_zone_fallback():
-    """When preset_metadata boxes are placed they replace the 3-zone map.
-
-    A bird detected inside a small box (e.g. on the right-most feeder)
-    must trigger that box's preset, even though its center lies inside
-    the legacy 'right' x-range too. Smaller boxes win on overlap.
-    """
-    clock = FakeClock()
-    commands = []
-    cam = _camera(mode="preset", acquire_frames=1)
-    cam["ptz"]["preset_metadata"] = {
-        # Big box covering most of the right half
-        "wide_right": {
-            "label": "wide",
-            "center_x_pct": 0.75,
-            "center_y_pct": 0.5,
-            "box_w_pct": 0.40,
-            "box_h_pct": 0.80,
-        },
-        # Small box on a single feeder
-        "feeder_4": {
-            "label": "4",
-            "center_x_pct": 0.78,
-            "center_y_pct": 0.45,
-            "box_w_pct": 0.10,
-            "box_h_pct": 0.15,
-        },
-        "overview_token": {
-            "label": "home",
-            "center_x_pct": 0.5,
-            "center_y_pct": 0.5,
-            "box_w_pct": 0.0,
-            "box_h_pct": 0.0,
-        },
-    }
-    controller = AutoPtzController(
-        camera_provider=lambda: cam,
-        command_runner=lambda c: commands.append(c),
-        clock=clock,
-        worker_enabled=False,
-    )
-    # Bird right where Feeder 4 is — smaller box wins.
-    detection = {
-        "x1": 76,
-        "y1": 40,
-        "x2": 80,
-        "y2": 50,
-        "confidence": 0.9,
-        "class_name": "bird",
-    }
-    controller.handle_detections(frame_shape=(100, 100, 3), detections=[detection])
-
-    assert len(commands) == 1
-    assert commands[0].preset_token == "feeder_4"
-
-
-def test_box_change_resets_acquire_window():
-    """A bird that hops to a new box must reacquire before the next goto.
-
-    Without this guard a tracked bird flapping between two feeders would
-    chain-trigger a goto on the first frame seen at the new box because
-    the acquire counter would still be elevated from the previous target.
-    """
-    clock = FakeClock()
-    commands = []
-    cam = _camera(mode="preset", acquire_frames=2)
-    cam["ptz"]["preset_metadata"] = {
-        "feeder_left": {
-            "label": "1",
-            "center_x_pct": 0.20,
-            "center_y_pct": 0.50,
-            "box_w_pct": 0.20,
-            "box_h_pct": 0.40,
-        },
-        "feeder_right": {
-            "label": "4",
-            "center_x_pct": 0.80,
-            "center_y_pct": 0.50,
-            "box_w_pct": 0.20,
-            "box_h_pct": 0.40,
-        },
-    }
-    controller = AutoPtzController(
-        camera_provider=lambda: cam,
-        command_runner=lambda c: commands.append(c),
-        clock=clock,
-        worker_enabled=False,
-    )
-    bird_left = {
-        "x1": 18,
-        "y1": 48,
-        "x2": 22,
-        "y2": 52,
-        "confidence": 0.9,
-        "class_name": "bird",
-    }
-    bird_right = {
-        "x1": 78,
-        "y1": 48,
-        "x2": 82,
-        "y2": 52,
-        "confidence": 0.9,
-        "class_name": "bird",
-    }
-
-    # Two frames in left box → goto fires.
-    controller.handle_detections(frame_shape=(100, 100, 3), detections=[bird_left])
-    controller.handle_detections(frame_shape=(100, 100, 3), detections=[bird_left])
-    assert len(commands) == 1
-    assert commands[0].preset_token == "feeder_left"
-
-    # First frame in right box must NOT goto yet — needs reacquire.
-    clock.advance(5.0)  # past the 3 s cooldown
-    controller.handle_detections(frame_shape=(100, 100, 3), detections=[bird_right])
-    assert len(commands) == 1, "single right-box frame must not trigger a goto"
-
-    # Second confirming frame → goto right.
-    controller.handle_detections(frame_shape=(100, 100, 3), detections=[bird_right])
-    assert len(commands) == 2
-    assert commands[1].preset_token == "feeder_right"
-
-
-def test_preset_metadata_no_box_match_skips_goto():
-    """Bird outside every placed box stays in 'acquiring' — no goto."""
-    clock = FakeClock()
-    commands = []
-    cam = _camera(mode="preset", acquire_frames=1)
-    cam["ptz"]["preset_metadata"] = {
-        "feeder_left": {
-            "label": "1",
-            "center_x_pct": 0.15,
-            "center_y_pct": 0.5,
-            "box_w_pct": 0.10,
-            "box_h_pct": 0.15,
-        },
-    }
-    controller = AutoPtzController(
-        camera_provider=lambda: cam,
-        command_runner=lambda c: commands.append(c),
-        clock=clock,
-        worker_enabled=False,
-    )
-    detection = {
-        "x1": 70,
-        "y1": 40,
-        "x2": 75,
-        "y2": 50,  # bird far right, outside any box
-        "confidence": 0.9,
-        "class_name": "bird",
-    }
-    controller.handle_detections(frame_shape=(100, 100, 3), detections=[detection])
-
-    assert commands == []
-    assert controller.status()["state"] == "acquiring"
 
 
 def test_status_reports_configured_enabled_before_first_detection():
@@ -1004,11 +924,11 @@ def test_snapshot_idle_returns_origin_none():
     assert snap["ptz_position_at"] is None
 
 
-def test_snapshot_tracking_returns_origin_preset_with_token_and_zone():
+def test_snapshot_tracking_uses_legacy_ptz_origin_without_preset_token():
     clock = FakeClock()
     commands: list = []
     controller = AutoPtzController(
-        camera_provider=lambda: _camera(mode="preset", acquire_frames=1),
+        camera_provider=lambda: _camera(),
         command_runner=commands.append,
         clock=clock,
         worker_enabled=False,
@@ -1017,14 +937,12 @@ def test_snapshot_tracking_returns_origin_preset_with_token_and_zone():
     controller.handle_detections(
         frame_shape=(100, 100, 3), detections=[_detection(0, 20)]
     )
-    # _maybe_goto_zone transitions to "tracking" on the first acceptable frame
-    # when acquire_frames == 1.
     snap = controller.snapshot_for_image_persistence()
 
     assert snap["ptz_origin"] == "preset"
     assert snap["ptz_state"] == "tracking"
-    assert snap["ptz_preset_token"] == "left_token"
-    assert snap["ptz_zone"] == "left"
+    assert snap["ptz_preset_token"] is None
+    assert snap["ptz_zone"] == "follow"
     assert snap["ptz_camera_id"] == 0
 
 
@@ -1227,7 +1145,7 @@ def test_notify_manual_drive_overrides_auto_tracking_state():
     """Operator yanks the camera mid-auto-tracking — manual wins until released."""
     clock = FakeClock()
     controller = AutoPtzController(
-        camera_provider=lambda: _camera(mode="preset", acquire_frames=1),
+        camera_provider=lambda: _camera(),
         command_runner=lambda c: None,
         clock=clock,
         worker_enabled=False,
@@ -1248,23 +1166,11 @@ def test_notify_manual_drive_overrides_auto_tracking_state():
 
 
 def test_manual_goto_blocks_detection_driven_counter_goto():
-    """Bug regression: manual goto must seed the command cooldown.
-
-    Reproduction: operator clicks preset 3. Backend fires the goto and
-    parks in `settling`. While the cheap PTZ camera flies (no MoveStatus
-    → 5 s sleep fallback), the detector keeps seeing the bird in the
-    still-wide-angle frame and routes it to a neighbouring zone (2 or 4).
-    Without the cooldown seed, _maybe_goto_zone fires a counter-goto on
-    the very next frame — the camera lurches to the wrong preset before
-    lost_grace eventually returns it home.
-
-    Fix: notify_external_goto sets _last_command_mono so the detection
-    path waits the full cooldown before it can issue another goto.
-    """
+    """Manual preset movement owns the camera until its settle phase ends."""
     clock = FakeClock()
     commands: list = []
     controller = AutoPtzController(
-        camera_provider=lambda: _camera(mode="preset", acquire_frames=1),
+        camera_provider=lambda: _camera(),
         command_runner=commands.append,
         clock=clock,
         worker_enabled=False,
@@ -1273,20 +1179,13 @@ def test_manual_goto_blocks_detection_driven_counter_goto():
     # Operator clicks a non-overview preset (simulates the UI path).
     controller.notify_external_goto("right_token")
 
-    # Immediately afterwards, a detection frame arrives that would
-    # normally route to the "left" zone (bird at x_pct ≈ 0.1, which is
-    # in the left-zone bounds 0.0–0.33).
+    # A detection frame arrives while the camera is still moving.
     controller.handle_detections(
         frame_shape=(100, 100, 3),
         detections=[_detection(0, 20)],  # bird center near x=10/100 = 0.10
     )
 
-    # With the fix in place, the detection-driven goto must be blocked
-    # by the command cooldown that notify_external_goto seeded.
-    # The only command in flight is the operator's own goto, which
-    # bypasses the command_runner because it's enqueued via
-    # _enqueue → camera client, not _maybe_goto_zone. Therefore
-    # commands stays empty.
+    # The manual settle gate prevents auto-follow from fighting it.
     assert commands == [], (
         f"detection-driven counter-goto leaked past manual: {commands}"
     )
@@ -1297,7 +1196,7 @@ def test_home_button_blocks_detection_driven_counter_goto():
     clock = FakeClock()
     commands: list = []
     controller = AutoPtzController(
-        camera_provider=lambda: _camera(mode="preset", acquire_frames=1),
+        camera_provider=lambda: _camera(),
         command_runner=commands.append,
         clock=clock,
         worker_enabled=False,
@@ -1322,23 +1221,11 @@ def test_home_button_blocks_detection_driven_counter_goto():
 
 
 def test_manual_joystick_drive_blocks_detection_driven_counter_goto():
-    """Third leg of the cooldown-seeding race: manual joystick drive.
-
-    Observed regression: in preset mode the camera springs to
-    other presets in quick succession during a detection event,
-    suspected to be a relic of a previous manual action. Commit 2e15f32
-    closed this race for preset-click (notify_external_goto) and Home
-    (return_to_overview) but missed the joystick path
-    (notify_manual_drive) — because joystick uses continuous_move
-    instead of goto, it was treated as "not a command". Physically
-    though the camera moves just the same, the mid-flight frames feed
-    the same false-zone routing, and the next detection-driven goto
-    fires with no cooldown gate.
-    """
+    """Manual joystick control temporarily suppresses auto-follow."""
     clock = FakeClock()
     commands: list = []
     controller = AutoPtzController(
-        camera_provider=lambda: _camera(mode="preset", acquire_frames=1),
+        camera_provider=lambda: _camera(),
         command_runner=commands.append,
         clock=clock,
         worker_enabled=False,
@@ -1357,623 +1244,6 @@ def test_manual_joystick_drive_blocks_detection_driven_counter_goto():
     assert commands == [], (
         f"detection-driven counter-goto leaked past manual joystick drive: {commands}"
     )
-
-
-# ---------------------------------------------------------------------------
-# Detection-driven settle window — cheap-PTZ movement time.
-#
-# Observed regression: in preset mode the camera flew to the correct
-# preset on a bird detection, then 4 s later jumped to Preset 4 (where
-# no bird was), then 4 s later home. The cooldown gate
-# alone cannot prevent this because cheap cameras take 2–6 s to
-# traverse — far longer than even the 10 s default — yet the controller
-# was committing _state="tracking" the instant the goto was enqueued,
-# and the very next mid-flight frame routed the bbox into a neighbour
-# zone. The fix parks the controller in "settling" until the camera
-# arrives (wait_until_idle / fallback), suppressing detection-driven
-# gotos until the frames are honest again.
-# ---------------------------------------------------------------------------
-
-
-def test_detection_goto_parks_in_settling_state_until_resumed():
-    """First detection-driven goto must leave the controller in 'settling'.
-
-    In worker_enabled=False the synchronous fallback flips us straight
-    back to 'tracking' (no real settle worker to call wait_until_idle),
-    so this test exercises the production path by skipping that
-    fast-track via a fresh controller plus a direct state assertion.
-    """
-    clock = FakeClock()
-    commands: list = []
-    controller = AutoPtzController(
-        camera_provider=lambda: _camera(mode="preset", acquire_frames=1),
-        command_runner=commands.append,
-        clock=clock,
-        worker_enabled=False,
-    )
-
-    # First detection triggers a goto. In the synchronous test mode the
-    # state ends up as 'tracking' (settling is auto-resumed). What we
-    # actually want to verify is the gate logic: after pretending the
-    # controller is mid-flight, the next detection must be suppressed.
-    controller.handle_detections(
-        frame_shape=(100, 100, 3), detections=[_detection(0, 20)]
-    )
-    assert len(commands) == 1, "first detection must issue exactly one goto"
-
-    # Simulate the production state: settle worker has parked us in
-    # 'settling' and a new detection arrives mid-flight in a different
-    # zone. The bird's bbox is in the right-zone (x ≈ 0.88) — without
-    # the gate the controller would issue a counter-goto to right_token.
-    with controller._lock:
-        controller._state = "settling"
-
-    clock.advance(2.0)  # plenty of time has passed; cooldown irrelevant
-    controller.handle_detections(
-        frame_shape=(100, 100, 3), detections=[_detection(80, 96)]
-    )
-
-    assert len(commands) == 1, (
-        f"settling guard must block counter-goto from mid-flight frame: {commands}"
-    )
-
-
-def test_settle_window_refreshes_last_seen_so_lost_grace_does_not_fire():
-    """During settling the bird is not lost — keep the lost-grace anchor live."""
-    clock = FakeClock()
-    controller = AutoPtzController(
-        camera_provider=lambda: _camera(mode="preset", acquire_frames=1),
-        command_runner=lambda c: None,
-        clock=clock,
-        worker_enabled=False,
-    )
-
-    # Drive controller into settling with a stale _last_seen_mono.
-    with controller._lock:
-        controller._state = "settling"
-        controller._last_seen_mono = clock.now - 100.0  # ancient
-
-    clock.advance(5.0)
-    controller.handle_detections(
-        frame_shape=(100, 100, 3), detections=[_detection(0, 20)]
-    )
-
-    assert controller._last_seen_mono == clock.now, (
-        "settling guard must refresh _last_seen_mono so a settle in "
-        "progress does not trip lost_grace mid-flight"
-    )
-
-
-def test_detection_settle_worker_not_spawned_when_worker_disabled():
-    """Synchronous mode must not start a background settle worker.
-
-    The worker would call ptz_core._client_for_camera() with no real
-    camera registered, raise, hit the fallback time.sleep(5), and slow
-    every test 5 s. The fix: skip the spawn when worker_enabled=False
-    and flip _state straight to 'tracking'.
-    """
-    clock = FakeClock()
-    commands: list = []
-    controller = AutoPtzController(
-        camera_provider=lambda: _camera(mode="preset", acquire_frames=1),
-        command_runner=commands.append,
-        clock=clock,
-        worker_enabled=False,
-    )
-
-    import threading as _t
-
-    before = {t.name for t in _t.enumerate()}
-    controller.handle_detections(
-        frame_shape=(100, 100, 3), detections=[_detection(0, 20)]
-    )
-    after = {t.name for t in _t.enumerate()}
-
-    new_threads = after - before
-    assert not any("auto-ptz-detection-settle" in n for n in new_threads), (
-        f"settle worker leaked into synchronous test mode: {new_threads}"
-    )
-    assert controller.status()["state"] == "tracking", (
-        "synchronous mode must reach 'tracking' immediately"
-    )
-
-
-def test_settle_then_resume_flips_state_back_to_tracking():
-    """Worker behaviour: after the settle finishes, _state must become 'tracking'."""
-    clock = FakeClock()
-    controller = AutoPtzController(
-        camera_provider=lambda: _camera(mode="preset", acquire_frames=1),
-        command_runner=lambda c: None,
-        clock=clock,
-        worker_enabled=False,
-    )
-    with controller._lock:
-        controller._state = "settling"
-
-    # Stub out the ONVIF call so the worker doesn't try to reach a
-    # camera; what we're testing is the post-settle state transition.
-    class _StubClient:
-        def wait_until_idle(self, *, max_wait_sec):  # noqa: ARG002
-            return True
-
-    from core import ptz_core
-
-    original = ptz_core._client_for_camera
-    ptz_core._client_for_camera = lambda _cam_id: _StubClient()
-    try:
-        controller._settle_then_resume_tracking(camera_id=0, settle_max_sec=1.0)
-    finally:
-        ptz_core._client_for_camera = original
-
-    assert controller._state == "tracking", (
-        f"settle worker must transition settling → tracking, got {controller._state}"
-    )
-
-
-def test_settle_resume_does_not_clobber_superseding_state():
-    """If something else changed _state away from 'settling', leave it alone.
-
-    A manual goto, an idle reset, or any other state change during the
-    settle window means our resume should be a no-op — otherwise we'd
-    drag the controller back to 'tracking' against the newer intent.
-    """
-    clock = FakeClock()
-    controller = AutoPtzController(
-        camera_provider=lambda: _camera(mode="preset", acquire_frames=1),
-        command_runner=lambda c: None,
-        clock=clock,
-        worker_enabled=False,
-    )
-    with controller._lock:
-        controller._state = "idle"  # something else took over
-
-    class _StubClient:
-        def wait_until_idle(self, *, max_wait_sec):  # noqa: ARG002
-            return True
-
-    from core import ptz_core
-
-    original = ptz_core._client_for_camera
-    ptz_core._client_for_camera = lambda _cam_id: _StubClient()
-    try:
-        controller._settle_then_resume_tracking(camera_id=0, settle_max_sec=1.0)
-    finally:
-        ptz_core._client_for_camera = original
-
-    assert controller._state == "idle", (
-        "settle worker must not overwrite a superseding state"
-    )
-
-
-def _grid_camera(
-    rows: int = 3,
-    cols: int = 3,
-    acquire_frames: int = 1,
-    grid_acquire_frames: int | None = None,
-    cooldown_ms: int = 100,
-    cells: dict | None = None,
-) -> dict:
-    """A camera dict pre-configured for grid mode.
-
-    Defaults give a 3×3 grid with every cell mapped to a preset token
-    ``grid_token_r{row}_c{col}`` so the controller can issue a goto
-    without bumping into the "cell not configured" branch.
-
-    grid_acquire_frames mirrors acquire_frames when omitted so existing
-    tests keep their single-frame trigger behaviour. New tests pass it
-    explicitly when they want to exercise the grid-only hurdle.
-    """
-    if cells is None:
-        cells = {
-            f"r{r}_c{c}": f"grid_token_r{r}_c{c}"
-            for r in range(rows)
-            for c in range(cols)
-        }
-    if grid_acquire_frames is None:
-        grid_acquire_frames = acquire_frames
-    return {
-        "id": 0,
-        "name": "Garden PTZ",
-        "ip": "198.51.100.10",
-        "ptz": {
-            "enabled": True,
-            "mode": "grid",
-            "overview_preset": "overview_token",
-            "acquire_frames": acquire_frames,
-            "grid_acquire_frames": grid_acquire_frames,
-            "lost_timeout_sec": 6.0,
-            "command_cooldown_ms": 10000,  # preset cooldown stays high
-            "grid_command_cooldown_ms": cooldown_ms,
-            "grid_shape": [rows, cols],
-            "grid_cells": cells,
-            "grid_hysteresis_margin": 0.05,
-            "deadband": 0.12,
-            "max_speed": 0.35,
-            "move_duration_ms": 250,
-            "zones": [],  # grid mode does not use legacy zones
-        },
-    }
-
-
-def _grid_detection(
-    x_pct: float, y_pct: float, frame_w: int = 100, frame_h: int = 100
-) -> dict:
-    """Build a detection whose center lands at (x_pct, y_pct) of the frame."""
-    cx, cy = x_pct * frame_w, y_pct * frame_h
-    return {
-        "x1": cx - 5,
-        "y1": cy - 5,
-        "x2": cx + 5,
-        "y2": cy + 5,
-        "confidence": 0.9,
-        "class_name": "bird",
-    }
-
-
-class TestGridMode:
-    """Grid-mode dispatch path in handle_detections."""
-
-    def test_grid_mode_routes_to_correct_cell(self):
-        commands = []
-        controller = AutoPtzController(
-            camera_provider=lambda: _grid_camera(acquire_frames=1),
-            command_runner=commands.append,
-            clock=FakeClock(),
-            worker_enabled=False,
-        )
-
-        # Center of a 3×3 grid → cell (1, 1) → token grid_token_r1_c1.
-        controller.handle_detections(
-            frame_shape=(100, 100, 3),
-            detections=[_grid_detection(0.5, 0.5)],
-        )
-
-        assert len(commands) == 1
-        assert commands[0].preset_token == "grid_token_r1_c1"
-
-    def test_grid_mode_top_left_cell(self):
-        commands = []
-        controller = AutoPtzController(
-            camera_provider=lambda: _grid_camera(acquire_frames=1),
-            command_runner=commands.append,
-            clock=FakeClock(),
-            worker_enabled=False,
-        )
-
-        controller.handle_detections(
-            frame_shape=(100, 100, 3),
-            detections=[_grid_detection(0.1, 0.1)],
-        )
-
-        assert commands[0].preset_token == "grid_token_r0_c0"
-
-    def test_grid_mode_cooldown_blocks_rapid_adjacent_switch(self):
-        commands = []
-        clock = FakeClock()
-        controller = AutoPtzController(
-            camera_provider=lambda: _grid_camera(acquire_frames=1, cooldown_ms=2000),
-            command_runner=commands.append,
-            clock=clock,
-            worker_enabled=False,
-        )
-
-        # First detection → cell (0, 0), goto fires.
-        controller.handle_detections(
-            frame_shape=(100, 100, 3),
-            detections=[_grid_detection(0.1, 0.1)],
-        )
-        # Decisive jump to a non-adjacent cell well outside hysteresis,
-        # but within cooldown → no second goto.
-        clock.advance(0.5)
-        controller.handle_detections(
-            frame_shape=(100, 100, 3),
-            detections=[_grid_detection(0.9, 0.9)],
-        )
-        assert len(commands) == 1
-
-        # After cooldown lapses → second goto fires.
-        clock.advance(2.5)
-        controller.handle_detections(
-            frame_shape=(100, 100, 3),
-            detections=[_grid_detection(0.9, 0.9)],
-        )
-        assert len(commands) == 2
-        assert commands[1].preset_token == "grid_token_r2_c2"
-
-    def test_grid_mode_hysteresis_suppresses_boundary_flap(self):
-        commands = []
-        clock = FakeClock()
-        controller = AutoPtzController(
-            camera_provider=lambda: _grid_camera(acquire_frames=1, cooldown_ms=500),
-            command_runner=commands.append,
-            clock=clock,
-            worker_enabled=False,
-        )
-
-        # Lock onto cell (0, 0) first.
-        controller.handle_detections(
-            frame_shape=(100, 100, 3),
-            detections=[_grid_detection(0.1, 0.1)],
-        )
-        assert len(commands) == 1
-
-        # Bird hops to x=0.34 — just over the 0.333 boundary, within
-        # the 0.05 hysteresis margin. Advance well past the 500ms
-        # cooldown so the only thing preventing a second goto is
-        # hysteresis itself.
-        clock.advance(2.0)
-        controller.handle_detections(
-            frame_shape=(100, 100, 3),
-            detections=[_grid_detection(0.34, 0.1)],
-        )
-        assert len(commands) == 1  # still in cell (0, 0)
-
-    def test_grid_mode_uncongifured_cell_does_not_crash(self):
-        commands = []
-        # Sparse grid: only (0, 0) is set.
-        controller = AutoPtzController(
-            camera_provider=lambda: _grid_camera(
-                acquire_frames=1,
-                cells={"r0_c0": "grid_token_r0_c0"},
-            ),
-            command_runner=commands.append,
-            clock=FakeClock(),
-            worker_enabled=False,
-        )
-
-        # Bird in cell (1, 1) — not configured.
-        controller.handle_detections(
-            frame_shape=(100, 100, 3),
-            detections=[_grid_detection(0.5, 0.5)],
-        )
-        assert len(commands) == 0
-
-    def test_grid_mode_records_origin_preset_in_snapshot(self):
-        controller = AutoPtzController(
-            camera_provider=lambda: _grid_camera(acquire_frames=1),
-            command_runner=lambda c: None,
-            clock=FakeClock(),
-            worker_enabled=False,
-        )
-
-        controller.handle_detections(
-            frame_shape=(100, 100, 3),
-            detections=[_grid_detection(0.5, 0.5)],
-        )
-
-        snap = controller.snapshot_for_image_persistence()
-        # Grid frames must inherit the preset-origin bias so the
-        # gallery ranker promotes them just like preset-mode frames.
-        assert snap["ptz_origin"] == "preset"
-        assert snap["ptz_state"] == "tracking"
-
-    def test_grid_mode_bird_hops_through_all_cells(self):
-        """Detection that visits every cell in turn produces one goto per cell.
-
-        Stresses the routing + cooldown interplay: each detection lands in
-        a new cell, cooldown lapses between visits, every cell should
-        trigger exactly one goto to its preset.
-
-        Note: normalize_ptz_config clamps grid_command_cooldown_ms to a
-        minimum of 500ms, so the smallest meaningful test cooldown is
-        500ms — clock advance must exceed that between cells.
-        """
-        commands = []
-        clock = FakeClock()
-        controller = AutoPtzController(
-            camera_provider=lambda: _grid_camera(acquire_frames=1, cooldown_ms=500),
-            command_runner=commands.append,
-            clock=clock,
-            worker_enabled=False,
-        )
-
-        # Visit cell centers in row-major order. 3×3 → 9 cells.
-        for r in range(3):
-            for c in range(3):
-                x_pct = (c + 0.5) / 3
-                y_pct = (r + 0.5) / 3
-                controller.handle_detections(
-                    frame_shape=(100, 100, 3),
-                    detections=[_grid_detection(x_pct, y_pct)],
-                )
-                clock.advance(0.6)  # > 0.5s cooldown
-
-        # All 9 cells visited, all 9 should have triggered a goto.
-        assert len(commands) == 9
-        emitted_tokens = [cmd.preset_token for cmd in commands]
-        expected = [f"grid_token_r{r}_c{c}" for r in range(3) for c in range(3)]
-        assert emitted_tokens == expected
-
-    def test_grid_mode_rapid_flap_blocked_by_cooldown(self):
-        """Bird flaps fast between two non-adjacent cells — cooldown caps the gotos."""
-        commands = []
-        clock = FakeClock()
-        controller = AutoPtzController(
-            camera_provider=lambda: _grid_camera(acquire_frames=1, cooldown_ms=4000),
-            command_runner=commands.append,
-            clock=clock,
-            worker_enabled=False,
-        )
-
-        # First detection in cell (0, 0) — goto fires.
-        controller.handle_detections(
-            frame_shape=(100, 100, 3),
-            detections=[_grid_detection(0.1, 0.1)],
-        )
-        assert len(commands) == 1
-
-        # Now flap rapidly between (0, 0) and (2, 2) — 10 alternations
-        # at 200ms intervals = 2s elapsed, less than the 4s cooldown.
-        for i in range(10):
-            clock.advance(0.2)
-            x_pct = 0.9 if i % 2 == 0 else 0.1
-            y_pct = 0.9 if i % 2 == 0 else 0.1
-            controller.handle_detections(
-                frame_shape=(100, 100, 3),
-                detections=[_grid_detection(x_pct, y_pct)],
-            )
-        # Within the 4s window from the first goto, the cooldown must
-        # block all further commands. Exactly one goto from the initial
-        # detection, no more.
-        assert len(commands) == 1
-
-        # After cooldown lapses, a fresh detection in a new cell fires.
-        clock.advance(2.5)  # total elapsed: 2 + 2.5 = 4.5s > 4s cooldown
-        controller.handle_detections(
-            frame_shape=(100, 100, 3),
-            detections=[_grid_detection(0.9, 0.9)],
-        )
-        assert len(commands) == 2
-        assert commands[1].preset_token == "grid_token_r2_c2"
-
-    def test_grid_mode_lost_grace_returns_to_overview(self):
-        """Bird leaves frame in grid mode → lost_grace → overview goto after timeout."""
-        commands = []
-        clock = FakeClock()
-        controller = AutoPtzController(
-            camera_provider=lambda: _grid_camera(acquire_frames=1, cooldown_ms=500),
-            command_runner=commands.append,
-            clock=clock,
-            worker_enabled=False,
-        )
-
-        # Bird in cell (1, 1) → tracking goto.
-        controller.handle_detections(
-            frame_shape=(100, 100, 3),
-            detections=[_grid_detection(0.5, 0.5)],
-        )
-        assert len(commands) == 1
-        assert commands[0].preset_token == "grid_token_r1_c1"
-
-        # Bird disappears. Within lost_timeout_sec, no return-to-overview yet.
-        clock.advance(3.0)  # less than the 6s lost_timeout_sec default
-        controller.handle_no_detection()
-        assert len(commands) == 1  # still no return goto
-
-        # Now past the timeout — handle_no_detection fires the overview goto.
-        clock.advance(4.0)
-        controller.handle_no_detection()
-        assert len(commands) == 2
-        assert commands[1].preset_token == "overview_token"
-
-    def test_grid_and_manual_drive_lock_contention(self):
-        """Interleaved manual-drive + grid auto-tracking calls don't deadlock.
-
-        The controller's _lock is reentrant-free; the contract is that
-        the two notify paths (manual_drive, handle_detections grid)
-        each acquire the lock briefly and release. This test fires both
-        from multiple threads simultaneously and asserts the suite
-        completes without timing out and the final state is consistent.
-        """
-        import threading
-
-        clock = FakeClock()
-        controller = AutoPtzController(
-            camera_provider=lambda: _grid_camera(acquire_frames=1, cooldown_ms=500),
-            command_runner=lambda c: None,
-            clock=clock,
-            worker_enabled=False,
-        )
-
-        stop_event = threading.Event()
-        errors: list[Exception] = []
-
-        def manual_pump():
-            try:
-                while not stop_event.is_set():
-                    controller.notify_manual_drive()
-            except Exception as exc:  # noqa: BLE001 — capture for assertion
-                errors.append(exc)
-
-        def grid_pump():
-            try:
-                positions = [(0.5, 0.5), (0.1, 0.1), (0.9, 0.9), (0.1, 0.9)]
-                idx = 0
-                while not stop_event.is_set():
-                    x_pct, y_pct = positions[idx % len(positions)]
-                    controller.handle_detections(
-                        frame_shape=(100, 100, 3),
-                        detections=[_grid_detection(x_pct, y_pct)],
-                    )
-                    idx += 1
-            except Exception as exc:  # noqa: BLE001
-                errors.append(exc)
-
-        manual_thread = threading.Thread(target=manual_pump, daemon=True)
-        grid_thread = threading.Thread(target=grid_pump, daemon=True)
-        manual_thread.start()
-        grid_thread.start()
-
-        # Run for 250ms — long enough to exercise heavy contention but
-        # short enough to keep the test snappy. Both pumps call into
-        # methods that acquire _lock; if there's a deadlock the threads
-        # never exit and join() times out.
-        import time as _time
-
-        _time.sleep(0.25)
-        stop_event.set()
-        manual_thread.join(timeout=2.0)
-        grid_thread.join(timeout=2.0)
-
-        # If join timed out the threads are stuck — that's a deadlock.
-        assert not manual_thread.is_alive(), "manual_pump did not exit (lock starved)"
-        assert not grid_thread.is_alive(), "grid_pump did not exit (lock starved)"
-        assert errors == [], f"unexpected exceptions: {errors}"
-
-        # Final state must be one of the valid grid/manual states.
-        # Both pumps set _last_command_mono so neither is starved.
-        status = controller.status()
-        assert status["state"] in {"tracking", "acquiring", "lost_grace"}
-
-
-class TestGridAcquireFrames:
-    """Grid dispatch reads grid_acquire_frames, not the preset acquire_frames."""
-
-    def test_grid_triggers_on_first_frame_when_grid_acquire_is_one(self):
-        commands = []
-        controller = AutoPtzController(
-            camera_provider=lambda: _grid_camera(
-                acquire_frames=5,
-                grid_acquire_frames=1,
-            ),
-            command_runner=commands.append,
-            clock=FakeClock(),
-            worker_enabled=False,
-        )
-
-        controller.handle_detections(
-            frame_shape=(100, 100, 3),
-            detections=[_grid_detection(0.5, 0.5)],
-        )
-
-        assert len(commands) == 1
-        assert commands[0].preset_token == "grid_token_r1_c1"
-
-    def test_grid_waits_for_grid_acquire_frames_threshold(self):
-        commands = []
-        controller = AutoPtzController(
-            camera_provider=lambda: _grid_camera(
-                acquire_frames=1,
-                grid_acquire_frames=3,
-            ),
-            command_runner=commands.append,
-            clock=FakeClock(),
-            worker_enabled=False,
-        )
-
-        for _ in range(2):
-            controller.handle_detections(
-                frame_shape=(100, 100, 3),
-                detections=[_grid_detection(0.5, 0.5)],
-            )
-        assert commands == []
-
-        controller.handle_detections(
-            frame_shape=(100, 100, 3),
-            detections=[_grid_detection(0.5, 0.5)],
-        )
-        assert len(commands) == 1
-        assert commands[0].preset_token == "grid_token_r1_c1"
 
 
 def test_lost_grace_without_manual_drive_still_maps_to_preset():
@@ -1998,198 +1268,10 @@ def test_lost_grace_without_manual_drive_still_maps_to_preset():
 
 
 # ---------------------------------------------------------------------------
-# Goto-failure rollback — cheap-PTZ camera semantics.
-#
-# Background: cheap ONVIF cameras may reject GotoPreset with "Preset token
-# does not exist" (or eat the call silently), even when GetPresets lists
-# the token. The controller commits _last_preset / _last_zone optimistically
-# under _lock so the cooldown gate sees the in-flight target. If the goto
-# is then rejected by the camera, that committed state lies — the next
-# snapshot_for_image_persistence() would write ptz_preset_token=X into
-# the DB even though the camera never moved. Rollback restores honest
-# telemetry; the CAS check prevents a newer enqueue from being clobbered.
-# ---------------------------------------------------------------------------
-
-
-class _FailingRunner:
-    """Command runner that raises on a configurable subset of gotos."""
-
-    def __init__(self, fail_tokens: set[str] | None = None) -> None:
-        self.fail_tokens = fail_tokens or set()
-        self.attempts: list = []
-
-    def __call__(self, command) -> None:
-        self.attempts.append(command)
-        if command.action == "goto" and command.preset_token in self.fail_tokens:
-            raise RuntimeError(
-                f"The requested preset token does not exist: {command.preset_token}"
-            )
-
-
-def test_goto_failure_rolls_back_last_preset_in_preset_mode():
-    """Worker-side rejection of GotoPreset must undo the optimistic commit.
-
-    Before the fix: snapshot_for_image_persistence would have returned
-    ptz_preset_token='left_token' even though the camera never moved.
-    """
-    runner = _FailingRunner(fail_tokens={"left_token"})
-    controller = AutoPtzController(
-        camera_provider=lambda: _camera(mode="preset", acquire_frames=1),
-        command_runner=runner,
-        clock=FakeClock(),
-        worker_enabled=False,
-    )
-
-    controller.handle_detections(
-        frame_shape=(100, 100, 3), detections=[_detection(0, 20)]
-    )
-
-    # The runner was called (the command was issued) but the camera
-    # rejected it, so the controller must have rolled back.
-    assert len(runner.attempts) == 1
-    assert runner.attempts[0].preset_token == "left_token"
-
-    snap = controller.snapshot_for_image_persistence()
-    assert snap["ptz_preset_token"] is None, (
-        "rollback must clear the committed preset token so the DB no "
-        "longer claims the camera reached a preset it never reached"
-    )
-    assert snap["ptz_zone"] is None
-
-
-def test_goto_failure_rolls_back_to_previous_successful_target():
-    """First goto succeeds, second goto fails → snapshot shows the first."""
-    runner = _FailingRunner(fail_tokens={"right_token"})
-    clock = FakeClock()
-    controller = AutoPtzController(
-        camera_provider=lambda: _camera(mode="preset", acquire_frames=1),
-        command_runner=runner,
-        clock=clock,
-        worker_enabled=False,
-    )
-
-    # First detection on the left — succeeds.
-    controller.handle_detections(
-        frame_shape=(100, 100, 3), detections=[_detection(0, 20)]
-    )
-    snap1 = controller.snapshot_for_image_persistence()
-    assert snap1["ptz_preset_token"] == "left_token"
-
-    # Bird moves to the right cell, cooldown elapsed — goto enqueued,
-    # but the camera rejects right_token.
-    clock.advance(2.0)
-    controller.handle_detections(
-        frame_shape=(100, 100, 3), detections=[_detection(80, 96)]
-    )
-
-    snap2 = controller.snapshot_for_image_persistence()
-    assert snap2["ptz_preset_token"] == "left_token", (
-        "after a failed goto, telemetry must reflect the last preset the "
-        "camera actually reached, not the one it was asked to reach"
-    )
-    assert snap2["ptz_zone"] == "left"
-
-
-def test_goto_failure_does_not_clobber_newer_committed_goto():
-    """CAS check: if state has moved on, the stale failure must not undo it.
-
-    Sequence:
-      1. Issue goto A (this test fakes A as already-failed).
-      2. Before the rollback fires, _last_preset has been overwritten by
-         goto B (succeeded).
-      3. Rollback for A runs — must not touch _last_preset because it no
-         longer equals A's token.
-    """
-    controller = AutoPtzController(
-        camera_provider=lambda: _camera(mode="preset", acquire_frames=1),
-        command_runner=lambda c: None,
-        clock=FakeClock(),
-        worker_enabled=False,
-    )
-    # Seed state as if goto B already succeeded.
-    with controller._lock:
-        controller._last_preset = "right_token"
-        controller._last_zone = "right"
-
-    # Now process a stale failure for goto A (left_token). The rollback
-    # would try to restore "" / "" — but the CAS check on _last_preset
-    # must veto because _last_preset is now "right_token", not "left_token".
-    from core.ptz_tracking_core import PtzCommand
-
-    stale_command = PtzCommand(
-        action="goto",
-        camera_id=0,
-        preset_token="left_token",
-        rollback_preset="",
-        rollback_zone="",
-    )
-    controller._on_command_failed(stale_command, RuntimeError("stale failure"))
-
-    snap = controller.snapshot_for_image_persistence()
-    assert snap["ptz_preset_token"] == "right_token", (
-        "the CAS check must protect a newer goto's committed state from "
-        "being overwritten by a stale failure's rollback"
-    )
-    assert snap["ptz_zone"] == "right"
-
-
-def test_goto_failure_in_grid_mode_rolls_back_cell_state():
-    """Same rollback contract for grid-mode adjacent-cell switching.
-
-    Production scenario: grid_r0_c1 → Preset006 enqueued, camera
-    rejects, DB had been writing ptz_zone=grid_r0_c1 +
-    ptz_preset_token=Preset006 anyway.
-    """
-    fail_token = "grid_token_r0_c1"
-    runner = _FailingRunner(fail_tokens={fail_token})
-    controller = AutoPtzController(
-        camera_provider=lambda: _grid_camera(acquire_frames=1, cooldown_ms=100),
-        command_runner=runner,
-        clock=FakeClock(),
-        worker_enabled=False,
-    )
-
-    # Detection center at (0.5, 0.16) → cell (0, 1) for a 3×3 grid.
-    controller.handle_detections(
-        frame_shape=(100, 100, 3),
-        detections=[_grid_detection(0.5, 0.16)],
-    )
-
-    assert len(runner.attempts) == 1
-    assert runner.attempts[0].preset_token == fail_token
-
-    snap = controller.snapshot_for_image_persistence()
-    assert snap["ptz_preset_token"] is None
-    assert snap["ptz_zone"] is None
-
-
-def test_successful_goto_leaves_last_preset_committed():
-    """Sanity: when the runner does NOT raise, no rollback fires."""
-    runner = _FailingRunner(fail_tokens=set())  # never fails
-    controller = AutoPtzController(
-        camera_provider=lambda: _camera(mode="preset", acquire_frames=1),
-        command_runner=runner,
-        clock=FakeClock(),
-        worker_enabled=False,
-    )
-
-    controller.handle_detections(
-        frame_shape=(100, 100, 3), detections=[_detection(0, 20)]
-    )
-
-    snap = controller.snapshot_for_image_persistence()
-    assert snap["ptz_preset_token"] == "left_token"
-    assert snap["ptz_zone"] == "left"
-
-
-# ---------------------------------------------------------------------------
 # Worker-thread retry — cheap-PTZ camera transient failures.
 #
-# Observed regression: every goto in a 3h+ Grid-Mode session was
-# rejected with "Preset token does not exist", but a manual CLI test
-# of the same token an hour later worked instantly. The rejection is
-# transient (camera busy / mid-move / firmware quirk), not permanent.
-# Retry converts most of these into eventual success.
+# Cheap cameras can transiently reject a valid overview goto while
+# busy or mid-move. Retry converts most of these into eventual success.
 #
 # We exercise _run_with_retry directly on a worker_enabled=False
 # controller so the test stays sync (no thread). The retry path itself
@@ -2223,7 +1305,7 @@ class _FlakyRunner:
 
 def _make_retry_controller(runner):
     return AutoPtzController(
-        camera_provider=lambda: _camera(mode="preset", acquire_frames=1),
+        camera_provider=lambda: _camera(),
         command_runner=runner,
         clock=FakeClock(),
         worker_enabled=False,  # we drive _run_with_retry by hand
@@ -2384,15 +1466,18 @@ def test_retry_stops_on_shutdown(monkeypatch):
     )
 
 
-def _follow_camera_with_budget(budget_sec: float, *, move_duration_ms: int = 250) -> dict:
+def _follow_camera_with_budget(
+    budget_sec: float, *, move_duration_ms: int = 250
+) -> dict:
     """Follow-mode camera dict that carries the near-focus zoom budget.
 
     The budget field defaults to 0.0 (disabled) elsewhere; tests that
     care about the guard explicitly set it here.
     """
-    cam = _camera(mode="follow", acquire_frames=1)
+    cam = _camera()
     cam["ptz"]["follow_zoom_max_burst_sec"] = float(budget_sec)
     cam["ptz"]["move_duration_ms"] = int(move_duration_ms)
+    cam["ptz"]["follow_zoom_duration_ms"] = int(move_duration_ms)
     # Floor the cooldown so we can fire multiple zoom-in commands without
     # advancing the fake clock past 100ms each frame — the budget guard
     # is the only gate under test. The validator clamps below 100, so
@@ -2419,7 +1504,7 @@ def test_follow_zoom_budget_blocks_zoom_in_after_exhaustion():
         worker_enabled=False,
     )
 
-    tiny_bbox = _follow_detection(70, 10, 90, 30)  # area = 4%, target 18%
+    tiny_bbox = _follow_detection(40, 40, 60, 60)  # area = 4%, target 18%
     for _ in range(3):
         controller.handle_detections(frame_shape=(100, 100, 3), detections=[tiny_bbox])
         clock.advance(0.2)  # > 100ms cooldown floor
@@ -2429,11 +1514,9 @@ def test_follow_zoom_budget_blocks_zoom_in_after_exhaustion():
         f"expected exactly 2 zoom-in bursts (budget 0.5s / 0.25s each), "
         f"got {len(zoom_in_cmds)}"
     )
-    # The third frame still issued a move (pan/tilt), but zoom must be 0.
+    # The third frame emits no command because the only needed action is blocked.
     move_cmds = [c for c in commands if c.action == "move"]
-    assert len(move_cmds) == 3
-    assert move_cmds[2].zoom == 0.0
-    assert move_cmds[2].pan > 0  # off-centre bird still gets steering
+    assert len(move_cmds) == 2
 
 
 def test_follow_zoom_budget_does_not_block_zoom_out():
@@ -2452,7 +1535,7 @@ def test_follow_zoom_budget_does_not_block_zoom_out():
     # Burn the budget with one zoom-in.
     controller.handle_detections(
         frame_shape=(100, 100, 3),
-        detections=[_follow_detection(70, 10, 90, 30)],
+        detections=[_follow_detection(40, 40, 60, 60)],
     )
     clock.advance(0.2)
 
@@ -2461,7 +1544,9 @@ def test_follow_zoom_budget_does_not_block_zoom_out():
     controller.handle_detections(frame_shape=(100, 100, 3), detections=[big])
 
     zoom_out_cmds = [c for c in commands if c.action == "move" and c.zoom < 0]
-    assert len(zoom_out_cmds) == 1, "zoom-out must remain available after budget exhaustion"
+    assert len(zoom_out_cmds) == 1, (
+        "zoom-out must remain available after budget exhaustion"
+    )
 
 
 def test_follow_zoom_budget_resets_after_return_to_overview():
@@ -2477,13 +1562,13 @@ def test_follow_zoom_budget_resets_after_return_to_overview():
         worker_enabled=False,
     )
 
-    tiny = _follow_detection(70, 10, 90, 30)
+    tiny = _follow_detection(40, 40, 60, 60)
 
     controller.handle_detections(frame_shape=(100, 100, 3), detections=[tiny])
     clock.advance(0.2)
     # Budget spent — second frame won't zoom in.
     controller.handle_detections(frame_shape=(100, 100, 3), detections=[tiny])
-    assert commands[-1].zoom == 0.0
+    assert len([c for c in commands if c.zoom > 0]) == 1
 
     # Operator triggers a return-to-overview.
     controller.return_to_overview()
@@ -2492,9 +1577,7 @@ def test_follow_zoom_budget_resets_after_return_to_overview():
     clock.advance(1.0)
     controller.handle_detections(frame_shape=(100, 100, 3), detections=[tiny])
 
-    fresh_zoom_in = [
-        c for c in commands if c.action == "move" and c.zoom > 0
-    ]
+    fresh_zoom_in = [c for c in commands if c.action == "move" and c.zoom > 0]
     assert len(fresh_zoom_in) >= 2, "return_to_overview must reset the zoom-in budget"
 
 
@@ -2510,7 +1593,7 @@ def test_follow_zoom_budget_zero_means_disabled():
         worker_enabled=False,
     )
 
-    tiny = _follow_detection(70, 10, 90, 30)
+    tiny = _follow_detection(40, 40, 60, 60)
     for _ in range(5):
         controller.handle_detections(frame_shape=(100, 100, 3), detections=[tiny])
         clock.advance(0.2)
@@ -2537,17 +1620,12 @@ def test_follow_zoom_locks_after_manual_joystick_drive():
     controller.notify_manual_drive()
     clock.advance(1.0)
 
-    # Bird arrives. Follow-mode should pan/tilt but NOT zoom in.
-    tiny = _follow_detection(70, 10, 90, 30)
+    # A centred bird needs only zoom; while locked, no command is needed.
+    tiny = _follow_detection(40, 40, 60, 60)
     controller.handle_detections(frame_shape=(100, 100, 3), detections=[tiny])
 
     move_cmds = [c for c in commands if c.action == "move"]
-    assert len(move_cmds) == 1, "follow-mode still steers pan/tilt"
-    assert move_cmds[0].zoom == 0.0, (
-        "zoom-in must be locked after manual joystick drive — operator's "
-        "lens position is unknown until an overview goto resets it"
-    )
-    assert move_cmds[0].pan > 0, "pan still fires (zoom is the only locked axis)"
+    assert move_cmds == []
 
 
 def test_follow_zoom_locks_after_non_overview_preset_goto():
@@ -2567,14 +1645,11 @@ def test_follow_zoom_locks_after_non_overview_preset_goto():
     controller.notify_external_goto("Preset005")
     clock.advance(1.0)
 
-    tiny = _follow_detection(70, 10, 90, 30)
+    tiny = _follow_detection(40, 40, 60, 60)
     controller.handle_detections(frame_shape=(100, 100, 3), detections=[tiny])
 
     move_cmds = [c for c in commands if c.action == "move"]
-    assert move_cmds
-    assert move_cmds[0].zoom == 0.0, (
-        "zoom-in must be locked after a non-overview preset goto"
-    )
+    assert move_cmds == []
 
 
 def test_follow_zoom_unlocks_after_overview_goto():
@@ -2593,9 +1668,9 @@ def test_follow_zoom_unlocks_after_overview_goto():
     # Lock via manual drive.
     controller.notify_manual_drive()
     clock.advance(1.0)
-    tiny = _follow_detection(70, 10, 90, 30)
+    tiny = _follow_detection(40, 40, 60, 60)
     controller.handle_detections(frame_shape=(100, 100, 3), detections=[tiny])
-    assert commands[-1].zoom == 0.0, "lock active"
+    assert not [c for c in commands if c.action == "move"], "lock active"
 
     # Operator clicks the overview preset in the UI.
     overview = cam["ptz"]["overview_preset"]
@@ -2604,9 +1679,7 @@ def test_follow_zoom_unlocks_after_overview_goto():
 
     # Fresh bird — follow-mode can zoom again now.
     controller.handle_detections(frame_shape=(100, 100, 3), detections=[tiny])
-    later_zoom_in = [
-        c for c in commands if c.action == "move" and c.zoom > 0
-    ]
+    later_zoom_in = [c for c in commands if c.action == "move" and c.zoom > 0]
     assert later_zoom_in, (
         "overview goto must release the lock so follow-mode can zoom again"
     )
@@ -2628,7 +1701,7 @@ def test_follow_zoom_unlocks_after_lost_timeout_return():
 
     # Set up a tracking state first so handle_no_detection can fire
     # the lost-timeout return.
-    tiny = _follow_detection(70, 10, 90, 30)
+    tiny = _follow_detection(40, 40, 60, 60)
     controller.handle_detections(frame_shape=(100, 100, 3), detections=[tiny])
 
     # Lock via manual drive mid-track.
@@ -2646,9 +1719,7 @@ def test_follow_zoom_unlocks_after_lost_timeout_return():
     # Fresh bird later — zoom-in should be unlocked again.
     clock.advance(1.0)
     controller.handle_detections(frame_shape=(100, 100, 3), detections=[tiny])
-    later_zoom_in = [
-        c for c in commands if c.action == "move" and c.zoom > 0
-    ]
+    later_zoom_in = [c for c in commands if c.action == "move" and c.zoom > 0]
     assert later_zoom_in, "lost-timeout overview return must clear the lock"
 
 
@@ -2672,7 +1743,7 @@ def _burst_controller(burst_pan_tilt: int = 1, burst_zoom: int = 1):
     that contains the burst logic we're testing.
     """
     return AutoPtzController(
-        camera_provider=lambda: _camera(mode="follow"),
+        camera_provider=lambda: _camera(),
         clock=FakeClock(),
         worker_enabled=False,
     )
@@ -2730,6 +1801,35 @@ def test_run_move_duration_multiplier_extends_each_call(monkeypatch):
     assert calls[0]["duration_ms"] == 600
 
 
+def test_calibrated_follow_move_ignores_legacy_manual_tuning(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        "core.ptz_core.continuous_move",
+        lambda camera_id, **kw: calls.append(kw),
+    )
+    monkeypatch.setattr(
+        "core.ptz_core.get_ptz_config",
+        lambda cid: {
+            "manual_pan_tilt_burst": 6,
+            "manual_zoom_burst": 6,
+            "manual_move_duration_multiplier": 5.0,
+        },
+    )
+    controller = _burst_controller()
+    cmd = PtzCommand(
+        action="move",
+        camera_id=0,
+        pan=0.35,
+        duration_ms=900,
+        use_manual_tuning=False,
+    )
+
+    controller._run_move_with_burst(cmd)
+
+    assert len(calls) == 1
+    assert calls[0]["duration_ms"] == 900
+
+
 def test_run_move_burst_and_duration_combine(monkeypatch):
     """Burst and duration multipliers multiply, not max/min.
 
@@ -2750,9 +1850,7 @@ def test_run_move_burst_and_duration_combine(monkeypatch):
             "manual_move_duration_multiplier": 2.0,
         },
     )
-    monkeypatch.setattr(
-        "threading.Event.wait", lambda self, timeout=None: False
-    )
+    monkeypatch.setattr("threading.Event.wait", lambda self, timeout=None: False)
     controller = _burst_controller()
     cmd = PtzCommand(
         action="move", camera_id=0, pan=0.3, tilt=0.0, zoom=0.0, duration_ms=300
@@ -2779,9 +1877,7 @@ def test_run_move_pan_tilt_burst_fires_n_calls(monkeypatch):
     # Make spacing-sleep instant so the test doesn't actually wait
     # ~800 ms per case. The wait() returns False when not signalled,
     # which is what we want for the "continue with next burst" path.
-    monkeypatch.setattr(
-        "threading.Event.wait", lambda self, timeout=None: False
-    )
+    monkeypatch.setattr("threading.Event.wait", lambda self, timeout=None: False)
     controller = _burst_controller()
     cmd = PtzCommand(
         action="move", camera_id=0, pan=0.3, tilt=0.0, zoom=0.0, duration_ms=250
@@ -2812,9 +1908,7 @@ def test_run_move_pure_zoom_uses_zoom_burst(monkeypatch):
         "core.ptz_core.get_ptz_config",
         lambda cid: {"manual_pan_tilt_burst": 3, "manual_zoom_burst": 1},
     )
-    monkeypatch.setattr(
-        "threading.Event.wait", lambda self, timeout=None: False
-    )
+    monkeypatch.setattr("threading.Event.wait", lambda self, timeout=None: False)
     controller = _burst_controller()
     cmd = PtzCommand(
         action="move", camera_id=0, pan=0.0, tilt=0.0, zoom=0.4, duration_ms=250
@@ -2838,11 +1932,9 @@ def test_run_move_burst_aborts_when_stop_queued(monkeypatch):
         "core.ptz_core.get_ptz_config",
         lambda cid: {"manual_pan_tilt_burst": 4, "manual_zoom_burst": 1},
     )
-    monkeypatch.setattr(
-        "threading.Event.wait", lambda self, timeout=None: False
-    )
+    monkeypatch.setattr("threading.Event.wait", lambda self, timeout=None: False)
     controller = AutoPtzController(
-        camera_provider=lambda: _camera(mode="follow"),
+        camera_provider=lambda: _camera(),
         clock=FakeClock(),
         worker_enabled=True,
     )
@@ -2875,11 +1967,9 @@ def test_run_move_burst_does_not_abort_on_queued_follow_move(monkeypatch):
         "core.ptz_core.get_ptz_config",
         lambda cid: {"manual_pan_tilt_burst": 4, "manual_zoom_burst": 1},
     )
-    monkeypatch.setattr(
-        "threading.Event.wait", lambda self, timeout=None: False
-    )
+    monkeypatch.setattr("threading.Event.wait", lambda self, timeout=None: False)
     controller = AutoPtzController(
-        camera_provider=lambda: _camera(mode="follow"),
+        camera_provider=lambda: _camera(),
         clock=FakeClock(),
         worker_enabled=True,
     )
@@ -2910,9 +2000,7 @@ def test_run_move_burst_aborts_on_shutdown(monkeypatch):
         lambda cid: {"manual_pan_tilt_burst": 4, "manual_zoom_burst": 1},
     )
     # Event.wait returns True when the event is set → signals abort.
-    monkeypatch.setattr(
-        "threading.Event.wait", lambda self, timeout=None: True
-    )
+    monkeypatch.setattr("threading.Event.wait", lambda self, timeout=None: True)
     controller = _burst_controller()
     cmd = PtzCommand(
         action="move", camera_id=0, pan=0.3, tilt=0.0, zoom=0.0, duration_ms=250

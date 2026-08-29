@@ -23,6 +23,7 @@ from pathlib import Path
 from flask import Blueprint, jsonify, request
 
 from config import get_config
+from core.ptz_aim_core import AimBusyError, AimUnavailableError
 from logging_config import get_logger
 from utils.settings import mask_rtsp_url, unmask_rtsp_url
 from web.blueprints.auth import login_required
@@ -39,6 +40,7 @@ from web.services import (
     backup_restore_service,
     db_service,
     onvif_service,
+    ptz_aim_service,
     ptz_capabilities_service,
     ptz_empirical_probe_service,
     ptz_service,
@@ -2033,6 +2035,88 @@ def cameras_use(camera_id: int):
 # =============================================================================
 
 
+def _get_ptz_aim_controller():
+    return getattr(api_v1, "ptz_aim_controller", None)
+
+
+@api_v1.route("/cameras/<int:camera_id>/ptz/aim", methods=["POST"])
+@login_required
+def camera_ptz_aim_start(camera_id: int):
+    """Start a bounded visual correction toward a clicked image point."""
+    controller = _get_ptz_aim_controller()
+    if controller is None:
+        return jsonify(
+            {"status": "error", "message": "Click-to-aim is unavailable"}
+        ), 503
+    data = request.get_json(silent=True) or {}
+    try:
+        target_x = float(data["x"])
+        target_y = float(data["y"])
+        aim = ptz_aim_service.start(controller, camera_id, target_x, target_y)
+        return jsonify({"status": "success", "aim": aim}), 202
+    except (KeyError, TypeError, ValueError):
+        return jsonify(
+            {
+                "status": "error",
+                "message": "x and y must be numbers between 0 and 1",
+            }
+        ), 400
+    except AimBusyError:
+        return jsonify(
+            {
+                "status": "error",
+                "message": "A click-to-aim session is already active",
+            }
+        ), 409
+    except AimUnavailableError:
+        return jsonify(
+            {"status": "error", "message": "No fresh camera frame is available"}
+        ), 503
+    except Exception as exc:
+        return _error_response("Click-to-aim start error", exc)
+
+
+@api_v1.route("/cameras/<int:camera_id>/ptz/aim", methods=["GET"])
+@login_required
+def camera_ptz_aim_status(camera_id: int):
+    """Return the live visual evidence for the current aim session."""
+    controller = _get_ptz_aim_controller()
+    if controller is None:
+        return jsonify(
+            {"status": "error", "message": "Click-to-aim is unavailable"}
+        ), 503
+    aim = ptz_aim_service.status(controller)
+    active_camera = aim.get("camera_id")
+    if aim.get("active") and active_camera != camera_id:
+        return jsonify(
+            {"status": "error", "message": "Another camera owns click-to-aim"}
+        ), 409
+    return jsonify({"status": "success", "aim": aim})
+
+
+@api_v1.route("/cameras/<int:camera_id>/ptz/aim", methods=["DELETE"])
+@login_required
+def camera_ptz_aim_cancel(camera_id: int):
+    """Cancel click-to-aim and send an immediate PTZ stop."""
+    controller = _get_ptz_aim_controller()
+    if controller is None:
+        return jsonify(
+            {"status": "error", "message": "Click-to-aim is unavailable"}
+        ), 503
+    try:
+        aim = ptz_aim_service.cancel(controller, camera_id)
+        return jsonify({"status": "success", "aim": aim})
+    except AimBusyError:
+        return jsonify(
+            {
+                "status": "error",
+                "message": "Another camera owns the active aim session",
+            }
+        ), 409
+    except Exception as exc:
+        return _error_response("Click-to-aim cancel error", exc)
+
+
 @api_v1.route("/cameras/<int:camera_id>/ptz/config", methods=["GET"])
 @login_required
 def camera_ptz_config_get(camera_id: int):
@@ -2686,112 +2770,6 @@ def camera_ptz_update_preset_metadata(camera_id: int, preset_token: str):
         return jsonify({"status": "success", "preset": result})
     except Exception as exc:
         return _error_response("PTZ metadata update error", exc)
-
-
-@api_v1.route("/cameras/<int:camera_id>/ptz/grid/state", methods=["GET"])
-@login_required
-def camera_ptz_grid_state(camera_id: int):
-    """Return current grid config: shape, mapped cells, missing cells."""
-    try:
-        result = ptz_service.get_grid_state(camera_id)
-        if result is None:
-            return jsonify({"status": "error", "message": "Camera not found"}), 404
-        return jsonify({"status": "success", "grid": result})
-    except Exception as exc:
-        return _error_response("PTZ grid state error", exc)
-
-
-@api_v1.route("/cameras/<int:camera_id>/ptz/grid/shape", methods=["PUT"])
-@login_required
-def camera_ptz_grid_shape(camera_id: int):
-    """Set grid shape (rows × cols). Allowed: 2×2, 2×3, 3×3, 3×4."""
-    try:
-        data = request.get_json(silent=True) or {}
-        if "rows" not in data or "cols" not in data:
-            return jsonify(
-                {"status": "error", "message": "rows and cols are required"}
-            ), 400
-        result = ptz_service.set_grid_shape(
-            camera_id, int(data["rows"]), int(data["cols"])
-        )
-        if result is None:
-            return jsonify({"status": "error", "message": "Camera not found"}), 404
-        return jsonify({"status": "success", "shape": result})
-    except ValueError as exc:
-        logger.info(
-            "PTZ grid shape rejected for camera %d [%s]",
-            camera_id,
-            type(exc).__name__,
-            exc_info=True,
-        )
-        return jsonify(
-            {"status": "error", "message": "Invalid grid shape"}
-        ), 400
-    except Exception as exc:
-        return _error_response("PTZ grid shape error", exc)
-
-
-@api_v1.route(
-    "/cameras/<int:camera_id>/ptz/grid/cells/<int:row>/<int:col>",
-    methods=["PUT"],
-)
-@login_required
-def camera_ptz_grid_cell_set(camera_id: int, row: int, col: int):
-    """Map a grid cell to a preset.
-
-    Two modes via JSON body:
-    - Empty body / no preset_token: save the camera's current position
-      as a fresh ONVIF preset (creates a new slot) and map this cell
-      to it. The legacy "aim with joystick, then save" path.
-    - {"preset_token": "PresetNNN"}: link this cell to an existing
-      preset (one of the operator's old 1–7 zones, the overview, the
-      re-focus slot, etc.) without moving the camera. Multiple cells
-      can point at the same token.
-    """
-    try:
-        data = request.get_json(silent=True) or {}
-        token = str(data.get("preset_token") or "").strip()
-        if token:
-            result = ptz_service.link_grid_cell_to_existing_preset(
-                camera_id, row, col, token
-            )
-        else:
-            result = ptz_service.set_grid_cell_at_current_position(
-                camera_id, row, col
-            )
-        if result is None:
-            return jsonify({"status": "error", "message": "Camera not found"}), 404
-        return jsonify({"status": "success", "cell": result})
-    except ValueError as exc:
-        logger.info(
-            "PTZ grid cell-set rejected for camera %d cell (%d,%d) [%s]",
-            camera_id,
-            row,
-            col,
-            type(exc).__name__,
-            exc_info=True,
-        )
-        return jsonify(
-            {"status": "error", "message": "Invalid grid cell mapping"}
-        ), 400
-    except Exception as exc:
-        return _error_response("PTZ grid cell set error", exc)
-
-
-@api_v1.route(
-    "/cameras/<int:camera_id>/ptz/grid/cells/<int:row>/<int:col>",
-    methods=["DELETE"],
-)
-@login_required
-def camera_ptz_grid_cell_clear(camera_id: int, row: int, col: int):
-    """Remove a grid cell mapping. ONVIF preset slot stays intact."""
-    try:
-        ok = ptz_service.clear_grid_cell(camera_id, row, col)
-        if not ok:
-            return jsonify({"status": "error", "message": "Camera not found"}), 404
-        return jsonify({"status": "success"})
-    except Exception as exc:
-        return _error_response("PTZ grid cell clear error", exc)
 
 
 @api_v1.route("/ptz/auto/status", methods=["GET"])
@@ -4049,6 +4027,15 @@ def init_api_v1(
     """
     # Store detection_manager reference on blueprint for route access
     api_v1.detection_manager = detection_manager
+
+    frame_supplier = getattr(detection_manager, "get_display_frame", None)
+    if callable(frame_supplier):
+        api_v1.ptz_aim_controller = ptz_aim_service.create_controller(
+            frame_supplier,
+            external_pause=getattr(detection_manager, "auto_ptz_controller", None),
+        )
+    else:
+        api_v1.ptz_aim_controller = None
 
     # Store system_monitor reference for vitals API (optional)
     api_v1.system_monitor = system_monitor

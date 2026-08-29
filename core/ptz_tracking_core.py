@@ -14,7 +14,6 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 from core import ptz_core
-from core.ptz_grid import cell_for_center, cell_preset_name
 from detectors.od_classes import is_bird_od_class
 from logging_config import get_logger
 
@@ -34,23 +33,21 @@ _GOTO_RETRY_ATTEMPTS = 2  # additional attempts after the first → 3 total
 _GOTO_RETRY_BACKOFF_SEC = 0.8
 
 # Follow-mode reacquisition policy. The controller extrapolates a short,
-# coherent target trajectory after the detector loses the bird. It may issue
-# two pan/tilt-only pulses, then stops and lets the normal lost-timeout return
-# the camera to overview. The deliberately small budget avoids turning a
-# momentary occlusion into an open-loop sweep on cameras without PTZ position
-# feedback.
+# coherent target trajectory after the detector loses the bird. A bounded
+# number of short corrections and one zoom-out widen the chance of seeing it
+# again before the normal lost-timeout returns the camera to overview.
 _TARGET_MOTION_HISTORY_SIZE = 5
-_TARGET_MOTION_MAX_GAP_SEC = 1.5
+_TARGET_MOTION_MAX_GAP_SEC = 2.5
 _TARGET_REASSOCIATION_MAX_DISTANCE = 0.45
-_LOST_SEARCH_WINDOW_SEC = 1.5
+_LOST_SEARCH_WINDOW_SEC = 8.0
 _LOST_SEARCH_PREDICT_AHEAD_SEC = 0.6
-_LOST_SEARCH_MAX_BURSTS = 2
+_LOST_SEARCH_MAX_BURSTS = 4
 _LOST_SEARCH_MIN_INTERVAL_SEC = 0.35
 _LOST_SEARCH_DEADBAND = 0.04
 _LOST_SEARCH_MIN_COMMAND_SPEED = 0.08
 
 PtzState = Literal[
-    "idle", "overview", "settling", "acquiring", "tracking", "lost_grace", "returning"
+    "idle", "overview", "settling", "tracking", "lost_grace", "returning"
 ]
 
 
@@ -63,6 +60,7 @@ class PtzCommand:
     tilt: float = 0.0
     zoom: float = 0.0
     duration_ms: int = 250
+    use_manual_tuning: bool = True
     # Speculative state committed under _lock at enqueue time so the
     # cooldown gate sees the in-flight target. If the worker later
     # reports the goto failed, the rollback uses these fields to undo
@@ -73,7 +71,7 @@ class PtzCommand:
 
 
 class AutoPtzController:
-    """Preset-first auto PTZ controller with optional hybrid move tracking."""
+    """Detection-driven continuous-movement PTZ controller."""
 
     def __init__(
         self,
@@ -96,7 +94,6 @@ class AutoPtzController:
         self._last_error = ""
         self._last_zone = ""
         self._last_preset = ""
-        self._acquire_count = 0
         self._last_target_center: tuple[float, float] | None = None
         self._target_motion_samples: deque[tuple[float, float, float]] = deque(
             maxlen=_TARGET_MOTION_HISTORY_SIZE
@@ -105,8 +102,11 @@ class AutoPtzController:
         self._lost_search_last_command_mono = 0.0
         self._lost_search_bursts = 0
         self._lost_search_stop_sent = False
+        self._lost_search_zoom_out_sent = False
         self._lost_search_velocity: tuple[float, float] | None = None
         self._predicted_target_center: tuple[float, float] | None = None
+        self._last_follow_direction: tuple[float, float] | None = None
+        self._last_tracking_move_until = 0.0
         # Normalised (x, y, w, h) bbox of the current target, surfaced in
         # status() for the live tracking overlay. Set alongside
         # _last_target_center; held through lost_grace; cleared on the
@@ -114,10 +114,6 @@ class AutoPtzController:
         # returning transitions). Presentation-only — no control logic.
         self._last_target_bbox: tuple[float, float, float, float] | None = None
         self._manual_view_until: float = 0.0  # 0 = no manual-view override active
-        self._acquiring_preset: str = ""  # token currently being acquired
-        self._grid_current_cell: tuple[int, int] | None = (
-            None  # last cell tracked in grid mode
-        )
         # Lost-detection cooldown: when a frame has no Bird above the
         # confidence threshold, we set this deadline and reject new
         # detection-driven moves until it elapses. Lets the cam actually
@@ -268,203 +264,17 @@ class AutoPtzController:
             now=self._clock(), center=(target[0], target[1])
         )
 
-        # Grid mode is a separate dispatch — different routing math,
-        # different cooldown, different "zone" semantics. Kept out of
-        # the preset/hybrid path so the legacy logic stays untouched.
-        if config.get("mode") == "grid":
-            self._handle_detections_grid(
-                config=config,
-                camera=camera,
-                target=target,
-            )
-            return
-
-        # Follow mode is preset-free: continuous pan/tilt + zoom keep
+        # Continuous pan/tilt + zoom keep
         # the bbox in the centre at the target size. No "zone" concept,
         # no acquire/settling state machine — every accepted detection
         # frame is a steering input gated only by deadband + cooldown.
-        if config.get("mode") == "follow":
-            self._handle_detections_follow(
-                config=config,
-                camera=camera,
-                target=target,
-                frame_shape=frame_shape,
-                detections=detections,
-            )
-            return
-
-        now = self._clock()
-        center_x, center_y, confidence, bbox = target
-        zone = self._zone_for_center(config, center_x, center_y)
-        if not zone or not zone.get("preset"):
-            self._update_status(
-                state="acquiring",
-                error="Detected bird is outside configured PTZ zones",
-                target_center=(center_x, center_y),
-            )
-            return
-
-        zone_name = str(zone.get("name") or "")
-        zone_preset = str(zone.get("preset") or "")
-        with self._lock:
-            self._last_seen_mono = now
-            self._last_target_center = (center_x, center_y)
-            self._last_target_bbox = bbox
-            # Bird detection always reverts to the detection-driven timeout,
-            # even if a manual-view override was active from an earlier click.
-            self._manual_view_until = 0.0
-            zone_changed = (
-                self._state in {"acquiring", "tracking"}
-                and zone_preset
-                and self._acquiring_preset
-                and zone_preset != self._acquiring_preset
-            )
-            if self._state not in {"acquiring", "tracking"} or zone_changed:
-                # Fresh acquire window for a new target box so a flapping
-                # bird hopping between boxes does not chain-trigger gotos.
-                self._acquire_count = 0
-            self._acquiring_preset = zone_preset
-            self._acquire_count += 1
-
-            if self._acquire_count < int(config["acquire_frames"]):
-                self._state = "acquiring"
-                self._last_error = ""
-                return
-
-        camera_id = int(camera["id"])
-        preset_token = zone_preset
-        issued = self._maybe_goto_zone(
-            camera_id=camera_id,
-            preset_token=preset_token,
-            zone_name=zone_name,
+        self._handle_detections_follow(
             config=config,
-            now=now,
+            camera=camera,
+            target=target,
+            frame_shape=frame_shape,
+            detections=detections,
         )
-
-        if config["mode"] == "hybrid":
-            self._maybe_move_to_center(
-                camera_id=camera_id,
-                center_x=center_x,
-                center_y=center_y,
-                config=config,
-                now=now,
-            )
-
-        with self._lock:
-            # When a goto fired, park in "settling" until the camera
-            # actually arrives. The settle worker (kicked below) flips
-            # us back to "tracking" once wait_until_idle resolves —
-            # otherwise mid-flight detection frames would route the
-            # bird into whatever zone the wide-angle frame paints it
-            # in, and the controller would fire a counter-goto as soon
-            # as the (shorter) command cooldown expires. Cheap PTZ
-            # cameras take 2–6 s to traverse, far longer than the
-            # cooldown alone protects against.
-            self._state = "settling" if issued else "tracking"
-            self._last_error = ""
-            self._last_target_center = (center_x, center_y)
-            self._last_target_bbox = bbox
-            logger.debug(
-                "Auto PTZ tracking target zone=%s conf=%.3f center=(%.3f, %.3f)",
-                zone_name,
-                confidence,
-                center_x,
-                center_y,
-            )
-
-        if issued:
-            self._spawn_detection_settle_worker(camera_id, config)
-
-    def _handle_detections_grid(
-        self,
-        *,
-        config: dict[str, Any],
-        camera: dict[str, Any],
-        target: tuple[float, float, float, tuple[float, float, float, float]],
-    ) -> None:
-        """Grid-mode dispatch: route bbox center to a (row, col) cell.
-
-        Reuses the same acquire_frames / state-machine semantics as the
-        preset path, but with grid-specific routing, naming, and a
-        separate cooldown. Hysteresis on cell selection is the design's
-        answer to flap between adjacent cells when the bird sits on a
-        boundary — see core.ptz_grid.cell_for_center.
-        """
-        now = self._clock()
-        center_x, center_y, confidence, bbox = target
-
-        shape = config.get("grid_shape") or [3, 3]
-        try:
-            rows, cols = int(shape[0]), int(shape[1])
-        except (IndexError, TypeError, ValueError):
-            rows, cols = 3, 3
-
-        hysteresis = float(config.get("grid_hysteresis_margin") or 0.05)
-        with self._lock:
-            current = self._grid_current_cell
-        row, col = cell_for_center(
-            center_x, center_y, rows, cols, current_cell=current, hysteresis=hysteresis
-        )
-        cell_key = f"r{row}_c{col}"
-        grid_cells = config.get("grid_cells") or {}
-        preset_token = str(grid_cells.get(cell_key) or "").strip()
-        if not preset_token:
-            # Operator did not finish the setup wizard for this cell.
-            self._update_status(
-                state="acquiring",
-                error=f"Grid cell {cell_key} has no preset configured",
-                target_center=(center_x, center_y),
-            )
-            return
-
-        cell_name = cell_preset_name(row, col)
-        with self._lock:
-            self._last_seen_mono = now
-            self._last_target_center = (center_x, center_y)
-            self._last_target_bbox = bbox
-            self._manual_view_until = 0.0
-            cell_changed = (
-                self._state in {"acquiring", "tracking"}
-                and self._grid_current_cell is not None
-                and self._grid_current_cell != (row, col)
-            )
-            if self._state not in {"acquiring", "tracking"} or cell_changed:
-                self._acquire_count = 0
-            self._grid_current_cell = (row, col)
-            self._acquiring_preset = preset_token
-            self._acquire_count += 1
-
-            if self._acquire_count < int(config["grid_acquire_frames"]):
-                self._state = "acquiring"
-                self._last_error = ""
-                return
-
-        camera_id = int(camera["id"])
-        issued = self._maybe_goto_cell(
-            camera_id=camera_id,
-            preset_token=preset_token,
-            cell_name=cell_name,
-            config=config,
-            now=now,
-        )
-
-        with self._lock:
-            # See preset-mode handle_detections for the rationale —
-            # settle worker prevents counter-gotos from mid-flight frames.
-            self._state = "settling" if issued else "tracking"
-            self._last_error = ""
-            self._last_target_center = (center_x, center_y)
-            self._last_target_bbox = bbox
-            logger.debug(
-                "Auto PTZ grid tracking cell=%s conf=%.3f center=(%.3f, %.3f)",
-                cell_name,
-                confidence,
-                center_x,
-                center_y,
-            )
-
-        if issued:
-            self._spawn_detection_settle_worker(camera_id, config)
 
     def _handle_detections_follow(
         self,
@@ -512,24 +322,26 @@ class AutoPtzController:
         offset_y = center_y - 0.5
         deadband = float(config["deadband"])
         max_speed = float(config["max_speed"])
-
-        # P-gain is deliberately low (0.8 vs hybrid-mode's 2.0). Reason:
-        # most cheap PTZ firmware ignores the ONVIF duration_sec parameter
-        # and runs each ContinuousMove for its own ~800-1000ms regardless.
-        # A high P-gain combined with the long actual burst causes overshoot
-        # past the centre, then the next detection frame sees the bird now
-        # ABOVE the centre, fires a tilt-down burst that overshoots again
-        # — classic limit-cycle oscillation. With 0.8 the cam approaches
-        # the centre asymptotically over a few frames instead.
         pan = 0.0
         tilt = 0.0
+        pan_duration_ms = 0.0
+        tilt_duration_ms = 0.0
         if abs(offset_x) > deadband:
-            pan = max(-max_speed, min(max_speed, offset_x * max_speed * 0.8))
+            pan_duration_ms = (
+                abs(offset_x) / float(config["follow_pan_rate_per_sec"]) * 1000.0
+            )
         if abs(offset_y) > deadband:
-            tilt = max(-max_speed, min(max_speed, -offset_y * max_speed * 0.8))
+            tilt_duration_ms = (
+                abs(offset_y) / float(config["follow_tilt_rate_per_sec"]) * 1000.0
+            )
+
+        if pan_duration_ms > 0:
+            pan = max_speed if offset_x > 0 else -max_speed
+        if tilt_duration_ms > 0:
+            tilt = -max_speed if offset_y > 0 else max_speed
 
         zoom = 0.0
-        if area_pct is not None:
+        if pan == 0.0 and tilt == 0.0 and area_pct is not None:
             target_pct = float(config.get("follow_zoom_target_pct", 0.18))
             zoom_deadband = float(config.get("follow_zoom_deadband_pct", 0.05))
             zoom_speed = float(config.get("follow_zoom_speed", 0.3))
@@ -565,17 +377,26 @@ class AutoPtzController:
         if pan == 0.0 and tilt == 0.0 and zoom == 0.0:
             return
 
+        if pan != 0.0 or tilt != 0.0:
+            required_ms = max(pan_duration_ms, tilt_duration_ms)
+            max_duration_ms = (
+                int(config["follow_tilt_max_duration_ms"]) if tilt != 0.0 else 2000
+            )
+            duration_ms = max(100, min(max_duration_ms, int(round(required_ms))))
+        else:
+            duration_ms = int(config["follow_zoom_duration_ms"])
+
         with self._lock:
             self._last_command_mono = now
-            if zoom > 0.0:
-                # Charge a zoom-in burst against the budget. We use
-                # move_duration_ms as the unit (not the firmware's
-                # actual ~800-1000 ms burst length) so the budget
-                # stays a function of what we *commanded*, which is
-                # what the operator's setting can reason about.
-                self._zoom_in_budget_used_sec += (
-                    float(config.get("move_duration_ms", 250)) / 1000.0
+            if pan != 0.0 or tilt != 0.0:
+                self._last_follow_direction = (pan, tilt)
+                self._last_tracking_move_until = max(
+                    self._last_tracking_move_until,
+                    now + duration_ms / 1000.0,
                 )
+            if zoom > 0.0:
+                # Charge the calibrated command duration against the guard.
+                self._zoom_in_budget_used_sec += duration_ms / 1000.0
 
         self._enqueue(
             PtzCommand(
@@ -584,7 +405,8 @@ class AutoPtzController:
                 pan=pan,
                 tilt=tilt,
                 zoom=zoom,
-                duration_ms=int(config["move_duration_ms"]),
+                duration_ms=duration_ms,
+                use_manual_tuning=False,
             )
         )
         logger.debug(
@@ -631,55 +453,6 @@ class AutoPtzController:
                 h = max(0.0, y2 - y1)
                 return (w * h) / float(frame_w * frame_h)
         return None
-
-    def _maybe_goto_cell(
-        self,
-        *,
-        camera_id: int,
-        preset_token: str,
-        cell_name: str,
-        config: dict[str, Any],
-        now: float,
-    ) -> bool:
-        """Like _maybe_goto_zone but uses the grid-specific cooldown.
-
-        Shorter cooldown (default 4s vs preset-mode's 10s) because
-        adjacent-cell switching is the *normal* flow, not the exception.
-        Hysteresis already filters the boundary-flap case upstream.
-
-        Returns True if a goto was issued.
-        """
-        cooldown_sec = int(config["grid_command_cooldown_ms"]) / 1000.0
-        with self._lock:
-            same_target = (
-                self._last_preset == preset_token and self._last_zone == cell_name
-            )
-            if same_target:
-                return False
-            if now - self._last_command_mono < cooldown_sec:
-                return False
-            prev_preset = self._last_preset
-            prev_zone = self._last_zone
-            self._last_command_mono = now
-            self._last_preset = preset_token
-            self._last_zone = cell_name
-
-        logger.info(
-            "AutoPTZ grid trigger cell=%s preset=%s camera_id=%s",
-            cell_name,
-            preset_token,
-            camera_id,
-        )
-        self._enqueue(
-            PtzCommand(
-                action="goto",
-                camera_id=camera_id,
-                preset_token=preset_token,
-                rollback_preset=prev_preset,
-                rollback_zone=prev_zone,
-            )
-        )
-        return True
 
     def _record_target_observation(
         self, *, now: float, center: tuple[float, float]
@@ -728,12 +501,14 @@ class AutoPtzController:
 
         mean_x = sum(sample[1] for sample in samples) / len(samples)
         mean_y = sum(sample[2] for sample in samples) / len(samples)
-        velocity_x = sum(
-            (sample[0] - mean_t) * (sample[1] - mean_x) for sample in samples
-        ) / variance_t
-        velocity_y = sum(
-            (sample[0] - mean_t) * (sample[2] - mean_y) for sample in samples
-        ) / variance_t
+        velocity_x = (
+            sum((sample[0] - mean_t) * (sample[1] - mean_x) for sample in samples)
+            / variance_t
+        )
+        velocity_y = (
+            sum((sample[0] - mean_t) * (sample[2] - mean_y) for sample in samples)
+            / variance_t
+        )
         # A target switch that slipped past the distance gate must not create
         # an extreme command. One frame-width per second is already a fast
         # bird for this deliberately short reacquisition horizon.
@@ -753,22 +528,74 @@ class AutoPtzController:
         command: PtzCommand | None = None
         with self._lock:
             if self._lost_search_started_mono <= 0:
-                velocity = self._estimate_target_velocity_locked(now=now)
-                if velocity is None or not self._target_motion_samples:
-                    return False
+                # A bbox trajectory sampled while our own PTZ command is still
+                # moving mostly describes camera motion, not bird motion. In
+                # that case continue the last steering direction instead of
+                # extrapolating the camera-induced image displacement.
+                last_sample_at = (
+                    self._target_motion_samples[-1][0]
+                    if self._target_motion_samples
+                    else 0.0
+                )
+                camera_motion_contaminated = (
+                    last_sample_at > 0
+                    and last_sample_at <= self._last_tracking_move_until
+                )
+                velocity = (
+                    None
+                    if camera_motion_contaminated
+                    else self._estimate_target_velocity_locked(now=now)
+                )
+                if velocity is None:
+                    direction = self._last_follow_direction
+                    if direction is None or not self._target_motion_samples:
+                        return False
+                    velocity = (
+                        0.15
+                        if direction[0] > 0
+                        else -0.15
+                        if direction[0] < 0
+                        else 0.0,
+                        -0.15
+                        if direction[1] > 0
+                        else 0.15
+                        if direction[1] < 0
+                        else 0.0,
+                    )
                 self._lost_search_started_mono = now
                 self._lost_search_velocity = velocity
 
             elapsed_search = now - self._lost_search_started_mono
-            if elapsed_search >= _LOST_SEARCH_WINDOW_SEC:
+            hold_sec = float(config.get("follow_lost_hold_sec", 2.0))
+            search_sec = float(config.get("follow_search_sec", 8.0))
+            if elapsed_search < hold_sec:
+                return True
+            if elapsed_search >= search_sec:
                 self._predicted_target_center = None
                 return False
+
+            zoom_out_ms = int(config.get("follow_search_zoom_out_ms", 250))
+            zoom_out_at = max(hold_sec + 1.0, search_sec * 0.6)
+            if (
+                zoom_out_ms > 0
+                and elapsed_search >= zoom_out_at
+                and not self._lost_search_zoom_out_sent
+            ):
+                self._lost_search_zoom_out_sent = True
+                command = PtzCommand(
+                    action="move",
+                    camera_id=camera_id,
+                    zoom=-float(config.get("follow_zoom_speed", 0.3)),
+                    duration_ms=zoom_out_ms,
+                    use_manual_tuning=False,
+                )
+                self._last_command_mono = now
 
             cooldown_sec = max(
                 _LOST_SEARCH_MIN_INTERVAL_SEC,
                 int(config["command_cooldown_ms"]) / 1000.0,
             )
-            if (
+            if command is None and (
                 self._lost_search_bursts >= _LOST_SEARCH_MAX_BURSTS
                 or (
                     self._lost_search_last_command_mono > 0
@@ -777,57 +604,64 @@ class AutoPtzController:
             ):
                 return True
 
-            last_at, last_x, last_y = self._target_motion_samples[-1]
-            velocity_x, velocity_y = self._lost_search_velocity or (0.0, 0.0)
-            horizon = max(0.0, now - last_at) + _LOST_SEARCH_PREDICT_AHEAD_SEC
-            predicted_x = max(0.02, min(0.98, last_x + velocity_x * horizon))
-            predicted_y = max(0.02, min(0.98, last_y + velocity_y * horizon))
-            self._predicted_target_center = (predicted_x, predicted_y)
+            if command is None:
+                last_at, last_x, last_y = self._target_motion_samples[-1]
+                velocity_x, velocity_y = self._lost_search_velocity or (0.0, 0.0)
+                horizon = max(0.0, now - last_at) + _LOST_SEARCH_PREDICT_AHEAD_SEC
+                predicted_x = max(0.02, min(0.98, last_x + velocity_x * horizon))
+                predicted_y = max(0.02, min(0.98, last_y + velocity_y * horizon))
+                self._predicted_target_center = (predicted_x, predicted_y)
 
-            offset_x = predicted_x - 0.5
-            offset_y = predicted_y - 0.5
-            max_speed = float(config["max_speed"])
+                offset_x = predicted_x - 0.5
+                offset_y = predicted_y - 0.5
+                max_speed = float(config["max_speed"])
 
-            def search_speed(offset: float, *, invert: bool = False) -> float:
-                if abs(offset) <= _LOST_SEARCH_DEADBAND:
-                    return 0.0
-                magnitude = min(
-                    max_speed,
-                    max(_LOST_SEARCH_MIN_COMMAND_SPEED, abs(offset) * max_speed),
+                def search_speed(offset: float, *, invert: bool = False) -> float:
+                    if abs(offset) <= _LOST_SEARCH_DEADBAND:
+                        return 0.0
+                    magnitude = min(
+                        max_speed,
+                        max(_LOST_SEARCH_MIN_COMMAND_SPEED, abs(offset) * max_speed),
+                    )
+                    direction = -1.0 if offset < 0 else 1.0
+                    if invert:
+                        direction *= -1.0
+                    return direction * magnitude
+
+                pan = search_speed(offset_x)
+                tilt = search_speed(offset_y, invert=True)
+                if pan == 0.0 and tilt == 0.0:
+                    self._predicted_target_center = None
+                    return False
+
+                self._lost_search_bursts += 1
+                self._lost_search_last_command_mono = now
+                self._last_command_mono = now
+                command = PtzCommand(
+                    action="move",
+                    camera_id=camera_id,
+                    pan=pan,
+                    tilt=tilt,
+                    zoom=0.0,
+                    duration_ms=int(config.get("follow_search_burst_ms", 400)),
+                    use_manual_tuning=False,
                 )
-                direction = -1.0 if offset < 0 else 1.0
-                if invert:
-                    direction *= -1.0
-                return direction * magnitude
-
-            pan = search_speed(offset_x)
-            tilt = search_speed(offset_y, invert=True)
-            if pan == 0.0 and tilt == 0.0:
-                return False
-
-            self._lost_search_bursts += 1
-            self._lost_search_last_command_mono = now
-            self._last_command_mono = now
-            burst_number = self._lost_search_bursts
-            predicted_center = self._predicted_target_center
-            search_velocity = self._lost_search_velocity
-            command = PtzCommand(
-                action="move",
-                camera_id=camera_id,
-                pan=pan,
-                tilt=tilt,
-                zoom=0.0,
-                duration_ms=int(config["move_duration_ms"]),
-            )
 
         assert command is not None
+        self._enqueue(command)
+        if command.zoom != 0.0:
+            logger.info(
+                "Auto PTZ lost-search zoom-out duration_ms=%d", command.duration_ms
+            )
+            return True
+        predicted_center = self._predicted_target_center
+        search_velocity = self._lost_search_velocity
         assert predicted_center is not None
         assert search_velocity is not None
-        self._enqueue(command)
         logger.info(
             "Auto PTZ predictive reacquisition burst=%d center=(%.3f, %.3f) "
             "velocity=(%.3f, %.3f) pan=%.3f tilt=%.3f",
-            burst_number,
+            self._lost_search_bursts,
             predicted_center[0],
             predicted_center[1],
             search_velocity[0],
@@ -849,6 +683,7 @@ class AutoPtzController:
         self._lost_search_last_command_mono = 0.0
         self._lost_search_bursts = 0
         self._lost_search_stop_sent = False
+        self._lost_search_zoom_out_sent = False
         self._lost_search_velocity = None
         self._predicted_target_center = None
 
@@ -857,7 +692,7 @@ class AutoPtzController:
             # External pause owns the camera — no auto-return either.
             if self._external_pause_reason:
                 return
-            if self._state not in {"acquiring", "tracking", "lost_grace"}:
+            if self._state not in {"tracking", "lost_grace"}:
                 return
             was_tracking = self._state == "tracking"
             predictive_search_active = self._lost_search_started_mono > 0
@@ -874,11 +709,7 @@ class AutoPtzController:
             return
 
         now = self._clock()
-        if (
-            config.get("mode") == "follow"
-            and not manual_view_active
-            and (was_tracking or predictive_search_active)
-        ):
+        if not manual_view_active and (was_tracking or predictive_search_active):
             search_active = self._continue_lost_follow_search(
                 camera_id=int(camera["id"]), config=config, now=now
             )
@@ -894,7 +725,10 @@ class AutoPtzController:
             if self._manual_view_until > 0:
                 deadline = self._manual_view_until
             else:
-                deadline = self._last_seen_mono + float(config["lost_timeout_sec"])
+                deadline = max(
+                    self._last_seen_mono,
+                    self._last_tracking_move_until,
+                ) + float(config["lost_timeout_sec"])
             if now < deadline:
                 self._state = "lost_grace"
                 return
@@ -926,7 +760,6 @@ class AutoPtzController:
             self._state = "returning"
             self._last_preset = overview
             self._last_zone = "overview"
-            self._acquire_count = 0
             # Returning to overview — no current target, drop the overlay box.
             self._last_target_bbox = None
             self._target_motion_samples.clear()
@@ -988,7 +821,6 @@ class AutoPtzController:
                 self._state = "settling"
                 self._last_seen_mono = 0.0
                 self._manual_view_until = 0.0
-                self._acquire_count = 0
                 # Operator sent the cam to a non-overview preset — each
                 # preset has its own baked-in zoom level we cannot read
                 # back. Lock follow-mode zoom-in until an overview goto
@@ -1106,7 +938,6 @@ class AutoPtzController:
             self._last_zone = "manual_drive"
             self._last_preset = ""  # no preset — operator is freely steering
             self._state = "lost_grace"
-            self._acquire_count = 0
             self._target_motion_samples.clear()
             self._reset_lost_search_locked()
 
@@ -1179,71 +1010,6 @@ class AutoPtzController:
             reason = self._external_pause_reason
         return (bool(reason), reason)
 
-    def _spawn_detection_settle_worker(
-        self, camera_id: int, config: dict[str, Any]
-    ) -> None:
-        """Start a background settler for a detection-driven goto.
-
-        Cheap PTZ cameras take 2–6 s to traverse between presets; if we
-        let the detection loop act on frames captured during the flight,
-        the bird's bbox lands in arbitrary zones and chain-fires
-        counter-gotos. The settle worker waits for ONVIF MoveStatus to
-        report IDLE (or a fixed-time fallback when the camera does not
-        expose it) and only then flips _state back to "tracking" so
-        detections are honored again.
-
-        Skipped when the controller's command worker is disabled — the
-        same flag tests use to keep behaviour synchronous and avoid
-        background ONVIF I/O that would fail without a real camera.
-        Synchronous callers flip straight to "tracking" instead.
-        """
-        if not self._worker_enabled:
-            with self._lock:
-                if self._state == "settling":
-                    self._state = "tracking"
-            return
-        settle_max = float(config.get("settle_max_sec") or 8.0)
-        t = threading.Thread(
-            target=self._settle_then_resume_tracking,
-            name="auto-ptz-detection-settle",
-            args=(camera_id, settle_max),
-            daemon=True,
-        )
-        t.start()
-
-    def _settle_then_resume_tracking(
-        self, camera_id: int, settle_max_sec: float
-    ) -> None:
-        """Block until the camera arrives, then unlock the tracking gate.
-
-        Sibling of _settle_then_park_manual: same wait semantics, but
-        the post-settle state transition is "tracking" (detection loop
-        resumes) instead of "lost_grace" (manual countdown).
-        """
-        try:
-            client = ptz_core._client_for_camera(camera_id)
-            arrived = False
-            try:
-                arrived = client.wait_until_idle(max_wait_sec=settle_max_sec)
-            except Exception as exc:
-                logger.debug("wait_until_idle failed, using fallback: %s", exc)
-            if not arrived:
-                # Fixed-time fallback for cameras that do not expose
-                # MoveStatus. Wait the same 5 s the manual settler uses
-                # so behaviour stays consistent across both paths.
-                time.sleep(5.0)
-        except Exception as exc:
-            logger.warning("Detection settle worker error: %s", exc)
-            time.sleep(5.0)
-
-        # Resume tracking only if nothing else superseded us. If the
-        # worker raced against a manual click or the controller went
-        # idle, leave that newer state alone.
-        with self._lock:
-            if self._state != "settling":
-                return
-            self._state = "tracking"
-
     def _settle_then_park_manual(
         self, camera_id: int, settle_max_sec: float, view_sec: float
     ) -> None:
@@ -1304,7 +1070,6 @@ class AutoPtzController:
             self._state = "returning"
             self._last_preset = overview
             self._last_zone = "overview"
-            self._acquire_count = 0
             # Returning to overview — no current target, drop the overlay box.
             self._last_target_bbox = None
             self._target_motion_samples.clear()
@@ -1331,6 +1096,8 @@ class AutoPtzController:
         with self._lock:
             state = self._state
             last_seen = self._last_seen_mono
+            last_tracking_move_until = self._last_tracking_move_until
+            lost_search_started = self._lost_search_started_mono
             manual_until = self._manual_view_until
             external_pause = self._external_pause_reason
             status = {
@@ -1338,7 +1105,6 @@ class AutoPtzController:
                 "last_error": self._last_error,
                 "last_zone": self._last_zone,
                 "last_preset": self._last_preset,
-                "acquire_count": self._acquire_count,
                 "last_target_center": self._last_target_center,
                 # Normalised (x, y, w, h) bbox of the current target for the
                 # live tracking overlay; None when there is no target.
@@ -1347,9 +1113,8 @@ class AutoPtzController:
                 "prediction_active": bool(
                     state == "lost_grace"
                     and self._predicted_target_center is not None
-                    and self._lost_search_started_mono > 0
-                    and self._clock() - self._lost_search_started_mono
-                    < _LOST_SEARCH_WINDOW_SEC
+                    and lost_search_started > 0
+                    and self._clock() - lost_search_started < _LOST_SEARCH_WINDOW_SEC
                 ),
                 # Surfaced for the Stream-page banner: when set, the UI
                 # shows "Auto-PTZ paused — <reason>" so it's clear why
@@ -1358,6 +1123,13 @@ class AutoPtzController:
             }
         if camera:
             config = ptz_core.normalize_ptz_config(camera.get("ptz"))
+            status["prediction_active"] = bool(
+                state == "lost_grace"
+                and status["predicted_target_center"] is not None
+                and lost_search_started > 0
+                and self._clock() - lost_search_started
+                < float(config.get("follow_search_sec", 8.0))
+            )
             configured_enabled = bool(config.get("enabled"))
             seconds_until_return: float | None = None
             if configured_enabled:
@@ -1367,8 +1139,8 @@ class AutoPtzController:
                 elif manual_until > 0:
                     remaining = manual_until - self._clock()
                     seconds_until_return = max(0.0, round(remaining, 1))
-                elif state in {"tracking", "acquiring", "lost_grace"} and last_seen > 0:
-                    elapsed = self._clock() - last_seen
+                elif state in {"tracking", "lost_grace"} and last_seen > 0:
+                    elapsed = self._clock() - max(last_seen, last_tracking_move_until)
                     remaining = float(config["lost_timeout_sec"]) - elapsed
                     seconds_until_return = max(0.0, round(remaining, 1))
             status.update(
@@ -1379,7 +1151,6 @@ class AutoPtzController:
                     # `configured_enabled` to make the meaning explicit.
                     "configured_enabled": configured_enabled,
                     "enabled": configured_enabled,
-                    "mode": config.get("mode"),
                     "camera_id": int(camera["id"]),
                     "camera_name": camera.get(
                         "name", f"Camera {int(camera['id']) + 1}"
@@ -1394,7 +1165,6 @@ class AutoPtzController:
                 {
                     "configured_enabled": False,
                     "enabled": False,
-                    "mode": "",
                     "camera_id": None,
                     "camera_name": "",
                     "lost_timeout_sec": None,
@@ -1403,93 +1173,6 @@ class AutoPtzController:
                 }
             )
         return status
-
-    def _maybe_goto_zone(
-        self,
-        *,
-        camera_id: int,
-        preset_token: str,
-        zone_name: str,
-        config: dict[str, Any],
-        now: float,
-    ) -> bool:
-        """Enqueue a goto if cooldown allows. Returns True if a goto was issued."""
-        cooldown_sec = int(config["command_cooldown_ms"]) / 1000.0
-        with self._lock:
-            same_target = (
-                self._last_preset == preset_token and self._last_zone == zone_name
-            )
-            if same_target:
-                return False
-            if now - self._last_command_mono < cooldown_sec:
-                return False
-            prev_preset = self._last_preset
-            prev_zone = self._last_zone
-            self._last_command_mono = now
-            self._last_preset = preset_token
-            self._last_zone = zone_name
-
-        logger.info(
-            "AutoPTZ trigger zone=%s preset=%s camera_id=%s",
-            zone_name,
-            preset_token,
-            camera_id,
-        )
-        self._enqueue(
-            PtzCommand(
-                action="goto",
-                camera_id=camera_id,
-                preset_token=preset_token,
-                rollback_preset=prev_preset,
-                rollback_zone=prev_zone,
-            )
-        )
-        self._publish_movement_event(
-            kind="auto",
-            estimated_sec=float(config.get("settle_max_sec") or 8.0),
-        )
-        return True
-
-    def _maybe_move_to_center(
-        self,
-        *,
-        camera_id: int,
-        center_x: float,
-        center_y: float,
-        config: dict[str, Any],
-        now: float,
-    ) -> None:
-        cooldown_sec = int(config["command_cooldown_ms"]) / 1000.0
-        with self._lock:
-            if now - self._last_command_mono < cooldown_sec:
-                return
-
-        offset_x = center_x - 0.5
-        offset_y = center_y - 0.5
-        deadband = float(config["deadband"])
-        if abs(offset_x) <= deadband and abs(offset_y) <= deadband:
-            return
-
-        max_speed = float(config["max_speed"])
-        pan = max(-max_speed, min(max_speed, offset_x * max_speed * 2.0))
-        tilt = max(-max_speed, min(max_speed, -offset_y * max_speed * 2.0))
-        if abs(offset_x) <= deadband:
-            pan = 0.0
-        if abs(offset_y) <= deadband:
-            tilt = 0.0
-
-        with self._lock:
-            self._last_command_mono = now
-
-        self._enqueue(
-            PtzCommand(
-                action="move",
-                camera_id=camera_id,
-                pan=pan,
-                tilt=tilt,
-                duration_ms=int(config["move_duration_ms"]),
-            )
-        )
 
     def _select_target(
         self,
@@ -1536,63 +1219,6 @@ class AutoPtzController:
             best = (center_x, center_y, confidence, (nx, ny, nw, nh))
             best_score = score
         return best
-
-    def _zone_for_center(
-        self, config: dict[str, Any], center_x: float, center_y: float
-    ) -> dict[str, Any] | None:
-        # Preferred path: operator-placed preset overlay boxes are the
-        # source of truth for detection-zone mapping. Pick the smallest
-        # containing box so a tightly-framed preset wins over a wider one.
-        overview = str(config.get("overview_preset") or "")
-        preset_meta = config.get("preset_metadata") or {}
-        if isinstance(preset_meta, dict) and preset_meta:
-            best: tuple[float, dict[str, Any]] | None = None
-            for token, meta in preset_meta.items():
-                if not isinstance(meta, dict):
-                    continue
-                if overview and token == overview:
-                    continue
-                w = float(meta.get("box_w_pct") or 0.0)
-                h = float(meta.get("box_h_pct") or 0.0)
-                if w <= 0 or h <= 0:
-                    continue
-                cx = float(meta.get("center_x_pct") or 0.0)
-                cy = float(meta.get("center_y_pct") or 0.0)
-                if (
-                    cx - w / 2 <= center_x < cx + w / 2
-                    and cy - h / 2 <= center_y < cy + h / 2
-                ):
-                    area = w * h
-                    if best is None or area < best[0]:
-                        best = (
-                            area,
-                            {
-                                "name": str(meta.get("label") or token),
-                                "preset": str(token),
-                            },
-                        )
-            if best is not None:
-                return best[1]
-            # No box matched and operator opted into the new model
-            # (at least one preset has a real box) → no goto.
-            if any(
-                isinstance(m, dict)
-                and float(m.get("box_w_pct") or 0.0) > 0
-                and float(m.get("box_h_pct") or 0.0) > 0
-                for m in preset_meta.values()
-            ):
-                return None
-
-        # Legacy fallback: the old 3-zone horizontal map. Only reached
-        # when no preset metadata boxes are configured at all.
-        for zone in config.get("zones", []):
-            if float(zone.get("x_min", 0.0)) <= center_x < float(
-                zone.get("x_max", 1.0)
-            ) and float(zone.get("y_min", 0.0)) <= center_y < float(
-                zone.get("y_max", 1.0)
-            ):
-                return zone
-        return None
 
     def _enqueue(self, command: PtzCommand) -> None:
         if not self._worker_enabled:
@@ -1714,21 +1340,17 @@ class AutoPtzController:
             ptz_core.stop(command.camera_id)
 
     def _run_move_with_burst(self, command: PtzCommand) -> None:
-        """Issue a follow-mode move N times back-to-back.
+        """Issue an optionally manual-tuned move N times back-to-back.
 
         Same purpose as the joystick's frontend burst (see stream.html):
         cheap PTZ cams that ignore ContinuousMove velocity step a fixed
-        firmware-internal distance per call. If pan/tilt steps are too
-        small relative to zoom, this enqueues exactly one logical move
-        per detection-loop tick but fires it N times.
+        firmware-internal distance per call. Calibrated auto-follow commands
+        opt out because their duration already represents the required move.
 
         Burst counts come from the per-camera ptz config. The "axis" of
         a move is determined by which fields are non-zero: a pure-zoom
         command (zoom!=0, pan==tilt==0) uses manual_zoom_burst; anything
-        else uses manual_pan_tilt_burst. Mixed pan+zoom commands aren't
-        produced by the current follow logic (zoom-only when bbox-area
-        wants correction, pan/tilt-only when offset wants correction),
-        so the simple axis classifier is sufficient.
+        else uses manual_pan_tilt_burst.
 
         Between calls the worker sleeps BURST_SPACING_SEC so the
         backend's ContinuousMove + sleep + Stop sequence on call K is
@@ -1811,6 +1433,8 @@ class AutoPtzController:
         Pure-zoom (zoom != 0, pan == tilt == 0) → manual_zoom_burst.
         Everything else (pan/tilt with or without zoom) → manual_pan_tilt_burst.
         """
+        if not command.use_manual_tuning:
+            return 1
         try:
             config = ptz_core.get_ptz_config(command.camera_id) or {}
         except Exception:
@@ -1838,6 +1462,8 @@ class AutoPtzController:
         multiplier on a 250 ms base saturates at 1250 ms — well
         within the client cap.
         """
+        if not command.use_manual_tuning:
+            return command.duration_ms
         try:
             config = ptz_core.get_ptz_config(command.camera_id) or {}
             mult = float(config.get("manual_move_duration_multiplier", 1.0))
@@ -1849,7 +1475,6 @@ class AutoPtzController:
         with self._lock:
             self._state = "idle"
             self._last_error = error
-            self._acquire_count = 0
             # No current target in idle — drop the overlay box.
             self._last_target_bbox = None
             self._target_motion_samples.clear()
@@ -1880,9 +1505,8 @@ class AutoPtzController:
         stay None until `GetStatus` is wired in.
 
         State mapping:
-          tracking / acquiring / settling / lost_grace → 'preset'
-              (camera is at, or flying to, a non-overview zone preset;
-              the frame is a close-up regardless of mid-fly motion)
+          tracking / settling / lost_grace → 'preset'
+              (historical DB value for a PTZ-driven close-up frame)
           overview / returning → 'overview'
               (camera is at, or flying to, the overview preset;
               the frame is wide-view)
@@ -1902,7 +1526,7 @@ class AutoPtzController:
         # auto case is "preset-targeted" in the literal sense.
         if last_zone == "manual_drive":
             origin = "manual_drive"
-        elif state in ("tracking", "acquiring", "settling", "lost_grace"):
+        elif state in ("tracking", "settling", "lost_grace"):
             origin = "preset"
         elif state in ("overview", "returning"):
             origin = "overview"

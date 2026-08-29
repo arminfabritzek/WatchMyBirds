@@ -163,6 +163,31 @@ class TestTemplateStructure:
         assert 'id="settingsSendReportButton"' in content
         assert 'id="settingsSendReportStatus"' in content
 
+    def test_settings_exposes_only_auto_bird_follow(self):
+        content = self.get_template_content("settings.html")
+        assert "Enable Auto Bird Follow" in content
+        assert 'id="ptzMode"' not in content
+        assert 'id="ptzGridConfig"' not in content
+        assert '<option value="preset">' not in content
+        assert '<option value="hybrid">' not in content
+        assert '<option value="grid">' not in content
+
+    def test_settings_preserves_manual_ptz_tuning_when_saving(self):
+        content = self.get_template_content("settings.html")
+        for setting in (
+            "manual_pan_tilt_burst",
+            "manual_zoom_burst",
+            "manual_move_duration_multiplier",
+        ):
+            assert (
+                f"Number(_ptzConfigPristine && _ptzConfigPristine.{setting})" in content
+            )
+
+    def test_stream_has_no_retired_grid_wizard(self):
+        content = self.get_template_content("stream.html")
+        assert "ptzGridWizard" not in content
+        assert "ptz_grid_setup" not in content
+
     def test_settings_species_locale_offers_english(self):
         """The species-name language selector must expose English."""
         content = self.get_template_content("settings.html")

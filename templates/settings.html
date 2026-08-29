@@ -159,7 +159,7 @@
             <div class="modal-header wm-modal__header">
                 <div class="wm-modal__title">
                     <span class="wm-modal__title-text">Auto PTZ</span>
-                    <span class="wm-modal__title-sub" id="ptzConfigSubtitle">Preset and hybrid tracking</span>
+                    <span class="wm-modal__title-sub" id="ptzConfigSubtitle">Fast bird follow with recovery search</span>
                 </div>
                 <button type="button" class="btn-close wm-modal__close" data-bs-dismiss="modal"></button>
             </div>
@@ -168,126 +168,33 @@
                     <input type="hidden" id="ptzCamId">
                     <div class="form-check form-switch mb-3">
                         <input class="form-check-input" type="checkbox" role="switch" id="ptzEnabled">
-                        <label class="form-check-label" for="ptzEnabled">Enable auto PTZ</label>
+                        <label class="form-check-label" for="ptzEnabled">Enable Auto Bird Follow</label>
                     </div>
                     <div class="row g-3 mb-3">
-                        <div class="col-md-6">
-                            <label for="ptzMode" class="form-label">Mode</label>
-                            <select class="form-select" id="ptzMode">
-                                <option value="preset">Preset</option>
-                                <option value="hybrid">Hybrid</option>
-                                <option value="grid">Grid (zoom-cells)</option>
-                                <option value="follow">Follow (continuous + zoom)</option>
-                            </select>
-                        </div>
-                        <div class="col-md-6">
+                        <div class="col-12">
                             <label for="ptzOverviewPreset" class="form-label">Overview preset</label>
                             <select class="form-select" id="ptzOverviewPreset"></select>
+                            <div class="form-text">Used only after the bird remains lost beyond the recovery window.</div>
                         </div>
                     </div>
                     <div class="row g-3 mb-3">
-                        <div class="col-md-4">
-                            <label for="ptzLeftPreset" class="form-label">Left zone</label>
-                            <div class="input-group">
-                                <select class="form-select" id="ptzLeftPreset"></select>
-                                <button type="button" class="btn btn-outline-secondary" onclick="testPtzPreset('ptzLeftPreset')" title="Move to the left-zone preset" aria-label="Test left-zone preset">Test</button>
-                            </div>
-                        </div>
-                        <div class="col-md-4">
-                            <label for="ptzCenterPreset" class="form-label">Center zone</label>
-                            <div class="input-group">
-                                <select class="form-select" id="ptzCenterPreset"></select>
-                                <button type="button" class="btn btn-outline-secondary" onclick="testPtzPreset('ptzCenterPreset')" title="Move to the center-zone preset" aria-label="Test center-zone preset">Test</button>
-                            </div>
-                        </div>
-                        <div class="col-md-4">
-                            <label for="ptzRightPreset" class="form-label">Right zone</label>
-                            <div class="input-group">
-                                <select class="form-select" id="ptzRightPreset"></select>
-                                <button type="button" class="btn btn-outline-secondary" onclick="testPtzPreset('ptzRightPreset')" title="Move to the right-zone preset" aria-label="Test right-zone preset">Test</button>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="row g-3 mb-3">
-                        <div class="col-md-4">
-                            <label for="ptzAcquireFrames" class="form-label">Acquire frames</label>
-                            <input type="number" min="1" max="10" class="form-control" id="ptzAcquireFrames">
-                        </div>
-                        <div class="col-md-4">
+                        <div class="col-md-6">
                             <label for="ptzLostTimeout" class="form-label">Lost timeout (s)</label>
                             <input type="number" min="1" max="60" step="0.5" class="form-control" id="ptzLostTimeout">
                         </div>
-                        <div class="col-md-4">
+                        <div class="col-md-6">
                             <label for="ptzCooldown" class="form-label">Cooldown (ms)</label>
                             <input type="number" min="100" max="10000" step="50" class="form-control" id="ptzCooldown">
                         </div>
                     </div>
                     <div class="row g-3">
-                        <div class="col-md-4">
+                        <div class="col-12">
                             <label for="ptzDeadband" class="form-label">Deadband</label>
                             <input type="number" min="0.02" max="0.4" step="0.01" class="form-control" id="ptzDeadband">
-                        </div>
-                        <div class="col-md-4">
-                            <label for="ptzMaxSpeed" class="form-label">Move speed</label>
-                            <input type="number" min="0.05" max="1" step="0.05" class="form-control" id="ptzMaxSpeed">
-                        </div>
-                        <div class="col-md-4">
-                            <label for="ptzMoveDuration" class="form-label">Move duration (ms)</label>
-                            <input type="number" min="50" max="2000" step="50" class="form-control" id="ptzMoveDuration">
+                            <div class="form-text">How close the bird must be to the frame centre before steering stops. Movement duration is calculated automatically from the measured camera response.</div>
                         </div>
                     </div>
-                    <div class="row g-3 mt-1">
-                        <div class="col-12">
-                            <div class="border rounded p-2" style="background: rgba(0,0,0,0.02);">
-                                <strong class="small d-block mb-2">Step-size compensation for cheap PTZ cams</strong>
-                                <div class="small text-muted mb-2">
-                                    Two independent knobs for cams that ignore ContinuousMove velocity. <strong>Burst</strong> fires N calls per move — works when the cam honours every call. <strong>Move duration</strong> lengthens a single call — works when the cam throttles back-to-back calls but honours one longer move. They combine multiplicatively. Applies to BOTH the stream-page joystick AND Auto-PTZ follow-mode corrections.
-                                </div>
-                                <div class="alert alert-danger small mb-2 p-2" role="note">
-                                    <strong>Heads up:</strong> some PTZ cams have a fixed firmware step size for pan/tilt that <em>no software setting</em> can override — speed, burst, and duration are all ignored by the motor controller. If you raise these knobs and the on-screen movement doesn't change, your cam is one of them. Zoom usually has a separate motor that does respond. The only fix in that case is a different camera.
-                                </div>
-                                <div class="row g-2">
-                                    <div class="col-md-4">
-                                        <label for="ptzManualPanTiltBurst" class="form-label">Pan/tilt burst (×)</label>
-                                        <input type="number" min="1" max="6" step="1" class="form-control" id="ptzManualPanTiltBurst" title="How many ContinuousMove calls to fire per logical pan/tilt move (joystick hold-tick or follow-mode correction). 1 = legacy single-call, 2–3 = compensate for cams with small per-step pan/tilt motion.">
-                                    </div>
-                                    <div class="col-md-4">
-                                        <label for="ptzManualZoomBurst" class="form-label">Zoom burst (×)</label>
-                                        <input type="number" min="1" max="6" step="1" class="form-control" id="ptzManualZoomBurst" title="Same idea for zoom. Most cheap cams already step too far on zoom, so leave at 1 unless your cam is the opposite case.">
-                                    </div>
-                                    <div class="col-md-4">
-                                        <label for="ptzManualMoveDurationMultiplier" class="form-label">Move duration (×)</label>
-                                        <input type="number" min="0.5" max="5.0" step="0.1" class="form-control" id="ptzManualMoveDurationMultiplier" title="Multiplies the per-call move duration. Try this when burst alone doesn't help — some cams throttle back-to-back calls but honour one longer ContinuousMove. 1.0 = legacy. Combines with burst: 3 bursts × 2× duration = 3 × 600 ms calls.">
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="row g-3 mt-1 d-none" id="ptzGridConfig">
-                        <div class="col-12">
-                            <div class="border rounded p-2" style="background: rgba(0,0,0,0.02);">
-                                <div class="d-flex align-items-center justify-content-between mb-2">
-                                    <strong class="small">Grid shape</strong>
-                                    <span class="small text-muted" id="ptzGridStateSummary">—</span>
-                                </div>
-                                <div class="btn-group btn-group-sm w-100 mb-2" role="group" aria-label="Grid shape">
-                                    <input type="radio" class="btn-check" name="ptzGridShape" id="ptzGridShape2x2" value="2x2">
-                                    <label class="btn btn-outline-secondary" for="ptzGridShape2x2">2×2</label>
-                                    <input type="radio" class="btn-check" name="ptzGridShape" id="ptzGridShape2x3" value="2x3">
-                                    <label class="btn btn-outline-secondary" for="ptzGridShape2x3">2×3</label>
-                                    <input type="radio" class="btn-check" name="ptzGridShape" id="ptzGridShape3x3" value="3x3" checked>
-                                    <label class="btn btn-outline-secondary" for="ptzGridShape3x3">3×3</label>
-                                    <input type="radio" class="btn-check" name="ptzGridShape" id="ptzGridShape3x4" value="3x4">
-                                    <label class="btn btn-outline-secondary" for="ptzGridShape3x4">3×4</label>
-                                </div>
-                                <div class="d-flex align-items-center justify-content-between gap-2">
-                                    <span class="small text-muted">Place each cell's preset on the Stream page.</span>
-                                    <a class="btn btn-sm btn--primary" id="ptzGridOpenWizard" href="/?ptz_grid_setup=0">Open Setup Wizard</a>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="row g-3 mt-1 d-none" id="ptzFollowConfig">
+                    <div class="row g-3 mt-1" id="ptzFollowConfig">
                         <div class="col-12">
                             <div class="border rounded p-2" style="background: rgba(0,0,0,0.02);">
                                 <strong class="small d-block mb-2">Follow mode — continuous pan/tilt + zoom</strong>
@@ -306,7 +213,7 @@
                                     </div>
                                     <div class="col-md-4">
                                         <label for="ptzFollowZoomSpeed" class="form-label">Zoom speed</label>
-                                        <input type="number" min="0.05" max="1" step="0.05" class="form-control" id="ptzFollowZoomSpeed" title="Continuous-zoom magnitude (0..1). Pan/tilt speed reuses the Move speed field above.">
+                                        <input type="number" min="0.05" max="1" step="0.05" class="form-control" id="ptzFollowZoomSpeed" title="Continuous-zoom magnitude (0..1).">
                                     </div>
                                 </div>
                                 <div class="row g-2 mt-1">
@@ -488,9 +395,8 @@
                             : cam.last_test_success === false
                                 ? '<span class="badge bg-danger">✗ Failed</span>'
                                 : '<span class="badge bg-secondary">Not Tested</span>';
-                        const ptzMode = cam.ptz && cam.ptz.mode ? String(cam.ptz.mode) : 'preset';
                         const ptzBadge = cam.ptz && cam.ptz.enabled
-                            ? `<span class="badge bg-info">PTZ ${ptzMode}</span>`
+                            ? '<span class="badge bg-info">Bird Follow</span>'
                             : cam.has_ptz === true
                                 ? '<span class="badge bg-secondary">PTZ Off</span>'
                                 : cam.has_ptz === false
@@ -676,15 +582,9 @@
         select.value = currentValue || '';
     }
 
-    function ptzZonePreset(config, name) {
-        const zones = Array.isArray(config.zones) ? config.zones : [];
-        const found = zones.find(function (zone) { return zone.name === name; });
-        return found ? (found.preset || '') : '';
-    }
-
     // Holds the full config returned by GET /ptz/config so that
     // savePtzConfig can preserve fields the form does not surface
-    // (preset_metadata, grid_cells). Without this, the PUT round-trip
+    // (preset_metadata). Without this, the PUT round-trip
     // wipes anything not echoed by the form.
     let _ptzConfigPristine = {};
 
@@ -709,13 +609,9 @@
             _ptzConfigPristine = config;
             const presets = presetsData.status === 'success' ? (presetsData.presets || []) : [];
             document.getElementById('ptzEnabled').checked = !!config.enabled;
-            document.getElementById('ptzMode').value = config.mode || 'preset';
-            document.getElementById('ptzAcquireFrames').value = config.acquire_frames || 2;
-            document.getElementById('ptzLostTimeout').value = config.lost_timeout_sec || 6;
+            document.getElementById('ptzLostTimeout').value = config.lost_timeout_sec || 10;
             document.getElementById('ptzCooldown').value = config.command_cooldown_ms || 700;
-            document.getElementById('ptzDeadband').value = config.deadband || 0.12;
-            document.getElementById('ptzMaxSpeed').value = config.max_speed || 0.35;
-            document.getElementById('ptzMoveDuration').value = config.move_duration_ms || 250;
+            document.getElementById('ptzDeadband').value = config.deadband || 0.04;
             document.getElementById('ptzFollowZoomTarget').value =
                 config.follow_zoom_target_pct != null ? config.follow_zoom_target_pct : 0.18;
             document.getElementById('ptzFollowZoomDeadband').value =
@@ -724,34 +620,12 @@
                 config.follow_zoom_speed != null ? config.follow_zoom_speed : 0.3;
             document.getElementById('ptzFollowZoomMaxBurst').value =
                 config.follow_zoom_max_burst_sec != null ? config.follow_zoom_max_burst_sec : 0;
-            document.getElementById('ptzManualPanTiltBurst').value =
-                config.manual_pan_tilt_burst != null ? config.manual_pan_tilt_burst : 1;
-            document.getElementById('ptzManualZoomBurst').value =
-                config.manual_zoom_burst != null ? config.manual_zoom_burst : 1;
-            document.getElementById('ptzManualMoveDurationMultiplier').value =
-                config.manual_move_duration_multiplier != null ? config.manual_move_duration_multiplier : 1.0;
 
             populatePtzPresetSelect(document.getElementById('ptzOverviewPreset'), presets, config.overview_preset || '');
-            populatePtzPresetSelect(document.getElementById('ptzLeftPreset'), presets, ptzZonePreset(config, 'left'));
-            populatePtzPresetSelect(document.getElementById('ptzCenterPreset'), presets, ptzZonePreset(config, 'center'));
-            populatePtzPresetSelect(document.getElementById('ptzRightPreset'), presets, ptzZonePreset(config, 'right'));
 
             if (presetsData.status !== 'success') {
                 ptzShowMessage('error', presetsData.message || 'Preset list unavailable. Saved tokens can still be used.');
             }
-
-            // Hydrate the grid-mode controls. Even when the current mode is
-            // preset/hybrid we pre-fill so the operator can flip the mode
-            // dropdown and immediately see the saved shape selection.
-            const shape = Array.isArray(config.grid_shape) ? config.grid_shape : [3, 3];
-            const shapeKey = `${shape[0]}x${shape[1]}`;
-            const shapeRadio = document.getElementById(`ptzGridShape${shapeKey}`)
-                || document.getElementById('ptzGridShape3x3');
-            if (shapeRadio) shapeRadio.checked = true;
-            ptzSyncGridConfigVisibility();
-            ptzRefreshGridStateSummary(camId);
-            const wizardLink = document.getElementById('ptzGridOpenWizard');
-            if (wizardLink) wizardLink.href = `/?ptz_grid_setup=${camId}`;
 
             const probeWizardLink = document.getElementById('ptzEmpiricalProbeOpenWizard');
             if (probeWizardLink) probeWizardLink.href = `/?ptz_probe=${camId}`;
@@ -920,68 +794,19 @@
         loadPtzCapabilities(camId, true);
     }
 
-    function ptzSyncGridConfigVisibility() {
-        const mode = (document.getElementById('ptzMode').value || 'preset').toLowerCase();
-        const gridBlock = document.getElementById('ptzGridConfig');
-        const followBlock = document.getElementById('ptzFollowConfig');
-        if (gridBlock) {
-            gridBlock.classList.toggle('d-none', mode !== 'grid');
-        }
-        if (followBlock) {
-            followBlock.classList.toggle('d-none', mode !== 'follow');
-        }
-    }
-
-    function ptzRefreshGridStateSummary(camId) {
-        const summaryEl = document.getElementById('ptzGridStateSummary');
-        if (!summaryEl) return;
-        summaryEl.textContent = 'loading…';
-        fetch(`/api/v1/cameras/${camId}/ptz/grid/state`).then(function (r) {
-            return r.json();
-        }).then(function (data) {
-            if (!data || data.status !== 'success' || !data.grid) {
-                summaryEl.textContent = '—';
-                return;
-            }
-            const g = data.grid;
-            const label = `${g.total_set}/${g.total_required} cells set`;
-            summaryEl.textContent = label;
-        }).catch(function () {
-            summaryEl.textContent = '—';
-        });
-    }
-
-    function ptzGetSelectedGridShape() {
-        const checked = document.querySelector('input[name="ptzGridShape"]:checked');
-        if (!checked) return [3, 3];
-        const parts = String(checked.value).split('x').map(function (s) { return parseInt(s, 10); });
-        if (parts.length === 2 && parts.every(function (n) { return Number.isFinite(n); })) {
-            return parts;
-        }
-        return [3, 3];
-    }
-
     function buildPtzConfigPayload() {
-        const shape = ptzGetSelectedGridShape();
-        // Preserve fields the form does not surface — without this the
-        // PUT plates preset_metadata (operator-placed overlay boxes)
-        // and grid_cells (operator-saved grid presets) on every save.
+        // Preserve operator-placed overview metadata across settings saves.
         const preservedPresetMetadata = _ptzConfigPristine && _ptzConfigPristine.preset_metadata
             ? _ptzConfigPristine.preset_metadata
             : {};
-        const preservedGridCells = _ptzConfigPristine && _ptzConfigPristine.grid_cells
-            ? _ptzConfigPristine.grid_cells
-            : {};
         return {
             enabled: document.getElementById('ptzEnabled').checked,
-            mode: document.getElementById('ptzMode').value || 'preset',
             overview_preset: document.getElementById('ptzOverviewPreset').value || '',
-            acquire_frames: parseInt(document.getElementById('ptzAcquireFrames').value, 10) || 2,
-            lost_timeout_sec: parseFloat(document.getElementById('ptzLostTimeout').value) || 6,
+            lost_timeout_sec: parseFloat(document.getElementById('ptzLostTimeout').value) || 10,
             command_cooldown_ms: parseInt(document.getElementById('ptzCooldown').value, 10) || 700,
-            deadband: parseFloat(document.getElementById('ptzDeadband').value) || 0.12,
-            max_speed: parseFloat(document.getElementById('ptzMaxSpeed').value) || 0.35,
-            move_duration_ms: parseInt(document.getElementById('ptzMoveDuration').value, 10) || 250,
+            deadband: parseFloat(document.getElementById('ptzDeadband').value) || 0.04,
+            max_speed: Number(_ptzConfigPristine && _ptzConfigPristine.max_speed) || 0.35,
+            move_duration_ms: Number(_ptzConfigPristine && _ptzConfigPristine.move_duration_ms) || 250,
             follow_zoom_target_pct: parseFloat(document.getElementById('ptzFollowZoomTarget').value) || 0.18,
             follow_zoom_deadband_pct: parseFloat(document.getElementById('ptzFollowZoomDeadband').value) || 0.05,
             follow_zoom_speed: parseFloat(document.getElementById('ptzFollowZoomSpeed').value) || 0.3,
@@ -989,26 +814,10 @@
                 const raw = parseFloat(document.getElementById('ptzFollowZoomMaxBurst').value);
                 return Number.isFinite(raw) && raw >= 0 ? raw : 0;
             })(),
-            manual_pan_tilt_burst: (() => {
-                const raw = parseInt(document.getElementById('ptzManualPanTiltBurst').value, 10);
-                return Number.isFinite(raw) && raw >= 1 && raw <= 6 ? raw : 1;
-            })(),
-            manual_zoom_burst: (() => {
-                const raw = parseInt(document.getElementById('ptzManualZoomBurst').value, 10);
-                return Number.isFinite(raw) && raw >= 1 && raw <= 6 ? raw : 1;
-            })(),
-            manual_move_duration_multiplier: (() => {
-                const raw = parseFloat(document.getElementById('ptzManualMoveDurationMultiplier').value);
-                return Number.isFinite(raw) && raw >= 0.5 && raw <= 5.0 ? raw : 1.0;
-            })(),
-            grid_shape: shape,
-            grid_cells: preservedGridCells,
-            preset_metadata: preservedPresetMetadata,
-            zones: [
-                { name: 'left', preset: document.getElementById('ptzLeftPreset').value || '', x_min: 0.0, y_min: 0.0, x_max: 0.33, y_max: 1.0 },
-                { name: 'center', preset: document.getElementById('ptzCenterPreset').value || '', x_min: 0.33, y_min: 0.0, x_max: 0.67, y_max: 1.0 },
-                { name: 'right', preset: document.getElementById('ptzRightPreset').value || '', x_min: 0.67, y_min: 0.0, x_max: 1.0, y_max: 1.0 }
-            ]
+            manual_pan_tilt_burst: Number(_ptzConfigPristine && _ptzConfigPristine.manual_pan_tilt_burst) || 1,
+            manual_zoom_burst: Number(_ptzConfigPristine && _ptzConfigPristine.manual_zoom_burst) || 1,
+            manual_move_duration_multiplier: Number(_ptzConfigPristine && _ptzConfigPristine.manual_move_duration_multiplier) || 1.0,
+            preset_metadata: preservedPresetMetadata
         };
     }
 
@@ -1179,9 +988,6 @@
 
     document.addEventListener('DOMContentLoaded', function () {
         loadSavedCameras();
-        // Toggle the grid-config block when the mode dropdown changes.
-        const modeEl = document.getElementById('ptzMode');
-        if (modeEl) modeEl.addEventListener('change', ptzSyncGridConfigVisibility);
     });
 
     function setCameraUrl(value) {

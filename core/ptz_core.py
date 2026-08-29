@@ -19,7 +19,6 @@ from utils.path_manager import get_path_manager
 
 logger = logging.getLogger(__name__)
 
-VALID_PTZ_MODES = {"preset", "hybrid", "grid", "follow"}
 _AUTO_CAMERA_CACHE_TTL_SEC = 2.0
 _AUTO_CAMERA_CACHE_SENTINEL = object()
 _auto_camera_cache_lock = threading.Lock()
@@ -91,24 +90,12 @@ def normalize_ptz_config(raw_config: dict[str, Any] | None) -> dict[str, Any]:
     """Normalize auto-PTZ config from API/storage into a stable shape."""
     defaults = DEFAULT_PTZ_CONFIG
     raw = raw_config or {}
-    mode = str(raw.get("mode") or defaults["mode"]).strip().lower()
-    if mode not in VALID_PTZ_MODES:
-        mode = defaults["mode"]
-
-    zones = _normalize_zones(raw.get("zones"))
-    if not zones:
-        zones = [zone.copy() for zone in defaults["zones"]]
-
     return {
         "enabled": bool(raw.get("enabled", defaults["enabled"])),
-        "mode": mode,
         "profile_index": _int_in_range(
             raw.get("profile_index"), defaults["profile_index"], 0, 8
         ),
         "overview_preset": str(raw.get("overview_preset") or "").strip(),
-        "acquire_frames": _int_in_range(
-            raw.get("acquire_frames"), defaults["acquire_frames"], 1, 10
-        ),
         "lost_timeout_sec": _float_in_range(
             raw.get("lost_timeout_sec"), defaults["lost_timeout_sec"], 1.0, 60.0
         ),
@@ -133,26 +120,6 @@ def normalize_ptz_config(raw_config: dict[str, Any] | None) -> dict[str, Any]:
         "move_duration_ms": _int_in_range(
             raw.get("move_duration_ms"), defaults["move_duration_ms"], 50, 2000
         ),
-        "grid_shape": list(_normalize_grid_shape(raw.get("grid_shape"))),
-        "grid_cells": _normalize_grid_cells(raw.get("grid_cells")),
-        "grid_command_cooldown_ms": _int_in_range(
-            raw.get("grid_command_cooldown_ms"),
-            int(defaults.get("grid_command_cooldown_ms", 4000)),
-            500,
-            30000,
-        ),
-        "grid_hysteresis_margin": _float_in_range(
-            raw.get("grid_hysteresis_margin"),
-            float(defaults.get("grid_hysteresis_margin", 0.05)),
-            0.0,
-            0.3,
-        ),
-        "grid_acquire_frames": _int_in_range(
-            raw.get("grid_acquire_frames"),
-            int(defaults.get("grid_acquire_frames", 1)),
-            1,
-            10,
-        ),
         "follow_zoom_target_pct": _float_in_range(
             raw.get("follow_zoom_target_pct"),
             float(defaults.get("follow_zoom_target_pct", 0.18)),
@@ -170,6 +137,54 @@ def normalize_ptz_config(raw_config: dict[str, Any] | None) -> dict[str, Any]:
             float(defaults.get("follow_zoom_speed", 0.3)),
             0.05,
             1.0,
+        ),
+        "follow_pan_rate_per_sec": _float_in_range(
+            raw.get("follow_pan_rate_per_sec"),
+            float(defaults.get("follow_pan_rate_per_sec", 0.075)),
+            0.01,
+            1.0,
+        ),
+        "follow_tilt_rate_per_sec": _float_in_range(
+            raw.get("follow_tilt_rate_per_sec"),
+            float(defaults.get("follow_tilt_rate_per_sec", 0.15)),
+            0.01,
+            1.0,
+        ),
+        "follow_tilt_max_duration_ms": _int_in_range(
+            raw.get("follow_tilt_max_duration_ms"),
+            int(defaults.get("follow_tilt_max_duration_ms", 500)),
+            100,
+            1000,
+        ),
+        "follow_zoom_duration_ms": _int_in_range(
+            raw.get("follow_zoom_duration_ms"),
+            int(defaults.get("follow_zoom_duration_ms", 750)),
+            100,
+            1000,
+        ),
+        "follow_lost_hold_sec": _float_in_range(
+            raw.get("follow_lost_hold_sec"),
+            float(defaults.get("follow_lost_hold_sec", 2.0)),
+            0.0,
+            5.0,
+        ),
+        "follow_search_sec": _float_in_range(
+            raw.get("follow_search_sec"),
+            float(defaults.get("follow_search_sec", 8.0)),
+            0.0,
+            15.0,
+        ),
+        "follow_search_burst_ms": _int_in_range(
+            raw.get("follow_search_burst_ms"),
+            int(defaults.get("follow_search_burst_ms", 400)),
+            100,
+            1000,
+        ),
+        "follow_search_zoom_out_ms": _int_in_range(
+            raw.get("follow_search_zoom_out_ms"),
+            int(defaults.get("follow_search_zoom_out_ms", 250)),
+            0,
+            750,
         ),
         "follow_zoom_max_burst_sec": _float_in_range(
             raw.get("follow_zoom_max_burst_sec"),
@@ -195,38 +210,9 @@ def normalize_ptz_config(raw_config: dict[str, Any] | None) -> dict[str, Any]:
             0.5,
             5.0,
         ),
-        "zones": zones,
         "overview_snapshot_path": str(raw.get("overview_snapshot_path") or "").strip(),
         "preset_metadata": _normalize_preset_metadata(raw.get("preset_metadata")),
     }
-
-
-def _normalize_grid_shape(raw: Any) -> tuple[int, int]:
-    """Re-export-style wrapper so the public boundary stays in ptz_core."""
-    from core.ptz_grid import normalize_grid_shape
-
-    return normalize_grid_shape(raw)
-
-
-def _normalize_grid_cells(raw_cells: Any) -> dict[str, str]:
-    """Shape-check the grid_cells map. Keys are 'r{row}_c{col}' strings.
-
-    Schema:
-      {"r0_c0": "<onvif_preset_token>", "r0_c1": "...", ...}
-    Values that aren't non-empty strings are dropped silently — bad
-    persisted state should degrade to "cell unset" rather than crash.
-    """
-    if not isinstance(raw_cells, dict):
-        return {}
-    out: dict[str, str] = {}
-    for key, value in raw_cells.items():
-        if not isinstance(key, str) or not isinstance(value, str):
-            continue
-        token = value.strip()
-        if not token:
-            continue
-        out[key] = token
-    return out
 
 
 def _normalize_preset_metadata(raw_meta: Any) -> dict[str, dict[str, Any]]:
@@ -245,31 +231,6 @@ def _normalize_preset_metadata(raw_meta: Any) -> dict[str, dict[str, Any]]:
     return out
 
 
-def _normalize_zones(raw_zones: Any) -> list[dict[str, Any]]:
-    if not isinstance(raw_zones, list):
-        return []
-
-    zones: list[dict[str, Any]] = []
-    for idx, raw_zone in enumerate(raw_zones):
-        if not isinstance(raw_zone, dict):
-            continue
-        x_min = _float_in_range(raw_zone.get("x_min"), 0.0, 0.0, 1.0)
-        y_min = _float_in_range(raw_zone.get("y_min"), 0.0, 0.0, 1.0)
-        x_max = _float_in_range(raw_zone.get("x_max"), 1.0, 0.0, 1.0)
-        y_max = _float_in_range(raw_zone.get("y_max"), 1.0, 0.0, 1.0)
-        if x_max <= x_min or y_max <= y_min:
-            continue
-        zones.append(
-            {
-                "name": str(raw_zone.get("name") or f"zone_{idx + 1}").strip(),
-                "preset": str(raw_zone.get("preset") or "").strip(),
-                "x_min": x_min,
-                "y_min": y_min,
-                "x_max": x_max,
-                "y_max": y_max,
-            }
-        )
-    return zones
 
 
 def get_ptz_config(camera_id: int) -> dict[str, Any] | None:
@@ -346,20 +307,13 @@ def list_presets_with_metadata(
     # Cheap PTZ cams routinely report all 256 ONVIF slot stubs as
     # existing, regardless of whether the operator ever set them. The
     # honest way to identify "in-use" presets is to take everything
-    # WMB has a record of: preset_metadata entries + overview_preset +
-    # grid_cells values. Any slot outside that set with a generic
-    # PresetNNN name is treated as a Cam-side stub and filtered.
+    # WMB has a record of: preset metadata plus the overview preset.
+    # Any slot outside that set with a generic PresetNNN name is treated
+    # as a camera-side stub and filtered.
     in_use_tokens: set[str] = set(metadata_by_token.keys())
     overview = str(ptz_cfg.get("overview_preset") or "").strip()
     if overview:
         in_use_tokens.add(overview)
-    grid_cells = ptz_cfg.get("grid_cells") or {}
-    if isinstance(grid_cells, dict):
-        for tok in grid_cells.values():
-            tok = str(tok or "").strip()
-            if tok:
-                in_use_tokens.add(tok)
-
     presets = list_presets(camera_id)
     result: list[dict[str, Any]] = []
     for preset in presets:
@@ -570,222 +524,6 @@ def remove_preset(camera_id: int, preset_token: str) -> bool:
     return True
 
 
-def _ensure_grid_mode(camera_id: int) -> bool:
-    """Flip ptz.mode to "grid" if a wizard action implied that intent.
-
-    Without this, an operator who completes the grid wizard (set_shape +
-    link_cells) but never opens the modal to flip mode persists every
-    grid_cell into cameras.yaml while the controller keeps running the
-    preset-dispatch path. The symptom is "wizard works, auto-PTZ
-    doesn't" — exactly the failure pattern that hid grid mode for days.
-
-    Idempotent: returns True only when an actual write happened, so
-    callers can surface a "mode auto-set" hint to the UI.
-    """
-    storage = get_camera_storage()
-    camera = storage.get_camera(camera_id, include_password=False)
-    if not camera:
-        return False
-    existing_ptz = dict(camera.get("ptz") or {})
-    if str(existing_ptz.get("mode") or "").lower() == "grid":
-        return False
-    existing_ptz["mode"] = "grid"
-    if not storage.update_ptz_config(camera_id, existing_ptz):
-        return False
-    clear_auto_ptz_camera_cache()
-    logger.info(
-        "PTZ mode auto-set to grid by wizard action camera_id=%s",
-        _slv(camera_id),
-    )
-    return True
-
-
-def set_grid_shape(camera_id: int, rows: int, cols: int) -> dict[str, Any] | None:
-    """Set the operator-chosen grid shape for grid-mode auto-tracking.
-
-    Validates the shape against `ptz_grid.ALLOWED_GRID_SHAPES`. Does NOT
-    clear existing grid_cells — the operator may want to expand from
-    2×3 to 3×3 and reuse overlapping cells. Cleanup is a separate call.
-    """
-    from core.ptz_grid import ALLOWED_GRID_SHAPES
-
-    storage = get_camera_storage()
-    if not storage.get_camera(camera_id, include_password=False):
-        return None
-    if (int(rows), int(cols)) not in ALLOWED_GRID_SHAPES:
-        raise ValueError(
-            f"Grid shape ({rows}, {cols}) not in allowed set {ALLOWED_GRID_SHAPES}"
-        )
-    if not storage.set_grid_shape(camera_id, int(rows), int(cols)):
-        return None
-    clear_auto_ptz_camera_cache()
-    mode_auto_set = _ensure_grid_mode(camera_id)
-    logger.info(
-        "PTZ grid shape set camera_id=%s shape=%dx%d",
-        _slv(camera_id),
-        rows,
-        cols,
-    )
-    return {
-        "rows": int(rows),
-        "cols": int(cols),
-        "mode_auto_set": mode_auto_set,
-    }
-
-
-def set_grid_cell_at_current_position(
-    camera_id: int, row: int, col: int
-) -> dict[str, Any] | None:
-    """Save the current camera position as a grid cell preset.
-
-    Creates a new ONVIF preset named `grid_r{row}_c{col}` at the
-    camera's current pan/tilt/zoom, then maps that preset's token to
-    the cell key in `cameras.yaml > ptz.grid_cells`. Returns the
-    cell's data on success, None if the camera doesn't exist.
-
-    Re-calling for an existing cell overwrites: SetPreset on most
-    ONVIF cameras updates the slot in place; the cell-key mapping
-    just gets re-written to the (same or new) token.
-    """
-    from core.ptz_grid import cell_preset_name
-
-    storage = get_camera_storage()
-    camera = storage.get_camera(camera_id, include_password=False)
-    if not camera:
-        return None
-
-    cell_key = f"r{int(row)}_c{int(col)}"
-    name = cell_preset_name(row, col)
-
-    # Reuse existing token if this cell was already set, so SetPreset
-    # updates the slot in place rather than creating a duplicate.
-    existing_cells = (camera.get("ptz") or {}).get("grid_cells") or {}
-    existing_token = str(existing_cells.get(cell_key) or "").strip() or None
-
-    client = _client_for_camera(camera_id)
-    logger.info(
-        "PTZ grid SetPreset camera_id=%s cell=%s existing_token=%s",
-        _slv(camera_id),
-        _slv(cell_key),
-        _slv(existing_token or ""),
-    )
-    token = client.set_preset(name=name, preset_token=existing_token)
-
-    if not storage.set_grid_cell(camera_id, cell_key, token):
-        return None
-    clear_auto_ptz_camera_cache()
-    mode_auto_set = _ensure_grid_mode(camera_id)
-    return {
-        "cell_key": cell_key,
-        "name": name,
-        "preset_token": token,
-        "mode_auto_set": mode_auto_set,
-    }
-
-
-def link_grid_cell_to_existing_preset(
-    camera_id: int, row: int, col: int, preset_token: str
-) -> dict[str, Any] | None:
-    """Map a grid cell to an existing ONVIF preset without moving the camera.
-
-    Lets the operator reuse presets that already exist on the camera
-    (the operator-placed 1–7 zones, the overview Preset005, the
-    Re-Focus Preset008, etc.) as grid-cell targets. Multiple cells can
-    point at the same token; routing in `_handle_detections_grid` just
-    reads `grid_cells[key]` and fires a goto — duplicate targets are
-    a feature, not a bug.
-
-    Validates that the preset token actually exists on the camera so a
-    typo doesn't silently create a dangling reference.
-    """
-    storage = get_camera_storage()
-    if not storage.get_camera(camera_id, include_password=False):
-        return None
-
-    token = str(preset_token or "").strip()
-    if not token:
-        raise ValueError("preset_token is required")
-
-    # Cheap existence check via list_presets — most cameras return
-    # their full preset table in one call. If the token isn't there,
-    # refuse the link rather than write a dangling reference.
-    client = _client_for_camera(camera_id)
-    available = {p.token for p in client.list_presets()}
-    if token not in available:
-        raise ValueError(
-            f"Preset token {token!r} not found on the camera "
-            f"(available: {sorted(available)[:8]}…)"
-        )
-
-    cell_key = f"r{int(row)}_c{int(col)}"
-    if not storage.set_grid_cell(camera_id, cell_key, token):
-        return None
-    clear_auto_ptz_camera_cache()
-    mode_auto_set = _ensure_grid_mode(camera_id)
-    logger.info(
-        "PTZ grid cell linked camera_id=%s cell=%s preset=%s",
-        _slv(camera_id),
-        _slv(cell_key),
-        _slv(token),
-    )
-    return {
-        "cell_key": cell_key,
-        "preset_token": token,
-        "mode": "linked",
-        "mode_auto_set": mode_auto_set,
-    }
-
-
-def clear_grid_cell(camera_id: int, row: int, col: int) -> bool:
-    """Remove a grid cell mapping. Does NOT delete the ONVIF preset.
-
-    The ONVIF preset slot stays so a re-add can reuse it. If the
-    operator wants the slot freed on the camera too, they can call
-    remove_preset() with the token they got back from set_grid_cell.
-    """
-    storage = get_camera_storage()
-    if not storage.get_camera(camera_id, include_password=False):
-        return False
-    cell_key = f"r{int(row)}_c{int(col)}"
-    if not storage.delete_grid_cell(camera_id, cell_key):
-        return False
-    clear_auto_ptz_camera_cache()
-    logger.info(
-        "PTZ grid cell cleared camera_id=%s cell=%s", _slv(camera_id), _slv(cell_key)
-    )
-    return True
-
-
-def get_grid_state(camera_id: int) -> dict[str, Any] | None:
-    """Return current grid config: shape, cells mapped, cells missing.
-
-    Used by the setup wizard UI to render "which cells need a preset
-    saved" without the frontend having to do its own math.
-    """
-    from core.ptz_grid import normalize_grid_shape, required_cell_count
-
-    storage = get_camera_storage()
-    camera = storage.get_camera(camera_id, include_password=False)
-    if not camera:
-        return None
-    ptz = normalize_ptz_config(camera.get("ptz"))
-    shape = normalize_grid_shape(ptz.get("grid_shape"))
-    cells: dict[str, str] = ptz.get("grid_cells") or {}
-    rows, cols = shape
-    expected_keys = [f"r{r}_c{c}" for r in range(rows) for c in range(cols)]
-    missing = [k for k in expected_keys if k not in cells]
-    return {
-        "shape": list(shape),
-        "rows": rows,
-        "cols": cols,
-        "cells": {k: cells[k] for k in expected_keys if k in cells},
-        "missing": missing,
-        "total_required": required_cell_count(shape),
-        "total_set": len(cells),
-        "mode_active": ptz.get("mode") == "grid",
-    }
-
-
 def goto_preset(camera_id: int, preset_token: str, speed: float | None = None) -> None:
     logger.info(
         "PTZ goto preset camera_id=%s preset=%s",
@@ -858,9 +596,7 @@ def get_focus_capabilities(camera_id: int) -> dict[str, Any]:
     return result
 
 
-def continuous_focus(
-    camera_id: int, *, speed: float, duration_ms: int = 250
-) -> None:
+def continuous_focus(camera_id: int, *, speed: float, duration_ms: int = 250) -> None:
     """Run one bounded manual-focus movement on the shared camera client."""
     if not _reserve_move_slot(camera_id):
         logger.debug("Focus move coalesced (slot busy) camera_id=%s", _slv(camera_id))
@@ -918,9 +654,7 @@ def stop_focus(camera_id: int) -> None:
 
 
 def set_autofocus(camera_id: int, enabled: bool) -> None:
-    logger.info(
-        "Autofocus camera_id=%s enabled=%s", _slv(camera_id), bool(enabled)
-    )
+    logger.info("Autofocus camera_id=%s enabled=%s", _slv(camera_id), bool(enabled))
     _run_ptz_command(camera_id, lambda client: client.set_autofocus(bool(enabled)))
 
 

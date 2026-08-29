@@ -20,40 +20,26 @@ class FakeClock:
         self.now += seconds
 
 
-def _camera(mode: str = "preset", acquire_frames: int = 1) -> dict:
-    # Mirrors tests/test_ptz_tracking_core.py::_camera, trimmed to the
-    # zones this module exercises (a centred bird lands in "center").
+def _camera() -> dict:
     return {
         "id": 0,
         "name": "Garden PTZ",
         "ip": "198.51.100.10",
         "ptz": {
             "enabled": True,
-            "mode": mode,
             "overview_preset": "overview_token",
-            "acquire_frames": acquire_frames,
             "lost_timeout_sec": 6.0,
             "command_cooldown_ms": 700,
             "deadband": 0.12,
             "max_speed": 0.35,
             "move_duration_ms": 250,
-            "zones": [
-                {
-                    "name": "center",
-                    "preset": "center_token",
-                    "x_min": 0.0,
-                    "y_min": 0.0,
-                    "x_max": 1.0,
-                    "y_max": 1.0,
-                },
-            ],
         },
     }
 
 
-def _make_idle_controller(mode: str = "preset", acquire_frames: int = 1):
+def _make_idle_controller():
     return AutoPtzController(
-        camera_provider=lambda: _camera(mode=mode, acquire_frames=acquire_frames),
+        camera_provider=_camera,
         command_runner=lambda _cmd: None,
         clock=FakeClock(),
         worker_enabled=False,
@@ -63,7 +49,7 @@ def _make_idle_controller(mode: str = "preset", acquire_frames: int = 1):
 def _make_tracking_controller_with_bbox():
     """An idle controller pumped one detection cycle so it is in a
     target-holding state and `_last_target_bbox` is set."""
-    controller = _make_idle_controller(mode="preset", acquire_frames=1)
+    controller = _make_idle_controller()
     # A bird centred in a 100x200 frame: bbox (50,20)-(150,80).
     det = {
         "x1": 50,

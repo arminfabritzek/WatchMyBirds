@@ -430,7 +430,7 @@
                 // cams that report all 256 slot stubs don't drown the
                 // operator in fake "existing presets". The metadata
                 // endpoint filters down to operator-configured slots
-                // only (preset_metadata + overview_preset + grid_cells).
+                // only (preset_metadata + overview_preset).
                 const resp = await fetch(
                     `/api/v1/cameras/${camId}/ptz/presets/metadata`
                 );
@@ -803,8 +803,7 @@
             const urlCamId = getProbeCamIdFromUrl();
             if (urlCamId === null) return;
             camId = urlCamId;
-            // Small delay so the page's own boot scripts finish first
-            // (matches the grid-setup-wizard pattern).
+            // Small delay so the page's own boot scripts finish first.
             window.setTimeout(openWizard, 50);
         });
     })();

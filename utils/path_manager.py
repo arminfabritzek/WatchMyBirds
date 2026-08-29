@@ -22,6 +22,7 @@ class PathManager:
         self.thumbs_dir = self.derivatives_dir / "thumbs"
         self.optimized_dir = self.derivatives_dir / "optimized"
         self.ptz_snapshots_dir = self.derivatives_dir / "ptz_snapshots"
+        self.visual_ptz_dir = self.derivatives_dir / "visual_ptz"
         # Inbox directories (for web upload ingest)
         self.inbox_dir = self.base_dir / "inbox"
         self.inbox_pending_dir = self.inbox_dir / "pending"
@@ -50,6 +51,26 @@ class PathManager:
         capabilities_dir = self.base_dir / "ptz_capabilities"
         capabilities_dir.mkdir(parents=True, exist_ok=True)
         return capabilities_dir / f"cam{int(camera_id)}.yaml"
+
+    def get_visual_ptz_keyframe_path(self, camera_id: int, keyframe_id: str) -> Path:
+        """Return a contained path for one visual-PTZ reference image."""
+        safe_id = self._safe_visual_ptz_id(keyframe_id)
+        keyframes_dir = self.visual_ptz_dir / f"cam{int(camera_id)}" / "keyframes"
+        keyframes_dir.mkdir(parents=True, exist_ok=True)
+        return keyframes_dir / f"{safe_id}.jpg"
+
+    def get_visual_ptz_debug_dir(self, camera_id: int) -> Path:
+        """Return the disposable visual-alignment debug artifact directory."""
+        debug_dir = self.visual_ptz_dir / f"cam{int(camera_id)}" / "debug"
+        debug_dir.mkdir(parents=True, exist_ok=True)
+        return debug_dir
+
+    @staticmethod
+    def _safe_visual_ptz_id(value: str) -> str:
+        safe = "".join(c for c in str(value) if c.isalnum() or c in "-_")
+        if not safe:
+            raise ValueError("keyframe_id must contain a letter or digit")
+        return safe[:80]
 
     def get_inbox_root_dir(self) -> Path:
         """Returns the inbox root directory."""

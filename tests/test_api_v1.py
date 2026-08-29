@@ -861,6 +861,20 @@ class TestApiV1PtzManualMove:
         assert metadata["stream_frame_width"] == 1280
         assert metadata["stream_frame_height"] == 720
 
+    def test_retired_ptz_grid_routes_are_absent(self, client):
+        assert client.get("/api/v1/cameras/0/ptz/grid/state").status_code == 404
+        assert (
+            client.put(
+                "/api/v1/cameras/0/ptz/grid/shape",
+                json={"rows": 3, "cols": 3},
+            ).status_code
+            == 404
+        )
+        assert (
+            client.put("/api/v1/cameras/0/ptz/grid/cells/0/0", json={}).status_code
+            == 404
+        )
+
 
 def test_ptz_tracking_overlay_enabled_validates_as_bool():
     """PTZ_TRACKING_OVERLAY_ENABLED is a known runtime key coerced to bool."""
@@ -890,3 +904,100 @@ class TestPtzAutoStatusOverlayFlag:
         body = response.get_json()
         assert "overlay_enabled" in body
         assert body["overlay_enabled"] is False
+
+
+class TestPtzClickToAim:
+    class _Controller:
+        def __init__(self):
+            self.started = None
+            self.cancelled = None
+
+        def start(self, camera_id, x, y):
+            self.started = (camera_id, x, y)
+            return {
+                "active": True,
+                "camera_id": camera_id,
+                "state": "matching",
+                "mapped_x": x,
+                "mapped_y": y,
+            }
+
+        def status(self):
+            return {
+                "active": True,
+                "camera_id": 4,
+                "state": "verifying",
+                "quality": 0.82,
+                "inliers": 31,
+            }
+
+        def cancel(self, camera_id):
+            self.cancelled = camera_id
+            return {"active": False, "camera_id": camera_id, "state": "cancelling"}
+
+    def test_start_returns_ephemeral_visual_session(self, client, monkeypatch):
+        from web.blueprints.api_v1 import api_v1
+
+        controller = self._Controller()
+        monkeypatch.setattr(api_v1, "ptz_aim_controller", controller, raising=False)
+
+        response = client.post("/api/v1/cameras/4/ptz/aim", json={"x": 0.72, "y": 0.31})
+
+        assert response.status_code == 202
+        assert controller.started == (4, 0.72, 0.31)
+        assert response.get_json()["aim"]["state"] == "matching"
+
+    def test_start_rejects_coordinates_outside_frame(self, client, monkeypatch):
+        from web.blueprints.api_v1 import api_v1
+
+        controller = self._Controller()
+        monkeypatch.setattr(api_v1, "ptz_aim_controller", controller, raising=False)
+        controller.start = MagicMock(side_effect=ValueError("outside frame"))
+
+        response = client.post("/api/v1/cameras/4/ptz/aim", json={"x": 1.2, "y": 0.4})
+
+        assert response.status_code == 400
+        assert response.get_json()["message"] == (
+            "x and y must be numbers between 0 and 1"
+        )
+
+    def test_start_returns_conflict_when_camera_control_is_busy(
+        self, client, monkeypatch
+    ):
+        from core.ptz_aim_core import AimBusyError
+        from web.blueprints.api_v1 import api_v1
+
+        controller = self._Controller()
+        controller.start = MagicMock(side_effect=AimBusyError("another owner"))
+        monkeypatch.setattr(api_v1, "ptz_aim_controller", controller, raising=False)
+
+        response = client.post("/api/v1/cameras/4/ptz/aim", json={"x": 0.5, "y": 0.5})
+
+        assert response.status_code == 409
+        assert response.get_json()["message"] == (
+            "A click-to-aim session is already active"
+        )
+
+    def test_status_surfaces_match_evidence(self, client, monkeypatch):
+        from web.blueprints.api_v1 import api_v1
+
+        monkeypatch.setattr(
+            api_v1, "ptz_aim_controller", self._Controller(), raising=False
+        )
+
+        response = client.get("/api/v1/cameras/4/ptz/aim")
+
+        assert response.status_code == 200
+        assert response.get_json()["aim"]["quality"] == 0.82
+        assert response.get_json()["aim"]["inliers"] == 31
+
+    def test_cancel_stops_owned_session(self, client, monkeypatch):
+        from web.blueprints.api_v1 import api_v1
+
+        controller = self._Controller()
+        monkeypatch.setattr(api_v1, "ptz_aim_controller", controller, raising=False)
+
+        response = client.delete("/api/v1/cameras/4/ptz/aim")
+
+        assert response.status_code == 200
+        assert controller.cancelled == 4
