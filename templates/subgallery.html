@@ -237,7 +237,8 @@
         date: '{{ date }}',
         sort: '{{ sort_by }}',
         min_score: '{{ current_threshold }}',
-        favorites_only: {{ favorites_only | tojson }}
+        favorites_only: {{ favorites_only | tojson }},
+        bulk_trash_success_url: '/gallery'
     };
 </script>
 {% include 'partials/inline_edit.html' %}

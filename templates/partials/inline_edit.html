@@ -324,7 +324,14 @@ cancel_label='Cancel'
                         'success', 3000
                     );
                 }
-                setTimeout(function () { location.reload(); }, 1500);
+                setTimeout(function () {
+                    var successUrl = window.INLINE_EDIT_FILTER_CONTEXT.bulk_trash_success_url;
+                    if (successUrl && successUrl.startsWith('/') && !successUrl.startsWith('//')) {
+                        window.location.assign(successUrl);
+                        return;
+                    }
+                    location.reload();
+                }, 1500);
             }
         };
 

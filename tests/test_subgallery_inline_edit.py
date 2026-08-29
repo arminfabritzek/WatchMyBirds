@@ -16,6 +16,7 @@ def test_subgallery_uses_inline_edit_toggle_and_filter_context():
     assert "toggleInlineEdit(this)" in content
     assert "window.INLINE_EDIT_FILTER_CONTEXT = {" in content
     assert "surface: 'gallery'" in content
+    assert "bulk_trash_success_url: '/gallery'" in content
     assert "{% include 'partials/inline_edit.html' %}" in content
 
 
@@ -26,9 +27,15 @@ def test_subgallery_targets_observation_covers_for_inline_edit():
         'data-detection-id="{{ obs.cover_detection.detection_id }}" '
         'data-batch-target="detection"'
     ) in content
-    assert 'data-batch-ids="{{ obs.detection_ids | join(\',\') }}"' in content
-    assert 'data-has-filmstrip="{{ \'true\' if obs.photo_count > 1 else \'false\' }}"' in content
-    assert 'data-modal-target="#modal-obs{{ obs.observation_id }}-{{ obs.cover_detection.detection_id }}"' in content
+    assert "data-batch-ids=\"{{ obs.detection_ids | join(',') }}\"" in content
+    assert (
+        "data-has-filmstrip=\"{{ 'true' if obs.photo_count > 1 else 'false' }}\""
+        in content
+    )
+    assert (
+        'data-modal-target="#modal-obs{{ obs.observation_id }}-{{ obs.cover_detection.detection_id }}"'
+        in content
+    )
     assert (
         '<div class="wm-tile fade-in-item" data-detection-id="{{ det.detection_id }}">'
     ) in content

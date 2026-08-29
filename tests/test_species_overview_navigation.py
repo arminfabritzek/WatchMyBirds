@@ -58,3 +58,11 @@ def test_species_overview_template_structure():
     assert "species-overview-grid" in content
     assert "detections" in content
     assert "observations" not in content
+
+
+def test_species_bulk_trash_returns_to_species_index():
+    overview = _read_text("templates/species_overview.html")
+    inline_edit = _read_text("templates/partials/inline_edit.html")
+
+    assert "bulk_trash_success_url: '/species'" in overview
+    assert "window.INLINE_EDIT_FILTER_CONTEXT.bulk_trash_success_url" in inline_edit

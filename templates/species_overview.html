@@ -112,7 +112,8 @@
         surface: 'species_overview',
         species_key: '{{ species_key }}',
         min_score: '{{ current_threshold }}',
-        favorites_only: {{ favorites_only | tojson }}
+        favorites_only: {{ favorites_only | tojson }},
+        bulk_trash_success_url: '/species'
     };
 </script>
 {% include 'partials/inline_edit.html' %}
