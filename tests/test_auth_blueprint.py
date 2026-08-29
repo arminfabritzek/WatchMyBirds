@@ -58,6 +58,29 @@ def test_protected_route_redirects_to_password_setup_when_required(client):
     assert "next=/protected" in response.headers["Location"]
 
 
+def test_protected_route_login_redirect_preserves_query_string(client):
+    with patch(
+        "web.blueprints.auth.auth_service.should_require_password_setup",
+        return_value=False,
+    ):
+        response = client.get("/protected?view=full&page=2", follow_redirects=False)
+
+    assert response.status_code == 302
+    assert response.headers["Location"].endswith(
+        "/login?next=/protected?view%3Dfull%26page%3D2"
+    )
+
+
+def test_appbar_login_link_keeps_current_destination():
+    from pathlib import Path
+
+    template = (
+        Path(__file__).resolve().parents[1] / "templates/partials/appbar.html"
+    ).read_text(encoding="utf-8")
+
+    assert "url_for('auth.login', next=request.full_path.rstrip('?'))" in template
+
+
 def test_setup_password_persists_password_and_authenticates_session(client):
     with (
         patch(

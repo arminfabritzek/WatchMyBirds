@@ -50,7 +50,8 @@ def login_required(f):
             )
             return redirect(url_for("auth.setup_password", next=next_url))
         if not session.get("authenticated"):
-            return redirect(url_for("auth.login", next=request.path))
+            next_url = request.full_path.rstrip("?")
+            return redirect(url_for("auth.login", next=next_url))
         return f(*args, **kwargs)
 
     return decorated_function

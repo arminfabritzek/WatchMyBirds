@@ -72,7 +72,7 @@
         </a>
         {% else %}
         <a class="app-bar__link app-bar__link--secondary app-bar__auth app-bar__auth--login"
-            href="/login" title="Login" aria-label="Login">
+            href="{{ url_for('auth.login', next=request.full_path.rstrip('?')) }}" title="Login" aria-label="Login">
             <svg class="app-bar__auth-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
                 <path d="M10 4H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h4"
                     stroke="currentColor" stroke-width="1.8"
