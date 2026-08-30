@@ -4,6 +4,9 @@
 
 ### Added
 
+- Compatible PTZ cameras can now centre a point clicked in the live view and
+  visually verify each bounded movement, while follow mode steers pan and tilt
+  together to keep moving birds in frame.
 - Field benchmark tools can now export confirmed station evidence and compare
   detector variants or wildlife models across false-positive and provisional
   recall trade-offs.
@@ -29,6 +32,10 @@
 
 ### Fixed
 
+- Login links and protected-route redirects now preserve destination query
+  parameters, so filtered or paginated views reopen after authentication.
+- Bulk trash from species and subgallery views now returns to the parent index
+  instead of reloading a stale page.
 - RTSP startup and recovery now revalidate the camera's current resolution
   before reading raw FFmpeg frames, preventing stale cached dimensions from
   combining parts of consecutive frames after a camera resolution change.
@@ -43,6 +50,11 @@
 
 ### Changed
 
+- The README and security guidance now state the project's agent-led
+  development and automated-assurance limits, including that the appliance
+  has not been independently audited for direct exposure to untrusted networks.
+- The optional training-data sharing invitation now lives on the Export page;
+  favouriting a bird is never interrupted by it.
 - The Canonical Dataset page now leads with the open review queue and keeps
   inclusion and exclusion manifests collapsed until they are needed.
 - PTZ follow mode now performs a short, bounded search along the bird's recent
