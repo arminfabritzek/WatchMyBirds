@@ -36,7 +36,12 @@ def test_tbwd_pages_render(client):
 
 
 def test_privacy_renders(client):
-    assert client.get("/privacy").status_code == 200
+    response = client.get("/privacy")
+    assert response.status_code == 200
+    content = response.get_data(as_text=True)
+    assert "Training-data exports" in content
+    assert "never sends it anywhere" in content
+    assert "entirely optional" in content
 
 
 def test_settings_requires_auth(app):

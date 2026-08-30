@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import zipfile
 from contextlib import nullcontext
 from datetime import datetime
@@ -26,7 +27,10 @@ def canonical_client(monkeypatch, tmp_path):
     manager.last_good_frame_timestamp = 0.0
     manager._first_frame_received = False
     with (
-        patch("web.services.auth_service.should_require_password_setup", return_value=False),
+        patch(
+            "web.services.auth_service.should_require_password_setup",
+            return_value=False,
+        ),
         patch("web.services.auth_service.is_default_password", return_value=False),
     ):
         app = create_web_interface(manager)
@@ -38,8 +42,12 @@ def canonical_client(monkeypatch, tmp_path):
             today = datetime.now().strftime("%Y%m%d")
             filename = f"{today}_101500_canonical.jpg"
             with db_connection.closing_connection() as conn:
-                detection_id = _seed(conn, filename=filename, timestamp=f"{today}_101500")
-            path = PathManager(str(get_config()["OUTPUT_DIR"])).get_original_path(filename)
+                detection_id = _seed(
+                    conn, filename=filename, timestamp=f"{today}_101500"
+                )
+            path = PathManager(str(get_config()["OUTPUT_DIR"])).get_original_path(
+                filename
+            )
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(b"canonical-image")
             post(
@@ -73,13 +81,20 @@ def test_preview_and_download_share_bundle_and_do_not_write(canonical_client) ->
     assert "manifest.jsonl" in archive.namelist()
     assert "facts.jsonl" in archive.namelist()
     with db_connection.closing_connection() as conn:
-        assert conn.execute("SELECT COUNT(*) FROM human_label_facts").fetchone()[0] == before
+        assert (
+            conn.execute("SELECT COUNT(*) FROM human_label_facts").fetchone()[0]
+            == before
+        )
 
 
-def test_canonical_dataset_page_is_the_export_navigation_target(canonical_client) -> None:
+def test_canonical_dataset_page_is_the_export_navigation_target(
+    canonical_client,
+) -> None:
     client, filename = canonical_client
     with db_connection.closing_connection() as conn:
-        _seed(conn, filename=filename, timestamp=datetime.now().strftime("%Y%m%d_%H%M%S"))
+        _seed(
+            conn, filename=filename, timestamp=datetime.now().strftime("%Y%m%d_%H%M%S")
+        )
 
     page = client.get("/admin/canonical-dataset")
 
@@ -92,6 +107,35 @@ def test_canonical_dataset_page_is_the_export_navigation_target(canonical_client
     appbar = open("templates/partials/appbar.html", encoding="utf-8").read()
     assert 'href="/admin/canonical-dataset"' in appbar
     assert 'href="/admin/groundtruth-export"' not in appbar
+
+
+def test_export_page_invites_sharing_without_interrupting_anyone(
+    canonical_client,
+) -> None:
+    client, _ = canonical_client
+
+    page = client.get("/admin/canonical-dataset")
+
+    content = page.get_data(as_text=True)
+    assert page.status_code == 200
+    assert 'id="contribute-training-title"' in content
+    assert "Entirely optional" in content
+    assert "Nothing leaves this device unless" in content
+    assert "no hurry and no obligation" in content
+    assert "attach the archive to a public" in content
+    assert "Training%20data%20contribution" in content
+
+
+def test_sharing_invitation_never_interrupts_the_operator(canonical_client) -> None:
+    """The ask lives on the Export page only — no modal, no favorite hijack."""
+    client, _ = canonical_client
+
+    content = client.get("/admin/canonical-dataset").get_data(as_text=True)
+
+    assert "trainingDataInvite" not in content
+    assert "wmb.trainingDataInvite" not in content
+    assert "data-training-data-invite-trigger" not in content
+    assert not os.path.exists("templates/partials/training_data_invite.html")
 
 
 def test_canonical_dataset_page_links_to_gallery_when_queue_is_clear(

@@ -81,6 +81,21 @@ hardware, MAC, hostname, or anything else identifiable.
 - Camera URLs, settings, passwords, or anything from your config
 - Your email or any identifier from your operating system
 
+## Training-data exports
+
+The Export page offers a bundle of your reviewed birds — a ZIP built on this
+device, containing selected images and the labels you confirmed. It stays
+here. WatchMyBirds never sends it anywhere; only you can do that, by hand.
+
+Sharing it is entirely optional and nothing in the app depends on it. The
+page invites you to pass your corrections on, because that is how the models
+everyone runs got better in the first place. Ignoring the invitation changes
+nothing.
+
+If you do want to share, please don't attach the archive to a public issue —
+it contains your own images. Get in touch without it and we'll arrange a
+private transfer.
+
 ## Where the data lives
 
 The heartbeat is received by a tiny Cloudflare Worker and stored in a
