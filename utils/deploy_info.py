@@ -115,8 +115,14 @@ def detect_deploy_type() -> str:
     except Exception:  # noqa: BLE001
         pass
 
-    # 2. RPi appliance
-    if Path("/opt/app").is_dir():
+    # 2. RPi appliance.  ``/opt/app`` alone is not distinctive enough:
+    # hosted Linux runners and unrelated software may use that generic path.
+    # Require files that are shipped together by the WatchMyBirds image build.
+    rpi_markers = (
+        Path("/opt/app/APP_VERSION"),
+        Path("/opt/app/systemd/app.service"),
+    )
+    if all(marker.is_file() for marker in rpi_markers):
         try:
             import shutil
 

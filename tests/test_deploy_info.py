@@ -89,6 +89,64 @@ class TestDetectDeployType:
             MockPath.side_effect = path_side_effect
             assert detect_deploy_type() == "dev"
 
+    def test_generic_opt_app_directory_is_not_rpi(self) -> None:
+        """A generic /opt/app directory does not identify this appliance."""
+        with (
+            patch("utils.deploy_info.Path") as MockPath,
+            patch("shutil.which", return_value="/usr/bin/systemctl"),
+        ):
+
+            def path_side_effect(p: str) -> Path:
+                mock_obj = type(
+                    "PathMock",
+                    (),
+                    {
+                        "exists": lambda self: False,
+                        "is_dir": lambda self: p == "/opt/app",
+                        "is_file": lambda self: False,
+                        "read_text": lambda self, **kw: (
+                            ""
+                            if p == "/proc/1/cgroup"
+                            else (_ for _ in ()).throw(FileNotFoundError())
+                        ),
+                    },
+                )()
+                return mock_obj  # type: ignore[return-value]
+
+            MockPath.side_effect = path_side_effect
+            assert detect_deploy_type() == "dev"
+
+    def test_rpi_requires_watchmybirds_build_markers(self) -> None:
+        """The image's version and service files identify an RPi build."""
+        markers = {
+            "/opt/app/APP_VERSION",
+            "/opt/app/systemd/app.service",
+        }
+        with (
+            patch("utils.deploy_info.Path") as MockPath,
+            patch("shutil.which", return_value="/usr/bin/systemctl"),
+        ):
+
+            def path_side_effect(p: str) -> Path:
+                mock_obj = type(
+                    "PathMock",
+                    (),
+                    {
+                        "exists": lambda self: False,
+                        "is_dir": lambda self: False,
+                        "is_file": lambda self: p in markers,
+                        "read_text": lambda self, **kw: (
+                            ""
+                            if p == "/proc/1/cgroup"
+                            else (_ for _ in ()).throw(FileNotFoundError())
+                        ),
+                    },
+                )()
+                return mock_obj  # type: ignore[return-value]
+
+            MockPath.side_effect = path_side_effect
+            assert detect_deploy_type() == "rpi"
+
 
 # ---------------------------------------------------------------------------
 # Integration-style tests for read_build_metadata
