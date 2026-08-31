@@ -8,6 +8,15 @@
 
 Only the latest release receives security updates. We recommend always running the most recent version.
 
+## Assurance Scope
+
+WatchMyBirds is developed primarily by AI coding agents under maintainer
+direction. Most source changes do not receive line-by-line human review.
+CI includes automated tests, linting, dependency audits, and static security
+analysis, but the project has not undergone an independent security audit.
+These checks reduce risk; they do not establish suitability for direct
+exposure to untrusted networks or other security-sensitive deployments.
+
 ## Reporting a Vulnerability
 
 We take the security of this project seriously. If you discover a security vulnerability, please report it privately.
@@ -23,7 +32,9 @@ We take the security of this project seriously. If you discover a security vulne
 ---
 
 ## Raspberry Pi Appliance Security
-The WatchMyBirds Raspberry Pi image is designed as a secure-by-default appliance. It implements strict system hardening measures to ensure suitability for exposed environments.
+The WatchMyBirds Raspberry Pi image includes defense-in-depth hardening
+intended to reduce its attack surface. These controls do not establish that
+the appliance is suitable for direct exposure to untrusted networks.
 
 ### 1. User & Authentication
 - **No Default User:** The standard `pi` user is completely removed.
@@ -101,7 +112,9 @@ The WatchMyBirds Raspberry Pi image is designed as a secure-by-default appliance
 
 ### 5. Updates & Hygiene
 - **Unattended Upgrades:** Package is installed; activation relies on OS defaults or user configuration.
-- **Dependency Audit:** `pip-audit` is not executed in the current CI workflows.
+- **Dependency Audit:** CI runs `pip-audit` against `requirements.txt`.
+  Optional dependency lanes are also scanned and currently report findings
+  as warnings.
 - **Config Permissions:** If `/etc/app/app.env` is used, the systemd app units now enforce `root:root` ownership and `chmod 600` before startup.
 - **Python Bootstrap Verification:** The Golden Image's CPython 3.12 source bootstrap is verified against the official Python release signature before compilation.
 - **Log Hygiene:** 

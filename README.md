@@ -47,7 +47,7 @@
 - 📊 **Analytics dashboard** — Activity patterns, species statistics, temporal insights
 - 🍓 **Raspberry Pi ready** — Pre-built images with WiFi setup
 - 🐳 **Docker support** — One-command deployment on any server
-- 🔒 **Hardened by default** — Systemd sandboxing, session auth, no root required
+- 🔒 **Appliance hardening** — Systemd sandboxing, session auth, no root required
 
 ---
 
@@ -204,6 +204,31 @@ at any time.
 Full details, including what is sent, what is never sent, where the data
 lives, and how to control it: **[docs/PRIVACY.md](docs/PRIVACY.md)**
 (or visit `/privacy` in your running install).
+
+---
+
+## Development and Assurance
+
+WatchMyBirds is developed through maintainer-directed AI coding agents.
+The maintainer supplies the domain knowledge, product direction,
+architecture, constraints, and acceptance criteria; implementation is
+produced almost entirely by coding agents.
+
+This workflow uses defense in depth: safeguards built into the AI systems are
+combined with repository-level automated tests, linting, dependency audits,
+static security analysis, and a semantic pre-public scan. Leading AI labs
+continually evaluate and strengthen protections against misuse and harmful or
+deceptive model behaviour; current public work includes
+[OpenAI's model safeguards](https://developers.openai.com/api/docs/guides/latest-model#safeguards),
+[Anthropic's Responsible Scaling Policy and risk reports](https://www.anthropic.com/responsible-scaling-policy),
+and [Google DeepMind's Frontier Safety Framework](https://deepmind.google/blog/strengthening-our-frontier-safety-framework/).
+These complementary layers provide meaningful assurance by targeting different
+failure modes before release.
+
+No automated process can guarantee defect-free or secure software, and this
+project has not undergone an independent security audit. Follow
+[SECURITY.md](SECURITY.md) when deploying in a security-sensitive or directly
+internet-exposed environment.
 
 ---
 

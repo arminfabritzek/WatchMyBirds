@@ -22,14 +22,14 @@ docker-compose up -d
 ## Coding Style
 
 - **Python:** Follow PEP 8, 4-space indentation.
-- **Formatter:** [Black](https://github.com/psf/black) (`line-length = 88`).
+- **Formatter:** [Ruff](https://docs.astral.sh/ruff/formatter/).
 - **Linter:** [Ruff](https://docs.astral.sh/ruff/). Rules are in `pyproject.toml`.
 - **Type Hints:** Python 3.12+ type hints are required for new code.
 
 Run the formatting and linting suite:
 ```bash
 ruff check --fix .
-black .
+ruff format .
 ```
 
 ## Testing
