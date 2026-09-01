@@ -291,9 +291,9 @@ The system is designed to run locally on affordable hardware to make wildlife ob
 
 ---
 
-## Star History
+## Still Watching
 
-[![Star History Chart](https://api.star-history.com/svg?repos=arminfabritzek/WatchMyBirds&type=Date)](https://star-history.com/#arminfabritzek/WatchMyBirds&Date)
+![A pigeon carries nesting material beside storm-tilted bird feeders. Text: “After the storm, we keep watch.”](assets/readme/after-the-storm-we-keep-watch.webp)
 
 ---
 
