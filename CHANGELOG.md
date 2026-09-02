@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Fixed
+
+- Dense navigation, review controls, filter bars, Settings fields, and image
+  actions now adapt across laptop and phone layouts, with touch-friendly
+  targets that stay inside the viewport.
+- GitHub releases now publish the curated `Unreleased` notes and archive them
+  under the released version automatically, so release pages no longer omit
+  the actual changes.
+
+## 0.5.4 - 2026-09-01
+
 ### Added
 
 - Compatible PTZ cameras can now centre a point clicked in the live view and
