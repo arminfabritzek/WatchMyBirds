@@ -318,6 +318,21 @@ code {
     min-height: 100vh;
 }
 
+@media (max-width: 480px) {
+    .app-footer {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        justify-content: center;
+        gap: var(--space-xs);
+    }
+
+    .app-footer > .ms-1,
+    .app-footer > .ms-2 {
+        margin-left: 0 !important;
+    }
+}
+
 .section {
     margin-top: var(--space-2xl);
     margin-bottom: var(--space-2xl);
@@ -911,13 +926,17 @@ code {
 }
 
 @media (max-width: 768px) {
-
     .grid--2,
     .grid--3,
     .grid--4 {
         grid-template-columns: 1fr;
     }
+}
 
+/* The authenticated navigation carries substantially more links than the
+   public shell. Switch both variants to the same compact menu before the
+   fixed bar can overrun laptop-sized viewports. */
+@media (max-width: 1100px) {
     .app-bar__brand {
         margin-right: var(--space-md);
     }
@@ -984,7 +1003,9 @@ code {
     .app-bar__dropdown-item:hover {
         opacity: 1;
     }
+}
 
+@media (max-width: 768px) {
     /* Status bar mobile: compact icon-only view */
     .status-bar {
         gap: var(--space-md);
@@ -1435,8 +1456,8 @@ code {
     opacity: 0.5;
 }
 
-/* Responsive: Two-row layout below 960px */
-@media (max-width: 960px) {
+/* Responsive: Two-row layout before dense controls begin to collide. */
+@media (max-width: 1100px) {
     .page-control-bar {
         height: auto;
         flex-wrap: wrap;
@@ -1451,6 +1472,8 @@ code {
     .page-control-bar__right {
         order: 2;
         margin-left: auto;
+        max-width: 100%;
+        flex-wrap: wrap;
     }
 
     .page-control-bar__center {
@@ -1479,6 +1502,21 @@ code {
     .page-control-bar__meta {
         font-size: 10px;
     }
+}
+
+@media (max-width: 720px) {
+    .page-control-bar__right {
+        flex: 1 1 100%;
+        width: 100%;
+        min-width: 0;
+        margin-left: 0;
+        justify-content: flex-start;
+    }
+
+    .page-control-bar__meta {
+        margin-left: 0;
+    }
+
 }
 
 /* Filter bar inside page-control-bar */
@@ -1600,6 +1638,52 @@ code {
 .sort-select-minimal:focus {
     outline: none;
     background-color: var(--color-surface-3);
+}
+
+/* Filter controls are declared after the generic phone layout, so keep the
+   narrow-screen overrides next to them to preserve the cascade. */
+@media (max-width: 720px) {
+    .page-control-bar .filter-bar-container,
+    .page-control-bar .filter-pill {
+        width: 100%;
+        min-width: 0;
+    }
+
+    .page-control-bar .filter-pill {
+        flex-wrap: wrap;
+        border-radius: var(--radius-lg);
+    }
+
+    .page-control-bar .filter-group {
+        flex: 1 1 100%;
+        min-width: 0;
+    }
+
+    .page-control-bar .slider-minimal {
+        flex: 1 1 60px;
+        width: auto;
+        min-width: 60px;
+    }
+
+    .page-control-bar .sort-select-minimal {
+        flex: 1 1 9rem;
+        min-width: 0;
+        max-width: 100%;
+    }
+
+    .filter-btn-mini {
+        position: relative;
+        flex: 0 0 36px;
+        width: 36px;
+        min-width: 36px;
+        height: 36px;
+    }
+
+    .filter-btn-mini::before {
+        position: absolute;
+        inset: -4px;
+        content: "";
+    }
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -2331,8 +2415,15 @@ code {
     }
 
     .stream-report-action {
-        width: 26px;
-        height: 26px;
+        position: relative;
+        width: 36px;
+        height: 36px;
+    }
+
+    .stream-report-action::before {
+        position: absolute;
+        inset: -4px;
+        content: "";
     }
 
     .stream-report-action__icon {
@@ -5861,6 +5952,16 @@ body {
     box-shadow: 0 2px 8px rgba(13, 148, 136, 0.4);
 }
 
+/* Touch screens have no dependable hover reveal. Keep these compact media
+   affordances visible instead of leaving an invisible live hit target. */
+@media (hover: none) {
+    .cover-jump-badge,
+    .source-link-badge {
+        opacity: 1;
+        transform: none;
+    }
+}
+
 /* ═══════════════════════════════════════════════════════════════════════════
    UI_STANDARD.md - WM-IMAGE-VIEWER
    Standard Image Viewer Structure
@@ -6727,6 +6828,22 @@ body {
 
 .review-desk-bar {
     margin-bottom: var(--space-md);
+}
+
+@media (max-width: 1200px) {
+    .review-desk-bar {
+        height: auto;
+        flex-wrap: wrap;
+    }
+
+    .review-desk-bar .page-control-bar__right {
+        flex: 1 1 100%;
+        width: 100%;
+        min-width: 0;
+        margin-left: 0;
+        flex-wrap: wrap;
+        justify-content: flex-start;
+    }
 }
 
 .review-insight-strip {
@@ -12122,6 +12239,21 @@ code {
     line-height: 1;
 }
 
+@media (max-width: 1200px) {
+    .review-grid__size-control {
+        flex: 1 1 18rem;
+        min-width: 0;
+        max-width: 100%;
+        margin-right: 0;
+    }
+
+    .review-grid__size-slider {
+        flex: 1 1 8rem;
+        width: auto;
+        min-width: 5rem;
+    }
+}
+
 /* Card tile grid — auto-fill so the layout reflows to fit the
    current --review-tile-size. minmax(N, 1fr) means tiles stretch
    to fill leftover space rather than leaving a gap on the right. */
@@ -12322,6 +12454,34 @@ code {
     height: 28px;
     min-width: 28px;
     font-size: 0.95rem;
+}
+
+/* Phone layouts need finger-sized actions. The Review Grid keeps five
+   controls in one row, so its visible buttons use 36px plus an equivalent
+   44px hit area; ordinary toolboxes can use the full 44px control. */
+@media (max-width: 720px), (hover: none) {
+    .wm-toolbox__btn,
+    .wm-toolbox--bar .wm-toolbox__btn {
+        min-width: 44px;
+        height: 44px;
+    }
+
+    .review-grid__tile .wm-toolbox {
+        gap: 8px;
+    }
+
+    .review-grid__tile .wm-toolbox__btn {
+        position: relative;
+        width: 36px;
+        min-width: 36px;
+        height: 36px;
+    }
+
+    .review-grid__tile .wm-toolbox__btn::before {
+        position: absolute;
+        inset: -4px;
+        content: "";
+    }
 }
 
 /* When tiles are below ~180px the always-on toolbox would cover most

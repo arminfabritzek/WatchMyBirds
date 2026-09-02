@@ -1230,6 +1230,36 @@
         background: var(--color-surface-2, #f8f9fa); border-radius: var(--radius-md, 0.5rem);
         font-size: 0.82rem; margin-bottom: var(--space-md, 0.75rem);
     }
+    .settings-status__value {
+        min-width: 0;
+        max-width: 100%;
+        overflow-wrap: anywhere;
+    }
+    .settings-field__select {
+        width: min(100%, 36rem);
+        max-width: 100%;
+    }
+
+    @media (max-width: 560px) {
+        .settings-panel__trigger {
+            align-items: flex-start;
+        }
+        .settings-panel__trigger-info {
+            display: none;
+        }
+        .settings-panel.is-open .settings-panel__body {
+            padding: var(--space-md, 0.75rem);
+        }
+        .settings-panel__body .d-flex.justify-content-between,
+        .settings-panel__body .d-flex.align-items-center.justify-content-between,
+        .settings-panel__body .d-flex.gap-2 {
+            min-width: 0;
+            flex-wrap: wrap;
+        }
+        .settings-field__select {
+            width: 100%;
+        }
+    }
 
     /* ── Danger section ────────────────────────── */
     .settings-panel--danger { border-color: var(--color-danger, #dc3545); }
@@ -1351,7 +1381,7 @@
             <!-- Status strip -->
             <div class="settings-status">
                 <span class="text-muted">Active:</span>
-                <code id="runtimeSourceDisplay" style="font-size:0.8rem;">{{ payload.get('STREAM_SOURCE_RUNTIME_VIDEO', {}).get('value', payload['VIDEO_SOURCE'].value) }}</code>
+                <code id="runtimeSourceDisplay" class="settings-status__value">{{ payload.get('STREAM_SOURCE_RUNTIME_VIDEO', {}).get('value', payload['VIDEO_SOURCE'].value) }}</code>
                 <span class="badge {{ 'text-bg-success' if payload.get('STREAM_SOURCE_RUNTIME_MODE', {}).get('value', 'direct') == 'relay' else 'text-bg-primary' }}" id="runtimeModeBadge">
                     {{ payload.get('STREAM_SOURCE_RUNTIME_MODE', {}).get('value', 'direct') | default('direct') }}</span>
                 <span class="badge text-bg-secondary" id="resolverModeBadge">resolver: {{ payload.get('STREAM_SOURCE_EFFECTIVE_MODE', {}).get('value', 'direct') | default('direct') }}</span>
@@ -1680,7 +1710,7 @@
             </div>
             <div class="settings-field mb-3">
                 <label for="TELEGRAM_MODE" class="settings-field__label">When to send Telegram messages</label>
-                <select name="TELEGRAM_MODE" id="TELEGRAM_MODE" class="form-select w-auto" data-telegram-mode>
+                <select name="TELEGRAM_MODE" id="TELEGRAM_MODE" class="form-select settings-field__select" data-telegram-mode>
                     <option value="off" {% if payload['TELEGRAM_MODE'].value == 'off' %}selected{% endif %}>Off — keep quiet</option>
                     <option value="live" {% if payload['TELEGRAM_MODE'].value == 'live' %}selected{% endif %}>Instant — ping for every confirmed sighting</option>
                     <option value="interval" {% if payload['TELEGRAM_MODE'].value == 'interval' %}selected{% endif %}>Hourly digest — periodic summary every N hours</option>

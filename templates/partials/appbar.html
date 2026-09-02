@@ -289,6 +289,7 @@
        status-bar pill look but adds dot + label + value triplets so the
        visual hierarchy matches the old streamPtzStatus pill. */
     .status-bar__auto-cam {
+        position: relative;
         display: inline-flex;
         align-items: center;
         gap: 6px;
@@ -441,9 +442,16 @@
             top: -25px !important;
         }
         .status-bar__auto-cam {
-            min-height: 28px;
+            min-width: 36px;
+            min-height: 36px;
             padding-inline: 6px;
             font-size: 0.72rem;
+            justify-content: center;
+        }
+        .status-bar__auto-cam::before {
+            position: absolute;
+            inset: -4px;
+            content: "";
         }
     }
 </style>

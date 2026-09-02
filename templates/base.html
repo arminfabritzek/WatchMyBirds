@@ -17,7 +17,7 @@
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
 
     <!-- Design System (Source of Truth for all styling) -->
-    <link rel="stylesheet" href="/assets/design-system.css?v=20260823-no-bird-dialog">
+    <link rel="stylesheet" href="/assets/design-system.css?v=20260902-responsive-touch-layout">
 
     {# Theme hydration — must run BEFORE the body paints to avoid a
        flash of the wrong palette. Resolves the effective theme once
@@ -89,7 +89,7 @@
         </div>
     </main>
 
-    <footer class="app-footer py-2 text-center text-muted">
+    <footer class="app-footer py-2 px-2 text-center text-muted">
         <small>WatchMyBirds</small>
         {% set _footer_ver = [footer_commit, footer_build_date] | select | join(' · ') %}
         {% if _footer_ver %}<small class="ms-1 font-monospace" style="opacity:.55">{{ _footer_ver }}</small>{% endif %}
