@@ -3,8 +3,7 @@
 frame set and compare detection counts + confidences.
 
 Runs on the Raspberry Pi (has the ONNX models, the Pi CPU profile,
-and the actual frames on disk). Lives in the repo on the Mac;
-synced via ``sync_preview.sh main`` to ``/opt/app/…`` on the Pi.
+and the actual frames on disk).
 
 ## What it does
 
