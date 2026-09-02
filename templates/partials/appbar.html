@@ -33,6 +33,17 @@
 
         {# Auth: Login / Admin links + Logout #}
         <span class="app-bar__spacer"></span>
+        <button type="button"
+                class="app-bar__link app-bar__link--secondary app-bar__status-toggle"
+                id="appBarStatusRailToggle"
+                aria-pressed="true"
+                aria-label="Hide live status bar"
+                title="Hide live status bar">
+            <svg class="app-bar__status-toggle-icon" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M4 6v12M10 9v9M16 4v14M22 11v7" />
+            </svg>
+            <span class="app-bar__status-toggle-label">Status bar</span>
+        </button>
         {% if session.get('authenticated') %}
         {# SECONDARY: Admin/utility actions (only when logged in) #}
         {# Legacy note: `/inbox` is an old path and should stay undiscoverable.
@@ -130,29 +141,6 @@
                     disabled>
                 <span class="status-bar__auto-cam-dot" aria-hidden="true"></span>
                 <span class="status-bar__auto-cam-label">Auto Cam</span>
-            </button>
-            {# Boxes mode toggle — only visible on the stream page. Stream
-               HTML unhides this on boot and owns the click handler. Save
-               snapshot sits next to it but only appears in Edit mode. #}
-            <button type="button"
-                    class="status-bar__auto-cam status-bar__boxes-toggle"
-                    id="appbarBoxesToggle"
-                    data-mode="hidden"
-                    aria-label="Toggle preset overlay boxes"
-                    title="Show preset overlay boxes"
-                    hidden
-                    disabled>
-                <span class="status-bar__auto-cam-label">Show boxes</span>
-            </button>
-            <button type="button"
-                    class="status-bar__auto-cam status-bar__snapshot-btn"
-                    id="appbarSnapshotBtn"
-                    aria-label="Capture overview snapshot"
-                    title="Fly to overview and freeze a new Mini-Map snapshot"
-                    hidden
-                    disabled>
-                <span class="spinner-border spinner-border-sm d-none" id="appbarSnapshotSpinner"></span>
-                <span class="status-bar__auto-cam-label">Save snapshot</span>
             </button>
             {# Telegram report send — only on the stream page (the
                startTelegramReportJob() function is defined there). Stream
@@ -285,6 +273,36 @@
         color: #3cc46a;
     }
 
+    .app-bar__status-toggle {
+        appearance: none;
+        border: 0;
+        border-bottom: 2px solid transparent;
+        background: transparent;
+        cursor: pointer;
+        gap: 6px;
+    }
+    .app-bar__status-toggle-icon {
+        width: 18px;
+        height: 18px;
+        fill: none;
+        stroke: currentColor;
+        stroke-width: 2;
+        stroke-linecap: round;
+    }
+    .wmb-status-rail-hidden .app-bar__status-toggle {
+        color: var(--color-primary);
+        opacity: 1;
+    }
+    .wmb-status-rail-hidden .app-mascot-bar {
+        display: none;
+    }
+    .wmb-status-rail-hidden body {
+        padding-top: var(--appbar-height);
+    }
+    .wmb-status-rail-hidden .stream-wrapper {
+        margin-top: 0;
+    }
+
     /* Auto-Cam toggle in the sysinfo cluster. Inherits the existing
        status-bar pill look but adds dot + label + value triplets so the
        visual hierarchy matches the old streamPtzStatus pill. */
@@ -352,29 +370,6 @@
         font-weight: 500;
     }
 
-    /* Boxes toggle: subtle highlight when in Edit mode so the operator
-       sees "I am editing" at a glance. data-mode attribute is set by
-       stream.html via existing MODE_LABELS / dataset.mode wiring. */
-    .status-bar__boxes-toggle[data-mode="edit"] {
-        border-color: rgba(74, 163, 217, 0.72);
-        background: rgba(74, 163, 217, 0.12);
-        color: #9ed9ff;
-    }
-    .status-bar__boxes-toggle[data-mode="visible"] {
-        border-color: rgba(60, 196, 106, 0.65);
-        background: rgba(60, 196, 106, 0.10);
-        color: #91e8ad;
-    }
-
-    /* Snapshot button — Bootstrap spinner inside; align it inline with
-       the label text. The d-none class is toggled by the existing
-       request handler. */
-    .status-bar__snapshot-btn .spinner-border {
-        width: 0.85rem;
-        height: 0.85rem;
-        border-width: 0.15em;
-    }
-
     @media (max-width: 1100px) {
         .app-mascot-bar {
             --app-mascot-width: 132px;
@@ -422,6 +417,9 @@
         .status-bar__auto-cam-label {
             display: none;
         }
+        .app-bar__status-toggle-label {
+            display: none;
+        }
         .status-bar__ticker-slot {
             min-width: 120px;
         }
@@ -457,6 +455,29 @@
 </style>
 
 <script>
+    (function () {
+        const STORAGE_KEY = 'wmb-status-rail';
+        const root = document.documentElement;
+        const button = document.getElementById('appBarStatusRailToggle');
+        if (!button) return;
+
+        function paint() {
+            const visible = !root.classList.contains('wmb-status-rail-hidden');
+            button.setAttribute('aria-pressed', visible ? 'true' : 'false');
+            button.setAttribute('aria-label', visible ? 'Hide live status bar' : 'Show live status bar');
+            button.title = visible ? 'Hide live status bar' : 'Show live status bar';
+        }
+
+        button.addEventListener('click', function () {
+            const hidden = root.classList.toggle('wmb-status-rail-hidden');
+            try {
+                localStorage.setItem(STORAGE_KEY, hidden ? 'hidden' : 'visible');
+            } catch (e) {}
+            paint();
+        });
+        paint();
+    })();
+
     (function () {
         // Logged-in users hit the full /health (DB + throttling + disk path).
         // Logged-out users hit /health/public, which projects only the four

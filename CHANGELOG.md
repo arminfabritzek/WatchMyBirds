@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Changed
+
+- The live status rail can now be hidden per browser, and its retired
+  preset-overlay editing controls no longer crowd the header.
+
 ### Fixed
 
 - Dense navigation, review controls, filter bars, Settings fields, and image

@@ -188,6 +188,25 @@ class TestTemplateStructure:
         assert "ptzGridWizard" not in content
         assert "ptz_grid_setup" not in content
 
+    def test_stream_has_no_retired_preset_overlay_controls(self):
+        stream_content = self.get_template_content("stream.html")
+        appbar_content = self.get_template_content("partials/appbar.html")
+        for retired_id in (
+            "appbarBoxesToggle",
+            "appbarSnapshotBtn",
+            "ptzBoxOverlay",
+            "ptzMinimap",
+        ):
+            assert retired_id not in stream_content
+            assert retired_id not in appbar_content
+
+    def test_appbar_status_rail_is_locally_toggleable(self):
+        base_content = self.get_template_content("base.html")
+        appbar_content = self.get_template_content("partials/appbar.html")
+        assert "wmb-status-rail" in base_content
+        assert 'id="appBarStatusRailToggle"' in appbar_content
+        assert "wmb-status-rail-hidden" in appbar_content
+
     def test_settings_species_locale_offers_english(self):
         """The species-name language selector must expose English."""
         content = self.get_template_content("settings.html")

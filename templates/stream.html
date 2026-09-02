@@ -25,7 +25,6 @@
             </iframe>
             <img id="video-feed-fallback" class="stream-video stream-embed__fallback" alt="Live Stream" data-fallback-src="/video_feed">
             {% if can_moderate %}
-            <img id="ptzEditCanvas" class="stream-embed__edit-canvas" alt="Edit overview" hidden>
             {# Live auto-PTZ tracking overlay (debug overlay). Shown when the
                "Live Tracking Overlay" setting is on (Settings → Detection &
                AI). Positioned to the video letterbox by the inline PTZ
@@ -212,16 +211,6 @@
             })();
         </script>
 
-        {% if can_moderate %}
-        <div id="ptzBoxOverlay" class="ptz-box-overlay" hidden>
-            <!-- Box buttons get injected here by JS. -->
-        </div>
-        <div id="ptzMinimap" class="ptz-minimap" hidden>
-            <img id="ptzMinimapImg" alt="Home overview" class="ptz-minimap__img">
-            <svg id="ptzMinimapSvg" class="ptz-minimap__svg" preserveAspectRatio="none" viewBox="0 0 100 100"></svg>
-        </div>
-        {% endif %}
-
     </div>
     <div class="stream-actions" aria-label="Stream actions">
         {% if can_moderate %}
@@ -245,22 +234,9 @@
             <strong>⚠ Auto-PTZ paused</strong> — <span id="ptzExternalPauseReason">external control</span>.
             Detection-driven moves are suppressed until released.
         </div>
-        {# Save snapshot + Show boxes moved to the global appbar status
-           bar (right of Auto Cam). Boxes is always visible on the
-           stream page; Save snapshot appears only in Edit mode.
-           See templates/partials/appbar.html. #}
-        <!-- Legacy Home button retained but hidden — replaced by the
-             D-pad's center ⌂. Kept around so existing JS handlers
-             (gotoPreset(overviewPreset)) continue to attach without
-             requiring a wider refactor. style="display:none" enforces
-             invisibility regardless of CSS cascade (the [hidden] attr
-             alone was being overridden by inline-flex defaults in some
-             browsers, leaving a 1-2px stub visible). -->
-        <button type="button" id="ptzHomeButton" hidden aria-hidden="true" style="display:none"></button>
         {# D-pad moved into .stream-embed above as a corner overlay
            (id="ptzJoystick" still works — same markup, just relocated).
-           Shown on hover or in Edit mode; hidden otherwise so the live
-           video is the focus. #}
+           Shown on hover so the live video remains the focus. #}
         {% endif %}
         {# Send-report button (paper-plane icon) moved to the global
            appbar status bar — see templates/partials/appbar.html. The
@@ -270,82 +246,6 @@
 
     {% if can_moderate %}
     <style>
-        .ptz-box-overlay {
-            position: absolute;
-            inset: 0;
-            pointer-events: none;
-            z-index: 4;
-        }
-        .ptz-box-overlay[hidden] { display: none; }
-        .ptz-box {
-            position: absolute;
-            border: 1.5px solid rgba(255, 255, 255, 0.7);
-            border-radius: 4px;
-            background: transparent;
-            color: rgba(255, 255, 255, 0.92);
-            font-family: inherit;
-            font-size: 13px;
-            font-weight: 600;
-            cursor: pointer;
-            pointer-events: auto;
-            transition: border-color 0.15s, background 0.15s;
-            padding: 0;
-        }
-        .ptz-box:hover,
-        .ptz-box:focus-visible {
-            border-color: rgba(255, 200, 60, 0.95);
-            background: rgba(255, 200, 60, 0.12);
-            outline: none;
-        }
-        .ptz-box__label {
-            position: absolute;
-            top: 2px;
-            left: 4px;
-            font-size: 11px;
-            line-height: 1;
-            padding: 2px 5px;
-            background: rgba(0, 0, 0, 0.55);
-            border-radius: 3px;
-        }
-        .ptz-box--edit {
-            border-style: dashed;
-            border-width: 2.5px;
-            border-color: rgba(120, 200, 255, 0.95);
-            background: rgba(120, 200, 255, 0.18);
-            cursor: move;
-            box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.45);
-        }
-        .ptz-box--edit:hover { background: rgba(120, 200, 255, 0.28); }
-        .ptz-box--edit .ptz-box__label {
-            background: rgba(40, 110, 180, 0.95);
-            font-size: 13px;
-            padding: 3px 7px;
-        }
-        .ptz-box__handle {
-            position: absolute;
-            width: 14px;
-            height: 14px;
-            background: rgba(255, 200, 60, 0.95);
-            border: 2px solid #fff;
-            border-radius: 2px;
-            right: -8px;
-            bottom: -8px;
-            cursor: nwse-resize;
-            box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.6);
-        }
-        .stream-embed--ptz-edit { cursor: crosshair; }
-        .stream-embed__edit-canvas {
-            position: absolute;
-            top: 0;
-            left: 0;
-            height: 100%;
-            width: 100%;
-            object-fit: fill;
-            display: block;
-            background: #000;
-            z-index: 3;
-        }
-        .stream-embed__edit-canvas[hidden] { display: none; }
         /* Live auto-PTZ tracking overlay. Inline JS positions it to the
            video letterbox rect; pointer-events:none keeps the joystick
            underneath clickable. Sits above the video, below the D-pad. */
@@ -357,132 +257,6 @@
             z-index: 4;
         }
         .stream-embed__tracking-overlay[hidden] { display: none; }
-        .stream-embed--ptz-edit .stream-embed__frame,
-        .stream-embed--ptz-edit .stream-embed__fallback {
-            visibility: hidden;
-        }
-        /* Black side-bars around the snapshot when it is letterboxed
-           inside the 16:9 stream-embed container. */
-        .stream-embed--ptz-edit::before {
-            content: "";
-            position: absolute;
-            inset: 0;
-            background: #000;
-            z-index: 2;
-        }
-
-        /* Grouped pill container — visual sibling to the D-pad and the
-           wizard panel. Wraps related controls in a single rounded
-           background so the stream toolbar reads as 2-3 clusters
-           instead of N freestanding buttons. */
-        .stream-ptz-group {
-            display: inline-flex;
-            align-items: center;
-            gap: 6px;
-            padding: 4px 8px;
-            border-radius: 12px;
-            background: rgba(0, 0, 0, 0.04);
-            border: 1px solid rgba(0, 0, 0, 0.08);
-        }
-        .stream-ptz-group--report { padding: 4px; }
-
-        /* Unified pill style for all stream-toolbar PTZ controls
-           (Auto-Cam status, Show boxes, Save snapshot). Inside a
-           group the per-button border is suppressed since the group
-           provides the visual frame. */
-        .stream-ptz-pill {
-            display: inline-flex;
-            align-items: center;
-            gap: 6px;
-            padding: 4px 10px;
-            border: 1px solid var(--color-border, #888);
-            background: var(--color-surface, #fff);
-            color: var(--color-text, #222);
-            border-radius: var(--radius-sm, 6px);
-            font-family: inherit;
-            font-size: 0.85rem;
-            line-height: 1.2;
-            cursor: pointer;
-            transition: background 0.15s, border-color 0.15s;
-        }
-        .stream-ptz-pill[hidden] { display: none; }
-        button.stream-ptz-pill { font-weight: 500; }
-        .stream-ptz-pill:hover:not(:disabled) { background: rgba(0, 0, 0, 0.04); }
-        .stream-ptz-pill:disabled { opacity: 0.6; cursor: progress; }
-        /* When inside a group container, drop the per-button border
-           so the group's outer border carries the framing. */
-        .stream-ptz-group .stream-ptz-pill {
-            border-color: transparent;
-            background: rgba(255, 255, 255, 0.85);
-        }
-        .stream-ptz-group .stream-ptz-pill:hover:not(:disabled) {
-            background: rgba(255, 255, 255, 1);
-        }
-        .stream-ptz-pill__label { color: var(--color-text-muted, #777); }
-        .stream-ptz-pill__value {
-            font-family: 'SF Mono', 'Fira Code', monospace;
-            text-transform: capitalize;
-            /* Reserve enough width for the longest runtime value
-               ("home in 12s") so the pill never resizes as the
-               countdown ticks. Anchored in ch units so it scales
-               with the font. */
-            min-width: 8ch;
-            text-align: left;
-        }
-        /* Action pills cycle their label text ("Show boxes" /
-           "Edit boxes" / "Done", or "Save snapshot" with/without
-           a spinner). Reserve the widest label's footprint so the
-           pill keeps the same hit-area and its neighbours don't
-           slide as the operator clicks through modes. justify-content
-           is centered so the shorter text ("Done") stays visually
-           anchored. */
-        .stream-ptz-pill--action {
-            min-width: 7.5rem;
-            justify-content: center;
-            text-align: center;
-        }
-        /* Active-state visual hint for buttons that flip a mode */
-        .stream-ptz-pill[data-mode="visible"] {
-            border-color: rgba(64, 150, 255, 0.7);
-            color: #1d6ed3;
-        }
-        .stream-ptz-pill[data-mode="edit"] {
-            background: rgba(120, 200, 255, 0.25);
-            border-color: rgba(120, 200, 255, 0.95);
-            color: #0a4480;
-            font-weight: 600;
-        }
-        /* Auto-return on/off toggle with status dot */
-        .stream-ptz-pill__dot {
-            width: 8px;
-            height: 8px;
-            border-radius: 50%;
-            background: var(--color-border, #999);
-            display: inline-block;
-            flex: 0 0 8px;
-        }
-        .stream-ptz-pill--toggle[data-enabled="true"] {
-            border-color: rgba(40, 170, 90, 0.85);
-            background: rgba(40, 170, 90, 0.10);
-            color: #1c5a36;
-        }
-        .stream-ptz-pill--toggle[data-enabled="true"] .stream-ptz-pill__dot {
-            background: rgba(40, 170, 90, 0.95);
-            box-shadow: 0 0 4px rgba(40, 170, 90, 0.5);
-        }
-        .stream-ptz-pill--toggle[data-enabled="true"][data-returning="true"] {
-            border-color: rgba(255, 165, 40, 0.95);
-            background: rgba(255, 165, 40, 0.12);
-            color: #7a3e00;
-        }
-        .stream-ptz-pill--toggle[data-enabled="true"][data-returning="true"] .stream-ptz-pill__dot {
-            background: rgba(255, 165, 40, 0.95);
-            animation: ptz-pulse 1s infinite ease-in-out;
-        }
-        @keyframes ptz-pulse {
-            0%, 100% { opacity: 1; }
-            50% { opacity: 0.4; }
-        }
         .stream-ptz-dpad {
             display: inline-flex;
             align-items: center;
@@ -495,11 +269,8 @@
         .stream-ptz-dpad[hidden] { display: none; }
 
         /* Floating overlay variant: sits inside .stream-embed in the
-           bottom-right corner. Fades in on hover. Touch devices: kept
-           visible since there's no hover signal. Edit mode: also kept
-           visible because operators may need to fine-aim while placing
-           boxes (.stream-embed--ptz-edit on the container is set by
-           stream.html when Edit mode is active). */
+           bottom-right corner. Fades in on hover. Touch devices keep it
+           visible because they have no hover signal. */
         .stream-ptz-dpad--overlay {
             position: absolute;
             right: 12px;
@@ -515,8 +286,7 @@
         }
         .stream-embed:hover .stream-ptz-dpad--overlay,
         .stream-ptz-dpad--overlay:hover,
-        .stream-ptz-dpad--overlay:focus-within,
-        .stream-embed--ptz-edit .stream-ptz-dpad--overlay {
+        .stream-ptz-dpad--overlay:focus-within {
             opacity: 1;
             pointer-events: auto;
         }
@@ -726,69 +496,21 @@
                 font-size: 13px;
             }
         }
-        .ptz-minimap {
-            position: absolute;
-            left: var(--space-md, 16px);
-            bottom: 60px;
-            width: 22%;
-            min-width: 160px;
-            max-width: 280px;
-            /* No fixed aspect-ratio: container shrinks to the snapshot's
-               native ratio so SVG markers land on the right pixels. */
-            z-index: 5;
-            border: 1.5px solid rgba(255, 255, 255, 0.4);
-            border-radius: 6px;
-            overflow: hidden;
-            box-shadow: 0 3px 12px rgba(0, 0, 0, 0.55);
-            line-height: 0;  /* avoid trailing-baseline gap under the img */
-        }
-        .ptz-minimap[hidden] { display: none; }
-        .ptz-minimap__img { display: block; width: 100%; height: auto; }
-        .ptz-minimap__svg { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
-        .ptz-minimap__svg .ptz-marker { pointer-events: auto; }
     </style>
 
     <script>
         (function () {
-            const overlayEl = document.getElementById('ptzBoxOverlay');
-            const editToggleEl = document.getElementById('appbarBoxesToggle');
-            const homeBtnEl = document.getElementById('ptzHomeButton');
-            const minimapEl = document.getElementById('ptzMinimap');
-            const minimapImgEl = document.getElementById('ptzMinimapImg');
-            const minimapSvgEl = document.getElementById('ptzMinimapSvg');
-            const snapshotBtnEl = document.getElementById('appbarSnapshotBtn');
-            const snapshotSpinnerEl = document.getElementById('appbarSnapshotSpinner');
-            if (!overlayEl || !editToggleEl) return;
-
             const CSRF = '{{ csrf_token }}';
             const STATUS_POLL_MS = 15000;
-            const MODE_HIDDEN = 'hidden';
-            const MODE_VISIBLE = 'visible';
-            const MODE_EDIT = 'edit';
-            const MODE_LABELS = {
-                hidden: { text: 'Presets', title: 'Show preset overlay boxes' },
-                visible: { text: 'Edit presets', title: 'Edit preset overlay boxes' },
-                edit: { text: 'Done', title: 'Stop editing' },
-            };
             let cameraId = null;
             let syncJoystickState = function () {};
-            let presets = [];
-            let mode = MODE_HIDDEN;
             let overviewPreset = '';
-            let lastPreset = '';
-            let onHome = true;
-            let snapshotUrl = '';
-            let optimisticUntil = 0;       // ignore backend last_preset until this monotonic ms timestamp
-            const OPTIMISTIC_HOLD_MS = 2500;
             let autoEnabled = false;
             let returnDeadline = 0;        // performance.now() ms at which the return is due, 0 if no countdown
             let countdownTimer = null;
-            let lostTimeoutSec = 6;        // refreshed from backend, used to seed countdown after manual goto
-            let manualViewSec = 15;        // refreshed from backend, manual-view deadline after settle
             let settling = false;          // true while backend is in "settling" state
             const streamEmbedEl = document.querySelector('.stream-embed');
             const iframeEl = document.getElementById('go2rtc-frame');
-            const editCanvasEl = document.getElementById('ptzEditCanvas');
             const fallbackVideoEl = document.getElementById('video-feed-fallback');
             const aimToggleEl = document.getElementById('ptzAimToggle');
             const aimOverlayEl = document.getElementById('ptzAimOverlay');
@@ -829,7 +551,6 @@
             function getCameraAspectDims() {
                 return cameraAspectDims
                     || readNaturalDims(fallbackVideoEl)
-                    || readNaturalDims(editCanvasEl)
                     || { width: 16, height: 9 };
             }
 
@@ -962,10 +683,6 @@
                         // Auto-return has fired locally; reset state and refresh
                         // from backend on the next poll.
                         returnDeadline = 0;
-                        lastPreset = overviewPreset;
-                        recomputeHomeState();
-                        applyModeStyles();
-                        renderBoxes();
                     }
                     paintStatusPill();
                 }, 500);
@@ -1007,19 +724,6 @@
                         paintExternalPauseBanner(auto.external_pause_reason);
                         cameraId = (typeof auto.camera_id === 'number') ? auto.camera_id : null;
                         syncJoystickState();
-                        // Trust the backend's last_preset only when it is
-                        // non-empty: the controller only fills it when IT
-                        // moved the camera, so a manual goto from this UI
-                        // leaves it blank and we must keep our local value.
-                        const backendPreset = String(auto.last_preset || '');
-                        // Trust backend only after the optimistic-update hold
-                        // window has expired. A user click sets lastPreset
-                        // locally; the next ~2.5 s of polling stay quiet so
-                        // a stale Goto response can't flip the UI back.
-                        if (backendPreset && performance.now() >= optimisticUntil) {
-                            lastPreset = backendPreset;
-                        }
-                        recomputeHomeState();
                         // Read the persisted operator intent, not the runtime
                         // controller state — a service that just restarted has
                         // configured_enabled=true even before the first
@@ -1029,12 +733,6 @@
                             ? auto.configured_enabled
                             : !!auto.enabled;
                         settling = auto.state === 'settling';
-                        if (typeof auto.lost_timeout_sec === 'number' && auto.lost_timeout_sec > 0) {
-                            lostTimeoutSec = auto.lost_timeout_sec;
-                        }
-                        if (typeof auto.manual_view_sec === 'number' && auto.manual_view_sec > 0) {
-                            manualViewSec = auto.manual_view_sec;
-                        }
                         const secsLeft = (typeof auto.seconds_until_return === 'number')
                             ? auto.seconds_until_return : null;
                         if (autoEnabled && secsLeft !== null && secsLeft > 0) {
@@ -1050,12 +748,6 @@
                             stopCountdownTicker();
                         }
                         paintStatusPill();
-                        // applyModeStyles owns the editToggle disabled
-                        // state — it knows about cameraId + snapshotUrl
-                        // + presets together, which is the right view
-                        // for "is there anything for Show boxes to do".
-                        applyModeStyles();
-                        renderBoxes();
                     })
                     .catch(function () {
                         autoEnabled = false;
@@ -1063,58 +755,25 @@
                         returnDeadline = 0;
                         stopCountdownTicker();
                         paintStatusPill();
-                        applyModeStyles();
                         // Clear the pause banner on fetch failure so a
                         // network blip doesn't leave a stale banner shown.
                         paintExternalPauseBanner('');
                     });
             }
 
-            function fetchPresets() {
-                if (cameraId === null) { presets = []; overviewPreset = ''; snapshotUrl = ''; return Promise.resolve(); }
-                return fetch('/api/v1/cameras/' + cameraId + '/ptz/presets/metadata?show_all=1', { cache: 'no-store' })
-                    .then(function (r) { return r.ok ? r.json() : { metadata: { presets: [] } }; })
+            function fetchPtzConfig() {
+                if (cameraId === null) {
+                    overviewPreset = '';
+                    return Promise.resolve();
+                }
+                return fetch('/api/v1/cameras/' + cameraId + '/ptz/config', { cache: 'no-store' })
+                    .then(function (r) { return r.ok ? r.json() : null; })
                     .then(function (data) {
-                        const meta = data.metadata || {};
-                        overviewPreset = String(meta.overview_preset || '');
-                        snapshotUrl = String(meta.overview_snapshot_url || '');
-                        const streamFrameWidth = Number(meta.stream_frame_width || 0);
-                        const streamFrameHeight = Number(meta.stream_frame_height || 0);
-                        if (streamFrameWidth > 0 && streamFrameHeight > 0) {
-                            setCameraAspectDims(streamFrameWidth, streamFrameHeight);
-                        }
-                        presets = (meta.presets || []).slice(0, 8);
-                        recomputeHomeState();
-                        // Preload the overview snapshot so getVideoRect()
-                        // can read the camera's true aspect ratio even
-                        // outside Edit mode. The img stays hidden; we
-                        // only want naturalWidth/Height populated for
-                        // overlay letterbox math.
-                        //
-                        // Uses a dedicated dataset marker
-                        // (prefetchedAspect) so applyModeStyles can still
-                        // see "first-time-this-Edit-session" and force a
-                        // cache-busted reload when the operator opens
-                        // Edit mode.
-                        if (editCanvasEl && snapshotUrl
-                            && editCanvasEl.dataset.prefetchedAspect !== snapshotUrl
-                            && !editCanvasEl.src) {
-                            editCanvasEl.dataset.prefetchedAspect = snapshotUrl;
-                            editCanvasEl.addEventListener('load', function () {
-                                syncOverlayToCanvas();
-                            }, { once: true });
-                            editCanvasEl.src = snapshotUrl;
-                        }
-                        if (snapshotUrl) {
-                            probeCameraAspect(snapshotUrl, 'overview:' + snapshotUrl);
-                        }
+                        const config = (data && data.config) || {};
+                        overviewPreset = String(config.overview_preset || '');
                         probeLiveFrameAspect();
                     })
-                    .catch(function () { presets = []; overviewPreset = ''; snapshotUrl = ''; });
-            }
-
-            function clearOverlay() {
-                while (overlayEl.firstChild) overlayEl.removeChild(overlayEl.firstChild);
+                    .catch(function () { overviewPreset = ''; });
             }
 
             // Compute the pixel rectangle of the actual video content
@@ -1122,14 +781,11 @@
             //
             // The container is laid out 16:9 (or whatever the iframe
             // negotiates). When the real video aspect differs, the
-            // video is centered with black bars. Preset-box overlays
-            // must clamp to this rectangle
-            // and NOT to the full container, or operator-placed
-            // coordinates land on the bars instead of on actual pixels.
+            // video is centered with black bars. Overlays must clamp to
+            // this rectangle rather than the full container.
             //
-            // Source of truth for the aspect is the camera frame, not the
-            // browser rectangle: current-frame probe, MJPEG natural size,
-            // overview snapshot, then 16:9 as a last-ditch fallback.
+            // Source of truth for the aspect is the current camera frame,
+            // then the MJPEG natural size, then 16:9 as fallback.
             function getVideoRect() {
                 if (!streamEmbedEl) return null;
                 const cw = streamEmbedEl.clientWidth;
@@ -1158,7 +814,6 @@
             }
 
             // Position any overlay element to the video rectangle.
-            // Shared letterbox math for the PTZ box overlay.
             function applyVideoRectToOverlay(el) {
                 if (!el) return;
                 const rect = getVideoRect();
@@ -1176,8 +831,7 @@
             }
 
             // Position the live tracking overlay canvas to the video
-            // letterbox rectangle (shares applyVideoRectToOverlay with the
-            // preset/grid overlays) and keep its drawing buffer matched to
+            // letterbox rectangle and keep its drawing buffer matched to
             // the CSS box so tracking_overlay.js can draw in plain
             // canvas-local coordinates. No-op when the canvas is absent
             // (unauthenticated build) or hidden (debug flag off).
@@ -1193,277 +847,17 @@
             function syncOverlayToCanvas() {
                 syncTrackingOverlay();
                 applyVideoRectToOverlay(aimOverlayEl);
-                if (!overlayEl) return;
-                if (mode === MODE_EDIT && editCanvasEl && !editCanvasEl.hidden) {
-                    applyVideoRectToOverlay(editCanvasEl);
-                    applyVideoRectToOverlay(overlayEl);
-                    return;
-                }
-                // Visible mode (no canvas snapshot): clamp to the live
-                // video letterbox so operator-placed preset boxes stay
-                // anchored to actual pixels, not to the black bars.
-                applyVideoRectToOverlay(overlayEl);
-            }
-
-            function applyModeStyles() {
-                const isEdit = mode === MODE_EDIT;
-                if (isEdit && aimArmed) cancelAim();
-                if (iframeEl) iframeEl.style.pointerEvents = (isEdit || aimArmed) ? 'none' : '';
-                if (streamEmbedEl) streamEmbedEl.classList.toggle('stream-embed--ptz-edit', isEdit);
-                if (editCanvasEl) {
-                    if (isEdit && snapshotUrl) {
-                        if (editCanvasEl.dataset.src !== snapshotUrl) {
-                            editCanvasEl.src = snapshotUrl + (snapshotUrl.includes('?') ? '&' : '?') + 'ts=' + Date.now();
-                            editCanvasEl.dataset.src = snapshotUrl;
-                            editCanvasEl.addEventListener('load', syncOverlayToCanvas, { once: true });
-                        }
-                        editCanvasEl.hidden = false;
-                    } else {
-                        editCanvasEl.hidden = true;
-                    }
-                    // Ensure overlay tracks canvas on resize too.
-                    if (isEdit) syncOverlayToCanvas();
-                    else syncOverlayToCanvas(); // resets inline styles
-                }
-                // Always-visible policy: the toggle stays in the toolbar
-                // so its slot never collapses. It's only clickable when
-                // there is actually something for it to reveal — a
-                // bound camera AND either a snapshot (Mini-Map) or at
-                // least one placed box. Without that, clicking just
-                // cycles mode-state with no visible effect, which is
-                // the UX bug we're fixing here. The tooltip carries the
-                // reason so the disabled state is self-explanatory.
-                const hasSomethingToShow = !!snapshotUrl || hasAnyPresetWithBox();
-                const editAvailable = (cameraId !== null)
-                    && (mode === MODE_EDIT || hasSomethingToShow);
-                // Unhide on the stream page (appbar default is hidden so
-                // the button doesn't appear on Gallery/Species/etc.).
-                editToggleEl.hidden = false;
-                editToggleEl.disabled = !editAvailable && !PTZ_DEBUG;
-                const label = MODE_LABELS[mode];
-                if (label) {
-                    editToggleEl.textContent = label.text;
-                    let title = label.title;
-                    if (!editAvailable && !PTZ_DEBUG) {
-                        title = (cameraId === null)
-                            ? 'No PTZ camera bound'
-                            : 'Capture an overview snapshot or place a box first';
-                    }
-                    editToggleEl.title = title;
-                    editToggleEl.setAttribute('aria-label', title);
-                }
-                editToggleEl.dataset.mode = mode;
-                if (homeBtnEl) {
-                    // Always-visible policy: the Home pill stays in the
-                    // toolbar at all times. It's `disabled` when there's
-                    // no overview preset / no camera / camera is already
-                    // at home — the operator can still see where the
-                    // shortcut lives. ?ptz_debug=1 force-enables.
-                    homeBtnEl.hidden = false;
-                    const enableHome = (
-                        !!overviewPreset
-                        && cameraId !== null
-                        && (mode === MODE_VISIBLE || !onHome)
-                        && mode !== MODE_EDIT
-                    );
-                    homeBtnEl.disabled = !enableHome && !PTZ_DEBUG;
-                }
-                if (snapshotBtnEl) {
-                    // Now hidden outside Edit mode — it lives in the
-                    // appbar next to Boxes, only appears once the
-                    // operator has actually entered Edit mode. Disabled
-                    // (but visible) when in Edit mode without a bound
-                    // camera or overview preset so the title can explain
-                    // why.
-                    snapshotBtnEl.hidden = !isEdit;
-                    const canSnapshot = isEdit && cameraId !== null && !!overviewPreset;
-                    snapshotBtnEl.disabled = !canSnapshot && !PTZ_DEBUG;
-                }
-                if (minimapEl) {
-                    // Mini-Map appears in "visible" mode whenever a snapshot
-                    // exists, even if no boxes are placed yet — the operator
-                    // can still see the overview and move on to Edit mode.
-                    const showMinimap = mode === MODE_VISIBLE
-                        && !!snapshotUrl
-                        && cameraId !== null;
-                    minimapEl.hidden = !showMinimap;
-                }
-                if (aimToggleEl) {
-                    aimToggleEl.disabled = ((cameraId === null) || isEdit) && !PTZ_DEBUG;
-                    aimToggleEl.setAttribute('aria-pressed', aimArmed ? 'true' : 'false');
-                }
-            }
-
-            function hasAnyPresetWithBox() {
-                return presets.some(function (p) {
-                    const m = p.metadata || {};
-                    return !!(m.box_w_pct && m.box_h_pct);
-                });
-            }
-
-            function renderMinimap() {
-                if (!minimapEl || !minimapSvgEl || !minimapImgEl) return;
-                if (minimapEl.hidden) return;
-                if (snapshotUrl && minimapImgEl.dataset.src !== snapshotUrl) {
-                    minimapImgEl.src = snapshotUrl + (snapshotUrl.includes('?') ? '&' : '?') + 'ts=' + Date.now();
-                    minimapImgEl.dataset.src = snapshotUrl;
-                }
-                while (minimapSvgEl.firstChild) minimapSvgEl.removeChild(minimapSvgEl.firstChild);
-                presets.forEach(function (preset, idx) {
-                    if (overviewPreset && preset.token === overviewPreset) return;
-                    const meta = preset.metadata || {};
-                    if (!meta.box_w_pct || !meta.box_h_pct) return;
-                    const w = meta.box_w_pct * 100;
-                    const h = meta.box_h_pct * 100;
-                    const cx = (meta.center_x_pct || 0.5) * 100;
-                    const cy = (meta.center_y_pct || 0.5) * 100;
-                    const x = Math.max(0, cx - w / 2);
-                    const y = Math.max(0, cy - h / 2);
-                    const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
-                    g.setAttribute('class', 'ptz-marker');
-                    g.addEventListener('click', function () { gotoPreset(preset.token); });
-                    const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-                    rect.setAttribute('x', String(x));
-                    rect.setAttribute('y', String(y));
-                    rect.setAttribute('width', String(w));
-                    rect.setAttribute('height', String(h));
-                    rect.setAttribute('fill', 'rgba(255,255,255,0.05)');
-                    rect.setAttribute('stroke', 'rgba(255,255,255,0.85)');
-                    rect.setAttribute('stroke-width', '0.7');
-                    rect.style.cursor = 'pointer';
-                    g.appendChild(rect);
-                    const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-                    text.setAttribute('x', String(cx));
-                    text.setAttribute('y', String(cy + 1.6));
-                    text.setAttribute('text-anchor', 'middle');
-                    text.setAttribute('fill', '#fff');
-                    text.setAttribute('font-size', '5');
-                    text.setAttribute('font-weight', '700');
-                    text.setAttribute('paint-order', 'stroke');
-                    text.setAttribute('stroke', 'rgba(0,0,0,0.7)');
-                    text.setAttribute('stroke-width', '0.5');
-                    text.textContent = String(idx + 1);
-                    text.style.pointerEvents = 'none';
-                    g.appendChild(text);
-                    minimapSvgEl.appendChild(g);
-                });
-            }
-
-            function recomputeHomeState() {
-                onHome = !overviewPreset || !lastPreset || lastPreset === overviewPreset;
-            }
-
-            function renderBoxes() {
-                clearOverlay();
-                if (mode === MODE_HIDDEN) {
-                    overlayEl.hidden = true;
-                    renderMinimap();
-                    return;
-                }
-                const isEdit = mode === MODE_EDIT;
-                // In visible mode the Mini-Map replaces the live-stream
-                // overlay when it has real content to draw — both a
-                // snapshot AND at least one placed box. Otherwise we
-                // keep the live overlay so the operator always sees
-                // SOMETHING when toggled into visible mode. The old
-                // !onHome trigger was removed: it hid the overlay
-                // whenever the operator clicked a box, which made
-                // boxes vanish with no replacement when no snapshot
-                // existed.
-                if (mode === MODE_VISIBLE && snapshotUrl && hasAnyPresetWithBox()) {
-                    overlayEl.hidden = true;
-                    renderMinimap();
-                    return;
-                }
-                if (!presets.length) {
-                    overlayEl.hidden = !isEdit;
-                    renderMinimap();
-                    return;
-                }
-                overlayEl.hidden = false;
-                // Render large boxes first so smaller ones sit on top and stay
-                // clickable when a bigger box visually contains them.
-                const renderOrder = presets
-                    .map(function (p, i) { return { p: p, idx: i }; })
-                    .sort(function (a, b) {
-                        const ma = a.p.metadata || {};
-                        const mb = b.p.metadata || {};
-                        const areaA = (ma.box_w_pct || 0.18) * (ma.box_h_pct || 0.24);
-                        const areaB = (mb.box_w_pct || 0.18) * (mb.box_h_pct || 0.24);
-                        return areaB - areaA;
-                    });
-                renderOrder.forEach(function (entry) {
-                    const preset = entry.p;
-                    const idx = entry.idx;
-                    if (overviewPreset && preset.token === overviewPreset) return;
-                    const meta = preset.metadata || {};
-                    const hasBox = !!(meta.box_w_pct && meta.box_h_pct);
-                    if (!hasBox && !isEdit) return;
-
-                    const w = (meta.box_w_pct || 0.18) * 100;
-                    const h = (meta.box_h_pct || 0.24) * 100;
-                    const cx = (meta.center_x_pct || ((idx + 1) / 9)) * 100;
-                    const cy = (meta.center_y_pct || 0.5) * 100;
-                    const left = Math.max(0, cx - w / 2);
-                    const top = Math.max(0, cy - h / 2);
-
-                    const node = document.createElement(isEdit ? 'div' : 'button');
-                    if (!isEdit) node.type = 'button';
-                    node.className = 'ptz-box' + (isEdit ? ' ptz-box--edit' : '');
-                    node.dataset.token = preset.token;
-                    node.dataset.idx = String(idx);
-                    node.style.left = left + '%';
-                    node.style.top = top + '%';
-                    node.style.width = w + '%';
-                    node.style.height = h + '%';
-                    node.setAttribute('aria-label', 'Preset ' + (idx + 1) + ' (' + preset.token + ')');
-                    node.title = preset.name + ' (' + preset.token + ')';
-
-                    const label = document.createElement('span');
-                    label.className = 'ptz-box__label';
-                    label.textContent = String(idx + 1);
-                    node.appendChild(label);
-
-                    if (!isEdit) {
-                        node.addEventListener('click', function () { gotoPreset(preset.token); });
-                    } else {
-                        attachEditHandlers(node, preset, idx);
-                        const handle = document.createElement('span');
-                        handle.className = 'ptz-box__handle';
-                        node.appendChild(handle);
-                    }
-
-                    overlayEl.appendChild(node);
-                });
-                renderMinimap();
             }
 
             function gotoPreset(token) {
                 if (cameraId === null) return;
                 if (aimArmed) cancelAim();
-                lastPreset = token;
-                optimisticUntil = performance.now() + OPTIMISTIC_HOLD_MS;
-                recomputeHomeState();
-                // Mirror the backend's notify_external_goto behaviour locally:
-                // when auto-return is on and we just sent the camera off the
-                // overview spot, seed the countdown so the operator sees the
-                // timer start immediately instead of waiting for the next poll.
-                if (autoEnabled && overviewPreset && token !== overviewPreset) {
-                    // Optimistic: enter the settle UI immediately. The backend
-                    // settle-worker runs wait_until_idle() and only then arms
-                    // the manual_view_sec countdown, so we stay in "arriving"
-                    // until the next poll picks up the real deadline.
-                    settling = true;
-                    returnDeadline = 0;
-                    startCountdownTicker();
-                } else if (overviewPreset && token === overviewPreset) {
+                if (overviewPreset && token === overviewPreset) {
                     settling = false;
                     returnDeadline = 0;
                     stopCountdownTicker();
                 }
                 paintStatusPill();
-                applyModeStyles();
-                renderBoxes();
                 fetch('/api/v1/cameras/' + cameraId + '/ptz/goto', {
                     method: 'POST',
                     headers: csrfHeaders({ 'Content-Type': 'application/json' }),
@@ -1471,16 +865,9 @@
                 }).catch(function () { /* silent */ });
             }
 
-            if (homeBtnEl) {
-                homeBtnEl.addEventListener('click', function () {
-                    if (!overviewPreset) return;
-                    gotoPreset(overviewPreset);
-                });
-            }
-
-            // Auto-Cam toggle: the old pill is gone; the LED ticker's
-            // status zone is the click target now. Logic is identical —
-            // optimistic local flip + PATCH, revert on failure.
+            // Auto-Cam toggle: the appbar button owns the interaction;
+            // the ticker mirrors its state. Use an optimistic local flip,
+            // then revert it if the PATCH fails.
             function toggleAutoCam() {
                 if (cameraId === null) return;
                 const next = !autoEnabled;
@@ -1515,107 +902,6 @@
             if (appbarToggleBtn) {
                 appbarToggleBtn.addEventListener('click', toggleAutoCam);
             }
-
-            if (snapshotBtnEl) {
-                snapshotBtnEl.addEventListener('click', function () {
-                    if (cameraId === null) return;
-                    snapshotBtnEl.disabled = true;
-                    if (snapshotSpinnerEl) snapshotSpinnerEl.classList.remove('d-none');
-                    fetch('/api/v1/cameras/' + cameraId + '/ptz/capture-overview-snapshot', {
-                        method: 'POST',
-                        headers: csrfHeaders(),
-                    })
-                        .then(function (r) { return r.json().then(function (data) { return { ok: r.ok, data: data }; }); })
-                        .then(function (res) {
-                            if (!res.ok || res.data.status !== 'success') {
-                                throw new Error((res.data && res.data.message) || 'snapshot failed');
-                            }
-                            return fetchPresets().then(function () {
-                                applyModeStyles();
-                                renderBoxes();
-                            });
-                        })
-                        .catch(function (err) {
-                            console.warn('PTZ snapshot capture failed:', err);
-                        })
-                        .finally(function () {
-                            snapshotBtnEl.disabled = false;
-                            if (snapshotSpinnerEl) snapshotSpinnerEl.classList.add('d-none');
-                        });
-                });
-            }
-
-            function attachEditHandlers(node, preset, idx) {
-                let drag = null;
-
-                node.addEventListener('pointerdown', function (ev) {
-                    if (ev.target.classList.contains('ptz-box__handle')) {
-                        drag = { mode: 'resize', startX: ev.clientX, startY: ev.clientY,
-                                 startW: node.offsetWidth, startH: node.offsetHeight };
-                    } else {
-                        drag = { mode: 'move', startX: ev.clientX, startY: ev.clientY,
-                                 startLeft: node.offsetLeft, startTop: node.offsetTop };
-                    }
-                    node.setPointerCapture(ev.pointerId);
-                    ev.preventDefault();
-                });
-                node.addEventListener('pointermove', function (ev) {
-                    if (!drag) return;
-                    const parent = node.parentElement.getBoundingClientRect();
-                    const dx = ev.clientX - drag.startX;
-                    const dy = ev.clientY - drag.startY;
-                    if (drag.mode === 'move') {
-                        const newLeft = Math.max(0, Math.min(parent.width - node.offsetWidth, drag.startLeft + dx));
-                        const newTop = Math.max(0, Math.min(parent.height - node.offsetHeight, drag.startTop + dy));
-                        node.style.left = (newLeft / parent.width * 100) + '%';
-                        node.style.top = (newTop / parent.height * 100) + '%';
-                    } else {
-                        const newW = Math.max(40, Math.min(parent.width - node.offsetLeft, drag.startW + dx));
-                        const newH = Math.max(40, Math.min(parent.height - node.offsetTop, drag.startH + dy));
-                        node.style.width = (newW / parent.width * 100) + '%';
-                        node.style.height = (newH / parent.height * 100) + '%';
-                    }
-                });
-                node.addEventListener('pointerup', function (ev) {
-                    if (!drag) return;
-                    node.releasePointerCapture(ev.pointerId);
-                    drag = null;
-                    const parent = node.parentElement.getBoundingClientRect();
-                    const w_pct = node.offsetWidth / parent.width;
-                    const h_pct = node.offsetHeight / parent.height;
-                    const cx_pct = (node.offsetLeft + node.offsetWidth / 2) / parent.width;
-                    const cy_pct = (node.offsetTop + node.offsetHeight / 2) / parent.height;
-                    persistBox(preset.token, preset.name, {
-                        center_x_pct: cx_pct, center_y_pct: cy_pct,
-                        box_w_pct: w_pct, box_h_pct: h_pct,
-                        label: String(idx + 1),
-                    });
-                });
-            }
-
-            function persistBox(token, name, meta) {
-                fetch('/api/v1/cameras/' + cameraId + '/ptz/presets/' + encodeURIComponent(token) + '/metadata', {
-                    method: 'PUT',
-                    headers: csrfHeaders({ 'Content-Type': 'application/json' }),
-                    body: JSON.stringify(meta)
-                })
-                    .then(function (r) { return r.json(); })
-                    .then(function (data) {
-                        if (data && data.preset && data.preset.metadata) {
-                            const p = presets.find(function (x) { return x.token === token; });
-                            if (p) p.metadata = data.preset.metadata;
-                        }
-                    })
-                    .catch(function () { /* silent */ });
-            }
-
-            editToggleEl.addEventListener('click', function () {
-                if (mode === MODE_HIDDEN) mode = MODE_VISIBLE;
-                else if (mode === MODE_VISIBLE) mode = MODE_EDIT;
-                else mode = MODE_HIDDEN;
-                applyModeStyles();
-                renderBoxes();
-            });
 
             // ---- Manual joystick (⬆⬇⬅➡🔍+🔍−) -----------------------------
             //
@@ -1654,11 +940,11 @@
                     aimReticleEl.removeAttribute('data-state');
                 }
                 if (aimToggleEl) aimToggleEl.setAttribute('aria-pressed', 'false');
-                if (iframeEl) iframeEl.style.pointerEvents = mode === MODE_EDIT ? 'none' : '';
+                if (iframeEl) iframeEl.style.pointerEvents = '';
             }
 
             function armAimUi() {
-                if (!aimOverlayEl || mode === MODE_EDIT || (cameraId === null && !PTZ_DEBUG)) return;
+                if (!aimOverlayEl || (cameraId === null && !PTZ_DEBUG)) return;
                 aimArmed = true;
                 aimSessionActive = false;
                 aimCameraId = cameraId;
@@ -1834,8 +1120,7 @@
                 // back-to-back calls but honour a single long move.
                 let moveDurationMultiplier = 1.0;
                 // Pan/tilt/zoom buttons (hold-to-move). Excludes the
-                // Home button which is single-click and reuses the
-                // existing ptzHomeButton's gotoPreset(overview) path.
+                // Home button, which is a single-click overview return.
                 const joyBtns = joystickEl.querySelectorAll('.stream-ptz-joybtn[data-axis]');
                 const dpadHomeBtn = document.getElementById('ptzDpadHome');
                 const focusControlsEl = document.getElementById('ptzFocusControls');
@@ -2051,7 +1336,7 @@
                         dpadHomeBtn.disabled = dis || !overviewPreset;
                     }
                     if (aimToggleEl) {
-                        aimToggleEl.disabled = (dis || mode === MODE_EDIT) && !PTZ_DEBUG;
+                        aimToggleEl.disabled = dis && !PTZ_DEBUG;
                     }
                     if (cameraId !== null && cameraId !== lastBurstCamId) {
                         lastBurstCamId = cameraId;
@@ -2082,12 +1367,11 @@
                 }
             }
 
-            // Boot: poll status + load presets, then redraw.
+            // Boot: poll status, then load the one remaining preset-backed
+            // value used by the D-pad's Home action.
             function refresh() {
-                fetchStatus().then(fetchPresets).then(function () {
+                fetchStatus().then(fetchPtzConfig).then(function () {
                     syncJoystickState();
-                    applyModeStyles();
-                    renderBoxes();
                 });
             }
             refresh();
