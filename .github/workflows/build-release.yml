@@ -322,6 +322,15 @@ jobs:
           # Append the CHANGELOG.md section for this version, if one exists.
           CHANGELOG_BODY=$(bash app_code/scripts/changelog_section.sh \
             "${{ steps.version.outputs.target }}" app_code/CHANGELOG.md)
+          if [ -z "$CHANGELOG_BODY" ]; then
+            echo "No versioned CHANGELOG section yet; using Unreleased notes."
+            CHANGELOG_BODY=$(bash app_code/scripts/changelog_section.sh \
+              Unreleased app_code/CHANGELOG.md)
+          fi
+          if [ -z "$CHANGELOG_BODY" ]; then
+            echo "::error::CHANGELOG has no notes for this release."
+            exit 1
+          fi
           if [ -n "$CHANGELOG_BODY" ]; then
             {
               printf '\n## Changes\n\n'
@@ -426,20 +435,22 @@ jobs:
           set -euo pipefail
           cd app_code
           RELEASED="${{ steps.version.outputs.target }}"
+          RELEASE_DATE="${{ steps.builddate.outputs.date_short }}"
           echo "$RELEASED" > APP_VERSION
+          python3 scripts/finalize_changelog.py "$RELEASED" "$RELEASE_DATE" CHANGELOG.md
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add APP_VERSION
+          git add APP_VERSION CHANGELOG.md
 
-          if git diff --cached --quiet -- APP_VERSION; then
-            echo "APP_VERSION already set to ${RELEASED}, nothing to commit."
+          if git diff --cached --quiet -- APP_VERSION CHANGELOG.md; then
+            echo "Release metadata already finalized, nothing to commit."
             exit 0
           fi
 
-          git commit -m "chore: set release version to ${RELEASED} [skip ci]" --only -- APP_VERSION
+          git commit -m "chore: finalize release ${RELEASED} [skip ci]" \
+            --only -- APP_VERSION CHANGELOG.md
 
-          # Rebasing onto a moved main never conflicts: nothing but this step
-          # writes APP_VERSION, so the bump is the only diff in flight.
+          # Fail safely if main moved and the release notes changed concurrently.
           for attempt in 1 2 3 4 5; do
             if git push origin HEAD:main; then
               break
