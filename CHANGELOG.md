@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.5.5 - 2026-09-03
+
 ### Changed
 
 - The live status rail can now be hidden per browser, and its retired
