@@ -162,6 +162,7 @@
                     });
                 }
 
+                {% if stream_source_mode and stream_source_mode != 'direct' %}
                 (async function preflightGo2RTC() {
                     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
                         const healthy = await serverHealthOk();
@@ -183,6 +184,9 @@
                         }
                     }
                 })();
+                {% else %}
+                enableFallback('stream_source_mode_direct');
+                {% endif %}
             })();
         </script>
 
