@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.5.6 - 2026-09-10
+
 ### Fixed
 
 - Camera capture now keeps retrying after repeated RTSP connection failures,
