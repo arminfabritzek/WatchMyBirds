@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### Fixed
+
+- Camera capture now keeps retrying after repeated RTSP connection failures,
+  respecting recovery cooldowns instead of leaving bird detection without frames.
+- Direct stream mode now opens the MJPEG live view without probing go2rtc;
+  expected go2rtc connection failures no longer log a full traceback.
+- Release builds now prepare changelog entries before building the Raspberry Pi
+  image. When curated notes are missing, entries are generated from commits since
+  the last release and reused for both release notes and the archived changelog.
+
+### Documentation
+
+- Added Blue Iris NVR to the community-tested camera list.
+
 ## 0.5.5 - 2026-09-03
 
 ### Changed

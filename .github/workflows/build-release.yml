@@ -63,6 +63,15 @@ jobs:
           fetch-depth: 0
           path: app_code
 
+      - name: Resolve Release Version and Prepare Changelog
+        id: version
+        run: |
+          set -euo pipefail
+          TARGET_VER=$(bash app_code/scripts/version_info.sh next-release app_code)
+          echo "target=${TARGET_VER}" >> "$GITHUB_OUTPUT"
+          python3 app_code/scripts/prepare_release_changelog.py \
+            "$TARGET_VER" app_code release_changes.md
+
       - name: Install Image Build Dependencies
         run: sudo apt-get update && sudo apt-get install -y xz-utils parted qemu-user-static
 
@@ -144,7 +153,7 @@ jobs:
           sudo mkdir -p mount_point/opt/wheelhouse
           sudo cp -r wheelhouse/* mount_point/opt/wheelhouse/
           # Write Version Metadata
-          RELEASE_VER=$(bash app_code/scripts/version_info.sh next-release app_code)
+          RELEASE_VER="${{ steps.version.outputs.target }}"
           echo "${RELEASE_VER}" | sudo tee mount_point/opt/app/APP_VERSION
           echo "${{ github.sha }}" | sudo tee mount_point/opt/app/commit.txt
           date -u +%Y-%m-%dT%H:%M:%SZ | sudo tee mount_point/opt/app/build_date.txt
@@ -290,12 +299,6 @@ jobs:
       - name: Compress Release Image
         run: xz -z -1 -T0 watchmybirds-rpi-${{ steps.builddate.outputs.date }}.img
 
-      - name: Resolve Release Version
-        id: version
-        run: |
-          TARGET_VER=$(bash app_code/scripts/version_info.sh next-release app_code)
-          echo "target=${TARGET_VER}" >> $GITHUB_OUTPUT
-
       - name: Create Release and Upload
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -319,24 +322,10 @@ jobs:
           sed -i "s/PLACEHOLDER_DATE/${DATE_SHORT}/g" release_notes.md
           sed -i "s/PLACEHOLDER_COMMIT/${{ github.sha }}/g" release_notes.md
 
-          # Append the CHANGELOG.md section for this version, if one exists.
-          CHANGELOG_BODY=$(bash app_code/scripts/changelog_section.sh \
-            "${{ steps.version.outputs.target }}" app_code/CHANGELOG.md)
-          if [ -z "$CHANGELOG_BODY" ]; then
-            echo "No versioned CHANGELOG section yet; using Unreleased notes."
-            CHANGELOG_BODY=$(bash app_code/scripts/changelog_section.sh \
-              Unreleased app_code/CHANGELOG.md)
-          fi
-          if [ -z "$CHANGELOG_BODY" ]; then
-            echo "::error::CHANGELOG has no notes for this release."
-            exit 1
-          fi
-          if [ -n "$CHANGELOG_BODY" ]; then
-            {
-              printf '\n## Changes\n\n'
-              printf '%s\n' "$CHANGELOG_BODY"
-            } >> release_notes.md
-          fi
+          {
+            printf '\n## Changes\n\n'
+            cat release_changes.md
+          } >> release_notes.md
 
           # Create or update the release
           if gh release view "$TAG" --repo "${{ github.repository }}" >/dev/null 2>&1; then

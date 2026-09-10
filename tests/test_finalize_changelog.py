@@ -76,7 +76,87 @@ def test_rejects_invalid_release_metadata(tmp_path: Path) -> None:
 def test_release_workflow_uses_and_archives_unreleased_notes() -> None:
     workflow = (REPO_ROOT / ".github/workflows/build-release.yml").read_text()
 
-    assert "using Unreleased notes" in workflow
-    assert "Unreleased app_code/CHANGELOG.md" in workflow
+    assert "python3 app_code/scripts/prepare_release_changelog.py" in workflow
+    assert "cat release_changes.md" in workflow
     assert 'python3 scripts/finalize_changelog.py "$RELEASED"' in workflow
     assert "git add APP_VERSION CHANGELOG.md" in workflow
+
+
+def test_release_notes_are_prepared_before_image_build(tmp_path: Path) -> None:
+    import os
+    import shutil
+
+    import yaml
+
+    workflow = yaml.safe_load(
+        (REPO_ROOT / ".github/workflows/build-release.yml").read_text()
+    )
+    steps = workflow["jobs"]["build-release"]["steps"]
+    prepare_index = next(
+        i for i, step in enumerate(steps) if step.get("id") == "version"
+    )
+    build_index = next(
+        i
+        for i, step in enumerate(steps)
+        if step.get("name") == "Build Golden Base Image On Demand"
+    )
+    assert prepare_index < build_index
+    app = tmp_path / "app_code"
+    scripts = app / "scripts"
+    scripts.mkdir(parents=True)
+    for name in (
+        "version_info.sh",
+        "changelog_section.sh",
+        "prepare_release_changelog.py",
+    ):
+        shutil.copy(REPO_ROOT / "scripts" / name, scripts / name)
+    subprocess.run(["git", "init", str(app)], check=True, capture_output=True)
+    (app / "APP_VERSION").write_text("0.5.6\n")
+    changelog = app / "CHANGELOG.md"
+    env = dict(os.environ, GITHUB_OUTPUT=str(tmp_path / "outputs"))
+    for notes, expected_success in (("", False), ("- Restore camera recovery.", True)):
+        changelog.write_text(_changelog(notes))
+        result = subprocess.run(
+            ["bash", "-c", steps[prepare_index]["run"]],
+            cwd=tmp_path,
+            env=env,
+            text=True,
+            capture_output=True,
+        )
+        assert (result.returncode == 0) is expected_success, result.stderr
+        if expected_success:
+            assert (tmp_path / "release_changes.md").read_text().strip() == notes
+        else:
+            assert "Release changelog preparation failed" in result.stderr
+            assert not (tmp_path / "release_changes.md").exists()
+
+    changelog.write_text(_changelog(""))
+    subprocess.run(["git", "-C", str(app), "add", "."], check=True)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(app),
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.com",
+            "commit",
+            "-qm",
+            "fix: restore capture",
+        ],
+        check=True,
+    )
+    result = subprocess.run(
+        ["bash", "-c", steps[prepare_index]["run"]],
+        cwd=tmp_path,
+        env=env,
+        text=True,
+        capture_output=True,
+    )
+    assert result.returncode == 0, result.stderr
+    notes = (tmp_path / "release_changes.md").read_text().strip()
+    assert "fix: restore capture" in notes
+    assert notes in result.stdout
+    finalize_changelog(changelog, "0.5.6", "2026-09-10")
+    assert notes in changelog.read_text()
