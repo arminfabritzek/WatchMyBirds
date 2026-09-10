@@ -627,6 +627,7 @@ def index_route():
         empty_latest_message="No detections in the last 24 hours.",
         image_width=IMAGE_WIDTH,
         today_iso=today_iso,
+        stream_source_mode=config.get("STREAM_SOURCE_MODE", "auto"),
         today_detection_count=today_detection_count,
         is_quiet_today=is_quiet_today,
         recent_archive_preview=recent_archive_preview,

@@ -3552,7 +3552,6 @@ def go2rtc_health_public():
             logger.info(
                 "go2rtc health probe failed [%s]",
                 type(exc).__name__,
-                exc_info=True,
             )
             healthy = False
             detail = type(exc).__name__
