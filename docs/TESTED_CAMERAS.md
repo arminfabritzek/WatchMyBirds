@@ -19,6 +19,7 @@ If you have tested a camera not listed here, please open an issue or PR to add i
 | SV3C PTZ (15× Optical Zoom) | RTSP | 2560×1920, 2560×1440 | ✅ Working | Advanced camera control was unreliable in testing; RTSP recommended | Developer | 2026-02 |
 | Raspberry Pi Camera Module (CSI) | CSI / USB | 1080p | ✅ Working | Also works via motionEyeOS | Developer | 2026-02 |
 | USB Webcam + motionEyeOS | RTSP | 1080p | ✅ Working | Stream via motionEyeOS on Raspberry Pi | Developer | 2026-02 |
+| Blue Iris (NVR) | RTSP | up to 4K | ✅ Working | Acts as a camera proxy — any camera supported by Blue Iris works through its RTSP re-stream. | Community | 2026-09 |
 
 > **Note:** Cameras are tested by community members in their own environments.
 > Results may vary depending on firmware version, network setup, and configuration.
