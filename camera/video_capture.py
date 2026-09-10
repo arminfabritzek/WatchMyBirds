@@ -1362,6 +1362,8 @@ class VideoCapture:
                 f"event=recovery_blocked_breaker attempt_id={attempt_id} "
                 f"trigger={trigger} offline_remaining={remaining:.1f}s"
             )
+            if trigger == "scheduled_reinit":
+                self._schedule_reinit(reason=reason)
             return
         # Prune old timestamps and check threshold
         self._breaker_timestamps = [
@@ -1374,6 +1376,7 @@ class VideoCapture:
                 f"trigger={trigger} attempts_in_window={len(self._breaker_timestamps)} "
                 f"offline_sec={self._breaker_offline_sec}"
             )
+            self._schedule_reinit(reason=reason)
             return
 
         # --- Cooldown check (Step 2) ---
@@ -1383,6 +1386,8 @@ class VideoCapture:
                 f"event=recovery_cooldown attempt_id={attempt_id} "
                 f"trigger={trigger} cooldown_remaining={remaining:.1f}s"
             )
+            if trigger == "scheduled_reinit":
+                self._schedule_reinit(reason=reason)
             return
 
         # --- Single-flight gate (Step 1) ---
@@ -1402,7 +1407,12 @@ class VideoCapture:
                 f"event=recovery_start attempt_id={attempt_id} trigger={trigger} "
                 f"reason={reason} breaker_count={len(self._breaker_timestamps)}"
             )
-            self._reinitialize_camera(reason=f"[{trigger}] {reason}")
+            if self._reinitialize_camera(reason=f"[{trigger}] {reason}") is False:
+                logger.info(
+                    f"event=recovery_end attempt_id={attempt_id} "
+                    f"trigger={trigger} result=deferred"
+                )
+                return
             logger.info(
                 f"event=recovery_end attempt_id={attempt_id} trigger={trigger} result=ok"
             )
@@ -1423,7 +1433,13 @@ class VideoCapture:
     # ------------------------------------------------------------------
     def _schedule_reinit(self, reason):
         """Schedule ONE pending reinit timer (coalesced)."""
-        delay = min(2**self.retry_count, 60)
+        # A timer must survive the dispatcher's cooldown and circuit breaker.
+        now = time.time()
+        delay = max(
+            min(2**self.retry_count, 60),
+            self._recovery_cooldown_until - now + 0.1,
+            self._breaker_offline_until - now + 0.1,
+        )
         with self._pending_reinit_lock:
             if self._pending_reinit_timer is not None:
                 self._pending_reinit_timer.cancel()
@@ -1439,7 +1455,7 @@ class VideoCapture:
             timer.start()
         logger.debug(f"event=reinit_scheduled delay={delay}s reason={reason}")
 
-    def _reinitialize_camera(self, reason="Unknown"):
+    def _reinitialize_camera(self, reason: str = "Unknown") -> bool:
         """
         Internal recovery action.  Do NOT call directly from hot paths;
         use request_recovery() instead.
@@ -1449,7 +1465,7 @@ class VideoCapture:
             logger.debug(
                 "Reinitialization is already being performed in another thread."
             )
-            return
+            return False
 
         try:
             logger.debug(f"Reinitializing camera due to: {reason}")
@@ -1457,7 +1473,7 @@ class VideoCapture:
                 logger.debug("Maximum retry attempts reached. Scheduling longer delay.")
                 self.retry_count = 0
                 self._schedule_reinit(reason="Retry after max attempts")
-                return
+                return False
 
             self.retry_count += 1
             logger.debug(f"Reinitialization attempt {self.retry_count}/5.")
@@ -1474,7 +1490,7 @@ class VideoCapture:
                 self._schedule_reinit(
                     reason="Reader thread alive after stop during reinit"
                 )
-                return
+                return False
 
             self.stop_event.clear()
             self.stop_flag = False
@@ -1488,6 +1504,7 @@ class VideoCapture:
             self._start_health_check_thread()
             logger.debug("Reinitialization successful.")
             self.retry_count = 0
+            return True
         except Exception as e:
             logger.debug(f"Reinitialization failed: {e}")
             raise  # let request_recovery handle scheduling

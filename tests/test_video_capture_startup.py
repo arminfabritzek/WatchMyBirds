@@ -217,7 +217,9 @@ def test_setup_ffmpeg_cleans_stale_ffmpeg_children_before_new_start(monkeypatch)
         "killpg",
         lambda _pid, _sig: (_ for _ in ()).throw(ProcessLookupError()),
     )
-    monkeypatch.setattr(vc_module.subprocess, "Popen", lambda *_args, **_kw: new_process)
+    monkeypatch.setattr(
+        vc_module.subprocess, "Popen", lambda *_args, **_kw: new_process
+    )
 
     cap._setup_ffmpeg()
 
@@ -226,3 +228,51 @@ def test_setup_ffmpeg_cleans_stale_ffmpeg_children_before_new_start(monkeypatch)
     assert cap.ffmpeg_process is new_process
     assert cap.ffmpeg_pid == new_process.pid
     assert set(cap._child_registry) == {new_process.pid}
+
+
+def test_recovery_continues_after_five_failures(monkeypatch, caplog) -> None:
+    from unittest.mock import Mock
+
+    cap = _build_capture(monkeypatch)
+    clock = [100.0]
+    timers = []
+    monkeypatch.setattr(vc_module.time, "time", lambda: clock[0])
+
+    def timer_factory(delay, callback, kwargs):
+        timer = Mock()
+        timers.append((delay, callback, kwargs))
+        return timer
+
+    monkeypatch.setattr(vc_module.threading, "Timer", timer_factory)
+    cap.retry_count = 5
+    with caplog.at_level("INFO"):
+        cap.request_recovery("scheduled_reinit", "previous failures")
+    assert "result=ok" not in caplog.text
+    assert cap.retry_count == 0
+    delay, callback, kwargs = timers[-1]
+    assert clock[0] + delay > cap._recovery_cooldown_until
+    recovered = Mock(return_value=True)
+    monkeypatch.setattr(cap, "_reinitialize_camera", recovered)
+    clock[0] += delay
+    callback(**kwargs)
+    recovered.assert_called_once()
+
+
+@pytest.mark.parametrize("blocked_by", ["cooldown", "breaker", "trip"])
+def test_scheduled_recovery_survives_dispatcher_blocks(monkeypatch, blocked_by) -> None:
+    from unittest.mock import Mock
+
+    cap = _build_capture(monkeypatch)
+    monkeypatch.setattr(vc_module.time, "time", lambda: 100.0)
+    timer_factory = Mock()
+    monkeypatch.setattr(vc_module.threading, "Timer", timer_factory)
+    if blocked_by == "cooldown":
+        cap._recovery_cooldown_until = 105.0
+    elif blocked_by == "breaker":
+        cap._breaker_offline_until = 160.0
+    else:
+        cap._breaker_timestamps = [99.0] * cap._breaker_threshold
+    cap.request_recovery("scheduled_reinit", "retry")
+    delay = timer_factory.call_args.args[0]
+    assert 100.0 + delay > max(cap._recovery_cooldown_until, cap._breaker_offline_until)
+    timer_factory.return_value.start.assert_called_once()
