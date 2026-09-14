@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import threading
 import time
-from datetime import UTC
 
 import pytest
 
@@ -184,6 +183,20 @@ def test_progress_updates_visible_to_callers():
     nightly_job_hub.stop("prog")
 
 
+def test_crashed_job_exposes_error_status():
+    class _CrashingJob(_FakeJob):
+        def run(self, stop_event, reason):
+            raise RuntimeError("retention test failure")
+
+    nightly_job_hub.register_job(_CrashingJob("crash"))
+    nightly_job_hub.run_now("crash")
+    nightly_job_hub._registry["crash"].thread.join(timeout=1)
+
+    status = nightly_job_hub.status("crash")
+    assert status["last_rc"] == 1
+    assert status["last_error"] == "RuntimeError: retention test failure"
+
+
 def test_should_run_in_daily_loop_false_skips_fire():
     """A job that returns False from should_run_in_daily_loop is
     not fired by the daily loop, even at night."""
@@ -198,10 +211,25 @@ def test_should_run_in_daily_loop_false_skips_fire():
     nightly_job_hub._maybe_fire_due_jobs()  # type: ignore[attr-defined]
     # The fake should NOT have started.
     assert not j.started_event.is_set()
-    # But the date guard IS marked, so next minute won't retry.
-    from datetime import datetime
-    today = datetime.now(tz=UTC).date().isoformat()
-    assert nightly_job_hub._last_fire_date.get("opt_out") == today  # type: ignore[attr-defined]
+    # No date is recorded: a live config change may make it eligible later.
+    assert "opt_out" not in nightly_job_hub._last_fire_date  # type: ignore[attr-defined]
+
+
+def test_only_independent_job_fires_without_night_pause():
+    class _IndependentJob(_FakeJob):
+        @property
+        def requires_night_pause(self) -> bool:
+            return False
+
+    night_job = _FakeJob("night", run_seconds=0.05)
+    independent = _IndependentJob("independent", run_seconds=0.05)
+    nightly_job_hub.register_job(night_job)
+    nightly_job_hub.register_job(independent)
+
+    nightly_job_hub._maybe_fire_due_jobs(is_night=False)
+
+    assert independent.started_event.wait(timeout=1)
+    assert not night_job.started_event.is_set()
 
 
 def test_daily_loop_fires_each_job_once_per_day():

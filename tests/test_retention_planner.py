@@ -53,14 +53,15 @@ def test_old_reviewed_image_with_derivatives_is_deletable(output_dir):
 
 
 def test_recent_image_is_not_deletable(output_dir):
-    # Recent images are pre-filtered out by the day-prefix cutoff; the
-    # Policy P2 rule is unit-tested separately in test_retention_policy.
+    # Recent images are pre-filtered from expensive protection queries but
+    # still reported so an empty preview explains why nothing is freed.
     fn = "20260530_120000_b.jpg"  # 2 days before NOW
     with closing_connection() as conn:
         seed_image(conn, fn, output_dir)
         plan = retention_core.build_plan(conn, str(output_dir), SETTINGS, now=NOW)
 
     assert plan.deletable == []
+    assert plan.protected_counts["too_recent"] == 1
 
 
 def test_missing_derivative_protects_original(output_dir):
@@ -102,7 +103,11 @@ def test_already_deleted_original_is_not_redeletable(output_dir):
     fn = "20260101_120004_f.jpg"
     with closing_connection() as conn:
         seed_image(
-            conn, fn, output_dir, original_present=0, write_original=False,
+            conn,
+            fn,
+            output_dir,
+            original_present=0,
+            write_original=False,
             original_deleted_at="2026-05-01T00:00:00+00:00",
         )
         plan = retention_core.build_plan(conn, str(output_dir), SETTINGS, now=NOW)

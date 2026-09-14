@@ -25,12 +25,11 @@ def retention_preview():
 @retention_bp.route("/api/v1/retention/run", methods=["POST"])
 @login_required
 def retention_run():
-    result = retention_service.run()
+    result = retention_service.start_run()
     logger.info(
-        "retention run: deleted=%s freed_bytes=%s missing=%s errors=%s",
-        result.get("deleted"),
-        result.get("freed_bytes"),
-        result.get("missing"),
-        result.get("errors"),
+        "retention run request: status=%s reason=%s",
+        result.get("status"),
+        result.get("reason"),
     )
-    return jsonify(result)
+    code = 200 if result.get("status") != "unknown_job" else 503
+    return jsonify(result), code

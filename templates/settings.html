@@ -1017,6 +1017,23 @@
         return `${v.toFixed(1)} ${u[i]}`;
     }
 
+    const _retentionReasonLabels = {
+        too_recent: 'inside the retention window',
+        missing_derivative: 'missing a required display derivative',
+        favorite: 'favourites',
+        unreviewed: 'unreviewed',
+        export_relevant: 'needed for training export',
+        already_deleted: 'original already absent',
+        disabled: 'retention is off',
+    };
+
+    function _retentionProtectionText(protectedCounts) {
+        const entries = Object.entries(protectedCounts || {})
+            .filter(([, count]) => count > 0)
+            .map(([reason, count]) => `${_retentionReasonLabels[reason] || reason}: ${count}`);
+        return entries.join(', ') || 'none';
+    }
+
     function retentionPreview() {
         const out = document.getElementById('retentionResult');
         out.textContent = 'Calculating…';
@@ -1028,10 +1045,7 @@
                     return;
                 }
                 const prot = data.protected || {};
-                const protLine = Object.keys(prot)
-                    .filter(k => prot[k] > 0)
-                    .map(k => `${k}: ${prot[k]}`)
-                    .join(', ') || 'none';
+                const protLine = _retentionProtectionText(prot);
                 out.innerHTML =
                     `Posture: <strong>${data.posture}</strong>. ` +
                     `Would retire <strong>${data.deletable.count}</strong> original(s), ` +
@@ -1044,14 +1058,17 @@
     function retentionRun() {
         if (!confirm('Delete the full-resolution originals selected by the retention policy? This cannot be undone (previews and metadata are kept).')) return;
         const out = document.getElementById('retentionResult');
-        out.textContent = 'Cleaning up…';
+        out.textContent = 'Starting cleanup…';
         fetch('/api/v1/retention/run', { method: 'POST' })
-            .then(res => res.json())
+            .then(res => res.json().then(data => {
+                if (!res.ok) throw new Error(data.status || `HTTP ${res.status}`);
+                return data;
+            }))
             .then(data => {
-                out.innerHTML =
-                    `Deleted <strong>${data.deleted}</strong> original(s), ` +
-                    `freed <strong>${_fmtBytes(data.freed_bytes)}</strong>. ` +
-                    `Missing: ${data.missing}, errors: ${data.errors}.`;
+                out.textContent = data.status === 'already_running'
+                    ? 'Cleanup is already running. Status updates appear below.'
+                    : 'Cleanup started. Status updates appear below.';
+                nightlyStartPolling();
             })
             .catch(err => { out.textContent = `Error: ${err.message || 'request failed'}`; });
     }
@@ -2219,17 +2236,17 @@
          ╚══════════════════════════════════════════════════╝ -->
     <div class="settings-panel" id="panelNightlyJobs">
         <button type="button" class="settings-panel__trigger" onclick="togglePanel('panelNightlyJobs')"
-                title="Background work that runs while OD is paused at night (CLIP aesthetic tagger, crop sharpness scoring, ...)">
+                title="Daily background work and jobs that wait for the nightly detection pause">
             Nightly Jobs
-            <span class="settings-panel__trigger-info">Manual trigger + status for night-only batch work</span>
+            <span class="settings-panel__trigger-info">Manual trigger + status for scheduled batch work</span>
             <svg class="settings-panel__chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
         </button>
         <div class="settings-panel__body">
             <p class="settings-field__help mb-3">
-                These jobs run automatically once per night while OD is paused. You can
-                also trigger them manually here — useful for re-running after a code
-                change, or running a backfill against existing data. Each job has its
-                own lock; two clicks while a job is running will skip the second.
+                Jobs run at most once per day. Resource-heavy jobs wait until OD is
+                paused at night; Storage Retention runs independently after its own
+                explicit opt-in. You can also trigger jobs manually here. Each job has
+                its own lock; two clicks while a job is running skip the second.
             </p>
             <div id="nightlyJobsContainer" class="d-flex flex-column gap-2">
                 <div class="text-muted">Loading…</div>
@@ -2252,9 +2269,11 @@
                 crops and detection boxes always remain. Anything still needed
                 for the training export, and favourites, are never removed. Use
                 <strong>Preview</strong> first to see exactly what would be freed.
+                Retained derivatives and protected data can continue growing, so
+                retention is not a fixed total-storage limit.
             </p>
 
-            {% set _posture = payload['RETENTION_POSTURE'].value if 'RETENTION_POSTURE' in payload else 'conservative' %}
+            {% set _posture = payload['RETENTION_POSTURE'].value if 'RETENTION_POSTURE' in payload else 'off' %}
             <div class="settings-field">
                 <label class="settings-field__label" for="RETENTION_POSTURE">Retention posture</label>
                 <select name="RETENTION_POSTURE" id="RETENTION_POSTURE" class="form-control">
@@ -2267,6 +2286,19 @@
                     only; metadata, stats, previews, crops and boxes remain.
                     Export-relevant frames and favourites stay protected in
                     every posture.
+                </div>
+            </div>
+
+            <div class="settings-field mt-3">
+                <label class="settings-field__label" for="RETENTION_AUTO_ENABLED">Automatic daily cleanup</label>
+                <select name="RETENTION_AUTO_ENABLED" id="RETENTION_AUTO_ENABLED" class="form-control">
+                    <option value="false" {% if not payload['RETENTION_AUTO_ENABLED'].value %}selected{% endif %}>Off — manual cleanup only</option>
+                    <option value="true" {% if payload['RETENTION_AUTO_ENABLED'].value %}selected{% endif %}>On — run once per day</option>
+                </select>
+                <div class="settings-field__help">
+                    This is a separate opt-in. Automatic runs start once per day,
+                    independent of detection pauses, when this switch is On and
+                    the retention posture is not Off.
                 </div>
             </div>
 
@@ -2287,10 +2319,13 @@
             </div>
 
             <div class="d-flex gap-2 mt-4">
-                <button type="button" class="btn btn--secondary" onclick="retentionPreview()">Preview</button>
-                <button type="button" class="btn btn--danger" onclick="retentionRun()">Clean up now</button>
+                <button type="button" class="btn btn--secondary" onclick="retentionPreview()"
+                        title="Calculate what retention would remove" aria-label="Preview storage retention">Preview</button>
+                <button type="button" class="btn btn--danger" onclick="retentionRun()"
+                        title="Start cleanup of eligible originals" aria-label="Run storage retention now">Clean up now</button>
             </div>
             <div id="retentionResult" class="settings-field__help mt-3" role="status"></div>
+            <div id="retentionLastRun" class="settings-field__help mt-2" role="status">No cleanup run recorded.</div>
         </div>
     </div>
 
@@ -3451,6 +3486,11 @@
 
         // Open clicked if it was closed
         if (!wasOpen) panel.classList.add('is-open');
+
+        // One accordion action can close either scheduled-job panel while
+        // opening another. Recompute both visibility states together so the
+        // polling handle never relies on stale per-panel flags.
+        requestAnimationFrame(scheduledJobPanelsVisibilityCheck);
     }
 
     // Init
@@ -4611,6 +4651,7 @@
 
     let _nightlyPollHandle = null;
     let _nightlyPollVisible = false;
+    let _retentionPollVisible = false;
 
     function _nightlyFmtTime(iso) {
         if (!iso) return '—';
@@ -4654,7 +4695,8 @@
         } else if (job.last_started_at) {
             const rc = job.last_rc;
             const ok = rc === 0;
-            statusLine = `Idle — last run ${_nightlyFmtTime(job.last_finished_at)} (${ok ? 'ok' : 'rc=' + rc})`;
+            statusLine = `Idle — last run ${_nightlyFmtTime(job.last_finished_at)} (${ok ? 'ok' : 'failed'})`;
+            if (job.last_error) statusLine += ` — ${job.last_error}`;
         } else {
             statusLine = 'Idle — no run yet this session';
         }
@@ -4677,6 +4719,13 @@
         statusEl.textContent = statusLine;
         labelCol.appendChild(nameEl);
         labelCol.appendChild(statusEl);
+        if (job.name === 'retention' && job.last_started_at) {
+            const detailEl = document.createElement('div');
+            detailEl.className = 'settings-field__help';
+            detailEl.style.marginTop = '0.25rem';
+            detailEl.textContent = _retentionResultText(job);
+            labelCol.appendChild(detailEl);
+        }
 
         const btnCol = document.createElement('div');
         btnCol.className = 'd-flex gap-2';
@@ -4686,6 +4735,8 @@
         runBtn.className = 'btn btn--primary btn--sm';
         runBtn.textContent = 'Run now';
         runBtn.disabled = running;
+        runBtn.title = running ? 'This job is already running' : 'Start this job now';
+        runBtn.setAttribute('aria-label', `Run ${String(job.display_name ?? job.name)} now`);
         // Capture the slug as a closure, not interpolated into HTML.
         const jobName = String(job.name ?? '');
         runBtn.addEventListener('click', () => nightlyRunNow(jobName));
@@ -4695,6 +4746,8 @@
         stopBtn.className = 'btn btn--secondary btn--sm';
         stopBtn.textContent = 'Stop';
         stopBtn.disabled = !running;
+        stopBtn.title = running ? 'Request a clean stop' : 'This job is not running';
+        stopBtn.setAttribute('aria-label', `Stop ${String(job.display_name ?? job.name)}`);
         if (jobName === 'aesthetic_tagger') {
             stopBtn.title = 'Best-effort: the CLIP tagger finishes the '
                 + 'current image before stopping, so it may run a few '
@@ -4709,6 +4762,26 @@
         row.appendChild(btnCol);
         wrapper.appendChild(row);
         return wrapper;
+    }
+
+    function _retentionResultText(job) {
+        const progress = job.progress || {};
+        if (job.last_error) return `Error: ${job.last_error}`;
+        if (typeof progress.deleted !== 'number') return 'No result details available.';
+        const stopped = progress.stopped === true ? ' Stopped before completion.' : '';
+        return `Removed ${progress.deleted} original(s), freed ${_fmtBytes(progress.freed_bytes)}, `
+            + `missing ${progress.missing || 0}, errors ${progress.errors || 0}. `
+            + `Protected: ${_retentionProtectionText(progress.protected)}.${stopped}`;
+    }
+
+    function _updateRetentionLastRun(job) {
+        const target = document.getElementById('retentionLastRun');
+        if (!target || !job) return;
+        if (job.running) {
+            target.textContent = `Cleanup running. ${_retentionResultText(job)}`;
+        } else if (job.last_started_at) {
+            target.textContent = `Last run ${_nightlyFmtTime(job.last_finished_at)}. ${_retentionResultText(job)}`;
+        }
     }
 
     function _nightlySetMessage(container, text, cssClass) {
@@ -4748,6 +4821,12 @@
             }
             for (const job of jobs) {
                 container.appendChild(_nightlyBuildRow(job));
+            }
+            const retentionJob = jobs.find(job => job.name === 'retention');
+            _updateRetentionLastRun(retentionJob);
+            if (!_nightlyPollVisible && !_retentionPollVisible
+                    && !(retentionJob && retentionJob.running)) {
+                nightlyStopPolling();
             }
         } catch (err) {
             _nightlySetMessage(container, 'Error: ' + err, 'text-danger');
@@ -4794,34 +4873,29 @@
         }
     }
 
-    function nightlyPanelVisibilityCheck() {
-        const panel = document.getElementById('panelNightlyJobs');
-        if (!panel) return;
-        // The accordion expansion adds a class; we just check if the
-        // panel body is visible by measuring computed height.
-        const body = panel.querySelector('.settings-panel__body');
-        const open = body && body.offsetHeight > 0;
-        if (open && !_nightlyPollVisible) {
-            _nightlyPollVisible = true;
+    function scheduledJobPanelsVisibilityCheck() {
+        const nightlyBody = document.querySelector(
+            '#panelNightlyJobs.is-open .settings-panel__body'
+        );
+        const retentionBody = document.querySelector(
+            '#panelRetention.is-open .settings-panel__body'
+        );
+        _nightlyPollVisible = Boolean(nightlyBody && nightlyBody.offsetHeight > 0);
+        _retentionPollVisible = Boolean(
+            retentionBody && retentionBody.offsetHeight > 0
+        );
+        if (_nightlyPollVisible || _retentionPollVisible) {
             nightlyStartPolling();
-        } else if (!open && _nightlyPollVisible) {
-            _nightlyPollVisible = false;
+        } else {
             nightlyStopPolling();
         }
     }
 
     document.addEventListener('DOMContentLoaded', function () {
-        // Check on every panel toggle. The togglePanel() function
-        // mutates classes synchronously, so we re-check on the next
-        // animation frame.
-        document.querySelectorAll('#panelNightlyJobs .settings-panel__trigger').forEach(btn => {
-            btn.addEventListener('click', () => {
-                requestAnimationFrame(nightlyPanelVisibilityCheck);
-            });
-        });
         // First load: if the panel is already open (e.g. browser
         // restored state), start polling.
-        nightlyPanelVisibilityCheck();
+        scheduledJobPanelsVisibilityCheck();
+        nightlyRefreshOnce();
     });
 
     // ====================================================================

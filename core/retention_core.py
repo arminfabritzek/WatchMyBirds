@@ -13,7 +13,11 @@ module and nothing from utils (H-01 enforcement-test rule).
 from __future__ import annotations
 
 import datetime as dt
+import json
+import os
+import sqlite3
 from collections import Counter
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -46,8 +50,8 @@ def resolve_posture_settings(settings: dict[str, Any]) -> dict[str, Any]:
             "off" if not settings.get("RETENTION_ENABLED", False) else "conservative"
         )
     elif posture not in VALID_POSTURES:
-        # Explicit-but-invalid value falls back to the safe posture.
-        posture = "conservative"
+        # Invalid configuration must never turn deletion on.
+        posture = "off"
 
     resolved = dict(settings)
     if posture == "off":
@@ -189,46 +193,86 @@ def build_plan(
     # be deletable, so excluding them keeps the planner off the full table.
     window = int(settings.get("RETENTION_DAYS", 90))
     cutoff = (now - dt.timedelta(days=window)).strftime("%Y%m%d")
-    candidates = retention_db.iter_candidate_images(conn, cutoff_prefix=cutoff)
-
-    # Resolve export-relevance and the per-image thumbnail names once for the
-    # whole candidate set (one query each), rather than per row.
-    filenames = [c["filename"] for c in candidates]
-    export_relevant = user_groundtruth_core.is_export_relevant_any(conn, filenames)
-    thumb_names = retention_db.thumbnail_names_for_images(conn, filenames)
-
     plan = RetentionPlan()
     protected: Counter[str] = Counter()
-
-    for cand in candidates:
-        filename = cand["filename"]
-        age_days = _age_days(cand["timestamp"], now)
-        facts = {
-            "age_days": age_days,
-            "original_present": cand["original_present"],
-            "derivatives_present": _derivatives_present(
-                path_mgr, filename, thumb_names.get(filename, [])
-            ),
-            "is_favorite": cand["is_favorite"],
-            "export_relevant": filename in export_relevant,
-            "review_status": cand["review_status"],
-        }
-        action, reason = decide(facts, settings)
-        if action == "delete":
-            original_path = path_mgr.get_original_path(filename)
-            try:
-                size = original_path.stat().st_size
-            except OSError:
-                size = 0
-            plan.deletable.append(
-                {"filename": filename, "bytes": size, "age_days": age_days}
-            )
-            plan.estimated_bytes += size
-        else:
-            protected[reason or "unknown"] += 1
+    candidate_count = retention_db.count_candidate_images(conn, cutoff_prefix=cutoff)
+    protected["too_recent"] = max(
+        0, retention_db.count_present_images(conn) - candidate_count
+    )
+    for candidates in retention_db.iter_candidate_image_batches(
+        conn, cutoff_prefix=cutoff
+    ):
+        batch_plan = _partition_candidates(conn, path_mgr, candidates, settings, now)
+        plan.deletable.extend(batch_plan.deletable)
+        plan.estimated_bytes += batch_plan.estimated_bytes
+        protected.update(batch_plan.protected_counts)
 
     plan.protected_counts = dict(protected)
     return plan
+
+
+def _partition_candidates(
+    conn: sqlite3.Connection,
+    path_mgr: PathManager,
+    candidates: list[dict[str, Any]],
+    settings: dict[str, Any],
+    now: dt.datetime,
+) -> RetentionPlan:
+    """Resolve bounded DB facts and partition one candidate batch."""
+    filenames = [candidate["filename"] for candidate in candidates]
+    export_relevant = user_groundtruth_core.is_export_relevant_any(conn, filenames)
+    thumb_names = retention_db.thumbnail_names_for_images(conn, filenames)
+    plan = RetentionPlan()
+    protected: Counter[str] = Counter()
+
+    for candidate in candidates:
+        filename = candidate["filename"]
+        age_days = _age_days(candidate["timestamp"], now)
+        facts = {
+            "age_days": age_days,
+            "original_present": candidate["original_present"],
+            "derivatives_present": _derivatives_present(
+                path_mgr, filename, thumb_names.get(filename, [])
+            ),
+            "is_favorite": candidate["is_favorite"],
+            "export_relevant": filename in export_relevant,
+            "review_status": candidate["review_status"],
+        }
+        action, reason = decide(facts, settings)
+        if action == "protect":
+            protected[reason or "unknown"] += 1
+            continue
+        original_path = path_mgr.get_original_path(filename)
+        try:
+            size = original_path.stat().st_size
+        except OSError:
+            size = 0
+        plan.deletable.append(
+            {"filename": filename, "bytes": size, "age_days": age_days}
+        )
+        plan.estimated_bytes += size
+
+    plan.protected_counts = dict(protected)
+    return plan
+
+
+def _current_decision(
+    conn: sqlite3.Connection,
+    path_mgr: PathManager,
+    filename: str,
+    settings: dict[str, Any],
+    now: dt.datetime,
+) -> Decision:
+    """Re-check mutable protection facts immediately before deletion."""
+    candidate = retention_db.candidate_image(conn, filename)
+    if candidate is None:
+        return "protect", "already_deleted"
+    current_plan = _partition_candidates(conn, path_mgr, [candidate], settings, now)
+    if current_plan.deletable:
+        return "delete", None
+    if current_plan.protected_counts:
+        return "protect", next(iter(current_plan.protected_counts))
+    return "protect", "unknown"
 
 
 # ---------------------------------------------------------------------------
@@ -241,7 +285,10 @@ def execute_plan(
     output_dir: str,
     settings: dict[str, Any],
     now: dt.datetime | None = None,
-) -> dict[str, int]:
+    *,
+    stop_requested: Callable[[], bool] | None = None,
+    progress_callback: Callable[[dict[str, Any]], None] | None = None,
+) -> dict[str, Any]:
     """Delete deletable originals and record the outcome.
 
     Order per file: ``_safe_delete`` (file) FIRST, then mark the DB
@@ -251,47 +298,116 @@ def execute_plan(
     (e.g. out-of-OUTPUT_DIR, unlink failure) is counted and skips only
     that file's DB update.
 
-    Returns {"deleted", "freed_bytes", "missing", "errors"}.
+    Returns deletion totals, protection reasons, progress totals, and whether
+    a cooperative stop interrupted the run.
     """
     # Imported lazily so the pure Policy half of this module has no IO deps.
     from pathlib import Path
 
     from utils.file_gc import _safe_delete
 
-    plan = build_plan(conn, output_dir, settings, now=now)
+    if now is None:
+        now = dt.datetime.now(dt.UTC)
     path_mgr = PathManager(output_dir)
     out_path = Path(output_dir)
+    cutoff = (
+        now - dt.timedelta(days=int(settings.get("RETENTION_DAYS", 90)))
+    ).strftime("%Y%m%d")
+    candidate_total = retention_db.count_candidate_images(conn, cutoff_prefix=cutoff)
+    total = retention_db.count_present_images(conn)
 
     deleted = 0
     freed_bytes = 0
     missing = 0
     errors = 0
+    protected: Counter[str] = Counter()
+    protected["too_recent"] = max(0, total - candidate_total)
+    processed = protected["too_recent"]
+    stopped = False
 
-    for item in plan.deletable:
-        filename = item["filename"]
-        original_path = path_mgr.get_original_path(filename)
-        result = _safe_delete(original_path, out_path)
+    def report_progress() -> None:
+        if progress_callback is not None:
+            progress_callback(
+                {
+                    "total": total,
+                    "done": processed,
+                    "deleted": deleted,
+                    "freed_bytes": freed_bytes,
+                    "missing": missing,
+                    "errors": errors,
+                    "protected": dict(protected),
+                }
+            )
 
-        if result in ("error", "skipped"):
-            # Never touched the file -> do not mark the DB as deleted.
-            errors += 1
-            continue
+    report_progress()
+    for candidates in retention_db.iter_candidate_image_batches(
+        conn, cutoff_prefix=cutoff
+    ):
+        if stop_requested is not None and stop_requested():
+            stopped = True
+            report_progress()
+            break
+        batch_plan = _partition_candidates(conn, path_mgr, candidates, settings, now)
+        protected.update(batch_plan.protected_counts)
+        processed += len(candidates) - len(batch_plan.deletable)
+        if stop_requested is not None and stop_requested():
+            stopped = True
+            report_progress()
+            break
 
-        # "deleted" or "missing": record the original as gone and commit.
-        retention_db.mark_original_deleted(conn, filename, now_iso(now))
-        conn.commit()
+        for item in batch_plan.deletable:
+            if stop_requested is not None and stop_requested():
+                stopped = True
+                break
+            filename = item["filename"]
+            # Serialize the final protection read, file deletion, and DB marker
+            # against concurrent protection writes. A favourite/export update
+            # that commits first is visible here; one that starts later waits
+            # until the deletion outcome is committed.
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                action, reason = _current_decision(
+                    conn, path_mgr, filename, settings, now
+                )
+                if action == "protect":
+                    protected[reason or "unknown"] += 1
+                    processed += 1
+                    conn.rollback()
+                    continue
 
-        if result == "deleted":
-            deleted += 1
-            freed_bytes += int(item.get("bytes", 0))
-        elif result == "missing":
-            missing += 1
+                original_path = path_mgr.get_original_path(filename)
+                result = _safe_delete(original_path, out_path)
+                processed += 1
+
+                if result in ("error", "skipped"):
+                    errors += 1
+                    conn.rollback()
+                    continue
+
+                retention_db.mark_original_deleted(conn, filename, now_iso(now))
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+
+            if result == "deleted":
+                deleted += 1
+                freed_bytes += int(item.get("bytes", 0))
+            elif result == "missing":
+                missing += 1
+        report_progress()
+        if stopped:
+            break
 
     return {
         "deleted": deleted,
         "freed_bytes": freed_bytes,
         "missing": missing,
         "errors": errors,
+        "protected": dict(protected),
+        "processed": processed,
+        "total": total,
+        "stopped": stopped,
     }
 
 
@@ -358,7 +474,11 @@ def preview() -> dict[str, Any]:
     }
 
 
-def run() -> dict[str, int]:
+def run(
+    *,
+    stop_requested: Callable[[], bool] | None = None,
+    progress_callback: Callable[[dict[str, Any]], None] | None = None,
+) -> dict[str, Any]:
     """Execute retention against the live DB/output dir."""
     from config import get_config
     from utils.db import closing_connection
@@ -368,7 +488,39 @@ def run() -> dict[str, int]:
     settings = _settings_from_config()
 
     with closing_connection() as conn:
-        return execute_plan(conn, output_dir, settings)
+        return execute_plan(
+            conn,
+            output_dir,
+            settings,
+            stop_requested=stop_requested,
+            progress_callback=progress_callback,
+        )
+
+
+def load_last_run_status() -> dict[str, Any]:
+    """Load the last completed retention-job status across app restarts."""
+    from config import get_config
+
+    path = PathManager(str(get_config()["OUTPUT_DIR"])).get_retention_status_path()
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def save_last_run_status(payload: dict[str, Any]) -> None:
+    """Atomically persist the last completed retention-job status."""
+    from config import get_config
+
+    path = PathManager(str(get_config()["OUTPUT_DIR"])).get_retention_status_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(".json.tmp")
+    temporary.write_text(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n",
+        encoding="utf-8",
+    )
+    os.replace(temporary, path)
 
 
 def is_original_retention_deleted(filename: str) -> bool:

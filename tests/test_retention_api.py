@@ -1,5 +1,7 @@
 """Retention API — preview + run routes and missing-original (410) serving."""
 
+import threading
+
 import pytest
 from flask import Flask
 
@@ -48,13 +50,18 @@ def client(output_dir, monkeypatch):
     app.secret_key = "test-secret-key"
     from web.blueprints.auth import auth_bp
     from web.blueprints.retention import retention_bp
+    from web.services import nightly_job_hub
+    from web.services.nightly_jobs.retention_job import RetentionJob
 
+    nightly_job_hub._registry.clear()
+    nightly_job_hub.register_job(RetentionJob())
     app.register_blueprint(auth_bp)
     app.register_blueprint(retention_bp)
     with app.test_client() as c:
         with c.session_transaction() as sess:
             sess["authenticated"] = True
         yield c
+    nightly_job_hub._registry.clear()
 
 
 def test_preview_returns_counts_and_is_side_effect_free(client, output_dir):
@@ -111,15 +118,23 @@ def test_conservative_protects_unreviewed_but_reclaim_retires_it(
     assert rec["protected"]["unreviewed"] == 0
 
 
-def test_run_deletes_previewed_set_and_reports_counts(client, output_dir):
+def test_run_starts_shared_job_and_deletes_previewed_set(client, output_dir):
     fn = "20260101_120000_b.jpg"
     _seed_deletable(output_dir, fn)
 
     resp = client.post("/api/v1/retention/run")
     assert resp.status_code == 200
     data = resp.get_json()
-    assert data["deleted"] == 1
-    assert data["freed_bytes"] == 1000
+    assert data["status"] == "started"
+
+    from web.services import nightly_job_hub
+
+    runtime = nightly_job_hub._registry["retention"]
+    runtime.thread.join(timeout=2)
+    status = nightly_job_hub.status("retention")
+    assert status["last_rc"] == 0
+    assert status["progress"]["deleted"] == 1
+    assert status["progress"]["freed_bytes"] == 1000
 
     assert not (output_dir / "originals" / "2026-01-01" / fn).exists()
     # Derivatives preserved.
@@ -130,6 +145,40 @@ def test_run_deletes_previewed_set_and_reports_counts(client, output_dir):
         / "2026-01-01"
         / "20260101_120000_b.webp"
     ).exists()
+
+
+def test_manual_run_cannot_overlap_existing_retention_job(client, monkeypatch):
+    from core import retention_core
+
+    started = threading.Event()
+    release = threading.Event()
+
+    def slow_run(**kwargs):
+        started.set()
+        release.wait(timeout=2)
+        return {
+            "deleted": 0,
+            "freed_bytes": 0,
+            "missing": 0,
+            "errors": 0,
+            "protected": {},
+            "processed": 0,
+            "total": 0,
+            "stopped": False,
+        }
+
+    monkeypatch.setattr(retention_core, "run", slow_run)
+    first = client.post("/api/v1/retention/run")
+    assert first.get_json()["status"] == "started"
+    assert started.wait(timeout=1)
+
+    second = client.post("/api/v1/retention/run")
+    assert second.get_json()["status"] == "already_running"
+    release.set()
+
+    from web.services import nightly_job_hub
+
+    nightly_job_hub._registry["retention"].thread.join(timeout=2)
 
 
 def test_serve_original_returns_410_when_retention_deleted(output_dir, monkeypatch):

@@ -14,9 +14,11 @@ def preview() -> dict[str, Any]:
     return retention_core.preview()
 
 
-def run() -> dict[str, int]:
-    """Execute retention (deletes deletable originals)."""
-    return retention_core.run()
+def start_run() -> dict[str, Any]:
+    """Start the registered retention job, sharing its overlap lock."""
+    from web.services.nightly_job_hub import run_now
+
+    return run_now("retention", reason="manual retention trigger")
 
 
 def is_original_retention_deleted(filename: str) -> bool:

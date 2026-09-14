@@ -1,6 +1,7 @@
 """Retention settings wired into the runtime config system."""
 
 import importlib
+from pathlib import Path
 
 import pytest
 
@@ -15,10 +16,11 @@ def fresh_config(monkeypatch, tmp_path):
     return config
 
 
-def test_defaults_present_and_conservative(fresh_config):
+def test_defaults_present_and_automatic_cleanup_off(fresh_config):
     cfg = fresh_config.get_config()
     # Feature ships OFF; protections ON; sane default window.
     assert cfg["RETENTION_ENABLED"] is False
+    assert cfg["RETENTION_AUTO_ENABLED"] is False
     assert cfg["RETENTION_DAYS"] == 90
     assert cfg["RETENTION_PROTECT_FAVORITES"] is True
     assert cfg["RETENTION_PROTECT_UNREVIEWED"] is True
@@ -27,6 +29,7 @@ def test_defaults_present_and_conservative(fresh_config):
 def test_retention_keys_are_runtime_editable(fresh_config):
     for key in (
         "RETENTION_ENABLED",
+        "RETENTION_AUTO_ENABLED",
         "RETENTION_DAYS",
         "RETENTION_PROTECT_FAVORITES",
         "RETENTION_PROTECT_UNREVIEWED",
@@ -75,11 +78,29 @@ def test_settings_round_trip_through_yaml(fresh_config):
     assert fresh_config.get_config()["RETENTION_DAYS"] == 45
 
 
+@pytest.mark.parametrize(
+    ("legacy_enabled", "expected_posture"),
+    [(True, "conservative"), (False, "off")],
+)
+def test_legacy_enabled_without_posture_migrates_on_real_load(
+    fresh_config, legacy_enabled, expected_posture
+):
+    output_dir = str(fresh_config.get_config()["OUTPUT_DIR"])
+    fresh_config.save_settings_yaml({"RETENTION_ENABLED": legacy_enabled}, output_dir)
+    fresh_config._CONFIG = None
+
+    loaded = fresh_config.get_config()
+
+    assert loaded["RETENTION_POSTURE"] == expected_posture
+    assert loaded["RETENTION_ENABLED"] is legacy_enabled
+    assert loaded["RETENTION_AUTO_ENABLED"] is False
+
+
 # --- Posture (V2) ---------------------------------------------------------
 
 
-def test_posture_default_is_conservative(fresh_config):
-    assert fresh_config.get_config()["RETENTION_POSTURE"] == "conservative"
+def test_posture_default_is_off(fresh_config):
+    assert fresh_config.get_config()["RETENTION_POSTURE"] == "off"
 
 
 def test_posture_is_runtime_editable(fresh_config):
@@ -101,3 +122,14 @@ def test_posture_validation_normalizes_case_and_whitespace(fresh_config):
 
 def test_posture_validation_rejects_unknown(fresh_config):
     assert fresh_config._validate_value("RETENTION_POSTURE", "aggressive")[0] is False
+
+
+def test_retention_polling_recomputes_both_panels_after_every_toggle():
+    template = (Path(__file__).parents[1] / "templates" / "settings.html").read_text(
+        encoding="utf-8"
+    )
+    assert "requestAnimationFrame(scheduledJobPanelsVisibilityCheck);" in template
+    assert "function scheduledJobPanelsVisibilityCheck()" in template
+    assert "_nightlyPollVisible = Boolean(" in template
+    assert "_retentionPollVisible = Boolean(" in template
+    assert "_nightlyPollVisible || _retentionPollVisible" in template

@@ -463,6 +463,10 @@ def toggle_favorite():
 
     conn = db_service.get_connection()
     try:
+        # Serialize the read-toggle-write sequence with retention's final
+        # protection-check/delete transaction. Whichever request obtains the
+        # write lock first completes its decision before the other proceeds.
+        conn.execute("BEGIN IMMEDIATE")
         # Read current state
         row = conn.execute(
             "SELECT COALESCE(is_favorite, 0) as is_favorite FROM detections WHERE detection_id = ?",

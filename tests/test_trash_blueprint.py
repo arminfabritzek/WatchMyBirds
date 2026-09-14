@@ -355,7 +355,8 @@ def test_favorite_stamps_manual_source_and_action_time(client):
     data = response.get_json()
     assert data["is_favorite"] is True
 
-    update_sql, update_params = mock_conn.execute.call_args_list[1].args
+    assert mock_conn.execute.call_args_list[0].args == ("BEGIN IMMEDIATE",)
+    update_sql, update_params = mock_conn.execute.call_args_list[2].args
     assert "rating_source = 'manual'" in update_sql
     assert "species_updated_at" in update_sql
     assert update_params[0] == 1

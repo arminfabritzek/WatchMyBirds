@@ -137,6 +137,19 @@ changes.
 |-----|---------|-------------|
 | `DEEP_SCAN_GATE_ENABLED` | `True` | When `True`, live detection and classification loops pause while a Deep Scan job runs (prevents resource contention on RPi). Set `False` to allow concurrent Deep Scan + live detection. Runtime-changeable via Settings UI. |
 
+### Storage Retention
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `RETENTION_POSTURE` | `off` | `off`, `conservative`, or `reclaim`; controls which old originals are eligible. |
+| `RETENTION_AUTO_ENABLED` | `False` | Explicit opt-in for one automatic run per UTC day, independent of whether detection pauses at night. |
+| `RETENTION_DAYS` | `90` | Originals at or below this age are retained. |
+| `RETENTION_PROTECT_FAVORITES` | `True` | Keep favourites even when their originals are otherwise eligible. |
+
+Retention removes full-resolution originals only. Derivatives, database rows,
+statistics, favourites, and export-relevant images continue to use storage, so
+this feature does not impose a fixed upper bound on total storage growth.
+
 ---
 
 ## Important Notes

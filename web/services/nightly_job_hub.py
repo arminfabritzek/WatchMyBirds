@@ -83,6 +83,15 @@ class JobBase(ABC):
         """
         return True
 
+    @property
+    def requires_night_pause(self) -> bool:
+        """Whether automatic execution must wait for OD's night pause."""
+        return True
+
+    def load_last_status(self) -> dict[str, Any]:
+        """Optional persisted lifecycle state restored during registration."""
+        return {}
+
     @abstractmethod
     def run(self, stop_event: threading.Event, reason: str) -> int:
         """Execute the job. Return 0 on success, non-zero on failure.
@@ -103,17 +112,37 @@ class _JobRuntime:
     """Per-job runtime state: lock, current thread, stop_event, last-run info."""
 
     def __init__(self, job: JobBase) -> None:
+        try:
+            restored = job.load_last_status()
+        except Exception:
+            logger.exception("nightly_job_hub: failed to restore %r status", job.name)
+            restored = {}
         self.job = job
         self.lock = threading.Lock()
         self.stop_event = threading.Event()
         self.thread: threading.Thread | None = None
-        self.last_started_at: datetime | None = None
-        self.last_finished_at: datetime | None = None
-        self.last_reason: str | None = None
-        self.last_rc: int | None = None
+        self.last_started_at = _parse_datetime(restored.get("last_started_at"))
+        self.last_finished_at = _parse_datetime(restored.get("last_finished_at"))
+        self.last_reason = restored.get("last_reason")
+        self.last_rc = restored.get("last_rc")
+        self.last_error = restored.get("last_error")
+        self.last_daily_fire_date = restored.get("last_daily_fire_date")
         # Optional progress hook the job can write to; the UI polls
         # this to render "142/8910 crops".
-        self.progress: dict[str, Any] = {}
+        progress = restored.get("progress")
+        self.progress: dict[str, Any] = (
+            dict(progress) if isinstance(progress, dict) else {}
+        )
+
+
+def _parse_datetime(value: Any) -> datetime | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
 
 
 _registry: dict[str, _JobRuntime] = {}
@@ -126,7 +155,18 @@ def register_job(job: JobBase) -> None:
         if job.name in _registry:
             logger.debug("nightly_job_hub: job %r already registered", job.name)
             return
-        _registry[job.name] = _JobRuntime(job)
+        runtime = _JobRuntime(job)
+        _registry[job.name] = runtime
+        fired_date = runtime.last_daily_fire_date
+        if (
+            not fired_date
+            and runtime.last_reason == "nightly auto"
+            and runtime.last_started_at
+        ):
+            fired_date = runtime.last_started_at.astimezone(UTC).date().isoformat()
+        if isinstance(fired_date, str):
+            if fired_date == datetime.now(tz=UTC).date().isoformat():
+                _last_fire_date[job.name] = fired_date
         logger.info("nightly_job_hub: registered job %r", job.name)
 
 
@@ -158,7 +198,8 @@ def list_jobs() -> list[dict[str, Any]]:
                 else None,
                 "last_reason": rt.last_reason,
                 "last_rc": rt.last_rc,
-                "progress": dict(rt.progress) if running else {},
+                "last_error": rt.last_error,
+                "progress": dict(rt.progress),
             }
         )
     return out
@@ -190,20 +231,18 @@ def run_now(name: str, reason: str = "manual trigger") -> dict[str, Any]:
     rt.last_finished_at = None
     rt.last_reason = reason
     rt.last_rc = None
+    rt.last_error = None
     rt.progress = {}
 
     def _worker():
         try:
-            logger.info(
-                "nightly_job_hub: starting %r (reason=%s)", rt.job.name, reason
-            )
+            logger.info("nightly_job_hub: starting %r (reason=%s)", rt.job.name, reason)
             rc = rt.job.run(rt.stop_event, reason)
             rt.last_rc = int(rc)
-            logger.info(
-                "nightly_job_hub: %r finished rc=%s", rt.job.name, rt.last_rc
-            )
-        except Exception:
+            logger.info("nightly_job_hub: %r finished rc=%s", rt.job.name, rt.last_rc)
+        except Exception as exc:
             rt.last_rc = 1
+            rt.last_error = f"{type(exc).__name__}: {exc}"
             logger.exception("nightly_job_hub: %r crashed", rt.job.name)
         finally:
             rt.last_finished_at = datetime.now(tz=UTC)
@@ -260,10 +299,8 @@ def update_progress(name: str, progress: dict[str, Any]) -> None:
 # ---------------------------------------------------------------------------
 #
 # The hub does NOT decide what "night" means — it just polls a
-# callback. The detection_manager's is_daytime() is the source of
-# truth. When that flips to night, every registered job that
-# returns ``should_run_in_daily_loop() == True`` fires once per
-# night.
+# callback. Jobs that require a quiet camera wait for that callback to report
+# night; independent maintenance jobs can opt out and still fire once daily.
 #
 # Duplicate-protection is date-based: each job tracks its last fire
 # date (UTC). A second night-trigger on the same date skips.
@@ -283,9 +320,9 @@ def start_daily_loop(
     Args:
         is_night_callback: Called every ``check_interval_s`` seconds.
             Returns True if it's currently night (i.e. OD is paused).
-            When True, every registered job is fired exactly once per
-            UTC date. Typically wired to the detection_manager's
-            ``_should_run_od_now()`` (inverted).
+            Jobs requiring a night pause wait for True; independent jobs are
+            considered on every check. Every eligible job fires at most once
+            per UTC date.
         check_interval_s: Poll interval. Default 60 s — at 1-minute
             granularity, jobs fire within a minute of dusk-plus-offset.
     """
@@ -304,8 +341,7 @@ def start_daily_loop(
         )
         while not _daily_loop_stop.is_set():
             try:
-                if is_night_callback():
-                    _maybe_fire_due_jobs()
+                _maybe_fire_due_jobs(is_night=is_night_callback())
             except Exception:
                 logger.exception("nightly_job_hub: daily loop error")
             _daily_loop_stop.wait(check_interval_s)
@@ -324,7 +360,7 @@ def stop_daily_loop() -> None:
     _daily_loop_stop.set()
 
 
-def _maybe_fire_due_jobs() -> None:
+def _maybe_fire_due_jobs(*, is_night: bool = True) -> None:
     """For each registered job, fire if not yet fired today."""
     today_iso = datetime.now(tz=UTC).date().isoformat()
     with _registry_lock:
@@ -333,8 +369,9 @@ def _maybe_fire_due_jobs() -> None:
     for rt in items:
         if _last_fire_date.get(rt.job.name) == today_iso:
             continue
+        if rt.job.requires_night_pause and not is_night:
+            continue
         if not rt.job.should_run_in_daily_loop():
-            _last_fire_date[rt.job.name] = today_iso
             continue
         # Mark first; even if run_now skips due to a manual run
         # already in progress, we don't want to retry every minute.

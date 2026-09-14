@@ -243,7 +243,7 @@ def _create_runtime():
         logger.warning(f"Aesthetic tag scheduler failed to start: {e}")
 
     # Start the Nightly Job Hub (generic registry for night-only batch
-    # work). Aesthetic-tagger and sharpness scoring both register here
+    # work). Aesthetic-tagger, retention, and sharpness scoring register here
     # so the Settings UI has one place to inspect / trigger / stop them.
     # The daily-fire loop fires registered jobs once per UTC night;
     # operators can also click "Run now" any time.
@@ -254,16 +254,17 @@ def _create_runtime():
         )
         from web.services.nightly_jobs import (
             AestheticTaggerJob,
+            RetentionJob,
             SharpnessJob,
         )
 
         register_job(AestheticTaggerJob())
+        register_job(RetentionJob())
         register_job(SharpnessJob())
 
-        # Daily-fire gate: True when OD is currently paused for night.
-        # When the master switch is on or no location is set, OD is
-        # never night-paused → the hub never auto-fires (operators
-        # still get manual triggers via the UI).
+        # Resource-heavy jobs wait for OD's night pause. Maintenance jobs
+        # such as retention opt out of that gate and still receive one daily
+        # trigger when detection runs around the clock.
         def _is_night_for_hub() -> bool:
             try:
                 status = detection_manager.get_od_status()

@@ -507,20 +507,30 @@ def is_export_relevant_any(
         _build_species_relabels_query(None, None),
         _build_favorites_query(None, None),
     ]
-    union_sql = " UNION ALL ".join(f"SELECT image_filename FROM ({sql})" for sql, _ in subqueries)
+    union_sql = " UNION ALL ".join(
+        f"SELECT image_filename FROM ({sql})" for sql, _ in subqueries
+    )
     params: list[Any] = []
     for _, sub_params in subqueries:
         params.extend(sub_params)
 
-    placeholders = ",".join("?" for _ in filenames)
-    wrapped = (
-        f"SELECT DISTINCT image_filename FROM ({union_sql}) "
-        f"WHERE image_filename IN ({placeholders})"
-    )
-    params.extend(filenames)
+    try:
+        variable_limit = conn.getlimit(sqlite3.SQLITE_LIMIT_VARIABLE_NUMBER)
+    except AttributeError:
+        variable_limit = 999
+    batch_size = max(1, min(500, int(variable_limit) - len(params)))
 
-    rows = conn.execute(wrapped, params).fetchall()
-    return {row["image_filename"] for row in rows}
+    relevant: set[str] = set()
+    for start in range(0, len(filenames), batch_size):
+        batch = filenames[start : start + batch_size]
+        placeholders = ",".join("?" for _ in batch)
+        wrapped = (
+            f"SELECT DISTINCT image_filename FROM ({union_sql}) "
+            f"WHERE image_filename IN ({placeholders})"
+        )
+        rows = conn.execute(wrapped, [*params, *batch]).fetchall()
+        relevant.update(row["image_filename"] for row in rows)
+    return relevant
 
 
 # ---------------------------------------------------------------------------

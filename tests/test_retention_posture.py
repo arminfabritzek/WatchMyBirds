@@ -85,10 +85,9 @@ def test_explicit_posture_overrides_legacy_enabled_flag():
     assert s["RETENTION_PROTECT_UNREVIEWED"] is False
 
 
-def test_unknown_posture_falls_back_to_conservative():
+def test_unknown_posture_falls_back_to_off():
     s = resolve_posture_settings({"RETENTION_POSTURE": "bogus", "RETENTION_DAYS": 90})
-    assert s["RETENTION_ENABLED"] is True
-    assert s["RETENTION_PROTECT_UNREVIEWED"] is True
+    assert s["RETENTION_ENABLED"] is False
 
 
 # --- end-to-end through decide() -----------------------------------------

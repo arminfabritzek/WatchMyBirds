@@ -234,10 +234,12 @@ DEFAULTS = {
     # (live-editable in Settings), not a boot ENV like EXIF_GPS_ENABLED.
     "EXPORT_BURN_IN_METADATA": True,
     # Artifact retention (full-resolution originals only); ships OFF.
-    # RETENTION_POSTURE is the authority; the booleans below are derived from
-    # it at decision time (resolve_posture_settings) and kept for backcompat.
-    "RETENTION_POSTURE": "conservative",
+    # RETENTION_POSTURE is the policy authority. RETENTION_ENABLED is derived
+    # from it at decision time and retained for backcompat; automatic execution
+    # has a separate default-OFF opt-in.
+    "RETENTION_POSTURE": "off",
     "RETENTION_ENABLED": False,
+    "RETENTION_AUTO_ENABLED": False,
     "RETENTION_DAYS": 90,
     "RETENTION_PROTECT_FAVORITES": True,
     "RETENTION_PROTECT_UNREVIEWED": True,
@@ -291,6 +293,7 @@ RUNTIME_KEYS = {
     "EXPORT_BURN_IN_METADATA",
     "RETENTION_POSTURE",
     "RETENTION_ENABLED",
+    "RETENTION_AUTO_ENABLED",
     "RETENTION_DAYS",
     "RETENTION_PROTECT_FAVORITES",
     "RETENTION_PROTECT_UNREVIEWED",
@@ -491,6 +494,21 @@ def _load_config() -> dict[str, Any]:
     for key, value in yaml_settings.items():
         if key in RUNTIME_KEYS:
             config[key] = value
+
+    # Legacy retention migration: before RETENTION_POSTURE existed, the
+    # persisted RETENTION_ENABLED boolean controlled manual cleanup. The
+    # default posture must not hide that explicit older choice. Automatic
+    # execution remains independently default-OFF unless its new key is
+    # explicitly present in YAML.
+    if (
+        "RETENTION_POSTURE" not in yaml_settings
+        and "RETENTION_ENABLED" in yaml_settings
+    ):
+        config["RETENTION_POSTURE"] = (
+            "conservative"
+            if _coerce_bool(yaml_settings["RETENTION_ENABLED"])
+            else "off"
+        )
 
     # Telemetry keys persist via a dedicated endpoint (/api/v1/settings/telemetry)
     # and deliberately bypass RUNTIME_KEYS so the generic Settings form can't
@@ -796,6 +814,7 @@ def _coerce_config_types(config: dict[str, Any]) -> None:
         "ENABLE_NIGHTLY_DEEP_SCAN",
         "NON_BIRD_DROP_BELOW_CONFIRM",
         "RETENTION_ENABLED",
+        "RETENTION_AUTO_ENABLED",
         "RETENTION_PROTECT_FAVORITES",
         "RETENTION_PROTECT_UNREVIEWED",
     ):
@@ -809,10 +828,10 @@ def _coerce_config_types(config: dict[str, Any]) -> None:
         ret_days = 90
     config["RETENTION_DAYS"] = max(1, min(3650, ret_days))
 
-    # RETENTION_POSTURE: normalize; unknown -> conservative (safe default).
-    posture = str(config.get("RETENTION_POSTURE", "conservative")).strip().lower()
+    # RETENTION_POSTURE: normalize; unknown -> off (non-destructive default).
+    posture = str(config.get("RETENTION_POSTURE", "off")).strip().lower()
     config["RETENTION_POSTURE"] = (
-        posture if posture in ("off", "conservative", "reclaim") else "conservative"
+        posture if posture in ("off", "conservative", "reclaim") else "off"
     )
 
     # LOCATION_DATA: parse "lat, lon" strings into dict
@@ -1187,6 +1206,7 @@ def _validate_value(key: str, value: Any) -> tuple[bool, Any]:
         "NON_BIRD_DROP_BELOW_CONFIRM",
         "PTZ_TRACKING_OVERLAY_ENABLED",
         "RETENTION_ENABLED",
+        "RETENTION_AUTO_ENABLED",
         "RETENTION_PROTECT_FAVORITES",
         "RETENTION_PROTECT_UNREVIEWED",
     ):

@@ -152,6 +152,10 @@ class PathManager:
         """
         return self.base_dir / ".restart_required"
 
+    def get_retention_status_path(self) -> Path:
+        """Return the persisted last-run status for storage retention."""
+        return self.base_dir / "retention_status.json"
+
     def get_date_folder(self, date_str: str) -> str:
         """Returns the YYYY-MM-DD folder name from various inputs."""
         # Assume input is either YYYY-MM-DD or YYYYMMDD prefix
