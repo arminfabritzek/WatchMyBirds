@@ -7,6 +7,7 @@ import zipfile
 from contextlib import nullcontext
 from datetime import datetime
 from io import BytesIO
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -104,7 +105,7 @@ def test_canonical_dataset_page_is_the_export_navigation_target(
     assert "Ready for another bird?" in content
     assert 'href="/admin/review"' in content
     assert 'aria-label="Review the next bird"' in content
-    appbar = open("templates/partials/appbar.html", encoding="utf-8").read()
+    appbar = Path("templates/partials/appbar.html").read_text(encoding="utf-8")
     assert 'href="/admin/canonical-dataset"' in appbar
     assert 'href="/admin/groundtruth-export"' not in appbar
 

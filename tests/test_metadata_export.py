@@ -93,7 +93,8 @@ def test_copy_preserves_exif_and_leaves_original_unchanged(tmp_path):
     assert hashlib.sha256(src.read_bytes()).hexdigest() == orig_hash
     # copy carries species + preserved EXIF
     assert "Cyanistes caeruleus" in _read_xmp(copy_bytes)
-    assert Image.open(io.BytesIO(copy_bytes)).info.get("exif")
+    with Image.open(io.BytesIO(copy_bytes)) as copy_image:
+        assert copy_image.info.get("exif")
 
 
 # --------------------------------------------------------------------------
@@ -114,9 +115,19 @@ def db_env(monkeypatch, tmp_path):
     return output_dir
 
 
-def _seed(conn, *, filename, timestamp, override=None, cls_species="Parus_major",
-          od_class="bird", detection_status="active", is_favorite=0, rating=None,
-          review_status="confirmed_bird"):
+def _seed(
+    conn,
+    *,
+    filename,
+    timestamp,
+    override=None,
+    cls_species="Parus_major",
+    od_class="bird",
+    detection_status="active",
+    is_favorite=0,
+    rating=None,
+    review_status="confirmed_bird",
+):
     insert_image(
         conn,
         {
@@ -134,7 +145,10 @@ def _seed(conn, *, filename, timestamp, override=None, cls_species="Parus_major"
         conn,
         {
             "image_filename": filename,
-            "bbox_x": 0.1, "bbox_y": 0.1, "bbox_w": 0.2, "bbox_h": 0.2,
+            "bbox_x": 0.1,
+            "bbox_y": 0.1,
+            "bbox_w": 0.2,
+            "bbox_h": 0.2,
             "od_class_name": od_class,
             "od_confidence": 0.9,
             "od_model_id": "yolo-test",
@@ -227,8 +241,7 @@ def test_core_non_bird_gets_no_aves(db_env):
     ts = "20260602_090000"
     with db_connection.closing_connection() as conn:
         # squirrel: OD class IS the species, no classifier row
-        _seed(conn, filename=fn, timestamp=ts, od_class="squirrel",
-              cls_species=None)
+        _seed(conn, filename=fn, timestamp=ts, od_class="squirrel", cls_species=None)
     _write_original(output_dir, fn)
 
     meta = core.build_event_metadata(fn)
@@ -246,8 +259,13 @@ def test_core_rejected_detection_excluded(db_env):
     fn = "20260602_100000_cam.jpg"
     ts = "20260602_100000"
     with db_connection.closing_connection() as conn:
-        _seed(conn, filename=fn, timestamp=ts, cls_species="Parus_major",
-              detection_status="rejected")
+        _seed(
+            conn,
+            filename=fn,
+            timestamp=ts,
+            cls_species="Parus_major",
+            detection_status="rejected",
+        )
     _write_original(output_dir, fn)
 
     meta = core.build_event_metadata(fn)
