@@ -157,9 +157,8 @@
                 const preflightUrl = '/api/v1/public/go2rtc/health';
                 const MAX_RETRIES = 1;
                 const RETRY_DELAY_MS = 1000;
-                const FETCH_TIMEOUT_MS = 4000;
-                const STREAM_START_DELAY_MS = 5000;
-                let fallbackEnabled = false;
+                 const FETCH_TIMEOUT_MS = 4000;
+                 let fallbackEnabled = false;
 
                 function enableFallback(reason) {
                     if (fallbackEnabled) return;
@@ -168,9 +167,7 @@
                     iframe.style.display = 'none';
                     iframe.removeAttribute('src');
                     fallback.style.display = 'block';
-                    setTimeout(function () {
-                        fallback.src = fallback.dataset.fallbackSrc || '/video_feed';
-                    }, STREAM_START_DELAY_MS);
+                    fallback.src = fallback.dataset.fallbackSrc || '/video_feed';
                     if (reason) {
                         console.warn(`Go2RTC unavailable, using /video_feed fallback: ${reason}`);
                     }
@@ -221,9 +218,7 @@
                     showLoading();
                     fallback.style.display = 'none';
                     iframe.style.display = 'block';
-                    setTimeout(function () {
-                        iframe.src = streamUrl;
-                    }, STREAM_START_DELAY_MS);
+                    iframe.src = streamUrl;
 
                     iframe.addEventListener('error', function () {
                         enableFallback('iframe error');
@@ -236,13 +231,13 @@
                     if (iframe.style.display !== 'none' && iframe.src) {
                         const source = iframe.src;
                         iframe.removeAttribute('src');
-                        setTimeout(function () { iframe.src = source; }, STREAM_START_DELAY_MS);
+                        setTimeout(function () { iframe.src = source; }, 0);
                         return;
                     }
                     if (fallback.style.display !== 'none') {
                         const source = fallback.src || fallback.dataset.fallbackSrc || '/video_feed';
                         fallback.removeAttribute('src');
-                        setTimeout(function () { fallback.src = source; }, STREAM_START_DELAY_MS);
+                        setTimeout(function () { fallback.src = source; }, 0);
                     }
                 }
 
