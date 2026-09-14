@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Added
+
+- Storage Retention can now run automatically once per day through a separate
+  opt-in, processes large image collections in bounded batches, coordinates
+  concurrent protection changes, and preserves clear results across restarts.
+
 ## 0.5.6 - 2026-09-10
 
 ### Fixed
