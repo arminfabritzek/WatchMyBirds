@@ -85,7 +85,7 @@ def main() -> int:
     try:
         changed = finalize_changelog(args.changelog, args.version, args.date)
     except (OSError, ValueError) as exc:
-        parser.error(str(exc))
+        raise SystemExit(f"{parser.prog}: error: {exc}") from exc
 
     print("CHANGELOG finalized." if changed else "CHANGELOG already finalized.")
     return 0
