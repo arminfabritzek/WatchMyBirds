@@ -145,8 +145,9 @@
                 }
 
                 showLoading();
-                iframe.addEventListener('load', hideLoading);
-                fallback.addEventListener('load', hideLoading);
+                fallback.addEventListener('load', function () {
+                    if (activeTransport === 'mjpeg' && fallback.naturalWidth > 0) hideLoading();
+                });
 
                 const host = window.location.hostname;
                 const port = '1984';
@@ -157,12 +158,16 @@
                 const preflightUrl = '/api/v1/public/go2rtc/health';
                 const MAX_RETRIES = 1;
                 const RETRY_DELAY_MS = 1000;
-                 const FETCH_TIMEOUT_MS = 4000;
-                 let fallbackEnabled = false;
+                const FETCH_TIMEOUT_MS = 4000;
+                let fallbackEnabled = false;
+                let activeTransport = null;
+                let reconnectTimer = null;
 
                 function enableFallback(reason) {
                     if (fallbackEnabled) return;
                     fallbackEnabled = true;
+                    activeTransport = 'mjpeg';
+                    clearTimeout(reconnectTimer);
                     showLoading();
                     iframe.style.display = 'none';
                     iframe.removeAttribute('src');
@@ -215,10 +220,13 @@
                 }
 
                 function enableGo2RTC() {
-                    showLoading();
+                    activeTransport = 'go2rtc';
                     fallback.style.display = 'none';
                     iframe.style.display = 'block';
                     iframe.src = streamUrl;
+                    // The cross-origin player owns video readiness and error UI.
+                    // An iframe load event only reports document readiness.
+                    hideLoading();
 
                     iframe.addEventListener('error', function () {
                         enableFallback('iframe error');
@@ -226,25 +234,30 @@
                 }
 
                 function reconnectStream() {
-                    if (document.hidden) return;
-                    showLoading();
-                    if (iframe.style.display !== 'none' && iframe.src) {
-                        const source = iframe.src;
-                        iframe.removeAttribute('src');
-                        setTimeout(function () { iframe.src = source; }, 0);
-                        return;
-                    }
-                    if (fallback.style.display !== 'none') {
-                        const source = fallback.src || fallback.dataset.fallbackSrc || '/video_feed';
-                        fallback.removeAttribute('src');
-                        setTimeout(function () { fallback.src = source; }, 0);
-                    }
+                    if (document.hidden || !activeTransport) return;
+                    clearTimeout(reconnectTimer);
+                    reconnectTimer = setTimeout(function () {
+                        if (document.hidden) return;
+                        if (activeTransport === 'go2rtc') {
+                            iframe.src = streamUrl;
+                        } else if (activeTransport === 'mjpeg') {
+                            showLoading();
+                            const source = fallback.dataset.fallbackSrc || '/video_feed';
+                            fallback.src = source + (source.includes('?') ? '&' : '?') + 'reconnect=' + Date.now();
+                        }
+                    }, 0);
                 }
 
                 document.addEventListener('visibilitychange', function () {
                     if (!document.hidden) reconnectStream();
                 });
-                window.addEventListener('pageshow', reconnectStream);
+                window.addEventListener('pageshow', function (event) {
+                    if (event.persisted) reconnectStream();
+                });
+                window.addEventListener('pagehide', function () {
+                    clearTimeout(reconnectTimer);
+                    hideLoading();
+                });
 
                 {% if stream_source_mode and stream_source_mode != 'direct' %}
                 (async function preflightGo2RTC() {
@@ -293,9 +306,9 @@
                     embed.style.width = '100%';
                 }
 
-                function applyStreamAspect() {
-                    const width = fallback.naturalWidth;
-                    const height = fallback.naturalHeight;
+                function applyStreamAspect(image) {
+                    const width = image.naturalWidth;
+                    const height = image.naturalHeight;
                     if (width > 0 && height > 0) {
                         streamAspect = width / height;
                         embed.style.setProperty('--stream-aspect', String(streamAspect));
@@ -303,9 +316,26 @@
                     }
                 }
 
-                fallback.addEventListener('load', applyStreamAspect);
+                fallback.addEventListener('load', function () { applyStreamAspect(fallback); });
                 window.addEventListener('resize', resizeStreamPane);
-                if (fallback.complete) applyStreamAspect();
+                if (fallback.complete) applyStreamAspect(fallback);
+
+                // The hidden MJPEG fallback never loads when go2rtc is active.
+                // /api/snapshot answers 503 until the first frame exists, so a
+                // single silent probe would leave the pane without an aspect.
+                let aspectProbeRetried = false;
+                function probeStreamAspect() {
+                    if (streamAspect) return;
+                    const probe = new Image();
+                    probe.onload = function () { applyStreamAspect(probe); };
+                    probe.onerror = function () {
+                        if (aspectProbeRetried) return;
+                        aspectProbeRetried = true;
+                        setTimeout(probeStreamAspect, 2000);
+                    };
+                    probe.src = '/api/snapshot?aspect_probe=' + Date.now();
+                }
+                probeStreamAspect();
             })();
         </script>
 
