@@ -26,5 +26,5 @@
 --extra-index-url https://pypi.org/simple
 
 torch>=2.13.0
-torchvision>=0.27.1
+torchvision>=0.28.0+cpu
 open_clip_torch>=3.3.0
