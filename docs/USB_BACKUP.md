@@ -152,7 +152,7 @@ holds the database open while it is replaced:
 sudo systemctl stop app.service
 
 # Docker
-docker compose stop app
+docker compose stop watchmybirds go2rtc
 ```
 
 **Fresh install / SD-card died (migration mode, default)** — refuses if
@@ -179,11 +179,34 @@ A publication error restores that directory automatically.
     --mode recovery --force --app-stopped
 ```
 
+For Docker, run the CLI in a disposable container using the installed image.
+Keep both Compose services stopped. Mount the **parent** of the host output
+folder so the CLI can rename the output directory and retain a sibling checkpoint;
+`/output` itself is a mount point and cannot be replaced atomically. Replace the
+example host paths and use the same image version as your stopped app:
+
+```bash
+docker run --rm --network none --entrypoint python \
+    --user 1000:1000 \
+    -v /your_path:/data \
+    -v /path/to/copied-snapshot:/snapshot:ro \
+    starminworks/watchmybirds:latest \
+    /app/scripts/recover_from_snapshot.py \
+    --snapshot /snapshot --destination /data/output \
+    --mode migration --app-stopped
+```
+
+Use the configured PUID/PGID for `--user`; that user must be able to write the
+parent folder. For replacement recovery add `--mode recovery --force` instead
+of `--mode migration`. The snapshot must be readable on the host (copy it from
+ext4 first if necessary). The entrypoint override bypasses normal startup and
+volume ownership changes; recovery needs no network or Pi services.
+
 Then restart the app:
 
 ```bash
 sudo systemctl start app.service       # Raspberry Pi
-docker compose start app               # Docker
+docker compose start watchmybirds go2rtc  # Docker
 ```
 
 The command validates the manifest version, COMPLETED marker, database checksum,

@@ -3,8 +3,18 @@ name: Docker
 on:
   workflow_dispatch:
 
+concurrency:
+  group: image-publish
+  cancel-in-progress: false
+
 jobs:
+  tests:
+    uses: ./.github/workflows/tests.yml
+    permissions:
+      contents: read
+
   build:
+    needs: tests
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -16,6 +26,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          fetch-depth: 0
 
       - name: Read App Version
         id: version
@@ -26,7 +38,19 @@ jobs:
             echo "::error::No stable release version found. Run the release workflow first."
             exit 1
           fi
+          TAG_COMMIT=$(git rev-parse "v${VERSION}^{commit}")
+          if [ "$TAG_COMMIT" != "$GITHUB_SHA" ]; then
+            echo "::error::Select the stable release tag for this rebuild, or use Docker Quick Build for development code."
+            exit 1
+          fi
+          git checkout --detach "v${VERSION}"
           echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "short_sha=$(git rev-parse --short=7 HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Record build time
+        id: build_time
+        run: echo "utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@1f40c72289eff860ee54a304f1438e3cff362e0a  # v4.3.0
@@ -45,9 +69,11 @@ jobs:
         uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302  # v6.2.0
         with:
           images: starminworks/watchmybirds
+          labels: |
+            org.opencontainers.image.revision=${{ steps.version.outputs.commit }}
           tags: |
             type=raw,value=${{ steps.version.outputs.version }}
-            type=sha
+            type=raw,value=sha-${{ steps.version.outputs.short_sha }}
             type=raw,value=latest
 
       - name: Build and Push Docker Image
@@ -61,8 +87,8 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
-            BUILD_DATE=${{ github.run_started_at }}
-            GIT_COMMIT=${{ github.sha }}
+            BUILD_DATE=${{ steps.build_time.outputs.utc }}
+            GIT_COMMIT=${{ steps.version.outputs.commit }}
             VERSION=${{ steps.version.outputs.version }}
 
       - name: Update Matching GitHub Release with Docker Info

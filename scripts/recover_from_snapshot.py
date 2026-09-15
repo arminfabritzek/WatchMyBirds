@@ -15,7 +15,7 @@ mounted or copied stick, no archive step required). Two modes:
 
 This script never starts or stops any service, and never touches a
 process. Stop the app (RPi: `sudo systemctl stop app.service`; Docker:
-`docker compose stop app`) before running it in either mode, and
+`docker compose stop watchmybirds`) before running it in either mode, and
 start it again afterward. Running it against a live, connected database
 is unsupported and can corrupt data -- see docs/USB_BACKUP.md.
 

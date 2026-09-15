@@ -4,7 +4,13 @@ on:
   workflow_dispatch:
 
 jobs:
+  tests:
+    uses: ./.github/workflows/tests.yml
+    permissions:
+      contents: read
+
   build-dev:
+    needs: tests
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -16,13 +22,15 @@ jobs:
           path: app_code
 
       - name: Inject SSH Key from Secret
+        env:
+          DEV_SSH_PUBLIC_KEY: ${{ secrets.DEV_SSH_PUBLIC_KEY }}
         run: |
-          if [ -z "${{ secrets.DEV_SSH_PUBLIC_KEY }}" ]; then
+          if [ -z "${DEV_SSH_PUBLIC_KEY}" ]; then
             echo "::warning::Missing GitHub Secret 'DEV_SSH_PUBLIC_KEY'! SSH access to the DEV image will not be possible unless you add this secret."
             # Create empty file to ensure copy steps don't fail
             touch app_code/rpi/dev_authorized_keys
           else
-            echo "${{ secrets.DEV_SSH_PUBLIC_KEY }}" > app_code/rpi/dev_authorized_keys
+            echo "${DEV_SSH_PUBLIC_KEY}" > app_code/rpi/dev_authorized_keys
             echo "SSH key injected from secret"
           fi
 
@@ -283,6 +291,7 @@ jobs:
           
           echo "Creating release $TAG..."
           gh release create "$TAG" \
+            --target "${GITHUB_SHA}" \
             --repo "${{ github.repository }}" \
             --title "🍓 Raspberry Pi Dev Image – ${DATE_SHORT}" \
             --notes-file release_notes.md \

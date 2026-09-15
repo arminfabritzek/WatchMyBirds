@@ -9,7 +9,16 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: image-publish
+  cancel-in-progress: false
+
 jobs:
+  tests:
+    uses: ./.github/workflows/tests.yml
+    permissions:
+      contents: read
+
   check:
     runs-on: ubuntu-latest
     outputs:
@@ -47,8 +56,8 @@ jobs:
           fi
 
   build-release:
-    needs: check
-    if: needs.check.outputs.skip != 'true'
+    needs: [check, tests]
+    if: github.ref == 'refs/heads/main' && needs.check.outputs.skip != 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -68,6 +77,13 @@ jobs:
         run: |
           set -euo pipefail
           TARGET_VER=$(bash app_code/scripts/version_info.sh next-release app_code)
+          if git -C app_code rev-parse "refs/tags/v${TARGET_VER}" >/dev/null 2>&1; then
+            TAG_COMMIT=$(git -C app_code rev-parse "v${TARGET_VER}^{commit}")
+            if [ "$TAG_COMMIT" != "$GITHUB_SHA" ]; then
+              echo "::error::Release tag already identifies different source code."
+              exit 1
+            fi
+          fi
           echo "target=${TARGET_VER}" >> "$GITHUB_OUTPUT"
           python3 app_code/scripts/prepare_release_changelog.py \
             "$TARGET_VER" app_code release_changes.md
@@ -146,7 +162,7 @@ jobs:
           # Inject App Code
           sudo mkdir -p mount_point/opt/app
           # Sync code (excluding git)
-          sudo rsync -av --delete --exclude='.git' --exclude='.github' app_code/ mount_point/opt/app/
+          sudo rsync -av --delete --exclude='.git' --exclude='.github' --exclude='/data/' app_code/ mount_point/opt/app/
           sudo chroot mount_point install -d -o watchmybirds -g watchmybirds -m 0750 /opt/app/data
 
           # Inject Wheelhouse
@@ -337,6 +353,7 @@ jobs:
           else
             echo "Creating release $TAG..."
             gh release create "$TAG" \
+              --target "${GITHUB_SHA}" \
               --repo "${{ github.repository }}" \
               --title "WatchMyBirds ${TAG} – ${DATE_SHORT}" \
               --notes-file release_notes.md \
@@ -348,6 +365,10 @@ jobs:
             "$IMG_FILE" \
             --repo "${{ github.repository }}" \
             --clobber
+
+      - name: Record build time
+        id: build_time
+        run: echo "utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
 
       - name: Set up Docker QEMU
         uses: docker/setup-qemu-action@1f40c72289eff860ee54a304f1438e3cff362e0a  # v4.3.0
@@ -382,7 +403,7 @@ jobs:
           tags: ${{ steps.docker_meta.outputs.tags }}
           labels: ${{ steps.docker_meta.outputs.labels }}
           build-args: |
-            BUILD_DATE=${{ github.run_started_at }}
+            BUILD_DATE=${{ steps.build_time.outputs.utc }}
             GIT_COMMIT=${{ github.sha }}
             VERSION=${{ steps.version.outputs.target }}
 

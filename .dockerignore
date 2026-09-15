@@ -68,3 +68,6 @@ scripts/
 
 # Go2RTC config (credentials; not used in container image)
 go2rtc.yaml
+
+# Offline migration CLI uses the shared recovery engine.
+!scripts/recover_from_snapshot.py
