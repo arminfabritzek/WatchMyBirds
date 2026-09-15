@@ -19,7 +19,8 @@ IOSchedulingClass=idle
 ExecStart=/opt/app/rpi/backup.sh --kind scheduled
 # Don't restart on failure -- the timer fires the next day. Repeated
 # failures land in the journal and surface via the API endpoint.
-TimeoutStartSec=30min
+# 3h (was 30min) gives headroom for large media volumes on SD-card I/O.
+TimeoutStartSec=3h
 
 # Light hardening (the script needs read access to /opt/app and write
 # access to /mnt/wmb-backup; nothing more).

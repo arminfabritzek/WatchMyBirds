@@ -121,6 +121,28 @@ die() {
     exit "$code"
 }
 
+# Written on every exit path (success, die(), or an uncaught signal like
+# SIGTERM from systemd's TimeoutStartSec) so the app can report the last
+# run's outcome even when it failed before any snapshot dir existed.
+write_last_run_status() {
+    local exit_code="$1"
+    local status="ok"
+    [[ "${exit_code}" != "0" ]] && status="failed"
+    [[ -d "${MOUNT_POINT}" && -w "${MOUNT_POINT}" ]] || return 0
+    cat > "${MOUNT_POINT}/LAST_RUN_STATUS.json.tmp" 2>/dev/null <<EOF || return 0
+{
+  "kind": "${KIND:-unknown}",
+  "snapshot_name": "${SNAPSHOT_NAME:-}",
+  "status": "${status}",
+  "exit_code": ${exit_code},
+  "started_at": "${TS_START:-}",
+  "finished_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+}
+EOF
+    mv -f "${MOUNT_POINT}/LAST_RUN_STATUS.json.tmp" "${MOUNT_POINT}/LAST_RUN_STATUS.json" 2>/dev/null || true
+}
+trap 'write_last_run_status "$?"' EXIT
+
 # ----------------------------------------------------------------------
 # Step 1: Mount + filesystem checks
 # ----------------------------------------------------------------------
@@ -198,15 +220,7 @@ done
 shopt -u nullglob
 
 # ----------------------------------------------------------------------
-# Step 3: Disk space guard
-# ----------------------------------------------------------------------
-FREE_BYTES="$(df -PB1 "${MOUNT_POINT}" | awk 'NR==2 {print $4}')"
-if [[ -z "${FREE_BYTES}" || "${FREE_BYTES}" -lt "${MIN_FREE_BYTES}" ]]; then
-    die 12 "Free space on stick (${FREE_BYTES:-0} B) below threshold (${MIN_FREE_BYTES} B). Prune snapshots or use a larger stick."
-fi
-
-# ----------------------------------------------------------------------
-# Step 4: Resolve previous successful snapshot for --link-dest
+# Step 3: Resolve previous successful snapshot for --link-dest
 # ----------------------------------------------------------------------
 PREV_SNAPSHOT=""
 if [[ -L "${LATEST_LINK}" ]]; then
@@ -232,6 +246,38 @@ else
 fi
 
 # ----------------------------------------------------------------------
+# Step 4: Disk space guard
+# ----------------------------------------------------------------------
+# Dry-run rsync against link-dest estimates real bytes needed this run,
+# on top of the MIN_FREE_BYTES floor -- catches "needs 5 GiB, 2.5 GiB free."
+FREE_BYTES="$(df -PB1 "${MOUNT_POINT}" | awk 'NR==2 {print $4}')"
+if [[ -z "${FREE_BYTES}" || "${FREE_BYTES}" -lt "${MIN_FREE_BYTES}" ]]; then
+    die 12 "Free space on stick (${FREE_BYTES:-0} B) below threshold (${MIN_FREE_BYTES} B). Prune snapshots or use a larger stick."
+fi
+
+ESTIMATE_LINKDEST=()
+if [[ -n "${PREV_SNAPSHOT}" && -d "${PREV_SNAPSHOT}/data/output" ]]; then
+    ESTIMATE_LINKDEST=(--link-dest="${PREV_SNAPSHOT}/data/output")
+fi
+ESTIMATED_NEW_BYTES=0
+if [[ -d "${OUTPUT_DIR}" ]]; then
+    ESTIMATED_NEW_BYTES="$(rsync -a --dry-run --stats \
+        --exclude='images.db' --exclude='images.db-wal' --exclude='images.db-shm' \
+        --exclude='backup/' --exclude='restore_tmp/' --exclude='backup_before_restore/' \
+        --exclude='.restart_required' \
+        "${ESTIMATE_LINKDEST[@]}" \
+        "${OUTPUT_DIR}/" "${SNAPSHOT_DIR}/data/output/" 2>/dev/null \
+        | awk -F': ' '/^Total transferred file size:/ {gsub(",", "", $2); print $2; found=1} END {if (!found) print 0}')"
+fi
+DB_SIZE_BYTES=0
+[[ -f "${DB_PATH}" ]] && DB_SIZE_BYTES="$(stat -c '%s' "${DB_PATH}" 2>/dev/null || echo 0)"
+REQUIRED_BYTES=$(( ESTIMATED_NEW_BYTES + DB_SIZE_BYTES + MIN_FREE_BYTES ))
+if [[ "${FREE_BYTES}" -lt "${REQUIRED_BYTES}" ]]; then
+    die 12 "Free space on stick (${FREE_BYTES} B) is below this run's estimated requirement (~${REQUIRED_BYTES} B: ${ESTIMATED_NEW_BYTES} B new/changed media + ${DB_SIZE_BYTES} B DB + ${MIN_FREE_BYTES} B floor). Prune snapshots or use a larger stick."
+fi
+log "Space check OK: ${FREE_BYTES} B free, ~${REQUIRED_BYTES} B estimated required."
+
+# ----------------------------------------------------------------------
 # Step 5: Create snapshot skeleton
 # ----------------------------------------------------------------------
 log "Starting ${KIND} snapshot: ${SNAPSHOT_NAME}"
@@ -248,7 +294,37 @@ mark_corrupt() {
 }
 
 # ----------------------------------------------------------------------
-# Step 6: SQLite database (online .backup, WAL-safe)
+# Step 6: Imagery + per-output state (rsync with --link-dest dedup)
+# ----------------------------------------------------------------------
+# Runs before the DB snapshot (Step 7): retention deletes a file, then
+# marks it gone in the DB, so this order never leaves the DB pointing
+# at a file this rsync already missed.
+log "Syncing imagery + output state via rsync..."
+RSYNC_LINKDEST=()
+if [[ -n "${PREV_SNAPSHOT}" && -d "${PREV_SNAPSHOT}/data/output" ]]; then
+    RSYNC_LINKDEST=(--link-dest="${PREV_SNAPSHOT}/data/output")
+fi
+
+mkdir -p "${SNAPSHOT_DIR}/data/output"
+# Excludes:
+#   - images.db / -wal / -shm: captured via sqlite .backup (consistent)
+#   - backup/: live app's transient backup staging dir
+#   - restore_tmp/: live app's restore staging
+#   - .restart_required: marker file, not data
+if ! rsync -a --delete \
+        --exclude='images.db' --exclude='images.db-wal' --exclude='images.db-shm' \
+        --exclude='backup/' \
+        --exclude='restore_tmp/' \
+        --exclude='backup_before_restore/' \
+        --exclude='.restart_required' \
+        "${RSYNC_LINKDEST[@]}" \
+        "${OUTPUT_DIR}/" \
+        "${SNAPSHOT_DIR}/data/output/"; then
+    die 14 "rsync of imagery (${OUTPUT_DIR}) failed"
+fi
+
+# ----------------------------------------------------------------------
+# Step 7: SQLite database (online .backup, WAL-safe)
 # ----------------------------------------------------------------------
 DB_DST="${SNAPSHOT_DIR}/data/images.db"
 DB_BYTES=0
@@ -274,36 +350,6 @@ if [[ -f "${DB_PATH}" ]]; then
         || die 13 "sha256sum failed on snapshot DB"
 else
     log "WARN: ${DB_PATH} not present -- skipping DB backup."
-fi
-
-# ----------------------------------------------------------------------
-# Step 7: Imagery + per-output state (rsync with --link-dest dedup)
-# ----------------------------------------------------------------------
-# We snapshot the entire OUTPUT_DIR (images, settings.yaml, model
-# downloads metadata, ingest state) EXCEPT the live DB itself (already
-# captured above) and any large transient caches.
-log "Syncing imagery + output state via rsync..."
-RSYNC_LINKDEST=()
-if [[ -n "${PREV_SNAPSHOT}" && -d "${PREV_SNAPSHOT}/data/output" ]]; then
-    RSYNC_LINKDEST=(--link-dest="${PREV_SNAPSHOT}/data/output")
-fi
-
-mkdir -p "${SNAPSHOT_DIR}/data/output"
-# Excludes:
-#   - images.db / -wal / -shm: captured via sqlite .backup (consistent)
-#   - backup/: live app's transient backup staging dir
-#   - restore_tmp/: live app's restore staging
-#   - .restart_required: marker file, not data
-if ! rsync -a --delete \
-        --exclude='images.db' --exclude='images.db-wal' --exclude='images.db-shm' \
-        --exclude='backup/' \
-        --exclude='restore_tmp/' \
-        --exclude='backup_before_restore/' \
-        --exclude='.restart_required' \
-        "${RSYNC_LINKDEST[@]}" \
-        "${OUTPUT_DIR}/" \
-        "${SNAPSHOT_DIR}/data/output/"; then
-    die 14 "rsync of imagery (${OUTPUT_DIR}) failed"
 fi
 
 # ----------------------------------------------------------------------

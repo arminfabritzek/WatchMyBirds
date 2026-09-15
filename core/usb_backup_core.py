@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import sqlite3
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -30,6 +31,7 @@ BACKUP_DEVICE = Path("/dev/disk/by-label/WMB-BACKUP")
 SNAPSHOTS_DIR = MOUNT_POINT / "snapshots"
 LATEST_LINK = MOUNT_POINT / "latest"
 BACKUP_LOG = MOUNT_POINT / "BACKUP_LOG.txt"
+LAST_RUN_STATUS_PATH = MOUNT_POINT / "LAST_RUN_STATUS.json"
 
 
 # ----------------------------------------------------------------------
@@ -520,11 +522,71 @@ def delete_snapshot(name: str) -> tuple[bool, str]:
 # ----------------------------------------------------------------------
 
 
+def _date_shard(filename: str) -> str:
+    """``YYYYMMDD_...`` -> ``YYYY-MM-DD``; ``"unknown_date"`` otherwise."""
+    date = filename[:8]
+    return f"{date[:4]}-{date[4:6]}-{date[6:8]}" if date.isdigit() else "unknown_date"
+
+
+def _verify_media(directory: Path, db_path: Path) -> dict[str, Any]:
+    """Cross-reference the snapshot's own DB against its own originals tree.
+
+    Uses the snapshot's ``images.original_present`` column (not the live
+    DB) so images the retention policy had already removed *before this
+    snapshot was taken* are correctly treated as intentionally absent,
+    not as damage.
+    """
+    originals_root = directory / "data" / "output" / "originals"
+    try:
+        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+        conn.row_factory = sqlite3.Row
+        try:
+            rows = conn.execute(
+                "SELECT filename, original_present FROM images"
+            ).fetchall()
+        finally:
+            conn.close()
+    except sqlite3.Error as exc:
+        return {"media_ok": None, "media_message": f"Cannot read images table: {exc}"}
+
+    def _expects_media(present: int | None) -> bool:
+        return present != 0  # NULL (legacy rows) defaults to "expected present"
+
+    expected = [
+        row["filename"] for row in rows if _expects_media(row["original_present"])
+    ]
+    missing = [
+        filename
+        for filename in expected
+        if not (originals_root / _date_shard(filename) / filename).is_file()
+    ]
+
+    if not expected:
+        return {"media_ok": None, "media_message": "No images with expected media."}
+    if missing:
+        sample = ", ".join(missing[:5])
+        more = f" (+{len(missing) - 5} more)" if len(missing) > 5 else ""
+        return {
+            "media_ok": False,
+            "media_message": (
+                f"{len(missing)}/{len(expected)} expected original(s) missing: "
+                f"{sample}{more}"
+            ),
+        }
+    return {
+        "media_ok": True,
+        "media_message": f"{len(expected)}/{len(expected)} expected originals present.",
+    }
+
+
 def verify_snapshot(name: str) -> dict[str, Any]:
-    """Re-run integrity checks on a snapshot.
+    """Re-run integrity checks on a snapshot: DB checksum, DB integrity,
+    and media completeness against the snapshot's own DB.
 
     Returns a structured result. Does NOT mutate the snapshot directory
     (no automatic CORRUPT-flag rewrite — operator decides what to do).
+    A missing database is always a hard failure (``ok=False``); it is
+    never silently treated as "nothing to check."
     """
     directory = _safe_snapshot_path(name)
     if directory is None:
@@ -535,13 +597,14 @@ def verify_snapshot(name: str) -> dict[str, Any]:
 
     db_path = directory / "data" / "images.db"
     sha_path = directory / "data" / "images.db.sha256"
+    db_present = db_path.is_file()
 
     sha_ok: bool | None
     sha_message: str | None
-    if not db_path.is_file():
-        sha_ok, sha_message = None, "No DB in snapshot."
+    if not db_present:
+        sha_ok, sha_message = False, "No DB in snapshot."
     elif not sha_path.is_file():
-        sha_ok, sha_message = None, "No sha256 file alongside DB."
+        sha_ok, sha_message = False, "No sha256 file alongside DB."
     else:
         try:
             result = subprocess.run(
@@ -558,8 +621,8 @@ def verify_snapshot(name: str) -> dict[str, Any]:
 
     integrity_ok: bool | None
     integrity_message: str | None
-    if not db_path.is_file():
-        integrity_ok, integrity_message = None, None
+    if not db_present:
+        integrity_ok, integrity_message = False, "No DB in snapshot."
     else:
         try:
             result = subprocess.run(
@@ -574,7 +637,17 @@ def verify_snapshot(name: str) -> dict[str, Any]:
         except (subprocess.SubprocessError, OSError) as exc:
             integrity_ok, integrity_message = False, str(exc)
 
-    overall_ok = (sha_ok is not False) and (integrity_ok is not False)
+    if db_present and sha_ok is not False and integrity_ok is not False:
+        media = _verify_media(directory, db_path)
+    else:
+        media = {"media_ok": None, "media_message": "Skipped: database check failed."}
+
+    overall_ok = (
+        db_present
+        and sha_ok is not False
+        and integrity_ok is not False
+        and media["media_ok"] is not False
+    )
 
     return {
         "ok": overall_ok,
@@ -583,6 +656,8 @@ def verify_snapshot(name: str) -> dict[str, Any]:
         "sha_message": sha_message,
         "integrity_ok": integrity_ok,
         "integrity_message": integrity_message,
+        "media_ok": media["media_ok"],
+        "media_message": media["media_message"],
         "previously_marked_corrupt": snap.corrupt,
     }
 
@@ -590,6 +665,17 @@ def verify_snapshot(name: str) -> dict[str, Any]:
 # ----------------------------------------------------------------------
 # Aggregate "summary" used by the Settings page card
 # ----------------------------------------------------------------------
+
+
+def get_last_run_status() -> dict[str, Any] | None:
+    """Read the durable last-run marker backup.sh writes on every exit.
+
+    Unlike a snapshot listing, this reports a run that failed before any
+    snapshot directory existed (e.g. mount missing, space guard refused,
+    or the run timed out) -- the failure modes a snapshot-only view
+    cannot see because nothing was ever written under snapshots/.
+    """
+    return _read_json_safely(LAST_RUN_STATUS_PATH)
 
 
 def get_backup_summary(*, recent_limit: int = 5) -> dict[str, Any]:
@@ -603,11 +689,14 @@ def get_backup_summary(*, recent_limit: int = 5) -> dict[str, Any]:
             most_recent_completed = s
             break
 
+    last_run = get_last_run_status() if stick.state == "connected" else None
+
     return {
         "stick": stick.to_dict(),
         "snapshots_recent": [s.to_dict() for s in snapshots],
         "most_recent_completed": (
             most_recent_completed.to_dict() if most_recent_completed else None
         ),
+        "last_run": last_run,
         "warn_almost_full": (stick.free_pct is not None and stick.free_pct < 20.0),
     }

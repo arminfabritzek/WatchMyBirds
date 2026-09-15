@@ -48,6 +48,9 @@ def fake_stick(tmp_path, monkeypatch):
     monkeypatch.setattr(usb_backup_core, "SNAPSHOTS_DIR", snaps)
     monkeypatch.setattr(usb_backup_core, "LATEST_LINK", mount / "latest")
     monkeypatch.setattr(usb_backup_core, "BACKUP_LOG", mount / "BACKUP_LOG.txt")
+    monkeypatch.setattr(
+        usb_backup_core, "LAST_RUN_STATUS_PATH", mount / "LAST_RUN_STATUS.json"
+    )
 
     # _is_mounted normally checks os.path.ismount -- in tests, the tmp
     # path is a regular dir, not a mount. Stub the check.
@@ -237,9 +240,7 @@ class TestStickStatus:
         assert usb_backup_core._is_mounted(tmp_path / "wmb-backup") is True
         assert calls["n"] == 2  # confirms re-check happened
 
-    def test_is_mounted_returns_false_when_device_missing(
-        self, tmp_path, monkeypatch
-    ):
+    def test_is_mounted_returns_false_when_device_missing(self, tmp_path, monkeypatch):
         # Stick truly absent: no real FS mounted AND no labelled device.
         # The autofs stub on its own must NOT make us claim mounted=True.
         absent_dev = tmp_path / "by-label-WMB-BACKUP-not-here"
@@ -281,17 +282,17 @@ class TestListSnapshots:
 
     def test_corrupt_snapshot_carries_reason(self, fake_stick):
         _make_snapshot(
-            fake_stick, "20260429_030000_scheduled",
-            corrupt=True, corrupt_reason="sha256 mismatch",
+            fake_stick,
+            "20260429_030000_scheduled",
+            corrupt=True,
+            corrupt_reason="sha256 mismatch",
         )
         out = usb_backup_core.list_snapshots()
         assert out[0].corrupt is True
         assert out[0].corrupt_reason == "sha256 mismatch"
 
     def test_incomplete_snapshot_is_listed_but_marked(self, fake_stick):
-        _make_snapshot(
-            fake_stick, "20260429_030000_scheduled", completed=False
-        )
+        _make_snapshot(fake_stick, "20260429_030000_scheduled", completed=False)
         out = usb_backup_core.list_snapshots()
         assert len(out) == 1
         assert out[0].completed is False
@@ -303,9 +304,7 @@ class TestListSnapshots:
         os.symlink(target, fake_stick / "latest")
         out = usb_backup_core.list_snapshots()
         latest = next(s for s in out if s.name == "20260429_030000_scheduled")
-        not_latest = next(
-            s for s in out if s.name == "20260428_030000_scheduled"
-        )
+        not_latest = next(s for s in out if s.name == "20260428_030000_scheduled")
         assert latest.is_latest is True
         assert not_latest.is_latest is False
 
@@ -387,25 +386,21 @@ class TestSummary:
         assert summary["stick"]["state"] == "connected"
         assert len(summary["snapshots_recent"]) == 2
         assert summary["most_recent_completed"] is not None
-        assert (
-            summary["most_recent_completed"]["name"]
-            == "20260429_030000_scheduled"
-        )
+        assert summary["most_recent_completed"]["name"] == "20260429_030000_scheduled"
 
     def test_summary_skips_corrupt_for_most_recent(self, fake_stick):
         # Newest is corrupt; the "most recent completed" should fall
         # back to the older clean one.
         _make_snapshot(
-            fake_stick, "20260429_030000_scheduled",
-            corrupt=True, corrupt_reason="sha mismatch",
+            fake_stick,
+            "20260429_030000_scheduled",
+            corrupt=True,
+            corrupt_reason="sha mismatch",
         )
         _make_snapshot(fake_stick, "20260428_030000_scheduled")
         summary = usb_backup_core.get_backup_summary()
         assert summary["most_recent_completed"] is not None
-        assert (
-            summary["most_recent_completed"]["name"]
-            == "20260428_030000_scheduled"
-        )
+        assert summary["most_recent_completed"]["name"] == "20260428_030000_scheduled"
 
     @pytest.mark.host_env
     def test_summary_handles_missing_stick(self, fake_stick, monkeypatch):
@@ -427,3 +422,153 @@ class TestSummary:
         )
         summary = usb_backup_core.get_backup_summary()
         assert summary["warn_almost_full"] is True
+
+
+# ----------------------------------------------------------------------
+# verify_snapshot / _verify_media
+# ----------------------------------------------------------------------
+
+
+def _write_snapshot_db(
+    snapshot_dir: Path, images: list[tuple[str, int]], *, with_sha: bool = True
+) -> Path:
+    """Write a real, schema-minimal images.db (+ optional .sha256) into
+    ``snapshot_dir/data/``. ``images`` is ``[(filename, original_present)]``.
+    """
+    import hashlib
+    import sqlite3
+
+    data_dir = snapshot_dir / "data"
+    data_dir.mkdir(parents=True, exist_ok=True)
+    db_path = data_dir / "images.db"
+
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        "CREATE TABLE images (filename TEXT PRIMARY KEY, original_present INTEGER DEFAULT 1)"
+    )
+    conn.executemany(
+        "INSERT INTO images (filename, original_present) VALUES (?, ?)", images
+    )
+    conn.commit()
+    conn.close()
+
+    if with_sha:
+        digest = hashlib.sha256(db_path.read_bytes()).hexdigest()
+        (data_dir / "images.db.sha256").write_text(f"{digest}  images.db\n")
+    return db_path
+
+
+def _write_original(snapshot_dir: Path, filename: str) -> None:
+    date = filename[:8]
+    shard = f"{date[:4]}-{date[4:6]}-{date[6:8]}"
+    originals = snapshot_dir / "data" / "output" / "originals" / shard
+    originals.mkdir(parents=True, exist_ok=True)
+    (originals / filename).write_bytes(b"jpeg-bytes")
+
+
+class TestVerifySnapshot:
+    def test_missing_database_is_a_hard_failure(self, fake_stick):
+        # No images.db written at all -- must never report ok=True.
+        _make_snapshot(fake_stick, "20260429_030000_scheduled")
+        result = usb_backup_core.verify_snapshot("20260429_030000_scheduled")
+        assert result["ok"] is False
+        assert result["sha_ok"] is False
+        assert result["integrity_ok"] is False
+
+    def test_valid_db_and_complete_media_passes(self, fake_stick):
+        d = _make_snapshot(fake_stick, "20260429_030000_scheduled")
+        _write_snapshot_db(d, [("20260429_090000_bird.jpg", 1)])
+        _write_original(d, "20260429_090000_bird.jpg")
+
+        result = usb_backup_core.verify_snapshot("20260429_030000_scheduled")
+
+        assert result["sha_ok"] is True
+        assert result["integrity_ok"] is True
+        assert result["media_ok"] is True
+        assert result["ok"] is True
+
+    def test_missing_media_fails_even_with_healthy_db(self, fake_stick):
+        d = _make_snapshot(fake_stick, "20260429_030000_scheduled")
+        _write_snapshot_db(d, [("20260429_090000_bird.jpg", 1)])
+        # Original file never written to disk -- damaged/incomplete snapshot.
+
+        result = usb_backup_core.verify_snapshot("20260429_030000_scheduled")
+
+        assert result["sha_ok"] is True
+        assert result["integrity_ok"] is True
+        assert result["media_ok"] is False
+        assert result["ok"] is False
+
+    def test_intentionally_retention_deleted_media_does_not_fail(self, fake_stick):
+        # original_present=0 means retention already removed this
+        # original before the snapshot was taken -- expected, not damage.
+        d = _make_snapshot(fake_stick, "20260429_030000_scheduled")
+        _write_snapshot_db(
+            d,
+            [
+                ("20260429_090000_bird.jpg", 1),
+                ("20260420_090000_old.jpg", 0),
+            ],
+        )
+        _write_original(d, "20260429_090000_bird.jpg")
+        # 20260420_090000_old.jpg deliberately has no file on disk.
+
+        result = usb_backup_core.verify_snapshot("20260429_030000_scheduled")
+
+        assert result["media_ok"] is True
+        assert result["ok"] is True
+
+    def test_bad_sha_fails_and_skips_media_check(self, fake_stick):
+        d = _make_snapshot(fake_stick, "20260429_030000_scheduled")
+        db_path = _write_snapshot_db(d, [("20260429_090000_bird.jpg", 1)])
+        # Corrupt the sha file so the checksum no longer matches.
+        (db_path.parent / "images.db.sha256").write_text("0" * 64 + "  images.db\n")
+        _write_original(d, "20260429_090000_bird.jpg")
+
+        result = usb_backup_core.verify_snapshot("20260429_030000_scheduled")
+
+        assert result["sha_ok"] is False
+        assert result["ok"] is False
+        assert result["media_ok"] is None
+
+    def test_unknown_snapshot_reports_not_found(self, fake_stick):
+        result = usb_backup_core.verify_snapshot("nope")
+        assert result["ok"] is False
+        assert result["error"] == "Snapshot not found."
+
+
+# ----------------------------------------------------------------------
+# get_last_run_status / summary integration
+# ----------------------------------------------------------------------
+
+
+class TestLastRunStatus:
+    def test_reports_none_when_no_marker_written(self, fake_stick):
+        assert usb_backup_core.get_last_run_status() is None
+
+    def test_reads_failed_marker_even_with_no_snapshots(self, fake_stick):
+        # A run that failed before creating any snapshot dir (e.g. the
+        # space guard refused, or the run timed out) leaves nothing
+        # under snapshots/ -- the marker is the only failure evidence.
+        (fake_stick / "LAST_RUN_STATUS.json").write_text(
+            '{"kind": "scheduled", "status": "failed", "exit_code": 12, '
+            '"started_at": "2026-04-29T03:00:00Z", '
+            '"finished_at": "2026-04-29T03:00:05Z"}'
+        )
+        status = usb_backup_core.get_last_run_status()
+        assert status["status"] == "failed"
+        assert status["exit_code"] == 12
+
+        summary = usb_backup_core.get_backup_summary()
+        assert summary["snapshots_recent"] == []
+        assert summary["last_run"]["status"] == "failed"
+
+    def test_summary_surfaces_successful_last_run(self, fake_stick):
+        _make_snapshot(fake_stick, "20260429_030000_scheduled")
+        (fake_stick / "LAST_RUN_STATUS.json").write_text(
+            '{"kind": "scheduled", "status": "ok", "exit_code": 0, '
+            '"started_at": "2026-04-29T03:00:00Z", '
+            '"finished_at": "2026-04-29T03:01:23Z"}'
+        )
+        summary = usb_backup_core.get_backup_summary()
+        assert summary["last_run"]["status"] == "ok"
