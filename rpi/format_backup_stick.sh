@@ -128,7 +128,7 @@ if [[ "${WMB_CONFIRM:-}" != "${EXPECTED_CONFIRM}" ]]; then
     die 2 "WMB_CONFIRM does not match expected value"
 fi
 
-exec 8>"/run/lock/watchmybirds-maintenance.lock" || die 11 "Cannot create maintenance lock"
+exec 8<>"/run/lock/watchmybirds/maintenance.lock" || die 11 "Cannot create maintenance lock"
 if ! flock -n 8; then
     die 11 "Another backup, format, or recovery operation is running."
 fi

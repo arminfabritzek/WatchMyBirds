@@ -26,7 +26,7 @@ TimeoutStartSec=3h
 # access to /mnt/wmb-backup; nothing more).
 NoNewPrivileges=true
 ProtectSystem=strict
-ReadWritePaths=/mnt/wmb-backup
+ReadWritePaths=/mnt/wmb-backup /run/lock/watchmybirds
 ProtectHome=yes
 PrivateTmp=true
 ProtectKernelTunables=true

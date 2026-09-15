@@ -59,7 +59,7 @@ def backup_harness(tmp_path):
         )
         .replace('readonly APP_DIR="/opt/app"', f'readonly APP_DIR="{app}"')
         .replace(
-            "/run/lock/watchmybirds-maintenance.lock",
+            "/run/lock/watchmybirds/maintenance.lock",
             str(tmp_path / "maintenance.lock"),
         )
     )

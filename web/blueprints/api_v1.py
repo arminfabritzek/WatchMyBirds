@@ -3744,8 +3744,25 @@ def system_recovery_preview(snapshot_name):
         try:
             preview = recovery_service.preview_snapshot(snapshot_name)
         except RecoveryError as exc:
+            message = _safe_validation_message(
+                exc,
+                allowed_prefixes=(
+                    "Confirm that current data will be replaced",
+                    "Guided recovery is currently available",
+                    "The selected backup was not found.",
+                    "Another recovery is already running.",
+                    "Another maintenance operation is starting.",
+                    "A recovery request is already waiting",
+                    "The recovery runner could not start.",
+                ),
+                fallback="Recovery validation failed. Review the backup preview and try again.",
+            )
             return jsonify(
-                {"status": "error", "code": exc.code, "message": str(exc)}
+                {
+                    "status": "error",
+                    "code": _safe_log_value(exc.code, max_len=64),
+                    "message": message,
+                }
             ), 400
         return jsonify({"status": "success", **preview})
     except Exception as exc:
@@ -3768,9 +3785,26 @@ def system_recovery_start():
                 checkpoint_acknowledged=payload.get("checkpoint_acknowledged") is True,
             )
         except RecoveryError as exc:
+            message = _safe_validation_message(
+                exc,
+                allowed_prefixes=(
+                    "Confirm that current data will be replaced",
+                    "Guided recovery is currently available",
+                    "The selected backup was not found.",
+                    "Another recovery is already running.",
+                    "Another maintenance operation is starting.",
+                    "A recovery request is already waiting",
+                    "The recovery runner could not start.",
+                ),
+                fallback="Recovery validation failed. Review the backup preview and try again.",
+            )
             status_code = 409 if exc.code == "operation_busy" else 400
             return jsonify(
-                {"status": "error", "code": exc.code, "message": str(exc)}
+                {
+                    "status": "error",
+                    "code": _safe_log_value(exc.code, max_len=64),
+                    "message": message,
+                }
             ), status_code
         return jsonify({"status": "success", **result})
     except Exception as exc:

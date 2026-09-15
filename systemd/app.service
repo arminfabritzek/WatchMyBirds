@@ -33,7 +33,7 @@ RestartSec=5
 
 # Security Hardening (strict sandboxing)
 ProtectSystem=strict
-ReadWritePaths=/opt/app/data /var/log/app /var/lib/watchmybirds-recovery/incoming
+ReadWritePaths=/opt/app/data /var/log/app /var/lib/watchmybirds-recovery/incoming /mnt/wmb-backup /run/lock/watchmybirds
 PrivateTmp=true
 # Power actions use logind/polkit; keep NNP enabled to block SUID escalation.
 NoNewPrivileges=true

@@ -37,7 +37,7 @@ STATE_ROOT = Path(
 )
 REQUEST_PATH = STATE_ROOT / "incoming" / "request.json"
 JOBS_DIR = STATE_ROOT / "jobs"
-MAINTENANCE_LOCK = Path("/run/lock/watchmybirds-maintenance.lock")
+MAINTENANCE_LOCK = Path("/run/lock/watchmybirds/maintenance.lock")
 EXPECTED_DESTINATION = Path(
     os.environ.get("WMB_RECOVERY_DESTINATION", "/opt/app/data/output")
 )
@@ -72,6 +72,7 @@ class RecoveryRunner:
         self._run_command = run_command
         self._health_probe = health_probe or self._default_health_probe
         self._state_lock = threading.Lock()
+        self._operation_lock = threading.Lock()
         self._maintenance_handle: Any | None = None
         try:
             existing = json.loads(self.status_path.read_text(encoding="utf-8"))
@@ -224,11 +225,36 @@ class RecoveryRunner:
         return candidates[0] if candidates else None
 
     def run(self) -> None:
+        with self._operation_lock:
+            self._run()
+
+    def retry_start(self) -> bool:
+        if not self._operation_lock.acquire(blocking=False):
+            return False
+        try:
+            self._acquire_maintenance_lock()
+            return self._retry_start()
+        except (OSError, recovery_core.RecoveryError):
+            return False
+        finally:
+            self._release_maintenance_lock()
+            self._operation_lock.release()
+
+    def roll_back(self) -> bool:
+        if not self._operation_lock.acquire(blocking=False):
+            return False
+        try:
+            return self._roll_back()
+        finally:
+            self._operation_lock.release()
+
+    def _run(self) -> None:
         checkpoint: Path | None = None
         app_stopped = False
         try:
             self._acquire_maintenance_lock()
             if self.status.get("stage") in {"published", "restarting_app"}:
+                self._systemctl("stop")
                 app_stopped = True
                 recovery_core.reconcile_interrupted_recovery(EXPECTED_DESTINATION)
                 checkpoint_raw = self.status.get("checkpoint")
@@ -347,7 +373,7 @@ class RecoveryRunner:
         finally:
             self._release_maintenance_lock()
 
-    def retry_start(self) -> bool:
+    def _retry_start(self) -> bool:
         if self.status.get("state") != "failed":
             return False
         self.update(
@@ -374,7 +400,7 @@ class RecoveryRunner:
         )
         return False
 
-    def roll_back(self) -> bool:
+    def _roll_back(self) -> bool:
         checkpoint_raw = self.status.get("checkpoint")
         if self.status.get("state") != "failed" or not checkpoint_raw:
             return False
@@ -534,7 +560,7 @@ def load_request() -> dict[str, Any] | None:
         raise recovery_core.RecoveryError(
             "invalid_request", "Recovery request could not be read."
         ) from exc
-    validated = RecoveryRunner.validate_request(payload)
+    validated = RecoveryRunner.validate_request(payload, require_snapshot=False)
     job_dir = JOBS_DIR / validated["job_id"]
     job_dir.mkdir(parents=True, exist_ok=False)
     job_dir.chmod(0o750)
@@ -561,6 +587,16 @@ def main() -> int:
     if request is None:
         return 0
     runner = RecoveryRunner(request)
+    try:
+        recovery_core.reconcile_interrupted_recovery(EXPECTED_DESTINATION)
+    except (OSError, recovery_core.RecoveryError) as exc:
+        runner.update(
+            state="failed",
+            stage="failed",
+            app_available=False,
+            message=str(exc),
+            error_code=getattr(exc, "code", "reconciliation_failed"),
+        )
     accepted = threading.Event()
     server = ThreadingHTTPServer((args.host, args.port), make_handler(runner, accepted))
     failed = runner.status.get("state") == "failed"

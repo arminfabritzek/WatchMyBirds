@@ -8,12 +8,14 @@ reconciliation. It never manages services.
 
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import shutil
 import sqlite3
 import tempfile
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Iterator
+from contextlib import closing, contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from itertools import chain
@@ -24,9 +26,30 @@ import yaml
 
 from core.usb_backup_core import verify_snapshot_directory
 from utils.path_manager import PathManager
-from utils.restore import _validate_db_schema
 
 ProgressCallback = Callable[[str, int, str], None]
+
+
+def _validate_db_schema(db_path: Path) -> tuple[bool, list[str]]:
+    """Check recovery's required tables without importing application startup."""
+    required = {"images", "detections", "classifications", "sources"}
+    try:
+        with closing(
+            sqlite3.connect(f"{db_path.resolve().as_uri()}?mode=ro", uri=True)
+        ) as conn:
+            tables = {
+                row[0]
+                for row in conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                )
+            }
+    except sqlite3.Error as exc:
+        return False, [f"Cannot open DB for validation: {exc}"]
+    missing = required - tables
+    return not missing, (
+        [f"Missing required tables: {', '.join(sorted(missing))}"] if missing else []
+    )
+
 
 # These values describe the destination appliance, its local access, or its
 # private integrations. Keeping them prevents a recovered snapshot from
@@ -331,7 +354,29 @@ def _journal_path(destination: Path) -> Path:
     return destination.parent / f".{destination.name}-recovery-journal.json"
 
 
+@contextmanager
+def _publication_lock(destination: Path) -> Iterator[None]:
+    # Separate from maintenance: app startup must reconcile while the runner
+    # still owns maintenance, after publication has finished.
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    with (destination.parent / f".{destination.name}-recovery.lock").open(
+        "a+"
+    ) as handle:
+        fcntl.flock(handle, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(handle, fcntl.LOCK_UN)
+
+
 def reconcile_interrupted_recovery(destination: Path) -> str | None:
+    """Serialize startup repair against live publication and other boot gates."""
+    destination = destination.resolve()
+    with _publication_lock(destination):
+        return _reconcile_interrupted_recovery(destination)
+
+
+def _reconcile_interrupted_recovery(destination: Path) -> str | None:
     """Repair or finalize a directory swap interrupted by process/power loss."""
     journal_path = _journal_path(destination)
     if not journal_path.is_file():
@@ -479,7 +524,7 @@ def _apply_settings_policy(staging: Path, destination: Path) -> tuple[str, ...]:
     return preserved
 
 
-def recover_snapshot(
+def _recover_snapshot(
     snapshot_dir: Path,
     destination: Path,
     *,
@@ -505,7 +550,7 @@ def recover_snapshot(
     ):
         raise RecoveryError("overlap", "The backup and recovery destination overlap.")
 
-    reconcile_interrupted_recovery(destination)
+    _reconcile_interrupted_recovery(destination)
     has_data = destination_has_data(destination)
     if mode == "migration" and has_data:
         raise RecoveryError(
@@ -662,10 +707,10 @@ def recover_snapshot(
         raise
 
 
-def rollback_checkpoint(destination: Path, checkpoint: Path) -> Path:
+def _rollback_checkpoint(destination: Path, checkpoint: Path) -> Path:
     """Replace a failed restored destination with its retained checkpoint."""
     destination = destination.resolve()
-    reconcile_interrupted_recovery(destination)
+    _reconcile_interrupted_recovery(destination)
     checkpoint = checkpoint.resolve(strict=True)
     if checkpoint.parent != destination.parent or not checkpoint.name.startswith(
         f"{destination.name}-before-restore-"
@@ -728,3 +773,24 @@ def settings_policy_labels(keys: Iterable[str]) -> list[str]:
         "telemetry_installation_id": "Device identity",
     }
     return [labels.get(key, key.replace("_", " ").title()) for key in keys]
+
+
+def recover_snapshot(
+    snapshot_dir: Path,
+    destination: Path,
+    *,
+    mode: str,
+    force: bool = False,
+    progress: ProgressCallback | None = None,
+) -> RecoveryResult:
+    """Publish a snapshot while excluding startup reconciliation."""
+    with _publication_lock(destination.resolve()):
+        return _recover_snapshot(
+            snapshot_dir, destination, mode=mode, force=force, progress=progress
+        )
+
+
+def rollback_checkpoint(destination: Path, checkpoint: Path) -> Path:
+    """Restore a checkpoint while excluding startup reconciliation."""
+    with _publication_lock(destination.resolve()):
+        return _rollback_checkpoint(destination, checkpoint)

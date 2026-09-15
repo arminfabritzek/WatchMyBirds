@@ -568,7 +568,10 @@ def test_runner_resumes_published_job_with_health_check_only(tmp_path, monkeypat
 
     runner.run()
 
-    assert commands == [["systemctl", "start", "app.service"]]
+    assert commands == [
+        ["systemctl", "stop", "app.service"],
+        ["systemctl", "start", "app.service"],
+    ]
     assert runner.status["state"] == "succeeded"
     assert runner.status["created_at"] == status["created_at"]
 
@@ -613,6 +616,7 @@ def test_resumed_restart_failure_keeps_retry_visible(tmp_path, monkeypatch):
         health_probe=lambda: False,
     )
     monkeypatch.setattr(runner, "_start_and_check", lambda: False)
+    monkeypatch.setattr(runner, "_systemctl", lambda _action: None)
 
     runner.run()
 
@@ -700,8 +704,8 @@ def test_systemd_units_allow_requests_and_gate_app_start_on_reconciliation():
 
     assert "/var/lib/watchmybirds-recovery/incoming" in app_unit
     assert "recovery_runner.py --reconcile-only" in app_unit
-    assert "ExecStartPre=" in recovery_unit
-    assert "recovery_runner.py --reconcile-only" in recovery_unit
+    assert "ExecStartPre=" not in recovery_unit
+    assert "recovery_runner.py --host" in recovery_unit
 
 
 def test_authorized_progress_poll_accepts_browser_handoff(tmp_path, monkeypatch):
@@ -816,3 +820,201 @@ def test_model_cache_links_are_ignored_but_original_links_rejected(tmp_path):
     (output / "originals/unsafe-link").symlink_to("/tmp")
     with pytest.raises(recovery_core.RecoveryError, match="symbolic links"):
         recovery_core.inspect_snapshot(snapshot, destination)
+
+
+def test_startup_reconciliation_waits_for_publication(tmp_path):
+    """Another boot gate must not remove a live staging tree."""
+    destination = tmp_path / "output"
+    destination.mkdir()
+    staging = tmp_path / ".output-restore-test"
+    staging.mkdir()
+    journal = tmp_path / ".output-recovery-journal.json"
+    journal.write_text(
+        json.dumps(
+            {
+                "schema_version": recovery_core.JOURNAL_SCHEMA_VERSION,
+                "destination": str(destination),
+                "staging": str(staging),
+                "checkpoint": None,
+                "phase": "staging",
+            }
+        )
+    )
+    entered = threading.Event()
+    done = threading.Event()
+
+    def reconcile():
+        entered.set()
+        recovery_core.reconcile_interrupted_recovery(destination)
+        done.set()
+
+    with recovery_core._publication_lock(destination):
+        thread = threading.Thread(target=reconcile)
+        thread.start()
+        assert entered.wait(1)
+        assert not done.wait(0.1)
+        assert staging.is_dir()
+    thread.join(2)
+    assert done.is_set()
+    assert not staging.exists()
+
+
+def test_runner_serves_reconciliation_failure(tmp_path, monkeypatch):
+    monkeypatch.setattr(recovery_runner, "JOBS_DIR", tmp_path / "jobs")
+    monkeypatch.setattr(recovery_runner.sys, "argv", ["runner"])
+    monkeypatch.setattr(
+        recovery_runner,
+        "load_request",
+        lambda: {
+            "job_id": "f" * 32,
+            "token": "t" * 40,
+            "snapshot_id": "missing",
+            "destination": str(tmp_path / "output"),
+            "mode": "recovery",
+        },
+    )
+
+    def fail(_destination):
+        raise recovery_core.RecoveryError("invalid_journal", "Damaged journal")
+
+    monkeypatch.setattr(recovery_core, "reconcile_interrupted_recovery", fail)
+    monkeypatch.setattr(
+        recovery_runner.RecoveryRunner,
+        "_default_health_probe",
+        staticmethod(lambda: False),
+    )
+    served = []
+
+    class Server:
+        def __init__(self, address, handler):
+            served.append(address)
+
+        def serve_forever(self, **kwargs):
+            status = json.loads(
+                next((tmp_path / "jobs").glob("*/status.json")).read_text()
+            )
+            assert status["error_code"] == "invalid_journal"
+            assert status["state"] == "failed"
+
+        def server_close(self):
+            pass
+
+    monkeypatch.setattr(recovery_runner, "ThreadingHTTPServer", Server)
+    assert recovery_runner.main() == 0
+    assert served == [("0.0.0.0", 8051)]
+
+
+def test_reconciliation_subprocess_does_not_create_output_before_swap_repair(tmp_path):
+    import os
+    import subprocess
+    import sys
+
+    destination = tmp_path / "output"
+    checkpoint = tmp_path / "output-before-restore-test"
+    checkpoint.mkdir()
+    (checkpoint / "original.txt").write_text("retained")
+    staging = tmp_path / ".output-restore-test"
+    staging.mkdir()
+    (staging / "replacement.txt").write_text("staged")
+    (tmp_path / ".output-recovery-journal.json").write_text(
+        json.dumps(
+            {
+                "schema_version": recovery_core.JOURNAL_SCHEMA_VERSION,
+                "destination": str(destination),
+                "staging": str(staging),
+                "checkpoint": str(checkpoint),
+                "phase": "checkpoint_moved",
+            }
+        )
+    )
+    result = subprocess.run(
+        [sys.executable, "scripts/recovery_runner.py", "--reconcile-only"],
+        env={
+            **os.environ,
+            "OUTPUT_DIR": str(destination),
+            "WMB_RECOVERY_DESTINATION": str(destination),
+        },
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+    assert result.returncode == 0, result.stderr
+    assert (destination / "original.txt").read_text() == "retained"
+    assert not checkpoint.exists()
+    assert not staging.exists()
+    assert not (destination / "logs").exists()
+
+
+def test_reconcile_without_usb_request_or_journal(tmp_path):
+    import os
+    import subprocess
+    import sys
+
+    destination = tmp_path / "data/output"
+    result = subprocess.run(
+        [sys.executable, "scripts/recovery_runner.py", "--reconcile-only"],
+        env={
+            **os.environ,
+            "OUTPUT_DIR": str(destination),
+            "WMB_RECOVERY_DESTINATION": str(destination),
+            "WMB_RECOVERY_STATE_DIR": str(tmp_path / "state"),
+        },
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert result.returncode == 0, result.stderr
+    assert not destination.exists()
+
+
+def test_retry_and_rollback_cannot_overlap(tmp_path, monkeypatch):
+    monkeypatch.setattr(recovery_runner, "JOBS_DIR", tmp_path / "jobs")
+    runner = recovery_runner.RecoveryRunner(
+        {
+            "job_id": "c" * 32,
+            "token": "t" * 40,
+            "snapshot_id": "snapshot",
+            "destination": str(tmp_path / "output"),
+            "mode": "recovery",
+        }
+    )
+    runner.update(state="failed")
+    with runner._operation_lock:
+        assert runner.retry_start() is False
+        assert runner.roll_back() is False
+    assert runner.status["state"] == "failed"
+
+
+@pytest.mark.parametrize("endpoint", ["preview", "start"])
+def test_recovery_api_does_not_expose_internal_validation_details(
+    monkeypatch, endpoint
+):
+    from flask import Flask
+
+    from web.blueprints.api_v1 import api_v1
+    from web.blueprints.auth import auth_bp
+    from web.services import recovery_service
+
+    app = Flask(__name__)
+    app.secret_key = "test"
+    app.register_blueprint(auth_bp)
+    app.register_blueprint(api_v1)
+    client = app.test_client()
+    with client.session_transaction() as session:
+        session["authenticated"] = True
+
+    def fail(*args, **kwargs):
+        raise recovery_core.RecoveryError(
+            "preflight_failed", "Cannot open private/path/database"
+        )
+
+    monkeypatch.setattr(recovery_service, "preview_snapshot", fail)
+    monkeypatch.setattr(recovery_service, "start_recovery", fail)
+    response = (
+        client.get("/api/v1/system/recovery/snapshot/preview")
+        if endpoint == "preview"
+        else client.post("/api/v1/system/recovery/start", json={})
+    )
+    assert response.status_code == 400
+    assert response.get_json()["code"] == "preflight_failed"
+    assert "private/path" not in response.get_data(as_text=True)

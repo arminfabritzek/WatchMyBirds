@@ -309,10 +309,12 @@ token-protected progress and failure page on TCP port `8051` while the main app
 on port `8050` is stopped. The web app can only submit a discovered snapshot
 identifier; the root runner fixes the destination to `/opt/app/data/output` and
 revalidates containment, completeness, checksums, schema, media, and space.
-Both the recovery unit and `app.service` run the journal reconciliation gate
-as a synchronous `ExecStartPre`, so the app cannot open the database while an
-interrupted directory swap is unresolved. The app sandbox can write only the
-runner's fixed incoming-request directory, not job status or runner code.
+`app.service` runs the journal reconciliation gate as a synchronous
+`ExecStartPre`, serialized with publication and rollback. The independent
+runner reports reconciliation failures through its status page, so the app
+cannot open an unresolved database while recovery diagnostics remain reachable.
+The app sandbox can write only the runner's fixed incoming-request directory,
+not job status or runner code.
 
 Recovery restores runtime settings from the snapshot except destination-owned
 access and identity values: `EDIT_PASSWORD`, camera/go2rtc connection keys,

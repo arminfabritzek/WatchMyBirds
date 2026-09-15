@@ -224,6 +224,14 @@ cp /tmp/polkit/10-watchmybirds-format-backup.rules \
     /etc/polkit-1/rules.d/10-watchmybirds-format-backup.rules
 chmod 644 /etc/polkit-1/rules.d/10-watchmybirds-format-backup.rules
 
+# Recreate the shared lock with stable ownership before services start at boot.
+install -d -m 0755 /etc/tmpfiles.d
+cat > /etc/tmpfiles.d/watchmybirds-maintenance.conf << 'EOF'
+d /run/lock/watchmybirds 0750 root watchmybirds -
+f /run/lock/watchmybirds/maintenance.lock 0660 root watchmybirds -
+EOF
+systemd-tmpfiles --create /etc/tmpfiles.d/watchmybirds-maintenance.conf
+
 install -d -o root -g watchmybirds -m 2750 /var/lib/watchmybirds-recovery
 install -d -o root -g watchmybirds -m 2770 /var/lib/watchmybirds-recovery/incoming
 install -d -o root -g watchmybirds -m 2750 /var/lib/watchmybirds-recovery/jobs

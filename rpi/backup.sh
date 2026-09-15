@@ -216,7 +216,7 @@ mkdir -p "${SNAPSHOTS_DIR}" || die 11 "Cannot create ${SNAPSHOTS_DIR}"
 # Shared appliance-maintenance lock: recovery, formatting, and snapshot
 # publication must never overlap. The recovery runner holds the same lock
 # while app.service is stopped and data directories are swapped.
-exec 8>"/run/lock/watchmybirds-maintenance.lock" || die 11 "Cannot create maintenance lock"
+exec 8<>"/run/lock/watchmybirds/maintenance.lock" || die 11 "Cannot create maintenance lock"
 if ! flock -n 8; then
     die 18 "Another backup, format, or recovery operation is running."
 fi
