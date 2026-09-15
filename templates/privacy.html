@@ -11,9 +11,8 @@
 
     <p>
         There is exactly <strong>one</strong> piece of optional outbound
-        traffic: an anonymous daily heartbeat that lets us count active
-        installations. <strong>It is off by default</strong>, and the only way
-        to turn it on is the toggle in <a href="/settings">Settings → Privacy</a>.
+        traffic: a voluntary daily heartbeat that helps us understand installation
+        activity and software adoption. <strong>It is off by default</strong>, and you can enable it during initial password setup or in <a href="/settings">Settings → Privacy</a>.
     </p>
 
     <hr class="my-4">
@@ -34,12 +33,13 @@
   "detector_variant":  "yolox-tiny-int8 | fasterrcnn | unknown"
 }</code></pre>
 
-    <p>That's it. Eight fields, all anonymous. The
+    <p>These eight fields describe an installation, not a named user. The
        <code>installation_id</code> is a random number we generate on your
        device — it's <strong>not</strong> derived from your hardware, MAC,
-       hostname, or anything else identifiable.</p>
+       hostname. The stable ID lets us recognize repeat reports from the same
+       installation; the data is pseudonymous, not fully anonymous.</p>
 
-    <h2 class="mt-4">What we explicitly never send</h2>
+    <h2 class="mt-4">What the heartbeat does not include</h2>
 
     <ul>
         <li>Your IP address, country, region, or any geo-location</li>
@@ -79,9 +79,7 @@
     <h2 class="mt-4">Where the data lives</h2>
 
     <p>The heartbeat is received by a tiny Cloudflare Worker and stored in a
-       Cloudflare D1 database with <code>jurisdiction=eu</code>, meaning
-       Cloudflare guarantees the data is stored and processed only in the
-       European Union. The endpoint is
+       Cloudflare D1 database with <code>jurisdiction=eu</code>, configured for EU data jurisdiction. The endpoint is
        <code>https://watchmybirds-telemetry.wmb-infra.workers.dev/v1/heartbeat</code>.</p>
 
     <p>The Worker explicitly drops the IP address, country code, and all
@@ -89,18 +87,20 @@
        The Worker source code is open and reviewable in the WatchMyBirds repo
        under <code>infra/telemetry-worker/</code>.</p>
 
-    <h2 class="mt-4">How long we keep it</h2>
+    <p>The connection exposes its source IP to Cloudflare as the network provider;
+       we do not include it in the heartbeat payload or store it in our telemetry database.</p>
 
-    <p>Each individual heartbeat is deleted <strong>within 24 hours</strong>
-       of being received. A nightly cron at 04:30 UTC aggregates yesterday's
-       heartbeats into per-day, per-cohort counts (e.g. "1 install on
-       <code>aarch64</code> with 8 GB RAM running v0.2.10 on 2026-05-06"),
-       then deletes the raw rows.</p>
+    <h2 class="mt-4">Storage and retention</h2>
 
-    <p>The aggregate table has <strong>no installation_id</strong>. There is
-       no way to track an individual install across days from what we keep.
-       We never archive, export, or back up the raw heartbeats — once they
-       are aggregated, the per-install timeline is gone forever.</p>
+    <p>Cloudflare's scheduled daily job at 04:30 UTC aggregates the previous day's
+       heartbeats and removes raw rows from earlier dates. This is a daily cleanup,
+       not a guaranteed 24-hour deletion deadline.</p>
+
+    <p>The maintainer also keeps a local history of installation IDs, report dates,
+       versions, and the technical fields listed above. This history is used to
+       count returning installations, follow version adoption, and prioritize
+       compatibility work. It currently has no automatic expiry. Aggregated counts
+       contain no installation IDs and are also retained for trend analysis.</p>
 
     <h2 class="mt-4">Your controls</h2>
 
@@ -115,9 +115,8 @@
             back on, you're counted as the same install (not a new one).</li>
         <li><strong>Rotate ID</strong> — if you want the next opt-in to be
             counted as a fresh install, click the "Rotate ID" button. This
-            wipes your current ID and generates a new one. Old raw rows in
-            the cloud are aggregated and deleted within 24 hours of being
-            received, so a rotation has effect very quickly.</li>
+            wipes your current ID and generates a new one. Future reports use the new ID. Rotation does not delete
+            previously received reports or the local history.</li>
         <li><strong>Block at the firewall</strong> — the heartbeat hostname
             is deliberately separate from any other WMB endpoint, so you can
             firewall-block <code>watchmybirds-telemetry.wmb-infra.workers.dev</code> without
@@ -143,10 +142,10 @@
     <p>If you spot something wrong, want clarification, or want to request
        deletion of any data: open an issue on
        <a href="https://github.com/arminfabritzek/WatchMyBirds/issues"
-          target="_blank" rel="noopener">GitHub</a>. Because the data is
-       anonymous, we can't selectively delete a specific install's history;
-       use the "Rotate ID" button or wait 90 days for the existing rows to
-       self-delete.</p>
+          target="_blank" rel="noopener">GitHub</a>. For a request concerning an installation, we may need its installation ID
+       from your device to locate the relevant records. Do not post it publicly;
+       ask for a private way to share it. Turning telemetry off stops future
+       reports but does not automatically delete previously received data.</p>
 
     <hr class="mt-4 mb-3">
 
@@ -154,9 +153,8 @@
         This page describes the behavior of the heartbeat as of the current
         app version. The Worker source code in
         <code>infra/telemetry-worker/src/worker.js</code> and the client code
-        in <code>web/services/telemetry_service.py</code> are the
-        authoritative reference. If they ever disagree with this page, the
-        code wins — please file a bug.
+        in <code>web/services/telemetry_service.py</code> describe the collection mechanism. Please report discrepancies with this
+        notice so they can be corrected.
     </p>
 </div>
 {% endblock %}

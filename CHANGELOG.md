@@ -8,6 +8,12 @@
   opt-in, processes large image collections in bounded batches, coordinates
   concurrent protection changes, and preserves clear results across restarts.
 
+### Documentation
+
+- Clarified optional telemetry notices to describe installation history,
+  its use for activity and version trends, and actual retention behavior.
+  Corrected anonymity and deletion claims in Privacy, Settings, and setup.
+
 ## 0.5.6 - 2026-09-10
 
 ### Fixed

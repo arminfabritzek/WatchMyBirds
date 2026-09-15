@@ -3,14 +3,14 @@
 WatchMyBirds runs entirely on your Raspberry Pi. Nothing about your bird
 activity, images, or detections ever leaves the device.
 
-There is exactly **one** piece of optional outbound traffic: an anonymous
-daily heartbeat that lets us count active installations. **It is off by
-default**, and the only way to turn it on is the toggle in
+There is exactly **one** piece of optional outbound traffic: a voluntary
+daily heartbeat that helps us understand installation activity and software adoption. **It is off by
+default**, and you can enable it during initial password setup or in
 **Settings → Privacy** in your running install.
 
 This document mirrors the `/privacy` page in the running app. If they ever
-disagree, the code in `web/services/telemetry_service.py` and
-`infra/telemetry-worker/src/worker.js` is authoritative — please file a bug.
+disagree, please report the discrepancy. The collection code is in `web/services/telemetry_service.py` and
+`infra/telemetry-worker/src/worker.js`.
 
 ---
 
@@ -64,11 +64,12 @@ One small JSON payload, once per UTC day, to
 }
 ```
 
-That's it. Eight fields, all anonymous. The `installation_id` is a random
+These eight fields describe an installation, not a named user. The `installation_id` is a random
 number we generate on your device — it is **not** derived from your
-hardware, MAC, hostname, or anything else identifiable.
+hardware, MAC, or hostname. The stable ID lets us recognize repeat
+reports from the same installation; the data is pseudonymous, not fully anonymous.
 
-## What we explicitly never send
+## What the heartbeat does not include
 
 - Your IP address, country, region, or any geo-location
 - Your locale, language, or timezone
@@ -99,8 +100,7 @@ private transfer.
 ## Where the data lives
 
 The heartbeat is received by a tiny Cloudflare Worker and stored in a
-Cloudflare D1 database with `jurisdiction=eu`, meaning Cloudflare guarantees
-the data is stored and processed only in the European Union. The endpoint is
+Cloudflare D1 database with `jurisdiction=eu`, configured for EU data jurisdiction. The endpoint is
 `https://watchmybirds-telemetry.wmb-infra.workers.dev/v1/heartbeat`.
 
 The Worker explicitly drops the IP address, country code, and all
@@ -108,17 +108,20 @@ Cloudflare-injected location metadata before writing to the database. The
 Worker source code is open and reviewable in
 [`infra/telemetry-worker/`](../infra/telemetry-worker/).
 
-## How long we keep it
+The connection exposes its source IP to Cloudflare as the network provider;
+we do not include it in the heartbeat payload or store it in our telemetry database.
 
-Each individual heartbeat is deleted **within 24 hours** of being received.
-A nightly cron at 04:30 UTC aggregates yesterday's heartbeats into per-day,
-per-cohort counts (e.g. "1 install on `aarch64` with 8 GB RAM running
-v0.2.10 on 2026-05-06"), then deletes the raw rows.
+## Storage and retention
 
-The aggregate table has **no `installation_id`**. There is no way to track
-an individual install across days from what we keep. We never archive,
-export, or back up the raw heartbeats — once they are aggregated, the
-per-install timeline is gone forever.
+Cloudflare's scheduled daily job at 04:30 UTC aggregates the previous day's
+heartbeats and removes raw rows from earlier dates. This is a daily cleanup,
+not a guaranteed 24-hour deletion deadline.
+
+The maintainer also keeps a local history of installation IDs, report dates,
+versions, and the technical fields listed above. This history is used to
+count returning installations, follow version adoption, and prioritize
+compatibility work. It currently has no automatic expiry. Aggregated counts
+contain no installation IDs and are also retained for trend analysis.
 
 ## Your controls
 
@@ -132,9 +135,8 @@ per-install timeline is gone forever.
 
 - **Rotate ID** — if you want the next opt-in to be counted as a fresh
   install, click the **Rotate ID** button in Settings → Privacy. This wipes
-  your current ID and generates a new one. Old raw rows in the cloud are
-  aggregated and deleted within 24 hours of being received, so a rotation
-  has effect very quickly.
+  your current ID and generates a new one. Future reports use the new ID. Rotation does not delete
+  previously received reports or the local history.
 
 - **Block at the firewall** — the heartbeat hostname is deliberately
   separate from any other WatchMyBirds endpoint, so you can firewall-block
@@ -159,9 +161,10 @@ If you spot something wrong, want clarification, or want to request
 deletion of any data: open an issue on
 [GitHub](https://github.com/arminfabritzek/WatchMyBirds/issues).
 
-Because the data is anonymous, we can't selectively delete a specific
-install's history. Use the **Rotate ID** button or wait 90 days for the
-existing rows to self-delete.
+For a request concerning an installation, we may need its installation ID
+from your device to locate the relevant records. Do not post it publicly;
+ask for a private way to share it. Turning telemetry off stops future
+reports but does not automatically delete previously received data.
 
 ---
 
@@ -170,5 +173,5 @@ version. The Worker source code in
 [`infra/telemetry-worker/src/worker.js`](../infra/telemetry-worker/src/worker.js)
 and the client code in
 [`web/services/telemetry_service.py`](../web/services/telemetry_service.py)
-are the authoritative reference. If they ever disagree with this page, the
-code wins — please file a bug.
+describe the collection mechanism. Please report discrepancies with this
+notice so they can be corrected.

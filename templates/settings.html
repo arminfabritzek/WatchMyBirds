@@ -2000,16 +2000,17 @@
                 </p>
                 <p class="mb-2">
                     Optionally, you can let this installation send <strong>one
-                    anonymous heartbeat per day</strong> so we can count how many
-                    people actually use the project. The heartbeat contains a
+                    usage heartbeat per day</strong> to understand installation
+                    activity and software adoption. The heartbeat contains a
                     random installation ID, the app version, and basic hardware
                     info (CPU count, rounded RAM). <strong>No images, no detections,
-                    no IP, no location, no email.</strong>
+                    no location, no email in the heartbeat.</strong>
                 </p>
                 <p class="mb-3">
-                    See <a href="/privacy" target="_blank" rel="noopener">Privacy
-                    page</a> for the full list of what we collect and what we
-                    explicitly never collect.
+                    The maintainer keeps a local history of these reports without
+                    automatic expiry. See the <a href="/privacy" target="_blank"
+                    rel="noopener">Privacy page</a> for the data collected,
+                    its purpose, and storage details.
                 </p>
             </div>
 
@@ -2018,7 +2019,7 @@
                     <div class="form-check form-switch">
                         <input class="form-check-input" type="checkbox" role="switch" id="telemetry_enabled_toggle">
                         <label class="form-check-label" for="telemetry_enabled_toggle">
-                            <strong>Send anonymous daily heartbeat</strong>
+                            <strong>Send daily usage heartbeat</strong>
                         </label>
                     </div>
                     <span id="telemetry_status_badge" class="badge bg-secondary">off</span>
@@ -2074,9 +2075,8 @@
                 </div>
                 <div class="settings-field__help mt-2">
                     Rotating wipes your current ID and generates a new one. The next
-                    heartbeat (if telemetry is on) will use the new ID. Old entries
-                    in the cloud database are never re-attributed and self-delete
-                    after 90 days.
+                    heartbeat (if telemetry is on) will use the new ID. Rotation does not delete previously received reports or the
+                    maintainer’s local history.
                 </div>
             </div>
 
