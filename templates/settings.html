@@ -2697,11 +2697,14 @@
                             ? 'Replaces current birds and records; keeps a complete checkpoint.'
                             : 'Migrates birds and records into this fresh installation.'));
                     var preserved = data.settings_preserved || [];
+                    var excluded = data.settings_excluded || [];
                     recoveryPreview.appendChild(previewItem('Settings policy',
                         (data.settings_restored_count || 0) + ' backup settings restored. ' +
                         (preserved.length ? preserved.join(', ') + ' stay from this device.' :
-                            'This device has no local credential overrides yet.') +
-                        ' Wi-Fi and operating-system network access are never replaced.', true));
+                            'This device has no local credential overrides yet.') + ' ' +
+                        (excluded.length ? excluded.join(', ') + ' from the backup will be ignored. ' : '') +
+                        'Camera and video-relay files stay from this device or remain unset. ' +
+                        'Wi-Fi and operating-system network access are never replaced.', true));
                     if (!data.guided_supported) {
                         recoveryPreview.appendChild(previewItem('Guided recovery unavailable',
                             'This is not an installed Raspberry Pi recovery service. Use the CLI fallback; Docker orchestration is not yet supported.', true));

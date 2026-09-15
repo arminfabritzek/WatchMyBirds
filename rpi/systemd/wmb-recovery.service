@@ -10,10 +10,10 @@ User=root
 Group=watchmybirds
 WorkingDirectory=/opt/app
 Environment=WMB_RECOVERY_DESTINATION=/opt/app/data/output
+ExecStartPre=/opt/app/.venv/bin/python /opt/app/scripts/recovery_runner.py --reconcile-only
 ExecStart=/opt/app/.venv/bin/python /opt/app/scripts/recovery_runner.py --host 0.0.0.0 --port 8051
 Restart=no
 TimeoutStartSec=30
-RuntimeMaxSec=24h
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=wmb-recovery

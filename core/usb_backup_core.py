@@ -518,6 +518,11 @@ def get_snapshot_directory(name: str) -> Path | None:
     return resolved
 
 
+def is_safe_snapshot_identifier(name: str) -> bool:
+    """Return whether ``name`` is a contained identifier, even if now absent."""
+    return _safe_snapshot_path(name) is not None
+
+
 def delete_snapshot(name: str) -> tuple[bool, str]:
     """Permanently delete a snapshot directory.
 

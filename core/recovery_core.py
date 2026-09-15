@@ -47,6 +47,7 @@ PRESERVED_SETTING_KEYS = frozenset(
         "telemetry_installation_id",
     }
 )
+PRESERVED_OUTPUT_FILES = ("cameras.yaml", "go2rtc.yaml")
 
 JOURNAL_SCHEMA_VERSION = 1
 SPACE_HEADROOM_RATIO = 1.10
@@ -197,6 +198,11 @@ def inspect_snapshot(snapshot_dir: Path, destination: Path) -> dict[str, Any]:
         else {}
     )
     preserved = sorted(PRESERVED_SETTING_KEYS.intersection(current_settings))
+    excluded = sorted(
+        PRESERVED_SETTING_KEYS.intersection(snapshot_settings).difference(
+            current_settings
+        )
+    )
     restored = sorted(set(snapshot_settings).difference(PRESERVED_SETTING_KEYS))
     compatible = bool(verification.get("ok") and schema_ok)
     blockers = []
@@ -227,17 +233,83 @@ def inspect_snapshot(snapshot_dir: Path, destination: Path) -> dict[str, Any]:
         "mode": "recovery" if has_data else "migration",
         "settings_restored": restored,
         "settings_preserved": preserved,
+        "settings_excluded": excluded,
         "network_preserved": True,
         "blockers": blockers,
         "verification": verification,
     }
 
 
-def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
+def _fsync_directory(path: Path) -> None:
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+    descriptor = os.open(path, flags)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def _fsync_tree(root: Path) -> None:
+    """Make staged regular files and directory entries durable before rename."""
+    directories = [root]
+    for path in root.rglob("*"):
+        if path.is_symlink():
+            raise RecoveryError(
+                "unsafe_snapshot", "The backup contains symbolic links."
+            )
+        if path.is_dir():
+            directories.append(path)
+        elif path.is_file():
+            with path.open("rb") as handle:
+                os.fsync(handle.fileno())
+    for directory in sorted(
+        directories, key=lambda item: len(item.parts), reverse=True
+    ):
+        _fsync_directory(directory)
+
+
+def _unlink_durable(path: Path) -> None:
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        return
+    _fsync_directory(path.parent)
+
+
+def _remove_tree_durable(path: Path) -> None:
+    if path.exists():
+        shutil.rmtree(path)
+        _fsync_directory(path.parent)
+
+
+def write_json_durable(
+    path: Path, payload: dict[str, Any], *, mode: int = 0o600
+) -> None:
+    """Atomically replace JSON and flush both contents and directory entry."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    temp = path.with_name(f".{path.name}.tmp-{os.getpid()}")
-    temp.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
-    temp.replace(path)
+    descriptor, temp_name = tempfile.mkstemp(
+        prefix=f".{path.name}.tmp-", dir=path.parent
+    )
+    temp = Path(temp_name)
+    try:
+        os.fchmod(descriptor, mode)
+        handle = os.fdopen(descriptor, "w", encoding="utf-8")
+        descriptor = -1
+        with handle:
+            handle.write(json.dumps(payload, indent=2, sort_keys=True))
+            handle.flush()
+            os.fsync(handle.fileno())
+        temp.replace(path)
+        _fsync_directory(path.parent)
+    except BaseException:
+        if descriptor >= 0:
+            os.close(descriptor)
+        temp.unlink(missing_ok=True)
+        raise
+
+
+def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
+    write_json_durable(path, payload)
 
 
 def _journal_path(destination: Path) -> Path:
@@ -276,6 +348,35 @@ def reconcile_interrupted_recovery(destination: Path) -> str | None:
             "Recovery state is damaged; automatic repair was refused.",
         ) from exc
 
+    if phase in {"rollback_prepared", "rollback_current_moved", "rollback_published"}:
+        if destination.exists() and checkpoint and not checkpoint.exists():
+            _unlink_durable(journal_path)
+            return "The interrupted checkpoint rollback had already completed."
+        if destination.exists() and checkpoint and checkpoint.exists():
+            if staging.exists():
+                raise RecoveryError(
+                    "interrupted_swap",
+                    "Rollback state is ambiguous; automatic repair was refused.",
+                )
+            _unlink_durable(journal_path)
+            return (
+                "The interrupted checkpoint rollback had not changed the installation."
+            )
+        if not destination.exists() and checkpoint and checkpoint.exists():
+            checkpoint.rename(destination)
+            _fsync_directory(destination.parent)
+            _unlink_durable(journal_path)
+            return "The interrupted checkpoint rollback was completed."
+        if not destination.exists() and staging.exists():
+            staging.rename(destination)
+            _fsync_directory(destination.parent)
+            _unlink_durable(journal_path)
+            return "The interrupted checkpoint rollback restored the last usable data."
+        raise RecoveryError(
+            "interrupted_swap",
+            "Checkpoint rollback was interrupted and could not be repaired automatically.",
+        )
+
     if (
         phase in {"checkpoint_prepared", "checkpoint_moved"}
         and not destination.exists()
@@ -283,9 +384,10 @@ def reconcile_interrupted_recovery(destination: Path) -> str | None:
         and checkpoint.exists()
     ):
         checkpoint.rename(destination)
+        _fsync_directory(destination.parent)
         if staging.exists():
-            shutil.rmtree(staging)
-        journal_path.unlink(missing_ok=True)
+            _remove_tree_durable(staging)
+        _unlink_durable(journal_path)
         return (
             "The interrupted publication was rolled back to the previous installation."
         )
@@ -296,13 +398,13 @@ def reconcile_interrupted_recovery(destination: Path) -> str | None:
         and checkpoint.is_dir()
     ):
         if staging.exists():
-            shutil.rmtree(staging)
-        journal_path.unlink(missing_ok=True)
+            _remove_tree_durable(staging)
+        _unlink_durable(journal_path)
         return "The interrupted recovery had already published its restored data."
     if phase == "published" and destination.is_dir():
         if staging.exists():
-            shutil.rmtree(staging)
-        journal_path.unlink(missing_ok=True)
+            _remove_tree_durable(staging)
+        _unlink_durable(journal_path)
         return "The interrupted recovery had already published its restored data."
     if (
         phase == "verified"
@@ -310,12 +412,12 @@ def reconcile_interrupted_recovery(destination: Path) -> str | None:
         and destination.is_dir()
         and not staging.exists()
     ):
-        journal_path.unlink(missing_ok=True)
+        _unlink_durable(journal_path)
         return "The interrupted migration had already published its restored data."
     if phase in {"staging", "verified", "checkpoint_prepared"} and destination.exists():
         if staging.exists():
-            shutil.rmtree(staging)
-        journal_path.unlink(missing_ok=True)
+            _remove_tree_durable(staging)
+        _unlink_durable(journal_path)
         return "Incomplete staged recovery data was removed; the installation was unchanged."
     raise RecoveryError(
         "interrupted_swap",
@@ -331,13 +433,34 @@ def _apply_settings_policy(staging: Path, destination: Path) -> tuple[str, ...]:
     )
     restored = _read_settings(staged_path) if staged_path.is_file() else {}
     preserved = tuple(sorted(PRESERVED_SETTING_KEYS.intersection(current)))
-    for key in preserved:
-        restored[key] = current[key]
+    for key in PRESERVED_SETTING_KEYS:
+        if key in current:
+            restored[key] = current[key]
+        else:
+            restored.pop(key, None)
     if restored or staged_path.exists() or current_path.exists():
         staged_path.write_text(
             yaml.safe_dump(restored, sort_keys=True), encoding="utf-8"
         )
         staged_path.chmod(0o600)
+
+    for name in PRESERVED_OUTPUT_FILES:
+        current_file = destination / name
+        staged_file = staging / name
+        if staged_file.exists() and not staged_file.is_file():
+            raise RecoveryError(
+                "invalid_device_settings",
+                f"The backup contains an invalid device settings entry: {name}.",
+            )
+        if current_file.exists():
+            if current_file.is_symlink() or not current_file.is_file():
+                raise RecoveryError(
+                    "invalid_device_settings",
+                    f"The current device settings entry is unsafe: {name}.",
+                )
+            shutil.copy2(current_file, staged_file)
+        else:
+            staged_file.unlink(missing_ok=True)
     return preserved
 
 
@@ -395,6 +518,7 @@ def recover_snapshot(
         )
 
     destination.parent.mkdir(parents=True, exist_ok=True)
+    _fsync_directory(destination.parent)
     staging = Path(
         tempfile.mkdtemp(prefix=f".{destination.name}-restore-", dir=destination.parent)
     )
@@ -424,6 +548,12 @@ def recover_snapshot(
             (staging / f"images.db{suffix}").unlink(missing_ok=True)
         shutil.copy2(snapshot_dir / "data" / "images.db", staging / "images.db")
         preserved = _apply_settings_policy(staging, destination)
+        if destination.exists():
+            owner = destination.stat()
+            shutil.copystat(destination, staging)
+            if os.geteuid() == 0:
+                for item in chain([staging], staging.rglob("*")):
+                    os.chown(item, owner.st_uid, owner.st_gid)
 
         _emit(
             progress,
@@ -438,6 +568,7 @@ def recover_snapshot(
         if not media["media_ok"] or not schema_ok:
             detail = media.get("media_message") or "; ".join(schema_issues)
             raise RecoveryError("staging_verification_failed", str(detail))
+        _fsync_tree(staging)
         payload["phase"] = "verified"
         _write_json_atomic(journal, payload)
 
@@ -455,6 +586,7 @@ def recover_snapshot(
                 serial += 1
             payload["checkpoint"] = str(checkpoint)
             payload["phase"] = "checkpoint_prepared"
+            _fsync_tree(destination)
             _write_json_atomic(journal, payload)
             _emit(
                 progress,
@@ -462,18 +594,15 @@ def recover_snapshot(
                 70,
                 "Retaining a complete checkpoint of the current installation…",
             )
-            owner = destination.stat()
-            shutil.copystat(destination, staging)
-            if os.geteuid() == 0:
-                for item in chain([staging], staging.rglob("*")):
-                    os.chown(item, owner.st_uid, owner.st_gid)
             destination.rename(checkpoint)
+            _fsync_directory(destination.parent)
             payload["phase"] = "checkpoint_moved"
             _write_json_atomic(journal, payload)
 
         _emit(progress, "publishing", 82, "Publishing the verified recovered data…")
         try:
             staging.rename(destination)
+            _fsync_directory(destination.parent)
         except BaseException:
             if (
                 checkpoint is not None
@@ -481,12 +610,13 @@ def recover_snapshot(
                 and not destination.exists()
             ):
                 checkpoint.rename(destination)
+                _fsync_directory(destination.parent)
             raise
         payload["phase"] = "published"
         _write_json_atomic(journal, payload)
         publication_committed = True
         try:
-            journal.unlink(missing_ok=True)
+            _unlink_durable(journal)
         except OSError:
             pass
         _emit(
@@ -499,18 +629,21 @@ def recover_snapshot(
     except BaseException:
         if not publication_committed and not staging.exists() and destination.exists():
             destination.rename(staging)
+            _fsync_directory(destination.parent)
         if checkpoint is not None and checkpoint.exists() and not destination.exists():
             checkpoint.rename(destination)
+            _fsync_directory(destination.parent)
         if staging.exists():
-            shutil.rmtree(staging)
+            _remove_tree_durable(staging)
         if payload.get("phase") in {"staging", "verified"} or destination.exists():
-            journal.unlink(missing_ok=True)
+            _unlink_durable(journal)
         raise
 
 
 def rollback_checkpoint(destination: Path, checkpoint: Path) -> Path:
     """Replace a failed restored destination with its retained checkpoint."""
     destination = destination.resolve()
+    reconcile_interrupted_recovery(destination)
     checkpoint = checkpoint.resolve(strict=True)
     if checkpoint.parent != destination.parent or not checkpoint.name.startswith(
         f"{destination.name}-before-restore-"
@@ -518,18 +651,43 @@ def rollback_checkpoint(destination: Path, checkpoint: Path) -> Path:
         raise RecoveryError(
             "unsafe_checkpoint", "The recovery checkpoint identifier is invalid."
         )
-    failed = (
-        destination.parent
-        / f"{destination.name}-failed-recovery-{datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')}"
-    )
+    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+    failed = destination.parent / f".{destination.name}-restore-failed-{stamp}"
+    serial = 1
+    while failed.exists():
+        failed = (
+            destination.parent / f".{destination.name}-restore-failed-{stamp}-{serial}"
+        )
+        serial += 1
+    journal = _journal_path(destination)
+    payload = {
+        "schema_version": JOURNAL_SCHEMA_VERSION,
+        "phase": "rollback_prepared",
+        "destination": str(destination),
+        "staging": str(failed),
+        "checkpoint": str(checkpoint),
+    }
+    if destination.exists():
+        _fsync_tree(destination)
+    _fsync_tree(checkpoint)
+    _write_json_atomic(journal, payload)
     if destination.exists():
         destination.rename(failed)
+        _fsync_directory(destination.parent)
+        payload["phase"] = "rollback_current_moved"
+        _write_json_atomic(journal, payload)
     try:
         checkpoint.rename(destination)
+        _fsync_directory(destination.parent)
     except BaseException:
         if failed.exists() and not destination.exists():
             failed.rename(destination)
+            _fsync_directory(destination.parent)
+        _unlink_durable(journal)
         raise
+    payload["phase"] = "rollback_published"
+    _write_json_atomic(journal, payload)
+    _unlink_durable(journal)
     return failed
 
 

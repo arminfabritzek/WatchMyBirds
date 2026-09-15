@@ -6,6 +6,7 @@ import fcntl
 import hashlib
 import json
 import sqlite3
+import stat
 import threading
 from pathlib import Path
 from types import SimpleNamespace
@@ -23,9 +24,12 @@ def _snapshot(root: Path, name: str = "20260915_120000_manual") -> Path:
     original.parent.mkdir(parents=True)
     original.write_bytes(b"bird")
     (output / "settings.yaml").write_text(
-        "EDIT_PASSWORD: old-password\nCAMERA_URL: rtsp://old-camera\nRETENTION_DAYS: 30\n",
+        "EDIT_PASSWORD: old-password\nCAMERA_URL: rtsp://old-camera\n"
+        "TELEGRAM_BOT_TOKEN: source-token\nRETENTION_DAYS: 30\n",
         encoding="utf-8",
     )
+    (output / "cameras.yaml").write_text("camera: source\n", encoding="utf-8")
+    (output / "go2rtc.yaml").write_text("stream: source\n", encoding="utf-8")
     db = snapshot / "data" / "images.db"
     with sqlite3.connect(db) as conn:
         conn.execute(
@@ -84,6 +88,7 @@ def test_preview_reports_counts_space_source_and_settings_policy(tmp_path, monke
     assert preview["required_bytes"] > 0
     assert preview["space_ok"] is True
     assert preview["settings_preserved"] == ["CAMERA_URL", "EDIT_PASSWORD"]
+    assert preview["settings_excluded"] == ["TELEGRAM_BOT_TOKEN"]
     assert "RETENTION_DAYS" in preview["settings_restored"]
 
 
@@ -95,13 +100,109 @@ def test_recovery_preserves_current_auth_and_device_settings(tmp_path):
         "EDIT_PASSWORD: current-password\nCAMERA_URL: rtsp://current-camera\nRETENTION_DAYS: 90\n",
         encoding="utf-8",
     )
+    (destination / "cameras.yaml").write_text("camera: current\n", encoding="utf-8")
+    (destination / "go2rtc.yaml").write_text("stream: current\n", encoding="utf-8")
 
     recovery_core.recover_snapshot(snapshot, destination, mode="recovery", force=True)
 
     restored = recovery_core._read_settings(destination / "settings.yaml")
     assert restored["EDIT_PASSWORD"] == "current-password"
     assert restored["CAMERA_URL"] == "rtsp://current-camera"
+    assert "TELEGRAM_BOT_TOKEN" not in restored
     assert restored["RETENTION_DAYS"] == 30
+    assert (destination / "cameras.yaml").read_text() == "camera: current\n"
+    assert (destination / "go2rtc.yaml").read_text() == "stream: current\n"
+
+
+def test_migration_never_imports_source_credentials_or_device_files(tmp_path):
+    snapshot = _snapshot(tmp_path / "usb")
+    destination = tmp_path / "output"
+
+    recovery_core.recover_snapshot(snapshot, destination, mode="migration")
+
+    restored = recovery_core._read_settings(destination / "settings.yaml")
+    assert "EDIT_PASSWORD" not in restored
+    assert "CAMERA_URL" not in restored
+    assert "TELEGRAM_BOT_TOKEN" not in restored
+    assert restored["RETENTION_DAYS"] == 30
+    assert not (destination / "cameras.yaml").exists()
+    assert not (destination / "go2rtc.yaml").exists()
+
+
+def test_atomic_journal_fsyncs_file_and_parent_directory(tmp_path, monkeypatch):
+    calls = []
+    original_fsync = recovery_core.os.fsync
+
+    def tracked_fsync(descriptor):
+        calls.append(stat.S_ISDIR(recovery_core.os.fstat(descriptor).st_mode))
+        original_fsync(descriptor)
+
+    monkeypatch.setattr(recovery_core.os, "fsync", tracked_fsync)
+
+    journal = tmp_path / "journal.json"
+    recovery_core._write_json_atomic(journal, {"phase": "test"})
+
+    assert calls[0] is False
+    assert calls[-1] is True
+    assert stat.S_IMODE(journal.stat().st_mode) == 0o600
+
+
+def test_recovery_orders_durability_barriers_around_renames(tmp_path, monkeypatch):
+    snapshot = _snapshot(tmp_path / "usb")
+    destination = tmp_path / "output"
+    destination.mkdir()
+    events = []
+    original_write = recovery_core._write_json_atomic
+    original_rename = Path.rename
+
+    def tracked_write(path, payload):
+        events.append(f"journal:{payload['phase']}")
+        original_write(path, payload)
+
+    def tracked_rename(path, target):
+        events.append(f"rename:{path.name}->{target.name}")
+        return original_rename(path, target)
+
+    monkeypatch.setattr(recovery_core, "_write_json_atomic", tracked_write)
+    monkeypatch.setattr(
+        recovery_core,
+        "_fsync_tree",
+        lambda path: events.append(f"fsync-tree:{path.name}"),
+    )
+    monkeypatch.setattr(
+        recovery_core,
+        "_fsync_directory",
+        lambda path: events.append(f"fsync-dir:{path.name}"),
+    )
+    monkeypatch.setattr(Path, "rename", tracked_rename)
+
+    recovery_core.recover_snapshot(snapshot, destination, mode="recovery", force=True)
+
+    staging_sync = next(
+        index
+        for index, event in enumerate(events)
+        if event.startswith("fsync-tree:.output-restore-")
+    )
+    verified = events.index("journal:verified")
+    prepared = events.index("journal:checkpoint_prepared")
+    checkpoint_rename = next(
+        index
+        for index, event in enumerate(events)
+        if event.startswith("rename:output->output-before-restore-")
+    )
+    moved = events.index("journal:checkpoint_moved")
+    publish_rename = next(
+        index
+        for index, event in enumerate(events)
+        if event.startswith("rename:.output-restore-") and event.endswith("->output")
+    )
+    published = events.index("journal:published")
+
+    assert staging_sync < verified
+    assert prepared < checkpoint_rename < moved
+    assert "fsync-dir:" + tmp_path.name in events[checkpoint_rename + 1 : moved]
+    assert publish_rename < published
+    assert "fsync-dir:" + tmp_path.name in events[publish_rename + 1 : published]
 
 
 def test_low_space_refuses_before_staging(tmp_path, monkeypatch):
@@ -226,6 +327,64 @@ def test_interrupted_published_swap_keeps_checkpoint(tmp_path):
     recovery_core.reconcile_interrupted_recovery(destination)
 
     assert destination.exists()
+    assert checkpoint.exists()
+    assert not journal.exists()
+
+
+def test_interrupted_rollback_after_current_move_completes_checkpoint(tmp_path):
+    destination = tmp_path / "output"
+    checkpoint = tmp_path / "output-before-restore-test"
+    failed = tmp_path / ".output-restore-failed-test"
+    checkpoint.mkdir()
+    failed.mkdir()
+    (checkpoint / "state").write_text("previous", encoding="utf-8")
+    (failed / "state").write_text("restored", encoding="utf-8")
+    journal = tmp_path / ".output-recovery-journal.json"
+    journal.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "phase": "rollback_current_moved",
+                "destination": str(destination),
+                "staging": str(failed),
+                "checkpoint": str(checkpoint),
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    recovery_core.reconcile_interrupted_recovery(destination)
+
+    assert (destination / "state").read_text() == "previous"
+    assert (failed / "state").read_text() == "restored"
+    assert not checkpoint.exists()
+    assert not journal.exists()
+
+
+def test_interrupted_rollback_before_first_move_keeps_current_data(tmp_path):
+    destination = tmp_path / "output"
+    checkpoint = tmp_path / "output-before-restore-test"
+    failed = tmp_path / ".output-restore-failed-test"
+    destination.mkdir()
+    checkpoint.mkdir()
+    (destination / "state").write_text("restored", encoding="utf-8")
+    journal = tmp_path / ".output-recovery-journal.json"
+    journal.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "phase": "rollback_prepared",
+                "destination": str(destination),
+                "staging": str(failed),
+                "checkpoint": str(checkpoint),
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    recovery_core.reconcile_interrupted_recovery(destination)
+
+    assert (destination / "state").read_text() == "restored"
     assert checkpoint.exists()
     assert not journal.exists()
 
@@ -414,6 +573,137 @@ def test_runner_resumes_published_job_with_health_check_only(tmp_path, monkeypat
     assert runner.status["created_at"] == status["created_at"]
 
 
+def test_resumed_restart_failure_keeps_retry_visible(tmp_path, monkeypatch):
+    destination = tmp_path / "output"
+    destination.mkdir()
+    jobs = tmp_path / "jobs"
+    job_id = "f" * 32
+    status_dir = jobs / job_id
+    status_dir.mkdir(parents=True)
+    (status_dir / "status.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "job_id": job_id,
+                "state": "running",
+                "stage": "restarting_app",
+                "percent": 94,
+                "message": "Restarting",
+                "checkpoint": None,
+                "checkpoint_available": False,
+                "created_at": "2026-09-15T12:00:00+00:00",
+                "updated_at": "2026-09-15T12:01:00+00:00",
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(recovery_runner, "EXPECTED_DESTINATION", destination)
+    monkeypatch.setattr(recovery_runner, "JOBS_DIR", jobs)
+    monkeypatch.setattr(
+        recovery_runner, "MAINTENANCE_LOCK", tmp_path / "maintenance.lock"
+    )
+    runner = recovery_runner.RecoveryRunner(
+        {
+            "job_id": job_id,
+            "token": "t" * 40,
+            "snapshot_id": "snapshot",
+            "destination": str(destination),
+            "mode": "recovery",
+        },
+        health_probe=lambda: False,
+    )
+    monkeypatch.setattr(runner, "_start_and_check", lambda: False)
+
+    runner.run()
+
+    assert runner.status["state"] == "failed"
+    assert runner.status["error_code"] == "restart_failed"
+    assert runner.status["app_available"] is False
+
+
+def test_failed_job_is_reopened_after_reboot_without_usb(tmp_path, monkeypatch):
+    jobs = tmp_path / "jobs"
+    job_id = "1" * 32
+    job_dir = jobs / job_id
+    job_dir.mkdir(parents=True)
+    destination = tmp_path / "output"
+    request = {
+        "schema_version": 1,
+        "job_id": job_id,
+        "token": "t" * 40,
+        "snapshot_id": "removed-snapshot",
+        "destination": str(destination),
+        "mode": "recovery",
+    }
+    (job_dir / "request.json").write_text(json.dumps(request), encoding="utf-8")
+    (job_dir / "status.json").write_text(
+        json.dumps(
+            {
+                "job_id": job_id,
+                "state": "failed",
+                "stage": "failed",
+                "updated_at": "2026-09-15T12:01:00+00:00",
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(recovery_runner, "REQUEST_PATH", tmp_path / "request.json")
+    monkeypatch.setattr(recovery_runner, "JOBS_DIR", jobs)
+    monkeypatch.setattr(recovery_runner, "EXPECTED_DESTINATION", destination)
+
+    assert recovery_runner.load_request() == request
+
+
+def test_rollback_refuses_to_swap_data_when_app_stop_fails(tmp_path, monkeypatch):
+    destination = tmp_path / "output"
+    checkpoint = tmp_path / "output-before-restore-test"
+    destination.mkdir()
+    checkpoint.mkdir()
+    (destination / "state").write_text("restored", encoding="utf-8")
+    (checkpoint / "state").write_text("previous", encoding="utf-8")
+    monkeypatch.setattr(recovery_runner, "EXPECTED_DESTINATION", destination)
+    monkeypatch.setattr(recovery_runner, "JOBS_DIR", tmp_path / "jobs")
+    monkeypatch.setattr(
+        recovery_runner, "MAINTENANCE_LOCK", tmp_path / "maintenance.lock"
+    )
+    runner = recovery_runner.RecoveryRunner(
+        {
+            "job_id": "2" * 32,
+            "token": "t" * 40,
+            "snapshot_id": "snapshot",
+            "destination": str(destination),
+            "mode": "recovery",
+        }
+    )
+    runner.update(
+        state="failed",
+        checkpoint=str(checkpoint),
+        checkpoint_available=True,
+        app_available=False,
+    )
+
+    def stop_fails(action):
+        assert action == "stop"
+        raise recovery_runner.subprocess.CalledProcessError(1, ["systemctl", "stop"])
+
+    monkeypatch.setattr(runner, "_systemctl", stop_fails)
+
+    assert runner.roll_back() is False
+    assert (destination / "state").read_text() == "restored"
+    assert (checkpoint / "state").read_text() == "previous"
+    assert runner.status["error_code"] == "app_stop_failed"
+
+
+def test_systemd_units_allow_requests_and_gate_app_start_on_reconciliation():
+    app_unit = Path("systemd/app.service").read_text(encoding="utf-8")
+    recovery_unit = Path("rpi/systemd/wmb-recovery.service").read_text(encoding="utf-8")
+
+    assert "/var/lib/watchmybirds-recovery/incoming" in app_unit
+    assert "recovery_runner.py --reconcile-only" in app_unit
+    assert "ExecStartPre=" in recovery_unit
+    assert "recovery_runner.py --reconcile-only" in recovery_unit
+
+
 def test_authorized_progress_poll_accepts_browser_handoff(tmp_path, monkeypatch):
     monkeypatch.setattr(recovery_runner, "JOBS_DIR", tmp_path / "jobs")
     runner = recovery_runner.RecoveryRunner(
@@ -480,7 +770,7 @@ def test_web_submission_requires_confirmation_and_stages_fixed_request(
     assert request["snapshot_id"] == "snapshot"
     assert request["destination"] == str((tmp_path / "output").resolve())
     assert request["token"] == result["token"]
-    assert commands == [["systemctl", "start", "wmb-recovery.service"]]
+    assert commands == [["systemctl", "restart", "wmb-recovery.service"]]
 
 
 def test_recovery_api_requires_authenticated_session(monkeypatch):

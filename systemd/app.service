@@ -17,6 +17,9 @@ Environment=PYTHONDONTWRITEBYTECODE=1
 Environment=PYTHONUNBUFFERED=1
 Environment=MODEL_BASE_PATH=/opt/app/data/models
 Environment=GO2RTC_CONFIG_PATH=/opt/app/data/output/go2rtc.yaml
+# Never let the app open the database until any durable recovery journal has
+# been reconciled. The leading + runs only this fixed preflight as root.
+ExecStartPre=+/opt/app/.venv/bin/python /opt/app/scripts/recovery_runner.py --reconcile-only
 # Force WiFi unblock on every start (runs as root via +). Sleep to avoid NM race.
 ExecStartPre=+/bin/sleep 2
 ExecStartPre=+/usr/sbin/rfkill unblock wifi
@@ -30,7 +33,7 @@ RestartSec=5
 
 # Security Hardening (strict sandboxing)
 ProtectSystem=strict
-ReadWritePaths=/opt/app/data /var/log/app
+ReadWritePaths=/opt/app/data /var/log/app /var/lib/watchmybirds-recovery/incoming
 PrivateTmp=true
 # Power actions use logind/polkit; keep NNP enabled to block SUID escalation.
 NoNewPrivileges=true

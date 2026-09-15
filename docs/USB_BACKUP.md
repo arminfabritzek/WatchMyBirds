@@ -109,8 +109,11 @@ Current Wi-Fi, operating-system network configuration, SSH keys, and installed
 application binaries are never restored. Backup runtime behavior is restored,
 but the destination's admin password, camera/relay connection values, Telegram
 credentials, and telemetry installation identity are preserved when they
-already exist. This keeps browser access and device identity usable after both
-fresh migration and replacement recovery.
+already exist. Source values in those protected fields are ignored when the
+destination has no value. Destination `cameras.yaml` and `go2rtc.yaml` are kept;
+on a fresh destination the source device files are omitted. This keeps browser
+access and device identity usable after both fresh migration and replacement
+recovery without importing another device's credentials.
 
 Guided orchestration is only claimed for Raspberry Pi images that install the
 runner, polkit rule, state directories, and firewall rule. Docker guided
@@ -185,6 +188,9 @@ checkpoint, and publication phases. A later run removes abandoned staging,
 restores the complete checkpoint if interruption happened between directory
 renames, or recognizes that publication already finished. Do not remove a
 retained checkpoint until recovery and application startup are verified.
+Journal contents, staged files and directories, and the parent directory after
+each rename are flushed before the next phase is recorded. Both the recovery
+unit and the main app run reconciliation synchronously before app startup.
 
 USB backup performs a second file-copy pass after its database snapshot and checks
 that snapshot's expected media before marking it complete. Concurrent changes may

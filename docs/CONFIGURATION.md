@@ -309,12 +309,18 @@ token-protected progress and failure page on TCP port `8051` while the main app
 on port `8050` is stopped. The web app can only submit a discovered snapshot
 identifier; the root runner fixes the destination to `/opt/app/data/output` and
 revalidates containment, completeness, checksums, schema, media, and space.
+Both the recovery unit and `app.service` run the journal reconciliation gate
+as a synchronous `ExecStartPre`, so the app cannot open the database while an
+interrupted directory swap is unresolved. The app sandbox can write only the
+runner's fixed incoming-request directory, not job status or runner code.
 
 Recovery restores runtime settings from the snapshot except destination-owned
 access and identity values: `EDIT_PASSWORD`, camera/go2rtc connection keys,
 Telegram credentials, and `telemetry_installation_id`. Operating-system network
 configuration and application binaries are outside `OUTPUT_DIR` and are never
-restored.
+restored. If a destination-owned value does not exist locally, the corresponding
+source value is omitted rather than imported. `cameras.yaml` and `go2rtc.yaml`
+are likewise preserved from the destination or left unset on a fresh device.
 
 ---
 

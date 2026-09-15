@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
 import secrets
 import subprocess
 import threading
@@ -41,6 +40,9 @@ def preview_snapshot(name: str) -> dict[str, Any]:
     preview = recovery_core.inspect_snapshot(snapshot, destination)
     preview["settings_preserved"] = recovery_core.settings_policy_labels(
         preview["settings_preserved"]
+    )
+    preview["settings_excluded"] = recovery_core.settings_policy_labels(
+        preview["settings_excluded"]
     )
     preview["settings_restored_count"] = len(preview.pop("settings_restored"))
     preview["guided_supported"] = is_supported()
@@ -116,19 +118,10 @@ def start_recovery(
             "mode": preview["mode"],
         }
         INCOMING_DIR.mkdir(parents=True, exist_ok=True)
-        temp = REQUEST_PATH.with_name(f".request-{os.getpid()}.tmp")
-        temp.write_text(json.dumps(payload), encoding="utf-8")
-        temp.chmod(0o640)
-        temp.replace(REQUEST_PATH)
-        action = (
-            "restart"
-            if current
-            and current.get("state") in {"succeeded", "failed", "rolled_back"}
-            else "start"
-        )
+        recovery_core.write_json_durable(REQUEST_PATH, payload, mode=0o640)
         try:
             subprocess.run(
-                ["systemctl", action, SERVICE_UNIT],
+                ["systemctl", "restart", SERVICE_UNIT],
                 check=True,
                 capture_output=True,
                 text=True,

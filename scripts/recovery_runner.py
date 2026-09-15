@@ -43,7 +43,7 @@ EXPECTED_DESTINATION = Path(
 )
 APP_UNIT = "app.service"
 HEALTH_URL = "http://127.0.0.1:8050/healthz"
-TERMINAL_STATES = {"succeeded", "failed", "rolled_back"}
+CLOSED_STATES = {"succeeded", "rolled_back"}
 
 
 def _utc_now() -> str:
@@ -51,11 +51,7 @@ def _utc_now() -> str:
 
 
 def _atomic_json(path: Path, payload: dict[str, Any], mode: int = 0o640) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
-    temp.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
-    temp.chmod(mode)
-    temp.replace(path)
+    recovery_core.write_json_durable(path, payload, mode=mode)
 
 
 class RecoveryRunner:
@@ -102,7 +98,9 @@ class RecoveryRunner:
         self._write_status()
 
     @staticmethod
-    def validate_request(payload: Any) -> dict[str, Any]:
+    def validate_request(
+        payload: Any, *, require_snapshot: bool = True
+    ) -> dict[str, Any]:
         if not isinstance(payload, dict) or payload.get("schema_version") != 1:
             raise recovery_core.RecoveryError(
                 "invalid_request", "Recovery request format is invalid."
@@ -136,7 +134,14 @@ class RecoveryRunner:
                 "unsafe_destination",
                 "Recovery destination is not the appliance data directory.",
             )
-        if usb_backup_core.get_snapshot_directory(payload["snapshot_id"]) is None:
+        if not usb_backup_core.is_safe_snapshot_identifier(payload["snapshot_id"]):
+            raise recovery_core.RecoveryError(
+                "snapshot_missing", "The selected backup identifier is unsafe."
+            )
+        if (
+            require_snapshot
+            and usb_backup_core.get_snapshot_directory(payload["snapshot_id"]) is None
+        ):
             raise recovery_core.RecoveryError(
                 "snapshot_missing", "The selected backup is unavailable or unsafe."
             )
@@ -224,6 +229,7 @@ class RecoveryRunner:
         try:
             self._acquire_maintenance_lock()
             if self.status.get("stage") in {"published", "restarting_app"}:
+                app_stopped = True
                 recovery_core.reconcile_interrupted_recovery(EXPECTED_DESTINATION)
                 checkpoint_raw = self.status.get("checkpoint")
                 checkpoint = (
@@ -302,9 +308,11 @@ class RecoveryRunner:
             )
         except recovery_core.RecoveryError as exc:
             app_available = (
-                self._start_and_check()
-                if app_stopped and exc.code != "restart_failed"
-                else not app_stopped
+                False
+                if exc.code == "restart_failed"
+                else self._start_and_check()
+                if app_stopped
+                else self._health_probe()
             )
             message = str(exc)
             if app_available:
@@ -321,7 +329,9 @@ class RecoveryRunner:
                 checkpoint_available=bool(checkpoint or self.status.get("checkpoint")),
             )
         except (OSError, subprocess.SubprocessError) as exc:
-            app_available = self._start_and_check() if app_stopped else True
+            app_available = (
+                self._start_and_check() if app_stopped else self._health_probe()
+            )
             self.update(
                 state="failed",
                 stage="failed",
@@ -377,8 +387,11 @@ class RecoveryRunner:
             self._acquire_maintenance_lock()
             try:
                 self._systemctl("stop")
-            except (OSError, subprocess.SubprocessError):
-                pass
+            except (OSError, subprocess.SubprocessError) as exc:
+                raise recovery_core.RecoveryError(
+                    "app_stop_failed",
+                    "WatchMyBirds could not be stopped, so rollback was refused and no data was changed.",
+                ) from exc
             recovery_core.rollback_checkpoint(
                 EXPECTED_DESTINATION, Path(checkpoint_raw)
             )
@@ -488,7 +501,7 @@ def make_handler(
 
 
 def load_request() -> dict[str, Any] | None:
-    """Consume a new request or resume the newest non-terminal durable job."""
+    """Consume a new request or reopen the newest actionable durable job."""
     if not REQUEST_PATH.exists():
         try:
             requests = sorted(
@@ -503,11 +516,11 @@ def load_request() -> dict[str, Any] | None:
                 status = json.loads(
                     (request_path.parent / "status.json").read_text(encoding="utf-8")
                 )
-                if status.get("state") in TERMINAL_STATES:
-                    continue
-                return RecoveryRunner.validate_request(
-                    json.loads(request_path.read_text(encoding="utf-8"))
+                request = RecoveryRunner.validate_request(
+                    json.loads(request_path.read_text(encoding="utf-8")),
+                    require_snapshot=False,
                 )
+                return None if status.get("state") in CLOSED_STATES else request
             except (OSError, json.JSONDecodeError, recovery_core.RecoveryError):
                 continue
         return None
@@ -525,8 +538,13 @@ def load_request() -> dict[str, Any] | None:
     job_dir = JOBS_DIR / validated["job_id"]
     job_dir.mkdir(parents=True, exist_ok=False)
     job_dir.chmod(0o750)
-    REQUEST_PATH.replace(job_dir / "request.json")
-    (job_dir / "request.json").chmod(0o600)
+    request_target = job_dir / "request.json"
+    REQUEST_PATH.replace(request_target)
+    request_target.chmod(0o600)
+    with request_target.open("rb") as handle:
+        os.fsync(handle.fileno())
+    recovery_core._fsync_directory(REQUEST_PATH.parent)
+    recovery_core._fsync_directory(job_dir)
     return validated
 
 
@@ -534,14 +552,21 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=8051)
+    parser.add_argument("--reconcile-only", action="store_true")
     args = parser.parse_args()
+    if args.reconcile_only:
+        recovery_core.reconcile_interrupted_recovery(EXPECTED_DESTINATION)
+        return 0
     request = load_request()
     if request is None:
         return 0
     runner = RecoveryRunner(request)
     accepted = threading.Event()
     server = ThreadingHTTPServer((args.host, args.port), make_handler(runner, accepted))
-    resuming = runner.status.get("stage") != "queued"
+    failed = runner.status.get("state") == "failed"
+    resuming = runner.status.get("stage") != "queued" and not failed
+    if failed:
+        runner.update(app_available=runner._health_probe())
 
     def run_after_handoff() -> None:
         if resuming or accepted.wait(timeout=60):
@@ -554,8 +579,9 @@ def main() -> int:
                 error_code="handoff_timeout",
             )
 
-    worker = threading.Thread(target=run_after_handoff, daemon=True)
-    worker.start()
+    if not failed:
+        worker = threading.Thread(target=run_after_handoff, daemon=True)
+        worker.start()
     try:
         server.serve_forever(poll_interval=0.5)
     finally:

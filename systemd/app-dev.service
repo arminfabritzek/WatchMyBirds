@@ -16,6 +16,9 @@ Environment=PYTHONDONTWRITEBYTECODE=1
 Environment=PYTHONUNBUFFERED=1
 Environment=MODEL_BASE_PATH=/opt/app/data/models
 Environment=GO2RTC_CONFIG_PATH=/opt/app/data/output/go2rtc.yaml
+# Match production's recovery-journal gate even though the dev filesystem
+# sandbox is relaxed.
+ExecStartPre=+/opt/app/.venv/bin/python /opt/app/scripts/recovery_runner.py --reconcile-only
 # Force WiFi unblock on every start (runs as root via +). Sleep to avoid NM race.
 ExecStartPre=+/bin/sleep 2
 ExecStartPre=+/usr/sbin/rfkill unblock wifi

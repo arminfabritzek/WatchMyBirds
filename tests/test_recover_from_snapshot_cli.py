@@ -329,8 +329,8 @@ def test_publication_failure_restores_complete_checkpoint(tmp_path, monkeypatch)
 
 def test_recovery_preserves_additional_output_state(tmp_path):
     snapshot = _make_snapshot(tmp_path, "snapshot", "20260901_090000_bird.jpg")
-    (snapshot / "data/output/cameras.yaml").write_text("cameras: []")
+    (snapshot / "data/output/custom-state.json").write_text('{"kept": true}')
     destination = tmp_path / "destination"
     result = _run_cli("--snapshot", str(snapshot), "--destination", str(destination))
     assert result.returncode == 0, result.stderr
-    assert (destination / "cameras.yaml").read_text() == "cameras: []"
+    assert (destination / "custom-state.json").read_text() == '{"kept": true}'

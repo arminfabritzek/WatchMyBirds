@@ -7,6 +7,9 @@
 - Raspberry Pi users can now preview and restore USB snapshots through Settings,
   with authenticated confirmation, independent progress during app restart,
   complete checkpoints, health checks, retry, and rollback after failed startup.
+  Recovery requests work within the hardened app sandbox; journaled swaps are
+  durably ordered, rollback refuses a running app, and source-device credentials
+  and camera files are never imported.
 - Storage Retention can now run automatically once per day through a separate
   opt-in, processes large image collections in bounded batches, coordinates
   concurrent protection changes, and preserves clear results across restarts.
