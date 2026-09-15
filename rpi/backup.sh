@@ -104,6 +104,7 @@ TS_START="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 STAMP="$(date +%Y%m%d_%H%M%S)"
 SNAPSHOT_NAME="${STAMP}_${KIND}"
 SNAPSHOT_DIR="${SNAPSHOTS_DIR}/${SNAPSHOT_NAME}"
+STAGE="preflight"
 
 # Log to both stderr (journal capture) and BACKUP_LOG.txt on the stick.
 log() {
@@ -127,8 +128,11 @@ die() {
 # run's outcome even when it failed before any snapshot dir existed.
 write_last_run_status() {
     local exit_code="$1"
-    local status="ok"
+    local status="${2:-ok}"
     [[ "${exit_code}" != "0" ]] && status="failed"
+    [[ "${exit_code}" == "18" ]] && return 0
+    local finished="null"
+    [[ "${status}" != "running" ]] && finished="\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\""
     [[ "${FSTYPE:-}" == "ext4" ]] || return 0
     [[ -d "${MOUNT_POINT}" && -w "${MOUNT_POINT}" ]] || return 0
     cat > "${MOUNT_POINT}/LAST_RUN_STATUS.json.$$.tmp" 2>/dev/null <<EOF || return 0
@@ -137,12 +141,24 @@ write_last_run_status() {
   "snapshot_name": "${SNAPSHOT_NAME:-}",
   "status": "${status}",
   "exit_code": ${exit_code},
+  "pid": $$,
+  "stage": "${STAGE}",
   "started_at": "${TS_START:-}",
-  "finished_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  "finished_at": ${finished}
 }
 EOF
     mv -f "${MOUNT_POINT}/LAST_RUN_STATUS.json.$$.tmp" "${MOUNT_POINT}/LAST_RUN_STATUS.json" 2>/dev/null || true
 }
+set_stage() {
+    STAGE="$1"
+    write_last_run_status 0 running
+}
+
+# Retain command diagnostics even for scheduled runs and detached launches.
+copy_files() {
+    rsync "$@" 2>&1 | tee -a "${LOG_FILE}" >&2
+}
+
 trap 'write_last_run_status "$?"' EXIT
 trap 'exit 143' TERM
 trap 'exit 130' INT
@@ -219,6 +235,7 @@ fi
 # Any snapshot directory without COMPLETED that's older than ORPHAN_AGE_MIN
 # minutes is from a crashed previous run -- purge it before we start, so
 # space estimates in the next step are accurate.
+set_stage preparing
 shopt -s nullglob
 for dir in "${SNAPSHOTS_DIR}"/*/; do
     [[ -d "${dir}" ]] || continue
@@ -277,7 +294,7 @@ ESTIMATED_NEW_BYTES=0
 if [[ -d "${OUTPUT_DIR}" ]]; then
     if ! ESTIMATE_STATS="$(rsync -a --dry-run --stats \
         --exclude='images.db' --exclude='images.db-wal' --exclude='images.db-shm' \
-        --exclude='backup/' --exclude='restore_tmp/' --exclude='backup_before_restore/' \
+        --exclude='/huggingface/' --exclude='backup/' --exclude='restore_tmp/' --exclude='backup_before_restore/' \
         --exclude='.restart_required' \
         ${ESTIMATE_LINKDEST[@]+"${ESTIMATE_LINKDEST[@]}"} \
         "${OUTPUT_DIR}/" "${SNAPSHOT_DIR}/data/output/" 2>&1)"; then
@@ -317,6 +334,7 @@ mark_corrupt() {
 # Copy first to reduce the final catch-up pass. Concurrent writes can
 # still race either pass; snapshot validation below must succeed before
 # publication.
+set_stage copying_images
 log "Syncing imagery + output state via rsync..."
 RSYNC_LINKDEST=()
 if [[ -n "${PREV_SNAPSHOT}" && -d "${PREV_SNAPSHOT}/data/output" ]]; then
@@ -329,8 +347,9 @@ mkdir -p "${SNAPSHOT_DIR}/data/output"
 #   - backup/: live app's transient backup staging dir
 #   - restore_tmp/: live app's restore staging
 #   - .restart_required: marker file, not data
-if ! rsync -a --delete \
+if ! copy_files -a --delete \
         --exclude='images.db' --exclude='images.db-wal' --exclude='images.db-shm' \
+        --exclude='/huggingface/' \
         --exclude='backup/' \
         --exclude='restore_tmp/' \
         --exclude='backup_before_restore/' \
@@ -347,6 +366,7 @@ fi
 DB_DST="${SNAPSHOT_DIR}/data/images.db"
 DB_BYTES=0
 if [[ -f "${DB_PATH}" ]]; then
+    set_stage copying_database
     log "Snapshotting SQLite database via .backup..."
     if sqlite3 "${DB_PATH}" ".backup '${DB_DST}'"; then
         DB_BYTES="$(stat -c '%s' "${DB_DST}" 2>/dev/null || echo 0)"
@@ -370,11 +390,12 @@ else
     die 13 "Database missing: ${DB_PATH}"
 fi
 
+set_stage checking_images
 # Catch captures created during the first copy before validating against
 # the fixed database snapshot. A deletion race fails verification safely.
-if ! rsync -a \
+if ! copy_files -a \
         --exclude='images.db' --exclude='images.db-wal' --exclude='images.db-shm' \
-        --exclude='backup/' --exclude='restore_tmp/' --exclude='backup_before_restore/' \
+        --exclude='/huggingface/' --exclude='backup/' --exclude='restore_tmp/' --exclude='backup_before_restore/' \
         --exclude='.restart_required' \
         "${OUTPUT_DIR}/" "${SNAPSHOT_DIR}/data/output/"; then
     die 14 "Final output copy failed"
@@ -383,6 +404,7 @@ fi
 # ----------------------------------------------------------------------
 # Step 8: App code (rsync, link-dest dedup)
 # ----------------------------------------------------------------------
+set_stage copying_app
 log "Syncing app code..."
 APP_LINKDEST=()
 if [[ -n "${PREV_SNAPSHOT}" && -d "${PREV_SNAPSHOT}/app" ]]; then
@@ -394,12 +416,13 @@ fi
 # Also exclude every flavour of dev/CI tool cache: these get created
 # during image build (or by sync_preview pulling a working tree) with
 # permissions that the watchmybirds user cannot read, which kills rsync.
-if ! rsync -a --delete \
+if ! copy_files -a --delete \
         --exclude='data/' \
         --exclude='.venv/' \
         --exclude='__pycache__/' \
         --exclude='*.pyc' \
         --exclude='.git/' \
+        --exclude='/.serena/' \
         --exclude='node_modules/' \
         --exclude='.ruff_cache/' \
         --exclude='.pytest_cache/' \
@@ -465,6 +488,7 @@ EOF
 # ----------------------------------------------------------------------
 # Step 10: COMPLETED marker (atomic-ish: this is the LAST file written)
 # ----------------------------------------------------------------------
+set_stage verifying
 if ! "${APP_DIR}/.venv/bin/python" "${APP_DIR}/scripts/verify_backup_snapshot.py" \
         "${SNAPSHOT_DIR}" --before-completion; then
     mark_corrupt "Snapshot verification failed"
@@ -560,6 +584,7 @@ prune_scheduled() {
     done < <(find "${SNAPSHOTS_DIR}" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort -r)
 }
 
+set_stage finishing
 prune_manual
 prune_scheduled
 

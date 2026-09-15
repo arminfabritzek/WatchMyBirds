@@ -3,8 +3,7 @@ USB Backup Service — Web-layer wrapper around core.usb_backup_core.
 
 Routes use this; the service translates between the dataclass-based
 core API and JSON-friendly dicts, and owns the `manual` trigger:
-spawning rpi/backup.sh as a detached subprocess so it survives the
-web process dying mid-snapshot.
+spawning rpi/backup.sh and collecting its diagnostic output.
 """
 
 from __future__ import annotations
@@ -88,9 +87,8 @@ def trigger_manual_backup() -> tuple[bool, str, dict[str, Any] | None]:
     expected log file location so the UI can give the operator
     something to point at.
 
-    The subprocess is detached via start_new_session=True (a.k.a.
-    setsid) so that if Flask crashes or restarts mid-backup, the
-    backup keeps running.
+    The process has a separate session, but remains part of the application
+    service cgroup. Restarting that service can interrupt a manual backup.
     """
     global _LAST_MANUAL_TRIGGER
 
@@ -117,16 +115,14 @@ def trigger_manual_backup() -> tuple[bool, str, dict[str, Any] | None]:
         )
 
     try:
-        # stdout/stderr go to journald via systemd-cat when available,
-        # otherwise to a per-pid file under /tmp. The script also
-        # appends to /mnt/wmb-backup/BACKUP_LOG.txt itself.
-        log_target = subprocess.DEVNULL
         try:
             proc = subprocess.Popen(  # noqa: S603 — fixed argv, no shell
                 [str(BACKUP_SCRIPT), "--kind", "manual"],
                 stdin=subprocess.DEVNULL,
-                stdout=log_target,
-                stderr=log_target,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                errors="replace",
                 start_new_session=True,  # detach: setsid()
                 close_fds=True,
             )
@@ -134,6 +130,16 @@ def trigger_manual_backup() -> tuple[bool, str, dict[str, Any] | None]:
             logger.error("Failed to spawn manual backup: %s", exc)
             return False, f"Failed to spawn backup: {exc}", None
 
+        def capture_output() -> None:
+            assert proc.stdout is not None
+            with proc.stdout:
+                for line in proc.stdout:
+                    logger.info("USB backup: %s", line.rstrip())
+            code = proc.wait()
+            if code:
+                logger.error("Manual USB backup failed (exit code %s)", code)
+
+        threading.Thread(target=capture_output, daemon=True).start()
         info = {
             "pid": proc.pid,
             "kind": "manual",

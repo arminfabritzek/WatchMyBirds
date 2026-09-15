@@ -798,3 +798,21 @@ def test_recovery_api_requires_authenticated_session(monkeypatch):
     response = client.get("/api/v1/system/recovery/snapshot/preview")
     assert response.status_code == 200
     assert response.get_json()["compatible"] is True
+
+
+def test_model_cache_links_are_ignored_but_original_links_rejected(tmp_path):
+    snapshot = _snapshot(tmp_path / "usb")
+    output = snapshot / "data/output"
+    cache = output / "huggingface"
+    cache.mkdir()
+    (cache / "cached-model").symlink_to("../../missing-cache-blob")
+    destination = tmp_path / "output"
+    (destination / "huggingface").mkdir(parents=True)
+    (destination / "huggingface/old-cache-link").symlink_to("missing")
+    result = recovery_core.recover_snapshot(snapshot, destination, mode="migration")
+    assert result.destination == destination
+    assert not (destination / "huggingface").exists()
+    assert (destination / "originals/2026-09-15/20260915_120000_bird.jpg").is_file()
+    (output / "originals/unsafe-link").symlink_to("/tmp")
+    with pytest.raises(recovery_core.RecoveryError, match="symbolic links"):
+        recovery_core.inspect_snapshot(snapshot, destination)

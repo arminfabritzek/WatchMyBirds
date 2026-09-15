@@ -109,11 +109,24 @@ def destination_has_data(destination: Path) -> bool:
         return True
 
 
+def _recovery_entries(root: Path) -> Iterable[Path]:
+    """Model download caches are regenerable and never restored."""
+    yield root
+    if not root.is_dir() or root.is_symlink():
+        return
+    for child in root.iterdir():
+        if child.name == "huggingface":
+            continue
+        yield child
+        if child.is_dir() and not child.is_symlink():
+            yield from child.rglob("*")
+
+
 def _tree_bytes(root: Path) -> int:
     total = 0
     if root.is_symlink():
         raise RecoveryError("unsafe_snapshot", "The backup contains symbolic links.")
-    for path in root.rglob("*"):
+    for path in _recovery_entries(root):
         if path.is_symlink():
             raise RecoveryError(
                 "unsafe_snapshot", "The backup contains symbolic links."
@@ -252,7 +265,9 @@ def _fsync_directory(path: Path) -> None:
 def _fsync_tree(root: Path) -> None:
     """Make staged regular files and directory entries durable before rename."""
     directories = [root]
-    for path in root.rglob("*"):
+    for path in _recovery_entries(root):
+        if path == root:
+            continue
         if path.is_symlink():
             raise RecoveryError(
                 "unsafe_snapshot", "The backup contains symbolic links."
@@ -539,11 +554,18 @@ def recover_snapshot(
         _emit(
             progress, "staging", 20, "Copying recovered data into a safe staging area…"
         )
-        if any(path.is_symlink() for path in chain([source], source.rglob("*"))):
+        if any(path.is_symlink() for path in _recovery_entries(source)):
             raise RecoveryError(
                 "unsafe_snapshot", "The backup contains symbolic links."
             )
-        shutil.copytree(source, staging, dirs_exist_ok=True)
+        shutil.copytree(
+            source,
+            staging,
+            dirs_exist_ok=True,
+            ignore=lambda directory, names: (
+                {"huggingface"} if Path(directory) == source else set()
+            ),
+        )
         for suffix in ("", "-wal", "-shm"):
             (staging / f"images.db{suffix}").unlink(missing_ok=True)
         shutil.copy2(snapshot_dir / "data" / "images.db", staging / "images.db")

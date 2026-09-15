@@ -16,6 +16,10 @@
 
 ### Fixed
 
+- USB backups exclude local development-tool state, retain copy diagnostics,
+  and show current stages and final outcomes in Settings. Recovery ignores
+  regenerable model caches in older snapshots, including their internal symlinks.
+
 - Large canonical training exports write archives to disk and clean up completed
   or interrupted downloads. Browser backups use native download streaming.
 - Backup merge preserves image associations on filename conflicts and reports

@@ -58,6 +58,10 @@ def backup_harness(tmp_path):
             'readonly MOUNT_POINT="/mnt/wmb-backup"', f'readonly MOUNT_POINT="{mount}"'
         )
         .replace('readonly APP_DIR="/opt/app"', f'readonly APP_DIR="{app}"')
+        .replace(
+            "/run/lock/watchmybirds-maintenance.lock",
+            str(tmp_path / "maintenance.lock"),
+        )
     )
     env = {
         **os.environ,
@@ -128,6 +132,10 @@ def test_term_records_failure(backup_harness):
         while not Path(env["READY_MARKER"]).exists() and time.monotonic() < deadline:
             time.sleep(0.02)
         assert Path(env["READY_MARKER"]).exists()
+        status = json.loads((mount / "LAST_RUN_STATUS.json").read_text())
+        assert status["status"] == "running"
+        assert status["stage"] == "copying_images"
+        assert status["finished_at"] is None
         os.killpg(proc.pid, signal.SIGTERM)
         proc.wait(timeout=5)
         assert proc.returncode == 143
@@ -150,3 +158,20 @@ def test_failed_completion_flush_removes_completed_marker(backup_harness):
     assert "Completion flush failed" in result.stderr
     assert not list(mount.rglob("COMPLETED"))
     assert list(mount.rglob("CORRUPT"))
+
+
+def test_copy_error_is_retained_on_usb(backup_harness):
+    _, mount, _, env = backup_harness
+    command = Path(env["PATH"].split(":")[0]) / "rsync"
+    command.write_text("""#!/bin/sh
+case " $* " in
+*--dry-run*) echo 'Total transferred file size: 0 bytes';;
+*) echo 'fixture unreadable file' >&2; exit 23;;
+esac
+""")
+    result = run_backup(backup_harness)
+    assert result.returncode == 14
+    assert "fixture unreadable file" in (mount / "BACKUP_LOG.txt").read_text()
+    status = json.loads((mount / "LAST_RUN_STATUS.json").read_text())
+    assert status["status"] == "failed"
+    assert status["stage"] == "copying_images"

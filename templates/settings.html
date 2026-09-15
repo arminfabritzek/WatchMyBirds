@@ -2876,17 +2876,30 @@
                     if (lastRun && lastRun.status) {
                         lastRunWrap.hidden = false;
                         var ok = lastRun.status === 'ok';
-                        lastRunBadge.className = 'badge ' + (ok ? 'badge--success' : 'badge--danger');
-                        lastRunBadge.textContent = ok ? 'Last run OK' : 'Last run failed';
+                        var running = lastRun.status === 'running';
+                        var stages = {
+                            preparing: 'Preparing backup', copying_images: 'Copying images',
+                            copying_database: 'Copying database', checking_images: 'Copying recent images',
+                            copying_app: 'Copying application files', verifying: 'Verifying backup',
+                            finishing: 'Finishing backup'
+                        };
+                        var runMessage = running ? (stages[lastRun.stage] || 'Backup running') + '…'
+                            : ok ? 'Backup completed and verified.'
+                            : lastRun.status === 'interrupted' ? 'Backup interrupted. No verified completion.'
+                            : 'Backup failed (exit code ' + lastRun.exit_code + '). Check backup diagnostics.';
+                        triggerStatus.textContent = runMessage;
+                        lastRunBadge.className = 'badge ' + (running ? 'badge--info' : ok ? 'badge--success' : 'badge--danger');
+                        lastRunBadge.textContent = running ? 'Backup running' : ok ? 'Last run OK' : 'Last run failed';
                         var detailParts = [];
                         if (lastRun.kind) { detailParts.push(lastRun.kind); }
                         if (lastRun.finished_at) { detailParts.push(fmtTime(lastRun.finished_at)); }
-                        if (!ok && lastRun.exit_code != null) {
+                        if (!ok && !running && lastRun.exit_code != null && lastRun.exit_code !== 0) {
                             detailParts.push('exit code ' + lastRun.exit_code);
                         }
                         lastRunDetail.textContent = detailParts.join(' · ');
                     } else {
                         lastRunWrap.hidden = true;
+                        triggerStatus.textContent = '';
                     }
 
                     var snaps = payload.snapshots_recent || [];
@@ -2902,7 +2915,7 @@
                         recoveryDiscovery.hidden = true;
                     }
 
-                    triggerBtn.disabled = stick.state !== 'connected';
+                    triggerBtn.disabled = stick.state !== 'connected' || !!(lastRun && lastRun.status === 'running');
                 }
 
                 function refresh() {
@@ -2932,7 +2945,7 @@
                         .then(function(data) {
                             if (data.status === 'success') {
                                 triggerStatus.textContent =
-                                    'Backup running in the background. Refresh to see it appear.';
+                                    'Backup requested. Waiting for status…';
                             } else {
                                 triggerStatus.textContent =
                                     'Failed: ' + (data.message || 'unknown error');

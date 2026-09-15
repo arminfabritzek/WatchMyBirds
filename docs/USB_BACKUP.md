@@ -50,6 +50,22 @@ migration on another CPU architecture.
 That's it. The systemd automount unit picks it up on first access, the
 daily timer runs at 03:00, and the Settings UI surfaces the stick state.
 
+The Hugging Face model-download cache is excluded from new snapshots and ignored
+when restoring older snapshots. Models are obtained by the installed application.
+
+## Backup progress and errors
+
+Settings shows the current backup stage and refreshes automatically: preparation,
+image copy, database copy, recent-image copy, application copy, verification,
+and finishing. These are stage updates, not a percentage or time estimate.
+The storage bar shows USB capacity, not backup progress.
+
+The final result replaces the running message. If the recorded process has gone
+away without writing a result, the page reports an interrupted backup. Copy
+errors are retained in `BACKUP_LOG.txt` on the stick; manual backup output also
+appears in the application journal. Do not remove the source SD card until a
+completed snapshot has passed verification.
+
 ## Why ext4?
 
 The backup script uses `rsync --link-dest` so daily snapshots share

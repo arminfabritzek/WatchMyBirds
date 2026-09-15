@@ -678,7 +678,18 @@ def get_last_run_status() -> dict[str, Any] | None:
     or the run timed out) -- the failure modes a snapshot-only view
     cannot see because nothing was ever written under snapshots/.
     """
-    return _read_json_safely(LAST_RUN_STATUS_PATH)
+    result = _read_json_safely(LAST_RUN_STATUS_PATH)
+    if result and result.get("status") == "running":
+        try:
+            pid = int(result["pid"])
+            if pid <= 0:
+                raise ValueError("Invalid PID")
+            command = Path(f"/proc/{pid}/cmdline").read_bytes().split(b"\0")
+            if not any(arg.endswith(b"/backup.sh") for arg in command):
+                raise ValueError("Backup process no longer running")
+        except (OSError, ValueError, KeyError, TypeError):
+            result = {**result, "status": "interrupted"}
+    return result
 
 
 def get_backup_summary(*, recent_limit: int = 5) -> dict[str, Any]:

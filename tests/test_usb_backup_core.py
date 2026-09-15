@@ -604,3 +604,20 @@ def test_legacy_schema_still_checks_missing_media(fake_stick):
         conn.execute("ALTER TABLE images DROP COLUMN original_present")
         conn.execute("INSERT INTO images VALUES ('20260429_090000_bird.jpg')")
     assert usb_backup_core._verify_media(d, db)["media_ok"] is False
+
+
+def test_running_marker_with_missing_process_is_interrupted(fake_stick):
+    (fake_stick / "LAST_RUN_STATUS.json").write_text(
+        json.dumps({"status": "running", "pid": 999999999, "stage": "copying_images"})
+    )
+    assert usb_backup_core.get_last_run_status()["status"] == "interrupted"
+
+
+def test_running_marker_with_backup_process_stays_running(fake_stick, monkeypatch):
+    (fake_stick / "LAST_RUN_STATUS.json").write_text(
+        json.dumps({"status": "running", "pid": 123, "stage": "verifying"})
+    )
+    monkeypatch.setattr(
+        Path, "read_bytes", lambda self: b"bash\0/opt/app/rpi/backup.sh\0--kind\0manual"
+    )
+    assert usb_backup_core.get_last_run_status()["status"] == "running"
