@@ -21,6 +21,8 @@
         <!-- Go2RTC Integration (Junior B) -->
         <!-- Old MJPEG: <img id="video-feed" src="/video_feed" class="stream-video" alt="Live Stream"> -->
         <div class="stream-embed">
+            <canvas id="stream-loading-static" class="stream-embed__loading-static" aria-label="Loading live stream"></canvas>
+            <div id="stream-loading-status" class="stream-embed__loading-status" role="status" aria-live="polite">Establishing Connection<span aria-hidden="true"></span></div>
             <iframe id="go2rtc-frame" class="stream-embed__frame" src="" allow="autoplay; fullscreen">
             </iframe>
             <img id="video-feed-fallback" class="stream-video stream-embed__fallback" alt="Live Stream" data-fallback-src="/video_feed">
@@ -85,7 +87,67 @@
             (function () {
                 const iframe = document.getElementById('go2rtc-frame');
                 const fallback = document.getElementById('video-feed-fallback');
+                const loadingStatic = document.getElementById('stream-loading-static');
+                const loadingStatus = document.getElementById('stream-loading-status');
                 if (!iframe || !fallback) return;
+
+                let noiseTimer = null;
+                let ellipsisTimer = null;
+
+                function drawNoise() {
+                    if (!loadingStatic) return;
+                    const context = loadingStatic.getContext('2d');
+                    if (!context) return;
+                    const width = 160;
+                    const height = 90;
+                    if (loadingStatic.width !== width || loadingStatic.height !== height) {
+                        loadingStatic.width = width;
+                        loadingStatic.height = height;
+                    }
+                    const image = context.createImageData(width, height);
+                    for (let index = 0; index < image.data.length; index += 4) {
+                        const value = Math.floor(Math.random() * 256);
+                        image.data[index] = value;
+                        image.data[index + 1] = value;
+                        image.data[index + 2] = value;
+                        image.data[index + 3] = 255;
+                    }
+                    context.putImageData(image, 0, 0);
+                }
+
+                function showLoading() {
+                    if (loadingStatic) loadingStatic.classList.remove('is-hidden');
+                    if (loadingStatus) loadingStatus.classList.remove('is-hidden');
+                    if (noiseTimer === null) {
+                        drawNoise();
+                        noiseTimer = window.setInterval(drawNoise, 100);
+                    }
+                    if (ellipsisTimer === null && loadingStatus) {
+                        let dots = 0;
+                        ellipsisTimer = window.setInterval(function () {
+                            loadingStatus.lastElementChild.textContent = '.'.repeat(dots);
+                            dots = (dots + 1) % 4;
+                        }, 500);
+                    }
+                }
+
+                function hideLoading() {
+                    if (loadingStatic) loadingStatic.classList.add('is-hidden');
+                    if (loadingStatus) loadingStatus.classList.add('is-hidden');
+                    if (noiseTimer !== null) {
+                        window.clearInterval(noiseTimer);
+                        noiseTimer = null;
+                    }
+                    if (ellipsisTimer !== null) {
+                        window.clearInterval(ellipsisTimer);
+                        ellipsisTimer = null;
+                    }
+                }
+
+                showLoading();
+                fallback.addEventListener('load', function () {
+                    if (activeTransport === 'mjpeg' && fallback.naturalWidth > 0) hideLoading();
+                });
 
                 const host = window.location.hostname;
                 const port = '1984';
@@ -98,10 +160,15 @@
                 const RETRY_DELAY_MS = 1000;
                 const FETCH_TIMEOUT_MS = 4000;
                 let fallbackEnabled = false;
+                let activeTransport = null;
+                let reconnectTimer = null;
 
                 function enableFallback(reason) {
                     if (fallbackEnabled) return;
                     fallbackEnabled = true;
+                    activeTransport = 'mjpeg';
+                    clearTimeout(reconnectTimer);
+                    showLoading();
                     iframe.style.display = 'none';
                     iframe.removeAttribute('src');
                     fallback.style.display = 'block';
@@ -153,14 +220,44 @@
                 }
 
                 function enableGo2RTC() {
+                    activeTransport = 'go2rtc';
                     fallback.style.display = 'none';
                     iframe.style.display = 'block';
                     iframe.src = streamUrl;
+                    // The cross-origin player owns video readiness and error UI.
+                    // An iframe load event only reports document readiness.
+                    hideLoading();
 
                     iframe.addEventListener('error', function () {
                         enableFallback('iframe error');
                     });
                 }
+
+                function reconnectStream() {
+                    if (document.hidden || !activeTransport) return;
+                    clearTimeout(reconnectTimer);
+                    reconnectTimer = setTimeout(function () {
+                        if (document.hidden) return;
+                        if (activeTransport === 'go2rtc') {
+                            iframe.src = streamUrl;
+                        } else if (activeTransport === 'mjpeg') {
+                            showLoading();
+                            const source = fallback.dataset.fallbackSrc || '/video_feed';
+                            fallback.src = source + (source.includes('?') ? '&' : '?') + 'reconnect=' + Date.now();
+                        }
+                    }, 0);
+                }
+
+                document.addEventListener('visibilitychange', function () {
+                    if (!document.hidden) reconnectStream();
+                });
+                window.addEventListener('pageshow', function (event) {
+                    if (event.persisted) reconnectStream();
+                });
+                window.addEventListener('pagehide', function () {
+                    clearTimeout(reconnectTimer);
+                    hideLoading();
+                });
 
                 {% if stream_source_mode and stream_source_mode != 'direct' %}
                 (async function preflightGo2RTC() {
@@ -191,27 +288,54 @@
         </script>
 
         <script>
-            // Fit the frame to the real camera aspect (runs for every
-            // visitor, not just moderators). The .stream-embed box defaults
-            // to 16:9 in CSS; a 4:3 (or any non-16:9) source would otherwise
-            // sit inside it with black pillarbox bars. The go2rtc iframe
-            // never exposes its natural size and the MJPEG fallback is
-            // display:none, so we read the true ratio from a live frame and
-            // pin it onto --stream-aspect. The PTZ overlay code (moderator
-            // build) keeps its own richer aspect handling for letterbox math.
             (function () {
                 const embed = document.querySelector('.stream-embed');
-                if (!embed) return;
-                const probe = new Image();
-                probe.onload = function () {
-                    const w = probe.naturalWidth;
-                    const h = probe.naturalHeight;
-                    if (w > 0 && h > 0) {
-                        embed.style.setProperty('--stream-aspect', String(w / h));
+                const container = document.querySelector('.stream-container');
+                const fallback = document.getElementById('video-feed-fallback');
+                if (!embed || !container || !fallback) return;
+
+                let streamAspect = null;
+
+                function resizeStreamPane() {
+                    if (!streamAspect) return;
+                    const maxWidth = parseFloat(getComputedStyle(container).maxWidth) || container.parentElement.clientWidth;
+                    const availableWidth = Math.min(container.parentElement.clientWidth, maxWidth);
+                    const availableHeight = window.innerHeight * 0.7;
+                    const width = Math.min(availableWidth, availableHeight * streamAspect);
+                    container.style.width = `${width}px`;
+                    embed.style.width = '100%';
+                }
+
+                function applyStreamAspect(image) {
+                    const width = image.naturalWidth;
+                    const height = image.naturalHeight;
+                    if (width > 0 && height > 0) {
+                        streamAspect = width / height;
+                        embed.style.setProperty('--stream-aspect', String(streamAspect));
+                        resizeStreamPane();
                     }
-                };
-                // Cache-bust so a stale snapshot can't pin a wrong ratio.
-                probe.src = '/api/snapshot?aspect_probe=' + Date.now();
+                }
+
+                fallback.addEventListener('load', function () { applyStreamAspect(fallback); });
+                window.addEventListener('resize', resizeStreamPane);
+                if (fallback.complete) applyStreamAspect(fallback);
+
+                // The hidden MJPEG fallback never loads when go2rtc is active.
+                // /api/snapshot answers 503 until the first frame exists, so a
+                // single silent probe would leave the pane without an aspect.
+                let aspectProbeRetried = false;
+                function probeStreamAspect() {
+                    if (streamAspect) return;
+                    const probe = new Image();
+                    probe.onload = function () { applyStreamAspect(probe); };
+                    probe.onerror = function () {
+                        if (aspectProbeRetried) return;
+                        aspectProbeRetried = true;
+                        setTimeout(probeStreamAspect, 2000);
+                    };
+                    probe.src = '/api/snapshot?aspect_probe=' + Date.now();
+                }
+                probeStreamAspect();
             })();
         </script>
 
