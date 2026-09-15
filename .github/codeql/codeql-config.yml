@@ -4,6 +4,11 @@ queries:
   - uses: security-extended
   - uses: security-and-quality
 
+# Do not add templates/ here: it has produced high-severity XSS and
+# sanitization findings.
+paths-ignore:
+  - tests
+
 # Do not auto-load repo-local CodeQL data extensions here. The former sanitizer
 # barrier pack under .github/codeql/extensions/ was incompatible with CodeQL
 # 2.25.6 and aborted the Python/JavaScript scans before analysis could finish.
