@@ -2335,31 +2335,15 @@
          ╚══════════════════════════════════════════════════╝ -->
     <div class="settings-panel" id="panelTools">
         <button type="button" class="settings-panel__trigger" onclick="togglePanel('panelTools')">
-            Tools & System
-            <span class="settings-panel__trigger-info">Backup, Ingest, System Info</span>
+            Data & Backups
+            <span class="settings-panel__trigger-info">Automatic backups, recovery, migration, Ingest, System Info</span>
             <svg class="settings-panel__chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
         </button>
         <div class="settings-panel__body">
 
-            <!-- Backup -->
-            <div class="mb-4">
-                <strong class="d-block mb-2">Backup & Migration</strong>
-                <p class="settings-field__help mb-2">Create a full backup of your database, images, and settings. Detection pauses during backup.</p>
-                <div class="d-flex gap-2 flex-wrap">
-                    <a href="/backup" class="btn btn--primary btn--sm">
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:4px;vertical-align:-1px;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-                        Create Backup
-                    </a>
-                    <a href="/restore" class="btn btn--secondary btn--sm">
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:4px;vertical-align:-1px;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-                        Import Backup
-                    </a>
-                </div>
-            </div>
-
-            <!-- USB Backup (write-only v1; restore lands in v2) -->
+            <!-- USB Backup: automatic snapshots + status + recovery instructions -->
             <div class="mb-4" id="usbBackupCard" hidden>
-                <strong class="d-block mb-2">USB Backup</strong>
+                <strong class="d-block mb-2">Automatic backups (USB)</strong>
                 <p class="settings-field__help mb-2">
                     Daily automatic snapshots to a USB stick (label
                     <code>WMB-BACKUP</code>, ext4). Protects against SD-card death.
@@ -2380,9 +2364,17 @@
                     <div class="settings-field__help mt-1" id="usbBackupSpaceLabel"></div>
                 </div>
 
+                <!-- Last scheduled/manual run outcome, incl. runs that failed
+                     before any snapshot directory existed (space guard, mount
+                     missing, timeout) -- a snapshot list alone can't show those. -->
+                <div class="mb-2" id="usbBackupLastRunWrap" hidden>
+                    <span class="badge" id="usbBackupLastRunBadge"></span>
+                    <span class="settings-field__help" id="usbBackupLastRunDetail"></span>
+                </div>
+
                 <!-- Recent snapshots -->
                 <div class="mb-2" id="usbBackupListWrap" hidden>
-                    <div class="settings-field__help mb-1">Recent snapshots</div>
+                    <div class="settings-field__help mb-1">Available snapshots</div>
                     <ul class="list-unstyled mb-0" id="usbBackupList"></ul>
                 </div>
 
@@ -2401,10 +2393,31 @@
                     </button>
                     <span class="settings-field__help" id="usbBackupTriggerStatus"></span>
                 </div>
-                <p class="settings-field__help mt-2 mb-0">
-                    Restore from a snapshot is currently a manual procedure
-                    on a separate Linux machine — UI restore is on the roadmap.
-                </p>
+
+                <div class="mt-3 pt-3" style="border-top:1px solid var(--wm-divider, #ddd);">
+                    <strong class="d-block mb-2">Recovery or moving to a new machine</strong>
+                    <p class="settings-field__help mb-2">
+                        Recovery and migration run from the command line against a
+                        snapshot directory — there is no in-app restore button, by
+                        design: it never risks replacing a live database while the
+                        app is still holding it open.
+                    </p>
+                    <p class="settings-field__help mb-1">
+                        Stop the app first (RPi: <code>sudo systemctl stop app.service</code>;
+                        Docker: <code>docker compose stop app</code>), then:
+                    </p>
+                    <pre class="p-2 bg-body-secondary rounded mb-2" style="font-size: 0.85em;"><code>.venv/bin/python scripts/recover_from_snapshot.py \
+    --snapshot /mnt/wmb-backup/latest \
+    --destination /opt/app/data/output \
+    --mode migration</code></pre>
+                    <p class="settings-field__help mb-0">
+                        <code>--mode migration</code> (default) refuses to touch a
+                        destination that already has data. Replacing a populated
+                        installation on purpose needs <code>--mode recovery --force</code>,
+                        which takes a safety checkpoint of the current database
+                        first. Full walkthrough: <code>docs/USB_BACKUP.md</code>.
+                    </p>
+                </div>
 
                 <!-- Format / re-format sub-section. Collapsed by default --
                      only relevant when the operator brings a fresh stick.
@@ -2438,6 +2451,32 @@
                     <span class="settings-field__help" id="usbFormatEstimate"></span>
                     <span class="settings-field__help" id="usbFormatProgress"></span>
                 </details>
+            </div>
+
+            <!-- Legacy archive backup + Merge/import: browser-downloaded
+                 .tar.gz workflow. Independent copy of your data and the
+                 explicit way to combine two installations' collections. -->
+            <div class="mb-4">
+                <strong class="d-block mb-2">Archive backup & merge two installations</strong>
+                <p class="settings-field__help mb-2">
+                    Download a full <code>.tar.gz</code> archive (database, images,
+                    settings) to keep as an independent copy, or import one to
+                    merge its detections and labels into this installation —
+                    the way to combine collections from two stations. Detection
+                    pauses automatically during both operations. Archives are
+                    capped at 100,000 files / 10 GiB on import; for larger
+                    collections, use the USB snapshot recovery path above instead.
+                </p>
+                <div class="d-flex gap-2 flex-wrap">
+                    <a href="/backup" class="btn btn--primary btn--sm">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:4px;vertical-align:-1px;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                        Create archive backup
+                    </a>
+                    <a href="/restore" class="btn btn--secondary btn--sm">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:4px;vertical-align:-1px;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                        Import / merge archive
+                    </a>
+                </div>
             </div>
             <style>
                 /* Rotate the chevron when the format section is open. */
@@ -2549,6 +2588,9 @@
                 var listEl = document.getElementById('usbBackupList');
                 var triggerBtn = document.getElementById('usbBackupTriggerBtn');
                 var triggerStatus = document.getElementById('usbBackupTriggerStatus');
+                var lastRunWrap = document.getElementById('usbBackupLastRunWrap');
+                var lastRunBadge = document.getElementById('usbBackupLastRunBadge');
+                var lastRunDetail = document.getElementById('usbBackupLastRunDetail');
 
                 if (!card || !stateBadge) return;
 
@@ -2608,6 +2650,42 @@
                         latestStrong.textContent = 'latest';
                         li.appendChild(latestStrong);
                     }
+
+                    li.appendChild(document.createTextNode(' '));
+                    var verifyBtn = document.createElement('button');
+                    verifyBtn.type = 'button';
+                    verifyBtn.className = 'btn btn--secondary btn--sm';
+                    verifyBtn.style.padding = '1px 8px';
+                    verifyBtn.style.fontSize = '0.8em';
+                    verifyBtn.textContent = 'Verify';
+                    var resultSpan = document.createElement('span');
+                    resultSpan.className = 'settings-field__help ms-1';
+                    verifyBtn.addEventListener('click', function() {
+                        verifyBtn.disabled = true;
+                        resultSpan.textContent = 'Checking…';
+                        fetch('/api/v1/system/backup/' + encodeURIComponent(s.name) + '/verify',
+                              { method: 'POST', credentials: 'same-origin' })
+                            .then(function(r) { return r.json(); })
+                            .then(function(data) {
+                                verifyBtn.disabled = false;
+                                if (!data || data.status !== 'success') {
+                                    resultSpan.textContent = 'Verify failed.';
+                                    return;
+                                }
+                                var parts = [];
+                                if (data.sha_ok === false) { parts.push('checksum FAILED'); }
+                                if (data.integrity_ok === false) { parts.push('DB integrity FAILED'); }
+                                if (data.media_ok === false) { parts.push('media MISSING (' + (data.media_message || '') + ')'); }
+                                if (data.ok) { parts.push('OK — DB and media verified'); }
+                                resultSpan.textContent = parts.join('; ') || 'Unknown result';
+                            })
+                            .catch(function() {
+                                verifyBtn.disabled = false;
+                                resultSpan.textContent = 'Verify request failed.';
+                            });
+                    });
+                    li.appendChild(verifyBtn);
+                    li.appendChild(resultSpan);
                     return li;
                 }
 
@@ -2629,6 +2707,7 @@
                             'do not unplug the stick.';
                         spaceWrap.hidden = true;
                         listWrap.hidden = true;
+                        lastRunWrap.hidden = true;
                         triggerBtn.disabled = true;
                         return;
                     }
@@ -2649,6 +2728,23 @@
                             ' (' + (stick.free_pct || 0).toFixed(0) + '% free)';
                     } else {
                         spaceWrap.hidden = true;
+                    }
+
+                    var lastRun = payload.last_run;
+                    if (lastRun && lastRun.status) {
+                        lastRunWrap.hidden = false;
+                        var ok = lastRun.status === 'ok';
+                        lastRunBadge.className = 'badge ' + (ok ? 'badge--success' : 'badge--danger');
+                        lastRunBadge.textContent = ok ? 'Last run OK' : 'Last run failed';
+                        var detailParts = [];
+                        if (lastRun.kind) { detailParts.push(lastRun.kind); }
+                        if (lastRun.finished_at) { detailParts.push(fmtTime(lastRun.finished_at)); }
+                        if (!ok && lastRun.exit_code != null) {
+                            detailParts.push('exit code ' + lastRun.exit_code);
+                        }
+                        lastRunDetail.textContent = detailParts.join(' · ');
+                    } else {
+                        lastRunWrap.hidden = true;
                     }
 
                     var snaps = payload.snapshots_recent || [];

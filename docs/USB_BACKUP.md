@@ -1,14 +1,14 @@
-# USB Backup (write-only v1)
+# USB Backup
 
 WatchMyBirds writes daily snapshots of the SQLite database, captured frames,
 and the installed app code to a USB stick mounted at `/mnt/wmb-backup`. This
 is your protection against SD-card death, which is the single most common
 hardware failure on a long-running Raspberry Pi.
 
-> **v1 is write-only.** Restore is currently a manual procedure (mount the
-> stick on any Linux machine and copy files back). A UI-driven restore flow
-> ships in a follow-up release together with the OTA pre-update snapshot
-> hook. See *Recovery* below.
+Recovery and migration are a supported, scripted CLI command
+(`scripts/recover_from_snapshot.py`) that runs directly against a snapshot
+directory — no archive step, no in-app restore UI. See *Recovery and
+migration* below.
 
 ## What you need
 
@@ -61,51 +61,88 @@ and fragile for unattended overnight runs.
 The mount is also locked down: `nosuid,nodev,noexec` means even if someone
 plants an executable on the stick, the Pi refuses to run it.
 
-## Recovery (manual, v1)
+## Recovery and migration
 
-Until the UI-driven restore lands, copy data back manually:
+Snapshot directories are named `YYYYMMDD_HHMMSS_<kind>/` under
+`/mnt/wmb-backup/snapshots/` (`<kind>` is `scheduled` or `manual`); the
+newest valid one is also reachable via the `/mnt/wmb-backup/latest`
+symlink. Each contains:
 
-1. Power off the Pi (or unmount cleanly: `sudo umount /mnt/wmb-backup`).
-2. Pull the stick. Plug into a Linux machine.
-3. Mount it: `sudo mount /dev/disk/by-label/WMB-BACKUP /mnt`
-4. Browse `/mnt/snapshots/` — directories are named
-   `YYYYMMDD_HHMMSS_<kind>/` where `<kind>` is `scheduled` or `manual`.
-5. Each snapshot directory contains:
-   - `data/images.db` — SQLite database (already verified with
-     `pragma integrity_check`; see `manifest.json`)
-   - `data/output/` — captured frames and per-output app state, excluding
-     the live SQLite files
-   - `app/` — the installed app code, useful only if you also want to
-     pin to that exact build
-   - `manifest.json` — what was captured, sizes, integrity hashes
-   - `COMPLETED` — marker file. **Trust no snapshot directory that lacks
-     this file** — it crashed mid-write.
+- `data/images.db` — SQLite database (verified with `pragma
+  integrity_check` at capture time; re-verify with `sha256sum -c
+  images.db.sha256` before trusting an old snapshot)
+- `data/output/` — captured frames and per-output app state
+- `app/` — the installed app code at capture time (forensic only; app
+  code is never restored by the recovery command — see below)
+- `manifest.json` — what was captured, sizes, integrity hashes
+- `COMPLETED` — marker file. **Trust no snapshot directory that lacks
+  this file** — it crashed mid-write.
 
-The newest valid snapshot is also reachable via the symlink
-`/mnt/latest/`.
+`scripts/recover_from_snapshot.py` is the supported recovery/migration
+command. It ships in the repository (not an agent-only tool) and runs
+directly against a snapshot directory — no archive upload, no
+intermediate `.tar.gz`, no in-app restore UI.
 
-To restore onto a fresh Pi installation:
+**It never starts or stops any service.** Stop the app first so nothing
+holds the database open while it is replaced:
 
 ```bash
+# Raspberry Pi
 sudo systemctl stop app.service
-sudo rsync -a /mnt/<snapshot>/data/output/ /opt/app/data/output/
-sudo cp /mnt/<snapshot>/data/images.db /opt/app/data/output/images.db
-sudo chown -R watchmybirds:watchmybirds /opt/app/data
-sudo systemctl start app.service
+
+# Docker
+docker compose stop app
 ```
 
-Do **not** restore the `app/` tree onto a running install unless you
-really want to roll back the app to the snapshotted version — for that
-case, use OTA's rollback flow (when it ships) instead.
+**Fresh install / SD-card died (migration mode, default)** — refuses if
+the destination database already has rows:
 
-## What is NOT backed up (v1)
+```bash
+.venv/bin/python scripts/recover_from_snapshot.py \
+    --snapshot /mnt/wmb-backup/latest \
+    --destination /opt/app/data/output \
+    --mode migration
+```
+
+**Replacing a populated installation (recovery mode)** — a deliberate,
+explicit action. Requires `--force`, and always takes a safety checkpoint
+of the current database into `<destination>/backup_before_restore/`
+before touching anything (the checkpoint path is printed on completion):
+
+```bash
+.venv/bin/python scripts/recover_from_snapshot.py \
+    --snapshot /mnt/wmb-backup/snapshots/20260901_030000_scheduled \
+    --destination /opt/app/data/output \
+    --mode recovery --force
+```
+
+Then restart the app:
+
+```bash
+sudo systemctl start app.service       # Raspberry Pi
+docker compose start app               # Docker
+```
+
+The command validates the snapshot (COMPLETED marker, checksum,
+`integrity_check`, media directory present) before writing anything, and
+refuses a corrupt or incomplete snapshot outright. Pass `--skip-media` to
+restore the database only (useful for a quick metadata-only recovery
+check). It never restores the `app/` tree — app code always comes from
+the running release image; rolling back app code is OTA's job, not
+backup's, when OTA rollback ships.
+
+Older snapshots captured before this command existed use the same
+directory layout and work with it unchanged — there is nothing to
+regenerate.
+
+## What is NOT backed up
 
 - Audio recordings (audio is currently archived as a feature; will be
   added separately if/when audio returns to mainline)
 - `/opt/app/.venv/` — pip-rebuilt on every release, no point copying
 - System config (`/etc/`, network settings, SSH keys, wifi credentials)
   — these are baked into the image, not the backup
-- Encrypted secrets at rest — v1 stick is plain ext4. If your threat
+- Encrypted secrets at rest — the stick is plain ext4. If your threat
   model includes "someone steals the stick", encrypt at the volume level
   yourself (LUKS) before formatting; the mount unit accepts any ext4
   volume regardless of underlying encryption.
