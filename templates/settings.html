@@ -2409,13 +2409,13 @@
                     <pre class="p-2 bg-body-secondary rounded mb-2" style="font-size: 0.85em;"><code>.venv/bin/python scripts/recover_from_snapshot.py \
     --snapshot /mnt/wmb-backup/latest \
     --destination /opt/app/data/output \
-    --mode migration</code></pre>
+    --mode migration --app-stopped</code></pre>
                     <p class="settings-field__help mb-0">
-                        <code>--mode migration</code> (default) refuses to touch a
+                        <code>--mode migration --app-stopped</code> (default) refuses to touch a
                         destination that already has data. Replacing a populated
-                        installation on purpose needs <code>--mode recovery --force</code>,
-                        which takes a safety checkpoint of the current database
-                        first. Full walkthrough: <code>docs/USB_BACKUP.md</code>.
+                        installation on purpose needs <code>--mode recovery --force --app-stopped</code>,
+                        which preserves the complete previous output directory
+                        as a safety checkpoint. Full walkthrough: <code>docs/USB_BACKUP.md</code>.
                     </p>
                 </div>
 

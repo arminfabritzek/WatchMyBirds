@@ -232,3 +232,128 @@ def test_database_failure_raises_instead_of_reporting_success(
 
     assert image_count == 0
     assert detection_count == 0
+
+
+def test_failed_original_mapping_aborts_merge(live_db, tmp_path):
+    from utils.restore import _merge_database
+
+    backup = _make_db(tmp_path, "failed-media")
+    name = "20260820_120000_bird.jpg"
+    _seed_image_with_detection(backup, filename=name, content_hash="incoming")
+    with pytest.raises(ValueError, match="Original import failed"):
+        _merge_database(backup, filename_rename_map={name: None})
+    with sqlite3.connect(live_db) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM images").fetchone()[0] == 0
+
+
+def test_live_database_replacement_is_refused(live_db, tmp_path):
+    from utils.path_manager import PathManager
+    from utils.restore import _replace_database, restore_from_archive
+
+    before = live_db.read_bytes()
+    with pytest.raises(RuntimeError, match="offline recovery"):
+        _replace_database(tmp_path / "backup.db", PathManager(str(live_db.parent)))
+    result = list(
+        restore_from_archive(tmp_path / "backup.tar.gz", db_strategy="replace")
+    )
+    assert result[-1]["error"]
+    assert "offline recovery" in result[-1]["error"]
+    assert live_db.read_bytes() == before
+
+
+def test_conflict_file_is_never_overwritten(tmp_path):
+    import hashlib
+
+    from utils.path_manager import PathManager
+    from utils.restore import _generate_conflict_filename, _import_original_file
+
+    pm = PathManager(str(tmp_path / "live"))
+    name = "20260820_120000_bird.jpg"
+    original = pm.get_original_path(name)
+    original.parent.mkdir(parents=True)
+    original.write_bytes(b"local")
+    source = tmp_path / "incoming" / "2026-08-20" / name
+    source.parent.mkdir(parents=True)
+    source.write_bytes(b"incoming")
+    conflict = original.with_name(
+        _generate_conflict_filename(name, hashlib.sha256(b"incoming").hexdigest())
+    )
+    conflict.write_bytes(b"different preexisting original")
+    with pytest.raises(ValueError, match="Conflicting original"):
+        _import_original_file(source, source.parent.parent, pm)
+    assert conflict.read_bytes() == b"different preexisting original"
+
+
+def test_archive_merge_keeps_files_detections_and_labels_together(
+    live_db, tmp_path, monkeypatch
+):
+    import hashlib
+    import tarfile
+
+    from core.human_label_core import (
+        LabelProvenance,
+        append_fact,
+        ensure_object_subject,
+    )
+    from utils import restore
+    from utils.path_manager import PathManager
+
+    filename = "20260820_100000_bird.jpg"
+    pm = PathManager(str(live_db.parent))
+    local = pm.get_original_path(filename)
+    local.parent.mkdir(parents=True)
+    local.write_bytes(b"local bird")
+    _seed_image_with_detection(
+        live_db,
+        filename=filename,
+        content_hash=hashlib.sha256(b"local bird").hexdigest(),
+    )
+    backup = _make_db(tmp_path, "incoming")
+    detection_id = _seed_image_with_detection(
+        backup,
+        filename=filename,
+        content_hash=hashlib.sha256(b"incoming bird").hexdigest(),
+    )
+    with sqlite3.connect(backup) as conn:
+        subject = ensure_object_subject(conn, detection_id)
+        append_fact(
+            conn,
+            subject_id=subject,
+            fact_type="bbox_quality",
+            answer_value="suitable",
+            provenance=LabelProvenance(
+                installation_id="incoming",
+                app_version="test",
+                context="normal_correction",
+                source_kind="watchmybirds_ui",
+            ),
+        )
+    conn.close()
+    image = tmp_path / "incoming.jpg"
+    image.write_bytes(b"incoming bird")
+    archive_path = pm.get_restore_tmp_dir() / "collection.tar.gz"
+    with tarfile.open(archive_path, "w:gz") as archive:
+        archive.add(backup, arcname="images.db")
+        archive.add(image, arcname=f"originals/2026-08-20/{filename}")
+    monkeypatch.setattr(restore, "get_path_manager", lambda: pm)
+    monkeypatch.setattr(restore, "get_db_path", lambda: str(live_db))
+    for _ in range(2):
+        result = list(restore.restore_from_archive(archive_path))[-1]
+        assert result["error"] is None, result
+    with sqlite3.connect(live_db) as conn:
+        rows = conn.execute("SELECT filename, content_hash FROM images").fetchall()
+        assert len(rows) == 2
+        for name, digest in rows:
+            assert (
+                hashlib.sha256(pm.get_original_path(name).read_bytes()).hexdigest()
+                == digest
+            )
+        labeled_filename, thumbnail = conn.execute("""
+            SELECT d.image_filename, d.thumbnail_path FROM human_label_facts f
+            JOIN label_subjects s ON s.subject_id=f.subject_id
+            JOIN detections d ON d.detection_id=s.detection_id
+        """).fetchone()
+        assert labeled_filename != filename
+        assert pm.get_original_path(labeled_filename).read_bytes() == b"incoming bird"
+        assert thumbnail is None
+        assert conn.execute("SELECT COUNT(*) FROM human_label_facts").fetchone()[0] == 1

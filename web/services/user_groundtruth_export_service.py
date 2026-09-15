@@ -39,14 +39,13 @@ frame to WMB Trash.
 
 from __future__ import annotations
 
-import io
 import json
 import sqlite3
 import zipfile
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, BinaryIO
 
 from core.user_groundtruth_core import (
     count_pending_by_bucket,
@@ -55,6 +54,7 @@ from core.user_groundtruth_core import (
     fetch_hard_negatives,
     fetch_species_relabels,
 )
+from web.services.archive_service import temporary_archive
 
 EXPORTER_VERSION = "1.2"  # bumped: confirmed_positives bucket opt-in (default off)
 
@@ -389,8 +389,8 @@ def stream_batch_zip(
     batch: Batch,
     *,
     include_images: bool = True,
-) -> io.BytesIO:
-    """Serialize a Batch into an in-memory ZIP and return the buffer.
+) -> BinaryIO:
+    """Serialize a Batch into a disk-backed ZIP and return the open file.
 
     Args:
         batch: the materialized Batch from ``build_batch``.
@@ -399,57 +399,57 @@ def stream_batch_zip(
             future ``--manifest-only`` operator option.
 
     Returns:
-        BytesIO positioned at 0, ready to be streamed via Flask
+        A binary file positioned at 0, ready to be streamed via Flask
         ``send_file``.
 
-    The ZIP is built in-memory; for the current dataset size (<1k
-    detections, <100MB total) this is well under the RAM budget on
-    the RPi. If batches ever exceed ~1GB this should be refactored
-    to a streaming generator, but premature optimization would
-    complicate testing.
     """
-    buffer = io.BytesIO()
-    with zipfile.ZipFile(buffer, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
-        # 1. Image files, date-sharded under images/YYYY-MM-DD/
-        missing_images: list[str] = []
-        if include_images:
-            for filename, src_path in batch._image_paths.items():
-                if not src_path.is_file():
-                    missing_images.append(filename)
-                    continue
-                date_folder = _date_folder_from_filename(filename)
-                arcname = f"images/{date_folder}/{filename}"
-                zf.write(src_path, arcname=arcname)
+    buffer = temporary_archive()
+    try:
+        with zipfile.ZipFile(buffer, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
+            # 1. Image files, date-sharded under images/YYYY-MM-DD/
+            missing_images: list[str] = []
+            if include_images:
+                for filename, src_path in batch._image_paths.items():
+                    if not src_path.is_file():
+                        missing_images.append(filename)
+                        continue
+                    date_folder = _date_folder_from_filename(filename)
+                    arcname = f"images/{date_folder}/{filename}"
+                    zf.write(src_path, arcname=arcname)
 
-        # 2. Four bucket manifest files (JSONL)
-        for bucket_name, rows in [
-            ("hard_negatives", batch.hard_negatives),
-            ("confirmed_positives", batch.confirmed_positives),
-            ("species_relabels", batch.species_relabels),
-            ("favorites", batch.favorites),
-        ]:
-            lines = [_manifest_line(r, batch) for r in rows]
+            # 2. Four bucket manifest files (JSONL)
+            for bucket_name, rows in [
+                ("hard_negatives", batch.hard_negatives),
+                ("confirmed_positives", batch.confirmed_positives),
+                ("species_relabels", batch.species_relabels),
+                ("favorites", batch.favorites),
+            ]:
+                lines = [_manifest_line(r, batch) for r in rows]
+                zf.writestr(
+                    f"manifests/{bucket_name}.jsonl",
+                    "\n".join(lines) + ("\n" if lines else ""),
+                )
+
+            # 3. Merged COCO annotations
+            coco = _build_coco(batch, missing_images=set(missing_images))
             zf.writestr(
-                f"manifests/{bucket_name}.jsonl",
-                "\n".join(lines) + ("\n" if lines else ""),
+                "coco_annotations.json",
+                json.dumps(coco, indent=2, ensure_ascii=False),
             )
 
-        # 3. Merged COCO annotations
-        coco = _build_coco(batch, missing_images=set(missing_images))
-        zf.writestr(
-            "coco_annotations.json",
-            json.dumps(coco, indent=2, ensure_ascii=False),
-        )
+            # 4. Batch metadata
+            meta = _build_metadata(batch, missing_images=missing_images)
+            zf.writestr(
+                "batch_metadata.json",
+                json.dumps(meta, indent=2, ensure_ascii=False),
+            )
 
-        # 4. Batch metadata
-        meta = _build_metadata(batch, missing_images=missing_images)
-        zf.writestr(
-            "batch_metadata.json",
-            json.dumps(meta, indent=2, ensure_ascii=False),
-        )
+            # 5. README for downstream training
+            zf.writestr("README.md", _build_readme(batch))
 
-        # 5. README for downstream training
-        zf.writestr("README.md", _build_readme(batch))
+    except BaseException:
+        buffer.close()
+        raise
 
     buffer.seek(0)
     return buffer

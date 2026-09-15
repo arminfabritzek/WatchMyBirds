@@ -102,10 +102,9 @@
                     <span class="db-strategy-option__desc">Add data to existing DB. Duplicates are skipped.</span>
                 </label>
                 <label class="db-strategy-option" id="strategyReplace">
-                    <input type="radio" name="db_strategy" value="replace" onchange="updateStrategy()">
+                    <input type="radio" name="db_strategy" value="replace" disabled onchange="updateStrategy()">
                     <span class="db-strategy-option__title">🔄 Replace</span>
-                    <span class="db-strategy-option__desc">Replace existing DB. <strong>Requires
-                            restart!</strong></span>
+                    <span class="db-strategy-option__desc">Use the offline recovery command with the app stopped.</span>
                 </label>
             </div>
         </div>

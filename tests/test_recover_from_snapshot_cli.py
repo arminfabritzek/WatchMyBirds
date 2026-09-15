@@ -8,6 +8,7 @@ mounted disks, no Pi/Docker contact.
 from __future__ import annotations
 
 import hashlib
+import json
 import sqlite3
 import subprocess
 import sys
@@ -47,7 +48,7 @@ def _make_snapshot(
     )
     conn.execute(
         "INSERT INTO images VALUES (?, ?, ?, 1)",
-        (filename, "2026-09-01T09:00:00", f"hash-{filename}"),
+        (filename, "2026-09-01T09:00:00", hashlib.sha256(b"jpeg-bytes").hexdigest()),
     )
     conn.commit()
     conn.close()
@@ -56,13 +57,14 @@ def _make_snapshot(
     if corrupt:
         digest = "0" * 64
     (data_dir / "images.db.sha256").write_text(f"{digest}  images.db\n")
+    (snapshot_dir / "manifest.json").write_text(json.dumps({"schema_version": 1}))
     (snapshot_dir / "COMPLETED").write_text(datetime.now(UTC).isoformat())
     return snapshot_dir
 
 
 def _run_cli(*args: str) -> subprocess.CompletedProcess:
     return subprocess.run(
-        [sys.executable, str(SCRIPT), *args],
+        [sys.executable, str(SCRIPT), "--app-stopped", *args],
         capture_output=True,
         text=True,
         cwd=str(REPO_ROOT),
@@ -185,12 +187,9 @@ def test_recovery_with_force_replaces_and_leaves_a_safety_checkpoint(tmp_path) -
     assert "Safety checkpoint written" in result.stdout
     assert _image_rows(destination / "images.db") == [(filename,)]
 
-    rollback_dir = destination / "backup_before_restore"
-    assert rollback_dir.is_dir()
-    rollback_files = list(rollback_dir.iterdir())
-    assert len(rollback_files) == 1
-    rollback_rows = _image_rows(rollback_files[0])
-    assert rollback_rows == [("existing.jpg",)]
+    checkpoints = list(tmp_path.glob("populated_dest-before-restore-*"))
+    assert len(checkpoints) == 1
+    assert _image_rows(checkpoints[0] / "images.db") == [("existing.jpg",)]
 
 
 def test_missing_completed_marker_is_refused(tmp_path) -> None:
@@ -269,3 +268,69 @@ def test_latest_symlink_is_followed(tmp_path) -> None:
 
     assert result.returncode == 0, result.stderr
     assert _image_rows(destination / "images.db") == [(filename,)]
+
+
+@pytest.mark.parametrize(
+    "missing",
+    [
+        "manifest.json",
+        "data/images.db.sha256",
+        "data/output/originals/2026-09-01/20260901_090000_bird.jpg",
+    ],
+)
+def test_incomplete_snapshot_never_changes_destination(tmp_path, missing):
+    snapshot = _make_snapshot(tmp_path, "snapshot", "20260901_090000_bird.jpg")
+    (snapshot / missing).unlink()
+    destination = tmp_path / "destination"
+    result = _run_cli("--snapshot", str(snapshot), "--destination", str(destination))
+    assert result.returncode != 0
+    assert not destination.exists()
+
+
+def test_copy_failure_preserves_database_media_and_settings(tmp_path, monkeypatch):
+    from scripts import recover_from_snapshot as recovery
+
+    snapshot = _make_snapshot(tmp_path, "snapshot", "20260901_090000_bird.jpg")
+    destination = tmp_path / "destination"
+    destination.mkdir()
+    for name in ("images.db", "settings.yaml", "original.jpg"):
+        (destination / name).write_bytes(b"previous")
+    before = {p.name: p.read_bytes() for p in destination.iterdir()}
+
+    def fail(*args, **kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(recovery.shutil, "copytree", fail)
+    with pytest.raises(OSError, match="disk full"):
+        recovery._restore_directory(snapshot, destination)
+    assert {p.name: p.read_bytes() for p in destination.iterdir()} == before
+    assert not list(tmp_path.glob(".destination-restore-*"))
+
+
+def test_publication_failure_restores_complete_checkpoint(tmp_path, monkeypatch):
+    from scripts import recover_from_snapshot as recovery
+
+    snapshot = _make_snapshot(tmp_path, "snapshot", "20260901_090000_bird.jpg")
+    destination = tmp_path / "destination"
+    destination.mkdir()
+    (destination / "images.db").write_bytes(b"previous")
+    original_rename = Path.rename
+
+    def rename(path, target):
+        if path.name.startswith(".destination-restore-"):
+            raise OSError("publish failed")
+        return original_rename(path, target)
+
+    monkeypatch.setattr(Path, "rename", rename)
+    with pytest.raises(OSError, match="publish failed"):
+        recovery._restore_directory(snapshot, destination)
+    assert (destination / "images.db").read_bytes() == b"previous"
+
+
+def test_recovery_preserves_additional_output_state(tmp_path):
+    snapshot = _make_snapshot(tmp_path, "snapshot", "20260901_090000_bird.jpg")
+    (snapshot / "data/output/cameras.yaml").write_text("cameras: []")
+    destination = tmp_path / "destination"
+    result = _run_cli("--snapshot", str(snapshot), "--destination", str(destination))
+    assert result.returncode == 0, result.stderr
+    assert (destination / "cameras.yaml").read_text() == "cameras: []"

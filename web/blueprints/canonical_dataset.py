@@ -68,6 +68,7 @@ def canonical_dataset_download():
         canonical_dataset_service.render_canonical_bundle_to_tempdir(
             bundle,
             path_resolver=path_manager.get_original_path,
+            temporary_root=path_manager.backup_dir,
         )
     )
 
@@ -78,12 +79,17 @@ def canonical_dataset_download():
         except OSError:
             pass
 
-    response = send_file(
-        archive_path,
-        mimetype="application/zip",
-        as_attachment=True,
-        download_name=f"watchmybirds-labels-{bundle.bundle_id[:12]}.zip",
-        max_age=0,
-    )
+    try:
+        response = send_file(
+            archive_path,
+            mimetype="application/zip",
+            as_attachment=True,
+            download_name=f"watchmybirds-labels-{bundle.bundle_id[:12]}.zip",
+            max_age=0,
+        )
+    except BaseException:
+        _cleanup()
+        raise
+    response.direct_passthrough = False
     response.call_on_close(_cleanup)
     return response

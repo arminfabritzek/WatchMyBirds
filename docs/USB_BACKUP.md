@@ -101,19 +101,21 @@ the destination database already has rows:
 .venv/bin/python scripts/recover_from_snapshot.py \
     --snapshot /mnt/wmb-backup/latest \
     --destination /opt/app/data/output \
-    --mode migration
+    --mode migration --app-stopped
 ```
 
 **Replacing a populated installation (recovery mode)** — a deliberate,
-explicit action. Requires `--force`, and always takes a safety checkpoint
-of the current database into `<destination>/backup_before_restore/`
-before touching anything (the checkpoint path is printed on completion):
+explicit action. Requires `--force` and `--app-stopped`. The command stages
+and verifies all output data before replacing the destination. The complete
+previous output directory is retained beside the destination as
+`output-before-restore-<unique-id>`; its path is printed before publication.
+A publication error restores that directory automatically.
 
 ```bash
 .venv/bin/python scripts/recover_from_snapshot.py \
     --snapshot /mnt/wmb-backup/snapshots/20260901_030000_scheduled \
     --destination /opt/app/data/output \
-    --mode recovery --force
+    --mode recovery --force --app-stopped
 ```
 
 Then restart the app:
@@ -123,13 +125,28 @@ sudo systemctl start app.service       # Raspberry Pi
 docker compose start app               # Docker
 ```
 
-The command validates the snapshot (COMPLETED marker, checksum,
-`integrity_check`, media directory present) before writing anything, and
-refuses a corrupt or incomplete snapshot outright. Pass `--skip-media` to
-restore the database only (useful for a quick metadata-only recovery
-check). It never restores the `app/` tree — app code always comes from
-the running release image; rolling back app code is OTA's job, not
-backup's, when OTA rollback ships.
+The command validates the manifest version, COMPLETED marker, database checksum,
+SQLite integrity, and expected originals before writing the destination. Available
+original checksums are verified; older rows without hashes receive existence
+checks only. Retention-deleted originals are allowed to be absent. All per-output
+state is restored, including camera settings and other files stored in the snapshot.
+App code is not restored.
+
+Run as the app user, or as root against an existing destination owned by that user.
+Both modes require all app processes to be stopped and `--app-stopped` to acknowledge
+that precondition. The command does not independently detect all open connections.
+For Docker, operate on the stopped container's **host output directory**, not an
+active bind mount inside a container. Staging requires space for the incoming
+output alongside the retained old directory. A copy failure leaves the destination
+untouched. If power is lost between directory renames, keep the app stopped and
+rename the printed checkpoint back to the original destination before retrying.
+Do not remove that checkpoint until recovery and application startup are verified.
+
+USB backup performs a second file-copy pass after its database snapshot and checks
+that snapshot's expected media before marking it complete. Concurrent changes may
+cause a run to fail verification; copying order alone does not provide an atomic
+snapshot. TERM/INT failures are recorded when the USB volume remains writable;
+power loss, SIGKILL, or a disconnected disk cannot guarantee a final status record.
 
 Older snapshots captured before this command existed use the same
 directory layout and work with it unchanged — there is nothing to

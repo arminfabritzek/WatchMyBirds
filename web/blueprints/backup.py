@@ -85,7 +85,16 @@ def backup_create():
     """
     try:
         # Parse options
-        data = request.get_json(silent=True) or {}
+        data = request.get_json(silent=True) or {
+            key: request.form[key] == "true"
+            for key in (
+                "include_db",
+                "include_originals",
+                "include_derivatives",
+                "include_settings",
+            )
+            if key in request.form
+        }
         include_db = data.get("include_db", True)
         include_originals = data.get("include_originals", True)
         include_derivatives = data.get("include_derivatives", False)

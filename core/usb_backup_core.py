@@ -14,6 +14,7 @@ See `docs/USB_BACKUP.md` for the design.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
@@ -23,9 +24,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from utils.path_manager import PathManager
+
 # These are the canonical on-Pi paths. They mirror the constants at the
 # top of rpi/backup.sh — keep them in sync. We don't share a config file
-# because backup.sh runs without Python in scope.
+# because backup.sh needs these paths before invoking Python validation.
 MOUNT_POINT = Path("/mnt/wmb-backup")
 BACKUP_DEVICE = Path("/dev/disk/by-label/WMB-BACKUP")
 SNAPSHOTS_DIR = MOUNT_POINT / "snapshots"
@@ -378,7 +381,7 @@ def _read_json_safely(path: Path) -> dict[str, Any] | None:
         with path.open(encoding="utf-8") as f:
             data = json.load(f)
         return data if isinstance(data, dict) else None
-    except (OSError, json.JSONDecodeError):
+    except (OSError, UnicodeError, json.JSONDecodeError):
         return None
 
 
@@ -522,60 +525,98 @@ def delete_snapshot(name: str) -> tuple[bool, str]:
 # ----------------------------------------------------------------------
 
 
-def _date_shard(filename: str) -> str:
-    """``YYYYMMDD_...`` -> ``YYYY-MM-DD``; ``"unknown_date"`` otherwise."""
-    date = filename[:8]
-    return f"{date[:4]}-{date[4:6]}-{date[6:8]}" if date.isdigit() else "unknown_date"
-
-
-def _verify_media(directory: Path, db_path: Path) -> dict[str, Any]:
-    """Cross-reference the snapshot's own DB against its own originals tree.
-
-    Uses the snapshot's ``images.original_present`` column (not the live
-    DB) so images the retention policy had already removed *before this
-    snapshot was taken* are correctly treated as intentionally absent,
-    not as damage.
-    """
-    originals_root = directory / "data" / "output" / "originals"
+def _verify_media(
+    directory: Path, db_path: Path, *, output_dir: Path | None = None
+) -> dict[str, Any]:
+    """Check expected originals against the snapshot, including available hashes."""
+    pm = PathManager(str(output_dir or directory / "data" / "output"))
+    checked = 0
+    hashed = 0
     try:
-        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
-        conn.row_factory = sqlite3.Row
+        conn = sqlite3.connect(db_path.resolve().as_uri() + "?mode=ro", uri=True)
         try:
-            rows = conn.execute(
-                "SELECT filename, original_present FROM images"
-            ).fetchall()
+            columns = {row[1] for row in conn.execute("PRAGMA table_info(images)")}
+            present = "original_present" if "original_present" in columns else "1"
+            digest = "content_hash" if "content_hash" in columns else "NULL"
+            for filename, expected, content_hash in conn.execute(
+                f"SELECT filename, {present}, {digest} FROM images"
+            ):
+                if expected == 0:
+                    continue
+                if not isinstance(filename, str) or Path(filename).name != filename:
+                    raise ValueError("Unsafe image filename in snapshot")
+                path = pm.get_original_path(filename)
+                if pm.contained_path(path, pm.originals_dir) is None:
+                    raise ValueError(f"Image escapes snapshot: {filename}")
+                if not path.is_file():
+                    raise ValueError(f"Expected original missing: {filename}")
+                checked += 1
+                if content_hash:
+                    with path.open("rb") as source:
+                        actual = hashlib.file_digest(source, "sha256").hexdigest()
+                    if actual != content_hash:
+                        raise ValueError(f"Original checksum mismatch: {filename}")
+                    hashed += 1
         finally:
             conn.close()
-    except sqlite3.Error as exc:
-        return {"media_ok": None, "media_message": f"Cannot read images table: {exc}"}
-
-    def _expects_media(present: int | None) -> bool:
-        return present != 0  # NULL (legacy rows) defaults to "expected present"
-
-    expected = [
-        row["filename"] for row in rows if _expects_media(row["original_present"])
-    ]
-    missing = [
-        filename
-        for filename in expected
-        if not (originals_root / _date_shard(filename) / filename).is_file()
-    ]
-
-    if not expected:
-        return {"media_ok": None, "media_message": "No images with expected media."}
-    if missing:
-        sample = ", ".join(missing[:5])
-        more = f" (+{len(missing) - 5} more)" if len(missing) > 5 else ""
-        return {
-            "media_ok": False,
-            "media_message": (
-                f"{len(missing)}/{len(expected)} expected original(s) missing: "
-                f"{sample}{more}"
-            ),
-        }
+    except (sqlite3.Error, OSError, ValueError) as exc:
+        return {"media_ok": False, "media_message": str(exc)}
     return {
         "media_ok": True,
-        "media_message": f"{len(expected)}/{len(expected)} expected originals present.",
+        "media_message": f"{checked} expected originals present; {hashed} checksums verified.",
+    }
+
+
+def verify_snapshot_directory(
+    directory: Path, *, require_completed: bool = True
+) -> dict[str, Any]:
+    """Validate a snapshot without requiring an installed app or mounted USB disk."""
+    problems = []
+    if require_completed and not (directory / "COMPLETED").is_file():
+        problems.append("Missing COMPLETED marker")
+    if (directory / "CORRUPT").exists():
+        problems.append("Snapshot is marked CORRUPT")
+    manifest = _read_json_safely(directory / "manifest.json")
+    if not manifest or manifest.get("schema_version") != 1:
+        problems.append("Missing or unsupported snapshot manifest")
+    if not (directory / "data" / "output").is_dir():
+        problems.append("Missing snapshot output directory")
+    db = directory / "data" / "images.db"
+    sha = db.with_suffix(".db.sha256")
+    sha_ok = False
+    integrity_ok = False
+    try:
+        tokens = sha.read_text().split()
+        if len(tokens) != 2 or tokens[1] not in ("images.db", "*images.db"):
+            raise ValueError("Invalid database checksum file")
+        with db.open("rb") as source:
+            sha_ok = hashlib.file_digest(source, "sha256").hexdigest() == tokens[0]
+        if not sha_ok:
+            raise ValueError("Checksum mismatch on images.db")
+        conn = sqlite3.connect(db.resolve().as_uri() + "?mode=ro", uri=True)
+        try:
+            integrity_ok = conn.execute("PRAGMA integrity_check").fetchall() == [
+                ("ok",)
+            ]
+        finally:
+            conn.close()
+        if not integrity_ok:
+            problems.append("Database integrity check failed")
+    except (OSError, ValueError, sqlite3.Error) as exc:
+        problems.append(str(exc))
+    media = (
+        _verify_media(directory, db)
+        if sha_ok and integrity_ok
+        else {"media_ok": None, "media_message": "Skipped: database check failed."}
+    )
+    return {
+        "ok": not problems and sha_ok and integrity_ok and media["media_ok"] is True,
+        "sha_ok": sha_ok,
+        "integrity_ok": integrity_ok,
+        "sha_message": "; ".join(problems) or None,
+        "integrity_message": None if integrity_ok else "Database check failed",
+        "error": "; ".join(problems) or None,
+        **media,
     }
 
 
@@ -595,69 +636,9 @@ def verify_snapshot(name: str) -> dict[str, Any]:
     if snap is None:
         return {"ok": False, "name": name, "error": "Snapshot not found."}
 
-    db_path = directory / "data" / "images.db"
-    sha_path = directory / "data" / "images.db.sha256"
-    db_present = db_path.is_file()
-
-    sha_ok: bool | None
-    sha_message: str | None
-    if not db_present:
-        sha_ok, sha_message = False, "No DB in snapshot."
-    elif not sha_path.is_file():
-        sha_ok, sha_message = False, "No sha256 file alongside DB."
-    else:
-        try:
-            result = subprocess.run(
-                ["sha256sum", "-c", "--quiet", str(sha_path.name)],
-                cwd=db_path.parent,
-                capture_output=True,
-                text=True,
-                timeout=300,
-            )
-            sha_ok = result.returncode == 0
-            sha_message = (result.stderr or result.stdout or "").strip() or None
-        except (subprocess.SubprocessError, OSError) as exc:
-            sha_ok, sha_message = False, str(exc)
-
-    integrity_ok: bool | None
-    integrity_message: str | None
-    if not db_present:
-        integrity_ok, integrity_message = False, "No DB in snapshot."
-    else:
-        try:
-            result = subprocess.run(
-                ["sqlite3", str(db_path), "pragma integrity_check;"],
-                capture_output=True,
-                text=True,
-                timeout=300,
-            )
-            output = (result.stdout or "").strip()
-            integrity_ok = result.returncode == 0 and output == "ok"
-            integrity_message = output or None
-        except (subprocess.SubprocessError, OSError) as exc:
-            integrity_ok, integrity_message = False, str(exc)
-
-    if db_present and sha_ok is not False and integrity_ok is not False:
-        media = _verify_media(directory, db_path)
-    else:
-        media = {"media_ok": None, "media_message": "Skipped: database check failed."}
-
-    overall_ok = (
-        db_present
-        and sha_ok is not False
-        and integrity_ok is not False
-        and media["media_ok"] is not False
-    )
-
     return {
-        "ok": overall_ok,
+        **verify_snapshot_directory(directory),
         "name": name,
-        "sha_ok": sha_ok,
-        "sha_message": sha_message,
-        "integrity_ok": integrity_ok,
-        "integrity_message": integrity_message,
-        "media_ok": media["media_ok"],
-        "media_message": media["media_message"],
         "previously_marked_corrupt": snap.corrupt,
     }
 

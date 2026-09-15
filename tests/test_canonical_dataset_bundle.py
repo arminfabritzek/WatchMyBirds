@@ -313,3 +313,47 @@ def test_render_memory_stays_bounded_as_media_volume_grows(
         f"volume {total_media_bytes} bytes -- media is likely being "
         f"held fully in memory instead of streamed"
     )
+
+
+def test_failed_render_removes_temp_directory(canonical_case, tmp_path, monkeypatch):
+    from web.services import canonical_dataset_service as service
+
+    directory = tmp_path / "temporary"
+    directory.mkdir()
+    monkeypatch.setattr(service.tempfile, "mkdtemp", lambda **kwargs: str(directory))
+
+    def fail(*args, **kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(service, "_write_bundle_zip", fail)
+    with pytest.raises(OSError, match="disk full"):
+        service.render_canonical_bundle_to_tempdir(None, path_resolver=lambda _: None)
+    assert not directory.exists()
+
+
+def test_disk_archive_preserves_legacy_compression_and_bytes(canonical_case, tmp_path):
+    from io import BytesIO
+
+    from web.services import canonical_dataset_service as service
+
+    conn, pm, *_ = canonical_case
+    bundle = build_canonical_dataset(
+        conn, media_exists=lambda name: pm.get_original_path(name).is_file()
+    )
+    entries = service._non_media_entries(bundle)
+    for filename in bundle.media_filenames:
+        path = pm.get_original_path(filename)
+        path.write_bytes((b"repetitive image-like fixture " * 4096) + bytes(range(256)))
+        entries[service._media_archive_path(filename)] = path.read_bytes()
+    legacy = BytesIO()
+    with zipfile.ZipFile(
+        legacy, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9
+    ) as archive:
+        for name in sorted(entries):
+            archive.writestr(service._zip_info(name), entries[name], compresslevel=9)
+    result = service.write_canonical_bundle(
+        bundle,
+        path_resolver=pm.get_original_path,
+        destination=tmp_path / "streamed.zip",
+    )
+    assert result.read_bytes() == legacy.getvalue()

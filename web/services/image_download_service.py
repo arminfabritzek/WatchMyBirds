@@ -11,15 +11,16 @@ to the raw original instead of losing the image.
 
 from __future__ import annotations
 
-import io
 import os
 import zipfile
 from datetime import datetime
+from typing import BinaryIO
 
 from config import get_config
 from logging_config import get_logger
 from web.services import db_service
 from web.services import metadata_export_service as mx
+from web.services.archive_service import temporary_archive
 
 logger = get_logger(__name__)
 
@@ -73,34 +74,39 @@ def collect_source_images(conn, detection_ids: list[int]) -> list[tuple[str, str
     return collected
 
 
-def build_zip(files: list[tuple[str, str, str]]) -> io.BytesIO:
+def build_zip(files: list[tuple[str, str, str]]) -> BinaryIO:
     """Zip the resolved originals, applying metadata burn-in when enabled."""
     burn_in = mx.burn_in_enabled()
-    buffer = io.BytesIO()
+    buffer = temporary_archive()
 
-    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
-        for abs_path, original_name, timestamp in files:
-            if not os.path.exists(abs_path):
-                continue
-            if burn_in:
-                try:
-                    zf.writestr(
-                        mx.export_filename(original_name, timestamp),
-                        mx.produce_copy_bytes(original_name),
-                    )
+    try:
+        with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+            for abs_path, original_name, timestamp in files:
+                if not os.path.exists(abs_path):
                     continue
-                except Exception:
-                    logger.exception(
-                        "metadata burn-in failed for %s; zipping raw original",
-                        original_name,
-                    )
-            zf.write(abs_path, arcname=original_name)
+                if burn_in:
+                    try:
+                        zf.writestr(
+                            mx.export_filename(original_name, timestamp),
+                            mx.produce_copy_bytes(original_name),
+                        )
+                        continue
+                    except Exception:
+                        logger.exception(
+                            "metadata burn-in failed for %s; zipping raw original",
+                            original_name,
+                        )
+                zf.write(abs_path, arcname=original_name)
+
+    except BaseException:
+        buffer.close()
+        raise
 
     buffer.seek(0)
     return buffer
 
 
-def build_download_archive(detection_ids: list[int]) -> io.BytesIO | None:
+def build_download_archive(detection_ids: list[int]) -> BinaryIO | None:
     """Resolve ids, stamp ``downloaded_timestamp``, return the archive.
 
     ``None`` when nothing resolved, so callers can redirect instead of

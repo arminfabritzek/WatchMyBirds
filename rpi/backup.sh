@@ -32,6 +32,7 @@
 # ----------------------------------------------------------------------
 
 set -u
+export LC_ALL=C
 # We deliberately do NOT 'set -e' globally -- we want to handle failures
 # explicitly so we can mark snapshots CORRUPT instead of leaving orphans.
 set -o pipefail
@@ -128,8 +129,9 @@ write_last_run_status() {
     local exit_code="$1"
     local status="ok"
     [[ "${exit_code}" != "0" ]] && status="failed"
+    [[ "${FSTYPE:-}" == "ext4" ]] || return 0
     [[ -d "${MOUNT_POINT}" && -w "${MOUNT_POINT}" ]] || return 0
-    cat > "${MOUNT_POINT}/LAST_RUN_STATUS.json.tmp" 2>/dev/null <<EOF || return 0
+    cat > "${MOUNT_POINT}/LAST_RUN_STATUS.json.$$.tmp" 2>/dev/null <<EOF || return 0
 {
   "kind": "${KIND:-unknown}",
   "snapshot_name": "${SNAPSHOT_NAME:-}",
@@ -139,9 +141,12 @@ write_last_run_status() {
   "finished_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 }
 EOF
-    mv -f "${MOUNT_POINT}/LAST_RUN_STATUS.json.tmp" "${MOUNT_POINT}/LAST_RUN_STATUS.json" 2>/dev/null || true
+    mv -f "${MOUNT_POINT}/LAST_RUN_STATUS.json.$$.tmp" "${MOUNT_POINT}/LAST_RUN_STATUS.json" 2>/dev/null || true
 }
 trap 'write_last_run_status "$?"' EXIT
+trap 'exit 143' TERM
+trap 'exit 130' INT
+trap 'exit 129' HUP
 
 # ----------------------------------------------------------------------
 # Step 1: Mount + filesystem checks
@@ -259,15 +264,20 @@ ESTIMATE_LINKDEST=()
 if [[ -n "${PREV_SNAPSHOT}" && -d "${PREV_SNAPSHOT}/data/output" ]]; then
     ESTIMATE_LINKDEST=(--link-dest="${PREV_SNAPSHOT}/data/output")
 fi
+mkdir -p "${SNAPSHOT_DIR}/data/output" || die 11 "Cannot create estimate directory"
 ESTIMATED_NEW_BYTES=0
 if [[ -d "${OUTPUT_DIR}" ]]; then
-    ESTIMATED_NEW_BYTES="$(rsync -a --dry-run --stats \
+    if ! ESTIMATE_STATS="$(rsync -a --dry-run --stats \
         --exclude='images.db' --exclude='images.db-wal' --exclude='images.db-shm' \
         --exclude='backup/' --exclude='restore_tmp/' --exclude='backup_before_restore/' \
         --exclude='.restart_required' \
-        "${ESTIMATE_LINKDEST[@]}" \
-        "${OUTPUT_DIR}/" "${SNAPSHOT_DIR}/data/output/" 2>/dev/null \
-        | awk -F': ' '/^Total transferred file size:/ {gsub(",", "", $2); print $2; found=1} END {if (!found) print 0}')"
+        ${ESTIMATE_LINKDEST[@]+"${ESTIMATE_LINKDEST[@]}"} \
+        "${OUTPUT_DIR}/" "${SNAPSHOT_DIR}/data/output/" 2>&1)"; then
+        die 12 "Cannot estimate backup space: ${ESTIMATE_STATS}"
+    fi
+    ESTIMATED_NEW_BYTES="$(awk -F': ' '/^Total transferred file size:/ {gsub(",", "", $2); split($2, fields, " "); print fields[1]}' <<< "${ESTIMATE_STATS}")"
+    [[ "${ESTIMATED_NEW_BYTES}" =~ ^[0-9]+$ ]] || die 12 "Invalid rsync size estimate"
+
 fi
 DB_SIZE_BYTES=0
 [[ -f "${DB_PATH}" ]] && DB_SIZE_BYTES="$(stat -c '%s' "${DB_PATH}" 2>/dev/null || echo 0)"
@@ -296,9 +306,9 @@ mark_corrupt() {
 # ----------------------------------------------------------------------
 # Step 6: Imagery + per-output state (rsync with --link-dest dedup)
 # ----------------------------------------------------------------------
-# Runs before the DB snapshot (Step 7): retention deletes a file, then
-# marks it gone in the DB, so this order never leaves the DB pointing
-# at a file this rsync already missed.
+# Copy first to reduce the final catch-up pass. Concurrent writes can
+# still race either pass; snapshot validation below must succeed before
+# publication.
 log "Syncing imagery + output state via rsync..."
 RSYNC_LINKDEST=()
 if [[ -n "${PREV_SNAPSHOT}" && -d "${PREV_SNAPSHOT}/data/output" ]]; then
@@ -317,7 +327,7 @@ if ! rsync -a --delete \
         --exclude='restore_tmp/' \
         --exclude='backup_before_restore/' \
         --exclude='.restart_required' \
-        "${RSYNC_LINKDEST[@]}" \
+        ${RSYNC_LINKDEST[@]+"${RSYNC_LINKDEST[@]}"} \
         "${OUTPUT_DIR}/" \
         "${SNAPSHOT_DIR}/data/output/"; then
     die 14 "rsync of imagery (${OUTPUT_DIR}) failed"
@@ -349,7 +359,17 @@ if [[ -f "${DB_PATH}" ]]; then
     (cd "${SNAPSHOT_DIR}/data" && sha256sum images.db > images.db.sha256) \
         || die 13 "sha256sum failed on snapshot DB"
 else
-    log "WARN: ${DB_PATH} not present -- skipping DB backup."
+    die 13 "Database missing: ${DB_PATH}"
+fi
+
+# Catch captures created during the first copy before validating against
+# the fixed database snapshot. A deletion race fails verification safely.
+if ! rsync -a \
+        --exclude='images.db' --exclude='images.db-wal' --exclude='images.db-shm' \
+        --exclude='backup/' --exclude='restore_tmp/' --exclude='backup_before_restore/' \
+        --exclude='.restart_required' \
+        "${OUTPUT_DIR}/" "${SNAPSHOT_DIR}/data/output/"; then
+    die 14 "Final output copy failed"
 fi
 
 # ----------------------------------------------------------------------
@@ -379,7 +399,7 @@ if ! rsync -a --delete \
         --exclude='.tox/' \
         --exclude='.coverage' \
         --exclude='htmlcov/' \
-        "${APP_LINKDEST[@]}" \
+        ${APP_LINKDEST[@]+"${APP_LINKDEST[@]}"} \
         "${APP_DIR}/" \
         "${SNAPSHOT_DIR}/app/"; then
     die 15 "rsync of app code (${APP_DIR}) failed"
@@ -437,11 +457,22 @@ EOF
 # ----------------------------------------------------------------------
 # Step 10: COMPLETED marker (atomic-ish: this is the LAST file written)
 # ----------------------------------------------------------------------
-echo "${TS_END}" > "${SNAPSHOT_DIR}/COMPLETED"
+if ! "${APP_DIR}/.venv/bin/python" "${APP_DIR}/scripts/verify_backup_snapshot.py" \
+        "${SNAPSHOT_DIR}" --before-completion; then
+    mark_corrupt "Snapshot verification failed"
+    die 17 "Snapshot verification failed"
+fi
+sync -f "${SNAPSHOT_DIR}" || die 17 "Snapshot flush failed"
+echo "${TS_END}" > "${SNAPSHOT_DIR}/COMPLETED" || die 17 "Cannot write completion marker"
+if ! sync -f "${SNAPSHOT_DIR}"; then
+    rm -f "${SNAPSHOT_DIR}/COMPLETED"
+    mark_corrupt "Completion flush failed"
+    die 17 "Completion flush failed"
+fi
 
 # Update 'latest' symlink to point at this snapshot.
-ln -sfn "${SNAPSHOT_DIR}" "${LATEST_LINK}.tmp"
-mv -Tf "${LATEST_LINK}.tmp" "${LATEST_LINK}"
+ln -sfn "${SNAPSHOT_DIR}" "${LATEST_LINK}.tmp" || die 17 "Cannot prepare latest snapshot link"
+mv -Tf "${LATEST_LINK}.tmp" "${LATEST_LINK}" || die 17 "Cannot publish latest snapshot link"
 
 log "Snapshot ${SNAPSHOT_NAME} completed (${TOTAL_BYTES:-0} B total)."
 

@@ -8,6 +8,16 @@
   opt-in, processes large image collections in bounded batches, coordinates
   concurrent protection changes, and preserves clear results across restarts.
 
+### Fixed
+
+- Large canonical training exports write archives to disk and clean up completed
+  or interrupted downloads. Browser backups use native download streaming.
+- Backup merge preserves image associations on filename conflicts and reports
+  database failures. Database replacement requires offline recovery.
+- USB snapshots validate expected originals before completion. Recovery validates
+  snapshot metadata and checksums, stages data before replacement, and retains
+  the previous output directory as a recovery checkpoint.
+
 ### Documentation
 
 - Clarified optional telemetry notices to describe installation history,

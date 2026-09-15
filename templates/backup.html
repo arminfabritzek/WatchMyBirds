@@ -219,33 +219,24 @@
         errorDiv.classList.add('hidden');
 
         try {
-            const response = await fetch('/api/backup/create', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(options)
-            });
-
-            if (!response.ok) {
-                const data = await response.json();
-                throw new Error(data.error || 'Backup failed');
+            const form = document.createElement('form');
+            form.method = 'POST';
+            form.action = '/api/backup/create';
+            const fields = {
+                ...options,
+                _csrf_token: document.querySelector('meta[name="csrf-token"]').content
+            };
+            for (const [name, value] of Object.entries(fields)) {
+                const input = document.createElement('input');
+                input.type = 'hidden';
+                input.name = name;
+                input.value = String(value);
+                form.appendChild(input);
             }
-
-            const disposition = response.headers.get('Content-Disposition');
-            let filename = 'watchmybirds_backup.tar.gz';
-            if (disposition) {
-                const match = disposition.match(/filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/);
-                if (match && match[1]) filename = match[1].replace(/['"]/g, '');
-            }
-
-            const blob = await response.blob();
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = filename;
-            a.click();
-            URL.revokeObjectURL(url);
-
-            progress.innerHTML = '<div class="alert alert--success">✅ Backup successfully downloaded!</div>';
+            document.body.appendChild(form);
+            form.submit();
+            form.remove();
+            progress.textContent = 'Download requested. Check your browser downloads for completion or errors.';
 
         } catch (err) {
             progress.classList.add('hidden');

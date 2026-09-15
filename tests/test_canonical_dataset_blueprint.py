@@ -151,3 +151,66 @@ def test_canonical_dataset_page_links_to_gallery_when_queue_is_clear(
     assert "All caught up" in content
     assert 'href="/gallery"' in content
     assert 'aria-label="Open bird gallery"' in content
+
+
+@pytest.mark.parametrize("consume", [True, False])
+def test_download_cleans_temporary_archive_on_close(
+    canonical_client, monkeypatch, consume
+):
+    from web.services import canonical_dataset_service as service
+
+    client, _ = canonical_client
+    created = []
+    render = service.render_canonical_bundle_to_tempdir
+
+    def record(*args, **kwargs):
+        result = render(*args, **kwargs)
+        created.append(result)
+        return result
+
+    monkeypatch.setattr(service, "render_canonical_bundle_to_tempdir", record)
+    response = client.get("/api/canonical-dataset/download", buffered=False)
+    assert response.status_code == 200
+    if consume:
+        assert response.data
+    response.close()
+    assert created
+    assert created[0][0].parent == Path(get_config()["OUTPUT_DIR"]) / "backup"
+    assert not created[0][0].exists()
+
+
+def test_backup_form_streams_selected_options_and_requires_csrf(
+    canonical_client, monkeypatch
+):
+    from web.blueprints import backup
+
+    client, _ = canonical_client
+    called = []
+    monkeypatch.setattr(backup.time, "sleep", lambda _: None)
+
+    def stream(**options):
+        called.append(options)
+        yield b"archive-chunk"
+
+    monkeypatch.setattr(backup.backup_restore_service, "stream_backup", stream)
+    fields = {
+        "include_db": "true",
+        "include_originals": "false",
+        "include_settings": "false",
+        "include_derivatives": "true",
+    }
+    assert client.post("/api/backup/create", data=fields).status_code == 403
+    response = client.post(
+        "/api/backup/create", data={**fields, "_csrf_token": "test-csrf-token"}
+    )
+    assert response.status_code == 200
+    assert response.data == b"archive-chunk"
+    response.close()
+    assert called == [
+        {
+            "include_db": True,
+            "include_originals": False,
+            "include_derivatives": True,
+            "include_settings": False,
+        }
+    ]

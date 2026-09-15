@@ -55,6 +55,13 @@ def _zip_info(name: str) -> zipfile.ZipInfo:
     return info
 
 
+def _media_zip_info(name: str, source: Path) -> zipfile.ZipInfo:
+    info = _zip_info(name)
+    info.file_size = source.stat().st_size
+    info._compresslevel = 9
+    return info
+
+
 def _non_media_entries(bundle: CanonicalDataset) -> dict[str, bytes]:
     metadata = {
         "schema_version": MANIFEST_SCHEMA_VERSION,
@@ -93,9 +100,7 @@ def _write_bundle_zip(
     Entry order and per-entry metadata (fixed timestamp, compression,
     Unix external attrs) match the previous in-memory implementation, so
     byte-for-byte determinism is preserved. Media files are streamed via
-    ``ZipFile.write``, which reads the source in fixed-size chunks
-    internally instead of loading the whole file into a Python bytes
-    object first.
+    fixed-size copies into writable ZIP entries.
     """
     non_media = _non_media_entries(bundle)
     media_names = {
@@ -119,7 +124,7 @@ def _write_bundle_zip(
                     source = path_resolver(media_names[name])
                     with (
                         source.open("rb") as src_file,
-                        archive.open(_zip_info(name), "w") as dest_entry,
+                        archive.open(_media_zip_info(name, source), "w") as dest_entry,
                     ):
                         shutil.copyfileobj(
                             src_file, dest_entry, length=_COPY_CHUNK_BYTES
@@ -170,6 +175,7 @@ def render_canonical_bundle_to_tempdir(
     bundle: CanonicalDataset,
     *,
     path_resolver: PathResolver,
+    temporary_root: Path | None = None,
 ) -> tuple[Path, Path]:
     """Render the bundle to a fresh temp directory; caller owns cleanup.
 
@@ -178,9 +184,15 @@ def render_canonical_bundle_to_tempdir(
     and cleanup has to happen only once the response is fully sent.
     Returns ``(tmp_dir, archive_path)``.
     """
-    tmp_dir = Path(tempfile.mkdtemp(prefix="canonical-bundle-"))
+    if temporary_root is not None:
+        temporary_root.mkdir(parents=True, exist_ok=True)
+    tmp_dir = Path(tempfile.mkdtemp(prefix="canonical-bundle-", dir=temporary_root))
     archive_path = tmp_dir / "bundle.zip"
-    _write_bundle_zip(bundle, path_resolver=path_resolver, destination=archive_path)
+    try:
+        _write_bundle_zip(bundle, path_resolver=path_resolver, destination=archive_path)
+    except BaseException:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+        raise
     return tmp_dir, archive_path
 
 

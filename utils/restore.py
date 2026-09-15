@@ -14,6 +14,7 @@ import shutil
 import sqlite3
 import tarfile
 from collections.abc import Generator
+from contextlib import closing
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -423,7 +424,11 @@ def _apply_rollback(db_backup: Path | None, settings_backup: Path | None) -> dic
     if db_backup and db_backup.exists():
         try:
             target = Path(get_db_path())
-            shutil.copy2(db_backup, target)
+            with (
+                closing(sqlite3.connect(db_backup)) as source,
+                closing(sqlite3.connect(target)) as dest,
+            ):
+                source.backup(dest)
             result["db_restored"] = True
             logger.warning(f"ROLLBACK: Restored DB from {db_backup}")
         except Exception as e:
@@ -569,6 +574,10 @@ def restore_from_archive(
         return result
 
     try:
+        if include_db and db_strategy == "replace":
+            raise ValueError(
+                "Database replacement requires offline recovery; stop the app and use scripts/recover_from_snapshot.py"
+            )
         # Stage 0: Pre-flight checks
         yield emit("preflight", 0, 5, "Checking archive...")
 
@@ -672,7 +681,7 @@ def restore_from_archive(
 
             # Stage 5: Import Originals (if requested)
             # landed_as feeds Stage 7's merge so renamed files keep their own detections.
-            filename_rename_map: dict[str, str] = {}
+            filename_rename_map: dict[str, str | None] = {}
             if include_originals and analysis["has_originals"]:
                 originals_dir = staging_dir / "originals"
                 if originals_dir.exists():
@@ -742,8 +751,9 @@ def restore_from_archive(
                     # Validate schema
                     is_valid, schema_issues = _validate_db_schema(backup_db_path)
                     if not is_valid:
-                        for issue in schema_issues:
-                            warnings.append(f"DB Schema: {issue}")
+                        raise ValueError(
+                            "Invalid backup database: " + "; ".join(schema_issues)
+                        )
                     else:
                         if db_strategy == "replace":
                             result = _replace_database(backup_db_path, pm)
@@ -784,7 +794,9 @@ def restore_from_archive(
             logger.error(f"Restore failed during extraction/import: {e}", exc_info=True)
 
             # Apply rollback if we have snapshots
-            rollback_result = _apply_rollback(db_rollback, settings_rollback)
+            rollback_result = _apply_rollback(
+                None if db_strategy == "merge" else db_rollback, settings_rollback
+            )
             rollback_msg = ""
             if rollback_result["db_restored"] or rollback_result["settings_restored"]:
                 restored_items = []
@@ -860,7 +872,13 @@ def _import_original_file(filepath: Path, source_root: Path, pm: PathManager) ->
             new_name = _generate_conflict_filename(filepath.name, source_hash)
             conflict_path = target_path.parent / new_name
 
-            shutil.copy2(filepath, conflict_path)
+            if conflict_path.exists():
+                if calculate_sha256(str(conflict_path)) != source_hash:
+                    raise ValueError(
+                        f"Conflicting original already exists: {conflict_path.name}"
+                    )
+            else:
+                shutil.copy2(filepath, conflict_path)
             result["imported"] = True
             result["landed_as"] = new_name
             result["conflict"] = {
@@ -1193,7 +1211,7 @@ def _merge_human_label_tables(
 
 
 def _merge_database(
-    backup_db_path: Path, *, filename_rename_map: dict[str, str] | None = None
+    backup_db_path: Path, *, filename_rename_map: dict[str, str | None] | None = None
 ) -> dict:
     """
     Merges backup DB into current DB.
@@ -1288,6 +1306,11 @@ def _merge_database(
             img = dict(zip(image_columns, img_row, strict=False))
             source_filename = str(img["filename"])
             content_hash = img.get("content_hash")
+            if (
+                source_filename in filename_rename_map
+                and filename_rename_map[source_filename] is None
+            ):
+                raise ValueError(f"Original import failed: {source_filename}")
 
             # Hash-based dedup check: a real content match always wins,
             # regardless of what Stage 5 did with the file on disk.
@@ -1312,12 +1335,9 @@ def _merge_database(
             existing = cursor.fetchone()
 
             if existing:
-                if landed_as == source_filename and (
-                    content_hash and existing[1] and content_hash != existing[1]
-                ):
-                    # No rename happened (originals weren't imported, or
-                    # the file was already present) yet the row content
-                    # differs -- surface it instead of silently merging.
+                if content_hash and existing[1] and content_hash != existing[1]:
+                    # The landed filename may itself collide with an existing
+                    # row. Never attach incoming detections to different bytes.
                     result["conflicts"].append(
                         {
                             "type": "image",
@@ -1390,6 +1410,8 @@ def _merge_database(
 
             detection_values = dict(det)
             detection_values["image_filename"] = target_filename
+            if target_filename != det["image_filename"]:
+                detection_values["thumbnail_path"] = None
             columns = [
                 column
                 for column in det_columns
@@ -1459,51 +1481,11 @@ def _merge_database(
 
 
 def _replace_database(backup_db_path: Path, pm: PathManager) -> dict:
-    """
-    Replaces the current DB file with the backup DB. Requires restart.
-
-    The running process (and any other process with the DB open) keeps
-    its existing connections/file descriptors across this call -- this
-    is why ``requires_restart`` is unconditional and the caller (the web
-    restore route) must not treat "replaced" as "safe to keep serving."
-    Deployment-level restart is the actual safety boundary.
-
-    Any failure raises rather than returning a soft warning, so callers
-    cannot mistake a failed replace for a completed one.
-
-    Returns:
-        dict: {"warnings": list, "requires_restart": bool}
-    """
-    result = {"warnings": [], "requires_restart": True}
-
-    current_db_path = Path(get_db_path())
-
-    is_valid, issues = _validate_db_schema(backup_db_path)
-    if not is_valid:
-        result["warnings"].extend(issues)
-        result["warnings"].append("DB replace aborted due to schema issues")
-        result["requires_restart"] = False
-        return result
-
-    # SQLite WAL mode keeps .db-shm/.db-wal; replacing only .db would
-    # leave stale WAL frames shadowing the new file's content.
-    wal_file = current_db_path.with_suffix(".db-wal")
-    shm_file = current_db_path.with_suffix(".db-shm")
-    if wal_file.exists():
-        wal_file.unlink()
-        logger.info(f"Deleted WAL file: {wal_file}")
-    if shm_file.exists():
-        shm_file.unlink()
-        logger.info(f"Deleted SHM file: {shm_file}")
-
-    # Atomic swap: copy to temp, then rename (atomic on Unix).
-    temp_new = current_db_path.with_suffix(".db.new")
-    shutil.copy2(backup_db_path, temp_new)
-    temp_new.rename(current_db_path)
-
-    logger.info("DB replaced successfully. Restart required.")
-    result["warnings"].append("Database replaced. Application restart required.")
-    return result
+    """Refuse database-file replacement inside the running application."""
+    raise RuntimeError(
+        "Database replacement requires offline recovery; stop the app and use "
+        "scripts/recover_from_snapshot.py"
+    )
 
 
 def cleanup_restore_tmp(pm: PathManager | None = None) -> None:

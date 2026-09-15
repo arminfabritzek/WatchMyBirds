@@ -572,3 +572,35 @@ class TestLastRunStatus:
         )
         summary = usb_backup_core.get_backup_summary()
         assert summary["last_run"]["status"] == "ok"
+
+
+@pytest.mark.parametrize("marker", ["COMPLETED", "manifest.json"])
+def test_verification_requires_snapshot_markers(fake_stick, marker):
+    d = _make_snapshot(fake_stick, "20260429_030000_scheduled")
+    _write_snapshot_db(d, [("20260429_090000_bird.jpg", 1)])
+    _write_original(d, "20260429_090000_bird.jpg")
+    (d / marker).unlink()
+    assert usb_backup_core.verify_snapshot(d.name)["ok"] is False
+
+
+def test_media_hash_mismatch_is_rejected(fake_stick):
+    import sqlite3
+
+    d = _make_snapshot(fake_stick, "20260429_030000_scheduled")
+    db = _write_snapshot_db(d, [("20260429_090000_bird.jpg", 1)])
+    _write_original(d, "20260429_090000_bird.jpg")
+    with sqlite3.connect(db) as conn:
+        conn.execute("ALTER TABLE images ADD COLUMN content_hash TEXT")
+        conn.execute("UPDATE images SET content_hash = ?", ("0" * 64,))
+    assert usb_backup_core._verify_media(d, db)["media_ok"] is False
+
+
+def test_legacy_schema_still_checks_missing_media(fake_stick):
+    import sqlite3
+
+    d = _make_snapshot(fake_stick, "20260429_030000_scheduled")
+    db = _write_snapshot_db(d, [])
+    with sqlite3.connect(db) as conn:
+        conn.execute("ALTER TABLE images DROP COLUMN original_present")
+        conn.execute("INSERT INTO images VALUES ('20260429_090000_bird.jpg')")
+    assert usb_backup_core._verify_media(d, db)["media_ok"] is False
