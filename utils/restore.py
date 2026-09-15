@@ -671,6 +671,8 @@ def restore_from_archive(
                 yield emit("settings", 1, 1, "Settings imported")
 
             # Stage 5: Import Originals (if requested)
+            # landed_as feeds Stage 7's merge so renamed files keep their own detections.
+            filename_rename_map: dict[str, str] = {}
             if include_originals and analysis["has_originals"]:
                 originals_dir = staging_dir / "originals"
                 if originals_dir.exists():
@@ -685,6 +687,7 @@ def restore_from_archive(
                     for filepath in originals_dir.rglob("*"):
                         if filepath.is_file():
                             result = _import_original_file(filepath, originals_dir, pm)
+                            filename_rename_map[filepath.name] = result["landed_as"]
                             if result["conflict"]:
                                 conflicts.append(result["conflict"])
                             if result["warning"]:
@@ -747,7 +750,10 @@ def restore_from_archive(
                             requires_restart = True
                             set_restart_required(pm)
                         else:
-                            result = _merge_database(backup_db_path)
+                            result = _merge_database(
+                                backup_db_path,
+                                filename_rename_map=filename_rename_map,
+                            )
 
                         if result["warnings"]:
                             warnings.extend(result["warnings"])
@@ -812,9 +818,14 @@ def _import_original_file(filepath: Path, source_root: Path, pm: PathManager) ->
     Imports a single original file with hash-based dedup and conflict handling.
 
     Returns:
-        dict: {"imported": bool, "conflict": dict|None, "warning": str|None}
+        dict: {
+            "imported": bool, "conflict": dict|None, "warning": str|None,
+            "landed_as": str|None,  # filename the file exists under after
+                                     # import (== source name unless
+                                     # renamed on conflict); None on error.
+        }
     """
-    result = {"imported": False, "conflict": None, "warning": None}
+    result = {"imported": False, "conflict": None, "warning": None, "landed_as": None}
 
     relative_path = filepath.relative_to(source_root)
     target_path = pm.originals_dir / relative_path
@@ -841,6 +852,7 @@ def _import_original_file(filepath: Path, source_root: Path, pm: PathManager) ->
         if source_hash == target_hash:
             # Same file, skip
             result["imported"] = False
+            result["landed_as"] = filepath.name
             return result
         else:
             # Conflict: same filename, different hash
@@ -850,6 +862,7 @@ def _import_original_file(filepath: Path, source_root: Path, pm: PathManager) ->
 
             shutil.copy2(filepath, conflict_path)
             result["imported"] = True
+            result["landed_as"] = new_name
             result["conflict"] = {
                 "original": str(relative_path),
                 "renamed_to": new_name,
@@ -860,6 +873,7 @@ def _import_original_file(filepath: Path, source_root: Path, pm: PathManager) ->
         # New file, copy directly
         shutil.copy2(filepath, target_path)
         result["imported"] = True
+        result["landed_as"] = filepath.name
         return result
 
 
@@ -986,9 +1000,12 @@ def _merge_human_label_tables(
     subjects = conn.execute(
         "SELECT * FROM backup.label_subjects ORDER BY subject_id"
     ).fetchall()
-    subject_columns = [description[0] for description in conn.execute(
-        "SELECT * FROM backup.label_subjects LIMIT 0"
-    ).description]
+    subject_columns = [
+        description[0]
+        for description in conn.execute(
+            "SELECT * FROM backup.label_subjects LIMIT 0"
+        ).description
+    ]
     subject_mapping: dict[int, int] = {}
     imported_subjects = 0
 
@@ -1065,9 +1082,12 @@ def _merge_human_label_tables(
     facts = conn.execute(
         "SELECT * FROM backup.human_label_facts ORDER BY fact_id"
     ).fetchall()
-    fact_columns = [description[0] for description in conn.execute(
-        "SELECT * FROM backup.human_label_facts LIMIT 0"
-    ).description]
+    fact_columns = [
+        description[0]
+        for description in conn.execute(
+            "SELECT * FROM backup.human_label_facts LIMIT 0"
+        ).description
+    ]
     grouped: dict[tuple[int, str], list[dict[str, Any]]] = {}
     for raw_fact in facts:
         fact = dict(zip(fact_columns, raw_fact, strict=True))
@@ -1115,7 +1135,10 @@ def _merge_human_label_tables(
             progressed = False
             for fact in list(pending):
                 old_predecessor = fact["supersedes_fact_id"]
-                if old_predecessor is not None and int(old_predecessor) not in fact_mapping:
+                if (
+                    old_predecessor is not None
+                    and int(old_predecessor) not in fact_mapping
+                ):
                     continue
                 target_predecessor = (
                     fact_mapping[int(old_predecessor)]
@@ -1169,24 +1192,33 @@ def _merge_human_label_tables(
     }
 
 
-def _merge_database(backup_db_path: Path) -> dict:
+def _merge_database(
+    backup_db_path: Path, *, filename_rename_map: dict[str, str] | None = None
+) -> dict:
     """
     Merges backup DB into current DB.
 
     Strategy:
     - ATTACH backup as read-only
     - Map sources by (name, type, uri)
-    - Import images with hash-based dedup
+    - Import images with hash-based dedup, honoring Stage 5's on-disk
+      renames via ``filename_rename_map`` so an image's detections and
+      labels follow the file it actually landed as
     - Import detections/classifications with ID remapping
+
+    Any failure aborts the whole merge (rollback, detach, close) and
+    propagates -- callers must not treat this as a soft/warning-only
+    outcome.
 
     Returns:
         dict: {"warnings": list, "conflicts": list, "stats": dict}
     """
+    filename_rename_map = filename_rename_map or {}
     result = {"warnings": [], "conflicts": [], "stats": {}}
 
+    current_db_path = get_db_path()
+    conn = sqlite3.connect(current_db_path)
     try:
-        current_db_path = get_db_path()
-        conn = sqlite3.connect(current_db_path)
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
 
@@ -1204,9 +1236,7 @@ def _merge_database(backup_db_path: Path) -> dict:
         backup_source_cols = {row[1] for row in cursor.fetchall()}
         cursor.execute("PRAGMA main.table_info(sources)")
         destination_source_cols = {row[1] for row in cursor.fetchall()}
-        backup_source_pk = (
-            "source_id" if "source_id" in backup_source_cols else "id"
-        )
+        backup_source_pk = "source_id" if "source_id" in backup_source_cols else "id"
         destination_source_pk = (
             "source_id" if "source_id" in destination_source_cols else "id"
         )
@@ -1256,9 +1286,11 @@ def _merge_database(backup_db_path: Path) -> dict:
 
         for img_row in backup_images:
             img = dict(zip(image_columns, img_row, strict=False))
+            source_filename = str(img["filename"])
             content_hash = img.get("content_hash")
 
-            # Hash-based dedup check
+            # Hash-based dedup check: a real content match always wins,
+            # regardless of what Stage 5 did with the file on disk.
             if content_hash:
                 cursor.execute(
                     "SELECT filename FROM images WHERE content_hash = ?",
@@ -1266,28 +1298,36 @@ def _merge_database(backup_db_path: Path) -> dict:
                 )
                 hash_match = cursor.fetchone()
                 if hash_match:
-                    image_mapping[str(img["filename"])] = str(hash_match[0])
+                    image_mapping[source_filename] = str(hash_match[0])
                     images_skipped += 1
                     continue
 
-            # Check filename
+            # Stage 5's rename decision (if any) is this image's identity.
+            landed_as = filename_rename_map.get(source_filename, source_filename)
+
             cursor.execute(
                 "SELECT filename, content_hash FROM images WHERE filename = ?",
-                (img["filename"],),
+                (landed_as,),
             )
             existing = cursor.fetchone()
 
             if existing:
-                image_mapping[str(img["filename"])] = str(existing[0])
-                if content_hash and existing[1] and content_hash != existing[1]:
-                    # Same filename, different hash -> warning
+                if landed_as == source_filename and (
+                    content_hash and existing[1] and content_hash != existing[1]
+                ):
+                    # No rename happened (originals weren't imported, or
+                    # the file was already present) yet the row content
+                    # differs -- surface it instead of silently merging.
                     result["conflicts"].append(
                         {
                             "type": "image",
-                            "filename": img["filename"],
+                            "filename": source_filename,
                             "message": "Different content hash, skipped",
                         }
                     )
+                    images_skipped += 1
+                    continue
+                image_mapping[source_filename] = str(existing[0])
                 images_skipped += 1
                 continue
 
@@ -1297,17 +1337,16 @@ def _merge_database(backup_db_path: Path) -> dict:
 
             image_values = dict(img)
             image_values["source_id"] = new_source_id
+            image_values["filename"] = landed_as
             columns = [
-                column
-                for column in image_columns
-                if column in destination_image_cols
+                column for column in image_columns if column in destination_image_cols
             ]
             placeholders = ", ".join("?" for _ in columns)
             cursor.execute(
                 f"INSERT INTO images ({', '.join(columns)}) VALUES ({placeholders})",
                 [image_values.get(column) for column in columns],
             )
-            image_mapping[str(img["filename"])] = str(img["filename"])
+            image_mapping[source_filename] = landed_as
             images_imported += 1
 
         result["stats"]["images_imported"] = images_imported
@@ -1398,74 +1437,72 @@ def _merge_database(backup_db_path: Path) -> dict:
             result=result,
         )
 
-        # Commit and cleanup
         conn.commit()
         cursor.execute("DETACH DATABASE backup")
-        conn.close()
 
         logger.info(
             f"DB merge complete: {images_imported} images, "
             f"{detections_imported} detections imported"
         )
+        return result
 
-    except Exception as e:
-        logger.error(f"DB merge failed: {e}", exc_info=True)
-        result["warnings"].append(f"DB merge error: {e}")
-
-    return result
+    except Exception:
+        conn.rollback()
+        try:
+            conn.execute("DETACH DATABASE backup")
+            conn.commit()
+        except sqlite3.Error:
+            pass
+        raise
+    finally:
+        conn.close()
 
 
 def _replace_database(backup_db_path: Path, pm: PathManager) -> dict:
     """
-    Replaces the current DB with the backup DB.
-    Requires restart after completion.
+    Replaces the current DB file with the backup DB. Requires restart.
+
+    The running process (and any other process with the DB open) keeps
+    its existing connections/file descriptors across this call -- this
+    is why ``requires_restart`` is unconditional and the caller (the web
+    restore route) must not treat "replaced" as "safe to keep serving."
+    Deployment-level restart is the actual safety boundary.
+
+    Any failure raises rather than returning a soft warning, so callers
+    cannot mistake a failed replace for a completed one.
 
     Returns:
         dict: {"warnings": list, "requires_restart": bool}
     """
     result = {"warnings": [], "requires_restart": True}
 
-    try:
-        current_db_path = Path(get_db_path())
+    current_db_path = Path(get_db_path())
 
-        # Validate backup DB first
-        is_valid, issues = _validate_db_schema(backup_db_path)
-        if not is_valid:
-            result["warnings"].extend(issues)
-            result["warnings"].append("DB replace aborted due to schema issues")
-            return result
+    is_valid, issues = _validate_db_schema(backup_db_path)
+    if not is_valid:
+        result["warnings"].extend(issues)
+        result["warnings"].append("DB replace aborted due to schema issues")
+        result["requires_restart"] = False
+        return result
 
-        # Close all connections (best effort)
-        # This won't work for connections in other threads/processes
-        # The restart requirement handles this
+    # SQLite WAL mode keeps .db-shm/.db-wal; replacing only .db would
+    # leave stale WAL frames shadowing the new file's content.
+    wal_file = current_db_path.with_suffix(".db-wal")
+    shm_file = current_db_path.with_suffix(".db-shm")
+    if wal_file.exists():
+        wal_file.unlink()
+        logger.info(f"Deleted WAL file: {wal_file}")
+    if shm_file.exists():
+        shm_file.unlink()
+        logger.info(f"Deleted SHM file: {shm_file}")
 
-        # CRITICAL: Delete WAL files first!
-        # SQLite in WAL mode keeps .db-shm and .db-wal files.
-        # If we only replace .db, SQLite reads stale data from old WAL files.
-        wal_file = current_db_path.with_suffix(".db-wal")
-        shm_file = current_db_path.with_suffix(".db-shm")
+    # Atomic swap: copy to temp, then rename (atomic on Unix).
+    temp_new = current_db_path.with_suffix(".db.new")
+    shutil.copy2(backup_db_path, temp_new)
+    temp_new.rename(current_db_path)
 
-        if wal_file.exists():
-            wal_file.unlink()
-            logger.info(f"Deleted WAL file: {wal_file}")
-        if shm_file.exists():
-            shm_file.unlink()
-            logger.info(f"Deleted SHM file: {shm_file}")
-
-        # Atomic swap: copy to temp, then rename
-        temp_new = current_db_path.with_suffix(".db.new")
-        shutil.copy2(backup_db_path, temp_new)
-
-        # On Unix, rename is atomic
-        temp_new.rename(current_db_path)
-
-        logger.info("DB replaced successfully. Restart required.")
-        result["warnings"].append("Database replaced. Application restart required.")
-
-    except Exception as e:
-        logger.error(f"DB replace failed: {e}", exc_info=True)
-        result["warnings"].append(f"DB replace error: {e}")
-
+    logger.info("DB replaced successfully. Restart required.")
+    result["warnings"].append("Database replaced. Application restart required.")
     return result
 
 
