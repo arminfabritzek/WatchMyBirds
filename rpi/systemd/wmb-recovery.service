@@ -1,0 +1,38 @@
+[Unit]
+Description=WatchMyBirds guided USB recovery runner
+ConditionPathExists=/opt/app/scripts/recovery_runner.py
+After=network.target mnt-wmb\x2dbackup.automount
+Before=app.service
+
+[Service]
+Type=simple
+User=root
+Group=watchmybirds
+WorkingDirectory=/opt/app
+Environment=WMB_RECOVERY_DESTINATION=/opt/app/data/output
+ExecStart=/opt/app/.venv/bin/python /opt/app/scripts/recovery_runner.py --host 0.0.0.0 --port 8051
+Restart=no
+TimeoutStartSec=30
+RuntimeMaxSec=24h
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=wmb-recovery
+
+# Recovery must manage app.service and atomically replace /opt/app/data/output.
+# Everything else is read-only; the USB filesystem is mounted noexec/nodev/nosuid.
+ProtectSystem=strict
+ReadWritePaths=/opt/app/data /var/lib/watchmybirds-recovery /run/lock
+ProtectHome=yes
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectClock=true
+ProtectHostname=true
+RestrictRealtime=true
+RestrictNamespaces=true
+LockPersonality=true
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=multi-user.target

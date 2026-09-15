@@ -56,6 +56,18 @@ WatchMyBirds is an AI-powered bird detection system that provides real-time vide
 *   **MUST:** Operate exclusively on ABSOLUTE paths resolved via `PathManager`.
 *   **MUST:** Ensure referential integrity (don't delete shared files if used elsewhere).
 
+### `core/recovery_core.py`
+*   **MUST:** Be the single recovery engine for the CLI and guided Pi runner.
+*   **MUST:** Validate and stage complete output state before atomic publication.
+*   **MUST:** Retain a complete destination checkpoint and reconcile interrupted swaps.
+*   **MUST NOT:** Manage services or accept web-framework objects.
+
+### `scripts/recovery_runner.py`
+*   **MUST:** Accept only a discovered snapshot identifier and the fixed Pi destination.
+*   **MUST:** Serialize maintenance, stop database users, restart the app, and verify health.
+*   **MUST:** Keep independent token-authenticated progress, retry, and rollback available while Flask is stopped.
+*   **MUST NOT:** Restore application binaries or accept arbitrary commands, paths, ports, or unit names.
+
 ### `web/web_interface.py`
 *   **MUST:** Serve the web UI via Flask routes.
 *   **MUST:** Use `path_manager` to resolve files for serving (`send_from_directory`).

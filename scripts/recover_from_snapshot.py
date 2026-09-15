@@ -35,11 +35,7 @@ from __future__ import annotations
 
 import argparse
 import os
-import shutil
-import sqlite3
 import sys
-import tempfile
-from itertools import chain
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -47,104 +43,24 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 
+from core import recovery_core
+
+# Compatibility aliases for callers/tests that imported the old private helpers.
+# The implementation itself lives only in core.recovery_core.
+shutil = recovery_core.shutil
+
+
 def _resolve_snapshot_dir(raw: Path) -> Path:
-    """Follow a 'latest' symlink; otherwise use the path as given."""
-    resolved = raw.resolve()
-    if resolved.is_symlink() or raw.is_symlink():
-        resolved = raw.resolve(strict=True)
-    return resolved
-
-
-def _verify_snapshot(snapshot_dir: Path) -> list[str]:
-    from core.usb_backup_core import verify_snapshot_directory
-
-    result = verify_snapshot_directory(snapshot_dir)
-    if result["ok"]:
-        return []
-    return [
-        str(value)
-        for value in (result.get("error"), result.get("media_message"))
-        if value
-    ]
-
-
-def _destination_has_data(db_path: Path) -> int:
-    """Return the row count in `images`, or 0 if the DB doesn't exist/is empty."""
-    if not db_path.is_file() or db_path.stat().st_size == 0:
-        return 0
-    try:
-        conn = sqlite3.connect(db_path.resolve().as_uri() + "?mode=ro", uri=True)
-        try:
-            row = conn.execute(
-                "SELECT COALESCE((SELECT COUNT(*) FROM images), 0)"
-            ).fetchone()
-            return int(row[0]) if row else 0
-        finally:
-            conn.close()
-    except sqlite3.Error:
-        # Unreadable/corrupt destination DB counts as "has data" -- never
-        # silently overwrite something we can't prove is empty.
-        return 1
+    return recovery_core.resolve_snapshot_directory(raw)
 
 
 def _restore_directory(snapshot_dir: Path, destination: Path) -> Path | None:
-    """Stage all output state before swapping directories while the app is stopped.
-
-    The previous directory is retained as a complete recovery checkpoint.
-    If publication fails, put it back before propagating the error.
-    """
-    if destination.is_mount():
-        raise ValueError(
-            "Destination is a mount point; run recovery on its host directory"
-        )
-    if (
-        destination == snapshot_dir
-        or destination in snapshot_dir.parents
-        or snapshot_dir in destination.parents
-    ):
-        raise ValueError("Snapshot and destination must not overlap")
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    staging = Path(
-        tempfile.mkdtemp(prefix=f".{destination.name}-restore-", dir=destination.parent)
+    result = recovery_core.recover_snapshot(
+        snapshot_dir, destination, mode="recovery", force=True
     )
-    checkpoint = None
-    try:
-        source = snapshot_dir / "data" / "output"
-        if any(path.is_symlink() for path in source.rglob("*")):
-            raise ValueError("Snapshot output contains symbolic links")
-        shutil.copytree(source, staging, dirs_exist_ok=True)
-        for suffix in ("", "-wal", "-shm"):
-            (staging / f"images.db{suffix}").unlink(missing_ok=True)
-        shutil.copy2(snapshot_dir / "data" / "images.db", staging / "images.db")
-        from core.usb_backup_core import _verify_media
-
-        result = _verify_media(snapshot_dir, staging / "images.db", output_dir=staging)
-        if not result["media_ok"]:
-            raise ValueError(result["media_message"])
-        if destination.exists():
-            owner = destination.stat()
-            shutil.copystat(destination, staging)
-            if os.geteuid() == 0:
-                for item in chain([staging], staging.rglob("*")):
-                    os.chown(item, owner.st_uid, owner.st_gid)
-            checkpoint = Path(
-                tempfile.mkdtemp(
-                    prefix=f"{destination.name}-before-restore-", dir=destination.parent
-                )
-            )
-            checkpoint.rmdir()
-            destination.rename(checkpoint)
-            print(f"Safety checkpoint written: {checkpoint}", flush=True)
-        try:
-            staging.rename(destination)
-        except BaseException:
-            if checkpoint is not None:
-                checkpoint.rename(destination)
-            raise
-        return checkpoint
-    finally:
-        if staging.exists():
-            shutil.rmtree(staging)
+    if result.checkpoint is not None:
+        print(f"Safety checkpoint written: {result.checkpoint}", flush=True)
+    return result.checkpoint
 
 
 def main() -> int:
@@ -185,72 +101,33 @@ def main() -> int:
     if not args.app_stopped:
         parser.error("Stop all app processes first, then pass --app-stopped")
 
-    snapshot_dir = _resolve_snapshot_dir(args.snapshot)
-    if not snapshot_dir.is_dir():
-        print(f"error: snapshot directory not found: {snapshot_dir}", file=sys.stderr)
-        return 1
-
-    problems = _verify_snapshot(snapshot_dir)
-    if problems:
-        print("error: snapshot failed verification:", file=sys.stderr)
-        for problem in problems:
-            print(f"  - {problem}", file=sys.stderr)
-        return 2
-
     destination = args.destination.resolve()
     destination_db = destination / "images.db"
-
-    existing_rows = _destination_has_data(destination_db)
-    from utils.path_manager import PathManager
-
-    originals = PathManager(str(destination)).originals_dir
-    if (
-        existing_rows == 0
-        and originals.exists()
-        and any(p.is_file() for p in originals.rglob("*"))
-    ):
-        existing_rows = 1
-    if args.mode == "migration" and existing_rows > 0:
-        print(
-            f"error: destination database at {destination_db} already has "
-            f"data (>= {existing_rows} row(s) in images). Migration mode "
-            "refuses to touch a populated destination. Use "
-            "--mode recovery --force if this is deliberate.",
-            file=sys.stderr,
-        )
-        return 3
-    if args.mode == "recovery" and not args.force:
-        print(
-            "error: --mode recovery requires --force. This will replace "
-            f"the database at {destination_db}. Make sure app.service / "
-            "the app container is stopped first.",
-            file=sys.stderr,
-        )
-        return 3
 
     # config._CONFIG loads from os.environ on first get_config() call in
     # this process, so set it before anything imports config.
     os.environ["OUTPUT_DIR"] = str(destination)
 
-    from utils.restore import _validate_db_schema
-
-    snapshot_db = snapshot_dir / "data" / "images.db"
-    is_valid, issues = _validate_db_schema(snapshot_db)
-    if not is_valid:
-        print("error: snapshot database failed schema validation:", file=sys.stderr)
-        for issue in issues:
-            print(f"  - {issue}", file=sys.stderr)
-        return 4
-
     try:
-        rollback_path = _restore_directory(snapshot_dir, destination)
-    except (OSError, ValueError) as exc:
+        result = recovery_core.recover_snapshot(
+            args.snapshot,
+            destination,
+            mode=args.mode,
+            force=args.force,
+            progress=lambda _stage, _percent, message: print(message, flush=True),
+        )
+        rollback_path = result.checkpoint
+    except recovery_core.RecoveryError as exc:
+        print(f"error: recovery failed [{exc.code}]: {exc}", file=sys.stderr)
+        return 2
+    except OSError as exc:
         print(f"error: recovery failed: {exc}", file=sys.stderr)
         return 5
 
     print("Recovery complete.")
     print(f"  Database: {destination_db}")
     if rollback_path is not None:
+        print(f"Safety checkpoint written: {rollback_path}")
         print(f"  Pre-restore backup kept at: {rollback_path}")
     print(
         "Restart the app (systemd: `sudo systemctl start app.service`; "

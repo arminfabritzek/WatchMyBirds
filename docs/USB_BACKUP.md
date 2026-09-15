@@ -5,10 +5,10 @@ and the installed app code to a USB stick mounted at `/mnt/wmb-backup`. This
 is your protection against SD-card death, which is the single most common
 hardware failure on a long-running Raspberry Pi.
 
-Recovery and migration are a supported, scripted CLI command
-(`scripts/recover_from_snapshot.py`) that runs directly against a snapshot
-directory — no archive step, no in-app restore UI. See *Recovery and
-migration* below.
+Raspberry Pi appliances provide guided recovery in **Settings → Data &
+Backups**. The CLI (`scripts/recover_from_snapshot.py`) uses the same recovery
+engine and remains available as a technical fallback or for supported data
+migration on another CPU architecture.
 
 ## What you need
 
@@ -78,10 +78,52 @@ symlink. Each contains:
 - `COMPLETED` — marker file. **Trust no snapshot directory that lacks
   this file** — it crashed mid-write.
 
-`scripts/recover_from_snapshot.py` is the supported recovery/migration
-command. It ships in the repository (not an agent-only tool) and runs
-directly against a snapshot directory — no archive upload, no
-intermediate `.tar.gz`, no in-app restore UI.
+### Guided Raspberry Pi recovery
+
+On a replacement SD card, finish the local password setup, connect the
+existing `WMB-BACKUP` stick, then open **Settings → Data & Backups**. The page
+lists completed snapshots and shows **We found a backup. Restore your birds?**
+Choose **Review & restore** to see the date, source device, image/detection/
+classification counts, app compatibility, required and available space, and
+the settings policy. Nothing is restored merely because a stick is connected.
+
+On a populated installation the same action clearly says that Restore replaces
+current data. It is deliberately separate from archive **Merge**, which combines
+collections. Two confirmations are required before the request is submitted.
+
+The dedicated `wmb-recovery.service` then:
+
+1. revalidates the fixed snapshot identifier and destination;
+2. takes the shared maintenance lock and stops `app.service`;
+3. validates, stages, and verifies the recovered database and retained media;
+4. retains the complete previous output directory as a checkpoint;
+5. atomically publishes the recovered directory; and
+6. restarts WatchMyBirds and waits for `/healthz`.
+
+The browser moves to a small independent, token-protected status page on port
+8051 before the app stops. If app startup fails, that page remains usable and
+offers **Retry app startup** and, when a checkpoint exists, **Restore previous
+checkpoint**. This avoids both a permanent spinner and an SSH-only failure path.
+
+Current Wi-Fi, operating-system network configuration, SSH keys, and installed
+application binaries are never restored. Backup runtime behavior is restored,
+but the destination's admin password, camera/relay connection values, Telegram
+credentials, and telemetry installation identity are preserved when they
+already exist. This keeps browser access and device identity usable after both
+fresh migration and replacement recovery.
+
+Guided orchestration is only claimed for Raspberry Pi images that install the
+runner, polkit rule, state directories, and firewall rule. Docker guided
+recovery is not implemented because a stopped container cannot safely own its
+host/container restart. Data migration through the shared CLI remains supported
+across CPU architectures; no binaries or virtualenv files are restored.
+
+### Technical CLI fallback
+
+`scripts/recover_from_snapshot.py` ships in the repository and runs directly
+against a snapshot directory without an archive upload. It calls the same core
+validation, staging, checkpoint, publication, and interruption-repair code as
+the guided runner.
 
 **It never starts or stops any service.** Stop the app first so nothing
 holds the database open while it is replaced:
@@ -128,8 +170,8 @@ docker compose start app               # Docker
 The command validates the manifest version, COMPLETED marker, database checksum,
 SQLite integrity, and expected originals before writing the destination. Available
 original checksums are verified; older rows without hashes receive existence
-checks only. Retention-deleted originals are allowed to be absent. All per-output
-state is restored, including camera settings and other files stored in the snapshot.
+checks only. Retention-deleted originals are allowed to be absent. Per-output
+state is restored subject to the destination identity/credential policy above.
 App code is not restored.
 
 Run as the app user, or as root against an existing destination owned by that user.
@@ -138,9 +180,11 @@ that precondition. The command does not independently detect all open connection
 For Docker, operate on the stopped container's **host output directory**, not an
 active bind mount inside a container. Staging requires space for the incoming
 output alongside the retained old directory. A copy failure leaves the destination
-untouched. If power is lost between directory renames, keep the app stopped and
-rename the printed checkpoint back to the original destination before retrying.
-Do not remove that checkpoint until recovery and application startup are verified.
+untouched. An atomic journal beside the output directory records staging,
+checkpoint, and publication phases. A later run removes abandoned staging,
+restores the complete checkpoint if interruption happened between directory
+renames, or recognizes that publication already finished. Do not remove a
+retained checkpoint until recovery and application startup are verified.
 
 USB backup performs a second file-copy pass after its database snapshot and checks
 that snapshot's expected media before marking it complete. Concurrent changes may

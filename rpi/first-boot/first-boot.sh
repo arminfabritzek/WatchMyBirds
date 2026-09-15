@@ -412,10 +412,12 @@ ufw default allow outgoing
 if [ "$IS_AP" -eq 1 ]; then
     echo "Allowing AP Services on wlan0..."
     ufw allow in on wlan0 to any port 80 proto tcp comment 'Setup UI'
+    ufw allow in on wlan0 to any port 8051 proto tcp comment 'Guided Recovery Status'
     ufw allow in on wlan0 to any port 67 proto udp
     ufw allow in on wlan0 to any port 53
 else
     ufw allow 8050/tcp comment 'Web Interface'
+    ufw allow 8051/tcp comment 'Guided Recovery Status'
     # Go2RTC ports for browser player (1984), RTSP relay (8554), and WebRTC (8555 tcp/udp)
     ufw allow 1984/tcp comment 'Go2RTC API/Player'
     ufw allow 8554/tcp comment 'Go2RTC RTSP'

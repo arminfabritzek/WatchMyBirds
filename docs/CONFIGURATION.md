@@ -302,6 +302,20 @@ The Backup feature creates streaming `.tar.gz` archives for data migration.
 - Archives are streamed directly (no local storage on the appliance)
 - Filename format: `watchmybirds_backup_YYYYMMDD_HHMMSS.tar.gz`
 
+### Guided USB Recovery (Raspberry Pi)
+
+Raspberry Pi images install `wmb-recovery.service`, which serves a temporary
+token-protected progress and failure page on TCP port `8051` while the main app
+on port `8050` is stopped. The web app can only submit a discovered snapshot
+identifier; the root runner fixes the destination to `/opt/app/data/output` and
+revalidates containment, completeness, checksums, schema, media, and space.
+
+Recovery restores runtime settings from the snapshot except destination-owned
+access and identity values: `EDIT_PASSWORD`, camera/go2rtc connection keys,
+Telegram credentials, and `telemetry_installation_id`. Operating-system network
+configuration and application binaries are outside `OUTPUT_DIR` and are never
+restored.
+
 ---
 
 ## See Also

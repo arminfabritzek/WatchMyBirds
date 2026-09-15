@@ -2378,6 +2378,11 @@
                     <ul class="list-unstyled mb-0" id="usbBackupList"></ul>
                 </div>
 
+                <div class="recovery-discovery" id="usbRecoveryDiscovery" hidden role="status">
+                    <strong id="usbRecoveryDiscoveryTitle">We found a backup. Restore your birds?</strong>
+                    <span id="usbRecoveryDiscoveryCopy">Review it first. Recovery never starts automatically.</span>
+                </div>
+
                 <!-- Actions -->
                 <div class="d-flex gap-2 flex-wrap">
                     <button type="button" class="btn btn--primary btn--sm"
@@ -2397,25 +2402,16 @@
                 <div class="mt-3 pt-3" style="border-top:1px solid var(--wm-divider, #ddd);">
                     <strong class="d-block mb-2">Recovery or moving to a new machine</strong>
                     <p class="settings-field__help mb-2">
-                        Recovery and migration run from the command line against a
-                        snapshot directory — there is no in-app restore button, by
-                        design: it never risks replacing a live database while the
-                        app is still holding it open.
+                        On Raspberry Pi, choose <strong>Review &amp; restore</strong>
+                        beside a backup. WatchMyBirds validates and stages it, keeps
+                        a complete checkpoint of current data, restarts safely, and
+                        reports progress even while the main app is offline.
                     </p>
-                    <p class="settings-field__help mb-1">
-                        Stop the app first (RPi: <code>sudo systemctl stop app.service</code>;
-                        Docker: <code>docker compose stop app</code>), then:
-                    </p>
-                    <pre class="p-2 bg-body-secondary rounded mb-2" style="font-size: 0.85em;"><code>.venv/bin/python scripts/recover_from_snapshot.py \
-    --snapshot /mnt/wmb-backup/latest \
-    --destination /opt/app/data/output \
-    --mode migration --app-stopped</code></pre>
                     <p class="settings-field__help mb-0">
-                        <code>--mode migration --app-stopped</code> (default) refuses to touch a
-                        destination that already has data. Replacing a populated
-                        installation on purpose needs <code>--mode recovery --force --app-stopped</code>,
-                        which preserves the complete previous output directory
-                        as a safety checkpoint. Full walkthrough: <code>docs/USB_BACKUP.md</code>.
+                        <strong>Restore replaces this installation.</strong> It is
+                        different from Merge below, which combines collections.
+                        Docker guided recovery is not supported yet. The CLI remains
+                        a technical fallback in <code>docs/USB_BACKUP.md</code>.
                     </p>
                 </div>
 
@@ -2488,6 +2484,42 @@
                     display: none;
                 }
             </style>
+
+            <div class="modal fade wm-modal wm-modal--form" id="usbRecoveryModal"
+                 tabindex="-1" aria-hidden="true" aria-labelledby="usbRecoveryModalTitle">
+                <div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable wm-modal__dialog">
+                    <div class="modal-content wm-modal__content">
+                        <div class="modal-header wm-modal__header">
+                            <div class="wm-modal__title">
+                                <span class="wm-modal__title-text" id="usbRecoveryModalTitle">Review USB recovery</span>
+                                <span class="wm-modal__title-sub" id="usbRecoveryModalSubtitle">Validating the selected backup…</span>
+                            </div>
+                            <button type="button" class="btn-close wm-modal__close" data-bs-dismiss="modal"
+                                    aria-label="Close" title="Close recovery preview"></button>
+                        </div>
+                        <div class="wm-modal__form">
+                            <div class="wm-modal__body">
+                                <div class="wm-modal__fields recovery-preview" id="usbRecoveryPreview">
+                                    <p role="status">Checking database, media, checksums, compatibility, and free space…</p>
+                                </div>
+                            </div>
+                            <div class="wm-modal__action wm-modal__action--form">
+                                <div class="recovery-confirmations">
+                                    <label><input type="checkbox" id="usbRecoveryReplaceConfirm"> I understand that Restore replaces current data.</label>
+                                    <label><input type="checkbox" id="usbRecoveryCheckpointConfirm"> I understand that the current installation is retained as a recovery checkpoint.</label>
+                                </div>
+                                <p class="alert alert--danger" id="usbRecoveryError" hidden role="alert"></p>
+                                <div class="wm-modal__actions">
+                                    <button type="button" class="btn btn--secondary" data-bs-dismiss="modal"
+                                            title="Keep the installation unchanged">Cancel</button>
+                                    <button type="button" class="btn btn--danger" id="usbRecoveryStartBtn" disabled
+                                            title="Replace data from this verified backup">Restore from this backup</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
 
             <!-- Format confirmation modal. Type "FORMAT" to enable the button. -->
             <div id="usbFormatModal" class="wm-modal" hidden role="dialog" aria-modal="true"
@@ -2591,6 +2623,15 @@
                 var lastRunWrap = document.getElementById('usbBackupLastRunWrap');
                 var lastRunBadge = document.getElementById('usbBackupLastRunBadge');
                 var lastRunDetail = document.getElementById('usbBackupLastRunDetail');
+                var recoveryDiscovery = document.getElementById('usbRecoveryDiscovery');
+                var recoveryModalEl = document.getElementById('usbRecoveryModal');
+                var recoveryPreview = document.getElementById('usbRecoveryPreview');
+                var recoverySubtitle = document.getElementById('usbRecoveryModalSubtitle');
+                var recoveryReplace = document.getElementById('usbRecoveryReplaceConfirm');
+                var recoveryCheckpoint = document.getElementById('usbRecoveryCheckpointConfirm');
+                var recoveryStart = document.getElementById('usbRecoveryStartBtn');
+                var recoveryError = document.getElementById('usbRecoveryError');
+                var selectedRecoverySnapshot = null;
 
                 if (!card || !stateBadge) return;
 
@@ -2618,6 +2659,91 @@
 
                 function clearChildren(el) {
                     while (el.firstChild) { el.removeChild(el.firstChild); }
+                }
+
+                function previewItem(label, value, wide) {
+                    var item = document.createElement('div');
+                    item.className = 'recovery-preview__item' + (wide ? ' recovery-preview__wide' : '');
+                    var strong = document.createElement('strong');
+                    strong.textContent = label;
+                    var span = document.createElement('span');
+                    span.className = 'settings-field__help';
+                    span.textContent = value;
+                    item.appendChild(strong);
+                    item.appendChild(span);
+                    return item;
+                }
+
+                function refreshRecoveryStartGate() {
+                    recoveryStart.disabled = !selectedRecoverySnapshot ||
+                        !recoveryReplace.checked || !recoveryCheckpoint.checked ||
+                        recoveryStart.dataset.blocked === '1';
+                }
+
+                function renderRecoveryPreview(data) {
+                    clearChildren(recoveryPreview);
+                    var counts = data.counts || {};
+                    recoveryPreview.appendChild(previewItem('Backup date', fmtTime(data.completed_at) || 'Date unavailable'));
+                    recoveryPreview.appendChild(previewItem('Source installation', data.source || 'Unknown device'));
+                    recoveryPreview.appendChild(previewItem('Records',
+                        (counts.images || 0) + ' images · ' + (counts.detections || 0) +
+                        ' detections · ' + (counts.classifications || 0) + ' classifications'));
+                    recoveryPreview.appendChild(previewItem('Compatibility',
+                        data.compatible ? 'Compatible with this installation' : 'Not compatible'));
+                    recoveryPreview.appendChild(previewItem('Space required',
+                        fmtBytes(data.required_bytes) + ' required · ' + fmtBytes(data.available_bytes) + ' available'));
+                    recoveryPreview.appendChild(previewItem('Recovery behavior',
+                        data.destination_has_data
+                            ? 'Replaces current birds and records; keeps a complete checkpoint.'
+                            : 'Migrates birds and records into this fresh installation.'));
+                    var preserved = data.settings_preserved || [];
+                    recoveryPreview.appendChild(previewItem('Settings policy',
+                        (data.settings_restored_count || 0) + ' backup settings restored. ' +
+                        (preserved.length ? preserved.join(', ') + ' stay from this device.' :
+                            'This device has no local credential overrides yet.') +
+                        ' Wi-Fi and operating-system network access are never replaced.', true));
+                    if (!data.guided_supported) {
+                        recoveryPreview.appendChild(previewItem('Guided recovery unavailable',
+                            'This is not an installed Raspberry Pi recovery service. Use the CLI fallback; Docker orchestration is not yet supported.', true));
+                    }
+                    var blockers = data.blockers || [];
+                    if (blockers.length) {
+                        recoveryPreview.appendChild(previewItem('Cannot restore this backup', blockers.join(' '), true));
+                    }
+                    recoverySubtitle.textContent = data.destination_has_data
+                        ? 'Replacement recovery · current data will be checkpointed first'
+                        : 'Fresh-install migration · current device access will stay usable';
+                    recoveryStart.dataset.blocked = blockers.length || !data.guided_supported ? '1' : '0';
+                    refreshRecoveryStartGate();
+                }
+
+                function openRecoveryPreview(snapshot) {
+                    selectedRecoverySnapshot = snapshot.name;
+                    recoveryReplace.checked = false;
+                    recoveryCheckpoint.checked = false;
+                    recoveryStart.dataset.blocked = '1';
+                    recoveryError.hidden = true;
+                    recoveryError.textContent = '';
+                    clearChildren(recoveryPreview);
+                    var loading = document.createElement('p');
+                    loading.textContent = 'Checking database, media, checksums, compatibility, and free space…';
+                    recoveryPreview.appendChild(loading);
+                    refreshRecoveryStartGate();
+                    var modal = bootstrap.Modal.getOrCreateInstance(recoveryModalEl);
+                    modal.show();
+                    fetch('/api/v1/system/recovery/' + encodeURIComponent(snapshot.name) + '/preview',
+                          { credentials: 'same-origin' })
+                        .then(function(r) { return r.json(); })
+                        .then(function(data) {
+                            if (!data || data.status !== 'success') {
+                                throw new Error(data && data.message ? data.message : 'Preview failed.');
+                            }
+                            renderRecoveryPreview(data);
+                        })
+                        .catch(function(err) {
+                            recoveryError.textContent = err.message || 'Could not preview this backup.';
+                            recoveryError.hidden = false;
+                        });
                 }
 
                 function renderSnapshotItem(s) {
@@ -2686,6 +2812,19 @@
                     });
                     li.appendChild(verifyBtn);
                     li.appendChild(resultSpan);
+                    if (s.completed && !s.corrupt) {
+                        li.appendChild(document.createTextNode(' '));
+                        var restoreBtn = document.createElement('button');
+                        restoreBtn.type = 'button';
+                        restoreBtn.className = 'btn btn--danger btn--sm';
+                        restoreBtn.style.padding = '1px 8px';
+                        restoreBtn.style.fontSize = '0.8em';
+                        restoreBtn.textContent = 'Review & restore';
+                        restoreBtn.title = 'Preview replacement recovery from this backup';
+                        restoreBtn.setAttribute('aria-label', 'Review and restore backup ' + String(s.name || ''));
+                        restoreBtn.addEventListener('click', function() { openRecoveryPreview(s); });
+                        li.appendChild(restoreBtn);
+                    }
                     return li;
                 }
 
@@ -2750,12 +2889,14 @@
                     var snaps = payload.snapshots_recent || [];
                     if (snaps.length) {
                         listWrap.hidden = false;
+                        recoveryDiscovery.hidden = false;
                         clearChildren(listEl);
                         snaps.forEach(function(s) {
                             listEl.appendChild(renderSnapshotItem(s));
                         });
                     } else {
                         listWrap.hidden = true;
+                        recoveryDiscovery.hidden = true;
                     }
 
                     triggerBtn.disabled = stick.state !== 'connected';
@@ -2799,6 +2940,37 @@
                         })
                         .finally(function() {
                             setTimeout(refresh, 2000);
+                        });
+                });
+
+                recoveryReplace.addEventListener('change', refreshRecoveryStartGate);
+                recoveryCheckpoint.addEventListener('change', refreshRecoveryStartGate);
+                recoveryStart.addEventListener('click', function() {
+                    recoveryStart.disabled = true;
+                    recoveryError.hidden = true;
+                    fetch('/api/v1/system/recovery/start', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        credentials: 'same-origin',
+                        body: JSON.stringify({
+                            snapshot_id: selectedRecoverySnapshot,
+                            replace_current_data: recoveryReplace.checked,
+                            checkpoint_acknowledged: recoveryCheckpoint.checked
+                        })
+                    })
+                        .then(function(r) { return r.json(); })
+                        .then(function(data) {
+                            if (!data || data.status !== 'success') {
+                                throw new Error(data && data.message ? data.message : 'Recovery could not start.');
+                            }
+                            recoverySubtitle.textContent = 'Handing over to the independent recovery runner…';
+                            window.location.assign('http://' + window.location.hostname +
+                                ':' + data.runner_port + '/#' + data.token);
+                        })
+                        .catch(function(err) {
+                            recoveryError.textContent = err.message || 'Recovery could not start. No data was changed.';
+                            recoveryError.hidden = false;
+                            refreshRecoveryStartGate();
                         });
                 });
 

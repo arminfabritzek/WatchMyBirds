@@ -242,6 +242,19 @@ cp /tmp/polkit/10-watchmybirds-format-backup.rules \
     /etc/polkit-1/rules.d/10-watchmybirds-format-backup.rules
 chmod 644 /etc/polkit-1/rules.d/10-watchmybirds-format-backup.rules
 
+# Install the independent guided-recovery runner. Its durable state remains
+# outside OUTPUT_DIR so progress and rollback survive the directory swap.
+install -d -o root -g watchmybirds -m 2750 /var/lib/watchmybirds-recovery
+install -d -o root -g watchmybirds -m 2770 /var/lib/watchmybirds-recovery/incoming
+install -d -o root -g watchmybirds -m 2750 /var/lib/watchmybirds-recovery/jobs
+cp /tmp/systemd/wmb-recovery.service /etc/systemd/system/wmb-recovery.service
+chmod 644 /etc/systemd/system/wmb-recovery.service
+ln -sf /etc/systemd/system/wmb-recovery.service \
+    /etc/systemd/system/multi-user.target.wants/wmb-recovery.service
+cp /tmp/polkit/10-watchmybirds-recovery.rules \
+    /etc/polkit-1/rules.d/10-watchmybirds-recovery.rules
+chmod 644 /etc/polkit-1/rules.d/10-watchmybirds-recovery.rules
+
 # Install OTA updater (root, polkit-gated to watchmybirds for start).
 # The unit itself does NOT auto-start; it's triggered on demand by the
 # Settings UI via /api/v1/system/updates/install.

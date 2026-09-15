@@ -224,6 +224,17 @@ cp /tmp/polkit/10-watchmybirds-format-backup.rules \
     /etc/polkit-1/rules.d/10-watchmybirds-format-backup.rules
 chmod 644 /etc/polkit-1/rules.d/10-watchmybirds-format-backup.rules
 
+install -d -o root -g watchmybirds -m 2750 /var/lib/watchmybirds-recovery
+install -d -o root -g watchmybirds -m 2770 /var/lib/watchmybirds-recovery/incoming
+install -d -o root -g watchmybirds -m 2750 /var/lib/watchmybirds-recovery/jobs
+cp /tmp/systemd/wmb-recovery.service /etc/systemd/system/wmb-recovery.service
+chmod 644 /etc/systemd/system/wmb-recovery.service
+ln -sf /etc/systemd/system/wmb-recovery.service \
+    /etc/systemd/system/multi-user.target.wants/wmb-recovery.service
+cp /tmp/polkit/10-watchmybirds-recovery.rules \
+    /etc/polkit-1/rules.d/10-watchmybirds-recovery.rules
+chmod 644 /etc/polkit-1/rules.d/10-watchmybirds-recovery.rules
+
 # OTA updater (oneshot, root, polkit-gated to watchmybirds for start).
 cp /tmp/systemd/wmb-update.service /etc/systemd/system/wmb-update.service
 chmod 644 /etc/systemd/system/wmb-update.service

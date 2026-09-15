@@ -128,6 +128,11 @@ if [[ "${WMB_CONFIRM:-}" != "${EXPECTED_CONFIRM}" ]]; then
     die 2 "WMB_CONFIRM does not match expected value"
 fi
 
+exec 8>"/run/lock/watchmybirds-maintenance.lock" || die 11 "Cannot create maintenance lock"
+if ! flock -n 8; then
+    die 11 "Another backup, format, or recovery operation is running."
+fi
+
 # Allowed device pattern: /dev/sd[a-z] -- no partitions, no other prefixes.
 if ! [[ "${WMB_TARGET_DEV}" =~ ^/dev/sd[a-z]$ ]]; then
     die 10 "Target must match /dev/sd[a-z] (got: ${WMB_TARGET_DEV})"

@@ -30,4 +30,5 @@ __all__ = [
     "db_core",
     "ingest_core",
     "path_core",
+    "recovery_core",
 ]

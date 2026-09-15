@@ -1,0 +1,9 @@
+// Allow the appliance app user to start or restart only the fixed recovery
+// runner. The runner accepts no paths, commands, or unit names from the web.
+polkit.addRule(function(action, subject) {
+    if (action.id == "org.freedesktop.systemd1.manage-units" &&
+        subject.user == "watchmybirds" &&
+        action.lookup("unit") == "wmb-recovery.service") {
+        return polkit.Result.YES;
+    }
+});

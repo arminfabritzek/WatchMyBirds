@@ -501,6 +501,23 @@ def get_snapshot(name: str) -> SnapshotInfo | None:
     return _inspect_snapshot(directory, _resolve_latest_target())
 
 
+def get_snapshot_directory(name: str) -> Path | None:
+    """Return the contained directory for an exact, safe snapshot identifier.
+
+    Callers must still validate snapshot contents. This only converts an
+    untrusted identifier into a path below the fixed snapshots directory.
+    """
+    directory = _safe_snapshot_path(name)
+    if directory is None or directory.is_symlink() or not directory.is_dir():
+        return None
+    try:
+        resolved = directory.resolve(strict=True)
+        resolved.relative_to(SNAPSHOTS_DIR.resolve(strict=True))
+    except (OSError, ValueError):
+        return None
+    return resolved
+
+
 def delete_snapshot(name: str) -> tuple[bool, str]:
     """Permanently delete a snapshot directory.
 

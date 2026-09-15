@@ -3599,8 +3599,7 @@ def bbox_heatmap_public():
 
 
 # =============================================================================
-# USB Backup (write-only v1) — see docs/USB_BACKUP.md. Restore endpoints
-# land in v2; not in this version.
+# USB Backup and guided Pi recovery — see docs/USB_BACKUP.md.
 # =============================================================================
 
 
@@ -3732,6 +3731,50 @@ def system_backup_verify(snapshot_name):
             exc_info=True,
         )
         return _error_response("Error verifying USB backup snapshot", exc)
+
+
+@api_v1.route("/system/recovery/<snapshot_name>/preview", methods=["GET"])
+@login_required
+def system_recovery_preview(snapshot_name):
+    """Validate and describe one discovered snapshot without changing data."""
+    try:
+        from core.recovery_core import RecoveryError
+        from web.services import recovery_service
+
+        try:
+            preview = recovery_service.preview_snapshot(snapshot_name)
+        except RecoveryError as exc:
+            return jsonify(
+                {"status": "error", "code": exc.code, "message": str(exc)}
+            ), 400
+        return jsonify({"status": "success", **preview})
+    except Exception as exc:
+        return _error_response("Error previewing USB recovery", exc)
+
+
+@api_v1.route("/system/recovery/start", methods=["POST"])
+@login_required
+def system_recovery_start():
+    """Submit a confirmed request to the independent Pi recovery runner."""
+    try:
+        from core.recovery_core import RecoveryError
+        from web.services import recovery_service
+
+        payload = request.get_json(silent=True) or {}
+        try:
+            result = recovery_service.start_recovery(
+                str(payload.get("snapshot_id") or ""),
+                replace_confirmed=payload.get("replace_current_data") is True,
+                checkpoint_acknowledged=payload.get("checkpoint_acknowledged") is True,
+            )
+        except RecoveryError as exc:
+            status_code = 409 if exc.code == "operation_busy" else 400
+            return jsonify(
+                {"status": "error", "code": exc.code, "message": str(exc)}
+            ), status_code
+        return jsonify({"status": "success", **result})
+    except Exception as exc:
+        return _error_response("Error starting guided recovery", exc)
 
 
 # =============================================================================

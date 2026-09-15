@@ -4,6 +4,9 @@
 
 ### Added
 
+- Raspberry Pi users can now preview and restore USB snapshots through Settings,
+  with authenticated confirmation, independent progress during app restart,
+  complete checkpoints, health checks, retry, and rollback after failed startup.
 - Storage Retention can now run automatically once per day through a separate
   opt-in, processes large image collections in bounded batches, coordinates
   concurrent protection changes, and preserves clear results across restarts.

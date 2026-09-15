@@ -1747,3 +1747,18 @@ and species answers continue through their normal controls.
 9. Species colour slots (§6d) are workspace-scoped, deterministic, and assigned across the union of (actionable events ∪ context anchors ∪ orphans). Per-event recomputation is forbidden — the same scientific name must keep one slot across the rail, the event-mode detection grid, the orphan modal, the batch stage, and the canvas bbox stroke.
 10. New surfaces that ship a bbox overlay must read the species slot from the host element's `data-species-colour` (or `box.speciesColour` on the canvas side), not from the legacy `BBOX_COLORS` rotation.
 11. Storage Retention lives as a Settings panel (`#panelRetention`), reusing the standard `settings-panel` / `settings-field` shells — it introduces no new image-bearing surface. When the retention policy has deleted an original, the original-serving routes (`/uploads/originals/...`, `/api/image/download/...`) return `410 Gone` with a human-readable message; gallery/stats/modals keep working off derivatives. (V1.1 will additionally hide the modal Download control when `original_present = 0`.)
+
+## 7. Guided Recovery (non-image settings workflow)
+
+Guided USB recovery lives inside the existing **Data & Backups** settings panel.
+The discovery callout uses `.recovery-discovery`; it never initiates recovery.
+Snapshot rows expose `Review & restore`, which opens the canonical
+`wm-modal wm-modal--form` preview. `.recovery-preview` is a responsive two-column
+facts grid that collapses to one column below 640 px. The form must show source,
+date, record counts, compatibility, required/available space, settings policy,
+and replacement/checkpoint behavior before enabling its destructive action.
+
+Both replacement and checkpoint acknowledgements are required. Merge remains a
+separate archive action with distinct copy. After submission, the browser moves
+to the independent runner page; that page owns progress, reconnect, failed-start
+retry, and checkpoint rollback while the main Flask service is unavailable.
