@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import json
+import os
 import zipfile
-from io import BytesIO
 
 import pytest
 
@@ -14,7 +14,7 @@ from core.human_label_core import HumanAnswer, LabelProvenance, record_human_ans
 from utils.db import connection as db_connection
 from utils.path_manager import PathManager
 from web.services.canonical_dataset_service import (
-    render_canonical_bundle,
+    render_canonical_bundle_to_path,
     write_canonical_bundle,
 )
 
@@ -113,26 +113,43 @@ def _jsonl(archive: zipfile.ZipFile, name: str) -> list[dict]:
     return [json.loads(line) for line in archive.read(name).decode().splitlines()]
 
 
-def test_bundle_is_deterministic_and_export_is_read_only(canonical_case) -> None:
+def test_bundle_is_deterministic_and_export_is_read_only(
+    canonical_case, tmp_path
+) -> None:
     conn, pm, *_ = canonical_case
     before = conn.execute("SELECT COUNT(*) FROM human_label_facts").fetchone()[0]
-    first = build_canonical_dataset(conn, media_exists=lambda name: pm.get_original_path(name).is_file())
-    second = build_canonical_dataset(conn, media_exists=lambda name: pm.get_original_path(name).is_file())
+    first = build_canonical_dataset(
+        conn, media_exists=lambda name: pm.get_original_path(name).is_file()
+    )
+    second = build_canonical_dataset(
+        conn, media_exists=lambda name: pm.get_original_path(name).is_file()
+    )
 
-    first_bytes = render_canonical_bundle(first, path_resolver=pm.get_original_path)
-    second_bytes = render_canonical_bundle(second, path_resolver=pm.get_original_path)
+    first_path = render_canonical_bundle_to_path(
+        first, path_resolver=pm.get_original_path, destination=tmp_path / "first.zip"
+    )
+    second_path = render_canonical_bundle_to_path(
+        second, path_resolver=pm.get_original_path, destination=tmp_path / "second.zip"
+    )
 
     assert first.bundle_id == second.bundle_id
-    assert first_bytes == second_bytes
-    assert conn.execute("SELECT COUNT(*) FROM human_label_facts").fetchone()[0] == before
+    assert first_path.read_bytes() == second_path.read_bytes()
+    assert (
+        conn.execute("SELECT COUNT(*) FROM human_label_facts").fetchone()[0] == before
+    )
 
 
 def test_bundle_keeps_partial_facts_and_gives_every_decision_reasons(
-    canonical_case,
+    canonical_case, tmp_path
 ) -> None:
     conn, pm, _, partial_ids, *_ = canonical_case
-    bundle = build_canonical_dataset(conn, media_exists=lambda name: pm.get_original_path(name).is_file())
-    archive = zipfile.ZipFile(BytesIO(render_canonical_bundle(bundle, path_resolver=pm.get_original_path)))
+    bundle = build_canonical_dataset(
+        conn, media_exists=lambda name: pm.get_original_path(name).is_file()
+    )
+    archive_path = render_canonical_bundle_to_path(
+        bundle, path_resolver=pm.get_original_path, destination=tmp_path / "bundle.zip"
+    )
+    archive = zipfile.ZipFile(archive_path)
 
     facts = _jsonl(archive, "facts.jsonl")
     manifest = _jsonl(archive, "manifest.jsonl")
@@ -142,7 +159,9 @@ def test_bundle_keeps_partial_facts_and_gives_every_decision_reasons(
         if row["view"] == "od_positive" and row["detection_id"] == partial_ids[0]
     )
 
-    assert {row["fact_type"] for row in facts if row["detection_id"] == partial_ids[0]} == {
+    assert {
+        row["fact_type"] for row in facts if row["detection_id"] == partial_ids[0]
+    } == {
         "bird_presence",
         "bbox_quality",
         "species_identity",
@@ -154,13 +173,32 @@ def test_bundle_keeps_partial_facts_and_gives_every_decision_reasons(
 
 def test_od_cls_negative_and_unresolved_views_are_independent(canonical_case) -> None:
     conn, pm, _, partial_ids, negative_ids, cls_ids = canonical_case
-    bundle = build_canonical_dataset(conn, media_exists=lambda name: pm.get_original_path(name).is_file())
-    by_key = {(row["view"], row.get("detection_id"), row["image_filename"]): row for row in bundle.manifest}
+    bundle = build_canonical_dataset(
+        conn, media_exists=lambda name: pm.get_original_path(name).is_file()
+    )
+    by_key = {
+        (row["view"], row.get("detection_id"), row["image_filename"]): row
+        for row in bundle.manifest
+    }
 
-    assert by_key[("od_positive", partial_ids[0], "20260810_090000_partial.jpg")]["decision"] == "excluded"
-    assert by_key[("cls_positive", cls_ids[0], "20260810_090200_cls.jpg")]["decision"] == "included"
-    assert by_key[("od_positive", cls_ids[0], "20260810_090200_cls.jpg")]["decision"] == "excluded"
-    assert by_key[("od_negative", None, "20260810_090100_negative.jpg")]["decision"] == "included"
+    assert (
+        by_key[("od_positive", partial_ids[0], "20260810_090000_partial.jpg")][
+            "decision"
+        ]
+        == "excluded"
+    )
+    assert (
+        by_key[("cls_positive", cls_ids[0], "20260810_090200_cls.jpg")]["decision"]
+        == "included"
+    )
+    assert (
+        by_key[("od_positive", cls_ids[0], "20260810_090200_cls.jpg")]["decision"]
+        == "excluded"
+    )
+    assert (
+        by_key[("od_negative", None, "20260810_090100_negative.jpg")]["decision"]
+        == "included"
+    )
     assert negative_ids[0] in bundle.unresolved_detection_ids
 
 
@@ -177,7 +215,9 @@ def test_resolving_sibling_makes_complete_od_frame_eligible(canonical_case) -> N
     )
     conn.commit()
 
-    bundle = build_canonical_dataset(conn, media_exists=lambda name: pm.get_original_path(name).is_file())
+    bundle = build_canonical_dataset(
+        conn, media_exists=lambda name: pm.get_original_path(name).is_file()
+    )
     decision = next(
         row
         for row in bundle.manifest
@@ -188,10 +228,18 @@ def test_resolving_sibling_makes_complete_od_frame_eligible(canonical_case) -> N
     assert decision["reasons"] == ["explicit_object_bird_and_suitable_bbox"]
 
 
-def test_explicit_transfer_writes_the_same_bundle_bytes(canonical_case, tmp_path) -> None:
+def test_explicit_transfer_writes_the_same_bundle_bytes(
+    canonical_case, tmp_path
+) -> None:
     conn, pm, *_ = canonical_case
-    bundle = build_canonical_dataset(conn, media_exists=lambda name: pm.get_original_path(name).is_file())
-    expected = render_canonical_bundle(bundle, path_resolver=pm.get_original_path)
+    bundle = build_canonical_dataset(
+        conn, media_exists=lambda name: pm.get_original_path(name).is_file()
+    )
+    expected = render_canonical_bundle_to_path(
+        bundle,
+        path_resolver=pm.get_original_path,
+        destination=tmp_path / "expected.zip",
+    ).read_bytes()
     destination = tmp_path / "transfer" / "labels.zip"
 
     written = write_canonical_bundle(
@@ -202,3 +250,66 @@ def test_explicit_transfer_writes_the_same_bundle_bytes(canonical_case, tmp_path
 
     assert written == destination
     assert destination.read_bytes() == expected
+
+
+def test_render_memory_stays_bounded_as_media_volume_grows(
+    canonical_case, tmp_path
+) -> None:
+    """Rendering must not hold every selected image's bytes in memory at once.
+
+    Regression test for GitHub issue #139: the old implementation built a
+    ``dict[str, bytes]`` of every entry (including all media) before
+    zipping, so peak memory scaled with total media volume. This writes a
+    handful of large media files and asserts that Python-level tracked
+    memory stays a small, roughly constant fraction of the total media
+    size -- not a precise multiplier (that depends on zlib/OS buffering),
+    but well under "all files resident at once."
+    """
+    import tracemalloc
+
+    conn, pm, provenance, *_ = canonical_case
+    large_bytes = 8 * 1024 * 1024  # 8 MiB per synthetic file
+    file_count = 6  # ~48 MiB total media, one file per candidate image
+
+    for index in range(file_count):
+        filename = f"20260811_0{index}0000_large.jpg"
+        conn.execute(
+            "INSERT INTO images(filename, timestamp, content_hash) VALUES (?, ?, ?)",
+            (filename, "2026-08-11T09:00:00+00:00", f"hash-large-{index}"),
+        )
+        path = pm.get_original_path(filename)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        # Deterministic, non-zero content so zlib can't shortcut compression.
+        path.write_bytes(os.urandom(large_bytes))
+        record_human_answer(
+            conn,
+            HumanAnswer(image_filename=filename, image_bird_presence="absent"),
+            provenance,
+        )
+    conn.commit()
+
+    bundle = build_canonical_dataset(
+        conn, media_exists=lambda name: pm.get_original_path(name).is_file()
+    )
+    assert len(bundle.media_filenames) >= file_count
+
+    tracemalloc.start()
+    try:
+        render_canonical_bundle_to_path(
+            bundle,
+            path_resolver=pm.get_original_path,
+            destination=tmp_path / "large.zip",
+        )
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+
+    total_media_bytes = file_count * large_bytes
+    # Streaming through a ~1 MiB copy buffer per file should stay far
+    # below the total media volume; give generous headroom for zlib
+    # internal state and Python object overhead.
+    assert peak < total_media_bytes / 4, (
+        f"peak traced memory {peak} bytes is too close to total media "
+        f"volume {total_media_bytes} bytes -- media is likely being "
+        f"held fully in memory instead of streamed"
+    )

@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
-import io
 import json
+import os
+import shutil
+import tempfile
 import zipfile
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 from core.canonical_dataset import (
@@ -16,6 +19,9 @@ from core.canonical_dataset import (
 )
 
 PathResolver = Callable[[str], Path]
+
+# Streaming write chunk size for media files copied into the archive.
+_COPY_CHUNK_BYTES = 1024 * 1024
 
 
 def build_bundle(conn, *, path_resolver: PathResolver) -> CanonicalDataset:
@@ -49,12 +55,7 @@ def _zip_info(name: str) -> zipfile.ZipInfo:
     return info
 
 
-def render_canonical_bundle(
-    bundle: CanonicalDataset,
-    *,
-    path_resolver: PathResolver,
-) -> bytes:
-    """Return byte-stable ZIP content for a fixed snapshot and media set."""
+def _non_media_entries(bundle: CanonicalDataset) -> dict[str, bytes]:
     metadata = {
         "schema_version": MANIFEST_SCHEMA_VERSION,
         "rule_version": RULE_VERSION,
@@ -78,15 +79,109 @@ def render_canonical_bundle(
                 if row["view"] == view and row["decision"] == "included"
             ]
         )
-    for filename in bundle.media_filenames:
-        path = path_resolver(filename)
-        entries[_media_archive_path(filename)] = path.read_bytes()
+    return entries
 
-    output = io.BytesIO()
-    with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
-        for name in sorted(entries):
-            archive.writestr(_zip_info(name), entries[name], compresslevel=9)
-    return output.getvalue()
+
+def _write_bundle_zip(
+    bundle: CanonicalDataset,
+    *,
+    path_resolver: PathResolver,
+    destination: Path,
+) -> None:
+    """Write the archive directly to disk without holding all bytes at once.
+
+    Entry order and per-entry metadata (fixed timestamp, compression,
+    Unix external attrs) match the previous in-memory implementation, so
+    byte-for-byte determinism is preserved. Media files are streamed via
+    ``ZipFile.write``, which reads the source in fixed-size chunks
+    internally instead of loading the whole file into a Python bytes
+    object first.
+    """
+    non_media = _non_media_entries(bundle)
+    media_names = {
+        _media_archive_path(filename): filename for filename in bundle.media_filenames
+    }
+    all_names = sorted(set(non_media) | set(media_names))
+
+    tmp_fd, tmp_path_str = tempfile.mkstemp(
+        dir=str(destination.parent), prefix=f".{destination.name}.", suffix=".tmp"
+    )
+    tmp_path = Path(tmp_path_str)
+    try:
+        os.close(tmp_fd)
+        with zipfile.ZipFile(
+            tmp_path, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9
+        ) as archive:
+            for name in all_names:
+                if name in non_media:
+                    archive.writestr(_zip_info(name), non_media[name], compresslevel=9)
+                else:
+                    source = path_resolver(media_names[name])
+                    with (
+                        source.open("rb") as src_file,
+                        archive.open(_zip_info(name), "w") as dest_entry,
+                    ):
+                        shutil.copyfileobj(
+                            src_file, dest_entry, length=_COPY_CHUNK_BYTES
+                        )
+        tmp_path.replace(destination)
+    except BaseException:
+        tmp_path.unlink(missing_ok=True)
+        raise
+
+
+def render_canonical_bundle_to_path(
+    bundle: CanonicalDataset,
+    *,
+    path_resolver: PathResolver,
+    destination: Path,
+) -> Path:
+    """Write byte-stable ZIP content for a fixed snapshot and media set to disk."""
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    _write_bundle_zip(bundle, path_resolver=path_resolver, destination=destination)
+    return destination
+
+
+@contextmanager
+def render_canonical_bundle_tempfile(
+    bundle: CanonicalDataset,
+    *,
+    path_resolver: PathResolver,
+) -> Iterator[Path]:
+    """Render the bundle to a disk-backed temp file, cleaned up on exit.
+
+    For callers (the CLI, tests) that can render and consume the file
+    within one `with` block.
+    """
+    tmp_dir, archive_path = render_canonical_bundle_to_tempdir(
+        bundle, path_resolver=path_resolver
+    )
+    try:
+        yield archive_path
+    finally:
+        archive_path.unlink(missing_ok=True)
+        try:
+            tmp_dir.rmdir()
+        except OSError:
+            pass
+
+
+def render_canonical_bundle_to_tempdir(
+    bundle: CanonicalDataset,
+    *,
+    path_resolver: PathResolver,
+) -> tuple[Path, Path]:
+    """Render the bundle to a fresh temp directory; caller owns cleanup.
+
+    Used by the download route, where the file must outlive this
+    function call (it is streamed by the WSGI layer after we return)
+    and cleanup has to happen only once the response is fully sent.
+    Returns ``(tmp_dir, archive_path)``.
+    """
+    tmp_dir = Path(tempfile.mkdtemp(prefix="canonical-bundle-"))
+    archive_path = tmp_dir / "bundle.zip"
+    _write_bundle_zip(bundle, path_resolver=path_resolver, destination=archive_path)
+    return tmp_dir, archive_path
 
 
 def write_canonical_bundle(
@@ -96,8 +191,6 @@ def write_canonical_bundle(
     destination: Path,
 ) -> Path:
     """Write the same bytes used by manual download to an explicit target."""
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    destination.write_bytes(
-        render_canonical_bundle(bundle, path_resolver=path_resolver)
+    return render_canonical_bundle_to_path(
+        bundle, path_resolver=path_resolver, destination=destination
     )
-    return destination

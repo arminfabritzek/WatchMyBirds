@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import io
-
 from flask import Blueprint, jsonify, render_template, send_file
 
 from utils.path_manager import PathManager
@@ -66,14 +64,26 @@ def canonical_dataset_preview():
 @login_required
 def canonical_dataset_download():
     bundle, path_manager = _build()
-    payload = canonical_dataset_service.render_canonical_bundle(
-        bundle,
-        path_resolver=path_manager.get_original_path,
+    tmp_dir, archive_path = (
+        canonical_dataset_service.render_canonical_bundle_to_tempdir(
+            bundle,
+            path_resolver=path_manager.get_original_path,
+        )
     )
-    return send_file(
-        io.BytesIO(payload),
+
+    def _cleanup() -> None:
+        archive_path.unlink(missing_ok=True)
+        try:
+            tmp_dir.rmdir()
+        except OSError:
+            pass
+
+    response = send_file(
+        archive_path,
         mimetype="application/zip",
         as_attachment=True,
         download_name=f"watchmybirds-labels-{bundle.bundle_id[:12]}.zip",
         max_age=0,
     )
+    response.call_on_close(_cleanup)
+    return response
