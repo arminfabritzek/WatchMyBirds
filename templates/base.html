@@ -67,9 +67,10 @@
        everyone else. #}
     <script>
     (function () {
+        document.documentElement.classList.add('wmb-status-rail-hidden');
         try {
-            if (localStorage.getItem('wmb-status-rail') === 'hidden') {
-                document.documentElement.classList.add('wmb-status-rail-hidden');
+            if (localStorage.getItem('wmb-status-rail') === 'visible') {
+                document.documentElement.classList.remove('wmb-status-rail-hidden');
             }
         } catch (e) {}
     })();
