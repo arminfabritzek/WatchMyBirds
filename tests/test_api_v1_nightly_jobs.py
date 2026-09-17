@@ -60,6 +60,11 @@ def app(monkeypatch, tmp_path):
     authenticated via session_transaction in the client fixture.
     """
     monkeypatch.setenv("OUTPUT_DIR", str(tmp_path))
+    monkeypatch.setattr(
+        nightly_job_hub.nightly_job_state,
+        "get_config",
+        lambda: {"OUTPUT_DIR": str(tmp_path)},
+    )
 
     nightly_job_hub._registry.clear()  # type: ignore[attr-defined]
     nightly_job_hub._last_fire_date.clear()  # type: ignore[attr-defined]
@@ -69,10 +74,15 @@ def app(monkeypatch, tmp_path):
     app.secret_key = "test-secret"
 
     from web.blueprints.auth import auth_bp
+
     app.register_blueprint(auth_bp)
 
     init_api_v1(app, detection_manager=_FakeDetectionManager())
     yield app
+    for runtime in nightly_job_hub._registry.values():
+        runtime.stop_event.set()
+        if runtime.thread is not None:
+            runtime.thread.join(timeout=2)
 
     nightly_job_hub._registry.clear()  # type: ignore[attr-defined]
     nightly_job_hub._last_fire_date.clear()  # type: ignore[attr-defined]

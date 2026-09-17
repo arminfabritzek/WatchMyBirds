@@ -44,6 +44,8 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
 
+from core import nightly_job_state
+
 logger = logging.getLogger(__name__)
 
 
@@ -113,7 +115,7 @@ class _JobRuntime:
 
     def __init__(self, job: JobBase) -> None:
         try:
-            restored = job.load_last_status()
+            restored = nightly_job_state.load_status(job.name) or job.load_last_status()
         except Exception:
             logger.exception("nightly_job_hub: failed to restore %r status", job.name)
             restored = {}
@@ -127,6 +129,11 @@ class _JobRuntime:
         self.last_rc = restored.get("last_rc")
         self.last_error = restored.get("last_error")
         self.last_daily_fire_date = restored.get("last_daily_fire_date")
+        self.last_result = restored.get("last_result")
+        if self.last_started_at and not self.last_finished_at:
+            self.last_result = "interrupted"
+        elif self.last_finished_at and not self.last_result:
+            self.last_result = "succeeded" if self.last_rc == 0 else "failed"
         # Optional progress hook the job can write to; the UI polls
         # this to render "142/8910 crops".
         progress = restored.get("progress")
@@ -197,12 +204,36 @@ def list_jobs() -> list[dict[str, Any]]:
                 if rt.last_finished_at
                 else None,
                 "last_reason": rt.last_reason,
+                "last_result": rt.last_result,
                 "last_rc": rt.last_rc,
                 "last_error": rt.last_error,
                 "progress": dict(rt.progress),
             }
         )
     return out
+
+
+def _persist_runtime(rt: _JobRuntime) -> None:
+    try:
+        nightly_job_state.save_status(
+            rt.job.name,
+            {
+                "last_started_at": rt.last_started_at.isoformat()
+                if rt.last_started_at
+                else None,
+                "last_finished_at": rt.last_finished_at.isoformat()
+                if rt.last_finished_at
+                else None,
+                "last_reason": rt.last_reason,
+                "last_rc": rt.last_rc,
+                "last_error": rt.last_error,
+                "last_result": rt.last_result,
+                "last_daily_fire_date": rt.last_daily_fire_date,
+                "progress": dict(rt.progress),
+            },
+        )
+    except Exception:
+        logger.exception("nightly_job_hub: failed to persist %r status", rt.job.name)
 
 
 def run_now(name: str, reason: str = "manual trigger") -> dict[str, Any]:
@@ -233,8 +264,12 @@ def run_now(name: str, reason: str = "manual trigger") -> dict[str, Any]:
     rt.last_rc = None
     rt.last_error = None
     rt.progress = {}
+    rt.last_result = "running"
+    if reason == "nightly auto":
+        rt.last_daily_fire_date = rt.last_started_at.date().isoformat()
+    _persist_runtime(rt)
 
-    def _worker():
+    def _worker() -> None:
         try:
             logger.info("nightly_job_hub: starting %r (reason=%s)", rt.job.name, reason)
             rc = rt.job.run(rt.stop_event, reason)
@@ -246,6 +281,15 @@ def run_now(name: str, reason: str = "manual trigger") -> dict[str, Any]:
             logger.exception("nightly_job_hub: %r crashed", rt.job.name)
         finally:
             rt.last_finished_at = datetime.now(tz=UTC)
+            if rt.last_rc != 0:
+                rt.last_result = "failed"
+            elif rt.progress.get("stopped"):
+                rt.last_result = "stopped"
+            elif rt.stop_event.is_set():
+                rt.last_result = "finished_after_stop_request"
+            else:
+                rt.last_result = "succeeded"
+            _persist_runtime(rt)
             rt.lock.release()
 
     rt.thread = threading.Thread(

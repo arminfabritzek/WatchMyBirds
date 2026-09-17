@@ -17,12 +17,21 @@ from web.services.nightly_job_hub import JobBase
 
 
 @pytest.fixture(autouse=True)
-def clean_registry():
+def clean_registry(monkeypatch, tmp_path):
     """Wipe the registry between tests so they don't pollute each other."""
+    monkeypatch.setattr(
+        nightly_job_hub.nightly_job_state,
+        "get_config",
+        lambda: {"OUTPUT_DIR": str(tmp_path)},
+    )
     # nightly_job_hub uses module-level state; reset before & after.
     nightly_job_hub._registry.clear()  # type: ignore[attr-defined]
     nightly_job_hub._last_fire_date.clear()  # type: ignore[attr-defined]
     yield
+    for runtime in nightly_job_hub._registry.values():
+        runtime.stop_event.set()
+        if runtime.thread is not None:
+            runtime.thread.join(timeout=2)
     nightly_job_hub._registry.clear()  # type: ignore[attr-defined]
     nightly_job_hub._last_fire_date.clear()  # type: ignore[attr-defined]
 
@@ -248,3 +257,81 @@ def test_daily_loop_fires_each_job_once_per_day():
     nightly_job_hub._maybe_fire_due_jobs()  # type: ignore[attr-defined]
     time.sleep(0.1)
     assert not j.started_event.is_set()
+
+
+@pytest.mark.parametrize("name", ["aesthetic_tagger", "sharpness", "retention"])
+@pytest.mark.parametrize("rc", [0, 1])
+def test_completed_run_survives_restart(name: str, rc: int) -> None:
+    job = _FakeJob(name, run_seconds=0)
+    job._exit_code = rc
+    nightly_job_hub.register_job(job)
+    nightly_job_hub.run_now(name)
+    nightly_job_hub._registry[name].thread.join(timeout=2)
+    before = nightly_job_hub.status(name)
+    nightly_job_hub.unregister_job(name)
+    nightly_job_hub.register_job(_FakeJob(name))
+    assert nightly_job_hub.status(name) == before
+    assert before["last_started_at"]
+    assert before["last_finished_at"]
+    assert before["last_result"] == ("succeeded" if rc == 0 else "failed")
+
+
+def test_start_is_persisted_and_unfinished_run_restores_as_interrupted() -> None:
+    job = _FakeJob(run_seconds=10)
+    nightly_job_hub.register_job(job)
+    nightly_job_hub.run_now(job.name)
+    assert job.started_event.wait(timeout=1)
+    saved = nightly_job_hub.nightly_job_state.load_status(job.name)
+    assert saved["last_started_at"]
+    assert saved["last_finished_at"] is None
+    restored = nightly_job_hub._JobRuntime(_FakeJob())
+    assert restored.last_result == "interrupted"
+    assert restored.last_finished_at is None
+
+
+def test_daily_marker_survives_manual_run_and_restart() -> None:
+    job = _FakeJob(run_seconds=0)
+    nightly_job_hub.register_job(job)
+    nightly_job_hub._maybe_fire_due_jobs()
+    nightly_job_hub._registry[job.name].thread.join(timeout=2)
+    nightly_job_hub.run_now(job.name)
+    nightly_job_hub._registry[job.name].thread.join(timeout=2)
+    nightly_job_hub._registry.clear()
+    nightly_job_hub._last_fire_date.clear()
+    replacement = _FakeJob()
+    nightly_job_hub.register_job(replacement)
+    nightly_job_hub._maybe_fire_due_jobs()
+    assert not replacement.started_event.is_set()
+
+
+@pytest.mark.parametrize("confirmed", [False, True])
+def test_stop_result_distinguishes_request_from_confirmed_stop(confirmed: bool) -> None:
+    class StopJob(_FakeJob):
+        def run(self, stop_event: threading.Event, reason: str) -> int:
+            self.started_event.set()
+            assert stop_event.wait(timeout=2)
+            nightly_job_hub.update_progress(self.name, {"stopped": confirmed})
+            return 0
+
+    job = StopJob()
+    nightly_job_hub.register_job(job)
+    nightly_job_hub.run_now(job.name)
+    assert job.started_event.wait(timeout=1)
+    nightly_job_hub.stop(job.name)
+    nightly_job_hub._registry[job.name].thread.join(timeout=2)
+    expected = "stopped" if confirmed else "finished_after_stop_request"
+    nightly_job_hub.unregister_job(job.name)
+    nightly_job_hub.register_job(_FakeJob())
+    assert nightly_job_hub.status(job.name)["last_result"] == expected
+
+
+def test_persistence_failure_does_not_lock_out_future_runs(monkeypatch) -> None:
+    def fail_save(*args: object) -> None:
+        raise OSError("Disk full")
+
+    monkeypatch.setattr(nightly_job_hub.nightly_job_state, "save_status", fail_save)
+    nightly_job_hub.register_job(_FakeJob(run_seconds=0))
+    for _ in range(2):
+        assert nightly_job_hub.run_now("fake")["status"] == "started"
+        nightly_job_hub._registry["fake"].thread.join(timeout=2)
+        assert nightly_job_hub.status("fake")["last_result"] == "succeeded"

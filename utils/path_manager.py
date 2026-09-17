@@ -156,6 +156,14 @@ class PathManager:
         """Return the persisted last-run status for storage retention."""
         return self.base_dir / "retention_status.json"
 
+    def get_nightly_job_status_path(self, name: str) -> Path:
+        """Return the lifecycle status path for one registered job."""
+        if not name or any(
+            c not in "abcdefghijklmnopqrstuvwxyz0123456789_-" for c in name
+        ):
+            raise ValueError("Invalid nightly job name")
+        return self.base_dir / "nightly_jobs" / f"{name}.json"
+
     def get_date_folder(self, date_str: str) -> str:
         """Returns the YYYY-MM-DD folder name from various inputs."""
         # Assume input is either YYYY-MM-DD or YYYYMMDD prefix

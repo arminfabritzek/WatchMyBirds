@@ -231,6 +231,17 @@ class SharpnessJob(JobBase):
             self._recompute_gallery_eligibility(conn)
 
         elapsed = time.monotonic() - started
+        update_progress(
+            self.name,
+            {
+                "total": total,
+                "done": done,
+                "skipped": skipped,
+                "errored": errored,
+                "stopped": stop_event.is_set(),
+                "elapsed_s": round(elapsed, 1),
+            },
+        )
         logger.info(
             "SharpnessJob: finished — done=%d skipped=%d errored=%d "
             "elapsed=%.1fs",

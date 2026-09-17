@@ -176,7 +176,12 @@ def test_missing_crop_file_is_skipped_not_errored(env, caplog):
     assert row[1] is None
 
 
-def test_stop_event_aborts_mid_batch(env):
+def test_stop_event_aborts_mid_batch(env, monkeypatch):
+    snapshots = []
+    monkeypatch.setattr(
+        "web.services.nightly_jobs.sharpness_job.update_progress",
+        lambda name, progress: snapshots.append(progress),
+    )
     conn = _make_minimal_db(env["db"])
     image_filename = "20260527_120000_cam0.jpg"
     day_dir = "2026-05-27"
@@ -205,6 +210,7 @@ def test_stop_event_aborts_mid_batch(env):
     ).fetchone()[0]
     # With stop set before the first iteration, zero rows are scored.
     assert scored == 0
+    assert snapshots[-1]["stopped"] is True
 
 
 def test_missing_db_returns_failure(env, tmp_path, monkeypatch):

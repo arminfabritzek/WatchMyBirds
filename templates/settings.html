@@ -4940,7 +4940,8 @@
     function _nightlyFmtTime(iso) {
         if (!iso) return '—';
         try {
-            return new Date(iso).toLocaleTimeString();
+            const date = new Date(iso);
+            return Number.isNaN(date.getTime()) ? '—' : date.toLocaleString();
         } catch (_) {
             return iso;
         }
@@ -4957,11 +4958,8 @@
 
         let statusLine;
         if (running && stopReq) {
-            // The CLIP tagger does not interrupt mid-image; stop takes
-            // effect only at the next per-image checkpoint. Say so
-            // instead of implying an instant halt.
             statusLine = job.name === 'aesthetic_tagger'
-                ? 'Stopping after current image…'
+                ? 'Stop requested — waiting for tagger to finish…'
                 : 'Stopping…';
         } else if (running) {
             const done = progress.done;
@@ -4976,13 +4974,8 @@
             } else {
                 statusLine = 'Running…';
             }
-        } else if (job.last_started_at) {
-            const rc = job.last_rc;
-            const ok = rc === 0;
-            statusLine = `Idle — last run ${_nightlyFmtTime(job.last_finished_at)} (${ok ? 'ok' : 'failed'})`;
-            if (job.last_error) statusLine += ` — ${job.last_error}`;
         } else {
-            statusLine = 'Idle — no run yet this session';
+            statusLine = job.last_started_at ? 'Idle' : 'No recorded run yet';
         }
 
         const wrapper = document.createElement('div');
@@ -5003,6 +4996,31 @@
         statusEl.textContent = statusLine;
         labelCol.appendChild(nameEl);
         labelCol.appendChild(statusEl);
+        const resultLabels = {
+            running: stopReq ? 'Stopping…' : 'Running',
+            succeeded: 'Successful',
+            failed: 'Failed',
+            stopped: 'Stopped',
+            interrupted: 'Interrupted (app restarted before completion)',
+            finished_after_stop_request: 'Finished after stop request',
+        };
+        const fields = [
+            ['Last started', _nightlyFmtTime(job.last_started_at)],
+            ['Last finished', _nightlyFmtTime(job.last_finished_at)],
+            ['Result', resultLabels[job.last_result] || 'No recorded run yet'],
+        ];
+        for (const [label, value] of fields) {
+            const detail = document.createElement('div');
+            detail.className = 'settings-field__help';
+            detail.textContent = `${label}: ${value}`;
+            labelCol.appendChild(detail);
+        }
+        if (job.last_error) {
+            const errorEl = document.createElement('div');
+            errorEl.className = 'settings-field__help text-danger';
+            errorEl.textContent = String(job.last_error);
+            labelCol.appendChild(errorEl);
+        }
         if (job.name === 'retention' && job.last_started_at) {
             const detailEl = document.createElement('div');
             detailEl.className = 'settings-field__help';
@@ -5033,9 +5051,8 @@
         stopBtn.title = running ? 'Request a clean stop' : 'This job is not running';
         stopBtn.setAttribute('aria-label', `Stop ${String(job.display_name ?? job.name)}`);
         if (jobName === 'aesthetic_tagger') {
-            stopBtn.title = 'Best-effort: the CLIP tagger finishes the '
-                + 'current image before stopping, so it may run a few '
-                + 'seconds longer.';
+            stopBtn.title = 'The CLIP tagger cannot interrupt its current run; '
+                + 'the stop request is recorded until it finishes.';
         }
         stopBtn.addEventListener('click', () => nightlyStop(jobName));
 
