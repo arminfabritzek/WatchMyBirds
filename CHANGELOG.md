@@ -13,6 +13,9 @@
 - Storage Retention can now run automatically once per day through a separate
   opt-in, processes large image collections in bounded batches, coordinates
   concurrent protection changes, and preserves clear results across restarts.
+- Nightly jobs retain their latest run status across app restarts. Settings
+  shows start and finish times, results, and errors, including interrupted runs
+  and runs that finish after a stop request.
 
 ### Changed
 
@@ -20,6 +23,8 @@
 - The live status bar starts collapsed for new browser visitors while preserving
   each browser's saved visibility preference.
 - Settings groups backup and migration controls under Data & Backups.
+- The aesthetic tagger's stop feedback now clarifies that its current run
+  finishes before the stop request takes effect.
 
 ### Fixed
 
@@ -47,6 +52,8 @@
 - Clarified optional telemetry notices to describe installation history,
   its use for activity and version trends, and actual retention behavior.
   Corrected anonymity and deletion claims in Privacy, Settings, and setup.
+- README badges show the combined release and Docker build status, latest
+  stable version, and a direct link to the Raspberry Pi release downloads.
 
 ## 0.5.6 - 2026-09-10
 
