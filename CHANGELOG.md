@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.5.7 - 2026-09-17
+
 ### Added
 
 - Raspberry Pi users can now preview and restore USB snapshots through Settings,
