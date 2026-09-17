@@ -14,7 +14,21 @@
   opt-in, processes large image collections in bounded batches, coordinates
   concurrent protection changes, and preserves clear results across restarts.
 
+### Changed
+
+- The navigation labels the model-training dataset download as Training Export.
+- The live status bar starts collapsed for new browser visitors while preserving
+  each browser's saved visibility preference.
+- Settings groups backup and migration controls under Data & Backups.
+
 ### Fixed
+
+- Live streams show connection feedback, start without an artificial delay,
+  and retain the correct aspect ratio and reconnect behavior.
+- Raspberry Pi image builds preserve installed data assets and gate builds on
+  tests; release tags and Docker image metadata identify the source being built.
+  Docker images include the offline snapshot recovery command.
+- Runtime and image-processing dependencies receive maintenance updates.
 
 - USB backups exclude local development-tool state, retain copy diagnostics,
   and show current stages and final outcomes in Settings. Recovery ignores
