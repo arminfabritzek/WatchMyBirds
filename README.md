@@ -19,23 +19,27 @@
 ---
 
 <p align="center">
-  <!-- CI Status -->
   <a href="https://github.com/arminfabritzek/WatchMyBirds/actions/workflows/tests.yml?query=branch%3Amain">
     <img src="https://github.com/arminfabritzek/WatchMyBirds/actions/workflows/tests.yml/badge.svg?branch=main&amp;event=push" alt="Tests on main" />
   </a>
   <a href="https://github.com/arminfabritzek/WatchMyBirds/actions/workflows/build-release.yml">
-    <img src="https://img.shields.io/github/actions/workflow/status/arminfabritzek/WatchMyBirds/build-release.yml?branch=main&amp;label=Release%20Build" alt="Latest release build on main" />
+    <img src="https://img.shields.io/github/actions/workflow/status/arminfabritzek/WatchMyBirds/build-release.yml?branch=main&amp;label=Release%20%2B%20Docker&amp;logo=docker" alt="Release and Docker build status on main" />
   </a>
-  <a href="https://github.com/arminfabritzek/WatchMyBirds/actions/workflows/docker.yml">
-    <img src="https://img.shields.io/github/actions/workflow/status/arminfabritzek/WatchMyBirds/docker.yml?label=Docker%20Image&amp;logo=docker" alt="Latest Docker image rebuild" />
-  </a> <!-- Raspberry Pi -->
-  <a href="https://github.com/arminfabritzek/WatchMyBirds/releases">
-    <img src="https://img.shields.io/badge/Raspberry%20Pi-Image-C51A4A?logo=raspberrypi&logoColor=white" />
-  </a>   <!-- Python -->
-  <img src="https://img.shields.io/badge/python-3.12-blue?logo=python&logoColor=white" />  <!-- License -->
-  <img src="https://img.shields.io/badge/license-Apache%202.0-green" />  <!-- Sponsor -->
+  <a href="https://github.com/arminfabritzek/WatchMyBirds/releases/latest">
+    <img src="https://img.shields.io/github/v/release/arminfabritzek/WatchMyBirds?label=Latest%20Release" alt="Latest stable release version" />
+  </a>
+  <a href="https://github.com/arminfabritzek/WatchMyBirds/releases/latest">
+    <img src="https://img.shields.io/badge/Raspberry%20Pi-Download-blue?logo=raspberrypi&amp;logoColor=white" alt="Download the Raspberry Pi image from the latest release" />
+  </a>
+  <img src="https://img.shields.io/badge/python-3.12-blue?logo=python&amp;logoColor=white" alt="Python 3.12" />
+  <a href="LICENSE">
+    <img src="https://img.shields.io/badge/license-Apache%202.0-green" alt="License: Apache 2.0" />
+  </a>
+</p>
+
+<p align="center">
   <a href="https://github.com/sponsors/arminfabritzek">
-    <img src="https://img.shields.io/badge/Sponsor-Me-ea4aaa?logo=github" />
+    <img src="https://img.shields.io/badge/Sponsor-Me-ea4aaa?logo=github" alt="Sponsor WatchMyBirds on GitHub" />
   </a>
 </p>
 
