@@ -241,7 +241,8 @@ def test_appbar_export_link_points_to_canonical_dataset():
     ).read_text(encoding="utf-8")
 
     assert 'href="/admin/canonical-dataset"' in content
-    assert "Inspect and download the canonical correction bundle" in content
+    assert 'title="Export reviewed labels and images for model training"' in content
+    assert "Training Export" in content
     assert "current_path == '/admin/canonical-dataset'" in content
 
 

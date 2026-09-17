@@ -20,8 +20,14 @@
 
 <p align="center">
   <!-- CI Status -->
-  <a href="https://github.com/arminfabritzek/WatchMyBirds/releases">
-    <img src="https://img.shields.io/github/actions/workflow/status/arminfabritzek/WatchMyBirds/docker.yml?label=Docker%20Image&logo=docker" />
+  <a href="https://github.com/arminfabritzek/WatchMyBirds/actions/workflows/tests.yml?query=branch%3Amain">
+    <img src="https://github.com/arminfabritzek/WatchMyBirds/actions/workflows/tests.yml/badge.svg?branch=main&amp;event=push" alt="Tests on main" />
+  </a>
+  <a href="https://github.com/arminfabritzek/WatchMyBirds/actions/workflows/build-release.yml">
+    <img src="https://img.shields.io/github/actions/workflow/status/arminfabritzek/WatchMyBirds/build-release.yml?branch=main&amp;label=Release%20Build" alt="Latest release build on main" />
+  </a>
+  <a href="https://github.com/arminfabritzek/WatchMyBirds/actions/workflows/docker.yml">
+    <img src="https://img.shields.io/github/actions/workflow/status/arminfabritzek/WatchMyBirds/docker.yml?label=Docker%20Image&amp;logo=docker" alt="Latest Docker image rebuild" />
   </a> <!-- Raspberry Pi -->
   <a href="https://github.com/arminfabritzek/WatchMyBirds/releases">
     <img src="https://img.shields.io/badge/Raspberry%20Pi-Image-C51A4A?logo=raspberrypi&logoColor=white" />
