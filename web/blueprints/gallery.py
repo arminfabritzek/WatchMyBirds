@@ -333,6 +333,13 @@ def species_route():
             species_groups[s_key] = chosen
 
     detections = []
+    modal_siblings = gallery_service.get_sibling_detections_batch(
+        [
+            str(det.get("original_name") or det.get("image_filename") or "")
+            for det in species_groups.values()
+            if (det.get("sibling_count") or 1) > 1
+        ]
+    )
     for species, det in sorted(
         species_groups.items(),
         key=lambda x: view_helpers.COMMON_NAMES.get(x[0], x[0]),
@@ -360,6 +367,29 @@ def species_route():
             formatted_time = ""
             gallery_date = ""
 
+        sibling_count = det.get("sibling_count", 1) or 1
+        siblings = []
+        original_name = str(det.get("original_name") or det.get("image_filename") or "")
+        if sibling_count > 1 and original_name:
+            for sibling in modal_siblings.get(original_name, []):
+                sibling_species = view_helpers.get_species_key(sibling)
+                sibling_thumb = sibling.get("thumbnail_path_virtual")
+                siblings.append(
+                    view_helpers.build_detection_view_dict(
+                        sibling,
+                        species_key=sibling_species,
+                        common_name=view_helpers.get_common_name(sibling_species),
+                        include_decision_state=True,
+                        extra={
+                            "thumb_url": (
+                                f"/uploads/derivatives/thumbs/{sibling_thumb}"
+                                if sibling_thumb
+                                else ""
+                            )
+                        },
+                    )
+                )
+
         detections.append(
             view_helpers.build_detection_view_dict(
                 det,
@@ -368,6 +398,8 @@ def species_route():
                 formatted_date=formatted_date,
                 formatted_time=formatted_time,
                 gallery_date=gallery_date,
+                siblings=siblings,
+                sibling_count=sibling_count,
                 extra={
                     "display_path": display_url,
                     "full_path": full_url,

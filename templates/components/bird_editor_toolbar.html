@@ -1,0 +1,145 @@
+{# Shared, fixed control rail for every detection-backed detail modal. #}
+{% macro render_bird_editor_toolbar(det, can_moderate=false) %}
+{% set image_filename = det.image_filename | default(det.original_name | default('', true), true) %}
+<div class="wm-bird-editor" data-bird-editor data-filename="{{ image_filename }}"
+    data-can-moderate="{{ 'true' if can_moderate else 'false' }}">
+    <div class="wm-bird-editor__toolbar" role="toolbar" aria-label="Bird editor">
+        <div class="wm-view-mode-toggle wm-view-mode-toggle--editor smart-zoom-toggle"
+            role="group" aria-label="Image view" data-view-mode="focus">
+            <button type="button" class="wm-view-mode-toggle__option"
+                data-action="set-smart-zoom" data-view-mode="full"
+                aria-label="Show full image" aria-pressed="false"
+                title="Show the complete image">Full</button>
+            <button type="button" class="wm-view-mode-toggle__option is-active"
+                data-action="set-smart-zoom" data-view-mode="zoom"
+                aria-label="Focus on selected bird" aria-pressed="true"
+                title="Focus on the selected bird">Focus</button>
+        </div>
+
+        <label class="wm-bird-editor__bird-select-label">
+            <span class="visually-hidden">Selected bird</span>
+            <select class="wm-bird-editor__species" data-editor-object-select
+                aria-label="Selected bird" title="Switch the active bird">
+                <option value="detection:{{ det.detection_id }}">1 · {{ det.common_name }}</option>
+            </select>
+        </label>
+
+        <span class="wm-bird-editor__draw-hint" data-editor-draw-hint hidden>
+            Draw around the missing bird
+        </span>
+
+        <div class="wm-bird-editor__actions">
+            <button type="button" class="btn btn--secondary btn--sm"
+                data-editor-action="adjust" title="Move or resize the selected bird's box"
+                aria-label="Adjust box"
+                {% if not can_moderate %}aria-disabled="true" data-login-required="true"{% endif %}>
+                Adjust box
+            </button>
+            <button type="button" class="btn btn--primary btn--sm"
+                data-editor-action="add" title="Draw a box for a bird that was missed"
+                aria-label="Add missing bird"
+                {% if not can_moderate %}aria-disabled="true" data-login-required="true"{% endif %}>
+                Add missing bird
+            </button>
+            <button type="button" class="btn btn--secondary btn--sm"
+                data-editor-action="place" title="Place a box for keyboard adjustment"
+                aria-label="Place box" hidden>Place box</button>
+            <button type="button" class="btn btn--secondary btn--sm"
+                data-editor-action="cancel" title="Discard the current edit"
+                aria-label="Cancel edit" hidden>Cancel</button>
+            <button type="button" class="btn btn--primary btn--sm"
+                data-editor-action="save" title="Save this bird"
+                aria-label="Save bird" hidden>Save bird</button>
+
+            <div class="wm-toolbox__menu wm-bird-editor__menu" role="group" aria-label="More image tools">
+                <button type="button" class="btn btn--secondary btn--sm wm-toolbox__more"
+                    data-editor-action="menu" aria-haspopup="true" aria-expanded="false"
+                    aria-label="More image tools" title="More image tools">⋯</button>
+                <div class="wm-toolbox__dropdown" role="menu" aria-label="Image tools">
+                    <button type="button" class="wm-toolbox__item bbox-toggle"
+                        data-action="toggle-bbox-overlay" role="menuitem"
+                        data-detection-id="{{ det.detection_id }}"
+                        data-siblings='{{ (det.siblings | default([])) | tojson }}'
+                        data-current-bbox='{{ {'x': det.bbox_x, 'y': det.bbox_y, 'w': det.bbox_w, 'h': det.bbox_h, 'id': det.detection_id, 'name': det.common_name} | tojson }}'
+                        title="Show or hide saved boxes" aria-label="Toggle bounding boxes">
+                        □ <span>Bounding boxes</span>
+                    </button>
+                    <button type="button" class="wm-toolbox__item wm-modal__maximize-btn"
+                        data-action="toggle-modal-maximize" role="menuitem"
+                        title="Toggle full-screen viewer" aria-label="Maximize image">
+                        ⛶ <span>Full screen</span>
+                    </button>
+                    {% if det.original_present is defined and det.original_present == 0 %}
+                    <span class="wm-toolbox__item modal-action-bar__item--disabled" role="menuitem"
+                        aria-disabled="true" title="Full-resolution original is gone">⃠ <span>Original retired</span></span>
+                    <a href="{{ det.optimized_path if det.optimized_path is defined and det.optimized_path else det.full_path }}"
+                        download class="wm-toolbox__item" role="menuitem"
+                        title="Download optimized preview" aria-label="Download preview">
+                        ↓ <span>Download preview</span></a>
+                    {% else %}
+                    <a href="/api/image/download/{{ det.detection_id }}" download class="wm-toolbox__item"
+                        role="menuitem" title="Download original image" aria-label="Download original image">
+                        ↓ <span>Download original</span></a>
+                    {% endif %}
+                    {% if det.gallery_date %}
+                    <a href="/gallery/{{ det.gallery_date }}?focus={{ det.detection_id }}#detection-{{ det.detection_id }}"
+                        class="wm-toolbox__item" role="menuitem" title="Open this day in Gallery"
+                        aria-label="Open this day in Gallery">📅 <span>Open day</span></a>
+                    {% endif %}
+                    <button type="button" class="wm-toolbox__item" role="menuitem"
+                        data-editor-action="bbox-verdict" data-bbox-verdict="suitable"
+                        aria-label="Mark this box as fitting the bird"
+                        title="The box sits correctly around this bird"
+                        {% if not can_moderate %}aria-disabled="true" data-login-required="true"{% endif %}>
+                        <span data-bbox-verdict-icon="suitable" aria-hidden="true">☐</span>
+                        <span>Box fits</span>
+                    </button>
+                    <button type="button" class="wm-toolbox__item" role="menuitem"
+                        data-editor-action="bbox-verdict" data-bbox-verdict="unsuitable"
+                        aria-label="Mark this box as wrong"
+                        title="The box does not sit correctly around this bird"
+                        {% if not can_moderate %}aria-disabled="true" data-login-required="true"{% endif %}>
+                        <span data-bbox-verdict-icon="unsuitable" aria-hidden="true">☐</span>
+                        <span>Box is wrong</span>
+                    </button>
+                    <button type="button" class="wm-toolbox__item"
+                        data-action="correction-details" data-detection-id="{{ det.detection_id }}"
+                        data-filename="{{ image_filename }}" role="menuitem"
+                        aria-label="Correction Details" title="Inspect current human facts">
+                        ⓘ <span>Correction Details</span>
+                    </button>
+                    <button type="button" class="wm-toolbox__item"
+                        data-action="favorite" data-detection-id="{{ det.detection_id }}"
+                        role="menuitem" aria-label="{{ 'Remove from favorites' if det.is_favorite else 'Add to favorites' }}"
+                        aria-pressed="{{ 'true' if det.is_favorite else 'false' }}"
+                        title="{{ 'Unfavorite this detection' if det.is_favorite else 'Favorite this detection' }}"
+                        {% if not can_moderate %}aria-disabled="true" data-login-required="true"{% endif %}>
+                        <span data-favorite-icon aria-hidden="true">{{ '⭐' if det.is_favorite else '☆' }}</span>
+                        <span data-favorite-label>{{ 'Unfavorite' if det.is_favorite else 'Favorite' }}</span>
+                    </button>
+                    <button type="button" class="wm-toolbox__item wm-toolbox__item--danger"
+                        data-action="move-trash" data-detection-id="{{ det.detection_id }}"
+                        role="menuitem" aria-label="Move to trash" title="Move this detection to trash"
+                        {% if not can_moderate %}aria-disabled="true" data-login-required="true"{% endif %}>
+                        🗑 <span>Move to Trash</span>
+                    </button>
+                    <button type="button" class="wm-toolbox__item wm-toolbox__item--danger"
+                        data-editor-action="retract" role="menuitem" hidden
+                        aria-label="Retract manually added bird"
+                        title="Retract this manually added bird and keep its audit history">
+                        ↶ <span>Retract added bird</span>
+                    </button>
+                    <button type="button" class="wm-toolbox__item wm-toolbox__item--danger"
+                        data-action="review-no-bird" data-filename="{{ image_filename }}"
+                        role="menuitem" aria-label="No birds in full image"
+                        title="Review the full image before recording no birds"
+                        {% if not can_moderate %}aria-disabled="true" data-login-required="true"{% endif %}>
+                        ✗ <span>No birds in full image</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="wm-bird-editor__status" data-editor-status role="status" aria-live="polite"></div>
+</div>
+{% endmacro %}

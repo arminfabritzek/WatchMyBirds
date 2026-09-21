@@ -415,7 +415,10 @@
                 break;
 
             case 'toggle-bbox-overlay':
-                if (typeof toggleBboxOverlay === 'function') {
+                var editorModal = actionEl.closest('.gallery-modal');
+                if (editorModal && typeof editorModal._wmBirdEditorToggleBoxes === 'function') {
+                    editorModal._wmBirdEditorToggleBoxes();
+                } else if (typeof toggleBboxOverlay === 'function') {
                     toggleBboxOverlay(actionEl);
                 }
                 break;
@@ -552,9 +555,18 @@
         var actionSurface = actionEl && (
             actionEl.closest('.wm-toolbox') ||
             actionEl.closest('.modal-action-bar') ||
-            actionEl.closest('.wm-view-mode-toggle')
+            actionEl.closest('.wm-view-mode-toggle') ||
+            actionEl.closest('.wm-bird-editor')
         );
         if (actionEl && actionSurface) {
+            // Capture-phase on document always runs before a nested guard, so
+            // the bird-editor's own disabled marker must be rejected here too.
+            if (actionEl.dataset.editorUnavailable === 'true') {
+                event.preventDefault();
+                event.stopPropagation();
+                if (window.wmToast) window.wmToast('This action is unavailable for the selected bird.', 'info', 3200);
+                return;
+            }
             event.preventDefault();
             event.stopPropagation();
             handleAction(actionEl);

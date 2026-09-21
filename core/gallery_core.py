@@ -860,6 +860,7 @@ def build_species_story_board(
             species_key=det.get("species_key"),
             cls_class_name=det.get("cls_class_name"),
             od_class_name=det.get("od_class_name"),
+            species_source=det.get("species_source"),
         )
         if species == UNKNOWN_SPECIES_KEY or species in excluded_species:
             continue

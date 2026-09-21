@@ -64,6 +64,7 @@ def _rows_for_image(conn: sqlite3.Connection, image_filename: str) -> list:
         SELECT
             d.detection_id,
             d.manual_species_override,
+            d.species_source,
             d.od_class_name,
             c.cls_class_name,
             COALESCE(c.cls_confidence, d.od_confidence) AS confidence,
@@ -141,6 +142,7 @@ def build_event_metadata(image_filename: str) -> EventMetadata:
             manual_override=row["manual_species_override"],
             cls_class_name=row["cls_class_name"],
             od_class_name=od_class,
+            species_source=row["species_source"],
         )
         if not key or key == "Unknown_species":
             continue

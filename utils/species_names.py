@@ -66,16 +66,37 @@ def is_non_species_od_token(od_class_name: str | None) -> bool:
     return canonical_species_key(od_class_name).lower() in _NON_SPECIES_OD_TOKENS
 
 
+HUMAN_UNKNOWN_SPECIES_SOURCES = frozenset({"manual_unknown", "manual_wrong"})
+
+
+def is_human_unknown_species_source(species_source: str | None) -> bool:
+    """Return True when a human explicitly answered "species unknown".
+
+    ``core.human_label_core`` writes ``species_source`` as
+    ``f"manual_{answer.species_identity}"``, so an explicit unknown/wrong
+    answer lands as ``manual_unknown`` / ``manual_wrong`` while it clears
+    ``manual_species_override``. Without this check the fallback chain
+    below would walk straight past the cleared override into the model's
+    own ``cls_class_name`` and resurrect the very species the human just
+    withdrew.
+    """
+    value = str(species_source or "").strip().lower()
+    return value in HUMAN_UNKNOWN_SPECIES_SOURCES
+
+
 def species_key_from_candidates(
     *,
     manual_override: str | None = None,
     cls_class_name: str | None = None,
     species_key: str | None = None,
     od_class_name: str | None = None,
+    species_source: str | None = None,
 ) -> str:
     """Resolve a single species key from the fallback chain.
 
     Priority order (highest to lowest):
+    0. An explicit human "unknown"/"wrong" answer (``species_source``)
+       short-circuits to :data:`UNKNOWN_SPECIES_KEY`
     1. Manual override (human-confirmed species)
     2. ``species_key`` column on the row (already-resolved key)
     3. ``cls_class_name`` from the classifier
@@ -87,6 +108,9 @@ def species_key_from_candidates(
     consumer that would otherwise accept ``"bird"`` as species truth should
     use this helper instead.
     """
+    if is_human_unknown_species_source(species_source):
+        return UNKNOWN_SPECIES_KEY
+
     for candidate in (manual_override, species_key, cls_class_name):
         value = canonical_species_key(candidate)
         if value:
@@ -157,9 +181,7 @@ def _extended_species_keys(locale: str = "DE") -> frozenset[str]:
     return frozenset(entry["scientific"] for entry in load_extended_species(locale))
 
 
-def is_known_species(
-    species_key: str | None, locale: str = "DE"
-) -> bool:
+def is_known_species(species_key: str | None, locale: str = "DE") -> bool:
     """Return True when *species_key* is a recognised species identity.
 
     A species is "recognised" when it appears in any of:
@@ -181,6 +203,12 @@ def is_known_species(
     if key in load_common_names(locale):
         return True
     return key in _extended_species_keys(locale)
+
+
+def is_known_bird_species(species_key: str | None, locale: str = "DE") -> bool:
+    """Recognised bird identities, excluding non-bird detector classes."""
+    key = canonical_species_key(species_key)
+    return key not in _NON_BIRD_OD_SPECIES and is_known_species(key, locale)
 
 
 @lru_cache(maxsize=4)

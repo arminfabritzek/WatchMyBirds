@@ -292,7 +292,7 @@ def _fetch_species_best_photos(conn: sqlite3.Connection, date_iso: str) -> list[
                 d.bbox_w,
                 d.bbox_h,
                 i.ptz_origin,
-                {effective_species_sql("d")} AS species
+                {effective_species_sql("d", conn)} AS species
             FROM detections d
             LEFT JOIN images i ON i.filename = d.image_filename
             WHERE d.image_filename LIKE ? || '%'

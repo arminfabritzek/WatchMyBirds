@@ -15,7 +15,26 @@ from utils.review_metadata import (
     REVIEW_STATUS_UNTAGGED,
     VALID_BBOX_REVIEW_STATES,
 )
-from utils.species_names import UNKNOWN_SPECIES_KEY
+from utils.species_names import (
+    HUMAN_UNKNOWN_SPECIES_SOURCES,
+    UNKNOWN_SPECIES_KEY,
+)
+
+
+def _manual_active_count_sql(conn: sqlite3.Connection, image_expr: str) -> str:
+    """Return a correlated manual-companion count for full or legacy schemas."""
+    exists = conn.execute(
+        """
+        SELECT 1 FROM sqlite_master
+        WHERE type = 'table' AND name = 'manual_objects'
+        """
+    ).fetchone()
+    if exists is None:
+        return "0"
+    return (
+        "(SELECT COUNT(*) FROM manual_objects mo "
+        f"WHERE mo.image_filename = {image_expr} AND mo.status = 'active')"
+    )
 
 
 def effective_bbox_projection_sql(
@@ -113,6 +132,44 @@ def _gallery_visibility_sql(det_alias: str = "d", image_alias: str = "i") -> str
     """
 
 
+def _companion_visibility_sql(det_alias: str = "d", image_alias: str = "i") -> str:
+    """Visibility policy for companion boxes inside the detail modal.
+
+    ``UI_STANDARD.md`` §0c (binding) requires every active box on a photo
+    to be drawn, which is a wider contract than the gallery's. The gallery
+    gate additionally demands ``decision_state = 'confirmed'`` so that the
+    temporal smoother can veto single-frame model hallucinations.
+
+    That veto is meaningless once a person has answered. "There is a bird
+    here, I cannot name the species" leaves ``decision_state = 'unknown'``
+    on purpose — the row belongs in the review queue, not in the gallery —
+    but the box itself is a human assertion and outranks any smoother
+    verdict. Filtering it out drops a box the operator explicitly kept.
+
+    The exception is deliberately narrow: it keys on the human-answer
+    marker in ``species_source``, so model-uncertain rows (no human
+    answer) stay hidden exactly as before.
+    """
+    human_unknown_sources = ", ".join(
+        f"'{source}'" for source in sorted(HUMAN_UNKNOWN_SPECIES_SOURCES)
+    )
+    return f"""
+        {det_alias}.status = 'active'
+        AND ({image_alias}.review_status IS NULL OR {image_alias}.review_status != '{REVIEW_STATUS_NO_BIRD}')
+        AND COALESCE({det_alias}.quality_gallery_ok, 1) = 1
+        AND (
+            lower(COALESCE({det_alias}.species_source, '')) IN ({human_unknown_sources})
+            OR (
+                lower(COALESCE({det_alias}.decision_state, '')) = 'confirmed'
+                AND (
+                    {det_alias}.decision_level IS NULL
+                    OR lower({det_alias}.decision_level) NOT IN ('reject', 'species_review')
+                )
+            )
+        )
+    """
+
+
 def _normalized_detector_species_sql(det_alias: str = "d") -> str:
     canonical_od = _canonical_species_key_sql(f"{det_alias}.od_class_name")
     return f"""
@@ -200,24 +257,65 @@ def _original_present_sql(conn: sqlite3.Connection, image_alias: str = "i") -> s
     return "1"
 
 
-def effective_species_sql(det_alias: str = "d") -> str:
+#: ``species_source`` values that record an explicit human "I cannot name
+#: this species" answer. ``core.human_label_core`` writes them as
+#: ``manual_<species_identity>`` and clears ``manual_species_override`` in the
+#: same statement, so without an explicit guard the COALESCE chains below walk
+#: past the cleared override into the model's own top-1 guess and re-display
+#: the species the human just withdrew.
+_HUMAN_UNKNOWN_SPECIES_SOURCES = ("manual_unknown", "manual_wrong")
+
+
+def _human_unknown_species_sql(
+    det_alias: str = "d", *, has_species_source: bool = True
+) -> str:
+    """SQL predicate: did a human explicitly answer "species unknown"?
+
+    SQLite resolves column references at prepare time, so a runtime guard
+    cannot protect a schema that predates ``species_source``. Callers that
+    know the available columns pass ``has_species_source=False`` and get a
+    constant-false predicate, which leaves the historical fallback chain
+    untouched (same degradation strategy as ``_original_present_sql``).
+    """
+    if not has_species_source:
+        return "0"
+    values = ", ".join(f"'{value}'" for value in _HUMAN_UNKNOWN_SPECIES_SOURCES)
+    return f"LOWER(TRIM(COALESCE({det_alias}.species_source, ''))) IN ({values})"
+
+
+def effective_species_sql(
+    det_alias: str = "d", conn: sqlite3.Connection | None = None
+) -> str:
+    """Species expression for the bird surfaces.
+
+    ``conn`` is optional: pass it when the database may predate the
+    ``species_source`` column (legacy installs, minimal test schemas) so the
+    explicit-unknown guard can be omitted instead of failing to prepare.
+    """
+    has_source = True
+    if conn is not None:
+        has_source = "species_source" in table_columns(conn, "detections")
     return f"""
-        COALESCE(
+        CASE WHEN {_human_unknown_species_sql(det_alias, has_species_source=has_source)}
+             THEN '{UNKNOWN_SPECIES_KEY}'
+        ELSE COALESCE(
             {_canonical_species_key_sql(f"NULLIF({det_alias}.manual_species_override, '')")},
             {_canonical_species_key_sql(_top1_species_sql(det_alias))},
             {_normalized_detector_species_sql(det_alias)}
-        )
+        ) END
     """
 
 
 def _effective_species_joined_sql(det_alias: str = "d", cls_alias: str = "c") -> str:
     """Species expression for queries that already join the rank-1 CLS row."""
     return f"""
-        COALESCE(
+        CASE WHEN {_human_unknown_species_sql(det_alias)}
+             THEN '{UNKNOWN_SPECIES_KEY}'
+        ELSE COALESCE(
             {_canonical_species_key_sql(f"NULLIF({det_alias}.manual_species_override, '')")},
             {_canonical_species_key_sql(f"{cls_alias}.cls_class_name")},
             {_normalized_detector_species_sql(det_alias)}
-        )
+        ) END
     """
 
 
@@ -252,12 +350,19 @@ def effective_species_sql_for_columns(
         if "od_class_name" in detection_columns
         else f"'{UNKNOWN_SPECIES_KEY}'"
     )
-    return f"""
+    resolved_sql = f"""
         COALESCE(
             {_canonical_species_key_sql(manual_sql)},
             {_canonical_species_key_sql(top1_sql)},
             {detector_sql}
         )
+    """
+    if "species_source" not in detection_columns:
+        return resolved_sql
+    return f"""
+        CASE WHEN {_human_unknown_species_sql(det_alias, has_species_source=True)}
+             THEN '{UNKNOWN_SPECIES_KEY}'
+        ELSE {resolved_sql} END
     """
 
 
@@ -386,6 +491,8 @@ def fetch_detections_for_gallery(
 
     species_sql = _effective_species_joined_sql("d", "c")
     bbox_sql, bbox_join_sql = effective_bbox_projection_sql(conn)
+    manual_count_d = _manual_active_count_sql(conn, "d.image_filename")
+    manual_count_v = _manual_active_count_sql(conn, "v.image_filename")
     # original_present is added to images by a runtime migration; legacy/test
     # schemas may lack it. Introspect so the query degrades to "present" (1).
     original_present_sql = _original_present_sql(conn)
@@ -445,7 +552,7 @@ def fetch_detections_for_gallery(
                     JOIN images i2 ON i2.filename = d2.image_filename
                     WHERE d2.image_filename = d.image_filename
                       AND {_gallery_visibility_sql("d2", "i2")}
-                ) as sibling_count
+                ) + {manual_count_d} as sibling_count
             FROM selected s
             JOIN detections d ON d.detection_id = s.detection_id
             JOIN images i ON d.image_filename = i.filename
@@ -480,7 +587,7 @@ def fetch_detections_for_gallery(
         )
         SELECT
             v.*,
-            COALESCE(sc.sibling_count, 1) AS sibling_count
+            COALESCE(sc.sibling_count, 1) + {manual_count_v} AS sibling_count
         FROM visible v
         LEFT JOIN sibling_counts sc ON sc.image_filename = v.image_filename
         {outer_order_clause}
@@ -591,6 +698,7 @@ def fetch_species_story_board_candidates(
 
     params.extend([total_limit, frames_per_species])
     species_sql = _effective_species_joined_sql("d", "c")
+    manual_count_rf = _manual_active_count_sql(conn, "rf.original_name")
 
     query = f"""
     WITH visible AS (
@@ -765,7 +873,7 @@ def fetch_species_story_board_candidates(
             JOIN images i2 ON i2.filename = d2.image_filename
             WHERE d2.image_filename = rf.original_name
               AND {_gallery_visibility_sql("d2", "i2")}
-        ) AS sibling_count,
+        ) + {manual_count_rf} AS sibling_count,
         rs.species_rank,
         rf.frame_rank,
         rs.visit_count,
@@ -784,7 +892,7 @@ def fetch_species_story_board_candidates(
 
 def fetch_sibling_detections(
     conn: sqlite3.Connection, image_filename: str
-) -> list[sqlite3.Row]:
+) -> list[sqlite3.Row | dict[str, object]]:
     """
     Returns all active detections for a given image filename.
     Used to display all birds when viewing a multi-detection image in the modal.
@@ -806,6 +914,7 @@ def fetch_sibling_detections(
             d.decision_state,
             d.manual_species_override,
             d.species_source,
+            d.is_favorite,
             c.cls_class_name,
             c.cls_confidence,
             {species_sql} as species_key,
@@ -818,16 +927,18 @@ def fetch_sibling_detections(
          AND c.rank = 1
          AND COALESCE(c.status, 'active') = 'active'
         {bbox_join_sql}
-        WHERE d.image_filename = ? AND {_gallery_visibility_sql("d", "i")}
+        WHERE d.image_filename = ? AND {_companion_visibility_sql("d", "i")}
         ORDER BY d.score DESC
     """
     cur = conn.execute(query, (image_filename,))
-    return cur.fetchall()
+    rows: list[sqlite3.Row | dict[str, object]] = list(cur.fetchall())
+    rows.extend(_fetch_manual_companions(conn, [image_filename]).get(image_filename, []))
+    return rows
 
 
 def fetch_sibling_detections_batch(
     conn: sqlite3.Connection, image_filenames: list[str]
-) -> dict[str, list[sqlite3.Row]]:
+) -> dict[str, list[sqlite3.Row | dict[str, object]]]:
     """
     Batch variant of fetch_sibling_detections. Returns siblings for several
     image filenames in a single query, grouped by ``image_filename``.
@@ -861,6 +972,7 @@ def fetch_sibling_detections_batch(
             d.decision_state,
             d.manual_species_override,
             d.species_source,
+            d.is_favorite,
             c.cls_class_name,
             c.cls_confidence,
             {species_sql} as species_key,
@@ -873,13 +985,71 @@ def fetch_sibling_detections_batch(
          AND c.rank = 1
          AND COALESCE(c.status, 'active') = 'active'
         {bbox_join_sql}
-        WHERE d.image_filename IN ({placeholders}) AND {_gallery_visibility_sql("d", "i")}
+        WHERE d.image_filename IN ({placeholders}) AND {_companion_visibility_sql("d", "i")}
         ORDER BY d.image_filename, d.score DESC
     """
     cur = conn.execute(query, tuple(image_filenames))
-    grouped: dict[str, list[sqlite3.Row]] = {}
+    grouped: dict[str, list[sqlite3.Row | dict[str, object]]] = {}
     for row in cur.fetchall():
         grouped.setdefault(row["image_filename"], []).append(row)
+    for filename, manual_rows in _fetch_manual_companions(
+        conn, image_filenames
+    ).items():
+        grouped.setdefault(filename, []).extend(manual_rows)
+    return grouped
+
+
+def _fetch_manual_companions(
+    conn: sqlite3.Connection, image_filenames: list[str]
+) -> dict[str, list[dict[str, object]]]:
+    """Project manual objects into the shared detail-view sibling shape."""
+    names = sorted({name for name in image_filenames if name})
+    if not names:
+        return {}
+    if _manual_active_count_sql(conn, "''") == "0":
+        return {}
+    placeholders = ",".join("?" for _ in names)
+    rows = conn.execute(
+        f"""
+        SELECT manual_object_id, image_filename, bbox_x, bbox_y, bbox_w, bbox_h,
+               species_key, species_state, revision
+        FROM manual_objects
+        WHERE image_filename IN ({placeholders}) AND status = 'active'
+        ORDER BY image_filename, manual_object_id
+        """,
+        names,
+    ).fetchall()
+    grouped: dict[str, list[dict[str, object]]] = {}
+    for row in rows:
+        manual_object_id = int(row["manual_object_id"])
+        species_key = row["species_key"]
+        grouped.setdefault(str(row["image_filename"]), []).append(
+            {
+                "image_filename": row["image_filename"],
+                "detection_id": None,
+                "manual_object_id": manual_object_id,
+                "object_key": f"manual:{manual_object_id}",
+                "object_kind": "manual",
+                "revision": int(row["revision"]),
+                "bbox_x": row["bbox_x"],
+                "bbox_y": row["bbox_y"],
+                "bbox_w": row["bbox_w"],
+                "bbox_h": row["bbox_h"],
+                "species_key": species_key,
+                "manual_species_override": species_key,
+                "species_source": "manual",
+                "species_state": row["species_state"],
+                "provenance": "manually_added",
+                "od_class_name": None,
+                "od_confidence": None,
+                "cls_class_name": None,
+                "cls_confidence": None,
+                "score": None,
+                "review_status": None,
+                "decision_state": None,
+                "thumbnail_path_virtual": None,
+            }
+        )
     return grouped
 
 
@@ -1473,6 +1643,8 @@ def fetch_detections_last_24h(
 
     species_sql = _effective_species_joined_sql("d", "c")
     original_present_sql = _original_present_sql(conn)
+    manual_count_d = _manual_active_count_sql(conn, "d.image_filename")
+    manual_count_v = _manual_active_count_sql(conn, "v.image_filename")
     select_body = f"""
             d.detection_id,
             i.timestamp as image_timestamp,
@@ -1522,7 +1694,7 @@ def fetch_detections_last_24h(
                     JOIN images i2 ON i2.filename = d2.image_filename
                     WHERE d2.image_filename = d.image_filename
                       AND {_gallery_visibility_sql("d2", "i2")}
-                ) as sibling_count
+                ) + {manual_count_d} as sibling_count
             FROM selected s
             JOIN detections d ON d.detection_id = s.detection_id
             JOIN images i ON d.image_filename = i.filename
@@ -1556,7 +1728,7 @@ def fetch_detections_last_24h(
         )
         SELECT
             v.*,
-            COALESCE(sc.sibling_count, 1) AS sibling_count
+            COALESCE(sc.sibling_count, 1) + {manual_count_v} AS sibling_count
         FROM visible v
         LEFT JOIN sibling_counts sc ON sc.image_filename = v.image_filename
         {outer_order_clause}

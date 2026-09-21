@@ -78,6 +78,7 @@ def _resolve_detection_species_key(det: dict) -> str:
         species_key=det.get("species_key"),
         cls_class_name=det.get("cls_class_name"),
         od_class_name=det.get("od_class_name"),
+        species_source=det.get("species_source"),
     )
     # Preserve historical contract: empty-key result when nothing resolved.
     return "" if resolved == UNKNOWN_SPECIES_KEY else normalize_species_key(resolved)

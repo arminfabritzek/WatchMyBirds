@@ -66,6 +66,10 @@ _UNKNOWN_SPECIES_TOKENS = frozenset(
 # "Unknown_species" (the literal UNKNOWN_SPECIES_KEY) is also rejected as
 # event species. Sync any changes with utils.species_names.is_non_species_od_token.
 
+# Mirrors utils.species_names.is_human_unknown_species_source; kept local so
+# core stays free of utils imports (H-02).
+_HUMAN_UNKNOWN_SPECIES_SOURCES = frozenset({"manual_unknown", "manual_wrong"})
+
 
 @dataclass(frozen=True)
 class BirdEvent:
@@ -185,6 +189,11 @@ def _resolve_detection_species(det: dict[str, Any]) -> tuple[str | None, str]:
         return manual_species, "manual"
 
     species_source = str(det.get("species_source") or "").strip().lower()
+    # An explicit human "species unknown" clears the override, so without this
+    # the chain falls through to the classifier's own withdrawn guess.
+    if species_source in _HUMAN_UNKNOWN_SPECIES_SOURCES:
+        return None, "unknown"
+
     species_key = _normalize_species(det.get("species_key"))
     if species_key and species_source != "manual":
         return species_key, "classifier"

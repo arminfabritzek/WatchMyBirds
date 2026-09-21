@@ -134,6 +134,7 @@ def get_species_key(det: dict | None) -> str:
     return species_key_from_candidates(
         cls_class_name=det.get("cls_class_name"),
         od_class_name=det.get("od_class_name"),
+        species_source=det.get("species_source"),
     )
 
 
@@ -236,6 +237,14 @@ def build_detection_view_dict(
 ) -> dict:
     payload = {
         "detection_id": det.get("detection_id"),
+        "manual_object_id": det.get("manual_object_id"),
+        "object_key": det.get("object_key") or (
+            f"detection:{det.get('detection_id')}" if det.get("detection_id") else ""
+        ),
+        "object_kind": det.get("object_kind") or "detection",
+        "revision": det.get("revision"),
+        "provenance": det.get("provenance"),
+        "species_state": det.get("species_state"),
         "species_key": species_key,
         "common_name": common_name,
         "od_class_name": det.get("od_class_name", ""),

@@ -563,6 +563,80 @@ def _init_human_label_schema(conn: sqlite3.Connection) -> None:
     """Install the additive canonical human-label schema."""
     conn.execute(
         """
+        CREATE TABLE IF NOT EXISTS manual_objects (
+            manual_object_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            image_filename TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'active'
+                CHECK(status IN ('active', 'retracted')),
+            bbox_x REAL NOT NULL CHECK(bbox_x BETWEEN 0.0 AND 1.0),
+            bbox_y REAL NOT NULL CHECK(bbox_y BETWEEN 0.0 AND 1.0),
+            bbox_w REAL NOT NULL CHECK(bbox_w > 0.0 AND bbox_w <= 1.0),
+            bbox_h REAL NOT NULL CHECK(bbox_h > 0.0 AND bbox_h <= 1.0),
+            species_key TEXT,
+            species_state TEXT NOT NULL
+                CHECK(species_state IN ('identified', 'unknown')),
+            revision INTEGER NOT NULL DEFAULT 1 CHECK(revision >= 1),
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            CHECK(bbox_x + bbox_w <= 1.0),
+            CHECK(bbox_y + bbox_h <= 1.0),
+            CHECK(
+                (species_state = 'identified' AND length(trim(species_key)) > 0)
+                OR (species_state = 'unknown' AND species_key IS NULL)
+            ),
+            FOREIGN KEY(image_filename) REFERENCES images(filename)
+                ON DELETE CASCADE
+        );
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_manual_objects_image_status
+        ON manual_objects(image_filename, status);
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS manual_object_revisions (
+            manual_revision_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            manual_object_id INTEGER NOT NULL,
+            revision INTEGER NOT NULL CHECK(revision >= 1),
+            operation TEXT NOT NULL CHECK(operation IN ('create', 'update')),
+            asserted_facts TEXT NOT NULL,
+            bbox_x REAL NOT NULL,
+            bbox_y REAL NOT NULL,
+            bbox_w REAL NOT NULL,
+            bbox_h REAL NOT NULL,
+            species_key TEXT,
+            species_state TEXT NOT NULL
+                CHECK(species_state IN ('identified', 'unknown')),
+            context TEXT NOT NULL
+                CHECK(context IN ('normal_correction', 'targeted_training')),
+            source_kind TEXT NOT NULL CHECK(length(trim(source_kind)) > 0),
+            source_ref TEXT,
+            installation_id TEXT NOT NULL CHECK(length(trim(installation_id)) > 0),
+            app_version TEXT NOT NULL CHECK(length(trim(app_version)) > 0),
+            created_at TEXT NOT NULL CHECK(length(trim(created_at)) > 0),
+            UNIQUE(manual_object_id, revision),
+            FOREIGN KEY(manual_object_id) REFERENCES manual_objects(manual_object_id)
+                ON DELETE CASCADE
+        );
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS manual_object_requests (
+            request_id TEXT PRIMARY KEY,
+            manual_object_id INTEGER NOT NULL,
+            revision INTEGER NOT NULL,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY(manual_object_id) REFERENCES manual_objects(manual_object_id)
+                ON DELETE CASCADE
+        );
+        """
+    )
+    conn.execute(
+        """
         CREATE TABLE IF NOT EXISTS label_subjects (
             subject_id INTEGER PRIMARY KEY AUTOINCREMENT,
             scope TEXT NOT NULL CHECK(scope IN ('image', 'object')),

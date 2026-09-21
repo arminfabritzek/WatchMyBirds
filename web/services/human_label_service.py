@@ -11,6 +11,7 @@ from pathlib import Path
 from config import get_config
 from core.crop_refresh import refresh_detection_thumbnail
 from core.human_label_core import (
+    BBox,
     HumanAnswer,
     LabelProvenance,
     get_or_create_labeling_installation_id,
@@ -19,6 +20,21 @@ from core.human_label_core import (
 )
 from core.human_label_core import (
     retract_bbox_quality as retract_bbox_quality_core,
+)
+from core.human_label_core import (
+    retract_species_identity as retract_species_identity_core,
+)
+from core.manual_object_core import (
+    ManualObjectDraft,
+)
+from core.manual_object_core import (
+    create_manual_object as create_manual_object_core,
+)
+from core.manual_object_core import (
+    retract_manual_object as retract_manual_object_core,
+)
+from core.manual_object_core import (
+    update_manual_object as update_manual_object_core,
 )
 from core.station_report import record_station_event_review
 
@@ -45,15 +61,97 @@ def record_answer(
     """Record one human action with local, non-telemetry provenance."""
     cfg = get_config()
     provenance = LabelProvenance(
-        installation_id=get_or_create_labeling_installation_id(
-            str(cfg["OUTPUT_DIR"])
-        ),
+        installation_id=get_or_create_labeling_installation_id(str(cfg["OUTPUT_DIR"])),
         app_version=_app_version(app_version),
         context=context,
         source_kind=source_kind,
         source_ref=source_ref,
     )
     return record_human_answer(conn, answer, provenance)
+
+
+def _ui_provenance(*, source_ref: str | None, app_version: str) -> LabelProvenance:
+    cfg = get_config()
+    return LabelProvenance(
+        installation_id=get_or_create_labeling_installation_id(str(cfg["OUTPUT_DIR"])),
+        app_version=_app_version(app_version),
+        context="normal_correction",
+        source_kind="watchmybirds_ui",
+        source_ref=source_ref,
+    )
+
+
+def create_manual_object(
+    conn: sqlite3.Connection,
+    draft: ManualObjectDraft,
+    *,
+    original_path: Path,
+    locale: str,
+    app_version: str = "",
+) -> tuple[dict[str, object], bool]:
+    """Persist one missed bird without fabricating a detector proposal."""
+    return create_manual_object_core(
+        conn,
+        draft,
+        _ui_provenance(
+            source_ref=f"manual-object:create:{draft.image_filename}",
+            app_version=app_version,
+        ),
+        original_path=original_path,
+        locale=locale,
+    )
+
+
+def update_manual_object(
+    conn: sqlite3.Connection,
+    *,
+    manual_object_id: int,
+    image_filename: str,
+    expected_revision: int,
+    locale: str,
+    app_version: str = "",
+    bbox: BBox | None = None,
+    species_supplied: bool = False,
+    species_key: str | None = None,
+    original_path: Path | None = None,
+) -> tuple[dict[str, object], bool]:
+    """Persist supplied manual-object axes with optimistic concurrency."""
+    return update_manual_object_core(
+        conn,
+        manual_object_id=manual_object_id,
+        image_filename=image_filename,
+        expected_revision=expected_revision,
+        provenance=_ui_provenance(
+            source_ref=f"manual-object:update:{manual_object_id}",
+            app_version=app_version,
+        ),
+        locale=locale,
+        bbox=bbox,
+        species_supplied=species_supplied,
+        species_key=species_key,
+        original_path=original_path,
+    )
+
+
+def retract_manual_object(
+    conn: sqlite3.Connection,
+    *,
+    manual_object_id: int,
+    image_filename: str,
+    expected_revision: int,
+    app_version: str = "",
+) -> dict[str, object]:
+    """Retract one manually added object without deleting its audit history."""
+    return retract_manual_object_core(
+        conn,
+        manual_object_id=manual_object_id,
+        image_filename=image_filename,
+        expected_revision=expected_revision,
+        provenance=_ui_provenance(
+            source_ref=f"manual-object:retract:{manual_object_id}",
+            app_version=app_version,
+        ),
+    )
 
 
 def record_event_review(
@@ -74,9 +172,7 @@ def record_event_review(
     """Append the event-level diagnostic-evidence statement."""
     cfg = get_config()
     provenance = LabelProvenance(
-        installation_id=get_or_create_labeling_installation_id(
-            str(cfg["OUTPUT_DIR"])
-        ),
+        installation_id=get_or_create_labeling_installation_id(str(cfg["OUTPUT_DIR"])),
         app_version=_app_version(app_version),
         context="normal_correction",
         source_kind="watchmybirds_ui",
@@ -95,6 +191,7 @@ def record_event_review(
         candidate_species_key=candidate_species_key,
         species_key=species_key,
     )
+
 
 logger = logging.getLogger(__name__)
 
@@ -151,7 +248,7 @@ def fetch_current_facts(
         f"""
         SELECT *
         FROM current_human_label_facts
-        WHERE {' AND '.join(clauses)}
+        WHERE {" AND ".join(clauses)}
         ORDER BY scope, fact_type
         """,
         params,
@@ -224,10 +321,7 @@ def fetch_detection_review_states(
             if row["assertion_state"] != "asserted":
                 continue
             next_state: str | None = None
-            if (
-                row["fact_type"] == "bird_presence"
-                and row["answer_value"] == "absent"
-            ):
+            if row["fact_type"] == "bird_presence" and row["answer_value"] == "absent":
                 next_state = "reviewed_negative"
             elif row["fact_type"] == "species_identity":
                 if row["answer_value"] in {"confirmed", "corrected"}:
@@ -260,7 +354,10 @@ def summarize_detection_review_progress(
 ) -> dict[str, int | bool]:
     """Count reviewed offered detections without implying wider scope."""
     ids = {int(detection_id) for detection_id in detection_ids if detection_id}
-    reviewed = sum(bool(review_states.get(detection_id, {}).get("reviewed")) for detection_id in ids)
+    reviewed = sum(
+        bool(review_states.get(detection_id, {}).get("reviewed"))
+        for detection_id in ids
+    )
     total = len(ids)
     return {
         "reviewed": reviewed,
@@ -304,6 +401,31 @@ def summarize_object_state(
     return object_training_readiness(facts), progress
 
 
+def retract_species_identity(
+    conn: sqlite3.Connection,
+    *,
+    image_filename: str,
+    detection_id: int,
+    source_ref: str | None = None,
+    app_version: str = "",
+) -> int | None:
+    """Withdraw one species answer through the canonical path."""
+    cfg = get_config()
+    provenance = LabelProvenance(
+        installation_id=get_or_create_labeling_installation_id(str(cfg["OUTPUT_DIR"])),
+        app_version=_app_version(app_version),
+        context="normal_correction",
+        source_kind="watchmybirds_ui",
+        source_ref=source_ref,
+    )
+    return retract_species_identity_core(
+        conn,
+        image_filename=image_filename,
+        detection_id=detection_id,
+        provenance=provenance,
+    )
+
+
 def retract_bbox_quality(
     conn: sqlite3.Connection,
     *,
@@ -315,9 +437,7 @@ def retract_bbox_quality(
     """Retract one explicit bbox-quality answer through the canonical path."""
     cfg = get_config()
     provenance = LabelProvenance(
-        installation_id=get_or_create_labeling_installation_id(
-            str(cfg["OUTPUT_DIR"])
-        ),
+        installation_id=get_or_create_labeling_installation_id(str(cfg["OUTPUT_DIR"])),
         app_version=_app_version(app_version),
         context="normal_correction",
         source_kind="watchmybirds_ui",

@@ -11,7 +11,7 @@ import math
 import sqlite3
 import uuid
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 
 
@@ -164,6 +164,16 @@ def get_or_create_labeling_installation_id(output_dir: str) -> str:
     return installation_id
 
 
+DERIVED_FROM_SPECIES_ANSWER = "derived:species-answer-implies-bird"
+
+
+def _derived_source_ref(source_ref: str | None) -> str:
+    base = (source_ref or "").strip()
+    return (
+        f"{base}|{DERIVED_FROM_SPECIES_ANSWER}" if base else DERIVED_FROM_SPECIES_ANSWER
+    )
+
+
 def record_human_answer(
     conn: sqlite3.Connection,
     answer: HumanAnswer,
@@ -186,10 +196,18 @@ def record_human_answer(
     if answer.image_bird_presence is not None or answer.detector_miss:
         image_subject_id = ensure_image_subject(conn, filename)
 
+    # Answering any species question already asserts a bird is in the box —
+    # "I cannot name the species" included. Without this the row fails OD
+    # readiness as object_bird_presence_unknown and a box the person
+    # endorsed is dropped from training. An explicit answer always wins.
+    object_bird_presence = answer.object_bird_presence
+    if object_bird_presence is None and answer.species_identity is not None:
+        object_bird_presence = "present"
+
     object_axes_present = any(
         value is not None
         for value in (
-            answer.object_bird_presence,
+            object_bird_presence,
             answer.bbox_quality,
             answer.bbox_correction,
             answer.species_identity,
@@ -241,17 +259,27 @@ def record_human_answer(
             )
         )
 
-    if answer.object_bird_presence is not None:
+    if object_bird_presence is not None:
+        # A derived fact is tagged in source_ref so a later reader can tell it
+        # apart from one the person answered directly.
+        presence_provenance = (
+            provenance
+            if answer.object_bird_presence is not None
+            else replace(
+                provenance,
+                source_ref=_derived_source_ref(provenance.source_ref),
+            )
+        )
         fact_ids.append(
             append_fact(
                 conn,
                 subject_id=_required_subject(object_subject_id),
                 fact_type="bird_presence",
-                answer_value=answer.object_bird_presence,
-                provenance=provenance,
+                answer_value=object_bird_presence,
+                provenance=presence_provenance,
             )
         )
-        status = "active" if answer.object_bird_presence == "present" else "rejected"
+        status = "active" if object_bird_presence == "present" else "rejected"
         conn.execute(
             "UPDATE detections SET status = ? WHERE detection_id = ?",
             (status, answer.detection_id),
@@ -340,6 +368,75 @@ def record_human_answer(
     if not fact_ids:
         raise HumanLabelError("answer contains no facts")
     return fact_ids
+
+
+def retract_species_identity(
+    conn: sqlite3.Connection,
+    *,
+    image_filename: str,
+    detection_id: int,
+    provenance: LabelProvenance,
+) -> int | None:
+    """Withdraw a species answer and every column it set.
+
+    Confirming a species writes a fact and five columns on ``detections``.
+    Withdrawing only the fact would leave a manual override nobody stands
+    behind while the decision columns still read as human-confirmed, so the
+    row keeps its place on gallery and species surfaces. Both move together.
+
+    The model's own proposal is untouched in either direction, so clearing
+    the human answer restores the AI prediction by itself. Returns ``None``
+    when there was no answer to take back.
+    """
+    row = conn.execute(
+        """
+        SELECT d.image_filename, s.subject_id
+        FROM detections d
+        LEFT JOIN label_subjects s
+          ON s.scope = 'object' AND s.detection_id = d.detection_id
+        WHERE d.detection_id = ?
+        """,
+        (int(detection_id),),
+    ).fetchone()
+    if row is None:
+        raise HumanLabelError("detection does not exist")
+    if str(row[0]) != image_filename.strip():
+        raise HumanLabelError("detection does not belong to image")
+    if row[1] is None:
+        return None
+
+    current = conn.execute(
+        """
+        SELECT fact_id
+        FROM current_human_label_facts
+        WHERE subject_id = ? AND fact_type = 'species_identity'
+        """,
+        (int(row[1]),),
+    ).fetchone()
+    if current is None:
+        return None
+
+    fact_id = append_fact(
+        conn,
+        subject_id=int(row[1]),
+        fact_type="species_identity",
+        answer_value=None,
+        assertion_state="retracted",
+        provenance=provenance,
+    )
+    conn.execute(
+        """
+        UPDATE detections
+        SET manual_species_override = NULL,
+            species_source = NULL,
+            species_updated_at = ?,
+            decision_state = 'uncertain',
+            decision_level = NULL
+        WHERE detection_id = ?
+        """,
+        (provenance.values()[-1], int(detection_id)),
+    )
+    return fact_id
 
 
 def retract_bbox_quality(

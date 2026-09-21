@@ -45,10 +45,11 @@ or changed in **one place** and instantly apply everywhere.
 4. **One zoom path.** Clicking any image opens the same `wm-modal` viewer
    (detection-backed → `detection_modal.html`, image-only fallback →
    `orphan_modal.html`). No surface ships its own lightbox.
-5. **Action position is fixed.** The toolbox sits at the bottom of the image
-   on hover/focus (`wm-toolbox`) or as a `wm-toolbox--bar` strip in modal
-   footers. Surfaces do not relocate it to the side, top, or outside the
-   image frame.
+5. **Action position is fixed.** Tile toolboxes sit at the bottom of the image
+   on hover/focus (`wm-toolbox`). Detection detail modals use the fixed
+   `wm-bird-editor` rail immediately below the photo; it is the sole modal
+   toolbar and owns object editing plus one overflow menu. Surfaces do not
+   add a second action row or menu.
 6. **Per-image state surfaces are uniform.** Things like favorite stars,
    future rating stars, eligibility badges, and selection checkboxes use
    shared classes (`wm-tile__badge`, `wm-toolbox__fav`, …) and the same DOM
@@ -58,10 +59,9 @@ or changed in **one place** and instantly apply everywhere.
    `tile_toolbox`. If a real exception is needed, this section must be
    updated in the same change.
 8. **View mode is an explicit choice.** Gallery grids use a segmented
-   `Crop | Full` control. Detail viewers with a valid detection box use
-   `Focus | Full`, centred 12 px above the bottom image edge. View mode is a
-   viewer concern and therefore stays separate from the bottom-right
-   detection-action toolbox.
+   `Crop | Full` control. Detail viewers with an editable object use
+   `Full | Focus` at the start of the shared editor rail. The order and
+   position stay stable while the selected bird changes.
 
 **Why this matters:** the explicit goal is that adding a new per-image
 affordance — for example star ratings — becomes a single edit to the toolbox
@@ -105,6 +105,15 @@ to discover that the frame had additional birds.
    action-bar `siblings | tojson` blob — already implemented in
    `gallery_utils.js:toggleBboxOverlay`.
 
+**Visibility gate:** companions use their own SQL predicate
+(`_companion_visibility_sql`), not the gallery's. The gallery additionally
+requires `decision_state = 'confirmed'` so the temporal smoother can veto
+single-frame model hallucinations — a veto that is meaningless once a
+person has answered. A box someone marked "bird present, species unknown"
+keeps `decision_state = 'unknown'` on purpose (it belongs in the review
+queue) and MUST still render here. Do not route companions through the
+gallery predicate.
+
 **Out of scope of this rule:**
 
 - Tile previews / thumbnails / story-board cards — these stay as
@@ -125,8 +134,10 @@ the explicit form of that promise for the multi-detection case.
 Bounding-box correction is an ordinary image action inside the canonical
 detail modal. It is not a separate labeling mode or page.
 
-1. `Adjust Bounding Box` starts from the active detection's existing proposal.
-   Blank-canvas box creation is forbidden.
+1. `Adjust box` starts from the active object's stored geometry. `Add missing
+   bird` is the sole blank-canvas exception: an authenticated operator may
+   draw one manual object on an existing stored image. It creates explicit
+   manual object evidence, never a detector proposal or biological event.
 2. The full image is visible while editing. Hovering and dragging a side moves
    that side; corners move two sides; dragging inside moves the whole box.
 3. Geometry stays inside the image and retains a visible minimum size. The
@@ -143,6 +154,15 @@ detail modal. It is not a separate labeling mode or page.
    from the same core reason-code contract used by dataset export. On images
    with multiple proposals it states how many boxes have answers and makes
    clear that other boxes are unchanged.
+8. The fixed editor rail is ordered `Full | Focus`, species, `Adjust box`,
+   `Add missing bird`, one overflow. During an edit the same rail replaces the
+   two edit actions with `Cancel` and `Save bird`; Escape cancels. Species uses
+   `WmSpeciesPicker` and remains draft state until Save succeeds.
+9. Saving a new manual object asserts only object bird presence, its manual
+   geometry, and either a catalog species identity or explicit unknown species.
+   Later saves append revisions only for the changed geometry/species axes.
+   They do not assert bbox quality, image completeness, event approval, or any
+   sibling fact. Manual objects carry no detector/classifier model or score.
 
 ## 0e. Offered-Box Species Confirmation (binding)
 
@@ -293,7 +313,7 @@ stop being visually primary.
 | Review event-level (rail outside tile_toolbox) | Approve Event, Move Event to Trash | — (lives in `review-stage-panel__action` rail, not the toolbox) |
 | Review per-member tile (inside tile_toolbox) | Favorite, Change Species, Move to Trash, No birds in full image | View Details, Deep Scan |
 | Trash                            | Restore                                  | View Details, Change Species *(if exposed)* — Favorite is intentionally suppressed |
-| Detail modals (`surface='detail_modal'`) | Favorite                                 | Change Species, Adjust Bounding Box, Correction Details, Move to Trash, No birds in full image |
+| Detail modals (`wm-bird-editor`) | Full / Focus, Species, Adjust box, Add missing bird | Bounding boxes, Full screen, Download, Open day, Favorite, Move to Trash, No birds in full image |
 
 **Rules embedded in the table:**
 
@@ -321,13 +341,10 @@ stop being visually primary.
   the split of the surface that opened them. A modal opened from
   Stream and a modal opened from Trash both use the "Detail modals"
   row.
-- **Detail modals** are addressed by `surface='detail_modal'`.
-  The image itself is the primary content, so Favorite is the only
-  always-visible object action. Change Species, Adjust Bounding Box,
-  Correction Details, Move to Trash, and No birds in full image live in the
-  shared overflow. The `frame_variant='bar'` rendering
-  remains available but is not required — the detail-modal split is
-  driven by `surface`, not by frame variant.
+- **Detail modals** use the `wm-bird-editor` exception defined in §0d. The
+  image remains primary, while selection and editing stay visible in one
+  stable rail. Detection-only actions such as Favorite and Move to Trash are
+  disabled when the active object was manually added.
 - Inbox, Orphans (top-level), and Restore are listed in `web/` as
   routes but do not render image tiles with the `tile_toolbox`
   macro. They are intentionally absent from this table. If a future
@@ -565,13 +582,12 @@ The image inside `.wm-modal__image .wm-image-viewer__img` is capped at
 `object-fit: contain`, where `--wm-modal-chrome` defaults to `10rem`
 (header + padding budget) and shrinks to `4rem` in maximized mode.
 
-**Action hierarchy is binding.** Previous, Next, More, and Close are the only
-always-visible header controls. The frequent `Focus | Full` view choice floats
-at the bottom centre of the image. Boxes, Maximize, Download, and Day live in
-the header's single More menu. Detection mutations never live in this
-viewer-navigation group; Favorite and the detection-action overflow stay at
-the bottom right in the shared image toolbox. No surface re-introduces a
-`.wm-modal__action` footer row or a parallel row of utility pills.
+**Action hierarchy is binding.** Previous, Next, and Close are the only
+always-visible header controls. The shared `wm-bird-editor` rail immediately
+below the photo owns `Full | Focus`, species, box editing, manual-object
+creation, and the one More menu. Boxes, Maximize, Download, Day, Favorite, and
+eligible destructive actions live in that menu. No surface adds a parallel
+image toolbox, header More menu, `.wm-modal__action` footer, or utility row.
 
 **Active-detection contract (multi-bird).** Clicking either a
 companion bbox on the canvas or a `.sibling-card` chip dispatches

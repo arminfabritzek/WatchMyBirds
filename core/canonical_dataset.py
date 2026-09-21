@@ -42,7 +42,9 @@ class CanonicalDataset:
         }
 
 
-def _rows(conn: sqlite3.Connection, sql: str, params: tuple = ()) -> list[dict[str, object]]:
+def _rows(
+    conn: sqlite3.Connection, sql: str, params: tuple = ()
+) -> list[dict[str, object]]:
     return [dict(row) for row in conn.execute(sql, params).fetchall()]
 
 
@@ -108,7 +110,9 @@ def _effective_bbox(
                 return tuple(float(value) for value in values)  # type: ignore[return-value]
     if subject is None:
         return None
-    values = tuple(subject.get(f"proposal_bbox_{axis}") for axis in ("x", "y", "w", "h"))
+    values = tuple(
+        subject.get(f"proposal_bbox_{axis}") for axis in ("x", "y", "w", "h")
+    )
     if any(value is None for value in values):
         return None
     return tuple(float(value) for value in values)  # type: ignore[return-value]
@@ -173,7 +177,18 @@ def build_canonical_dataset(
         for subject in subjects
         if subject["scope"] == "image"
     }
-    candidate_filenames = sorted({str(subject["image_filename"]) for subject in subjects})
+    # Manual birds are not represented by detector-backed COCO annotations.
+    # Such frames must not be exported as complete or as empty negatives.
+    manual_frames = {
+        str(row["image_filename"])
+        for row in _rows(
+            conn,
+            "SELECT DISTINCT image_filename FROM manual_objects WHERE status = 'active'",
+        )
+    }
+    candidate_filenames = sorted(
+        {str(subject["image_filename"]) for subject in subjects}
+    )
     detections: list[dict[str, object]] = []
     if candidate_filenames:
         placeholders = ",".join("?" for _ in candidate_filenames)
@@ -196,7 +211,9 @@ def build_canonical_dataset(
     for filename, subject in image_subjects.items():
         image_facts[filename] = current_by_subject.get(int(subject["subject_id"]), [])
     for detection_id, subject in subject_by_detection.items():
-        object_facts[detection_id] = current_by_subject.get(int(subject["subject_id"]), [])
+        object_facts[detection_id] = current_by_subject.get(
+            int(subject["subject_id"]), []
+        )
 
     manifest: list[dict[str, object]] = []
     media_filenames: set[str] = set()
@@ -213,6 +230,8 @@ def build_canonical_dataset(
         frame_facts = image_facts.get(filename, [])
         image_presence = _fact_value(frame_facts, "bird_presence")
         negative_reasons: list[str] = []
+        if filename in manual_frames:
+            negative_reasons.append("manual_birds_not_exported")
         if not present_media:
             negative_reasons.append("media_missing")
         if image_presence == "absent":
@@ -236,14 +255,19 @@ def build_canonical_dataset(
 
         frame_detection_rows = detections_by_image.get(filename, [])
         detector_miss = _fact_value(frame_facts, "detector_miss") == "reported"
-        frame_complete = bool(frame_detection_rows) and not detector_miss and all(
-            _object_resolved_for_od(object_facts.get(int(row["detection_id"]), []))
-            for row in frame_detection_rows
+        frame_complete = (
+            bool(frame_detection_rows)
+            and filename not in manual_frames
+            and not detector_miss
+            and all(
+                _object_resolved_for_od(object_facts.get(int(row["detection_id"]), []))
+                for row in frame_detection_rows
+            )
         )
         frame_has_od_positive = any(
-            object_training_readiness(
-                object_facts.get(int(row["detection_id"]), [])
-            )["od"]["ready"]
+            object_training_readiness(object_facts.get(int(row["detection_id"]), []))[
+                "od"
+            ]["ready"]
             for row in frame_detection_rows
         )
         if frame_complete and frame_has_od_positive and present_media:
@@ -257,6 +281,8 @@ def build_canonical_dataset(
             bbox = _effective_bbox(subject, active_facts)
 
             od_reasons = list(readiness["od"]["reasons"])
+            if filename in manual_frames:
+                od_reasons.append("manual_birds_not_exported")
             if detector_miss:
                 od_reasons.append("detector_miss_reported")
             if not frame_complete:
@@ -316,7 +342,8 @@ def build_canonical_dataset(
                     filename=filename,
                     detection_id=detection_id,
                     included=unresolved,
-                    reasons=unresolved_reasons or ["all_requested_training_views_resolved"],
+                    reasons=unresolved_reasons
+                    or ["all_requested_training_views_resolved"],
                 )
             )
 
@@ -332,7 +359,9 @@ def build_canonical_dataset(
     coco_annotations: list[dict[str, object]] = []
     annotation_id = 1
     coco_filenames = sorted(complete_positive_frames | included_negative_frames)
-    image_id_by_name = {filename: index + 1 for index, filename in enumerate(coco_filenames)}
+    image_id_by_name = {
+        filename: index + 1 for index, filename in enumerate(coco_filenames)
+    }
     for filename in coco_filenames:
         media_filenames.add(filename)
         first_detection = next(iter(detections_by_image.get(filename, [])), {})
@@ -350,7 +379,10 @@ def build_canonical_dataset(
             detection_id = int(detection["detection_id"])
             if detection_id not in od_included_ids:
                 continue
-            bbox = _effective_bbox(subject_by_detection.get(detection_id), object_facts.get(detection_id, []))
+            bbox = _effective_bbox(
+                subject_by_detection.get(detection_id),
+                object_facts.get(detection_id, []),
+            )
             width = int(detection.get("frame_width") or 0)
             height = int(detection.get("frame_height") or 0)
             if bbox is None or width <= 0 or height <= 0:
@@ -375,7 +407,9 @@ def build_canonical_dataset(
         subject = subject_by_detection[detection_id]
         filename = str(subject["image_filename"])
         active_facts = object_facts[detection_id]
-        species_fact = next(fact for fact in active_facts if fact["fact_type"] == "species_identity")
+        species_fact = next(
+            fact for fact in active_facts if fact["fact_type"] == "species_identity"
+        )
         bbox = _effective_bbox(subject, active_facts)
         classifier_ready.append(
             {
@@ -390,7 +424,10 @@ def build_canonical_dataset(
         )
 
     coco = {
-        "info": {"schema_version": MANIFEST_SCHEMA_VERSION, "rule_version": RULE_VERSION},
+        "info": {
+            "schema_version": MANIFEST_SCHEMA_VERSION,
+            "rule_version": RULE_VERSION,
+        },
         "licenses": [],
         "categories": [{"id": 1, "name": "bird", "supercategory": "animal"}],
         "images": coco_images,
@@ -399,7 +436,9 @@ def build_canonical_dataset(
     snapshot = {
         "max_subject_id": max((int(row["subject_id"]) for row in subjects), default=0),
         "max_fact_id": max((int(row["fact_id"]) for row in facts), default=0),
-        "latest_fact_created_at": max((str(row["created_at"]) for row in facts), default=""),
+        "latest_fact_created_at": max(
+            (str(row["created_at"]) for row in facts), default=""
+        ),
     }
     identity_payload = b"".join(
         (

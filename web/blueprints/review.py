@@ -42,6 +42,7 @@ from utils.review_metadata import (
 from utils.species_names import (
     UNKNOWN_SPECIES_KEY,
     build_species_picker_entries,
+    is_human_unknown_species_source,
     is_known_species,
     load_common_names,
     resolve_common_name,
@@ -78,6 +79,12 @@ _REVIEW_EVENT_FALLBACK_LABELS = {
     "multi_bird_ambiguity": "Multiple open birds on one source image",
     "bbox_jump": "Bird moves far across frames — select checked frames, then approve",
 }
+
+# Reasons that mean "this event has no species a human would stand behind".
+# The other reasons leave a trustworthy species and only question the framing.
+_UNRESOLVED_EVENT_SPECIES_REASONS = frozenset(
+    {"unknown_species", "partial_unknown_species"}
+)
 
 
 # Per-species colour and reference-image helpers.
@@ -286,13 +293,30 @@ def _resolve_review_selected_species(
     *,
     manual_species_override: str | None,
     common_names: dict[str, str],
+    species_source: str | None = None,
 ) -> tuple[str | None, str | None, str | None]:
+    """Resolve what the review UI shows - and would submit - as the species.
+
+    An explicit human "species unknown" answer clears
+    ``manual_species_override``, which makes it indistinguishable from a row
+    nobody has answered yet. Only ``species_source`` separates the two, and
+    the difference matters: pre-selecting the classifier's top-1 for a row a
+    human just marked unknown both mislabels the header and puts that species
+    one Approve click away from becoming a positive label.
+    """
     manual_species = str(manual_species_override or "").strip()
     if manual_species:
         return (
             manual_species,
             resolve_common_name(manual_species, common_names),
             "manual",
+        )
+
+    if is_human_unknown_species_source(species_source):
+        return (
+            None,
+            resolve_common_name(UNKNOWN_SPECIES_KEY, common_names),
+            "manual_unknown",
         )
 
     scientific_name, common_name = _resolve_review_default_species(
@@ -307,6 +331,43 @@ def _resolve_review_selected_species(
         common_name,
         "default",
     )
+
+
+def _resolve_review_event_selected_species(
+    *,
+    candidate_species: str | None,
+    default_species: str | None,
+    fallback_reason: str | None,
+) -> str | None:
+    """Resolve the species a Review Desk event card would submit on Approve.
+
+    ``candidate_species`` is ``None`` both when nobody has answered and when
+    the event is deliberately unresolved, so falling back to the classifier's
+    suggestion would re-arm Approve with a species a human withdrew. The
+    event-level twin of :func:`_resolve_review_selected_species`.
+    """
+    candidate = str(candidate_species or "").strip()
+    if candidate:
+        return candidate
+    if fallback_reason in _UNRESOLVED_EVENT_SPECIES_REASONS:
+        return None
+    return str(default_species or "").strip() or None
+
+
+def _resolve_review_member_candidate_species(row: dict) -> str | None:
+    """Species a review tile offers for confirmation or relabelling.
+
+    Skips the classifier fallback once a human has explicitly withdrawn the
+    species: ``review_grid.js`` treats a pick equal to this value as "no
+    change", so the withdrawn species here would block the operator from
+    later deciding the bird is that species after all.
+    """
+    manual = str(row.get("manual_species_override") or "").strip()
+    if manual:
+        return manual
+    if is_human_unknown_species_source(row.get("species_source")):
+        return None
+    return str(row.get("cls_class_name") or "").strip() or None
 
 
 def _load_recent_review_species(conn, common_names: dict[str, str]) -> list[dict]:
@@ -493,6 +554,7 @@ def _build_review_modal_siblings(
             species_key=sibling["species_key"],
             cls_class_name=sibling["cls_class_name"],
             od_class_name=sibling["od_class_name"],
+            species_source=sibling["species_source"],
         )
         # Preserve historical contract: empty string when species cannot
         # be resolved to a real species (UI templates special-case this).
@@ -662,6 +724,7 @@ def _build_review_item(
                 quick_species,
                 manual_species_override=row["manual_species_override"],
                 common_names=common_names,
+                species_source=row["species_source"],
             )
         )
     elif include_detail:
@@ -674,13 +737,12 @@ def _build_review_item(
                 quick_species,
                 manual_species_override=row["manual_species_override"],
                 common_names=common_names,
+                species_source=row["species_source"],
             )
         )
     manual_bbox_review = row["manual_bbox_review"]
     selected_bbox_review = (
-        manual_bbox_review
-        if manual_bbox_review in VALID_BBOX_REVIEW_STATES
-        else None
+        manual_bbox_review if manual_bbox_review in VALID_BBOX_REVIEW_STATES else None
     )
     selected_bbox_review_origin = (
         "manual" if manual_bbox_review in VALID_BBOX_REVIEW_STATES else None
@@ -1086,11 +1148,7 @@ def _build_review_event_member(
     formatted_date, formatted_time = _split_review_datetime(row.get("timestamp"))
     member["formatted_short_date"] = formatted_date
     member["formatted_time"] = formatted_time
-    member["candidate_species"] = (
-        str(row.get("manual_species_override") or "").strip()
-        or str(row.get("cls_class_name") or "").strip()
-        or None
-    )
+    member["candidate_species"] = _resolve_review_member_candidate_species(row)
     member["candidate_species_common"] = resolve_common_name(
         member["candidate_species"], common_names
     )
@@ -1263,7 +1321,11 @@ def _build_review_event(
             common_names=common_names,
         )
 
-    selected_species = str(candidate_species or default_species or "").strip() or None
+    selected_species = _resolve_review_event_selected_species(
+        candidate_species=candidate_species,
+        default_species=default_species,
+        fallback_reason=raw_event.fallback_reason,
+    )
     selected_species_common = (
         resolve_common_name(selected_species, common_names)
         if selected_species
@@ -3598,7 +3660,9 @@ def review_event_resolve():
                 evidence_quality=evidence_quality,
                 event_start=min(keep_timestamps),
                 event_end=max(keep_timestamps),
-                candidate_species_key=(event.get("candidate_species") if event else None),
+                candidate_species_key=(
+                    event.get("candidate_species") if event else None
+                ),
                 species_key=species,
                 source_ref="review:event-resolve",
             )

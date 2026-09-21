@@ -357,3 +357,71 @@ def test_disk_archive_preserves_legacy_compression_and_bytes(canonical_case, tmp
         destination=tmp_path / "streamed.zip",
     )
     assert result.read_bytes() == legacy.getvalue()
+
+
+@pytest.mark.parametrize("negative", [False, True])
+def test_manual_birds_prevent_incomplete_or_negative_od_export(
+    canonical_case, negative: bool
+) -> None:
+    from core.human_label_core import BBox
+    from core.manual_object_core import (
+        ManualObjectDraft,
+        create_manual_object,
+        retract_manual_object,
+    )
+
+    conn, pm, provenance, partial_ids, *_ = canonical_case
+    filename = (
+        "20260810_090100_negative.jpg" if negative else "20260810_090000_partial.jpg"
+    )
+    if not negative:
+        record_human_answer(
+            conn,
+            HumanAnswer(
+                image_filename=filename,
+                detection_id=partial_ids[1],
+                object_bird_presence="absent",
+            ),
+            provenance,
+        )
+    before = build_canonical_dataset(
+        conn, media_exists=lambda name: pm.get_original_path(name).is_file()
+    )
+    obj, _ = create_manual_object(
+        conn,
+        ManualObjectDraft(
+            filename, BBox(0.4, 0.4, 0.2, 0.2), None, "manual-export-safety"
+        ),
+        provenance,
+        original_path=pm.get_original_path(filename),
+        locale="DE",
+    )
+    changes = conn.total_changes
+    after = build_canonical_dataset(
+        conn, media_exists=lambda name: pm.get_original_path(name).is_file()
+    )
+    assert conn.total_changes == changes
+    view = "od_negative" if negative else "od_positive"
+    decisions = [
+        row
+        for row in after.manifest
+        if row["image_filename"] == filename and row["view"] == view
+    ]
+    assert decisions and all(row["decision"] == "excluded" for row in decisions)
+    assert all("manual_birds_not_exported" in row["reasons"] for row in decisions)
+    assert any(
+        row["decision"] == "included"
+        for row in before.manifest
+        if row["image_filename"] == filename and row["view"] == view
+    )
+    retract_manual_object(
+        conn,
+        manual_object_id=obj["manual_object_id"],
+        image_filename=filename,
+        expected_revision=1,
+        provenance=provenance,
+    )
+    restored = build_canonical_dataset(
+        conn, media_exists=lambda name: pm.get_original_path(name).is_file()
+    )
+    assert restored.manifest == before.manifest

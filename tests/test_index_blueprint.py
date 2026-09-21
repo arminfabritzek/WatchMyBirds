@@ -294,3 +294,29 @@ def test_index_title_reflects_today_observation_count(seeded_client):
 
     assert title.startswith("Live • ")
     assert title.endswith("Observations Today")
+
+
+def test_modal_rows_carry_the_image_filename(seeded_client):
+    """Every modal row must name its source image.
+
+    ``bird_editor_toolbar.html`` renders ``data-filename`` from
+    ``image_filename``/``original_name``, and ``bird_editor.js`` posts that
+    value to ``/api/labels/answer``. A row without it renders an empty
+    attribute, so confirming a species from the dashboard fails with
+    "filename required" while the same bird works from the gallery.
+    """
+    client, _ = seeded_client
+    _, captured = _capture_index_context(client)
+    context = captured["context"]
+
+    checked = 0
+    for key in ("visual_summary", "today_visitors_modal_dets", "best_species_modal_dets"):
+        for row in context[key]:
+            name = str(row.get("original_name") or row.get("image_filename") or "")
+            assert name.strip(), (
+                f"{key} row for detection {row.get('detection_id')} carries no "
+                "image filename, so its editor cannot save"
+            )
+            checked += 1
+
+    assert checked, "fixture produced no modal rows to check"

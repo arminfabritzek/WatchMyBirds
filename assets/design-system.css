@@ -5571,6 +5571,9 @@ body {
     padding: var(--space-md);
     background: var(--color-surface-2);
     text-align: center;
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
 }
 
 .wm-modal__image {
@@ -5588,7 +5591,77 @@ body {
    --wm-modal-chrome so maximize mode can tune it without touching
    the image rule. */
 .wm-modal__body {
-    --wm-modal-chrome: 10rem;
+    --wm-modal-chrome: 13rem;
+}
+
+/* Height budget for the detail modal.
+
+   The image used to be capped against the raw viewport
+   (100vh - --wm-modal-chrome) while the bird-editor rail below it was laid
+   out as an ordinary static block. Nothing reserved space for that rail, so
+   image + toolbar + status could exceed .wm-modal__content's
+   max-height (100vh - 2rem) and the toolbar was clipped by its
+   overflow: hidden. The shortfall was constant (~57px at any window
+   height >= 716px CSS), because the image cap grows with the viewport just
+   as fast as the window does - which is why enlarging the window never
+   helped and only zooming the browser out did.
+
+   The body is now a flex column that derives the image budget instead of
+   guessing it: the editor rail claims its intrinsic height first
+   (flex: 0 0 auto) and the image region takes what is left
+   (flex: 1 1 auto; min-height: 0). min-height: 0 is required - the
+   flex default of min-height: auto refuses to shrink a flex item below its
+   intrinsic content height, which is what pushed the rail out of the
+   clipped box.
+
+   Deliberately NOT reintroducing the two patterns that previously broke
+   bbox overlays (see the note on .wm-modal__image .wm-image-viewer__img):
+   .wm-image-viewer itself stays a plain block that shrink-wraps its <img>,
+   and no object-fit is applied. Only the body - one level above the overlay
+   container - becomes a flex column, so the overlay/layer geometry contract
+   is untouched. */
+.wm-modal__content:has(.wm-bird-editor) {
+    display: flex;
+    flex-direction: column;
+}
+
+.wm-modal__content:has(.wm-bird-editor) > .wm-modal__header {
+    flex: 0 0 auto;
+}
+
+.wm-modal__body:has(.wm-bird-editor) {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    flex: 1 1 auto;
+    min-height: 0;
+}
+
+.wm-modal__body:has(.wm-bird-editor) > .wm-modal__image {
+    flex: 1 1 auto;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+}
+
+/* The editor rail is the primary control surface: it is never the thing
+   that gets clipped. */
+.wm-modal__body:has(.wm-bird-editor) > .wm-bird-editor {
+    flex: 0 0 auto;
+}
+
+/* Inside the flex column the image is bounded by the space the rail left
+   over, not by a viewport guess. Both bounds are kept: whichever is
+   smaller wins. */
+.wm-modal__body:has(.wm-bird-editor) .wm-image-viewer {
+    min-height: 0;
+    max-height: 100%;
+}
+
+.wm-modal__body:has(.wm-bird-editor) .wm-image-viewer__img {
+    max-height: 100%;
 }
 
 /* Modal-image sizing correction.
@@ -5808,6 +5881,22 @@ body {
 
     .wm-modal__header {
         padding: var(--space-xs) var(--space-sm);
+    }
+}
+
+@media (max-height: 700px) {
+    .wm-modal__body {
+        --wm-modal-chrome: 15rem;
+        padding-block: var(--space-sm);
+    }
+
+    .wm-modal__image .wm-image-viewer__img {
+        max-height: max(180px, calc(100dvh - var(--wm-modal-chrome)));
+    }
+
+    .wm-bird-editor__toolbar {
+        min-height: 48px;
+        padding-block: 6px;
     }
 }
 
@@ -6267,6 +6356,308 @@ body {
     left: 0;
     pointer-events: none;
     display: none;
+}
+
+/* Shared detail-modal bird editor. The image remains the dominant surface;
+   every mutable object action lives in the single rail immediately below it. */
+.wm-modal__image:has(+ .wm-bird-editor) {
+    margin-bottom: 0;
+}
+
+.wm-bird-editor {
+    width: min(100%, 1120px);
+    margin: 0 auto;
+    color: var(--color-text);
+}
+
+.wm-bird-editor__toolbar {
+    display: grid;
+    grid-template-columns: auto minmax(11rem, 1fr) auto;
+    align-items: center;
+    gap: var(--space-sm);
+    min-height: 58px;
+    padding: 8px 10px;
+    border: 1px solid var(--color-border-light);
+    border-top: 0;
+    border-radius: 0 0 var(--radius-md) var(--radius-md);
+    background: color-mix(in srgb, var(--color-surface) 94%, #cda15d 6%);
+    box-shadow: 0 8px 24px rgba(44, 34, 20, 0.08);
+}
+
+.wm-view-mode-toggle--editor {
+    --wm-view-mode-bg: color-mix(in srgb, var(--color-surface-2) 92%, #7b6541 8%);
+    --wm-view-mode-border: var(--color-border);
+    --wm-view-mode-text: var(--color-text-muted);
+    --wm-view-mode-active-bg: #66583d;
+    --wm-view-mode-active-text: #fffdf8;
+    box-shadow: none;
+}
+
+.wm-bird-editor__species {
+    display: inline-flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-sm);
+    min-width: 0;
+    min-height: 40px;
+    padding: 0 12px;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-surface);
+    color: var(--color-text);
+    font: inherit;
+    font-size: var(--font-size-sm);
+    font-weight: 650;
+    text-align: left;
+}
+
+.wm-bird-editor__bird-select-label {
+    display: block;
+    min-width: 0;
+}
+
+.wm-bird-editor__species {
+    width: 100%;
+}
+
+.wm-bird-editor__species:hover,
+.wm-bird-editor__species:focus-visible {
+    border-color: var(--color-accent);
+    outline: none;
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent) 18%, transparent);
+}
+
+.wm-bird-editor__species[aria-disabled="true"] {
+    opacity: 0.58;
+}
+
+.wm-bird-editor__actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 6px;
+}
+
+.wm-bird-editor__actions .btn {
+    min-height: 40px;
+    white-space: nowrap;
+}
+
+.wm-bird-editor__menu {
+    position: relative;
+}
+
+.wm-bird-editor__menu > .wm-toolbox__more {
+    min-width: 42px;
+    min-height: 40px;
+    font-size: 1.05rem;
+}
+
+.wm-bird-editor__menu .wm-toolbox__dropdown {
+    right: 0;
+    bottom: calc(100% + 6px);
+}
+
+.wm-bird-editor__draw-hint {
+    min-width: 11rem;
+    color: var(--color-text-muted);
+    font-size: var(--font-size-sm);
+    text-align: left;
+}
+
+.wm-bird-editor__status {
+    min-height: 26px;
+    padding: 5px 12px 0;
+    color: var(--color-text-muted);
+    font-size: var(--font-size-xs);
+    text-align: left;
+}
+
+.wm-bird-editor__layer {
+    position: absolute;
+    z-index: 15;
+    overflow: visible;
+    pointer-events: none;
+    transition: transform 0.4s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+    transform-origin: center center;
+}
+
+.wm-bird-editor__layer.is-adding {
+    cursor: crosshair;
+    pointer-events: auto;
+    touch-action: none;
+}
+
+.wm-bird-editor__box {
+    position: absolute;
+    box-sizing: border-box;
+    border: 2px solid rgba(245, 228, 184, 0.94);
+    border-radius: 3px;
+    background: rgba(37, 30, 21, 0.03);
+    box-shadow: 0 0 0 1px rgba(30, 23, 14, 0.72);
+    pointer-events: auto;
+    transition: border-color 120ms ease, box-shadow 120ms ease, background 120ms ease;
+}
+
+.wm-bird-editor__box.is-selected {
+    z-index: 2;
+    border-width: 3px;
+    border-color: #f3bf5d;
+    background: rgba(243, 191, 93, 0.07);
+    box-shadow: 0 0 0 1px rgba(30, 23, 14, 0.82), 0 0 20px rgba(243, 191, 93, 0.28);
+}
+
+.wm-bird-editor__box-body {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    cursor: pointer;
+    touch-action: none;
+}
+
+.wm-bird-editor__layer.is-editing .wm-bird-editor__box.is-selected .wm-bird-editor__box-body {
+    cursor: move;
+}
+
+.wm-bird-editor__box-body:focus-visible {
+    outline: 3px solid #fff;
+    outline-offset: 3px;
+}
+
+.wm-bird-editor__box-label {
+    position: absolute;
+    left: -3px;
+    bottom: calc(100% + 3px);
+    max-width: 220px;
+    min-height: 28px;
+    display: inline-flex;
+    align-items: stretch;
+    padding: 0;
+    overflow: hidden;
+    border: 1px solid rgba(255, 255, 255, 0.32);
+    border-radius: 7px;
+    background: rgba(43, 35, 24, 0.9);
+    color: #fffaf0;
+    font: inherit;
+    backdrop-filter: blur(8px);
+}
+
+.wm-bird-editor__box-label-name,
+.wm-bird-editor__box-label-picker {
+    min-height: 28px;
+    padding: 4px 8px;
+    border: 0;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    font-size: 0.72rem;
+    font-weight: 700;
+    line-height: 1;
+    white-space: nowrap;
+}
+
+.wm-bird-editor__box-label-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.wm-bird-editor__box-label-picker {
+    min-width: 30px;
+    border-left: 1px solid rgba(255, 255, 255, 0.28);
+    cursor: pointer;
+}
+
+.wm-bird-editor__box.is-label-inside .wm-bird-editor__box-label {
+    top: 3px;
+    bottom: auto;
+}
+
+.wm-bird-editor__box.is-label-right .wm-bird-editor__box-label {
+    right: -3px;
+    left: auto;
+}
+
+.wm-bird-editor__box.is-selected .wm-bird-editor__box-label {
+    background: #e8ad43;
+    color: #2c2113;
+}
+
+.wm-bird-editor__handle {
+    position: absolute;
+    width: 18px;
+    height: 18px;
+    padding: 0;
+    border: 5px solid transparent;
+    border-radius: 50%;
+    background: #f3bf5d;
+    background-clip: content-box;
+    touch-action: none;
+}
+
+.wm-bird-editor__handle--n { top: -9px; left: calc(50% - 9px); cursor: ns-resize; }
+.wm-bird-editor__handle--e { right: -9px; top: calc(50% - 9px); cursor: ew-resize; }
+.wm-bird-editor__handle--s { bottom: -9px; left: calc(50% - 9px); cursor: ns-resize; }
+.wm-bird-editor__handle--w { left: -9px; top: calc(50% - 9px); cursor: ew-resize; }
+.wm-bird-editor__handle--nw { top: -9px; left: -9px; cursor: nwse-resize; }
+.wm-bird-editor__handle--ne { top: -9px; right: -9px; cursor: nesw-resize; }
+.wm-bird-editor__handle--se { right: -9px; bottom: -9px; cursor: nwse-resize; }
+.wm-bird-editor__handle--sw { left: -9px; bottom: -9px; cursor: nesw-resize; }
+
+.wm-modal.wm-modal--maximized .wm-modal__body {
+    --wm-modal-chrome: 8.5rem;
+}
+
+@media (max-width: 760px) {
+    .wm-bird-editor__toolbar {
+        grid-template-columns: auto minmax(0, 1fr);
+        gap: 6px;
+    }
+
+    .wm-bird-editor__actions {
+        grid-column: 1 / -1;
+        justify-content: stretch;
+    }
+
+    .wm-bird-editor__actions .btn:not([hidden]) {
+        flex: 1 1 auto;
+    }
+
+    .wm-bird-editor__menu {
+        flex: 0 0 auto;
+    }
+
+    .wm-bird-editor__status {
+        padding-inline: 4px;
+    }
+}
+
+@media (max-width: 460px) {
+    .wm-bird-editor__toolbar {
+        grid-template-columns: 1fr;
+    }
+
+    .wm-view-mode-toggle--editor,
+    .wm-bird-editor__species,
+    .wm-bird-editor__actions {
+        width: 100%;
+    }
+
+    .wm-view-mode-toggle--editor .wm-view-mode-toggle__option {
+        flex: 1 1 50%;
+    }
+
+    .wm-bird-editor__actions {
+        grid-column: 1;
+        flex-wrap: wrap;
+    }
+
+    .wm-bird-editor__box-label {
+        max-width: 130px;
+    }
 }
 
 .wm-bbox-label-layer {

@@ -137,6 +137,7 @@ def index_route():
         sk = view_helpers.get_species_key(raw)
         return {
             "detection_id": raw.get("detection_id"),
+            "original_name": raw.get("original_name") or "",
             "species_key": sk,
             "common_name": view_helpers.get_common_name(sk),
             "latin_name": sk,
@@ -364,6 +365,7 @@ def index_route():
             visual_summary.append(
                 {
                     "detection_id": det.get("detection_id"),
+                    "original_name": det.get("original_name") or "",
                     "species_key": view_helpers.get_species_key(det),
                     "common_name": view_helpers.get_common_name(
                         view_helpers.get_species_key(det)

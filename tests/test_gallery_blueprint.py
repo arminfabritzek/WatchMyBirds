@@ -315,8 +315,9 @@ def test_gallery_review_progress_uses_canonical_human_facts(seeded_client):
     assert 'data-review-progress="1/2"' in reviewed_gallery
     assert 'data-review-progress="1/1"' in reviewed_subgallery
     assert reviewed_subgallery.count('data-review-progress="0/1"') == 1
-    assert 'data-interactive-labels="true"' in reviewed_subgallery
-    assert 'data-human-review-state="confirmed"' in reviewed_subgallery
+    assert "data-bird-editor" in reviewed_subgallery
+    assert 'data-current-detection=' in reviewed_subgallery
+    assert '"human_review_state": "confirmed"' in reviewed_subgallery
 
     relabeled = post(
         client,
@@ -328,7 +329,7 @@ def test_gallery_review_progress_uses_canonical_human_facts(seeded_client):
     )
     assert relabeled.status_code == 200, relabeled.get_data(as_text=True)
     corrected_subgallery = client.get(f"/gallery/{today_iso}").get_data(as_text=True)
-    assert 'data-human-review-state="corrected"' in corrected_subgallery
+    assert '"human_review_state": "corrected"' in corrected_subgallery
 
     with db_connection.closing_connection() as conn:
         other = conn.execute(

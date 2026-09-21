@@ -63,10 +63,9 @@ function resolveViewerHost(scope, el) {
 function resolveViewerToolButton(host, scope, selector) {
     const hostBtn = host && host.querySelector ? host.querySelector(selector) : null;
     if (hostBtn) return hostBtn;
-    if (scope && scope.classList && scope.classList.contains('modal')) {
-        return scope.querySelector('.modal-action-bar ' + selector);
-    }
-    return null;
+    if (!scope || !scope.querySelector) return null;
+    return scope.querySelector('.wm-bird-editor ' + selector)
+        || scope.querySelector('.modal-action-bar ' + selector);
 }
 
 function isReviewViewerScope(scope) {
@@ -124,20 +123,24 @@ function redirectToLogin() {
 function setToolboxFavoriteState(btn, isFav) {
     if (!btn || !btn.classList) return;
     btn.classList.toggle('wm-toolbox__fav--active', isFav);
-    btn.textContent = isFav ? '⭐' : '☆';
+    const icon = btn.querySelector('[data-favorite-icon]');
+    const label = btn.querySelector('[data-favorite-label]');
+    if (icon) icon.textContent = isFav ? '⭐' : '☆';
+    else if (!label) btn.textContent = isFav ? '⭐' : '☆';
+    if (label) label.textContent = isFav ? 'Unfavorite' : 'Favorite';
     btn.setAttribute('aria-pressed', isFav ? 'true' : 'false');
     btn.setAttribute('aria-label', isFav ? 'Remove from favorites' : 'Add to favorites');
     btn.setAttribute('title', isFav ? 'Unfavorite' : 'Favorite');
 }
 
 function setLegacyTileBadgeState(btn, isFav) {
-    if (!btn || !btn.classList) return;
+    if (!btn || !btn.classList || !btn.classList.contains('wm-tile__fav-badge')) return;
     btn.classList.toggle('wm-tile__fav-badge--active', isFav);
     btn.textContent = isFav ? '⭐' : '☆';
 }
 
 function setModalFavoriteState(btn, isFav) {
-    if (!btn || !btn.classList) return;
+    if (!btn || !btn.classList || !btn.classList.contains('fav-btn')) return;
     btn.classList.toggle('fav-btn--active', isFav);
     btn.textContent = isFav ? '⭐' : '☆';
 }
@@ -162,6 +165,9 @@ async function toggleFavorite(event, detectionId, btn) {
 
             const data = await resp.json();
             const isFav = Boolean(data.is_favorite);
+            document.dispatchEvent(new CustomEvent('wmb:favorite-updated', {
+                detail: { detectionId: Number(detectionId), isFavorite: isFav }
+            }));
 
             // Update the button in the modal or the hovered badge
             if (btn && btn.classList) {
@@ -221,6 +227,7 @@ function showModalTransition(currentModalEl, nextModalEl) {
     };
 
     const showNextModal = function () {
+        currentModalEl.removeEventListener('hide.bs.modal', detectPreventedHide);
         const nextInstance = bootstrap.Modal.getOrCreateInstance
             ? bootstrap.Modal.getOrCreateInstance(nextModalEl)
             : new bootstrap.Modal(nextModalEl);
@@ -229,9 +236,18 @@ function showModalTransition(currentModalEl, nextModalEl) {
         nextInstance.show();
     };
 
+    const detectPreventedHide = function (event) {
+        queueMicrotask(function () {
+            if (!event.defaultPrevented || currentModalEl.dataset.birdEditorDiscardAccepted === 'true') return;
+            currentModalEl.removeEventListener('hidden.bs.modal', showNextModal);
+            unlockNavigation();
+        });
+    };
+
     const currentInstance = bootstrap.Modal.getInstance(currentModalEl);
     if (currentInstance && currentModalEl.classList.contains('show')) {
         currentModalEl.addEventListener('hidden.bs.modal', showNextModal, { once: true });
+        currentModalEl.addEventListener('hide.bs.modal', detectPreventedHide, { once: true });
         currentInstance.hide();
         return;
     }
@@ -929,8 +945,6 @@ function startWmBboxEditor(actionEl) {
                 body: JSON.stringify({
                     filename: filename,
                     detection_id: detectionId,
-                    object_bird_presence: 'present',
-                    bbox_quality: 'suitable',
                     bbox_correction: currentBox
                 })
             });
@@ -971,6 +985,10 @@ function initBboxOverlay(img) {
 
     const canvas = container.querySelector('.bbox-overlay');
     if (!canvas) return;
+    if (container.querySelector('[data-bird-editor-layer]')) {
+        canvas.style.display = 'none';
+        return;
+    }
 
     const apply = function () {
         // Canvas backing store sizing is now owned entirely by

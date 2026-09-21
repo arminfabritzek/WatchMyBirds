@@ -32,6 +32,7 @@ def _resolved_species_key(row_dict: dict) -> str:
         species_key=row_dict.get("species_key"),
         cls_class_name=row_dict.get("cls_class_name"),
         od_class_name=row_dict.get("od_class_name"),
+        species_source=row_dict.get("species_source"),
     )
 
 

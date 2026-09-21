@@ -153,6 +153,24 @@ window.WmSpeciesPicker = (function () {
         return item;
     }
 
+    function createUnknownItem(onPick) {
+        var item = document.createElement('button');
+        item.type = 'button';
+        item.className = 'wm-species-picker-item wm-species-picker-item--unknown';
+        item.style.cssText =
+            'display:flex;justify-content:space-between;align-items:center;gap:10px;' +
+            'width:100%;padding:10px 12px;border:1px solid rgba(255,255,255,0.12);border-radius:8px;' +
+            'cursor:pointer;text-align:left;font-size:0.82rem;background:rgba(255,255,255,0.04);' +
+            'color:rgba(255,255,255,0.92);';
+        item.textContent = 'Bird · species unknown';
+        item.title = 'Save the bird without assigning a species';
+        item.setAttribute('aria-label', 'Bird, species unknown');
+        item.onclick = function () {
+            onPick({ scientific: null, common: 'Bird · species unknown' });
+        };
+        return item;
+    }
+
     function matchesFilter(sp, filter) {
         if (!filter) return true;
         var scientific = (sp.scientific || '').toLowerCase().replace(/_/g, ' ');
@@ -195,6 +213,11 @@ window.WmSpeciesPicker = (function () {
 
         return new Promise(function (resolve) {
             loadSpeciesList(detectionId).then(function (species) {
+                if (options.birdsOnly) {
+                    species = species.filter(function (sp) {
+                        return !['cat', 'squirrel', 'marten_mustelid', 'hedgehog'].includes(sp.scientific);
+                    });
+                }
                 if (!species.length) {
                     alert('Could not load species list.');
                     resolve(null);
@@ -245,7 +268,7 @@ window.WmSpeciesPicker = (function () {
 
                 function cleanup() {
                     overlay.remove();
-                    document.removeEventListener('keydown', onKey);
+                    document.removeEventListener('keydown', onKey, true);
                 }
 
                 function onPick(sp) {
@@ -276,6 +299,12 @@ window.WmSpeciesPicker = (function () {
 
                     var groups = splitSpecies(species, filter);
                     var renderedAny = false;
+
+                    if (options.allowUnknown && !filter) {
+                        listEl.appendChild(createSectionHeader('No species assignment'));
+                        listEl.appendChild(createUnknownItem(onPick));
+                        renderedAny = true;
+                    }
 
                     var recent = recentItems(filter);
                     if (recent.length) {
@@ -425,6 +454,7 @@ window.WmSpeciesPicker = (function () {
                 function onKey(e) {
                     if (e.key === 'Escape' || e.key === 'ArrowLeft') {
                         e.preventDefault();
+                        e.stopImmediatePropagation();
                         cancel();
                         return;
                     }
@@ -447,7 +477,7 @@ window.WmSpeciesPicker = (function () {
                         pickCursor();
                     }
                 }
-                document.addEventListener('keydown', onKey);
+                document.addEventListener('keydown', onKey, true);
 
                 mountEl.appendChild(overlay);
 

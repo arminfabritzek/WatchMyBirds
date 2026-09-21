@@ -174,7 +174,15 @@ def test_quick_species_sets_every_axis(seeded):
             "species_key": TARGET_SPECIES,
             "source_kind": "watchmybirds_ui",
             "source_ref": "review:quick-species",
-        }
+        },
+        # Naming a species asserts a bird is in the box; the presence axis is
+        # filled from that answer and tagged so it reads as derived.
+        "bird_presence": {
+            "answer_value": "present",
+            "species_key": None,
+            "source_kind": "watchmybirds_ui",
+            "source_ref": "review:quick-species|derived:species-answer-implies-bird",
+        },
     }
 
 
