@@ -150,9 +150,16 @@ def test_detection_view_dict_defaults_original_present_for_legacy_payloads():
 
 
 def test_detection_modal_renders_preview_download_for_retired_original():
-    app = Flask(__name__, template_folder=str(Path(__file__).resolve().parents[1] / "templates"))
+    from web import view_helpers
+
+    app = Flask(
+        __name__, template_folder=str(Path(__file__).resolve().parents[1] / "templates")
+    )
     app.secret_key = "test"
     app.jinja_env.globals["wikipedia_species_url"] = lambda *_args: None
+    app.jinja_env.globals["build_current_detection_payload"] = (
+        view_helpers.build_current_detection_payload
+    )
     det = {
         "detection_id": 3795,
         "species_key": "Poecile_palustris",

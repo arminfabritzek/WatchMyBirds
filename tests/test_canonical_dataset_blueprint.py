@@ -102,12 +102,165 @@ def test_canonical_dataset_page_is_the_export_navigation_target(
     assert page.status_code == 200
     content = page.get_data(as_text=True)
     assert "Canonical Dataset" in content
-    assert "Ready for another bird?" in content
-    assert 'href="/admin/review"' in content
-    assert 'aria-label="Review the next bird"' in content
+    main_start = content.index('<main class="page">')
+    main_content = content[main_start : content.index("</main>", main_start)]
+    assert 'href="/admin/review"' not in main_content
     appbar = Path("templates/partials/appbar.html").read_text(encoding="utf-8")
     assert 'href="/admin/canonical-dataset"' in appbar
     assert 'href="/admin/groundtruth-export"' not in appbar
+
+
+def test_canonical_dataset_page_shows_honest_readiness_figures(
+    canonical_client,
+) -> None:
+    """The header states what the station can contribute, not a stale count.
+
+    The fixture answers presence, box and species for one detection, so it
+    is both CLS- and OD-ready and leaves nothing needing a box verdict.
+    """
+    client, _ = canonical_client
+
+    page = client.get("/admin/canonical-dataset")
+
+    assert page.status_code == 200
+    content = page.get_data(as_text=True)
+    assert "ready for species training" in content
+    assert "ready for box training" in content
+    assert "need a box verdict" in content
+
+
+def test_dataset_explains_missing_original_without_losing_labels(
+    canonical_client,
+) -> None:
+    client, filename = canonical_client
+    path = PathManager(str(get_config()["OUTPUT_DIR"])).get_original_path(filename)
+    before = client.get("/api/canonical-dataset/preview").get_json()
+    assert "Missing originals block training export" not in client.get(
+        "/admin/canonical-dataset"
+    ).get_data(as_text=True)
+    path.unlink()
+
+    content = client.get("/admin/canonical-dataset").get_data(as_text=True)
+    after = client.get("/api/canonical-dataset/preview").get_json()
+    assert "1 labeled bird is excluded from training export" in content
+    assert "Your corrections are saved." in content
+    assert after["counts"]["facts"] == before["counts"]["facts"]
+    assert after["counts"].get("cls_positive_included", 0) == 0
+
+
+def test_canonical_dataset_page_offers_the_walkthrough_when_verdicts_are_missing(
+    canonical_client,
+) -> None:
+    """A detection with species answered but no box verdict shows the CTA."""
+    client, filename = canonical_client
+    with db_connection.closing_connection() as conn:
+        detection_id = _seed(
+            conn,
+            filename=filename,
+            timestamp=datetime.now().strftime("%Y%m%d_%H%M%S"),
+        )
+    post(
+        client,
+        "/api/labels/answer",
+        {
+            "filename": filename,
+            "detection_id": detection_id,
+            "object_bird_presence": "present",
+            "species_identity": "corrected",
+            "species_key": "Parus_major",
+        },
+    )
+
+    page = client.get("/admin/canonical-dataset")
+
+    content = page.get_data(as_text=True)
+    assert page.status_code == 200
+    assert 'href="/admin/canonical-dataset/box-walkthrough"' in content
+    assert "Go through them" in content
+
+
+def test_box_walkthrough_shows_the_candidate_editor(canonical_client) -> None:
+    """The walkthrough embeds the same bird editor the detail modal uses."""
+    client, filename = canonical_client
+    with db_connection.closing_connection() as conn:
+        detection_id = _seed(
+            conn,
+            filename=filename,
+            timestamp=datetime.now().strftime("%Y%m%d_%H%M%S"),
+        )
+    post(
+        client,
+        "/api/labels/answer",
+        {
+            "filename": filename,
+            "detection_id": detection_id,
+            "object_bird_presence": "present",
+            "species_identity": "corrected",
+            "species_key": "Parus_major",
+        },
+    )
+
+    page = client.get("/admin/canonical-dataset/box-walkthrough")
+
+    assert page.status_code == 200
+    content = page.get_data(as_text=True)
+    assert "data-current-detection=" in content
+    assert "data-bird-editor" in content
+    assert "Box fits" in content
+    assert 'class="btn btn--primary btn--sm"' in content
+    assert content.index('data-editor-action="bbox-verdict"') < content.index('data-editor-action="menu"')
+    assert f"skip={detection_id}" in content
+    assert "/assets/js/species_picker.js?v=" in content
+    assert "/assets/js/gallery_utils.js?v=" in content
+    assert "/assets/js/tile_actions.js?v=" in content
+    assert "initSmartZoom(image)" in content
+
+
+def test_box_walkthrough_is_empty_when_nothing_needs_a_verdict(
+    canonical_client,
+) -> None:
+    """The fixture's one detection already carries a box verdict."""
+    client, _ = canonical_client
+
+    page = client.get("/admin/canonical-dataset/box-walkthrough")
+
+    assert page.status_code == 200
+    content = page.get_data(as_text=True)
+    assert "Nothing is waiting on a box verdict" in content
+    assert "data-current-detection=" not in content
+
+
+def test_box_walkthrough_skip_moves_to_the_next_candidate(canonical_client) -> None:
+    """A skipped detection ID is excluded, but nothing is written for it."""
+    client, filename = canonical_client
+    with db_connection.closing_connection() as conn:
+        detection_id = _seed(
+            conn,
+            filename=filename,
+            timestamp=datetime.now().strftime("%Y%m%d_%H%M%S"),
+        )
+    post(
+        client,
+        "/api/labels/answer",
+        {
+            "filename": filename,
+            "detection_id": detection_id,
+            "object_bird_presence": "present",
+            "species_identity": "corrected",
+            "species_key": "Parus_major",
+        },
+    )
+    with db_connection.closing_connection() as conn:
+        before = conn.execute("SELECT COUNT(*) FROM human_label_facts").fetchone()[0]
+
+    page = client.get(f"/admin/canonical-dataset/box-walkthrough?skip={detection_id}")
+
+    assert page.status_code == 200
+    content = page.get_data(as_text=True)
+    assert "Nothing is waiting on a box verdict" in content
+    with db_connection.closing_connection() as conn:
+        after = conn.execute("SELECT COUNT(*) FROM human_label_facts").fetchone()[0]
+    assert after == before
 
 
 def test_export_page_invites_sharing_without_interrupting_anyone(
@@ -139,7 +292,7 @@ def test_sharing_invitation_never_interrupts_the_operator(canonical_client) -> N
     assert not os.path.exists("templates/partials/training_data_invite.html")
 
 
-def test_canonical_dataset_page_links_to_gallery_when_queue_is_clear(
+def test_canonical_dataset_page_has_no_action_when_no_box_verdict_is_needed(
     canonical_client,
 ) -> None:
     client, _ = canonical_client
@@ -149,8 +302,7 @@ def test_canonical_dataset_page_links_to_gallery_when_queue_is_clear(
     content = page.get_data(as_text=True)
     assert page.status_code == 200
     assert "All caught up" in content
-    assert 'href="/gallery"' in content
-    assert 'aria-label="Open bird gallery"' in content
+    assert 'href="/admin/canonical-dataset/box-walkthrough"' not in content
 
 
 @pytest.mark.parametrize("consume", [True, False])

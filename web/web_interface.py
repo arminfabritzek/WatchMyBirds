@@ -163,6 +163,9 @@ def create_web_interface(detection_manager, system_monitor=None):
     )
     server.jinja_env.globals["BBOX_REVIEW_CORRECT"] = BBOX_REVIEW_CORRECT
     server.jinja_env.globals["BBOX_REVIEW_WRONG"] = BBOX_REVIEW_WRONG
+    server.jinja_env.globals["build_current_detection_payload"] = (
+        view_helpers.build_current_detection_payload
+    )
 
     server.config["MAX_CONTENT_LENGTH"] = 10 * 1024 * 1024 * 1024
 

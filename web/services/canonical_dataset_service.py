@@ -32,6 +32,56 @@ def build_bundle(conn, *, path_resolver: PathResolver) -> CanonicalDataset:
     )
 
 
+def box_walkthrough_candidate_ids(bundle: CanonicalDataset) -> list[int]:
+    """Detections with an answered species but no box verdict yet.
+
+    Derived from the same manifest the page already renders, not a second
+    query: a detection qualifies when its species is answered (the
+    ``cls_positive`` view includes it) and ``od_positive`` names a missing
+    ``bbox_quality`` fact among its blockers — not an unsuitable one, which
+    is already answered and must not reappear. A sibling detection on the
+    same frame still waiting on its own answer also marks this row
+    ``frame_has_unresolved_objects``; that reason does not disqualify the
+    row, since answering its own verdict is still the useful action.
+    """
+    cls_ready_ids = {
+        row["detection_id"]
+        for row in bundle.manifest
+        if row["view"] == "cls_positive" and row["decision"] == "included"
+    }
+    allowed_reasons = {"bbox_quality_unknown", "frame_has_unresolved_objects"}
+    return [
+        int(row["detection_id"])
+        for row in bundle.manifest
+        if row["view"] == "od_positive"
+        and row["decision"] == "excluded"
+        and "bbox_quality_unknown" in row["reasons"]
+        and set(row["reasons"]) <= allowed_reasons
+        and row["detection_id"] in cls_ready_ids
+    ]
+
+
+def needs_box_verdict_count(bundle: CanonicalDataset) -> int:
+    """Count of :func:`box_walkthrough_candidate_ids`."""
+    return len(box_walkthrough_candidate_ids(bundle))
+
+
+def missing_original_bird_count(bundle: CanonicalDataset) -> int:
+    """Count labeled birds with missing media once across both training views."""
+    presence_blockers = {"object_bird_presence_unknown", "object_bird_absent"}
+    return len(
+        {
+            row["detection_id"]
+            for row in bundle.manifest
+            if row["view"] in {"cls_positive", "od_positive"}
+            and row["decision"] == "excluded"
+            and row["detection_id"] is not None
+            and "media_missing" in row["reasons"]
+            and not presence_blockers.intersection(row["reasons"])
+        }
+    )
+
+
 def _json_bytes(value: object) -> bytes:
     return (json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n").encode()
 

@@ -126,9 +126,15 @@ def closing_connection():
 
 
 def fetch_detections_for_gallery(
-    conn, date_iso: str | None = None, limit: int | None = None, order_by: str | None = None
+    conn,
+    date_iso: str | None = None,
+    limit: int | None = None,
+    order_by: str | None = None,
+    detection_ids: list[int] | None = None,
 ) -> list:
-    return _fetch_detections_for_gallery(conn, date_iso, limit=limit, order_by=order_by)
+    return _fetch_detections_for_gallery(
+        conn, date_iso, limit=limit, order_by=order_by, detection_ids=detection_ids
+    )
 
 
 def fetch_active_detection_ids_in_date_range(

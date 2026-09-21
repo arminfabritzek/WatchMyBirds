@@ -15,49 +15,54 @@
             title="Download the current human-label bundle">Download bundle</a>
     </header>
 
-    {% set open_count = bundle.unresolved_detection_ids|length %}
-    <section class="canonical-review{% if not open_count %} canonical-review--complete{% endif %}"
+    <section class="canonical-review{% if not needs_box_verdict_count %} canonical-review--complete{% endif %}"
         aria-labelledby="canonical-review-title">
         <div class="canonical-review__status">
             <span class="canonical-review__led" aria-hidden="true"></span>
-            <span>{% if open_count %}Review queue ready{% else %}Review queue clear{% endif %}</span>
+            <span>{% if needs_box_verdict_count %}Box verdicts pending{% else %}Box verdicts clear{% endif %}</span>
+        </div>
+        <div class="canonical-review__readiness" role="list">
+            <div class="canonical-review__figure" role="listitem">
+                <p class="canonical-review__figure-count">{{ cls_ready_count }}</p>
+                <p class="canonical-review__figure-label">ready for species training</p>
+            </div>
+            <div class="canonical-review__figure" role="listitem">
+                <p class="canonical-review__figure-count">{{ od_ready_count }}</p>
+                <p class="canonical-review__figure-label">ready for box training</p>
+            </div>
+            <div class="canonical-review__figure" role="listitem">
+                <p class="canonical-review__figure-count" aria-label="{{ needs_box_verdict_count }} need a box verdict">{{ needs_box_verdict_count }}</p>
+                <p class="canonical-review__figure-label">need a box verdict</p>
+            </div>
         </div>
         <div class="canonical-review__content">
-            <p class="canonical-review__count" aria-label="{{ open_count }} open boxes">{{ open_count }}</p>
-            <div class="canonical-review__copy">
-                <p class="canonical-review__kicker">{% if open_count %}Ready for another bird?{% else %}All caught up{% endif %}</p>
-                <h2 id="canonical-review-title">
-                    {% if open_count %}Open boxes need a human look{% else %}No open boxes right now{% endif %}
-                </h2>
-                <p>
-                    {% if open_count %}
-                        Confirm the bird, box, or species. Each answer makes the next dataset bundle more useful.
-                    {% else %}
-                        The queue is clear. Enjoy the gallery while the camera finds the next visitor.
-                    {% endif %}
-                </p>
-            </div>
-            {% if open_count %}
-                <a class="btn btn--primary btn--lg canonical-review__action" href="/admin/review"
-                    aria-label="Review the next bird"
-                    title="Open the next bird awaiting review">
-                    Review next bird <span class="canonical-review__arrow" aria-hidden="true">→</span>
+            {% if needs_box_verdict_count %}
+                <p class="canonical-review__kicker">Fully identified birds that no training job can use for boxes yet.</p>
+                <a class="btn btn--primary btn--lg canonical-review__action" href="/admin/canonical-dataset/box-walkthrough"
+                    aria-label="Go through detections that need a box verdict"
+                    title="Confirm or correct the box on each pending detection">
+                    Go through them <span class="canonical-review__arrow" aria-hidden="true">→</span>
                 </a>
             {% else %}
-                <a class="btn btn--secondary btn--lg canonical-review__action" href="/gallery"
-                    aria-label="Open bird gallery"
-                    title="Browse recent bird images">
-                    Open gallery <span class="canonical-review__arrow" aria-hidden="true">→</span>
-                </a>
+                <p class="canonical-review__kicker">All caught up</p>
+                <p>No detection is waiting on a box verdict right now.</p>
             {% endif %}
         </div>
     </section>
+
+    {% if missing_original_bird_count %}
+    <div class="wm-training-export-notice" role="note" aria-label="Missing originals block training export">
+        <strong>{{ missing_original_bird_count }} labeled {{ 'bird is' if missing_original_bird_count == 1 else 'birds are' }} excluded from training export because the original image is missing.</strong>
+        <p>Your corrections are saved. These birds are not included in the training-ready counts above.
+            Reviewing their boxes again will not restore the missing originals.</p>
+    </div>
+    {% endif %}
 
     <dl class="canonical-dataset__summary">
         <div><dt>Bundle</dt><dd><code>{{ bundle.bundle_id[:12] }}</code></dd></div>
         <div><dt>Subjects</dt><dd>{{ bundle.counts.subjects }}</dd></div>
         <div><dt>Facts</dt><dd>{{ bundle.counts.facts }}</dd></div>
-        <div><dt>Open boxes</dt><dd>{{ open_count }}</dd></div>
+        <div><dt>Need a box verdict</dt><dd>{{ needs_box_verdict_count }}</dd></div>
     </dl>
 
     <section class="canonical-dataset__contribute" aria-labelledby="contribute-training-title">

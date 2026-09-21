@@ -467,14 +467,22 @@ def fetch_detections_for_gallery(
     date_str_iso: str | None = None,
     limit: int | None = None,
     order_by: str = "score",
+    detection_ids: list[int] | None = None,
 ) -> list[sqlite3.Row]:
     """
     Returns detection-centric records for gallery display.
+
+    ``detection_ids``, when given, restricts the result to those rows (still
+    subject to the usual gallery-visibility filter) instead of a date range.
     """
     params: list[Any] = []
     where_clauses = [_gallery_visibility_sql("d", "i")]
 
-    if date_str_iso:
+    if detection_ids:
+        placeholders = ",".join("?" for _ in detection_ids)
+        where_clauses.append(f"d.detection_id IN ({placeholders})")
+        params.extend(detection_ids)
+    elif date_str_iso:
         start_ts, end_ts = _day_bounds(date_str_iso)
         where_clauses.append("i.timestamp >= ? AND i.timestamp < ?")
         params.extend([start_ts, end_ts])

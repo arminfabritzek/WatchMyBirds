@@ -1,0 +1,85 @@
+{% extends "base.html" %}
+{% from "components/modal_image_viewer.html" import render_image_viewer %}
+{% from "components/bird_editor_toolbar.html" import render_bird_editor_toolbar %}
+
+{% block title %}Box Walkthrough{% endblock %}
+
+{% block content %}
+<div class="container py-4 box-walkthrough">
+    <header class="box-walkthrough__header">
+        <div>
+            <p class="canonical-dataset__eyebrow">Human-verified training data</p>
+            <h1>Box Walkthrough</h1>
+            {% if det %}
+            <p>One bird at a time. Confirm the box, correct it, or skip — nothing here is required.</p>
+            {% else %}
+            <p>Nothing is waiting on a box verdict right now.</p>
+            {% endif %}
+        </div>
+        <a class="btn btn--secondary" href="/admin/canonical-dataset"
+            aria-label="Back to Canonical Dataset"
+            title="Back to Canonical Dataset">Back to dataset</a>
+    </header>
+
+    {% if det %}
+    <p class="box-walkthrough__remaining">{{ remaining_count }} waiting on a box verdict</p>
+
+    <div class="box-walkthrough__stage wm-box-walkthrough" data-box-walkthrough
+        data-walkthrough-url="/admin/canonical-dataset/box-walkthrough{% if skip_query %}?{{ skip_query }}{% endif %}">
+        <div class="box-walkthrough__image wm-toolbox-host">
+            {{ render_image_viewer(
+            image_url=det.full_path,
+            image_alt=det.common_name,
+            detection_id=det.detection_id,
+            bbox={'x': det.bbox_x, 'y': det.bbox_y, 'w': det.bbox_w, 'h': det.bbox_h},
+            dismissable=false,
+            defer_src=false,
+            show_view_mode=false,
+            interactive_labels=false,
+            can_moderate=can_moderate,
+            current_detection=build_current_detection_payload(det)
+            ) }}
+        </div>
+        {{ render_bird_editor_toolbar(det, can_moderate=can_moderate, box_walkthrough=true) }}
+
+        <div class="box-walkthrough__actions">
+            <a class="btn btn--secondary"
+                href="/admin/canonical-dataset/box-walkthrough?{{ skip_query }}{% if skip_query %}&{% endif %}skip={{ det.detection_id }}"
+                data-box-walkthrough-skip
+                aria-label="Skip this bird for now"
+                title="Leave this bird's box verdict for later">
+                Skip
+            </a>
+        </div>
+    </div>
+    {% else %}
+    <p class="box-walkthrough__empty">Every detection with an answered species also has a box verdict.</p>
+    <a class="btn btn--primary" href="/admin/canonical-dataset"
+        aria-label="Back to Canonical Dataset">Back to dataset</a>
+    {% endif %}
+</div>
+{% endblock %}
+
+{% block scripts %}
+{% if det %}
+<script src="/assets/js/species_picker.js?v=20260920-bird-editor-v5"></script>
+<script src="/assets/js/gallery_utils.js?v=20260922-bbox-label-v4"></script>
+<script src="/assets/js/tile_actions.js?v=20260920-bird-editor-v4"></script>
+<script>
+    (function () {
+        const stage = document.querySelector('[data-box-walkthrough]');
+        if (!stage) return;
+        const image = stage.querySelector('.wm-image-viewer__img');
+        const initialiseViewer = function () {
+            if (image && typeof initSmartZoom === 'function') initSmartZoom(image);
+        };
+        if (image && image.complete) initialiseViewer();
+        else if (image) image.addEventListener('load', initialiseViewer, { once: true });
+        document.addEventListener('wmb:bird-objects-updated', function (event) {
+            if (!stage.contains(event.detail.source)) return;
+            window.location.href = stage.dataset.walkthroughUrl;
+        });
+    })();
+</script>
+{% endif %}
+{% endblock %}

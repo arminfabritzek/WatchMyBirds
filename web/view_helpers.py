@@ -11,6 +11,7 @@ from flask import send_from_directory
 from config import get_config
 from core.species_colours import assign_species_colours
 from utils.species_names import (
+    is_human_unknown_species_source,
     load_common_names,
     resolve_common_name,
     species_key_from_candidates,
@@ -140,6 +141,138 @@ def get_species_key(det: dict | None) -> str:
 
 def get_common_name(species_key: str | None) -> str:
     return resolve_common_name(species_key or UNKNOWN_SPECIES_KEY, COMMON_NAMES)
+
+
+def _detection_has_human_unknown_species(det: dict) -> bool:
+    """Mirror ``detection_modal.html``'s ``has_human_unknown_species`` guard.
+
+    Two independent signals both mean "a person withdrew this species":
+    ``species_source`` in the ``manual_unknown``/``manual_wrong`` set (the
+    canonical human-label facts path), or a legacy ``human_review_state`` of
+    ``reviewed_unknown`` (the Gallery-only review-state overlay). Either one
+    must suppress the species key and the old CLS guess — this is the guard
+    fixed in 461f9918; dropping either branch resurrects a withdrawn species.
+    """
+    if is_human_unknown_species_source(det.get("species_source")):
+        return True
+    return det.get("human_review_state") == "reviewed_unknown"
+
+
+def build_current_detection_payload(det: dict) -> dict:
+    """Build the bird editor's ``current_detection`` payload in Python.
+
+    Single source for the fallback chain that ``detection_modal.html``
+    previously composed as a Jinja literal. Field names, fallback order and
+    the unknown-species guard match that literal exactly; see
+    ``tests/test_detail_modal_unknown_species_head.py`` for the coverage.
+    """
+    has_human_unknown_species = _detection_has_human_unknown_species(det)
+    has_manual_species_review = det.get("species_source") == "manual" and bool(
+        det.get("manual_species_override")
+    )
+    human_review_state = det.get("human_review_state") or "unreviewed"
+
+    if has_human_unknown_species:
+        species_key = None
+    else:
+        species_key = (
+            det.get("human_species_key")
+            or det.get("species_key")
+            or det.get("manual_species_override")
+            or det.get("cls_class_name")
+            or det.get("od_class_name")
+        )
+
+    if has_human_unknown_species:
+        provenance = "human_unknown"
+    elif has_manual_species_review or human_review_state in (
+        "corrected",
+        "reviewed_unknown",
+    ):
+        provenance = "manually_identified"
+    elif human_review_state == "confirmed":
+        provenance = "human_confirmed"
+    else:
+        provenance = "model_proposal"
+
+    detection_id = det.get("detection_id")
+    image_filename = det.get("image_filename") or det.get("original_name") or ""
+
+    return {
+        "detection_id": detection_id,
+        "manual_object_id": None,
+        "object_key": f"detection:{detection_id}",
+        "object_kind": "detection",
+        "image_filename": image_filename,
+        "species_key": species_key,
+        "common_name": det.get("human_common_name") or det.get("common_name"),
+        "species_source": det.get("species_source"),
+        "human_review_state": human_review_state,
+        "formatted_date": det.get("formatted_date"),
+        "formatted_time": det.get("formatted_time"),
+        "species_colour": det.get("species_colour"),
+        "bbox_x": det.get("bbox_x"),
+        "bbox_y": det.get("bbox_y"),
+        "bbox_w": det.get("bbox_w"),
+        "bbox_h": det.get("bbox_h"),
+        "provenance": provenance,
+        "od_class_name": det.get("od_class_name"),
+        "od_confidence": det.get("od_confidence"),
+        "cls_class_name": det.get("cls_class_name"),
+        "cls_confidence": det.get("cls_confidence"),
+        "is_favorite": det.get("is_favorite"),
+        "revision": None,
+    }
+
+
+def build_detection_view_from_gallery_row(det_row: dict) -> dict:
+    """Turn one raw ``fetch_detections_for_gallery`` row into a view dict.
+
+    Mirrors the field derivation Gallery's ``enrich_detection`` performs per
+    row (formatted date/time from the image timestamp, species key and
+    common name, media URLs), minus the whole-day sibling lookup that
+    single-detection surfaces like the box walkthrough do not need.
+    """
+    full_path = det_row.get("relative_path") or det_row.get(
+        "optimized_name_virtual", ""
+    )
+    thumb_virtual = det_row.get("thumbnail_path_virtual")
+    display_url = (
+        f"/uploads/derivatives/thumbs/{thumb_virtual}"
+        if thumb_virtual
+        else f"/uploads/derivatives/optimized/{full_path}"
+    )
+    full_url = f"/uploads/derivatives/optimized/{full_path}"
+    original_url = f"/uploads/originals/{full_path.replace('.webp', '.jpg')}"
+
+    ts = det_row.get("image_timestamp", "") or ""
+    if len(ts) >= 15:
+        date_str = ts[:8]
+        time_str = ts[9:15]
+        formatted_date = f"{date_str[6:8]}.{date_str[4:6]}.{date_str[0:4]}"
+        formatted_time = f"{time_str[0:2]}:{time_str[2:4]}:{time_str[4:6]}"
+    else:
+        formatted_date = ""
+        formatted_time = ""
+
+    species_key = get_species_key(det_row)
+    return build_detection_view_dict(
+        det_row,
+        species_key=species_key,
+        common_name=get_common_name(species_key),
+        formatted_date=formatted_date,
+        formatted_time=formatted_time,
+        gallery_date=date_iso_from_timestamp(ts),
+        siblings=[],
+        sibling_count=det_row.get("sibling_count", 1) or 1,
+        include_decision_state=True,
+        extra={
+            "display_path": display_url,
+            "full_path": full_url,
+            "original_path": original_url,
+            "optimized_path": full_url,
+        },
+    )
 
 
 def compute_auto_rating(od_confidence, cls_confidence, bbox_w, bbox_h):

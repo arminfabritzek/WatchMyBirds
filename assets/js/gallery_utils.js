@@ -36,7 +36,9 @@ function safeSameOriginPath(rawUrl) {
 
 function getViewerScope(el) {
     if (!el || !el.closest) return null;
-    return el.closest('.wm-viewer-scope') || el.closest('.modal');
+    return el.closest('.wm-viewer-scope')
+        || el.closest('.modal')
+        || el.closest('.wm-box-walkthrough');
 }
 
 function getViewerHost(el) {
@@ -1296,28 +1298,123 @@ async function confirmBboxSpecies(event, viewer, box) {
     }
 }
 
-function _renderInteractiveBboxLabels(canvas, img, boxes, geometry, zoomScale) {
+function _positionInteractiveBboxLabel(label, layer, viewer, boxRect) {
+    const viewport = viewer.getBoundingClientRect();
+    const layerRect = layer.getBoundingClientRect();
+    const labelRect = label.getBoundingClientRect();
+    const gap = 10;
+    const inset = 6;
+    const box = {
+        left: layerRect.left + boxRect.x,
+        top: layerRect.top + boxRect.y,
+        right: layerRect.left + boxRect.x + boxRect.w,
+        bottom: layerRect.top + boxRect.y + boxRect.h
+    };
+    const placements = [
+        {
+            name: 'above',
+            space: box.top - viewport.top,
+            fits: box.top - viewport.top >= labelRect.height + gap + inset,
+            left: box.left + ((box.right - box.left) - labelRect.width) / 2,
+            top: box.top - labelRect.height - gap
+        },
+        {
+            name: 'below',
+            space: viewport.bottom - box.bottom,
+            fits: viewport.bottom - box.bottom >= labelRect.height + gap + inset,
+            left: box.left + ((box.right - box.left) - labelRect.width) / 2,
+            top: box.bottom + gap
+        },
+        {
+            name: 'right',
+            space: viewport.right - box.right,
+            fits: viewport.right - box.right >= labelRect.width + gap + inset,
+            left: box.right + gap,
+            top: box.top + ((box.bottom - box.top) - labelRect.height) / 2
+        },
+        {
+            name: 'left',
+            space: box.left - viewport.left,
+            fits: box.left - viewport.left >= labelRect.width + gap + inset,
+            left: box.left - labelRect.width - gap,
+            top: box.top + ((box.bottom - box.top) - labelRect.height) / 2
+        }
+    ];
+    const maxLeft = Math.max(viewport.left + inset, viewport.right - labelRect.width - inset);
+    const maxTop = Math.max(viewport.top + inset, viewport.bottom - labelRect.height - inset);
+    const otherLabels = Array.from(layer.querySelectorAll('.wm-bbox-label')).filter(function (other) {
+        return other !== label;
+    });
+    const positioned = placements.map(function (candidate) {
+        const screenLeft = Math.min(Math.max(candidate.left, viewport.left + inset), maxLeft);
+        const screenTop = Math.min(Math.max(candidate.top, viewport.top + inset), maxTop);
+        const bounds = {
+            left: screenLeft,
+            top: screenTop,
+            right: screenLeft + labelRect.width,
+            bottom: screenTop + labelRect.height
+        };
+        const overlapsBox = bounds.left < box.right + gap
+            && bounds.right > box.left - gap
+            && bounds.top < box.bottom + gap
+            && bounds.bottom > box.top - gap;
+        const overlapsLabel = otherLabels.some(function (other) {
+            const otherRect = other.getBoundingClientRect();
+            return bounds.left < otherRect.right + 4
+                && bounds.right > otherRect.left - 4
+                && bounds.top < otherRect.bottom + 4
+                && bounds.bottom > otherRect.top - 4;
+        });
+        return Object.assign({}, candidate, {
+            screenLeft: screenLeft,
+            screenTop: screenTop,
+            overlapsBox: overlapsBox,
+            overlapsLabel: overlapsLabel
+        });
+    });
+    const placement = positioned.find(function (candidate) {
+        return candidate.fits && !candidate.overlapsBox && !candidate.overlapsLabel;
+    }) || positioned.find(function (candidate) {
+        return candidate.fits && !candidate.overlapsBox;
+    }) || positioned.find(function (candidate) {
+        return !candidate.overlapsBox && !candidate.overlapsLabel;
+    }) || positioned.reduce(function (best, candidate) {
+            return candidate.space > best.space ? candidate : best;
+        });
+
+    label.dataset.placement = placement.name;
+    label.style.left = (placement.screenLeft - layerRect.left) + 'px';
+    label.style.top = (placement.screenTop - layerRect.top) + 'px';
+}
+
+function _renderInteractiveBboxLabels(img, boxes, geometry) {
     const viewer = img.closest('.wm-image-viewer');
     const layer = viewer?.querySelector('.wm-bbox-label-layer');
     if (!layer || viewer.dataset.interactiveLabels !== 'true') return;
 
     layer.replaceChildren();
     layer.hidden = false;
-    layer.style.left = (img.offsetLeft || 0) + 'px';
-    layer.style.top = (img.offsetTop || 0) + 'px';
-    layer.style.width = geometry.elementW + 'px';
-    layer.style.height = geometry.elementH + 'px';
+    layer.style.left = '0';
+    layer.style.top = '0';
+    layer.style.width = viewer.clientWidth + 'px';
+    layer.style.height = viewer.clientHeight + 'px';
     layer.style.transformOrigin = '0 0';
-    layer.style.transform = img.style.transform || '';
+    layer.style.transform = '';
 
     const canModerate = viewer.dataset.canModerate === 'true';
-    const inv = 1 / zoomScale;
+    const imageRect = img.getBoundingClientRect();
+    const layerRect = layer.getBoundingClientRect();
+    const renderedScaleX = imageRect.width / geometry.elementW;
+    const renderedScaleY = imageRect.height / geometry.elementH;
     boxes.forEach(function (rawBox, index) {
         const box = _enrichInteractiveBox(viewer, rawBox);
         if (!box.w || !box.h) return;
-        const x = geometry.contentX + box.x * geometry.contentW;
-        const y = geometry.contentY + box.y * geometry.contentH;
-        const h = box.h * geometry.contentH;
+        const x = imageRect.left - layerRect.left
+            + (geometry.contentX + box.x * geometry.contentW) * renderedScaleX;
+        const y = imageRect.top - layerRect.top
+            + (geometry.contentY + box.y * geometry.contentH) * renderedScaleY;
+        const w = box.w * geometry.contentW * renderedScaleX;
+        const h = box.h * geometry.contentH * renderedScaleY;
         const label = document.createElement('div');
         const state = box.reviewState || 'unreviewed';
         const reviewed = state !== 'unreviewed';
@@ -1326,9 +1423,6 @@ function _renderInteractiveBboxLabels(canvas, img, boxes, geometry, zoomScale) {
             + (box.isCurrent ? ' is-current' : '');
         label.dataset.detectionId = String(box.id || '');
         label.dataset.reviewState = state;
-        label.style.left = x + 'px';
-        label.style.top = Math.max(0, y - (34 * inv)) + 'px';
-        label.style.transform = 'scale(' + inv + ')';
         label.style.setProperty('--bbox-label-colour', resolveBboxColour(box, index));
 
         const statusText = state === 'reviewed_negative'
@@ -1367,6 +1461,12 @@ function _renderInteractiveBboxLabels(canvas, img, boxes, geometry, zoomScale) {
             label.appendChild(pickerButton);
         }
         layer.appendChild(label);
+        _positionInteractiveBboxLabel(label, layer, viewer, {
+            x: x,
+            y: y,
+            w: w,
+            h: h
+        });
     });
 }
 
@@ -1473,8 +1573,8 @@ function drawBoundingBoxes(canvas, img, boxes, currentDetectionId) {
     const labelHeight = 18 * inv;
     const labelPadX = 4 * inv;
     const labelPadY = 2 * inv;
-    const strokeCurrent = 3 * inv;
-    const strokeOther = 2 * inv;
+    const strokeCurrent = 1 * inv;
+    const strokeOther = 0.75 * inv;
 
     // Collect CSS-pixel rects keyed by detection id so the click handler
     // below can hit-test without recomputing. Stored on the canvas DOM
@@ -1551,7 +1651,7 @@ function drawBoundingBoxes(canvas, img, boxes, currentDetectionId) {
     canvas._hitTestBoxes = hitTestBoxes.slice().sort(function (a, b) {
         return a.area - b.area;
     });
-    _renderInteractiveBboxLabels(canvas, img, boxes, geometry, zoomScale);
+    _renderInteractiveBboxLabels(img, boxes, geometry);
 }
 
 // Re-draw boxes on window resize
@@ -1809,7 +1909,7 @@ function applySmartZoom(viewer, img, bx, by, bw, bh) {
     const labelLayer = viewer.querySelector('.wm-bbox-label-layer');
     if (labelLayer) {
         labelLayer.style.transformOrigin = '0 0';
-        labelLayer.style.transform = transformCSS;
+        labelLayer.style.transform = '';
     }
 
 }

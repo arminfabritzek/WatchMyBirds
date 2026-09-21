@@ -24,6 +24,8 @@ from pathlib import Path
 import pytest
 from flask import Flask, render_template_string
 
+from web.view_helpers import build_current_detection_payload
+
 ROOT = Path(__file__).resolve().parents[1]
 
 AI_SPECIES = "Sitta_europaea"
@@ -36,6 +38,9 @@ def _app() -> Flask:
     app.secret_key = "test"
     app.jinja_env.globals["wikipedia_species_url"] = lambda common, key: (
         "https://en.wikipedia.org/wiki/" + str(key).replace("_", " ") if key else None
+    )
+    app.jinja_env.globals["build_current_detection_payload"] = (
+        build_current_detection_payload
     )
     return app
 
@@ -360,6 +365,9 @@ def test_no_wikipedia_link_at_all_for_an_explicitly_unknown_species() -> None:
     app = Flask(__name__, template_folder=str(ROOT / "templates"))
     app.secret_key = "test"
     app.jinja_env.globals["wikipedia_species_url"] = build_species_wikipedia_url
+    app.jinja_env.globals["build_current_detection_payload"] = (
+        build_current_detection_payload
+    )
 
     with app.test_request_context("/gallery/2026-09-20"):
         rendered = render_template_string(
@@ -379,6 +387,9 @@ def test_a_real_species_still_gets_its_wikipedia_link() -> None:
     app = Flask(__name__, template_folder=str(ROOT / "templates"))
     app.secret_key = "test"
     app.jinja_env.globals["wikipedia_species_url"] = build_species_wikipedia_url
+    app.jinja_env.globals["build_current_detection_payload"] = (
+        build_current_detection_payload
+    )
 
     with app.test_request_context("/gallery/2026-09-20"):
         rendered = render_template_string(

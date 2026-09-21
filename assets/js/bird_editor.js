@@ -257,7 +257,8 @@
                     const value = button.dataset.bboxVerdict;
                     const on = view.visible && view.active === value;
                     button.setAttribute('aria-pressed', on ? 'true' : 'false');
-                    button.hidden = !view.visible;
+                    button.hidden = !view.visible || (button.hasAttribute('data-editor-walkthrough-confirm') && mode !== 'browse');
+                    if (button.hasAttribute('data-editor-walkthrough-confirm')) button.disabled = saving || stale;
                     const icon = button.querySelector('[data-bbox-verdict-icon]');
                     if (icon) icon.textContent = on ? '\u2611' : '\u2610';
                 }
@@ -365,6 +366,91 @@
         }
         modal._wmBirdEditorSync = syncLayer;
 
+        function currentZoomScale() {
+            const match = String(img.style.transform || '').match(/scale\(([0-9.]+)\)/);
+            if (!match) return 1;
+            const scale = Number(match[1]);
+            return Number.isFinite(scale) && scale > 0 ? scale : 1;
+        }
+
+        function positionShapeLabel(node, label, occupied, scale) {
+            const viewport = viewer.getBoundingClientRect();
+            const box = node.getBoundingClientRect();
+            const width = label.offsetWidth;
+            const height = label.offsetHeight;
+            const gap = 10;
+            const inset = 6;
+            const candidates = [
+                {
+                    name: 'above', space: box.top - viewport.top,
+                    fits: box.top - viewport.top >= height + gap + inset,
+                    left: box.left + (box.width - width) / 2,
+                    top: box.top - height - gap
+                },
+                {
+                    name: 'below', space: viewport.bottom - box.bottom,
+                    fits: viewport.bottom - box.bottom >= height + gap + inset,
+                    left: box.left + (box.width - width) / 2,
+                    top: box.bottom + gap
+                },
+                {
+                    name: 'right', space: viewport.right - box.right,
+                    fits: viewport.right - box.right >= width + gap + inset,
+                    left: box.right + gap,
+                    top: box.top + (box.height - height) / 2
+                },
+                {
+                    name: 'left', space: box.left - viewport.left,
+                    fits: box.left - viewport.left >= width + gap + inset,
+                    left: box.left - width - gap,
+                    top: box.top + (box.height - height) / 2
+                }
+            ];
+            const maxLeft = Math.max(viewport.left + inset, viewport.right - width - inset);
+            const maxTop = Math.max(viewport.top + inset, viewport.bottom - height - inset);
+            const positioned = candidates.map(function (candidate) {
+                const left = Math.min(Math.max(candidate.left, viewport.left + inset), maxLeft);
+                const top = Math.min(Math.max(candidate.top, viewport.top + inset), maxTop);
+                const bounds = { left: left, top: top, right: left + width, bottom: top + height };
+                const overlapsBox = bounds.left < box.right + gap
+                    && bounds.right > box.left - gap
+                    && bounds.top < box.bottom + gap
+                    && bounds.bottom > box.top - gap;
+                const overlapsLabel = occupied.some(function (other) {
+                    return bounds.left < other.right + 4
+                        && bounds.right > other.left - 4
+                        && bounds.top < other.bottom + 4
+                        && bounds.bottom > other.top - 4;
+                });
+                return Object.assign({}, candidate, {
+                    left: left, top: top, bounds: bounds,
+                    overlapsBox: overlapsBox, overlapsLabel: overlapsLabel
+                });
+            });
+            const previousPlacement = label.dataset.placement;
+            const placement = positioned.find(function (candidate) {
+                return candidate.name === previousPlacement
+                    && !candidate.overlapsBox && !candidate.overlapsLabel;
+            }) || positioned.find(function (candidate) {
+                return candidate.fits && !candidate.overlapsBox && !candidate.overlapsLabel;
+            }) || positioned.find(function (candidate) {
+                return candidate.fits && !candidate.overlapsBox;
+            }) || positioned.find(function (candidate) {
+                return !candidate.overlapsBox && !candidate.overlapsLabel;
+            }) || positioned.reduce(function (best, candidate) {
+                return candidate.space > best.space ? candidate : best;
+            });
+            const inverse = 1 / scale;
+            label.dataset.placement = placement.name;
+            label.style.left = ((placement.left - box.left) / scale) + 'px';
+            label.style.top = ((placement.top - box.top) / scale) + 'px';
+            label.style.right = 'auto';
+            label.style.bottom = 'auto';
+            label.style.transformOrigin = '0 0';
+            label.style.transform = 'scale(' + inverse + ')';
+            occupied.push(placement.bounds);
+        }
+
         function point(event) {
             const rect = layer.getBoundingClientRect();
             const g = geometry();
@@ -380,7 +466,16 @@
 
         function positionShapes() {
             const g = geometry();
-            layer.querySelectorAll('[data-editor-object-key]').forEach(function (node) {
+            const scale = currentZoomScale();
+            const nodes = Array.from(layer.querySelectorAll('[data-editor-object-key]'));
+            const inverse = 1 / scale;
+            layer.style.setProperty('--wm-bird-editor-stroke', inverse + 'px');
+            layer.style.setProperty('--wm-bird-editor-soft-stroke', (0.75 * inverse) + 'px');
+            layer.style.setProperty('--wm-bird-editor-radius', (3 * inverse) + 'px');
+            layer.style.setProperty('--wm-bird-editor-focus', (2 * inverse) + 'px');
+            layer.style.setProperty('--wm-bird-editor-glow', (14 * inverse) + 'px');
+            layer.style.setProperty('--wm-bird-editor-handle-scale', String(inverse));
+            nodes.forEach(function (node) {
                 const item = (draft && node.dataset.editorObjectKey === draft.objectKey)
                     ? draft
                     : objects.find(function (candidate) {
@@ -391,8 +486,11 @@
                 node.style.top = (g.contentY + item.bbox.y * g.contentH) + 'px';
                 node.style.width = (item.bbox.w * g.contentW) + 'px';
                 node.style.height = (item.bbox.h * g.contentH) + 'px';
-                node.classList.toggle('is-label-inside', g.contentY + item.bbox.y * g.contentH < 36);
-                node.classList.toggle('is-label-right', item.bbox.x + item.bbox.w > 0.78);
+            });
+            const occupied = [];
+            nodes.forEach(function (node) {
+                const label = node.querySelector('.wm-bird-editor__box-label');
+                if (label) positionShapeLabel(node, label, occupied, scale);
             });
         }
 
@@ -562,7 +660,6 @@
             if (!requireAuth()) return;
             const item = current();
             if (!item) return;
-            forceFull();
             initialDraft = clone(item);
             draft = clone(item);
             mode = 'edit';
@@ -1189,6 +1286,10 @@
         });
         window.addEventListener('resize', syncLayer);
         new MutationObserver(syncLayer).observe(img, { attributes: true, attributeFilter: ['style'] });
+        function syncFinishedTransform(event) {
+            if (event.target === img && event.propertyName === 'transform') syncLayer();
+        }
+        img.addEventListener('transitionend', syncFinishedTransform);
         img.addEventListener('load', syncLayer);
         /* Geometry can also change without touching the image's own style
            attribute or the window size - maximize toggles a class on an
@@ -1233,4 +1334,7 @@
         if (event.target.classList.contains('gallery-modal')) setup(event.target);
     });
     document.querySelectorAll('.gallery-modal').forEach(setup);
+    // Non-modal container: the box walkthrough embeds the same editor in a
+    // full page rather than a Bootstrap modal, so it is set up on load.
+    document.querySelectorAll('.wm-box-walkthrough').forEach(setup);
 })();

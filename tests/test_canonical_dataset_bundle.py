@@ -14,6 +14,9 @@ from core.human_label_core import HumanAnswer, LabelProvenance, record_human_ans
 from utils.db import connection as db_connection
 from utils.path_manager import PathManager
 from web.services.canonical_dataset_service import (
+    box_walkthrough_candidate_ids,
+    missing_original_bird_count,
+    needs_box_verdict_count,
     render_canonical_bundle_to_path,
     write_canonical_bundle,
 )
@@ -111,6 +114,19 @@ def canonical_case(monkeypatch: pytest.MonkeyPatch, tmp_path):
 
 def _jsonl(archive: zipfile.ZipFile, name: str) -> list[dict]:
     return [json.loads(line) for line in archive.read(name).decode().splitlines()]
+
+
+def test_missing_original_count_deduplicates_views_and_ignores_unanswered_birds(
+    canonical_case,
+) -> None:
+    conn, pm, *_ = canonical_case
+    before = build_canonical_dataset(conn, media_exists=lambda _: True)
+    assert missing_original_bird_count(before) == 0
+
+    # Two labeled birds, one unanswered sibling and a negative image.
+    missing = build_canonical_dataset(conn, media_exists=lambda _: False)
+    assert missing_original_bird_count(missing) == 2
+    assert needs_box_verdict_count(missing) == 0
 
 
 def test_bundle_is_deterministic_and_export_is_read_only(
@@ -226,6 +242,89 @@ def test_resolving_sibling_makes_complete_od_frame_eligible(canonical_case) -> N
 
     assert decision["decision"] == "included"
     assert decision["reasons"] == ["explicit_object_bird_and_suitable_bbox"]
+
+
+def test_box_walkthrough_candidates_need_species_and_no_bbox_verdict(
+    canonical_case,
+) -> None:
+    """The 260-row gap: species answered, box verdict never asked.
+
+    ``cls_ids[0]`` has a species but an already-answered ``unsuitable``
+    verdict, so it must not reappear. ``partial_ids[0]`` has a suitable
+    verdict but only an ``unknown`` species, so it never qualified either.
+    Neither seeded fixture detection is a candidate. Answering only species
+    on the untouched sibling, ``partial_ids[1]``, is what creates one.
+    """
+    conn, pm, provenance, partial_ids, negative_ids, cls_ids = canonical_case
+    bundle = build_canonical_dataset(
+        conn, media_exists=lambda name: pm.get_original_path(name).is_file()
+    )
+
+    assert box_walkthrough_candidate_ids(bundle) == []
+    assert needs_box_verdict_count(bundle) == 0
+
+    record_human_answer(
+        conn,
+        HumanAnswer(
+            image_filename="20260810_090000_partial.jpg",
+            detection_id=partial_ids[1],
+            object_bird_presence="present",
+            species_identity="corrected",
+            species_key="Parus_major",
+        ),
+        provenance,
+    )
+    conn.commit()
+
+    bundle = build_canonical_dataset(
+        conn, media_exists=lambda name: pm.get_original_path(name).is_file()
+    )
+
+    assert box_walkthrough_candidate_ids(bundle) == [partial_ids[1]]
+    assert needs_box_verdict_count(bundle) == 1
+
+
+def test_box_walkthrough_candidate_survives_an_unresolved_sibling(
+    canonical_case,
+) -> None:
+    """A frame-mate still missing its own answer must not hide this row.
+
+    ``partial_ids[0]`` (the sibling detection on the same frame) already
+    carries a suitable box verdict but no species, so it is not itself
+    OD-complete for the frame. That leaves ``frame_has_unresolved_objects``
+    riding along with ``bbox_quality_unknown`` on ``partial_ids[1]``'s
+    od_positive reasons. That extra reason must not disqualify the row:
+    answering its own box verdict is still useful, independent of the
+    sibling.
+    """
+    conn, pm, provenance, partial_ids, *_ = canonical_case
+    record_human_answer(
+        conn,
+        HumanAnswer(
+            image_filename="20260810_090000_partial.jpg",
+            detection_id=partial_ids[1],
+            object_bird_presence="present",
+            species_identity="corrected",
+            species_key="Parus_major",
+        ),
+        provenance,
+    )
+    conn.commit()
+
+    bundle = build_canonical_dataset(
+        conn, media_exists=lambda name: pm.get_original_path(name).is_file()
+    )
+    od_row = next(
+        row
+        for row in bundle.manifest
+        if row["view"] == "od_positive" and row["detection_id"] == partial_ids[1]
+    )
+
+    assert set(od_row["reasons"]) == {
+        "bbox_quality_unknown",
+        "frame_has_unresolved_objects",
+    }
+    assert box_walkthrough_candidate_ids(bundle) == [partial_ids[1]]
 
 
 def test_explicit_transfer_writes_the_same_bundle_bytes(

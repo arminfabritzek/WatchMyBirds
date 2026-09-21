@@ -496,7 +496,8 @@ def test_review_modal_uses_quick_review_layout():
     gallery_js = _read("assets/js/gallery_utils.js")
     assert "function getViewerScope(el)" in gallery_js
     assert "function isReviewViewerScope(scope)" in gallery_js
-    assert "el.closest('.wm-viewer-scope') || el.closest('.modal')" in gallery_js
+    assert "el.closest('.wm-viewer-scope')" in gallery_js
+    assert "el.closest('.modal')" in gallery_js
     assert "'wmb_review_bbox_pref'" in gallery_js
     assert "'wmb_review_zoom_pref'" in gallery_js
     toolbox = _read("templates/partials/tile_toolbox.html")
@@ -591,6 +592,7 @@ def test_gallery_utils_cache_key_reaches_every_image_surface():
         "templates/edit.html",
         "templates/orphans.html",
         "templates/review_grid.html",
+        "templates/canonical_dataset_box_walkthrough.html",
         "templates/species.html",
         "templates/species_overview.html",
         "templates/stream.html",
@@ -599,7 +601,62 @@ def test_gallery_utils_cache_key_reaches_every_image_surface():
     )
 
     for template in templates:
-        assert "gallery_utils.js?v=20260920-bird-editor-v3" in _read(template), template
+        assert "gallery_utils.js?v=20260922-bbox-label-v4" in _read(template), template
+
+
+def test_offered_box_labels_choose_visible_space_around_the_box():
+    """Interactive species controls must not always cover the box at top-left."""
+    js = _read("assets/js/gallery_utils.js")
+
+    assert "function _positionInteractiveBboxLabel" in js
+    assert "name: 'above'" in js
+    assert "name: 'below'" in js
+    assert "name: 'right'" in js
+    assert "name: 'left'" in js
+    assert "candidate.space > best.space" in js
+    assert "label.dataset.placement = placement.name" in js
+    assert "viewport.right - labelRect.width - inset" in js
+    assert "candidate.fits && !candidate.overlapsBox && !candidate.overlapsLabel" in js
+    assert "layer.style.transform = '';" in js
+    assert "const renderedScaleX = imageRect.width / geometry.elementW;" in js
+    assert "labelLayer.style.transform = '';" in js
+
+    css = _read("assets/design-system.css")
+    assert "@media (hover: hover) and (pointer: fine)" in css
+    assert ".wm-bbox-label__confirm:hover" in css
+    assert ".wm-bbox-label__picker:hover" in css
+    assert "border: 1px solid #f5c84c" in css
+    assert "const strokeCurrent = 1 * inv;" in js
+    assert "const strokeOther = 0.75 * inv;" in js
+
+    editor = _read("assets/js/bird_editor.js")
+    assert "function positionShapeLabel" in editor
+    assert "const previousPlacement = label.dataset.placement;" in editor
+    assert "candidate.name === previousPlacement" in editor
+    assert "img.addEventListener('transitionend', syncFinishedTransform);" in editor
+    assert "candidate.fits && !candidate.overlapsBox && !candidate.overlapsLabel" in editor
+    assert "--wm-bird-editor-stroke" in editor
+    assert "--wm-bird-editor-soft-stroke" in editor
+    assert "label.style.transform = 'scale(' + inverse + ')'" in editor
+    assert "button.wm-bird-editor__box-label-name:hover" in css
+    assert ".wm-bird-editor__box-label-picker:hover" in css
+
+
+def test_adjust_box_preserves_focus_and_handles_keep_screen_size():
+    editor = _read("assets/js/bird_editor.js")
+    css = _read("assets/design-system.css")
+    begin_edit = editor.split("function beginEdit()", 1)[1].split(
+        "function beginAdd()", 1
+    )[0]
+    begin_add = editor.split("function beginAdd()", 1)[1].split(
+        "function cancelEdit", 1
+    )[0]
+
+    assert "forceFull();" not in begin_edit
+    assert "forceFull();" in begin_add
+    assert "--wm-bird-editor-handle-scale" in editor
+    assert "transform: scale(var(--wm-bird-editor-handle-scale, 1));" in css
+    assert "transform-origin: center;" in css
 
 
 def test_no_bird_js_fallback_is_surface_agnostic():
@@ -672,6 +729,7 @@ def test_tile_action_cache_key_reaches_every_image_surface():
         "templates/edit.html",
         "templates/orphans.html",
         "templates/review_grid.html",
+        "templates/canonical_dataset_box_walkthrough.html",
         "templates/species.html",
         "templates/species_overview.html",
         "templates/stream.html",
@@ -681,6 +739,12 @@ def test_tile_action_cache_key_reaches_every_image_surface():
 
     for template in templates:
         assert "tile_actions.js?v=20260920-bird-editor-v4" in _read(template), template
+
+
+def test_box_walkthrough_is_a_shared_viewer_scope():
+    gallery = _read("assets/js/gallery_utils.js")
+
+    assert "el.closest('.wm-box-walkthrough')" in gallery
 
 
 def test_bird_editor_keeps_selection_confirmation_and_picker_separate():

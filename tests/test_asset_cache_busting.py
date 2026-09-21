@@ -21,8 +21,8 @@ _EDITOR = _ROOT / "assets/js/bird_editor.js"
 
 # Update BOTH when bird_editor.js changes: bump the ?v= token in base.html,
 # then paste the digest the failure message prints.
-_EXPECTED_EDITOR_DIGEST = "ee99517fb25dbc44"
-_EXPECTED_TOKEN = "20260921-box-verdict-in-view-v8"
+_EXPECTED_EDITOR_DIGEST = "80d328653b09f56d"
+_EXPECTED_TOKEN = "20260923-focus-edit-v13"
 
 
 def _digest(path: Path) -> str:

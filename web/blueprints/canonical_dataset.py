@@ -2,9 +2,18 @@
 
 from __future__ import annotations
 
-from flask import Blueprint, jsonify, render_template, send_file
+from flask import (
+    Blueprint,
+    jsonify,
+    redirect,
+    render_template,
+    request,
+    send_file,
+    session,
+)
 
 from utils.path_manager import PathManager
+from web import view_helpers
 from web.blueprints.auth import login_required
 from web.services import canonical_dataset_service, db_service
 
@@ -42,6 +51,64 @@ def canonical_dataset_page():
         bundle=bundle,
         included=[row for row in bundle.manifest if row["decision"] == "included"],
         excluded=[row for row in bundle.manifest if row["decision"] == "excluded"],
+        cls_ready_count=len(bundle.classifier_ready),
+        od_ready_count=len(bundle.coco["annotations"]),
+        missing_original_bird_count=canonical_dataset_service.missing_original_bird_count(
+            bundle
+        ),
+        needs_box_verdict_count=canonical_dataset_service.needs_box_verdict_count(
+            bundle
+        ),
+    )
+
+
+@canonical_dataset_bp.route("/admin/canonical-dataset/box-walkthrough")
+@login_required
+def box_walkthrough_page():
+    """One detection at a time: confirm or correct its box, then advance.
+
+    Reachable only from the dataset page's gap figure — never a queue with
+    a claim on the operator's attention. ``skip`` names detection IDs to
+    pass over without writing anything, so a skipped row can reappear on
+    a later visit but not immediately in the same pass.
+    """
+    bundle, _ = _build()
+    candidate_ids = canonical_dataset_service.box_walkthrough_candidate_ids(bundle)
+    skipped = {
+        int(value) for value in request.args.getlist("skip") if value.strip().isdigit()
+    }
+    remaining = [
+        detection_id for detection_id in candidate_ids if detection_id not in skipped
+    ]
+
+    if not remaining:
+        return render_template(
+            "canonical_dataset_box_walkthrough.html",
+            det=None,
+            remaining_count=0,
+        )
+
+    with db_service.closing_connection() as conn:
+        rows = db_service.fetch_detections_for_gallery(
+            conn, detection_ids=[remaining[0]], order_by="time"
+        )
+    if not rows:
+        # The candidate vanished between listing and fetch (deleted,
+        # trashed) — treat it like a skip and try the next one.
+        skip_args = [str(value) for value in sorted(skipped | {remaining[0]})]
+        return redirect(
+            "/admin/canonical-dataset/box-walkthrough?"
+            + "&".join(f"skip={value}" for value in skip_args)
+        )
+
+    det = view_helpers.build_detection_view_from_gallery_row(dict(rows[0]))
+    skip_query = "&".join(f"skip={value}" for value in sorted(skipped))
+    return render_template(
+        "canonical_dataset_box_walkthrough.html",
+        det=det,
+        can_moderate=bool(session.get("authenticated")),
+        remaining_count=len(remaining),
+        skip_query=skip_query,
     )
 
 

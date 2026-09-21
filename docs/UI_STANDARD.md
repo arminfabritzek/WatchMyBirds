@@ -138,10 +138,13 @@ detail modal. It is not a separate labeling mode or page.
    bird` is the sole blank-canvas exception: an authenticated operator may
    draw one manual object on an existing stored image. It creates explicit
    manual object evidence, never a detector proposal or biological event.
-2. The full image is visible while editing. Hovering and dragging a side moves
-   that side; corners move two sides; dragging inside moves the whole box.
-3. Geometry stays inside the image and retains a visible minimum size. The
-   shared math contract lives in `assets/js/bbox_editor_math.js`.
+2. `Adjust box` preserves the current `Full` or `Focus` view, and either view
+   remains selectable during the edit. `Add missing bird` switches to `Full`
+   so the complete drawing canvas is visible. Hovering and dragging a side
+   moves that side; corners move two sides; dragging inside moves the whole box.
+3. Geometry stays inside the image and retains a visible minimum size. Resize
+   handles compensate for the Focus transform so their on-screen size remains
+   stable. The shared math contract lives in `assets/js/bbox_editor_math.js`.
 4. Nothing is persisted during dragging. `Save box` explicitly records a
    corrected, suitable box through `/api/labels/answer`; `Cancel` and `Escape`
    discard the edit.
@@ -163,6 +166,15 @@ detail modal. It is not a separate labeling mode or page.
    Later saves append revisions only for the changed geometry/species axes.
    They do not assert bbox quality, image completeness, event approval, or any
    sibling fact. Manual objects carry no detector/classifier model or score.
+10. When `original_present = 0`, the shared editor shows a persistent
+    `wm-training-export-notice` above its controls. It explains that corrections
+    are saved but cannot be exported for training without the original. The
+    notice never covers the image or disables editing. The dataset page uses
+    the same notice style to count distinct labeled birds whose training views
+    are excluded for missing media; these are separate from pending box verdicts.
+11. In the Box Walkthrough, `Box fits` is also a direct primary action in the
+    editor rail. It records the current box verdict through the shared editor
+    action and advances only after the save succeeds.
 
 ## 0e. Offered-Box Species Confirmation (binding)
 

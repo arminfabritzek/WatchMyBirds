@@ -1,8 +1,15 @@
 {# Shared, fixed control rail for every detection-backed detail modal. #}
-{% macro render_bird_editor_toolbar(det, can_moderate=false) %}
+{% macro render_bird_editor_toolbar(det, can_moderate=false, box_walkthrough=false) %}
 {% set image_filename = det.image_filename | default(det.original_name | default('', true), true) %}
 <div class="wm-bird-editor" data-bird-editor data-filename="{{ image_filename }}"
     data-can-moderate="{{ 'true' if can_moderate else 'false' }}">
+    {% if det.original_present is defined and det.original_present == 0 %}
+    <div class="wm-training-export-notice" role="note" aria-label="Training export unavailable">
+        <strong>Not available for training export</strong>
+        <p>The original image is missing. Species and box corrections are saved,
+            but cannot currently be exported as training data.</p>
+    </div>
+    {% endif %}
     <div class="wm-bird-editor__toolbar" role="toolbar" aria-label="Bird editor">
         <div class="wm-view-mode-toggle wm-view-mode-toggle--editor smart-zoom-toggle"
             role="group" aria-label="Image view" data-view-mode="focus">
@@ -29,13 +36,23 @@
         </span>
 
         <div class="wm-bird-editor__actions">
+            {% if box_walkthrough %}
+            <button type="button" class="btn btn--primary btn--sm"
+                data-editor-action="bbox-verdict" data-bbox-verdict="suitable"
+                data-editor-walkthrough-confirm
+                aria-label="Confirm this box fits the bird"
+                title="Confirm this box and move to the next bird"
+                {% if not can_moderate %}aria-disabled="true" data-login-required="true"{% endif %}>
+                Box fits
+            </button>
+            {% endif %}
             <button type="button" class="btn btn--secondary btn--sm"
                 data-editor-action="adjust" title="Move or resize the selected bird's box"
                 aria-label="Adjust box"
                 {% if not can_moderate %}aria-disabled="true" data-login-required="true"{% endif %}>
                 Adjust box
             </button>
-            <button type="button" class="btn btn--primary btn--sm"
+            <button type="button" class="btn {{ 'btn--secondary' if box_walkthrough else 'btn--primary' }} btn--sm"
                 data-editor-action="add" title="Draw a box for a bird that was missed"
                 aria-label="Add missing bird"
                 {% if not can_moderate %}aria-disabled="true" data-login-required="true"{% endif %}>
