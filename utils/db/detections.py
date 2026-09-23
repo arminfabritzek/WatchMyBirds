@@ -132,6 +132,25 @@ def _gallery_visibility_sql(det_alias: str = "d", image_alias: str = "i") -> str
     """
 
 
+def is_detection_visible_in_gallery(
+    conn: sqlite3.Connection, detection_id: int, min_score: float = 0.0
+) -> bool:
+    """Apply the gallery's visibility policy to one persisted detection."""
+    row = conn.execute(
+        f"""
+        SELECT 1
+        FROM detections d
+        JOIN images i ON i.filename = d.image_filename
+        WHERE d.detection_id = ?
+          AND {_gallery_visibility_sql("d", "i")}
+          AND COALESCE(d.score, 0.0) >= ?
+        LIMIT 1
+        """,
+        (detection_id, min_score),
+    ).fetchone()
+    return row is not None
+
+
 def _companion_visibility_sql(det_alias: str = "d", image_alias: str = "i") -> str:
     """Visibility policy for companion boxes inside the detail modal.
 
@@ -940,7 +959,9 @@ def fetch_sibling_detections(
     """
     cur = conn.execute(query, (image_filename,))
     rows: list[sqlite3.Row | dict[str, object]] = list(cur.fetchall())
-    rows.extend(_fetch_manual_companions(conn, [image_filename]).get(image_filename, []))
+    rows.extend(
+        _fetch_manual_companions(conn, [image_filename]).get(image_filename, [])
+    )
     return rows
 
 

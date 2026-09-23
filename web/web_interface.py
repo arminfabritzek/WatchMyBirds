@@ -250,6 +250,10 @@ def create_web_interface(detection_manager, system_monitor=None):
             view_helpers.refresh_common_names(
                 valid_updates["SPECIES_COMMON_NAME_LOCALE"]
             )
+        if any(key.startswith("MQTT_") for key in valid_updates):
+            mqtt_service = getattr(detection_manager, "mqtt_detection_service", None)
+            if mqtt_service is not None:
+                mqtt_service.settings_changed()
 
     init_api_v1(
         server,

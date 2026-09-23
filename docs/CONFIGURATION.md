@@ -116,6 +116,81 @@ changes.
 | `TELEGRAM_BOT_TOKEN` | — | Bot token (env-only, never in settings.yaml) |
 | `TELEGRAM_CHAT_ID` | — | Chat ID for notifications |
 
+### MQTT detection events
+
+MQTT is off by default and independent of Telegram. Configure it in
+**Settings → Notifications**. These are runtime settings in
+`OUTPUT_DIR/settings.yaml`; environment variables with the same names can
+provide boot defaults. The Settings UI never echoes the saved MQTT password.
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `MQTT_ENABLED` | `False` | Publish alert-eligible, classified bird detections |
+| `MQTT_HOST` | empty | Broker hostname or IP, as seen by WatchMyBirds |
+| `MQTT_PORT` | `1883` | Broker TCP port (often `8883` with TLS) |
+| `MQTT_USERNAME` | empty | Optional broker username |
+| `MQTT_PASSWORD` | empty | Optional broker password; blank UI field keeps saved value, checkbox clears it |
+| `MQTT_TLS` | `False` | TLS with system certificate validation |
+| `MQTT_TOPIC_PREFIX` | `watchmybirds` | Topic path prefix; no MQTT wildcards |
+| `MQTT_IMAGE_BASE_URL` | empty | HTTP(S) base URL that Node-RED can reach, e.g. `http://192.168.1.20:8050` |
+
+Enabling MQTT requires a broker host and image base URL. If WatchMyBirds is
+behind a reverse proxy with a path prefix, include that path in the base URL.
+The image route itself is public; grant network access only to clients that
+should fetch bird images. Check an actual event URL from the consumer's
+network. `localhost` or a Docker-only hostname usually points to the wrong
+machine there.
+
+Each successfully saved, catalog-known bird detection publishes one JSON
+event on `<MQTT_TOPIC_PREFIX>/detection` only if it passes the same visibility
+policy as the Gallery (including the normal gallery score threshold).
+Review-only detections, such as `species_review` or `uncertain`, do not publish.
+Example (illustrative):
+
+```json
+{
+  "event": "bird_detection",
+  "event_type": "bird_detection",
+  "detection_id": 1234,
+  "species": "Great Tit",
+  "scientific_name": "Parus major",
+  "confidence": 0.94,
+  "timestamp": "2026-09-19T09:42:03+00:00",
+  "image_url": "http://192.168.1.20:8050/uploads/derivatives/thumbs/2026-09-19/20260919_114203_000000_crop_0.webp"
+}
+```
+
+`confidence` is the combined detection/classification score stored with the
+detection. `timestamp` is capture time converted to UTC. `detection_id`
+identifies the local database row; consumers can pair it with a unique topic
+prefix per station to discard possible QoS 1 duplicates. A `station` field is
+included only when `STATION_NAME` is configured. No image bytes are sent over
+MQTT. The URL points to a regenerable bird crop.
+
+Events use QoS 1 and are not retained. They are best-effort: broker outages,
+a full queue, or process shutdown can lose an event; QoS 1 may duplicate one.
+The app does not replay historical detections. Broker networking runs off the
+detection thread with reconnect delays. V1 has no Last Will/online-status
+topic or Home Assistant discovery. Home Assistant can use an MQTT trigger or
+a manually configured MQTT Event entity (`event_type`); Node-RED can subscribe
+to the topic directly.
+
+Subscribe from the consumer machine with Mosquitto clients:
+
+```sh
+mosquitto_sub -h BROKER_HOST -p 1883 -t 'watchmybirds/detection' -v
+```
+
+Supply `-u USER -P PASSWORD` and TLS options if required. After an eligible
+bird detection, open the received `image_url` from the Node-RED host (for
+example, `curl -I URL`). HTTP 200 confirms that the consumer can fetch it.
+
+The MQTT transport accepts generic topic/payload messages; only the outbound
+bird producer is wired in V1. Future MQTT sensor input can add a subscriber
+and domain mapping without changing Telegram or the detection event format.
+Sensor storage, Home Assistant discovery, PTZ control, and internal messaging
+are outside this release.
+
 ### Security
 
 | Variable | Default | Description |

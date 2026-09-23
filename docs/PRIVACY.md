@@ -1,9 +1,11 @@
 # Privacy
 
-WatchMyBirds runs entirely on your Raspberry Pi. Nothing about your bird
-activity, images, or detections ever leaves the device.
+WatchMyBirds runs on your Raspberry Pi. Bird activity, images, and detections
+stay there unless you explicitly enable an outbound integration such as
+Telegram or MQTT. MQTT sends detection metadata and an image URL to the broker
+you configure; a consumer that can reach WatchMyBirds can fetch that image.
 
-There is exactly **one** piece of optional outbound traffic: a voluntary
+The separate optional traffic to the WatchMyBirds operator is a voluntary
 daily heartbeat that helps us understand installation activity and software adoption. **It is off by
 default**, and you can enable it during initial password setup or in
 **Settings → Privacy** in your running install.

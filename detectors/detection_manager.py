@@ -33,6 +33,7 @@ from detectors.services.classification_service import ClassificationService
 from detectors.services.crop_service import CropService
 from detectors.services.decision_policy_service import DecisionPolicyService
 from detectors.services.detection_service import DetectionService
+from detectors.services.mqtt_detection_service import MqttDetectionService
 from detectors.services.scoring_pipeline import ScoringResult, compute_detection_signals
 from detectors.services.temporal_decision_service import TemporalDecisionService
 from logging_config import get_logger
@@ -236,6 +237,7 @@ class DetectionManager:
         except Exception:  # noqa: BLE001 — wizard registration is optional
             logger.debug("Empirical-probe wizard registration skipped")
         self.notification_service = NotificationService(common_names=self.common_names)
+        self.mqtt_detection_service = MqttDetectionService()
         self.persistence_service = PersistenceService(
             ptz_controller=self.auto_ptz_controller
         )
@@ -323,6 +325,7 @@ class DetectionManager:
     def start(self) -> None:
         """Starts the DetectionManager."""
         self.stop_event.clear()
+        self.mqtt_detection_service.start()
         self.frame_thread.start()
         self.detection_thread.start()
         self.processing_thread.start()
@@ -383,6 +386,7 @@ class DetectionManager:
     def stop(self) -> None:
         """Stops the DetectionManager."""
         self.stop_event.set()
+        self.mqtt_detection_service.stop()
 
         for thread in [
             self.frame_thread,
@@ -1460,6 +1464,17 @@ class DetectionManager:
                             if det_result.thumbnail_path
                             else None
                         )
+
+                    if notify_eligible and cls_name and det_result.success:
+                        try:
+                            self.mqtt_detection_service.publish_detection(
+                                result=det_result,
+                                latin_name=cls_name,
+                                score=score,
+                                capture_time=capture_time,
+                            )
+                        except Exception:
+                            logger.warning("MQTT event preparation failed")
 
                 except Exception as e:
                     logger.error(f"PersistenceService.save_detection error: {e}")

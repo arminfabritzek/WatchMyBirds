@@ -15,7 +15,39 @@ from utils.db.detections import (
     fetch_random_favorites,
     fetch_sibling_detections,
     fetch_species_story_board_candidates,
+    is_detection_visible_in_gallery,
 )
+
+
+def test_mqtt_gallery_gate_excludes_review_only_and_hidden_detections():
+    conn = _build_conn()
+    cases = [
+        (1, "confirmed", "species", None, "untagged", "active", 0.9),
+        (2, "confirmed", "species_review", None, "untagged", "active", 0.9),
+        (3, "uncertain", "species", None, "untagged", "active", 0.9),
+        (4, "confirmed", "species", 0, "untagged", "active", 0.9),
+        (5, "confirmed", "species", None, "untagged", "active", 0.05),
+        (6, "confirmed", "species", None, "no_bird", "active", 0.9),
+        (7, "confirmed", "species", None, "untagged", "rejected", 0.9),
+    ]
+    for detection_id, state, level, quality, review, status, score in cases:
+        filename = f"20260923_12000{detection_id}.jpg"
+        conn.execute(
+            "INSERT INTO images(filename, timestamp, review_status) VALUES (?, ?, ?)",
+            (filename, "20260923_120000", review),
+        )
+        conn.execute(
+            """INSERT INTO detections(
+                detection_id, image_filename, status, score, decision_state,
+                decision_level, quality_gallery_ok
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (detection_id, filename, status, score, state, level, quality),
+        )
+
+    assert [
+        is_detection_visible_in_gallery(conn, detection_id, min_score=0.1)
+        for detection_id in range(1, 8)
+    ] == [True, False, False, False, False, False, False]
 
 
 def _build_conn() -> sqlite3.Connection:
@@ -235,12 +267,14 @@ def test_visibility_policy_filters_gallery_like_surfaces():
     _seed_visibility_fixture(conn)
 
     gallery_ids = [
-        row["detection_id"] for row in fetch_detections_for_gallery(conn, order_by="score")
+        row["detection_id"]
+        for row in fetch_detections_for_gallery(conn, order_by="score")
     ]
     assert gallery_ids == [2, 1]
 
     mixed_row = next(
-        row for row in fetch_detections_for_gallery(conn, order_by="score")
+        row
+        for row in fetch_detections_for_gallery(conn, order_by="score")
         if row["detection_id"] == 2
     )
     assert mixed_row["sibling_count"] == 1
@@ -278,9 +312,7 @@ def test_visibility_policy_filters_gallery_like_surfaces():
         }
         for row in fetch_daily_covers(conn, min_score=0.0)
     }
-    assert covers["2026-03-27"]["relative_path"].endswith(
-        "20260327_130000_mixed.webp"
-    )
+    assert covers["2026-03-27"]["relative_path"].endswith("20260327_130000_mixed.webp")
     assert covers["2026-03-27"]["detection_id"] == 2
     assert covers["2026-03-27"]["image_count"] == 2
 
@@ -468,7 +500,8 @@ def test_uncertain_detection_never_appears_in_gallery_even_if_image_is_confirmed
     conn.commit()
 
     gallery_ids = [
-        row["detection_id"] for row in fetch_detections_for_gallery(conn, order_by="score")
+        row["detection_id"]
+        for row in fetch_detections_for_gallery(conn, order_by="score")
     ]
     assert gallery_ids == []
 

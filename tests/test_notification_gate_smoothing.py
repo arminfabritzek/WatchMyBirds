@@ -40,6 +40,7 @@ def _base_manager(monkeypatch, tmp_path):
 
     mgr.persistence_service = MagicMock()
     mgr.notification_service = MagicMock()
+    mgr.mqtt_detection_service = MagicMock()
     mgr.crop_service = MagicMock()
     mgr.classification_service = MagicMock()
 
@@ -47,7 +48,10 @@ def _base_manager(monkeypatch, tmp_path):
         success=True, base_filename="test.jpg"
     )
     mgr.persistence_service.save_detection.return_value = DetectionPersistenceResult(
-        success=True, thumbnail_path="thumb.webp"
+        success=True,
+        detection_id=42,
+        thumbnail_path="thumb.webp",
+        thumbnail_filename="20260919_114203_000000_crop_0.webp",
     )
     mgr.crop_service.create_classification_crop.return_value = np.zeros(
         (224, 224, 3), dtype=np.uint8
@@ -123,6 +127,7 @@ def test_smoothing_off_confirmed_notifies(_base_manager):
 
     mgr.notification_service.queue_detection.assert_called_once()
     mgr.notification_service.send_summary.assert_called_once()
+    mgr.mqtt_detection_service.publish_detection.assert_called_once()
 
 
 def test_smoothing_off_uncertain_does_not_notify(_base_manager):
@@ -147,6 +152,7 @@ def test_smoothing_off_uncertain_does_not_notify(_base_manager):
     _run_one_job(mgr)
 
     mgr.notification_service.queue_detection.assert_not_called()
+    mgr.mqtt_detection_service.publish_detection.assert_not_called()
 
 
 # =========================================================================
@@ -189,6 +195,7 @@ def test_smoothing_on_raw_uncertain_smoothed_confirmed_notifies(_base_manager):
     # Therefore notification fires.
     mgr.notification_service.queue_detection.assert_called_once()
     mgr.notification_service.send_summary.assert_called_once()
+    mgr.mqtt_detection_service.publish_detection.assert_called_once()
 
 
 # =========================================================================
@@ -227,3 +234,45 @@ def test_smoothing_on_raw_confirmed_smoothed_uncertain_no_notify(_base_manager):
     # Smoothed state = UNCERTAIN (4 UNCERTAIN + 1 CONFIRMED → majority = UNCERTAIN).
     # Therefore NO notification.
     mgr.notification_service.queue_detection.assert_not_called()
+    mgr.mqtt_detection_service.publish_detection.assert_not_called()
+
+
+def test_mqtt_failure_does_not_interrupt_detection_or_telegram(_base_manager):
+    mgr = _base_manager
+    mgr.temporal_decision_service = TemporalDecisionService(
+        config={"ENABLE_TEMPORAL_SMOOTHING": "false"}
+    )
+    mgr.classification_service.classify.return_value = ClassificationResult(
+        class_name="Parus_major",
+        confidence=0.85,
+        model_id="test",
+        top_k_confidences=[0.85, 0.05, 0.03, 0.02, 0.01],
+    )
+    mgr.notification_service.should_send.return_value = True
+    mgr.mqtt_detection_service.publish_detection.side_effect = RuntimeError(
+        "broker unavailable"
+    )
+
+    _run_one_job(mgr)
+
+    mgr.persistence_service.save_detection.assert_called_once()
+    mgr.notification_service.send_summary.assert_called_once()
+
+
+def test_mqtt_event_is_independent_of_telegram_mode(_base_manager):
+    mgr = _base_manager
+    mgr.temporal_decision_service = TemporalDecisionService(
+        config={"ENABLE_TEMPORAL_SMOOTHING": "false"}
+    )
+    mgr.classification_service.classify.return_value = ClassificationResult(
+        class_name="Parus_major",
+        confidence=0.85,
+        model_id="test",
+        top_k_confidences=[0.85, 0.05, 0.03, 0.02, 0.01],
+    )
+    mgr.notification_service.should_send.return_value = False
+
+    _run_one_job(mgr)
+
+    mgr.notification_service.send_summary.assert_not_called()
+    mgr.mqtt_detection_service.publish_detection.assert_called_once()

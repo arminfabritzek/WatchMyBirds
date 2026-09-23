@@ -56,6 +56,7 @@ from utils.db.detections import (
     fetch_trash_candidate_selection_in_date_range,
     insert_classification,
     insert_detection,
+    is_detection_visible_in_gallery,
     purge_detections,
     reject_detections,
     restore_detections,
@@ -117,6 +118,7 @@ __all__ = [
     # Detections
     "insert_detection",
     "insert_classification",
+    "is_detection_visible_in_gallery",
     "apply_species_override",
     "apply_species_override_many",
     "fetch_active_detection_ids_in_date_range",

@@ -1,6 +1,7 @@
 # config.py
 import os
 from typing import Any
+from urllib.parse import urlsplit
 
 from dotenv import load_dotenv
 
@@ -168,6 +169,14 @@ DEFAULTS = {
     "GALLERY_DISPLAY_THRESHOLD": 0.1,
     "TELEGRAM_BOT_TOKEN": "",
     "TELEGRAM_CHAT_ID": "",
+    "MQTT_ENABLED": False,
+    "MQTT_HOST": "",
+    "MQTT_PORT": 1883,
+    "MQTT_USERNAME": "",
+    "MQTT_PASSWORD": "",
+    "MQTT_TLS": False,
+    "MQTT_TOPIC_PREFIX": "watchmybirds",
+    "MQTT_IMAGE_BASE_URL": "",
     "TELEGRAM_REPORT_TIME": "21:00",
     "TELEGRAM_MODE": "off",  # "off", "live", "daily", "interval", "new_species_only"
     "TELEGRAM_REPORT_INTERVAL_HOURS": 1,
@@ -324,6 +333,14 @@ RUNTIME_KEYS = {
     "DEBUG_MODE",
     "TELEGRAM_BOT_TOKEN",
     "TELEGRAM_CHAT_ID",
+    "MQTT_ENABLED",
+    "MQTT_HOST",
+    "MQTT_PORT",
+    "MQTT_USERNAME",
+    "MQTT_PASSWORD",
+    "MQTT_TLS",
+    "MQTT_TOPIC_PREFIX",
+    "MQTT_IMAGE_BASE_URL",
     "TELEGRAM_REPORT_TIME",
     "TELEGRAM_MODE",
     "TELEGRAM_REPORT_INTERVAL_HOURS",
@@ -453,6 +470,18 @@ def _load_config() -> dict[str, Any]:
         config["TELEGRAM_BOT_TOKEN"] = os.getenv("TELEGRAM_BOT_TOKEN")
     if os.getenv("TELEGRAM_CHAT_ID") is not None:
         config["TELEGRAM_CHAT_ID"] = os.getenv("TELEGRAM_CHAT_ID")
+    for key in (
+        "MQTT_ENABLED",
+        "MQTT_HOST",
+        "MQTT_PORT",
+        "MQTT_USERNAME",
+        "MQTT_PASSWORD",
+        "MQTT_TLS",
+        "MQTT_TOPIC_PREFIX",
+        "MQTT_IMAGE_BASE_URL",
+    ):
+        if os.getenv(key) is not None:
+            config[key] = os.getenv(key)
     if os.getenv("TELEGRAM_REPORT_TIME") is not None:
         config["TELEGRAM_REPORT_TIME"] = os.getenv("TELEGRAM_REPORT_TIME")
     if os.getenv("TELEGRAM_MODE") is not None:
@@ -1023,6 +1052,14 @@ def _coerce_config_types(config: dict[str, Any]) -> None:
     # working. "off" disables everything; individual features below gate on
     # TELEGRAM_MODE directly so the mode decides *what* gets sent.
     config["TELEGRAM_ENABLED"] = mode_val != "off"
+    config["MQTT_ENABLED"] = _coerce_bool(config.get("MQTT_ENABLED", False))
+    config["MQTT_TLS"] = _coerce_bool(config.get("MQTT_TLS", False))
+    try:
+        config["MQTT_PORT"] = int(config.get("MQTT_PORT", 1883))
+    except (TypeError, ValueError):
+        config["MQTT_PORT"] = 1883
+    if not 1 <= config["MQTT_PORT"] <= 65535:
+        config["MQTT_PORT"] = 1883
 
     # TELEGRAM_REPORT_INTERVAL_HOURS: integer in [1, 24]. Used only when
     # TELEGRAM_MODE == "interval".
@@ -1097,13 +1134,15 @@ def get_settings_payload() -> dict[str, Any]:
             source = "env"
         is_internal = key == "VIDEO_SOURCE"
         payload[key] = {
-            "value": cfg.get(key),
+            "value": "" if key == "MQTT_PASSWORD" else cfg.get(key),
             "default": default,
             "source": source,
             "editable": key in RUNTIME_KEYS and not is_internal,
             "restart_required": key in BOOT_KEYS,
             "internal": is_internal,
         }
+        if key == "MQTT_PASSWORD":
+            payload[key]["configured"] = bool(cfg.get(key))
 
     runtime_video = cfg.get("VIDEO_SOURCE", "")
     runtime_mode = (
@@ -1162,6 +1201,14 @@ def validate_runtime_updates(
             valid[key] = coerced
         else:
             errors[key] = "Invalid value"
+    merged = {**get_config(), **valid}
+    if merged.get("MQTT_ENABLED") and any(key.startswith("MQTT_") for key in updates):
+        if not str(merged.get("MQTT_HOST", "")).strip():
+            errors["MQTT_HOST"] = "Broker hostname is required when MQTT is enabled"
+        if not str(merged.get("MQTT_IMAGE_BASE_URL", "")).strip():
+            errors["MQTT_IMAGE_BASE_URL"] = (
+                "Image base URL is required when MQTT is enabled"
+            )
     return valid, errors
 
 
@@ -1197,6 +1244,8 @@ def _validate_value(key: str, value: Any) -> tuple[bool, Any]:
     if key in (
         "DAY_AND_NIGHT_CAPTURE",
         "TELEGRAM_ENABLED",
+        "MQTT_ENABLED",
+        "MQTT_TLS",
         "INBOX_REQUIRE_EXIF_DATETIME",
         "INBOX_REQUIRE_EXIF_GPS",
         "MOTION_DETECTION_ENABLED",
@@ -1211,6 +1260,46 @@ def _validate_value(key: str, value: Any) -> tuple[bool, Any]:
         "RETENTION_PROTECT_UNREVIEWED",
     ):
         return True, _coerce_bool(value)
+    if key == "MQTT_PORT":
+        try:
+            port = int(value)
+        except (TypeError, ValueError):
+            return False, None
+        return (1 <= port <= 65535), port
+    if key == "MQTT_HOST":
+        host = str(value or "").strip()
+        return (len(host) <= 253 and not any(c in host for c in "/?#@ \t\r\n")), host
+    if key in ("MQTT_USERNAME", "MQTT_PASSWORD"):
+        value = str(value or "")
+        return len(value) <= 1024, value
+    if key == "MQTT_TOPIC_PREFIX":
+        prefix = str(value or "").strip().strip("/")
+        return (
+            bool(prefix)
+            and len(prefix) <= 128
+            and not any(c in prefix for c in "+#\x00\r\n")
+            and all(prefix.split("/"))
+        ), prefix
+    if key == "MQTT_IMAGE_BASE_URL":
+        base = str(value or "").strip().rstrip("/")
+        if not base:
+            return True, ""
+        try:
+            parts = urlsplit(base)
+            port = parts.port
+        except ValueError:
+            return False, None
+        return (
+            parts.scheme in ("http", "https")
+            and bool(parts.hostname)
+            and (port is None or 1 <= port <= 65535)
+            and not parts.username
+            and not parts.password
+            and not parts.query
+            and not parts.fragment
+            and "\n" not in base
+            and len(base) <= 2048
+        ), base
     if key == "RETENTION_DAYS":
         try:
             days = int(float(value))

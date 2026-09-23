@@ -6,6 +6,7 @@ ifaddr==0.2.0
 numpy==2.5.1
 onnxruntime==1.28.0
 onvif-zeep==0.2.12
+paho-mqtt==2.1.0
 opencv-python-headless==5.0.0.93
 piexif==1.1.3
 pillow==12.3.0

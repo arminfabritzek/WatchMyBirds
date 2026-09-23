@@ -1716,7 +1716,7 @@
     <div class="settings-panel" id="panelNotifications">
         <button type="button" class="settings-panel__trigger" onclick="togglePanel('panelNotifications')">
             Notifications
-            <span class="settings-panel__trigger-info">Telegram Alerts</span>
+            <span class="settings-panel__trigger-info">Telegram, MQTT</span>
             <svg class="settings-panel__chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
         </button>
         <div class="settings-panel__body">
@@ -1820,6 +1820,51 @@
                     data-state="idle"
                     aria-live="polite"
                 ></span>
+            </div>
+            <h3 class="h5 mt-4">MQTT detection events</h3>
+            <div class="settings-field mb-3">
+                <label for="MQTT_ENABLED" class="settings-field__label">Publish detections via MQTT</label>
+                <select name="MQTT_ENABLED" id="MQTT_ENABLED" class="form-select settings-field__select">
+                    <option value="false" {% if not payload['MQTT_ENABLED'].value %}selected{% endif %}>Off</option>
+                    <option value="true" {% if payload['MQTT_ENABLED'].value %}selected{% endif %}>On</option>
+                </select>
+                <div class="settings-field__help">Sends saved bird detections that qualify for the Gallery, independently of Telegram.</div>
+            </div>
+            <div class="row g-3">
+                <div class="col-md-6"><div class="settings-field">
+                    <label for="MQTT_HOST" class="settings-field__label">Broker hostname or IP</label>
+                    <input type="text" name="MQTT_HOST" id="MQTT_HOST" class="form-control" value="{{ payload['MQTT_HOST'].value }}" placeholder="e.g. 192.168.1.10">
+                </div></div>
+                <div class="col-md-3"><div class="settings-field">
+                    <label for="MQTT_PORT" class="settings-field__label">Port</label>
+                    <input type="number" name="MQTT_PORT" id="MQTT_PORT" class="form-control" min="1" max="65535" value="{{ payload['MQTT_PORT'].value }}">
+                </div></div>
+                <div class="col-md-3"><div class="settings-field">
+                    <label for="MQTT_TLS" class="settings-field__label">TLS</label>
+                    <select name="MQTT_TLS" id="MQTT_TLS" class="form-select">
+                        <option value="false" {% if not payload['MQTT_TLS'].value %}selected{% endif %}>Off</option>
+                        <option value="true" {% if payload['MQTT_TLS'].value %}selected{% endif %}>On</option>
+                    </select>
+                </div></div>
+                <div class="col-md-6"><div class="settings-field">
+                    <label for="MQTT_USERNAME" class="settings-field__label">Username (optional)</label>
+                    <input type="text" name="MQTT_USERNAME" id="MQTT_USERNAME" class="form-control" autocomplete="off" value="{{ payload['MQTT_USERNAME'].value }}">
+                </div></div>
+                <div class="col-md-6"><div class="settings-field">
+                    <label for="MQTT_PASSWORD" class="settings-field__label">Password (optional)</label>
+                    <input type="password" name="MQTT_PASSWORD" id="MQTT_PASSWORD" class="form-control" autocomplete="new-password" placeholder="{% if payload['MQTT_PASSWORD'].configured %}Saved; leave blank to keep{% else %}No password saved{% endif %}">
+                    <label class="settings-field__help"><input type="checkbox" id="MQTT_CLEAR_PASSWORD"> Clear saved password</label>
+                </div></div>
+                <div class="col-md-6"><div class="settings-field">
+                    <label for="MQTT_TOPIC_PREFIX" class="settings-field__label">Topic prefix</label>
+                    <input type="text" name="MQTT_TOPIC_PREFIX" id="MQTT_TOPIC_PREFIX" class="form-control" value="{{ payload['MQTT_TOPIC_PREFIX'].value }}">
+                    <div class="settings-field__help">Events publish to &lt;prefix&gt;/detection.</div>
+                </div></div>
+                <div class="col-md-6"><div class="settings-field">
+                    <label for="MQTT_IMAGE_BASE_URL" class="settings-field__label">WatchMyBirds URL reachable by MQTT consumers</label>
+                    <input type="url" name="MQTT_IMAGE_BASE_URL" id="MQTT_IMAGE_BASE_URL" class="form-control" value="{{ payload['MQTT_IMAGE_BASE_URL'].value }}" placeholder="http://192.168.1.20:8050">
+                    <div class="settings-field__help">Use the address Node-RED can open, including port or reverse-proxy path. Image links point to bird thumbnails.</div>
+                </div></div>
             </div>
             <script>
                 (function () {
@@ -4629,6 +4674,11 @@
         const formData = new FormData(form);
         const payload = {};
         for (const [key, value] of formData.entries()) { payload[key] = value; }
+        if (document.getElementById('MQTT_CLEAR_PASSWORD').checked) {
+            payload.MQTT_PASSWORD = null;
+        } else if (!payload.MQTT_PASSWORD) {
+            delete payload.MQTT_PASSWORD;
+        }
 
         fetch('/api/v1/settings', {
             method: 'POST',
