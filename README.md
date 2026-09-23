@@ -145,6 +145,7 @@ App available at: **http://localhost:8050**
 | [Security Policy](SECURITY.md) | Hardening measures and vulnerability reporting |
 | [RPi Setup](rpi/README.md) | Raspberry Pi appliance guide |
 | [Configuration](docs/CONFIGURATION.md) | All settings explained |
+| [Tested Cameras](docs/TESTED_CAMERAS.md) | Community-reported camera compatibility |
 
 ---
 
