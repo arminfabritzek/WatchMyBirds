@@ -4,6 +4,8 @@
 
 ### Added
 
+- Optional MQTT events let Node-RED and other subscribers receive gallery-visible
+  bird detections with an image URL; broker settings are available in Settings.
 - Detail views now let reviewers correct offered birds, withdraw a species
   confirmation, and record a box verdict without answering unrelated questions.
 - Training Export now offers a box-verdict walkthrough and explains when missing
