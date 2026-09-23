@@ -32,11 +32,7 @@ jobs:
           pip install -r requirements.txt
           pip install pytest ruff
 
-      # Reported but not blocking: the tree carries two pre-existing findings
-      # that are unrelated to the test gate. Flip to a hard failure once they
-      # are cleared, so lint regressions start blocking too.
       - name: Lint
-        continue-on-error: true
         run: ruff check .
 
       # host_env covers tests asserting on the host's mount table or on civil

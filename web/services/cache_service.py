@@ -46,7 +46,7 @@ _store: dict[str, _Entry] = {}
 _lock = threading.Lock()
 
 
-def cached(key: str, ttl_seconds: float, builder: Callable[[], T]) -> T:
+def cached[T](key: str, ttl_seconds: float, builder: Callable[[], T]) -> T:
     """Return the cached value for ``key`` or call ``builder`` and store it.
 
     The builder runs outside the lock so a slow query does not block
