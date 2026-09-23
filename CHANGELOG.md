@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.5.8 - 2026-09-23
+
 ### Added
 
 - Optional MQTT events let Node-RED and other subscribers receive gallery-visible
