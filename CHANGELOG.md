@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+### Added
+
+- Detail views now let reviewers correct offered birds, withdraw a species
+  confirmation, and record a box verdict without answering unrelated questions.
+- Training Export now offers a box-verdict walkthrough and explains when missing
+  originals exclude labeled birds from training-ready counts.
+
+### Fixed
+
+- Species answers now establish bird presence for training eligibility. A
+  backfill command repairs earlier answers while leaving contradictions for
+  human review.
+
 ## 0.5.7 - 2026-09-17
 
 ### Added
