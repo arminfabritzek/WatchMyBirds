@@ -977,20 +977,37 @@
                 applyVideoRectToOverlay(aimOverlayEl);
             }
 
-            function gotoPreset(token) {
+            async function gotoPreset(token) {
                 if (cameraId === null) return;
                 if (aimArmed) cancelAim();
-                if (overviewPreset && token === overviewPreset) {
-                    settling = false;
-                    returnDeadline = 0;
-                    stopCountdownTicker();
+                let failureMessage = 'Could not confirm the camera preset request. Check the live view before retrying.';
+                try {
+                    const response = await fetch('/api/v1/cameras/' + cameraId + '/ptz/goto', {
+                        method: 'POST',
+                        headers: csrfHeaders({ 'Content-Type': 'application/json' }),
+                        body: JSON.stringify({ preset_token: token })
+                    });
+                    if (response.status === 401 || isAuthRedirect(response)) {
+                        redirectToLogin();
+                        return;
+                    }
+                    if (!response.ok) {
+                        failureMessage = 'Camera preset request failed (HTTP ' + response.status + '). Check the live view before retrying.';
+                        throw new Error('Preset request failed');
+                    }
+                    const data = await response.json();
+                    if (!data || data.status !== 'success') {
+                        throw new Error('Preset request was not accepted');
+                    }
+                    if (overviewPreset && token === overviewPreset) {
+                        settling = false;
+                        returnDeadline = 0;
+                        stopCountdownTicker();
+                    }
+                    paintStatusPill();
+                } catch (_) {
+                    window.wmToast(failureMessage, 'error', 7000);
                 }
-                paintStatusPill();
-                fetch('/api/v1/cameras/' + cameraId + '/ptz/goto', {
-                    method: 'POST',
-                    headers: csrfHeaders({ 'Content-Type': 'application/json' }),
-                    body: JSON.stringify({ preset_token: token })
-                }).catch(function () { /* silent */ });
             }
 
             // Auto-Cam toggle: the appbar button owns the interaction;

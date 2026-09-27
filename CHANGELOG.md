@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Fixed
+
+- Live-view Overview controls now report failed preset requests, prompt for
+  login when the session expires, and clear the return countdown only after
+  the server accepts the request.
+
 ## 0.5.8 - 2026-09-23
 
 ### Added
