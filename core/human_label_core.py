@@ -167,6 +167,21 @@ def get_or_create_labeling_installation_id(output_dir: str) -> str:
 DERIVED_FROM_SPECIES_ANSWER = "derived:species-answer-implies-bird"
 
 
+def species_review_state(
+    answer_value: str,
+    species_key: str | None,
+    proposal_species_key: str | None,
+) -> str:
+    """Classify a human species answer against the immutable proposal."""
+    if (
+        answer_value not in {"confirmed", "corrected"}
+        or not species_key
+        or not proposal_species_key
+    ):
+        return answer_value
+    return "confirmed" if species_key == proposal_species_key else "corrected"
+
+
 def _derived_source_ref(source_ref: str | None) -> str:
     base = (source_ref or "").strip()
     return (
@@ -191,6 +206,7 @@ def record_human_answer(
     fact_ids: list[int] = []
     image_subject_id: int | None = None
     object_subject_id: int | None = None
+    proposal_species_key: str | None = None
     action_at = provenance.values()[-1]
 
     if answer.image_bird_presence is not None or answer.detector_miss:
@@ -217,12 +233,13 @@ def record_human_answer(
         if answer.detection_id is None:
             raise HumanLabelError("object facts require detection_id")
         object_subject_id = ensure_object_subject(conn, answer.detection_id)
-        subject_filename = conn.execute(
-            "SELECT image_filename FROM label_subjects WHERE subject_id = ?",
+        subject = conn.execute(
+            "SELECT image_filename, proposal_species_key FROM label_subjects WHERE subject_id = ?",
             (object_subject_id,),
-        ).fetchone()[0]
-        if subject_filename != filename:
+        ).fetchone()
+        if subject[0] != filename:
             raise HumanLabelError("detection does not belong to image")
+        proposal_species_key = subject[1]
 
     if answer.image_bird_presence is not None:
         fact_ids.append(
@@ -324,12 +341,17 @@ def record_human_answer(
         )
 
     if answer.species_identity is not None:
+        stored_species_identity = species_review_state(
+            answer.species_identity,
+            answer.species_key,
+            proposal_species_key,
+        )
         fact_ids.append(
             append_fact(
                 conn,
                 subject_id=_required_subject(object_subject_id),
                 fact_type="species_identity",
-                answer_value=answer.species_identity,
+                answer_value=stored_species_identity,
                 species_key=answer.species_key,
                 provenance=provenance,
             )

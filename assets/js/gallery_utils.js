@@ -1285,7 +1285,9 @@ async function confirmBboxSpecies(event, viewer, box) {
         if (!response.ok || payload.status !== 'success') {
             throw new Error(payload.message || 'Unable to confirm species');
         }
-        _setInteractiveReviewState(viewer, box.id, 'confirmed', box.speciesKey);
+        _setInteractiveReviewState(
+            viewer, box.id, payload.review_state?.state || 'confirmed', box.speciesKey
+        );
         const toggle = viewer.closest('.wm-toolbox-host')?.querySelector('.bbox-toggle.active')
             || viewer.closest('.wm-modal')?.querySelector('.bbox-toggle.active');
         if (toggle) redrawBboxOverlay(toggle);

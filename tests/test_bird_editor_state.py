@@ -35,7 +35,8 @@ const draft = JSON.parse(JSON.stringify(saved));
             else ""
         )
         + """
-const result = editor.confirmedSpeciesState(saved, draft);
+const result = editor.confirmedSpeciesState(saved, draft,
+    draft.speciesKey === saved.speciesKey ? 'confirmed' : 'corrected');
 console.log(JSON.stringify({saved,draft,result}));
 """
     )
@@ -49,11 +50,12 @@ console.log(JSON.stringify({saved,draft,result}));
     assert result["confirmed"]["speciesKey"] == (
         "Parus_major" if change_species else "Sitta_europaea"
     )
-    assert result["confirmed"]["humanReviewState"] == "confirmed"
+    expected_state = "corrected" if change_species else "confirmed"
+    assert result["confirmed"]["humanReviewState"] == expected_state
     assert payload["saved"]["humanReviewState"] == "unreviewed"
     if move:
         assert result["draft"]["bbox"]["x"] == 0.4
         assert result["draft"]["speciesKey"] == result["confirmed"]["speciesKey"]
-        assert result["draft"]["humanReviewState"] == "confirmed"
+        assert result["draft"]["humanReviewState"] == expected_state
     else:
         assert result["draft"] is None

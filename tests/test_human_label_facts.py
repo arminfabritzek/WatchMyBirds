@@ -803,6 +803,80 @@ def test_one_human_answer_writes_independent_facts_and_legacy_projection(
     )
 
 
+@pytest.mark.parametrize(
+    ("submitted", "species_key", "expected"),
+    [
+        ("confirmed", "Cyanistes_caeruleus", "corrected"),
+        ("corrected", "Parus_major", "confirmed"),
+    ],
+)
+def test_species_answer_is_stored_relative_to_original_proposal(
+    conn: sqlite3.Connection,
+    seeded: dict[str, int | str],
+    provenance: LabelProvenance,
+    submitted: str,
+    species_key: str,
+    expected: str,
+) -> None:
+    record_human_answer(
+        conn,
+        HumanAnswer(
+            image_filename=str(seeded["filename"]),
+            detection_id=int(seeded["detection_id"]),
+            species_identity=submitted,
+            species_key=species_key,
+        ),
+        provenance,
+    )
+
+    fact = conn.execute(
+        """
+        SELECT answer_value, species_key, proposal_species_key
+        FROM current_human_label_facts
+        WHERE detection_id = ? AND fact_type = 'species_identity'
+        """,
+        (seeded["detection_id"],),
+    ).fetchone()
+    assert tuple(fact) == (expected, species_key, "Parus_major")
+    override = conn.execute(
+        "SELECT manual_species_override FROM detections WHERE detection_id = ?",
+        (seeded["detection_id"],),
+    ).fetchone()[0]
+    assert override == species_key
+
+
+def test_review_projection_repairs_legacy_answer_words(
+    conn: sqlite3.Connection,
+    seeded: dict[str, int | str],
+    provenance: LabelProvenance,
+) -> None:
+    from web.services import human_label_service
+
+    detection_id = int(seeded["detection_id"])
+    subject_id = ensure_object_subject(conn, detection_id)
+    append_fact(
+        conn,
+        subject_id=subject_id,
+        fact_type="species_identity",
+        answer_value="confirmed",
+        species_key="Cyanistes_caeruleus",
+        provenance=provenance,
+    )
+    states = human_label_service.fetch_detection_review_states(conn, [detection_id])
+    assert states[detection_id]["state"] == "corrected"
+
+    append_fact(
+        conn,
+        subject_id=subject_id,
+        fact_type="species_identity",
+        answer_value="corrected",
+        species_key="Parus_major",
+        provenance=provenance,
+    )
+    states = human_label_service.fetch_detection_review_states(conn, [detection_id])
+    assert states[detection_id]["state"] == "confirmed"
+
+
 def test_object_rejection_projection_does_not_mark_whole_image_no_bird(
     conn: sqlite3.Connection,
     seeded: dict[str, int | str],

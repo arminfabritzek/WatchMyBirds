@@ -185,13 +185,12 @@ def build_current_detection_payload(det: dict) -> dict:
 
     if has_human_unknown_species:
         provenance = "human_unknown"
-    elif has_manual_species_review or human_review_state in (
-        "corrected",
-        "reviewed_unknown",
-    ):
+    elif human_review_state in ("corrected", "reviewed_unknown"):
         provenance = "manually_identified"
     elif human_review_state == "confirmed":
         provenance = "human_confirmed"
+    elif has_manual_species_review:
+        provenance = "manually_identified"
     else:
         provenance = "model_proposal"
 

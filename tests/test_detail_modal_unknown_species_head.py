@@ -273,12 +273,14 @@ def test_ai_status_badge_follows_the_decision_state() -> None:
     assert "AI uncertain" in uncertain
 
 
-def test_manual_species_provenance_wins_over_the_ai_badge() -> None:
-    """A human-identified species reads as human work, not an AI verdict.
-
-    The provenance slot is exclusive: once a person has set the species it
-    says "Manually identified" and no automatic assessment badge appears.
-    """
+@pytest.mark.parametrize(
+    ("review_state", "expected_provenance"),
+    [("confirmed", "Human confirmed"), ("corrected", "Manually identified")],
+)
+def test_manual_species_provenance_wins_over_the_ai_badge(
+    review_state: str, expected_provenance: str
+) -> None:
+    """The human review state controls the provenance shown in the head."""
     head = _head(
         _render(
             _detection(
@@ -287,13 +289,13 @@ def test_manual_species_provenance_wins_over_the_ai_badge() -> None:
                 manual_species_override="Parus_major",
                 species_source="manual",
                 review_status="confirmed_bird",
-                human_review_state="confirmed",
+                human_review_state=review_state,
             )
         )
     )
     prov = re.search(r"data-editor-title-provenance[^>]*>(.*?)</span>", head, re.S)
     assert prov is not None
-    assert "Manually identified" in prov.group(1)
+    assert expected_provenance in prov.group(1)
     assert "AI confirmed" not in head, (
         "an automatic AI badge sits beside a human-identified species"
     )

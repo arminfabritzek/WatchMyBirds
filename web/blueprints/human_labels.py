@@ -324,6 +324,13 @@ def label_answer():
                 image_filename=filename,
                 detection_id=detection_id,
             )
+            review_state = (
+                human_label_service.fetch_detection_review_states(conn, [detection_id])[
+                    detection_id
+                ]
+                if detection_id is not None
+                else None
+            )
         gallery_service.invalidate_cache()
     except HumanLabelError as exc:
         logger.info("Label answer rejected: %s", type(exc).__name__)
@@ -349,5 +356,6 @@ def label_answer():
             "status": "success",
             "fact_ids": fact_ids,
             "facts": facts,
+            "review_state": review_state,
         }
     )

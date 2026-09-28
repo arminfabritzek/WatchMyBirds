@@ -4,6 +4,8 @@
 
 ### Fixed
 
+- Species review now distinguishes a confirmed model proposal from a corrected
+  species, including in earlier labels shown in the gallery.
 - Live-view Overview controls now report failed preset requests, prompt for
   login when the session expires, and clear the return countdown only after
   the server accepts the request.

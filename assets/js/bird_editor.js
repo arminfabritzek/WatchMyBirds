@@ -84,13 +84,15 @@
     }
 
     // A species answer commits no geometry. Keep any box edit pending.
-    function confirmedSpeciesState(saved, displayed) {
+    function confirmedSpeciesState(saved, displayed, reviewState) {
         const confirmed = clone(saved);
         const answer = displayed || saved;
+        const state = reviewState === 'corrected' ? 'corrected' : 'confirmed';
         confirmed.speciesKey = answer.speciesKey;
         confirmed.commonName = answer.commonName;
-        confirmed.humanReviewState = 'confirmed';
-        confirmed.provenance = 'human_confirmed';
+        confirmed.humanReviewState = state;
+        confirmed.provenance = state === 'corrected'
+            ? 'manually_identified' : 'human_confirmed';
         const pending = displayed && !sameBox(saved.bbox, displayed.bbox)
             ? clone(confirmed) : null;
         if (pending) pending.bbox = clone(displayed.bbox);
@@ -820,17 +822,20 @@
                 if (!response.ok || payload.status !== 'success') {
                     throw new Error(payload.message || 'Unable to confirm species');
                 }
-                const result = confirmedSpeciesState(saved, displayed);
+                const reviewState = payload.review_state?.state;
+                const result = confirmedSpeciesState(saved, displayed, reviewState);
                 updateObjects(result.confirmed);
                 if (displayed) {
                     draft = result.draft;
                     initialDraft = draft ? clone(result.confirmed) : null;
                     mode = draft ? 'edit' : 'browse';
                 }
-                message = draft ? 'Species confirmed · box changes still need Save'
-                    : result.confirmed.commonName + ' confirmed · other birds unchanged';
+                const verb = result.confirmed.humanReviewState === 'corrected'
+                    ? 'corrected' : 'confirmed';
+                message = draft ? 'Species ' + verb + ' · box changes still need Save'
+                    : result.confirmed.commonName + ' ' + verb + ' · other birds unchanged';
                 broadcastObjects();
-                if (window.wmToast) window.wmToast('Species confirmed', 'success', 2200);
+                if (window.wmToast) window.wmToast('Species ' + verb, 'success', 2200);
             } catch (error) {
                 message = error.message || 'Unable to confirm species';
                 if (window.wmToast) window.wmToast(message, 'error', 4200);
@@ -996,8 +1001,12 @@
                     // of the bird; keeping it would re-send it on the next one.
                     delete saved.bboxVerdict;
                     if (savingDraft.speciesKey !== savingInitial.speciesKey) {
-                        saved.provenance = 'manually_identified';
-                        saved.humanReviewState = savingDraft.speciesKey ? 'corrected' : 'reviewed_unknown';
+                        const reviewState = payload.review_state?.state;
+                        saved.humanReviewState = reviewState || (
+                            savingDraft.speciesKey ? 'corrected' : 'reviewed_unknown'
+                        );
+                        saved.provenance = saved.humanReviewState === 'confirmed'
+                            ? 'human_confirmed' : 'manually_identified';
                     }
                 }
                 updateObjects(saved);

@@ -17,6 +17,7 @@ from core.human_label_core import (
     get_or_create_labeling_installation_id,
     object_training_readiness,
     record_human_answer,
+    species_review_state,
 )
 from core.human_label_core import (
     retract_bbox_quality as retract_bbox_quality_core,
@@ -294,7 +295,7 @@ def fetch_detection_review_states(
             f"""
             SELECT current.detection_id, current.scope, current.fact_type,
                    current.assertion_state, current.answer_value,
-                   current.species_key
+                   current.species_key, current.proposal_species_key
             FROM current_human_label_facts current
             WHERE current.scope = 'object'
               AND current.detection_id IN ({placeholders})
@@ -325,7 +326,11 @@ def fetch_detection_review_states(
                 next_state = "reviewed_negative"
             elif row["fact_type"] == "species_identity":
                 if row["answer_value"] in {"confirmed", "corrected"}:
-                    next_state = str(row["answer_value"])
+                    next_state = species_review_state(
+                        str(row["answer_value"]),
+                        row["species_key"],
+                        row["proposal_species_key"],
+                    )
                 elif row["answer_value"] == "unknown":
                     next_state = "reviewed_unknown"
 

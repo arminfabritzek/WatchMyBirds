@@ -365,3 +365,48 @@ def test_gallery_review_progress_uses_canonical_human_facts(seeded_client):
     # the remaining visible detection is still honestly complete.
     assert 'data-review-progress="1/1"' in complete_gallery
     assert complete_subgallery.count('data-review-progress="1/1"') == 1
+
+
+def test_species_answer_response_and_gallery_follow_proposal(seeded_client):
+    client, today_iso = seeded_client
+    with db_connection.closing_connection() as conn:
+        row = conn.execute(
+            """
+            SELECT d.detection_id, d.image_filename
+            FROM detections d
+            JOIN classifications c ON c.detection_id = d.detection_id
+            WHERE c.cls_class_name = 'Parus_major'
+            """
+        ).fetchone()
+
+    corrected = post(
+        client,
+        "/api/labels/answer",
+        {
+            "filename": row["image_filename"],
+            "detection_id": row["detection_id"],
+            "species_identity": "confirmed",
+            "species_key": "Cyanistes_caeruleus",
+        },
+    )
+    assert corrected.status_code == 200
+    assert corrected.get_json()["review_state"]["state"] == "corrected"
+    assert '"human_review_state": "corrected"' in client.get(
+        f"/gallery/{today_iso}"
+    ).get_data(as_text=True)
+
+    confirmed = post(
+        client,
+        "/api/labels/answer",
+        {
+            "filename": row["image_filename"],
+            "detection_id": row["detection_id"],
+            "species_identity": "corrected",
+            "species_key": "Parus_major",
+        },
+    )
+    assert confirmed.status_code == 200
+    assert confirmed.get_json()["review_state"]["state"] == "confirmed"
+    assert '"human_review_state": "confirmed"' in client.get(
+        f"/gallery/{today_iso}"
+    ).get_data(as_text=True)
