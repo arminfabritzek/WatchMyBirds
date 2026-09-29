@@ -1,13 +1,14 @@
 import os
 
 from flask import Blueprint, current_app, jsonify, render_template, request
+from flask.blueprints import BlueprintSetupState
 
 from config import get_config, get_settings_payload
 from logging_config import get_logger
 from utils.settings import mask_rtsp_url
 from web import view_helpers
 from web.blueprints.auth import login_required
-from web.services import db_service
+from web.services import asset_service, db_service
 
 logger = get_logger(__name__)
 config = get_config()
@@ -16,6 +17,13 @@ pages_bp = Blueprint("pages", __name__)
 
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
 _ASSETS_FOLDER = os.path.join(_PROJECT_ROOT, "assets")
+
+
+@pages_bp.record_once
+def register_asset_versions(state: BlueprintSetupState) -> None:
+    state.app.jinja_env.globals["bird_editor_version"] = asset_service.editor_version(
+        _ASSETS_FOLDER
+    )
 
 
 RUNTIME_BOOL_KEYS = {

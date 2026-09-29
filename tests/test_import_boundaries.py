@@ -1,67 +1,107 @@
-"""
-Import Boundary Tests.
-
-Validates architecture boundaries with explicit enforcement levels:
-- web/* may NOT import directly from utils/, camera/, detectors/
-- web/services/* may ONLY import from core/*
-- core/* may NOT import from web/, flask, werkzeug
-
-Marker policy:
-- arch_hard: PR-blocking invariants
-- arch_soft: monitoring-only invariants
-"""
+"""Static import contracts from docs/INVARIANTS.md; no application imports."""
 
 import ast
+import sys
+from importlib.util import resolve_name
 from pathlib import Path
 
 import pytest
 
+WEB_SERVICE_EXCEPTIONS = {
+    "aesthetic_tag_scheduler.py": {
+        "scripts.aesthetic_tag_nightly",
+        "open_clip",
+        "torch",
+    },
+    "analysis_service.py": {"cv2", "web.security.safe_log_value"},
+    "companion/llama_cpp_adapter.py": {"llama_cpp"},
+    "model_registry_service.py": {"yaml"},
+    "nightly_jobs/sharpness_job.py": {"cv2", "utils.image_ops"},
+    "report_scheduler.py": {"utils.daily_report"},
+    "telemetry_service.py": {"requests", "psutil", "utils.settings"},
+    "update_service.py": {"web.security.safe_log_value"},
+    "usb_format_service.py": {"web.security.safe_log_value"},
+}
+
+DETECTOR_SERVICE_EDGES = {
+    ("persistence_service", "crop_service"),
+    ("capability_registry", "decision_policy_service"),
+    ("capability_registry", "temporal_decision_service"),
+    ("scoring_pipeline", "bbox_quality_service"),
+    ("scoring_pipeline", "capability_registry"),
+    ("scoring_pipeline", "decision_policy_service"),
+    ("scoring_pipeline", "temporal_decision_service"),
+}
+
 
 def get_project_root() -> Path:
-    """Get the project root directory."""
     return Path(__file__).parent.parent
 
 
 def get_imports_from_file(filepath: Path) -> list[tuple[str, int]]:
-    """
-    Extract all import statements from a Python file.
-
-    Returns:
-        List of (module_name, line_number) tuples
-    """
+    package = ".".join(filepath.relative_to(get_project_root()).parts[:-1])
+    tree = ast.parse(filepath.read_text(encoding="utf-8"), filename=str(filepath))
     imports = []
-    try:
-        with open(filepath, encoding="utf-8") as f:
-            tree = ast.parse(f.read(), filename=str(filepath))
-    except SyntaxError:
-        return imports
-
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
-            for alias in node.names:
-                imports.append((alias.name, node.lineno))
+            imports.extend((alias.name, node.lineno) for alias in node.names)
         elif isinstance(node, ast.ImportFrom):
-            if node.module:
-                imports.append((node.module, node.lineno))
-
+            module = node.module or ""
+            if node.level:
+                module = resolve_name("." * node.level + module, package)
+            # Include imported names so `from utils import db` cannot evade H-01.
+            imports.extend(
+                (module if alias.name == "*" else f"{module}.{alias.name}", node.lineno)
+                for alias in node.names
+            )
     return imports
+
+
+def module_matches(module: str, prefix: str) -> bool:
+    prefix = prefix.rstrip(".")
+    return module == prefix or module.startswith(prefix + ".")
 
 
 def check_forbidden_imports(
     imports: list[tuple[str, int]], forbidden_prefixes: list[str]
 ) -> list[tuple[str, int]]:
-    """
-    Check for forbidden imports.
+    return [
+        (module, line)
+        for module, line in imports
+        if any(module_matches(module, prefix) for prefix in forbidden_prefixes)
+    ]
 
-    Returns:
-        List of (module_name, line_number) for violations
-    """
+
+def web_service_violations(project_root: Path) -> list[str]:
+    services_dir = project_root / "web" / "services"
+    assert services_dir.is_dir(), "Missing web/services"
     violations = []
-    for module, line in imports:
-        for prefix in forbidden_prefixes:
-            if module.startswith(prefix):
-                violations.append((module, line))
-                break
+    for path in sorted(services_dir.rglob("*.py")):
+        relative = path.relative_to(services_dir).as_posix()
+        allowed = {"core", "config", "logging_config", "web.services"}
+        allowed.update(WEB_SERVICE_EXCEPTIONS.get(relative, set()))
+        for module, line in get_imports_from_file(path):
+            if module.split(".")[0] in sys.stdlib_module_names:
+                continue
+            if not any(module_matches(module, prefix) for prefix in allowed):
+                violations.append(f"{relative}:{line} imports {module}")
+    return violations
+
+
+def detector_service_violations(project_root: Path) -> list[str]:
+    services_dir = project_root / "detectors" / "services"
+    assert services_dir.is_dir(), "Missing detectors/services"
+    violations = []
+    for path in sorted(services_dir.rglob("*.py")):
+        source = ".".join(path.relative_to(services_dir).with_suffix("").parts)
+        for module, line in get_imports_from_file(path):
+            if not module_matches(module, "detectors.services"):
+                continue
+            if path == services_dir / "__init__.py":
+                continue
+            target = module.removeprefix("detectors.services.").split(".")[0]
+            if (source, target) not in DETECTOR_SERVICE_EDGES:
+                violations.append(f"{source}:{line} imports {module}")
     return violations
 
 
@@ -69,35 +109,8 @@ class TestWebLayerBoundaries:
     """Tests for web layer import boundaries."""
 
     @pytest.mark.arch_hard
-    def test_services_only_import_from_core(self):
-        """web/services/* should only import from core/*."""
-        project_root = get_project_root()
-        services_dir = project_root / "web" / "services"
-
-        if not services_dir.exists():
-            return  # No services yet
-
-        forbidden = ["utils.", "camera.", "detectors."]
-        # Pragmatic exceptions: lazy imports where no core wrapper exists
-        allowed_exceptions = {
-            ("report_scheduler.py", "utils.daily_report"),
-            ("telemetry_service.py", "utils.settings"),
-        }
-        all_violations = []
-
-        for py_file in services_dir.glob("*.py"):
-            if py_file.name == "__init__.py":
-                continue
-            imports = get_imports_from_file(py_file)
-            violations = check_forbidden_imports(imports, forbidden)
-            for module, line in violations:
-                if (py_file.name, module) not in allowed_exceptions:
-                    all_violations.append(f"{py_file.name}:{line} imports {module}")
-
-        assert len(all_violations) == 0, (
-            "Services should only import from core/*. Violations:\n"
-            + "\n".join(all_violations)
-        )
+    def test_services_use_documented_imports(self) -> None:
+        assert web_service_violations(get_project_root()) == []
 
     @pytest.mark.arch_hard
     def test_core_does_not_import_web(self):
@@ -105,15 +118,12 @@ class TestWebLayerBoundaries:
         project_root = get_project_root()
         core_dir = project_root / "core"
 
-        if not core_dir.exists():
-            return
+        assert core_dir.is_dir()
 
         forbidden = ["web.", "flask", "werkzeug"]
         all_violations = []
 
-        for py_file in core_dir.glob("*.py"):
-            if py_file.name == "__init__.py":
-                continue
+        for py_file in core_dir.rglob("*.py"):
             imports = get_imports_from_file(py_file)
             violations = check_forbidden_imports(imports, forbidden)
             for module, line in violations:
@@ -150,34 +160,9 @@ class TestWebLayerBoundaries:
         # Uncomment the assertion below when migration is complete:
         # assert len(violations) == 0
 
-    @pytest.mark.arch_soft
-    def test_detection_manager_only_uses_services(self):
-        """
-        detection_manager.py should only use Services for core operations.
-
-        FORBIDDEN imports in detection_manager.py:
-        - utils.db (use PersistenceService)
-        - utils.image_ops (use CropService)
-        - utils.telegram_notifier (use NotificationService)
-        - camera. (allowed: only VideoCapture for frame grabbing)
-
-        ALLOWED imports:
-        - detectors.services.* (all Services)
-        - detectors.classifier (wrapped by ClassificationService)
-        - detectors.motion_detector (not a Service, standalone)
-        - camera.video_capture (needed for frame input)
-        - utils.db (get_connection, get_or_create_default_source only for DB init)
-        - utils.path_manager (PathManager for output dirs)
-        - config, logging_config, threading, etc.
-        """
-        project_root = get_project_root()
-        detection_manager = project_root / "detectors" / "detection_manager.py"
-
-        if not detection_manager.exists():
-            return
-
-        # These imports are FORBIDDEN in detection_manager.py
-        # They indicate direct implementation rather than service delegation
+    def test_detection_manager_delegates_image_and_notification_helpers(self) -> None:
+        detection_manager = get_project_root() / "detectors" / "detection_manager.py"
+        assert detection_manager.is_file()
         forbidden = [
             "utils.image_ops",  # Must use CropService
             "utils.telegram_notifier",  # Must use NotificationService
@@ -252,15 +237,12 @@ class TestDetectorServicesArchitecture:
         project_root = get_project_root()
         services_dir = project_root / "detectors" / "services"
 
-        if not services_dir.exists():
-            return
+        assert services_dir.is_dir()
 
         forbidden = ["web.", "flask", "werkzeug"]
         all_violations = []
 
-        for py_file in services_dir.glob("*.py"):
-            if py_file.name == "__init__.py":
-                continue
+        for py_file in services_dir.rglob("*.py"):
             imports = get_imports_from_file(py_file)
             violations = check_forbidden_imports(imports, forbidden)
             for module, line in violations:
@@ -271,62 +253,8 @@ class TestDetectorServicesArchitecture:
             + "\n".join(all_violations)
         )
 
-    def test_detector_services_do_not_import_each_other_circularly(self):
-        """
-        Detector services should not have circular import dependencies.
-
-        Each service should be independent or only depend on shared utilities.
-
-        ALLOWED exceptions (documented dependencies):
-        - persistence_service → crop_service (thumbnails need cropping)
-        """
-        project_root = get_project_root()
-        services_dir = project_root / "detectors" / "services"
-
-        if not services_dir.exists():
-            return
-
-        # Check that no service imports another service
-        # (except through the __init__.py or allowed exceptions)
-        service_modules = [
-            "persistence_service",
-            "crop_service",
-            "classification_service",
-            "detection_service",
-            "notification_service",
-            "capture_service",
-        ]
-
-        # Allowed dependencies (from → to)
-        allowed_dependencies = {
-            ("persistence_service", "crop_service"),  # Thumbnails need cropping
-        }
-
-        all_violations = []
-
-        for py_file in services_dir.glob("*.py"):
-            if py_file.name == "__init__.py":
-                continue
-
-            service_name = py_file.stem
-            imports = get_imports_from_file(py_file)
-
-            for module, line in imports:
-                for other_service in service_modules:
-                    if other_service == service_name:
-                        continue
-                    if other_service in module:
-                        # Check if this is an allowed dependency
-                        if (service_name, other_service) in allowed_dependencies:
-                            continue
-                        all_violations.append(
-                            f"{py_file.name}:{line} imports {module} (circular)"
-                        )
-
-        assert len(all_violations) == 0, (
-            "Detector services should not import each other. Violations:\n"
-            + "\n".join(all_violations)
-        )
+    def test_detector_services_use_documented_edges(self) -> None:
+        assert detector_service_violations(get_project_root()) == []
 
     def test_detector_services_exist(self):
         """Verify all required detector services exist."""
@@ -480,7 +408,7 @@ if __name__ == "__main__":
     tests = TestWebLayerBoundaries()
 
     try:
-        tests.test_services_only_import_from_core()
+        tests.test_services_use_documented_imports()
         print("✓ Services import boundaries OK")
     except AssertionError as e:
         print(f"✗ Services violation: {e}")
@@ -517,8 +445,8 @@ if __name__ == "__main__":
         print(f"✗ {e}")
 
     try:
-        detector_tests.test_detector_services_do_not_import_each_other_circularly()
-        print("✓ Detector services no circular imports")
+        detector_tests.test_detector_services_use_documented_edges()
+        print("✓ Detector service dependency edges OK")
     except AssertionError as e:
         print(f"✗ {e}")
 
@@ -542,3 +470,99 @@ if __name__ == "__main__":
         print("✓ Partials do not extend")
     except AssertionError as e:
         print(f"✗ {e}")
+
+
+@pytest.mark.arch_hard
+class TestBoundaryScanner:
+    @pytest.mark.parametrize(
+        "source",
+        [
+            "import utils",
+            "from utils import settings",
+            "from ..security import safe_log_value",
+            "import camera.video_capture as capture",
+            "from web import web_interface",
+            "import requests",
+            "import core_extra",
+            "def lazy():\n    from utils import db",
+        ],
+    )
+    def test_web_rejects_undocumented_imports(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, source: str
+    ) -> None:
+        monkeypatch.setattr(sys.modules[__name__], "get_project_root", lambda: tmp_path)
+        path = tmp_path / "web/services/new_service.py"
+        path.parent.mkdir(parents=True)
+        path.write_text(source)
+        assert web_service_violations(tmp_path)
+
+    def test_web_scans_nested_initializers(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(sys.modules[__name__], "get_project_root", lambda: tmp_path)
+        path = tmp_path / "web/services/nested/__init__.py"
+        path.parent.mkdir(parents=True)
+        path.write_text("from ...security import safe_log_value")
+        assert web_service_violations(tmp_path)
+        path.write_text(
+            "from .. import db_service\nfrom core import db_core\nimport os"
+        )
+        assert web_service_violations(tmp_path) == []
+
+    def test_exceptions_are_scoped_to_file_and_module(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(sys.modules[__name__], "get_project_root", lambda: tmp_path)
+        path = tmp_path / "web/services/report_scheduler.py"
+        path.parent.mkdir(parents=True)
+        path.write_text("from utils.daily_report import main")
+        assert web_service_violations(tmp_path) == []
+        path.write_text("from utils import db")
+        assert web_service_violations(tmp_path)
+
+    @pytest.mark.parametrize(
+        "source",
+        [
+            "import detectors.services.new_service",
+            "from detectors.services import new_service",
+            "from .new_service import run",
+            "from . import new_service",
+            "from detectors.services import *",
+        ],
+    )
+    def test_detector_rejects_new_edges(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, source: str
+    ) -> None:
+        monkeypatch.setattr(sys.modules[__name__], "get_project_root", lambda: tmp_path)
+        path = tmp_path / "detectors/services/scoring_pipeline.py"
+        path.parent.mkdir(parents=True)
+        path.write_text(source)
+        assert detector_service_violations(tmp_path)
+
+    def test_detector_allows_documented_relative_edge_and_package_exports(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(sys.modules[__name__], "get_project_root", lambda: tmp_path)
+        path = tmp_path / "detectors/services/persistence_service.py"
+        path.parent.mkdir(parents=True)
+        path.write_text("from .crop_service import CropService")
+        (path.parent / "__init__.py").write_text(
+            "from .crop_service import CropService"
+        )
+        assert detector_service_violations(tmp_path) == []
+        path.write_text("from .scoring_pipeline import compute_detection_signals")
+        assert detector_service_violations(tmp_path)
+
+    def test_syntax_errors_are_not_silently_accepted(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(sys.modules[__name__], "get_project_root", lambda: tmp_path)
+        path = tmp_path / "broken.py"
+        path.write_text("def broken(")
+        with pytest.raises(SyntaxError):
+            get_imports_from_file(path)
+
+    @pytest.mark.parametrize("module", ["web", "flask", "werkzeug", "web.routes"])
+    def test_framework_boundary_matches_roots(self, module: str) -> None:
+        assert check_forbidden_imports([(module, 1)], ["web", "flask", "werkzeug"])
+        assert check_forbidden_imports([("website", 1)], ["web"]) == []

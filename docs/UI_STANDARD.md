@@ -169,12 +169,21 @@ detail modal. It is not a separate labeling mode or page.
 10. When `original_present = 0`, the shared editor shows a persistent
     `wm-training-export-notice` above its controls. It explains that corrections
     are saved but cannot be exported for training without the original. The
-    notice never covers the image or disables editing. The dataset page uses
+    notice never covers the image. Offered-box corrections remain available;
+    manual-object creation and manual geometry updates require the original,
+    while species-only updates to an existing manual object remain available.
+    The dataset page uses
     the same notice style to count distinct labeled birds whose training views
     are excluded for missing media; these are separate from pending box verdicts.
 11. In the Box Walkthrough, `Box fits` is also a direct primary action in the
     editor rail. It records the current box verdict through the shared editor
     action and advances only after the save succeeds.
+
+The shared `bird_editor.js` URL uses a content hash computed when the pages
+blueprint is registered. No manual cache-token or test-snapshot update is
+needed after editing this file. Restart the application after deploying asset
+changes so the URL reflects the installed content. Other assets retain their
+existing versioning until explicitly migrated.
 
 ## 0e. Offered-Box Species Confirmation (binding)
 
@@ -1762,15 +1771,15 @@ and species answers continue through their normal controls.
 ## Rules
 
 1. Every modal structure uses a defined type: `wm-modal` or `wm-modal wm-modal--form`.
-2. Every tile structure uses a defined type: `wm-tile`, `wm-tile wm-tile--review` (legacy), or `wm-tile wm-tile--bbox`.
+2. Standard image tiles use `wm-tile`, `wm-tile wm-tile--review` (legacy), or `wm-tile wm-tile--bbox`. Documented surface compositions such as Review Grid (§6/§6bb) use their own shared components; the legacy tile list is not exhaustive.
 3. The default Review workbench uses the `review-grid` event-card composition
    (§6 and §6bb). The retired `review-stage-panel` composition remains only for
    fragment endpoints, orphan-modal hosting, and explicit legacy-layout
    verification; new default Review Desk work must not extend it.
 4. Every detection-bearing browsing surface uses `tile_toolbox` (§5) for action overlays.
 5. No template may build its own modal, tile, or toolbox structures.
-6. Only these classes may be used.
-7. CSS refers exclusively to these classes.
+6. Reuse the component families and surface-specific compositions documented here. This is not a global ban on every class without a `wm-` prefix.
+7. Shared component styling belongs in the design system; preserve the documented structure and design tokens across surfaces.
 8. Continuity batch approvals (§6c) **must** post to `/api/review/event-approve` without an `event_key` and **must** filter `data-batch-context-detection-ids` out of the payload before posting. The server-side guard (refusal on `images.review_status='confirmed_bird'`) is the second line of defence, not the first.
 9. Species colour slots (§6d) are workspace-scoped, deterministic, and assigned across the union of (actionable events ∪ context anchors ∪ orphans). Per-event recomputation is forbidden — the same scientific name must keep one slot across the rail, the event-mode detection grid, the orphan modal, the batch stage, and the canvas bbox stroke.
 10. New surfaces that ship a bbox overlay must read the species slot from the host element's `data-species-colour` (or `box.speciesColour` on the canvas side), not from the legacy `BBOX_COLORS` rotation.

@@ -1,48 +1,72 @@
-"""The editor's cache-buster must move when the editor does.
-
-``base.html`` loads ``bird_editor.js`` with a ``?v=`` token. Browsers key
-their cache on the full URL, so shipping new JS under an unchanged token
-leaves every returning visitor on the old file — the markup updates from
-the template while the behaviour silently does not.
-
-This pins the token against the file's content hash: change the script,
-and the test tells you to move the token in the same commit.
-"""
-
-from __future__ import annotations
+"""The rendered editor URL follows installed content without manual snapshots."""
 
 import hashlib
+import os
 import re
 from pathlib import Path
 
+import pytest
+from flask import Flask
+from flask.testing import FlaskClient
+
+from web.blueprints.auth import auth_bp
+from web.blueprints.pages import pages_bp
+
 _ROOT = Path(__file__).resolve().parents[1]
-_BASE = _ROOT / "templates/base.html"
-_EDITOR = _ROOT / "assets/js/bird_editor.js"
-
-# Update BOTH when bird_editor.js changes: bump the ?v= token in base.html,
-# then paste the digest the failure message prints.
-_EXPECTED_EDITOR_DIGEST = "80d328653b09f56d"
-_EXPECTED_TOKEN = "20260923-focus-edit-v13"
 
 
-def _digest(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()[:16]
+def _client() -> FlaskClient:
+    app = Flask(__name__, template_folder=str(_ROOT / "templates"))
+    app.config["TESTING"] = True
+    app.register_blueprint(auth_bp)
+    app.register_blueprint(pages_bp)
+    return app.test_client()
 
 
-def _token() -> str:
-    match = re.search(r"bird_editor\.js\?v=([^\"']+)", _BASE.read_text())
-    assert match, "base.html no longer loads bird_editor.js with a ?v= token"
+def _editor_url(client: FlaskClient) -> str:
+    response = client.get("/privacy")
+    assert response.status_code == 200
+    match = re.search(
+        r'src="(/assets/js/bird_editor\.js\?v=[0-9a-f]{16})"',
+        response.get_data(as_text=True),
+    )
+    assert match, "Missing content-versioned editor URL"
     return match.group(1)
 
 
-def test_editor_cache_token_matches_the_shipped_file():
-    digest = _digest(_EDITOR)
-    token = _token()
+def test_editor_cache_token_matches_served_content() -> None:
+    client = _client()
+    url = _editor_url(client)
+    response = client.get(url)
+    assert response.status_code == 200
+    assert url.endswith(hashlib.sha256(response.data).hexdigest()[:16])
+    assert _editor_url(client) == url
+    assert _editor_url(_client()) == url
 
-    assert (digest, token) == (_EXPECTED_EDITOR_DIGEST, _EXPECTED_TOKEN), (
-        "bird_editor.js changed without moving its cache-buster (or vice versa).\n"
-        f"  current digest: {digest}\n"
-        f"  current token:  {token}\n"
-        "Bump the ?v= token in templates/base.html, then update both constants "
-        "in this test."
-    )
+
+def test_editor_url_changes_after_content_update_and_restart(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("web.blueprints.pages._ASSETS_FOLDER", str(tmp_path))
+    editor = tmp_path / "js/bird_editor.js"
+    editor.parent.mkdir()
+    editor.write_bytes(b"old editor")
+    old_stat = editor.stat()
+    first_url = _editor_url(_client())
+    editor.write_bytes(b"new editor")
+    os.utime(editor, ns=(old_stat.st_atime_ns, old_stat.st_mtime_ns))
+    client = _client()
+    second_url = _editor_url(client)
+    assert first_url != second_url
+    assert client.get(second_url).data == b"new editor"
+    assert second_url.endswith(hashlib.sha256(b"new editor").hexdigest()[:16])
+
+
+def test_missing_editor_fails_at_registration(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("web.blueprints.pages._ASSETS_FOLDER", str(tmp_path))
+    with pytest.raises(FileNotFoundError):
+        _client()

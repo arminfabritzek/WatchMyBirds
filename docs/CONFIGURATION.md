@@ -15,15 +15,33 @@ WatchMyBirds uses a **two-layer configuration model**:
 
 ### Runtime Settings
 - Stored in `OUTPUT_DIR/settings.yaml`
-- Editable via the Settings UI without restart
-- Applied immediately
+- Editable via the Settings UI and persisted without editing `.env`.
+- Runtime editability controls persistence; when a value takes effect depends
+  on its consumer and must be checked per setting. For example,
+  `STREAM_WIDTH_OUTPUT_RESIZE` is captured by
+  `web/blueprints/stream.py` at import, and Companion backend/model/context
+  settings are read when the inference adapter is constructed. The current
+  Companion service also captures enable, pause-detection, and timeout at
+  construction; saving their YAML values does not reconfigure that instance.
+  These settings require a restart in the current implementation.
+- Companion language/tone on `/chat` and `/event` come from each request
+  (defaults: `de` / `kid_friendly`), not from the persisted
+  `COMPANION_LANGUAGE` / `COMPANION_TONE` keys. Those keys currently do not
+  establish API defaults; this is an implementation gap.
+- `config.RUNTIME_KEYS` controls generic editability. Telemetry uses a
+  dedicated settings endpoint and explicit YAML loading. The generic
+  `restart_required` flag currently derives from `BOOT_KEYS` and does not
+  describe every restart-dependent consumer.
 
 ### Merge Order
 ```
-defaults → environment variables → settings.yaml
+defaults → environment variables → supported settings.yaml overrides
 ```
 
 Runtime edits update `settings.yaml` only — the `.env` file is never mutated.
+The loader accepts runtime keys and dedicated telemetry overrides, rather
+than applying arbitrary YAML keys. Legacy key migrations and type coercion
+run as part of loading; inspect `config._load_config` when changing precedence.
 
 ---
 
@@ -113,7 +131,7 @@ changes.
 |----------|---------|-------------|
 | `TELEGRAM_ENABLED` | `False` | Enable Telegram notifications |
 | `TELEGRAM_COOLDOWN` | `5` | Cooldown (seconds) between alerts |
-| `TELEGRAM_BOT_TOKEN` | — | Bot token (env-only, never in settings.yaml) |
+| `TELEGRAM_BOT_TOKEN` | — | Bot token (environment default or persisted runtime setting; treat settings.yaml as sensitive) |
 | `TELEGRAM_CHAT_ID` | — | Chat ID for notifications |
 
 ### MQTT detection events

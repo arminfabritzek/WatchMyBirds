@@ -4,11 +4,18 @@
 
 ### Fixed
 
+- The bird editor automatically refreshes its browser cache version after app
+  updates, preventing stale editing controls without manual version changes.
 - Species review now distinguishes a confirmed model proposal from a corrected
   species, including in earlier labels shown in the gallery.
 - Live-view Overview controls now report failed preset requests, prompt for
   login when the session expires, and clear the return countdown only after
   the server accepts the request.
+
+### Documentation
+
+- Configuration guidance clarifies which settings require a restart, how
+  Companion defaults are applied, and where Telegram credentials are stored.
 
 ## 0.5.8 - 2026-09-23
 

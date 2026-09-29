@@ -1,188 +1,125 @@
-# CLAUDE.md — WatchMyBirds
+# AGENTS.md — WatchMyBirds
 
-Operating notes for AI coding agents working in this repository.
-Humans should read [`CONTRIBUTING.md`](CONTRIBUTING.md) instead.
+WatchMyBirds is a single-station bird-detection appliance: object detection →
+species classification, with Flask/Jinja2, SQLite, and local image storage.
+Raspberry Pi 5 (aarch64, CPU) and Docker are first-class targets.
+Human contributors: [CONTRIBUTING.md](CONTRIBUTING.md).
 
-## What this project is
+## Working agreement
 
-WatchMyBirds is a **single-station bird-detection appliance**:
-a multi-stage AI pipeline (object detection → species classification)
-behind a Flask + Jinja2 web UI, deployed on Raspberry Pi 5 or via
-Docker. Originals are immutable, the SQLite DB is the metadata
-authority, new storage-path construction goes through
-`utils.path_manager.PathManager`.
+- Check `git status --short` and the relevant diff first. Preserve existing
+  work; do not reset, stash, or overwrite unrelated changes.
+- Keep a short `[ ]` / `[x]` checklist in the conversation. Carry authorized
+  local implementation and verification through to a reviewable result.
+- Ask when a missing decision materially changes scope. Deployment, live
+  camera or production-data changes, pushing, and publishing need action-specific
+  authorization; existing authorization in the conversation counts.
+- When contributors work concurrently, agree file ownership and re-read shared
+  files before editing. Integrate their changes instead of reverting them.
+- Keep fixes focused. Do not bundle unsolicited refactors.
 
-The architectural narrative lives in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md);
-the enforced invariants live in [`docs/INVARIANTS.md`](docs/INVARIANTS.md).
-**Read both before any non-trivial change.**
+## Read for the affected surface
 
-## Environment
+| Change | Read before editing |
+|--------|---------------------|
+| Service boundaries, storage, image lifecycle, deletion, architecture tests | [INVARIANTS.md](docs/INVARIANTS.md) and [ARCHITECTURE.md](docs/ARCHITECTURE.md) |
+| Templates, frontend JS or CSS | Binding sections and affected component in [UI_STANDARD.md](docs/UI_STANDARD.md) |
+| Settings or config loading | [CONFIGURATION.md](docs/CONFIGURATION.md) |
+| Outbound data flows | [PRIVACY.md](docs/PRIVACY.md) |
 
-- **Python:** 3.12+ (pinned in `pyproject.toml`, also pinned on the
-  RPi build lane — do not bump unilaterally).
-- **Virtualenv:** prefer `.venv/` in the repo root when present.
-- **Dependencies:** `requirements.txt` is authoritative for runtime.
-  `requirements-aesthetic.txt` is split out only for CPU-index isolation
-  (torch/open_clip); it is installed by every standard build and the
-  tagger is default-ON — opt out via `AESTHETIC_TAG_ENABLED=False`, not
-  by skipping the file. `requirements-companion.txt` is a genuine
-  optional extra (default-OFF LLM companion, not auto-installed).
-- **Entry point:** `python main.py` → web UI on `http://localhost:8050`.
+For other edits, read the relevant implementation, tests, and supporting docs;
+a documentation-only edit needs the sources for its claims.
 
-## Tooling
+For architecture rules, authority is **INVARIANTS.md > ARCHITECTURE.md > other
+project documents**. Report code/test/doc disagreements instead of silently
+weakening a rule. Rule demotions require the rationale, test update, and version
+bump described in INVARIANTS.md. Update UI_STANDARD.md in the same change when
+a shared UI rule changes.
 
-All tool configuration is centralized in `pyproject.toml`. There are
-no separate `.flake8` / `.isort.cfg` / `pytest.ini` files.
+## Contracts to preserve
 
-| Task    | Command                  | Notes                                |
-|---------|--------------------------|--------------------------------------|
-| Lint    | `ruff check .`           | Autofix: `ruff check --fix .`        |
-| Format  | `ruff format .`          | Black is deprecated, prefer `ruff`.  |
-| Test    | `pytest`                 | `testpaths = ["tests"]`.             |
+The full import policy, exceptions, and required module list live in
+INVARIANTS.md. Quick map:
 
-## Binding documents (read before touching the listed surfaces)
+- **H-01:** Web services use the documented import allowlist and file-scoped
+  exceptions. Nearby legacy imports do not authorize new exceptions.
+- **H-02 / H-03:** Core and detector services do not import web, Flask, or Werkzeug.
+- **H-04:** Detector-service imports follow the explicit directed dependency table.
+- **H-05:** Preserve the required modules.
 
-Authority order when they disagree: **`INVARIANTS.md` > `ARCHITECTURE.md` > everything else.** `INVARIANTS.md` is schema-versioned and tracks what is actually enforced; the others are narrative.
+These checks cover static imports and module presence, not all runtime behavior.
+S-01–S-05 guide new work: thin routes, dedicated use-case services, injectable
+state, service-owned IO, `PathManager` for storage paths, and `utils.image_ops`
+for shared transformations. Legacy deviations are not permission to add more.
 
-- [`docs/INVARIANTS.md`](docs/INVARIANTS.md) — schema-versioned (`v4`)
-  list of HARD / SOFT / OBSOLETE invariants. The canonical answer to
-  "is this rule actually enforced?" Read first for any cross-cutting
-  change.
-- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — narrative architecture:
-  data model, module responsibilities, change rules. Context for any
-  change in `detectors/`, `core/`, `web/`, `utils/path_manager.py`,
-  `utils/image_ops.py`, `utils/file_gc.py`.
-- [`docs/UI_STANDARD.md`](docs/UI_STANDARD.md) — image UX,
-  hover-tooltip convention, modal/review/stream rules. **Sections 0,
-  0a, and 0c are marked `(binding)`.** Read before any template /
-  frontend-JS / CSS change.
-- [`docs/CONFIGURATION.md`](docs/CONFIGURATION.md) — two-layer config
-  model: boot ENV vars (read-only at runtime) + `OUTPUT_DIR/settings.yaml`
-  (live-editable). Merge order: defaults → env → settings.yaml.
-- [`docs/PRIVACY.md`](docs/PRIVACY.md) — privacy posture (local-only
-  by default, opt-in heartbeat only).
+- Preserve originals after capture/import finalization. Never overwrite an
+  existing original or edit it for a correction. Retention may remove originals;
+  preserve derivatives for retained observations that no longer have originals.
+- SQLite is the metadata authority. Store filenames/relative references, not
+  absolute filesystem paths. Path getters alone do not prove containment;
+  use the checked path described in ARCHITECTURE.md for untrusted filenames.
+- Hard deletion attempts file removal before DB removal. Missing files must
+  not abort DB cleanup. See ARCHITECTURE.md for known persistence gaps.
+- Use Flask/Jinja2 for new UI. SPA migration, a server DB, cloud primary storage,
+  and reintroducing Dash are out of scope without an explicit request.
+- General blank-canvas annotation is out of scope. Existing `Add missing bird`
+  on a stored image with an available original is the explicit exception
+  (UI_STANDARD.md §0d). Manual objects must not fabricate model scores,
+  detector proposals, or event approval. Offered-box corrections remain in scope.
 
-## Hard rules (HARD invariants from `INVARIANTS.md v4`)
+## Environment and validation
 
-These are the rules whose violations are detected by tests. If you
-break one, CI catches you.
+- Python minimum is 3.12 (`pyproject.toml`); CI/RPi use 3.12. Docker pins its own
+  runtime in `Dockerfile`. Do not bump runtimes unilaterally or require CUDA/x86 SIMD.
+- Prefer the repo `.venv/`. Start the app with `python main.py` (default port 8050).
+- Runtime dependencies: `requirements.txt` plus `requirements-aesthetic.txt`.
+  The latter isolates the torch/open_clip CPU index, is included in standard
+  builds, and is default-ON. Opt out with `AESTHETIC_TAG_ENABLED=False`, not by
+  omitting its dependencies. `requirements-companion.txt` is an optional extra
+  for the default-OFF Companion.
+- Python tool configuration lives in `pyproject.toml`. Run from the repo root;
+  use `.venv/bin/python -m` when available. `<files>` below is a placeholder.
 
-- **`H-01` Web service import boundary.** `web/services/*.py` may
-  import from `core/*`, stdlib/typing, `config`, `logging_config`, and
-  other `web.services.*` — **never from `camera/*`, `detectors/*`, or
-  `utils.*`**. Only two grandfathered exceptions exist
-  (`report_scheduler.py` → `utils.daily_report`, `telemetry_service.py`
-  → `utils.settings`); do not add a third. Need a small constant from
-  `utils`? Mirror it locally or route it through `core/`.
-- **`H-02` Core isolation.** `core/*.py` must not import `web/*`,
-  `flask`, or `werkzeug`.
-- **`H-03` Detector service isolation.** `detectors/services/*.py`
-  must not import `web/*`, `flask`, or `werkzeug`.
-- **`H-04` Detector service internal coupling.** Only
-  `detectors/services/persistence_service.py` may import
-  `detectors/services/crop_service.py`. No other inter-file imports
-  inside `detectors/services/`.
-- **`H-05` Required module set.** Do not delete or rename the
-  required files in `core/`, `web/services/`, and `detectors/services/`
-  (see `INVARIANTS.md` for the exact list).
+| Check | Command |
+|-------|---------|
+| Lint affected Python | `python -m ruff check <files>` |
+| Check / apply formatting | `python -m ruff format --check <files>` / `python -m ruff format <files>` |
+| Targeted tests | `python -m pytest <files>` |
+| Hard architecture checks | `python -m pytest tests/test_import_boundaries.py -m arch_hard` |
+| CI-equivalent lint/test selection | `python -m ruff check .` then `python -m pytest -q -m "not host_env"` |
 
-Project-level rules that are equally non-negotiable but not in the
-invariants test suite:
+Use targeted checks during iteration. Broaden for cross-cutting changes or PR
+preparation; `host_env` tests need a suitable host. Do not mass-format unrelated
+files. For documentation-only changes, check claims, links, and `git diff --check`;
+a full suite is unnecessary. Add tests for detection, persistence, path resolution,
+deletion, and auth changes; tests belong in `tests/`.
 
-- **Originals are immutable.** Files under `OUTPUT_DIR/originals/`
-  are written once and never modified in place. Derivatives
-  (`OUTPUT_DIR/derivatives/…`) are disposable and regenerable.
-- **Database is the metadata authority.** No absolute filesystem
-  paths in the DB — only filenames and relative references resolved
-  at runtime.
-- **No Dash.** The legacy Dash UI is deprecated. All new routes are
-  Flask + Jinja2 (blueprints under `web/blueprints/` or routes on
-  `web/web_interface.py`).
-- **Deletion order.** Hard delete: attempt file removal first,
-  then DB record removal. Missing-file MUST NOT abort the DB removal.
+## Style and language
 
-## Soft rules (SOFT invariants — preferred patterns for new code)
+- Conventional Commits (`feat:`, `fix:`, `docs:`, `refactor:`, `test:`, `chore:`),
+  imperative subject, at most 72 characters.
+- New Python functions/methods require type hints (`list[T]`, `X | None`).
+- Comments explain non-obvious reasons; do not narrate well-named code.
+- UI labels, helper/status text, UI-near docs, comments, and identifiers default
+  to English. Species names and other locale-derived content remain localized.
 
-These are not test-enforced as facts about the whole codebase. Legacy
-call sites that violate them still exist. **Do not extend that pile;
-new code follows the rule.**
+## Navigation
 
-- **`S-01` Route thinness.** Blueprint handlers and routes parse the
-  request, call a service, return a response. No business rules, no
-  raw SQL, no file-processing pipelines inline.
-- **`S-02` Service responsibility.** Use-case logic lives in dedicated
-  service modules, not in `web/services/db_service.py` as a SQL
-  pass-through.
-- **`S-03` Runtime state ownership.** Prefer injectable stateful
-  services over module-level mutable globals in blueprints.
-- **`S-04` IO placement.** Subprocess calls, large file IO, hardware
-  metrics — through dedicated services, not in route handlers.
-- **`S-05` Path and image-op centralization.** New storage-path
-  construction goes through `utils.path_manager.PathManager`. New
-  image transformations go through `utils.image_ops`. (`O-03` and
-  `O-04` in `INVARIANTS.md` retired the claim that this is *already*
-  exclusive — it is the rule for new code, not the state of legacy.)
+- UI: `web/`, `templates/`, `assets/`; analytics: `web/blueprints/analytics.py`,
+  `core/analytics_core.py`.
+- Pipeline/storage: `detectors/`, `core/`, `utils/`; inbox ingestion:
+  `core/ingest_core.py`, `utils/ingest.py`.
+- Camera/deployment: `camera/`, `rpi/`, `systemd/`, `scripts/`, `infra/`,
+  `.github/workflows/`, `docker-compose.example.yml`.
+- Optional Companion: `web/services/companion/`, `web/blueprints/companion.py`.
 
-## Style and changes
+## Completion
 
-- **Conventional Commits** for messages: `feat:`, `fix:`, `docs:`,
-  `refactor:`, `test:`, `chore:`. Subject ≤ 72 chars, imperative.
-- **Type hints** required on new code (Python 3.12 syntax: `list[T]`,
-  `X | None`, `match`).
-- **Tests** belong in `tests/`. Add a test when the change touches
-  detection, persistence, path resolution, deletion, or auth.
-- **Comments:** only when the *why* is non-obvious. Don't narrate
-  what well-named code already says.
-- **No unsolicited refactors.** A bug fix fixes the bug; cleanup is
-  a separate change. Don't bundle.
+Review the final diff and fix check failures caused by the change. For UI changes,
+inspect affected flows in a browser at desktop/narrow widths and in Light/Dark;
+report unavailable visual verification explicitly. A template test is insufficient.
 
-## Localization
-
-User-facing labels, status text, helper copy, and new UI-near
-documentation default to **English**. Bird species names and other
-locale-derived content stay localized where they belong. Comments
-and identifiers are English.
-
-## Deploy targets (informational)
-
-- **Docker:** `docker-compose.example.yml` → standard Docker host.
-- **Raspberry Pi 5:** the primary appliance target. Pre-built images
-  exist; see `rpi/` for build pipeline.
-
-Do not write production code that assumes x86 SIMD, CUDA, or
-glibc-only behavior — RPi (aarch64, musl-adjacent on some builds) is
-a first-class target.
-
-## Out of scope (do not propose without explicit ask)
-
-- Migrating the gallery to a SPA framework (React/Vue/etc.).
-- Replacing SQLite with a server DB.
-- Cloud storage as the primary tier.
-- Reintroducing Dash.
-- Blank-canvas labeling: asking the operator to produce a label on a
-  frame where nothing was proposed. Correcting a proposal — confirm,
-  relabel, reject, drag the offered box — is in scope and is where
-  active work is heading. The line is the blank canvas, not the mouse.
-
-## Where things live
-
-| Area                            | Path                                  |
-|---------------------------------|---------------------------------------|
-| Web routes & templates          | `web/`, `templates/`                  |
-| Detection / classification      | `detectors/`                          |
-| Core business logic & DB        | `core/`                               |
-| Path / image / GC utilities     | `utils/`                              |
-| Ingest pipeline                 | `ingest/`                             |
-| Camera & streaming              | `camera/`                             |
-| Analytics                       | `analytics/`                          |
-| RPi build & deploy              | `rpi/`, `systemd/`                    |
-| Operational scripts             | `scripts/`, `infra/`                  |
-| Tests                           | `tests/`                              |
-| User docs                       | `docs/`                               |
-| Optional Companion (LLM) layer  | `berta_openai/`                       |
-
-## Reporting back
-
-After a change: state what changed, which invariants were touched,
-and what tests were added or run. Don't write a summary document —
-the diff and the commit message are the record.
+Report what changed, affected invariants, checks/results, and remaining limitations.
+Distinguish local verification from deployment/live-device verification and identify
+pre-existing failures. Do not create a separate summary document unless requested;
+the diff and, when committed, the commit message are the record.
