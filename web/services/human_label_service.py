@@ -274,6 +274,7 @@ def fetch_detection_review_states(
             "state": "unreviewed",
             "reviewed": False,
             "species_key": None,
+            "bbox_verdict": None,
         }
         for detection_id in ids
     }
@@ -299,7 +300,7 @@ def fetch_detection_review_states(
             FROM current_human_label_facts current
             WHERE current.scope = 'object'
               AND current.detection_id IN ({placeholders})
-              AND current.fact_type IN ('bird_presence', 'species_identity')
+              AND current.fact_type IN ('bird_presence', 'species_identity', 'bbox_quality')
             """,
             chunk,
         ).fetchall()
@@ -321,6 +322,9 @@ def fetch_detection_review_states(
         for row in (*object_rows, *image_rows):
             if row["assertion_state"] != "asserted":
                 continue
+            if row["fact_type"] == "bbox_quality":
+                states[int(row["detection_id"])]["bbox_verdict"] = row["answer_value"]
+                continue
             next_state: str | None = None
             if row["fact_type"] == "bird_presence" and row["answer_value"] == "absent":
                 next_state = "reviewed_negative"
@@ -341,6 +345,7 @@ def fetch_detection_review_states(
             if priority[next_state] < priority[current_state]:
                 continue
             states[detection_id] = {
+                **states[detection_id],
                 "state": next_state,
                 "reviewed": True,
                 "species_key": (
@@ -367,6 +372,11 @@ def summarize_detection_review_progress(
     return {
         "reviewed": reviewed,
         "total": total,
+        "boxes_reviewed": sum(
+            review_states.get(detection_id, {}).get("bbox_verdict")
+            in {"suitable", "unsuitable"}
+            for detection_id in ids
+        ),
         "complete": total > 0 and reviewed == total,
     }
 

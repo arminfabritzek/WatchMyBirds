@@ -4,6 +4,10 @@
 
 ### Fixed
 
+- Species and box assessments remain independent when editing birds, survive
+  reopening, and can be withdrawn without changing the other assessment.
+- Bird labels and box badges show their own saved assessment status; galleries
+  show separate counts for assessed species and boxes.
 - The bird editor automatically refreshes its browser cache version after app
   updates, preventing stale editing controls without manual version changes.
 - Species review now distinguishes a confirmed model proposal from a corrected

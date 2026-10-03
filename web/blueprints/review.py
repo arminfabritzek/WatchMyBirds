@@ -583,6 +583,7 @@ def _build_review_modal_siblings(
                 "bbox_y": sibling["bbox_y"] or 0.0,
                 "bbox_w": sibling["bbox_w"] or 0.0,
                 "bbox_h": sibling["bbox_h"] or 0.0,
+                "human_bbox_verdict": dict(sibling).get("human_bbox_verdict"),
                 "thumb_url": (
                     f"/uploads/derivatives/thumbs/{thumb_virtual}"
                     if thumb_virtual

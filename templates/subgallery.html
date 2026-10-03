@@ -1,4 +1,5 @@
 {% extends 'base.html' %}
+{% from 'components/human_review_progress.html' import render_human_review_progress %}
 
 {% block title %}{{ date }} - Gallery - WatchMyBirds{% endblock %}
 
@@ -114,11 +115,7 @@
         <span class="wm-tile__name">{{ obs.common_name }}</span>
         <span class="wm-tile__meta">{{ obs.cover_detection.formatted_time }}{% if obs.duration_sec > 0 %} · {{
             obs.duration_display }}{% endif %}</span>
-        <span class="wm-review-progress wm-review-progress--observation{% if obs.review_progress.complete %} is-complete{% endif %}"
-            aria-label="{{ obs.review_progress.reviewed }} of {{ obs.review_progress.total }} species labels checked">
-            <span class="wm-review-progress__mark" aria-hidden="true">{% if obs.review_progress.complete %}✓{% endif %}</span>
-            <span>{{ obs.review_progress.reviewed }}/{{ obs.review_progress.total }} checked</span>
-        </span>
+        {{ render_human_review_progress(obs.review_progress, observation=true) }}
         {% if obs.photo_count > 1 %}
         <span class="wm-tile__score"><span class="obs-card__expand-hint">▼</span></span>
         {% endif %}

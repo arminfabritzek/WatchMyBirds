@@ -6554,9 +6554,11 @@ body {
     position: absolute;
     left: -3px;
     bottom: calc(100% + 3px);
+    width: max-content;
     max-width: 220px;
     min-height: 28px;
-    display: inline-flex;
+    display: inline-grid;
+    grid-template-columns: minmax(0, 1fr) auto;
     align-items: stretch;
     padding: 0;
     overflow: hidden;
@@ -13388,3 +13390,63 @@ code {
 .quality-strata { display: flex; flex-wrap: wrap; gap: 8px 18px; margin-top: 18px; color: var(--color-text-muted); font-size: 0.78rem; }
 .quality-strata span { display: flex; gap: 6px; }
 .quality-strata strong { color: var(--color-text); }
+
+/* Species and box confirmations remain independent of selection styling. */
+.wm-bird-editor__box .wm-bird-editor__box-label.is-species-confirmed {
+    background: #187544;
+    color: #fff;
+    border-color: rgba(255, 255, 255, 0.75);
+}
+.wm-bird-editor__box[data-box-verdict="confirmed"] {
+    border-color: #249c60;
+    background: transparent;
+}
+.wm-bird-editor__box[data-box-verdict="incorrect"] {
+    border-color: #bb453b;
+}
+.wm-bird-editor__box-verdict {
+    position: absolute;
+    right: 0;
+    bottom: 0;
+    width: 28px;
+    height: 28px;
+    display: grid;
+    place-items: center;
+    border: 1px solid rgba(0, 0, 0, 0.18);
+    border-radius: 50%;
+    background: #fffdf7;
+    color: #655e50;
+    font: 700 19px/1 system-ui, sans-serif;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.18);
+    transform: scale(var(--wm-bird-editor-handle-scale, 1));
+    transform-origin: bottom right;
+    pointer-events: auto;
+}
+.wm-bird-editor__box-verdict[data-verdict="confirmed"] { color: #187544; }
+.wm-bird-editor__box-verdict[data-verdict="incorrect"] { color: #b33129; }
+.wm-bird-editor__box-verdict[data-verdict="pending"] { color: #846315; }
+.wm-bird-editor__layer.is-editing .wm-bird-editor__box.is-selected .wm-bird-editor__box-verdict {
+    bottom: 12px;
+    right: 12px;
+    pointer-events: none;
+}
+.wm-bird-editor__menu-status {
+    padding: 8px 12px 4px;
+    font-size: 12px;
+    font-weight: 600;
+}
+.wm-review-progress { flex-wrap: wrap; }
+
+.wm-bird-editor__menu-hint {
+    max-width: 220px;
+    padding: 0 12px 6px;
+    font-size: 11px;
+    line-height: 1.4;
+    opacity: 0.8;
+}
+.wm-bird-editor__menu-hint[hidden] { display: none; }
+
+button.wm-bird-editor__box-verdict { padding: 0; cursor: pointer; }
+button.wm-bird-editor__box-verdict:hover { background: #e4f3e9; }
+button.wm-bird-editor__box-verdict:focus-visible { outline: 3px solid #187544; outline-offset: 2px; }
+button.wm-bird-editor__box-verdict:disabled { cursor: default; opacity: 0.65; }

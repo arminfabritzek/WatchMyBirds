@@ -103,7 +103,9 @@
                         class="wm-toolbox__item" role="menuitem" title="Open this day in Gallery"
                         aria-label="Open this day in Gallery">📅 <span>Open day</span></a>
                     {% endif %}
-                    <button type="button" class="wm-toolbox__item" role="menuitem"
+                    <div class="wm-bird-editor__menu-status" data-bbox-status role="status"></div>
+                    <div class="wm-bird-editor__menu-hint" data-bbox-undo-hint hidden>Select the checked option again to clear.</div>
+                    <button type="button" class="wm-toolbox__item" role="menuitemcheckbox" aria-checked="false"
                         data-editor-action="bbox-verdict" data-bbox-verdict="suitable"
                         aria-label="Mark this box as fitting the bird"
                         title="The box sits correctly around this bird"
@@ -111,7 +113,7 @@
                         <span data-bbox-verdict-icon="suitable" aria-hidden="true">☐</span>
                         <span>Box fits</span>
                     </button>
-                    <button type="button" class="wm-toolbox__item" role="menuitem"
+                    <button type="button" class="wm-toolbox__item" role="menuitemcheckbox" aria-checked="false"
                         data-editor-action="bbox-verdict" data-bbox-verdict="unsuitable"
                         aria-label="Mark this box as wrong"
                         title="The box does not sit correctly around this bird"

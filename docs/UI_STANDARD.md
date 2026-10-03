@@ -179,6 +179,26 @@ detail modal. It is not a separate labeling mode or page.
     editor rail. It records the current box verdict through the shared editor
     action and advances only after the save succeeds.
 
+12. Each box carries a compact badge at its lower-right corner: `?` for unchecked,
+    a green check for confirmed, and a red `!` for incorrect. Its accessible name
+    and tooltip spell out the status; the menu retains the full status text.
+    Pending edits use a clock rather than a saved confirmation check. Manual
+    objects use a pencil without inventing a box-quality fact. Badges retain
+    their screen size in Focus view and avoid resize handles during editing.
+    For authenticated operators, the offered-box badge is a keyboard-accessible
+    button in browse mode: click to confirm suitable, click again to retract.
+    It targets its own box, including companions, and never changes species.
+    It is disabled while saving, stale, or editing; manual boxes stay read-only.
+13. The overflow keeps two box actions (`Box fits`, `Box is wrong`) and a
+    non-action status line. Pressing the active action clears that assessment.
+    Browse-mode answers save immediately; edit-mode answers say `Unsaved` until
+    Save succeeds. Cancel keeps the stored assessment. Geometry changes imply
+    a suitable new box unless the user explicitly chooses another assessment.
+14. Stored verdicts come only from current canonical human facts. They survive
+    reload, companion selection and inter-modal updates. Draft intent is separate:
+    a species-only save never repeats, changes or clears the stored box answer.
+    Combined changes and retraction persist atomically through the answer API.
+
 The shared `bird_editor.js` URL uses a content hash computed when the pages
 blueprint is registered. No manual cache-token or test-snapshot update is
 needed after editing this file. Restart the application after deploying asset
@@ -199,12 +219,16 @@ second toolbox or a blank-canvas labeling mode.
    detection. It does not introduce a second picker implementation.
 3. A check mark means canonical current human evidence exists. AI decision
    state and legacy review columns must never create the check appearance.
-4. Confirmed and corrected controls retain the species colour. Confirmation is
-   distinguished by check state and outline, not by turning every species box
-   the same colour.
-5. Gallery tiles remain read-only. They may show aggregate `reviewed / total`
-   progress, but all fact-writing controls stay inside the detail modal or the
-   established Review workflow.
+4. Confirmed and corrected known species use a fully green label, including
+   the dropdown segment, with a white check and text.
+   Species-unknown answers do not get a positive species confirmation colour.
+   The frame turns green only for its own saved suitable-box verdict.
+5. Gallery tiles remain read-only. They show independent human-assessment
+   counts: `Species n/N · Boxes n/N`. A box marked wrong counts as assessed;
+   species explicitly marked unknown counts as answered. These are counts of
+   offered detections, not images, positive approvals or training eligibility.
+   Do not show a shared completion check for independent axes. All fact-writing
+   controls stay inside the detail modal or the established Review workflow.
 6. Every segment is keyboard focusable, carries an accessible name, and keeps
    a practical touch target. Focus/Full transforms, resizing, and active-box
    switching must keep labels aligned with their boxes.

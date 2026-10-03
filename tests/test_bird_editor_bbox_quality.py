@@ -109,7 +109,9 @@ def test_the_toggle_can_report_an_unusable_box():
 def test_an_explicit_verdict_outranks_the_drag_implication():
     """Someone who drags and then marks it wrong meant wrong."""
     moved_then_rejected = _draft(
-        bbox={"x": 0.4, "y": 0.2, "w": 0.3, "h": 0.3}, bboxVerdict="unsuitable"
+        bbox={"x": 0.4, "y": 0.2, "w": 0.3, "h": 0.3},
+        bboxVerdict="unsuitable",
+        bboxVerdictTouched=True,
     )
 
     body = _build_body(moved_then_rejected, SAVED)
@@ -180,7 +182,7 @@ def test_a_verdict_is_never_carried_into_a_later_save():
 
     body = _build_body(already_answered, initial_with_verdict)
 
-    assert body["bbox_quality"] == "suitable"
+    assert "bbox_quality" not in body
     assert "bbox_correction" not in body
 
 
@@ -268,3 +270,60 @@ def test_a_verdict_given_while_viewing_is_written_immediately():
 def test_a_verdict_given_while_editing_rides_along_with_save():
     """In edit mode the verdict joins the pending box change instead."""
     assert _click_mode(True) == "draft"
+
+
+def test_relabel_preserves_saved_box_without_reasserting_it():
+    initial = _draft(bboxVerdict="suitable")
+    changed = _draft(bboxVerdict="suitable", speciesKey="Parus_major")
+    body = _build_body(changed, initial)
+    assert body["species_identity"] == "corrected"
+    assert "bbox_quality" not in body
+    assert "retract_bbox_quality" not in body
+
+
+def test_clear_in_edit_mode_is_an_explicit_retraction():
+    initial = _draft(bboxVerdict="suitable")
+    changed = _draft(bboxVerdict=None, bboxVerdictTouched=True)
+    body = _build_body(changed, initial)
+    assert body["retract_bbox_quality"] is True
+    assert "bbox_quality" not in body
+
+
+def test_correcting_a_previously_wrong_box_confirms_the_new_geometry():
+    initial = _draft(bboxVerdict="unsuitable")
+    changed = _draft(
+        bboxVerdict="unsuitable", bbox={"x": 0.3, "y": 0.2, "w": 0.3, "h": 0.3}
+    )
+    body = _build_body(changed, initial)
+    assert body["bbox_quality"] == "suitable"
+
+
+def test_normalize_restores_only_canonical_box_verdict():
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("Node.js is unavailable")
+    script = (
+        "const e=require("
+        + json.dumps(str(_MODULE))
+        + ");"
+        + """
+    const raw = {detection_id: 1, bbox_x: .1, bbox_y: .1, bbox_w: .2, bbox_h: .2};
+    const cases = [null, 'suitable', 'unsuitable'].map(v => {
+        const item = e.normalize({...raw, human_bbox_verdict:v});
+        return [item.bboxVerdict, e.bboxStatusText(item, null)];
+    });
+    const legacy = e.normalize({...raw, manual_bbox_review:'correct', bbox_quality:1});
+    console.log(JSON.stringify({cases, legacy:legacy.bboxVerdict}));
+    """
+    )
+    data = json.loads(
+        subprocess.run(
+            [node, "-e", script], check=True, capture_output=True, text=True
+        ).stdout
+    )
+    assert data["cases"] == [
+        [None, "□ Box unchecked"],
+        ["suitable", "☑ Box confirmed"],
+        ["unsuitable", "⚠ Box incorrect"],
+    ]
+    assert data["legacy"] is None

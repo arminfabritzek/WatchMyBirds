@@ -94,6 +94,7 @@ class HumanAnswer:
     species_identity: str | None = None
     species_key: str | None = None
     detector_miss: bool = False
+    retract_bbox_quality: bool = False
 
 
 def object_training_readiness(
@@ -203,6 +204,9 @@ def record_human_answer(
     if not filename:
         raise HumanLabelError("image filename is required")
 
+    if answer.retract_bbox_quality and answer.bbox_quality is not None:
+        raise HumanLabelError("bbox quality cannot be set and cleared together")
+
     fact_ids: list[int] = []
     image_subject_id: int | None = None
     object_subject_id: int | None = None
@@ -229,7 +233,7 @@ def record_human_answer(
             answer.species_identity,
         )
     )
-    if object_axes_present:
+    if object_axes_present or answer.retract_bbox_quality:
         if answer.detection_id is None:
             raise HumanLabelError("object facts require detection_id")
         object_subject_id = ensure_object_subject(conn, answer.detection_id)
@@ -387,7 +391,17 @@ def record_human_answer(
                 ),
             )
 
-    if not fact_ids:
+    if answer.retract_bbox_quality:
+        retracted = retract_bbox_quality(
+            conn,
+            image_filename=filename,
+            detection_id=answer.detection_id,
+            provenance=provenance,
+        )
+        if retracted is not None:
+            fact_ids.append(retracted)
+
+    if not fact_ids and not answer.retract_bbox_quality:
         raise HumanLabelError("answer contains no facts")
     return fact_ids
 

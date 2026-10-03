@@ -69,6 +69,24 @@ def effective_bbox_projection_sql(
     return projected, join_sql
 
 
+def human_bbox_verdict_sql(conn: sqlite3.Connection, det_alias: str = "d") -> str:
+    """Read human evidence only; legacy columns and model scores are not votes."""
+    if (
+        conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'view' "
+            "AND name = 'current_human_label_facts'"
+        ).fetchone()
+        is None
+    ):
+        return "NULL"
+    return (
+        "(SELECT answer_value FROM current_human_label_facts "
+        f"WHERE detection_id = {det_alias}.detection_id "
+        "AND scope = 'object' AND fact_type = 'bbox_quality' "
+        "AND assertion_state = 'asserted')"
+    )
+
+
 def _canonical_species_key_sql(expr: str) -> str:
     """SQL mirror of utils.species_names.canonical_species_key()."""
     return f"NULLIF(REPLACE(TRIM(COALESCE({expr}, '')), ' ', '_'), '')"
@@ -518,6 +536,7 @@ def fetch_detections_for_gallery(
 
     species_sql = _effective_species_joined_sql("d", "c")
     bbox_sql, bbox_join_sql = effective_bbox_projection_sql(conn)
+    verdict_sql = human_bbox_verdict_sql(conn)
     manual_count_d = _manual_active_count_sql(conn, "d.image_filename")
     manual_count_v = _manual_active_count_sql(conn, "v.image_filename")
     # original_present is added to images by a runtime migration; legacy/test
@@ -532,6 +551,7 @@ def fetch_detections_for_gallery(
             {bbox_sql[1]} AS bbox_y,
             {bbox_sql[2]} AS bbox_w,
             {bbox_sql[3]} AS bbox_h,
+            {verdict_sql} AS human_bbox_verdict,
             d.od_class_name,
             d.od_confidence,
             d.score,
@@ -927,6 +947,7 @@ def fetch_sibling_detections(
     """
     species_sql = _effective_species_joined_sql("d", "c")
     bbox_sql, bbox_join_sql = effective_bbox_projection_sql(conn)
+    verdict_sql = human_bbox_verdict_sql(conn)
     query = f"""
         SELECT
             d.detection_id,
@@ -938,6 +959,7 @@ def fetch_sibling_detections(
             {bbox_sql[1]} AS bbox_y,
             {bbox_sql[2]} AS bbox_w,
             {bbox_sql[3]} AS bbox_h,
+            {verdict_sql} AS human_bbox_verdict,
             d.decision_state,
             d.manual_species_override,
             d.species_source,
@@ -986,6 +1008,7 @@ def fetch_sibling_detections_batch(
     placeholders = ",".join("?" * len(image_filenames))
     species_sql = _effective_species_joined_sql("d", "c")
     bbox_sql, bbox_join_sql = effective_bbox_projection_sql(conn)
+    verdict_sql = human_bbox_verdict_sql(conn)
     query = f"""
         SELECT
             d.image_filename,
@@ -998,6 +1021,7 @@ def fetch_sibling_detections_batch(
             {bbox_sql[1]} AS bbox_y,
             {bbox_sql[2]} AS bbox_w,
             {bbox_sql[3]} AS bbox_h,
+            {verdict_sql} AS human_bbox_verdict,
             d.decision_state,
             d.manual_species_override,
             d.species_source,

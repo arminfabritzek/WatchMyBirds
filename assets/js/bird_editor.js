@@ -56,6 +56,8 @@
             commonName: item.common_name || (speciesKey ? speciesKey.replace(/_/g, ' ') : 'Bird · species unknown'),
             provenance: provenance,
             humanReviewState: humanReviewState,
+            bboxVerdict: ['suitable', 'unsuitable'].includes(item.human_bbox_verdict)
+                ? item.human_bbox_verdict : null,
             formattedDate: item.formatted_date || '',
             formattedTime: item.formatted_time || '',
             odClassName: item.od_class_name || null,
@@ -93,9 +95,14 @@
         confirmed.humanReviewState = state;
         confirmed.provenance = state === 'corrected'
             ? 'manually_identified' : 'human_confirmed';
-        const pending = displayed && !sameBox(saved.bbox, displayed.bbox)
+        const pending = displayed && (!sameBox(saved.bbox, displayed.bbox)
+            || (displayed.bboxVerdict || null) !== (saved.bboxVerdict || null))
             ? clone(confirmed) : null;
-        if (pending) pending.bbox = clone(displayed.bbox);
+        if (pending) {
+            pending.bbox = clone(displayed.bbox);
+            pending.bboxVerdict = displayed.bboxVerdict || null;
+            pending.bboxVerdictTouched = !!displayed.bboxVerdictTouched;
+        }
         return { confirmed: confirmed, draft: pending };
     }
 
@@ -135,6 +142,46 @@
     // nothing else. Redrawing a box is itself the verdict that the new box
     // is right; correcting a species says nothing about the geometry, so
     // that axis stays absent rather than being guessed at.
+    function effectiveBboxVerdict(draft, initial) {
+        if (initial && !sameBox(draft.bbox, initial.bbox) && !draft.bboxVerdictTouched) {
+            return 'suitable';
+        }
+        return draft.bboxVerdict || null;
+    }
+
+    function bboxStatusText(item, initial) {
+        if (item.objectKind === 'manual') return 'Manually drawn box';
+        const verdict = effectiveBboxVerdict(item, initial);
+        const text = verdict === 'suitable' ? '☑ Box confirmed'
+            : verdict === 'unsuitable' ? '⚠ Box incorrect' : '□ Box unchecked';
+        const pending = initial && (!sameBox(item.bbox, initial.bbox)
+            || verdict !== (initial.bboxVerdict || null));
+        return text + (pending ? ' · Unsaved' : '');
+    }
+
+    function paintBoxVerdict(node, item, initial) {
+        const verdict = effectiveBboxVerdict(item, initial);
+        const text = bboxStatusText(item, initial);
+        const pending = text.includes('Unsaved');
+        const state = pending ? 'pending' : item.objectKind === 'manual' ? 'manual'
+            : verdict === 'suitable' ? 'confirmed'
+                : verdict === 'unsuitable' ? 'incorrect' : 'unchecked';
+        node.textContent = state === 'confirmed' ? '✓'
+            : state === 'incorrect' ? '!' : state === 'pending' ? '◷'
+                : state === 'manual' ? '✎' : '?';
+        node.dataset.verdict = state;
+        node.title = text;
+        node.setAttribute('aria-label', text);
+        if (node.tagName !== 'BUTTON') node.setAttribute('role', 'img');
+        else {
+            const action = verdict === 'suitable' ? 'Take back box confirmation' : 'Confirm box fits';
+            node.setAttribute('aria-label', action);
+            node.setAttribute('aria-pressed', verdict === 'suitable' ? 'true' : 'false');
+            node.title = action;
+        }
+        node.closest('.wm-bird-editor__box').dataset.boxVerdict = state;
+    }
+
     function detectionAnswerBody(filename, draft, initial) {
         const body = { filename: filename, detection_id: draft.detectionId };
         const moved = !sameBox(draft.bbox, initial.bbox);
@@ -143,13 +190,34 @@
             body.species_identity = draft.speciesKey ? 'corrected' : 'unknown';
             body.species_key = draft.speciesKey;
         }
-        const verdict = draft.bboxVerdict;
-        if (verdict === 'suitable' || verdict === 'unsuitable') {
-            body.bbox_quality = verdict;
-        } else if (moved) {
-            body.bbox_quality = 'suitable';
+        const verdict = effectiveBboxVerdict(draft, initial);
+        if (verdict !== (initial.bboxVerdict || null) || moved) {
+            if (verdict) body.bbox_quality = verdict;
+            else body.retract_bbox_quality = true;
         }
         return body;
+    }
+
+    function serializeObject(object) {
+        return {
+            detection_id: object.detectionId,
+            manual_object_id: object.manualObjectId,
+            object_key: object.objectKey,
+            object_kind: object.objectKind,
+            revision: object.revision,
+            bbox_x: object.bbox.x, bbox_y: object.bbox.y,
+            bbox_w: object.bbox.w, bbox_h: object.bbox.h,
+            species_key: object.speciesKey,
+            common_name: object.commonName,
+            provenance: object.provenance,
+            human_review_state: object.humanReviewState,
+            human_bbox_verdict: object.bboxVerdict || null,
+            od_class_name: object.odClassName,
+            od_confidence: object.odConfidence,
+            cls_class_name: object.clsClassName,
+            cls_confidence: object.clsConfidence,
+            is_favorite: object.isFavorite
+        };
     }
 
     if (typeof module === 'object' && module.exports) {
@@ -161,6 +229,9 @@
             bboxVerdictView: bboxVerdictView,
             bboxVerdictClickMode: bboxVerdictClickMode,
             normalize: normalize,
+            serializeObject: serializeObject,
+            effectiveBboxVerdict: effectiveBboxVerdict,
+            bboxStatusText: bboxStatusText,
             isHumanUnknownSpecies: isHumanUnknownSpecies
         };
         return;
@@ -253,12 +324,27 @@
         }
 
         function renderBboxVerdict() {
-            const view = bboxVerdictView(current(), mode === 'edit');
+            const item = current();
+            const displayed = item && draft ? Object.assign({}, item, {
+                bboxVerdict: effectiveBboxVerdict(item, initialDraft)
+            }) : item;
+            const view = bboxVerdictView(displayed, mode === 'edit');
+            const hint = root.querySelector('[data-bbox-undo-hint]');
+            if (hint) hint.hidden = !view.visible || !view.active;
+            const summary = root.querySelector('[data-bbox-status]');
+            if (summary) summary.textContent = item ? bboxStatusText(item, draft ? initialDraft : null) : '';
+
             root.querySelectorAll('[data-editor-action="bbox-verdict"]').forEach(
                 function (button) {
                     const value = button.dataset.bboxVerdict;
                     const on = view.visible && view.active === value;
-                    button.setAttribute('aria-pressed', on ? 'true' : 'false');
+                    button.setAttribute(button.getAttribute('role') === 'menuitemcheckbox'
+                        ? 'aria-checked' : 'aria-pressed', on ? 'true' : 'false');
+                    if (!button.hasAttribute('data-editor-walkthrough-confirm')) {
+                        button.title = on ? 'Click again to clear this box assessment'
+                            : value === 'suitable' ? 'The box fits this bird' : 'The box does not fit this bird';
+                    }
+
                     button.hidden = !view.visible || (button.hasAttribute('data-editor-walkthrough-confirm') && mode !== 'browse');
                     if (button.hasAttribute('data-editor-walkthrough-confirm')) button.disabled = saving || stale;
                     const icon = button.querySelector('[data-bbox-verdict-icon]');
@@ -521,7 +607,9 @@
 
                 const label = document.createElement('div');
                 label.className = 'wm-bird-editor__box-label';
-                const reviewed = item.humanReviewState !== 'unreviewed';
+                const reviewed = ['confirmed', 'corrected'].includes(item.humanReviewState)
+                    && !!item.speciesKey;
+                label.classList.toggle('is-species-confirmed', reviewed);
                 const clickAction = speciesClickAction(item);
                 if (item.objectKind === 'detection' && clickAction !== 'none') {
                     const undo = clickAction === 'retract';
@@ -556,7 +644,19 @@
                     picker.title = 'Choose a different species';
                     label.appendChild(picker);
                 }
+                const canConfirmBox = item.objectKind === 'detection'
+                    && root.dataset.canModerate === 'true';
+                const boxStatus = document.createElement(canConfirmBox ? 'button' : 'span');
+                if (canConfirmBox) {
+                    boxStatus.type = 'button';
+                    boxStatus.dataset.editorBoxConfirm = item.objectKey;
+                    boxStatus.disabled = saving || stale || mode !== 'browse';
+                }
+                boxStatus.className = 'wm-bird-editor__box-verdict';
                 shape.appendChild(label);
+                shape.appendChild(boxStatus);
+                paintBoxVerdict(boxStatus, item,
+                    draft && draft.objectKey === item.objectKey ? initialDraft : null);
 
                 if (selected && draft && mode === 'edit') {
                     ['n', 'e', 's', 'w', 'nw', 'ne', 'se', 'sw'].forEach(function (handle) {
@@ -718,24 +818,7 @@
 
         function serializedObjects() {
             return objects.map(function (object) {
-                return {
-                    detection_id: object.detectionId,
-                    manual_object_id: object.manualObjectId,
-                    object_key: object.objectKey,
-                    object_kind: object.objectKind,
-                    revision: object.revision,
-                    bbox_x: object.bbox.x, bbox_y: object.bbox.y,
-                    bbox_w: object.bbox.w, bbox_h: object.bbox.h,
-                    species_key: object.speciesKey,
-                    common_name: object.commonName,
-                    provenance: object.provenance,
-                    human_review_state: object.humanReviewState,
-                    od_class_name: object.odClassName,
-                    od_confidence: object.odConfidence,
-                    cls_class_name: object.clsClassName,
-                    cls_confidence: object.clsConfidence,
-                    is_favorite: object.isFavorite
-                };
+                return serializeObject(object);
             });
         }
 
@@ -997,9 +1080,8 @@
                     saved = objectFromResponse(payload, savingDraft.commonName);
                 } else {
                     saved = clone(savingDraft);
-                    // The verdict was an answer about this save, not a property
-                    // of the bird; keeping it would re-send it on the next one.
-                    delete saved.bboxVerdict;
+                    saved.bboxVerdict = payload.review_state.bbox_verdict || null;
+                    delete saved.bboxVerdictTouched;
                     if (savingDraft.speciesKey !== savingInitial.speciesKey) {
                         const reviewState = payload.review_state?.state;
                         saved.humanReviewState = reviewState || (
@@ -1090,11 +1172,13 @@
             else if (action === 'bbox-verdict') {
                 const item = current();
                 if (!bboxVerdictView(item, mode === 'edit').visible) return;
-                const next = nextBboxVerdict(
-                    item.bboxVerdict || null, control.dataset.bboxVerdict
-                );
+                const next = control.hasAttribute('data-editor-walkthrough-confirm')
+                    ? 'suitable' : nextBboxVerdict(
+                        effectiveBboxVerdict(item, draft ? initialDraft : null), control.dataset.bboxVerdict
+                    );
                 if (bboxVerdictClickMode(mode === 'edit') === 'draft') {
                     draft.bboxVerdict = next;
+                    draft.bboxVerdictTouched = true;
                     render();
                 } else {
                     postBboxVerdict(item, next);
@@ -1114,6 +1198,19 @@
         }
 
         layer.addEventListener('click', function (event) {
+            const boxConfirm = event.target.closest('[data-editor-box-confirm]');
+            if (boxConfirm) {
+                event.preventDefault();
+                event.stopPropagation();
+                if (saving || stale || mode !== 'browse') return;
+                const target = objects.find(function (item) {
+                    return item.objectKey === boxConfirm.dataset.editorBoxConfirm;
+                });
+                if (target && target.objectKind === 'detection') {
+                    postBboxVerdict(target, nextBboxVerdict(target.bboxVerdict, 'suitable'));
+                }
+                return;
+            }
             const confirm = event.target.closest('[data-editor-confirm]');
             if (confirm) {
                 event.preventDefault();
@@ -1231,6 +1328,10 @@
             draft.bbox = window.WmBboxMath.resizeBox(draft.bbox, handle, dx, dy, MIN_BOX);
             positionShapes();
             saveButton.disabled = saving || stale || !hasChanges();
+            renderBboxVerdict();
+            layer.querySelectorAll('.wm-bird-editor__box-verdict').forEach(function (node) {
+                if (node.closest('.is-selected')) paintBoxVerdict(node, draft, initialDraft);
+            });
             status.textContent = 'Box adjusted · Save to keep this edit';
         });
 

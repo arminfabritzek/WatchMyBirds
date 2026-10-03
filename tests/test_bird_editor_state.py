@@ -59,3 +59,36 @@ console.log(JSON.stringify({saved,draft,result}));
         assert result["draft"]["humanReviewState"] == expected_state
     else:
         assert result["draft"] is None
+
+
+@pytest.mark.parametrize("verdict", [None, "suitable", "unsuitable"])
+def test_box_state_survives_broadcast_roundtrip(verdict):
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("Node.js is unavailable")
+    module = Path(__file__).resolve().parents[1] / "assets/js/bird_editor.js"
+    script = (
+        "const e=require("
+        + json.dumps(str(module))
+        + ");const v="
+        + json.dumps(verdict)
+        + ";"
+        + """
+    const a = e.normalize({detection_id:1, bbox_x:.1,bbox_y:.2,bbox_w:.3,bbox_h:.4,
+        species_key:'Parus_major', human_review_state:'corrected',human_bbox_verdict:v});
+    const b = e.normalize(e.serializeObject(a));
+    const draft = {...b,bboxVerdict:v === 'suitable' ? null : 'suitable',bboxVerdictTouched:true};
+    const result=e.confirmedSpeciesState(b,draft,'corrected');
+    console.log(JSON.stringify({a,b,result,draft}));
+    """
+    )
+    data = json.loads(
+        subprocess.run(
+            [node, "-e", script], check=True, capture_output=True, text=True
+        ).stdout
+    )
+    assert data["b"]["bboxVerdict"] == verdict
+    assert data["b"]["humanReviewState"] == "corrected"
+    assert data["result"]["confirmed"]["bboxVerdict"] == verdict
+    assert data["result"]["draft"]["bboxVerdict"] == data["draft"]["bboxVerdict"]
+    assert data["result"]["draft"]["bboxVerdictTouched"] is True

@@ -224,6 +224,7 @@ def label_bbox_quality_retract():
             {"status": "error", "message": "unable to clear the box verdict"}
         ), 400
 
+    gallery_service.invalidate_cache()
     return jsonify({"status": "success", "fact_id": fact_id})
 
 
@@ -256,6 +257,7 @@ def label_species_retract():
             {"status": "error", "message": "unable to take the species back"}
         ), 400
 
+    gallery_service.invalidate_cache()
     return jsonify({"status": "success", "fact_id": fact_id})
 
 
@@ -288,6 +290,11 @@ def label_answer():
     except (KeyError, TypeError, ValueError):
         return jsonify({"status": "error", "message": "invalid bbox"}), 400
 
+    if "retract_bbox_quality" in data and not isinstance(
+        data["retract_bbox_quality"], bool
+    ):
+        return jsonify({"status": "error", "message": "invalid box retraction"}), 400
+
     answer = HumanAnswer(
         image_filename=filename,
         detection_id=detection_id,
@@ -298,6 +305,7 @@ def label_answer():
         species_identity=data.get("species_identity"),
         species_key=data.get("species_key"),
         detector_miss=data.get("detector_miss") is True,
+        retract_bbox_quality=data.get("retract_bbox_quality") is True,
     )
 
     try:
