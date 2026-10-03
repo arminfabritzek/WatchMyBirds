@@ -1,0 +1,120 @@
+# Local UI development with appliance data
+
+Develop the existing Flask/Jinja UI on a Mac or Linux computer using a private
+copy of a Raspberry Pi's database and bird images. This is a developer tool,
+not a second appliance, native mobile client, or deployment workflow.
+
+## Where it belongs
+
+The reusable scripts, tests and this guide belong in the existing WatchMyBirds
+repository. They use the same UI and data services as the appliance; a separate
+repository would introduce a second version of those interfaces. Private data,
+source-device addresses, local passwords and generated manifests stay outside
+Git. No command below commits, pushes, publishes or deploys anything.
+
+## Prerequisites
+
+Use Python 3.12+ and the project's virtual environment/dependencies. SSH access
+to your own appliance must already work without interactive password prompts.
+The remote account needs existing permission to read the output directory and
+run `sudo -n python3`, `sudo -n rsync`, `sudo -n cat`, and cleanup of generated
+`/tmp/wmb-local-pull-*` files. The tool does not change those permissions.
+Both machines need rsync. Provision dependencies through the normal project
+setup; do not run the hardware entrypoint `main.py` for this workflow.
+
+## First use
+
+From the repository root:
+
+```bash
+.venv/bin/python scripts/local_dev.py refresh --ssh-target admin@pi.local
+.venv/bin/python scripts/local_dev.py start
+```
+
+Replace the SSH target with your device. `--remote-output` defaults to
+`/opt/app/data/output`. Open **http://127.0.0.1:8080**. The local admin password
+is independently generated in `local-credentials.json` in the private data root;
+the Pi password is not fetched. Use the normal login form. Stop the local
+server with Ctrl-C. The development notice shows the source snapshot time.
+
+On macOS the default private data root is
+`~/Library/Application Support/WatchMyBirds-dev`. On other systems pass a
+suitable private directory using `--data-root` before the subcommand. A root
+inside a Git checkout is refused. The first pull needs enough disk space for
+the bird media, cache, snapshot and editable work copy. APFS copy-on-write avoids
+full duplicate copies on supported macOS volumes; other filesystems use ordinary
+independent copies and can need roughly three times the source media size.
+
+## Daily workflow
+
+- `start`: run the current editable work generation; local edits persist.
+- `refresh --ssh-target user@host`: get a new verified Pi snapshot. Existing
+  work is preserved; only the first successful pull creates a working copy.
+- `reset`: create a fresh working generation from the latest verified snapshot.
+  Older work remains on disk; no local edits are silently overwritten.
+- `status`: show the current snapshot and working generation.
+
+The server and data operations share a lock. Stop the server before refresh or
+reset. `start --port 8081` selects another loopback port. Snapshots/caches/older
+work are not automatically pruned; manage their disk usage explicitly.
+
+## Data guarantees and limits
+
+The Pi application stays running. The helper creates an online SQLite backup
+with read-only source access. It inventories originals and optimized/thumb
+bird images, with SHA-256 hashes. rsync pre-copies media, then reconciles it after
+the backup; unchanged cached images are reused. Every included downloaded file,
+the DB checksum, DB integrity, foreign keys and row counts are verified before
+publishing the `latest.json` pointer. A failed pull keeps the last verified
+snapshot and current work. Incomplete generations may remain for diagnosis.
+
+Only bird media and the SQLite snapshot are exported. The Pi's `.env`, camera
+credentials, settings, Flask keys, device identity, models and logs are not
+copied. The DB itself can contain station/source metadata and image references,
+so the complete data root remains private and must never be committed.
+
+Media already absent on the source is recorded as `source_missing_media` in the
+manifest. It is not silently invented or presented as a transfer success for
+that image. Files present at hashing time but missing/changed after transfer
+cause verification to fail. This is a verified DB snapshot with verified media,
+not an atomic filesystem snapshot of the running appliance. Retention flags
+allow intentionally removed originals to be distinguished from expected ones.
+
+## Local runtime boundary
+
+The dedicated launcher configures its working directory before importing the
+real web factory. It reasserts disabled integrations after configuration loading.
+It never constructs the DetectionManager or starts main.py's background jobs.
+Originals and derivatives in work are independent files, never hardlinks to the
+snapshot. Existing login, authorization and CSRF checks remain active.
+
+Server-side outbound sockets, DNS to external hosts and child processes are
+blocked by a process-local Python audit hook. HTTP routes permit browsing,
+media, analytics, local labels and trash/favorites; camera, configuration,
+system management, ingestion, rescans and background operations return 503.
+The browser is restricted to same-origin API connections and no embedded relay
+frames. The service listens only on 127.0.0.1 and rejects non-loopback Host values.
+This is a development guard, not an operating-system sandbox for arbitrary code.
+
+The Live page can show real saved visits but **does not play the live camera**.
+Models, detection performance, camera reconnection and appliance behavior still
+need separate hardware tests. Browser fonts/styles keep the existing CDN usage.
+
+## What this profile can test
+
+Use this profile for galleries, stored-image viewers, labeling, favorites, trash,
+analytics and responsive layouts with real copied data. It renders the same
+maintained templates as the appliance; it does not add a separate UI mode.
+
+It cannot validate PTZ movements, live transport, camera reconnects or recording.
+Those require the normal appliance runtime with an explicitly selected test
+camera/device. Removing the local guards would not provide a representative
+hardware environment. Docker runs of the normal runtime have the same need for
+real camera/device integration tests.
+
+## Pi deployment
+
+Local start and refresh never imply permission to copy code to the Pi. Use the
+existing explicit deployment workflow after local validation and authorization.
+For this workflow, say “start locally” or “pull Pi data”; do not use a deployment
+shortcut when the intended action is a Mac test.

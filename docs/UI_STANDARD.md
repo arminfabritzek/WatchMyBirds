@@ -1823,3 +1823,16 @@ Both replacement and checkpoint acknowledgements are required. Merge remains a
 separate archive action with distinct copy. After submission, the browser moves
 to the independent runner page; that page owns progress, reconnect, failed-start
 retry, and checkpoint rollback while the main Flask service is unavailable.
+
+
+## Local development notice
+
+The isolated local launcher adds one shared notice through `base.html`: Local
+development, source snapshot time, local-only edits and disabled camera/jobs.
+It appears on all rendered pages in this profile. Production does not inject
+this context. Preserve the shared viewer/editor and existing authentication.
+
+In the local profile, Live replaces camera playback with an immediate disabled
+notice and omits its player and camera controls. Saved visits keep the canonical
+image viewer and editing actions. No connection spinner or camera-retry action
+should suggest that a live feed is expected in this profile.

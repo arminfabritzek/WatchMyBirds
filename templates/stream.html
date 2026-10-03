@@ -21,6 +21,12 @@
         <!-- Go2RTC Integration (Junior B) -->
         <!-- Old MJPEG: <img id="video-feed" src="/video_feed" class="stream-video" alt="Live Stream"> -->
         <div class="stream-embed">
+            {% if local_development %}
+            <div class="stream-embed__unavailable" role="status">
+                <strong>Live camera is off in local development</strong>
+                <span>Browse your copied bird visits below. The Pi keeps recording independently.</span>
+            </div>
+            {% else %}
             <canvas id="stream-loading-static" class="stream-embed__loading-static" aria-label="Loading live stream"></canvas>
             <div id="stream-loading-status" class="stream-embed__loading-status" role="status" aria-live="polite">Establishing Connection<span aria-hidden="true"></span></div>
             <iframe id="go2rtc-frame" class="stream-embed__frame" src="" allow="autoplay; fullscreen">
@@ -76,6 +82,7 @@
             {% endif %}
 
             {# Detection overlay intentionally disabled in public backport build. #}
+            {% endif %}
         </div>
 
         <script>
@@ -341,7 +348,7 @@
 
     </div>
     <div class="stream-actions" aria-label="Stream actions">
-        {% if can_moderate %}
+        {% if can_moderate and not local_development %}
         <!--
             PTZ controls are always rendered (no `hidden` default). When no
             PTZ camera is bound the buttons go to a disabled state so the
@@ -372,7 +379,7 @@
            startTelegramReportJob() is still defined in this file. #}
     </div>
 
-    {% if can_moderate %}
+    {% if can_moderate and not local_development %}
     <style>
         /* Live auto-PTZ tracking overlay. Inline JS positions it to the
            video letterbox rect; pointer-events:none keeps the joystick

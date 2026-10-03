@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Added
+
+- Optional local UI development uses verified copies of appliance bird data,
+  keeping edits local while camera controls and background jobs remain disabled.
+
 ### Fixed
 
 - Species and box assessments remain independent when editing birds, survive
