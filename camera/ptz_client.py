@@ -15,6 +15,7 @@ from urllib.parse import urlparse, urlunparse
 
 from onvif import ONVIFCamera
 from zeep.cache import InMemoryCache
+from zeep.exceptions import Fault
 from zeep.transports import Transport
 
 from utils.log_safety import safe_log_value as _slv
@@ -69,6 +70,24 @@ def _rewrite_xaddrs_to_host(camera: Any, host: str, port: int) -> int:
             rewritten,
         )
     return rewritten
+
+
+def _soap_fault_codes(exc: Exception) -> tuple[str, str]:
+    """Read structured faults through python-onvif's exception wrapper.
+
+    Never serialize a response, SOAP envelope, fault detail or arbitrary error
+    message: any of those can contain credentials or camera-supplied content.
+    """
+    current: BaseException | None = exc
+    seen: set[int] = set()
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if isinstance(current, Fault):
+            return _slv(current.code or "unknown"), _slv(
+                ",".join(str(code) for code in (current.subcodes or []))
+            )
+        current = current.__cause__ or current.__context__
+    return "unknown", ""
 
 
 @dataclass(frozen=True)
@@ -164,6 +183,9 @@ class PtzClient:
         self._profile_token: str | None = None
         self._video_source_token: str | None = None
         self._focus_stop_uses_zero_speed = False
+        self._ptz_configuration_token: str | None = None
+        self._last_motion_command = "none"
+        self._last_motion_at: float | None = None
 
     def _create_camera(self) -> ONVIFCamera:
         wsdl_dir = _resolve_onvif_wsdl_dir()
@@ -205,6 +227,8 @@ class PtzClient:
             raise RuntimeError("Selected media profile has no token")
 
         self._profile_token = str(token)
+        config_token = _get_value(_get_value(profile, "PTZConfiguration"), "token")
+        self._ptz_configuration_token = str(config_token) if config_token else None
         source_config = _get_value(profile, "VideoSourceConfiguration")
         source_token = _get_value(source_config, "SourceToken")
         if source_token:
@@ -413,7 +437,49 @@ class PtzClient:
                 "Zoom": {"x": value},
             }
 
-        ptz.GotoPreset(request)
+        started = time.monotonic()
+        previous_age_ms = (
+            round((started - self._last_motion_at) * 1000)
+            if self._last_motion_at is not None
+            else None
+        )
+        context = (
+            _slv(self.ip),
+            _slv(profile_token),
+            _slv(self._ptz_configuration_token),
+            _slv(preset_token),
+            self._last_motion_command,
+            previous_age_ms,
+        )
+        logger.info(
+            "PTZ preset event=request host=%s profile=%s ptz_config=%s "
+            "preset=%s previous_command=%s previous_age_ms=%s",
+            *context,
+        )
+        try:
+            ptz.GotoPreset(request)
+        except Exception as exc:
+            code, subcodes = _soap_fault_codes(exc)
+            logger.warning(
+                "PTZ preset event=rejected host=%s profile=%s ptz_config=%s "
+                "preset=%s previous_command=%s previous_age_ms=%s "
+                "elapsed_ms=%d error_type=%s soap_code=%s soap_subcodes=%s",
+                *context,
+                round((time.monotonic() - started) * 1000),
+                type(exc).__name__,
+                code,
+                subcodes,
+            )
+            raise
+        self._last_motion_command = "GotoPreset"
+        self._last_motion_at = time.monotonic()
+        logger.info(
+            "PTZ preset event=accepted host=%s profile=%s ptz_config=%s "
+            "preset=%s previous_command=%s previous_age_ms=%s "
+            "elapsed_ms=%d arrival_verified=false",
+            *context,
+            round((time.monotonic() - started) * 1000),
+        )
 
     def continuous_move(
         self,
@@ -436,6 +502,8 @@ class PtzClient:
             "Zoom": {"x": zoom},
         }
         ptz.ContinuousMove(request)
+        self._last_motion_command = "ContinuousMove"
+        self._last_motion_at = time.monotonic()
         time.sleep(duration_sec)
         self.stop(pan_tilt=True, zoom=abs(zoom) > 0.001)
 
@@ -478,6 +546,8 @@ class PtzClient:
         request.PanTilt = bool(pan_tilt)
         request.Zoom = bool(zoom)
         ptz.Stop(request)
+        self._last_motion_command = "Stop"
+        self._last_motion_at = time.monotonic()
 
     def emergency_stop(self) -> None:
         """Stop both pan/tilt and zoom immediately, logged at WARNING.

@@ -1272,7 +1272,7 @@ class AutoPtzController:
                 self._command_runner(command)
                 if attempt > 0:
                     logger.info(
-                        "Auto PTZ goto succeeded on retry attempt=%d preset=%s",
+                        "Auto PTZ goto accepted on retry attempt=%d preset=%s arrival_verified=false",
                         attempt + 1,
                         command.preset_token,
                     )
