@@ -136,8 +136,14 @@ settings.yaml; the settings API also accepts this runtime key.
 For a species-level image prediction, existing candidates are ranked by
 `image_score * sqrt(max(0.001, seasonal_occurrence))`. BirdNET's occurrence score
 depends on latitude, longitude and the capture date (48 seasonal bins per year).
-The finite floor retains rare species; unmatched scientific names keep their
-original score. No species is added, and no personal correction history,
+The finite floor retains rare species. Scientific names are matched using exact
+names and a bundled GBIF synonym reference. Case, spaces and underscores do not
+change identity. Only unique, documented species-level matches are used; names
+are never guessed from a shared epithet or common name. If any bird candidate
+cannot be resolved (including ambiguous splits, unsupported subspecies and
+hybrids), the entire original candidate order and scores remain unchanged.
+Background/non-bird classes do not require a geographic species match.
+No species is added, and no personal correction history,
 habitat rule or blacklist is used. Genus, review-only and rejected classifier
 decisions retain their existing behavior.
 
@@ -145,7 +151,8 @@ The selected species becomes the downstream prediction. Its confidence remains
 that species's original image probability; the geographic ranking score is not
 a calibrated confidence. A changed selection can therefore fall below existing
 confidence thresholds and require review. Original image candidates, scores and
-their order are retained in `detections.geography_json` with model provenance;
+their order are retained in `detections.geography_json` with model provenance,
+the synonym-reference hash, name matches and whether weighting was applied;
 `raw_species_name` retains the original top choice. Human answers remain
 authoritative. Existing detections are not rewritten automatically.
 
@@ -162,6 +169,9 @@ Inference runs locally on one CPU thread with cached occurrence scores; no GPU,
 extra Python package or new nightly job is needed. Failed downloads, invalid
 context or model errors retain the image prediction and retry later. Coordinates
 and images are never sent to the model host; the public download uses GitHub.
+The bundled synonym reference also works offline, without a runtime taxonomy
+service. It covers documented synonyms rather than every possible scientific
+name; unresolved candidates use the unchanged-image fallback described above.
 The model is licensed under Apache-2.0; see the
 [BirdNET Geomodel repository](https://github.com/birdnet-team/geomodel) and its
 [model license](https://github.com/birdnet-team/geomodel/blob/main/LICENSE-MODELS.md).

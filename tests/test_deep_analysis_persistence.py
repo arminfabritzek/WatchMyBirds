@@ -69,7 +69,13 @@ def test_deep_analysis_persists_raw_provenance_and_exact_top5(
         )
         classifier._geography._model = Mock()
         classifier._geography._model.predict.return_value = (
-            {HERON: 0, NUTHATCH: 0.9},
+            {
+                HERON: 0,
+                NUTHATCH: 0.9,
+                "Parus_major": 0.1,
+                "Cyanistes_caeruleus": 0.1,
+                "Dendrocopos_major": 0.1,
+            },
             {"model_id": "geo-test"},
         )
         classification = classifier.apply_geography(

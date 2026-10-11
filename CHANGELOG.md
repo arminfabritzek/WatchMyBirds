@@ -12,6 +12,9 @@
 
 ### Fixed
 
+- Geographic species ranking resolves documented scientific-name synonyms
+  locally and preserves the original image ranking when bird candidates cannot
+  all be mapped, preventing unmatched names from gaining a ranking advantage.
 - Nightly quality scoring and automatic gallery selection exclude images or
   boxes currently confirmed by a reviewer to contain no bird.
 - Deep analysis preserves all five classifier candidates without duplicating

@@ -84,13 +84,37 @@ def test_geography_selects_real_candidate_without_boosting_confidence(
     assert raw_prediction.class_name == "A" and raw_prediction.geography_json is None
 
 
+def test_incomplete_taxonomy_preserves_the_complete_image_prediction(
+    raw_prediction: ClassificationResult,
+) -> None:
+    service = configured_service(raw_prediction)
+    service._geography._model.predict.return_value = ({"A": 0.001, "B": 0.9}, {})
+    result = service.apply_geography(raw_prediction, datetime(2026, 1, 1))
+    assert result.class_name == raw_prediction.class_name
+    assert result.confidence == raw_prediction.confidence
+    assert result.top_k_classes == raw_prediction.top_k_classes
+    assert result.top_k_confidences == raw_prediction.top_k_confidences
+    evidence = json.loads(result.geography_json)
+    assert evidence["weighting_applied"] is False
+    assert evidence["unmapped_species"] == ["C", "D", "E"]
+
+
 def test_different_locations_and_seasons_use_the_same_policy(
     raw_prediction: ClassificationResult,
 ) -> None:
     service = configured_service(raw_prediction)
 
     def occurrence(lat: float, lon: float, stamp: datetime) -> tuple[dict, dict]:
-        return ({"A": 0.001 if lat < 0 or stamp.month == 12 else 0.9, "B": 0.9}, {})
+        return (
+            {
+                "A": 0.001 if lat < 0 or stamp.month == 12 else 0.9,
+                "B": 0.9,
+                "C": 0.1,
+                "D": 0.1,
+                "E": 0.1,
+            },
+            {},
+        )
 
     service._geography._model.predict.side_effect = occurrence
     assert (

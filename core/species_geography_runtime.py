@@ -20,6 +20,7 @@ import piexif
 import requests
 
 from core.species_geography import GeographicAssessment, rank_geographically
+from core.species_taxonomy import GeographicNameIndex, load_geographic_synonyms
 from logging_config import get_logger
 
 logger = get_logger(__name__)
@@ -201,6 +202,8 @@ class GeographicWeighting:
         self._model: LocalGeoModel | None = None
         self._load_lock = threading.Lock()
         self._retry_at = 0.0
+        self._taxonomy: GeographicNameIndex | None = None
+        self._taxonomy_sha256: str | None = None
 
     def assess(
         self,
@@ -247,13 +250,29 @@ class GeographicWeighting:
             occurrence, provenance = self._model.predict(
                 latitude, longitude, observed_at
             )
-            assessment = rank_geographically(candidates, occurrence)
+            with self._load_lock:
+                if self._taxonomy is None:
+                    groups, self._taxonomy_sha256 = load_geographic_synonyms()
+                    self._taxonomy = GeographicNameIndex(occurrence, groups)
+            name_matches = {
+                name: self._taxonomy.resolve(name) for name, _score in candidates
+            }
+            mapped_occurrence = {
+                name: occurrence[target]
+                for name, target in name_matches.items()
+                if target is not None
+            }
+            assessment = rank_geographically(candidates, mapped_occurrence)
             provenance = {
                 key: value
                 for key, value in provenance.items()
                 if key not in {"latitude", "longitude"}
             }
-            provenance["policy"] = "image-score-times-sqrt-occurrence-floor-0.001-v1"
+            provenance["policy"] = (
+                "image-score-times-sqrt-occurrence-floor-0.001-complete-taxonomy-v2"
+            )
+            provenance["taxonomy_sha256"] = self._taxonomy_sha256
+            provenance["name_matches"] = name_matches
             return assessment, provenance
         except Exception as exc:
             self._retry_at = time.monotonic() + 60

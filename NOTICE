@@ -29,6 +29,15 @@ repositories for applicable license terms before redistribution.
 
 Data Sources
 ------------
+  - GBIF Backbone Taxonomy — assets/geographic_synonyms.json is a filtered
+    derivative containing species-level scientific synonym groups only.
+    GBIF Secretariat (2023). GBIF Backbone Taxonomy. Checklist dataset
+    https://doi.org/10.15468/39omei accessed via GBIF.org on 2026-10-11.
+    Licensed under Creative Commons Attribution 4.0 International (CC BY 4.0).
+    Changes: scientific names grouped by accepted species ID; subspecies,
+    hybrids, higher taxa, partial synonyms and ambiguous-rank links omitted.
+    See: https://creativecommons.org/licenses/by/4.0/
+
   - Wikipedia — Species descriptions and images are retrieved at runtime.
     Text and media are available under the Creative Commons
     Attribution-ShareAlike 4.0 International (CC BY-SA 4.0) license.
