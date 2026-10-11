@@ -31,10 +31,14 @@ does not read CF-injected request metadata before writing to D1.
 ## Local development
 
 ```bash
-npm install
+npm ci
 npx wrangler login                  # browser opens for OAuth
 npx wrangler dev                    # local dev with mock D1
 ```
+
+Use the npm version declared in `package.json`. Dependency installation scripts
+are disabled by the project `.npmrc`; native tools use their platform packages.
+Run `npm audit` after updating dependencies.
 
 ## First-time deploy
 

@@ -2,6 +2,7 @@
   "name": "watchmybirds-telemetry-worker",
   "version": "0.1.0",
   "private": true,
+  "packageManager": "npm@11.8.0",
   "description": "Cloudflare Worker that receives anonymous opt-in usage heartbeats from WatchMyBirds installations.",
   "scripts": {
     "dev": "wrangler dev",
@@ -14,7 +15,7 @@
     "db:mau": "wrangler d1 execute watchmybirds-heartbeats --remote --command \"SELECT COUNT(DISTINCT installation_id) AS mau FROM heartbeats WHERE date >= date('now', '-30 days')\""
   },
   "devDependencies": {
-    "wrangler": "^4.120.0"
+    "wrangler": "^4.149.0"
   },
   "overrides": {
     "esbuild": "^0.28.1",
