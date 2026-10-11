@@ -2,14 +2,9 @@
 """
 Nightly aesthetic auto-tagger for WatchMyBirds.
 
-Computes a CLIP "facing-camera" score on every new detection from the previous
-day, writes it to detections.aesthetic_score, and optionally sets is_favorite=1
-for the top-N per species per day --- but only for species where the score has
-been validated to track manual judgement.
-
-Pigeons / large birds are intentionally NOT auto-tagged, because validation
-showed clip_facing_camera does not generalize to them (AUC 0.35 on 56-image
-out-of-sample test set).
+Computes a CLIP facing-camera score and selects automatic gallery candidates.
+Human bird-absence answers exclude their image or object from both steps.
+The score measures composition, not bird presence or species correctness.
 
 In production this runs in-process via the app's daemon-thread scheduler
 (web/services/aesthetic_tag_scheduler.py), so the CLI below is for manual
@@ -24,12 +19,8 @@ Design notes:
   the scheduler actually fires.
 - Skips detections that already have aesthetic_score populated. Idempotent:
   re-runs are no-ops if all data is fresh.
-- Only writes is_favorite=1 (the auto tag) on detections in TAGGABLE_SPECIES.
-  All other detections still get an aesthetic_score (for analytics) but no
-  favorite flag.
-- Existing manual is_favorite=1 (rating_source='manual') is preserved: this
-  job only ever SETS rating_source='auto' on detections that don't already
-  have a manual favorite.
+- Writes is_gallery_eligible for selected candidates; human favorites and
+  rating_source are preserved.
 """
 
 from __future__ import annotations
@@ -177,6 +168,16 @@ def setup_logging(verbose: bool) -> None:
 # --- DB helpers ------------------------------------------------------------
 
 
+_NO_HUMAN_BIRD_ABSENCE = """
+AND NOT EXISTS (
+    SELECT 1 FROM current_human_label_facts human
+    WHERE human.fact_type = 'bird_presence' AND human.answer_value = 'absent'
+      AND ((human.scope = 'image' AND human.image_filename = d.image_filename)
+        OR (human.scope = 'object' AND human.detection_id = d.detection_id))
+)
+"""
+
+
 def fetch_unscored_detections(
     conn: sqlite3.Connection,
     since: str,
@@ -249,6 +250,7 @@ def fetch_unscored_detections(
             {score_filter}
             AND d.thumbnail_path IS NOT NULL
             AND (d.decision_level IS NULL OR lower(d.decision_level) NOT IN ('reject', 'species_review'))
+            {_NO_HUMAN_BIRD_ABSENCE}
             AND c.cls_class_name IS NOT NULL
             {" ".join(where_clauses)}
         )
@@ -274,6 +276,7 @@ def fetch_unscored_detections(
           {score_filter}
           AND d.thumbnail_path IS NOT NULL
           AND (d.decision_level IS NULL OR lower(d.decision_level) NOT IN ('reject', 'species_review'))
+          {_NO_HUMAN_BIRD_ABSENCE}
           {" ".join(where_clauses)}
         ORDER BY d.created_at DESC
         """
@@ -356,6 +359,7 @@ def apply_auto_favorites(conn: sqlite3.Connection, since: str, dry_run: bool) ->
         AND d.aesthetic_score IS NOT NULL
         AND d.aesthetic_score >= ?
         AND (d.decision_level IS NULL OR lower(d.decision_level) NOT IN ('reject', 'species_review'))
+        {_NO_HUMAN_BIRD_ABSENCE}
         {species_clause}
         {decision_clause}
     )
