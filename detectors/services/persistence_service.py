@@ -342,8 +342,14 @@ class PersistenceService(PersistenceInterface):
                     "policy_version": detection.policy_version,
                     "decision_level": detection.decision_level,
                     "raw_species_name": detection.raw_species_name,
+                    "geography_json": getattr(detection, "geography_json", None),
                     "species_source": (
-                        "model_top1" if detection.cls_class_name else "unknown"
+                        "geographic"
+                        if getattr(detection, "geography_json", None)
+                        and detection.cls_class_name != detection.raw_species_name
+                        else "model_top1"
+                        if detection.cls_class_name
+                        else "unknown"
                     ),
                 },
             )

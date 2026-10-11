@@ -90,6 +90,7 @@ DEFAULTS = {
     # Species-classifier runtime. The detector remains unchanged; only the
     # crop classifier is selected here.
     "CLASSIFIER_BACKEND": "inat_tflite",  # "wmb_onnx" | "inat_tflite"
+    "SPECIES_GEOGRAPHY_ENABLED": True,
     # Detection-confidence floor is now model-owned (read from the active
     # model_metadata.json). CONFIDENCE_THRESHOLD_DETECTION has been retired.
     "SAVE_THRESHOLD": 0.65,
@@ -298,6 +299,7 @@ DEFAULTS = {
 }
 
 RUNTIME_KEYS = {
+    "SPECIES_GEOGRAPHY_ENABLED",
     "CLASSIFIER_BACKEND",
     "EXPORT_BURN_IN_METADATA",
     "RETENTION_POSTURE",
@@ -420,6 +422,9 @@ def _load_config() -> dict[str, Any]:
     location_str = os.getenv("LOCATION_DATA")
     if location_str:
         config["LOCATION_DATA"] = location_str
+    config["LOCATION_DATA_CONFIGURED"] = bool(location_str)
+    if os.getenv("SPECIES_GEOGRAPHY_ENABLED") is not None:
+        config["SPECIES_GEOGRAPHY_ENABLED"] = os.getenv("SPECIES_GEOGRAPHY_ENABLED")
 
     for key in (
         "DETECTOR_MODEL_CHOICE",
@@ -507,6 +512,8 @@ def _load_config() -> dict[str, Any]:
 
     # YAML runtime overrides
     yaml_settings = load_settings_yaml(str(config["OUTPUT_DIR"]))
+    if "LOCATION_DATA" in yaml_settings:
+        config["LOCATION_DATA_CONFIGURED"] = True
 
     if (
         "MAX_FPS_DETECTION" in yaml_settings
@@ -874,6 +881,10 @@ def _coerce_config_types(config: dict[str, Any]) -> None:
             }
         except Exception:
             config["LOCATION_DATA"] = DEFAULTS["LOCATION_DATA"]
+            config["LOCATION_DATA_CONFIGURED"] = False
+    config["SPECIES_GEOGRAPHY_ENABLED"] = _coerce_bool(
+        config.get("SPECIES_GEOGRAPHY_ENABLED", True)
+    )
 
     # VIDEO_SOURCE: int for webcams, string otherwise (startup-only per locked decision).
     source = config.get("VIDEO_SOURCE", "0")
@@ -1235,6 +1246,8 @@ def update_runtime_settings(updates: dict[str, Any]) -> None:
             continue
         next_yaml_settings[key] = value
         next_cfg[key] = value
+        if key == "LOCATION_DATA":
+            next_cfg["LOCATION_DATA_CONFIGURED"] = True
     _coerce_config_types(next_cfg)
     save_settings_yaml(next_yaml_settings, output_dir)
     cfg.update(next_cfg)
@@ -1242,6 +1255,7 @@ def update_runtime_settings(updates: dict[str, Any]) -> None:
 
 def _validate_value(key: str, value: Any) -> tuple[bool, Any]:
     if key in (
+        "SPECIES_GEOGRAPHY_ENABLED",
         "DAY_AND_NIGHT_CAPTURE",
         "TELEGRAM_ENABLED",
         "MQTT_ENABLED",

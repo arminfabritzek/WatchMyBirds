@@ -305,7 +305,6 @@ def test_process_deep_analysis_job_uses_standard_persistence_path(monkeypatch):
     assert det.score == pytest.approx(0.8)  # = cls_conf (current scoring semantics)
     assert det.agreement_score == 0.8
     assert det.top_k_predictions == [
-        ("Parus_major", 0.8),
         ("Cyanistes_caeruleus", 0.05),
         ("Sitta_europaea", 0.03),
         ("Erithacus_rubecula", 0.02),

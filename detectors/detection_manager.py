@@ -71,7 +71,8 @@ class DetectionManager:
             backend=build_classifier_backend(
                 self.config,
                 wmb_classifier=self.classifier,
-            )
+            ),
+            config=self.config,
         )
         self.classifier_model_id = ""
 
@@ -1216,7 +1217,9 @@ class DetectionManager:
                 if is_bird:
                     try:
                         if crop_rgb is not None:
-                            cls_result = self.classification_service.classify(crop_rgb)
+                            cls_result = self.classification_service.classify(
+                                crop_rgb, observed_at=capture_time
+                            )
                             cls_name = cls_result.class_name
                             cls_conf = cls_result.confidence
                             if not self.classifier_model_id:
@@ -1269,7 +1272,8 @@ class DetectionManager:
                     unknown_score=signals.unknown_score,
                     decision_reasons=signals.decision_reasons_json,
                     policy_version=signals.policy_version,
-                    top_k_predictions=list(
+                    top_k_predictions=getattr(cls_result, "storage_alternatives", None)
+                    or list(
                         zip(
                             (getattr(cls_result, "top_k_classes", []) or [])[1:],
                             [
@@ -1287,6 +1291,9 @@ class DetectionManager:
                     if cls_result is not None
                     else None,
                     raw_species_name=getattr(cls_result, "raw_species_name", None)
+                    if cls_result is not None
+                    else None,
+                    geography_json=getattr(cls_result, "geography_json", None)
                     if cls_result is not None
                     else None,
                 )

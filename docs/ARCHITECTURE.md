@@ -22,6 +22,12 @@ WatchMyBirds is an AI-powered bird detection system that provides real-time vide
     *   `images` table: Stores filename and global metadata.
     *   `detections` table: Stores bounding boxes, scores, and classifications. Links to `images`.
     *   `classifications` table: Stores species predictions.
+        Rank 1 is the downstream selected label, which may be geographically
+        weighted; its confidence and the four alternatives retain image-model
+        probabilities. `detections.raw_species_name` and optional
+        `detections.geography_json` preserve the raw top choice, complete raw
+        candidate order, geographic ranking and model provenance separately.
+        Geographic scoring never consumes or writes human label facts.
     *   `label_subjects` / `human_label_facts`: Explicit human assertions, separate from model outputs.
     *   `manual_objects` / `manual_object_revisions`: Manually added birds and their revision history.
     *   `station_event_reviews`: Explicit biological-event review decisions.

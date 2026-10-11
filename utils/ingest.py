@@ -8,6 +8,7 @@ import cv2
 import piexif
 
 from config import get_config
+from core.species_geography_runtime import geographic_exif_context
 from detectors.classifier_backends.factory import build_classifier_backend
 from detectors.detector import Detector
 from detectors.interfaces.classification import ClassificationInterface
@@ -29,6 +30,7 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
 )
 logger = logging.getLogger("FolderIngest")
+
 
 config = get_config()
 
@@ -217,7 +219,9 @@ def ingest_folder(folder_path: str, source_id: int, move_files: bool = False) ->
     det_model_name = config["DETECTOR_MODEL_CHOICE"]
     det_model_version = det_model_id
 
-    classifier = ClassificationService(backend=build_classifier_backend(config))
+    classifier = ClassificationService(
+        backend=build_classifier_backend(config), config=config
+    )
     cls_model_id = classifier.get_model_id() or "unknown"
     cls_model_name = str(config.get("CLASSIFIER_BACKEND", "inat_tflite"))
     cls_model_version = cls_model_id
@@ -321,6 +325,7 @@ def ingest_file(
 
     # 2. Extract original EXIF data (before loading with cv2 which strips it)
     original_exif_bytes = extract_original_exif(filepath)
+    geo_time, geo_location = geographic_exif_context(original_exif_bytes)
 
     # 3. Load Image
     image = cv2.imread(filepath)
@@ -394,6 +399,7 @@ def ingest_file(
             det_cls_conf = 0.0
             od_class_name = det.get("class_name", "bird")
             is_bird = is_bird_od_class(od_class_name)
+            classification = None
 
             # Crop & Classify — bird track only. Non-bird OD classes skip CLS
             # because the OD class name IS the species.
@@ -403,7 +409,9 @@ def ingest_file(
                     crop, (SAVE_RESOLUTION_CROP, SAVE_RESOLUTION_CROP)
                 )
                 crop_rgb = cv2.cvtColor(crop_resized, cv2.COLOR_BGR2RGB)
-                classification = classifier.classify(crop_rgb)
+                classification = classifier.classify(
+                    crop_rgb, observed_at=geo_time, location=geo_location
+                )
                 det_cls_name = classification.class_name
                 det_cls_conf = classification.confidence
 
@@ -474,6 +482,7 @@ def ingest_file(
                     "od_confidence": det["confidence"],
                     "cls_class_name": det_cls_name,
                     "cls_confidence": det_cls_conf,
+                    "classification": classification,
                     "thumb_filename": thumb_filename,
                 }
             )
@@ -549,6 +558,22 @@ def ingest_file(
                     "thumbnail_path": enriched_det["thumb_filename"],
                     "frame_width": image.shape[1],
                     "frame_height": image.shape[0],
+                    "raw_species_name": getattr(
+                        enriched_det["classification"], "raw_species_name", None
+                    ),
+                    "decision_level": getattr(
+                        enriched_det["classification"], "decision_level", None
+                    ),
+                    "geography_json": getattr(
+                        enriched_det["classification"], "geography_json", None
+                    ),
+                    "species_source": "geographic"
+                    if getattr(enriched_det["classification"], "geography_json", None)
+                    and enriched_det["cls_class_name"]
+                    != enriched_det["classification"].raw_species_name
+                    else "model_top1"
+                    if enriched_det["cls_class_name"]
+                    else "unknown",
                 },
             )
 
@@ -564,6 +589,28 @@ def ingest_file(
                         "created_at": created_at_iso,
                     },
                 )
+                result = enriched_det["classification"]
+                alternatives = getattr(result, "storage_alternatives", None)
+                if alternatives is None:
+                    alternatives = list(
+                        zip(
+                            getattr(result, "top_k_classes", [])[1:],
+                            getattr(result, "top_k_confidences", [])[1:],
+                            strict=False,
+                        )
+                    )
+                for rank, (species, confidence) in enumerate(alternatives[:4], 2):
+                    insert_classification(
+                        conn,
+                        {
+                            "detection_id": det_id,
+                            "cls_class_name": species,
+                            "cls_confidence": confidence,
+                            "cls_model_id": classifier.get_model_id() or "unknown",
+                            "created_at": created_at_iso,
+                            "rank": rank,
+                        },
+                    )
 
         logger.debug(f"Ingested {filepath} -> {original_name}")
 
@@ -632,7 +679,9 @@ def ingest_inbox_folder(pending_dir: str, file_snapshot: list[str]) -> None:
     det_model_name = config["DETECTOR_MODEL_CHOICE"]
     det_model_version = det_model_id
 
-    classifier = ClassificationService(backend=build_classifier_backend(config))
+    classifier = ClassificationService(
+        backend=build_classifier_backend(config), config=config
+    )
     cls_model_id = classifier.get_model_id() or "unknown"
     cls_model_name = str(config.get("CLASSIFIER_BACKEND", "inat_tflite"))
     cls_model_version = cls_model_id

@@ -9,6 +9,7 @@ import cv2
 
 from config import get_config
 from core.analysis_queue import analysis_queue
+from core.species_geography_runtime import geographic_exif_context, observation_datetime
 from web.security import safe_log_value as _slv
 from web.services import db_service, gallery_service
 
@@ -35,6 +36,9 @@ class _DeepReviewDetectionData:
     decision_reasons: str | None = None
     policy_version: str | None = None
     top_k_predictions: list[tuple[str, float]] = field(default_factory=list)
+    decision_level: str | None = None
+    raw_species_name: str | None = None
+    geography_json: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -179,6 +183,8 @@ def _build_detection_payload(
     detection_manager: Any,
     frame: Any,
     raw_detection: dict,
+    observed_at: datetime | None = None,
+    location: dict[str, float] | None = None,
 ) -> tuple[_DeepReviewDetectionData, str]:
     """
     Build a normalized detection payload using the same CLS + scoring logic
@@ -204,7 +210,13 @@ def _build_detection_payload(
     )
     cls_result = None
     if crop_rgb is not None:
-        cls_result = detection_manager.classification_service.classify(crop_rgb)
+        cls_result = (
+            detection_manager.classification_service.classify(
+                crop_rgb, observed_at=observed_at, location=location
+            )
+            if observed_at is not None
+            else detection_manager.classification_service.classify(crop_rgb)
+        )
         cls_name = cls_result.class_name
         cls_conf = cls_result.confidence
         if not detection_manager.classifier_model_id and cls_result.model_id:
@@ -241,10 +253,14 @@ def _build_detection_payload(
         unknown_score=signals.unknown_score,
         decision_reasons=signals.decision_reasons_json,
         policy_version=signals.policy_version,
-        top_k_predictions=list(
+        decision_level=getattr(cls_result, "decision_level", None),
+        raw_species_name=getattr(cls_result, "raw_species_name", None),
+        geography_json=getattr(cls_result, "geography_json", None),
+        top_k_predictions=getattr(cls_result, "storage_alternatives", None)
+        or list(
             zip(
-                getattr(cls_result, "top_k_classes", []) or [],
-                getattr(cls_result, "top_k_confidences", []) or [],
+                (getattr(cls_result, "top_k_classes", []) or [])[1:],
+                (getattr(cls_result, "top_k_confidences", []) or [])[1:],
                 strict=False,
             )
         )
@@ -318,8 +334,8 @@ def _save_rescan_proposals(
                     (job_id, target_detection_id, image_filename,
                      suggested_species, suggested_confidence, suggested_score,
                      bbox_x, bbox_y, bbox_w, bbox_h,
-                     topk_json, source_model, status)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ready')
+                     topk_json, source_model, geography_json, status)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ready')
                 """,
                 (
                     job_id,
@@ -334,11 +350,38 @@ def _save_rescan_proposals(
                     payload.bbox[3] - payload.bbox[1],  # height
                     topk_json,
                     model,
+                    getattr(payload, "geography_json", None),
                 ),
             )
             saved += 1
     logger.info(f"Saved {saved} rescan proposals for {filename} (job {job_id})")
     return saved
+
+
+def _image_geography(
+    filename: str, image_path: str
+) -> tuple[datetime | None, dict[str, float] | None]:
+    try:
+        with db_service.closing_connection() as conn:
+            row = conn.execute(
+                "SELECT s.type FROM images i JOIN sources s ON s.source_id=i.source_id "
+                "WHERE i.filename=?",
+                (filename,),
+            ).fetchone()
+        if row is None:
+            return None, None
+        if row[0] == "ipcam":
+            if not config.get("LOCATION_DATA_CONFIGURED", False):
+                return None, None
+            stamp, location = geographic_exif_context(image_path)
+            return (
+                (stamp, location) if stamp else (observation_datetime(filename), None)
+            )
+        # Imported photographs must not inherit the appliance's location.
+        return geographic_exif_context(image_path)
+    except Exception as exc:
+        logger.debug("Image geography unavailable: %s", exc)
+        return None, None
 
 
 # ---------------------------------------------------------------------------
@@ -391,6 +434,7 @@ def process_deep_analysis_job(detection_manager: Any, job_data: dict) -> None:
         return
 
     # Run scan
+    geo_time, geo_location = _image_geography(filename, img_path)
     try:
         start_ts = datetime.now()
         detections = detection_manager.run_exhaustive_scan(frame)
@@ -420,6 +464,8 @@ def process_deep_analysis_job(detection_manager: Any, job_data: dict) -> None:
                 detection_manager=detection_manager,
                 frame=frame,
                 raw_detection=raw_det,
+                observed_at=geo_time,
+                location=geo_location,
             )
             payloads.append(payload)
             method = raw_det.get("method", "unknown")

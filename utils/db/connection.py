@@ -211,6 +211,7 @@ def _init_schema(conn: sqlite3.Connection) -> None:
     #   cls_class_name was promoted to genus_sp. or cleared for reject.
     _ensure_column_on_table(conn, "detections", "decision_level", "TEXT")
     _ensure_column_on_table(conn, "detections", "raw_species_name", "TEXT")
+    _ensure_column_on_table(conn, "detections", "geography_json", "TEXT")
 
     # Frame resolution at capture time (tracks camera/resolution changes)
     _ensure_column_on_table(conn, "detections", "frame_width", "INTEGER")
@@ -422,6 +423,7 @@ def _init_schema(conn: sqlite3.Connection) -> None:
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_rescan_proposals_job_id ON rescan_proposals(job_id);"
     )
+    _ensure_column_on_table(conn, "rescan_proposals", "geography_json", "TEXT")
 
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_rescan_proposals_status ON rescan_proposals(status);"
@@ -454,11 +456,15 @@ def _init_schema(conn: sqlite3.Connection) -> None:
     # Additive migrations for pre-existing DBs (the CREATE TABLE above
     # is no-op once the table exists; ALTER adds the new columns).
     _ensure_column_on_table(
-        conn, "export_batches", "favorites_count",
+        conn,
+        "export_batches",
+        "favorites_count",
         "INTEGER NOT NULL DEFAULT 0",
     )
     _ensure_column_on_table(
-        conn, "export_batches", "frame_integrity_dropped_count",
+        conn,
+        "export_batches",
+        "frame_integrity_dropped_count",
         "INTEGER NOT NULL DEFAULT 0",
     )
     conn.execute(

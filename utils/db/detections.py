@@ -435,8 +435,9 @@ def insert_detection(conn: sqlite3.Connection, row: dict[str, Any]) -> int:
             species_source,
             species_updated_at,
             decision_level,
-            raw_species_name
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+            raw_species_name,
+            geography_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
         """,
         (
             row.get("image_filename"),
@@ -467,6 +468,7 @@ def insert_detection(conn: sqlite3.Connection, row: dict[str, Any]) -> int:
             row.get("species_updated_at", row.get("created_at")),
             row.get("decision_level"),
             row.get("raw_species_name"),
+            row.get("geography_json"),
         ),
     )
     conn.commit()

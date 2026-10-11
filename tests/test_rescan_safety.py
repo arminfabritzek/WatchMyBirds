@@ -70,6 +70,7 @@ def _create_test_db(tmp_path) -> sqlite3.Connection:
             bbox_x REAL, bbox_y REAL, bbox_w REAL, bbox_h REAL,
             topk_json TEXT,
             source_model TEXT,
+            geography_json TEXT,
             status TEXT DEFAULT 'queued',
             created_at TEXT DEFAULT CURRENT_TIMESTAMP,
             applied_at TEXT,
@@ -102,7 +103,8 @@ class _FakePayload:
 
 
 class TestSaveRescanProposals:
-    def test_writes_to_proposals_not_detections(self, tmp_path):
+    @pytest.mark.parametrize("geography", [None, '{"raw_species":"Parus_major"}'])
+    def test_writes_to_proposals_not_detections(self, tmp_path, geography):
         conn = _create_test_db(tmp_path)
 
         # Insert image + detection
@@ -124,6 +126,8 @@ class TestSaveRescanProposals:
         from web.services.analysis_service import _save_rescan_proposals
 
         payloads = [_FakePayload()]
+        if geography is not None:
+            payloads[0].geography_json = geography
         with patch("web.services.analysis_service.db_service") as mock_db:
             # Make closing_connection return our test conn
             mock_db.closing_connection.return_value.__enter__ = MagicMock(
@@ -157,6 +161,7 @@ class TestSaveRescanProposals:
         assert p["target_detection_id"] == det_id
         assert p["suggested_species"] == "Parus_major"
         assert p["status"] == "ready"
+        assert p["geography_json"] == geography
 
         conn.close()
 

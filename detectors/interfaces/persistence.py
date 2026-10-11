@@ -92,6 +92,7 @@ class DetectionData:
     top_k_predictions: list[tuple[str, float]] = field(default_factory=list)
     decision_level: str | None = None
     raw_species_name: str | None = None
+    geography_json: str | None = None
 
 
 class PersistenceInterface(ABC):

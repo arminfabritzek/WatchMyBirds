@@ -4,11 +4,18 @@
 
 ### Added
 
+- Species classification can use the configured location and capture season
+  to weight image candidates locally, preserving original predictions and
+  human corrections without installation-specific species rules.
 - Optional local UI development uses verified copies of appliance bird data,
   keeping edits local while camera controls and background jobs remain disabled.
 
 ### Fixed
 
+- Nightly quality scoring and automatic gallery selection exclude images or
+  boxes currently confirmed by a reviewer to contain no bird.
+- Deep analysis preserves all five classifier candidates without duplicating
+  the first, together with the original species and decision level.
 - Species and box assessments remain independent when editing birds, survive
   reopening, and can be withdrawn without changing the other assessment.
 - Bird labels and box badges show their own saved assessment status; galleries

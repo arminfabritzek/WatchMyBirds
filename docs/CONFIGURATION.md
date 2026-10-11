@@ -121,9 +121,50 @@ changes.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `LOCATION_DATA` | `52.516, 13.377` | GPS lat/lon for EXIF metadata (`"lat, lon"`) |
+| `LOCATION_DATA` | `52.516, 13.377` | GPS lat/lon for EXIF metadata and geographic species weighting (`"lat, lon"`); set the actual camera location explicitly |
+| `SPECIES_GEOGRAPHY_ENABLED` | `True` | Weight species candidates by local seasonal occurrence; requires an explicitly saved location or complete photo EXIF |
 | `DAY_AND_NIGHT_CAPTURE` | `True` | Enable daylight gating for detections |
 | `DAY_AND_NIGHT_CAPTURE_LOCATION` | `Berlin` | City name for Astral daylight check |
+
+Geographic weighting uses the same policy for every installation and classifier
+backend. Set your actual coordinates in Settings or through `LOCATION_DATA` in
+the environment/settings.yaml. The built-in Berlin fallback alone does not
+activate weighting. `DAY_AND_NIGHT_CAPTURE_LOCATION` does not set coordinates.
+Disable weighting with `SPECIES_GEOGRAPHY_ENABLED=False` in the environment or
+settings.yaml; the settings API also accepts this runtime key.
+
+For a species-level image prediction, existing candidates are ranked by
+`image_score * sqrt(max(0.001, seasonal_occurrence))`. BirdNET's occurrence score
+depends on latitude, longitude and the capture date (48 seasonal bins per year).
+The finite floor retains rare species; unmatched scientific names keep their
+original score. No species is added, and no personal correction history,
+habitat rule or blacklist is used. Genus, review-only and rejected classifier
+decisions retain their existing behavior.
+
+The selected species becomes the downstream prediction. Its confidence remains
+that species's original image probability; the geographic ranking score is not
+a calibrated confidence. A changed selection can therefore fall below existing
+confidence thresholds and require review. Original image candidates, scores and
+their order are retained in `detections.geography_json` with model provenance;
+`raw_species_name` retains the original top choice. Human answers remain
+authoritative. Existing detections are not rewritten automatically.
+
+Live capture uses the capture time and configured camera location. Imports use
+their own EXIF capture date **and** GPS, and skip weighting if either is absent.
+Deep scans use the stored image's origin: camera captures need a configured
+location; imports need their own complete EXIF. Rescans of existing detections
+remain proposals, including geographic evidence, rather than overwriting them.
+
+The first eligible prediction downloads the fixed BirdNET Geomodel v3.0.4 FP16
+model and labels (about 8.6 MB total) into
+`MODEL_BASE_PATH/species_geography/`. Downloads are atomic and SHA256-checked.
+Inference runs locally on one CPU thread with cached occurrence scores; no GPU,
+extra Python package or new nightly job is needed. Failed downloads, invalid
+context or model errors retain the image prediction and retry later. Coordinates
+and images are never sent to the model host; the public download uses GitHub.
+The model is licensed under Apache-2.0; see the
+[BirdNET Geomodel repository](https://github.com/birdnet-team/geomodel) and its
+[model license](https://github.com/birdnet-team/geomodel/blob/main/LICENSE-MODELS.md).
 
 ### Notifications
 
