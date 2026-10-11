@@ -302,6 +302,18 @@ The system is designed to run locally on affordable hardware to make wildlife ob
 
 ---
 
+## Star History
+
+<a href="https://www.star-history.com/?repos=arminfabritzek%2Fwatchmybirds&amp;type=date&amp;legend=bottom-right">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=arminfabritzek/watchmybirds&amp;type=date&amp;theme=dark&amp;legend=bottom-right" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=arminfabritzek/watchmybirds&amp;type=date&amp;legend=bottom-right" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=arminfabritzek/watchmybirds&amp;type=date&amp;legend=bottom-right" />
+ </picture>
+</a>
+
+---
+
 ## Still Watching
 
 ![A pigeon carries nesting material beside storm-tilted bird feeders. Text: “After the storm, we keep watch.”](assets/readme/after-the-storm-we-keep-watch.webp)
