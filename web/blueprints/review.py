@@ -13,24 +13,37 @@ Handles review queue routes:
 """
 
 import os
+import re
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from flask import Blueprint, abort, jsonify, render_template, request, send_file
+from flask import (
+    Blueprint,
+    Response,
+    abort,
+    current_app,
+    jsonify,
+    render_template,
+    request,
+    send_file,
+    url_for,
+)
 
 from config import get_config
 from core.events import build_bird_events
 from core.human_label_core import HumanAnswer
+from core.review_navigation import ReviewDaySelection, select_review_day
+from core.review_state import (
+    refresh_review_image_visibility as _refresh_review_image_visibility,
+)
 from core.station_report import (
     build_candidate_review_priorities,
     fetch_current_station_event_reviews,
 )
 from logging_config import get_logger
 from utils.db import fetch_sibling_detections
-from utils.db.detections import table_columns
-from utils.db.review_queue import _ex_unclear_predicate_sql
 from utils.review_metadata import (
     BBOX_REVIEW_CORRECT,
     REVIEW_STATUS_CONFIRMED_BIRD,
@@ -547,7 +560,7 @@ def _build_review_modal_siblings(
     if siblings_cache is not None:
         sibling_rows = siblings_cache.get(filename, [])
     else:
-        sibling_rows = fetch_sibling_detections(conn, filename)
+        sibling_rows = fetch_sibling_detections(conn, filename, include_rejected=True)
     for sibling in sibling_rows:
         resolved_species_key = species_key_from_candidates(
             manual_override=sibling["manual_species_override"],
@@ -584,6 +597,13 @@ def _build_review_modal_siblings(
                 "bbox_w": sibling["bbox_w"] or 0.0,
                 "bbox_h": sibling["bbox_h"] or 0.0,
                 "human_bbox_verdict": dict(sibling).get("human_bbox_verdict"),
+                "object_status": dict(sibling).get("object_status", "active"),
+                "needs_review": bool(dict(sibling).get("needs_review", False)),
+                "manual_object_id": dict(sibling).get("manual_object_id"),
+                "object_key": dict(sibling).get("object_key"),
+                "object_kind": dict(sibling).get("object_kind"),
+                "revision": dict(sibling).get("revision"),
+                "provenance": dict(sibling).get("provenance"),
                 "thumb_url": (
                     f"/uploads/derivatives/thumbs/{thumb_virtual}"
                     if thumb_virtual
@@ -641,6 +661,7 @@ def _build_review_modal_detection(
 
     return {
         "detection_id": detection_id,
+        "image_filename": filename,
         "species_key": species_key,
         "common_name": common_name,
         "od_class_name": row["species_key"] or "",
@@ -656,7 +677,7 @@ def _build_review_modal_detection(
         "gallery_date": gallery_date,
         "siblings": siblings,
         "sibling_count": max(
-            len(siblings),
+            sum(s.get("object_status") != "rejected" for s in siblings),
             int(row["sibling_detection_count"] or 0),
             1,
         ),
@@ -760,16 +781,11 @@ def _build_review_item(
         optimized_url = (
             f"/uploads/derivatives/optimized/{date_folder_str}/{optimized_filename}"
         )
-        # Pre-generated high-res bbox crop (~400px), built by the
-        # detection pipeline and stored under derivatives/thumbs/.
-        # The detection pipeline emits one crop per detection on the
-        # image; review members carry detection-1 as the cover, so
-        # we use _crop_1.webp by convention. The SQL view exposes
-        # this as `thumbnail_path_virtual` but fetch_review_queue_images
-        # does not select it, so we reconstruct deterministically.
-        if best_detection_id:
-            crop_name = filename.rsplit(".", 1)[0] + "_crop_1.webp"
-            crop_url = f"/uploads/derivatives/thumbs/{date_folder_str}/{crop_name}"
+        crop_name = row["thumbnail_path"] if "thumbnail_path" in row.keys() else None
+        if best_detection_id and crop_name:
+            crop_url = (
+                f"/uploads/derivatives/thumbs/{date_folder_str}/{Path(crop_name).name}"
+            )
 
     inline_siblings: list[dict] = []
     if include_detail and best_detection_id:
@@ -887,6 +903,8 @@ def _fetch_review_event_payloads(
     output_dir: str,
     species_locale: str,
     common_names: dict[str, str],
+    rows: list | None = None,
+    recent_species: list[dict] | None = None,
 ) -> tuple[list, dict[int, dict], list[dict], bool]:
     """Load detection rows + Gallery context and group them into BirdEvents.
 
@@ -895,8 +913,10 @@ def _fetch_review_event_payloads(
     as ``context_only=True`` inputs so the biological event boundary
     stays intact across the Review / Gallery border.
     """
-    rows = db_service.fetch_review_queue_images(conn, gallery_threshold)
-    recent_species = _load_recent_review_species(conn, common_names)
+    if rows is None:
+        rows = db_service.fetch_review_queue_images(conn, gallery_threshold)
+    if recent_species is None:
+        recent_species = _load_recent_review_species(conn, common_names)
     detection_rows: dict[int, dict] = {}
     untagged_min: str | None = None
     untagged_max: str | None = None
@@ -1135,6 +1155,7 @@ def _build_review_event_member(
     common_names: dict[str, str],
     recent_species: list[dict],
     siblings_cache: dict[str, list] | None = None,
+    include_modal: bool = True,
 ) -> dict:
     member = _build_review_item(
         row,
@@ -1171,12 +1192,7 @@ def _build_review_event_member(
         member["review_reason"] = "context"
         member["reason_label"] = "In Gallery"
 
-    # Modal-detection payload for the per-tile lightbox in the Review Grid.
-    # Every image opens through the shared detection_modal viewer, which
-    # needs a det-shaped dict per tile. _build_review_item runs with
-    # include_detail=False here for the heavy quick-species/picker work,
-    # so we build a focused modal-detection alongside it.
-    if member.get("best_detection_id") and not member["context_only"]:
+    if include_modal and member.get("best_detection_id") and not member["context_only"]:
         member["modal_detection"] = _build_review_modal_detection(
             row,
             filename=member["filename"],
@@ -1208,6 +1224,7 @@ def _build_review_event(
     recent_species: list[dict],
     include_detail: bool = False,
     siblings_cache: dict[str, list] | None = None,
+    include_modal: bool = True,
 ) -> dict | None:
     """Translate a ``BirdEvent`` into the dict shape the templates expect.
 
@@ -1228,6 +1245,7 @@ def _build_review_event(
         common_names=common_names,
         recent_species=recent_species,
         siblings_cache=siblings_cache,
+        include_modal=include_modal,
     )
     window_date, window_time = _format_review_event_window(
         raw_event.start_time,
@@ -1357,6 +1375,7 @@ def _build_review_event(
                 common_names=common_names,
                 recent_species=recent_species,
                 siblings_cache=siblings_cache,
+                include_modal=include_modal,
             )
         )
 
@@ -1378,9 +1397,13 @@ def _load_review_items(
     output_dir: str,
     species_locale: str,
     common_names: dict[str, str],
+    rows: list | None = None,
+    recent_species: list[dict] | None = None,
 ) -> tuple[list[dict], list[dict]]:
-    rows = db_service.fetch_review_queue_images(conn, gallery_threshold)
-    recent_species = _load_recent_review_species(conn, common_names)
+    if rows is None:
+        rows = db_service.fetch_review_queue_images(conn, gallery_threshold)
+    if recent_species is None:
+        recent_species = _load_recent_review_species(conn, common_names)
     items = [
         _build_review_item(
             row,
@@ -1467,8 +1490,7 @@ def _collect_review_siblings_cache(
 ) -> dict[str, list]:
     """One batch fetch for every actionable member's sibling list.
 
-    The Review-Grid render emits a ``render_modal`` per actionable tile,
-    each of which needs the source-image sibling list for the lightbox.
+    Eager detail fragments need each actionable member's source-image siblings.
     Per-tile querying is O(events × members) round-trips against SQLite;
     batching collapses it to one query for the whole page render.
     """
@@ -1485,7 +1507,9 @@ def _collect_review_siblings_cache(
         return {}
     from utils.db.detections import fetch_sibling_detections_batch
 
-    grouped = fetch_sibling_detections_batch(conn, sorted(filenames))
+    grouped = fetch_sibling_detections_batch(
+        conn, sorted(filenames), include_rejected=True
+    )
     return {name: list(rows) for name, rows in grouped.items()}
 
 
@@ -1497,6 +1521,10 @@ def _load_review_events(
     species_locale: str,
     common_names: dict[str, str],
     include_detail: bool = False,
+    payloads: tuple[list, dict[int, dict], list[dict], bool] | None = None,
+    selection: ReviewDaySelection | None = None,
+    sort_order: str = "priority",
+    include_modal: bool = True,
 ) -> tuple[list[dict], list[dict], bool, set[str]]:
     """Return ``(review_events, continuity_batches, context_truncated, workspace_species_keys)``.
 
@@ -1511,19 +1539,30 @@ def _load_review_events(
         row_map,
         recent_species,
         context_truncated,
-    ) = _fetch_review_event_payloads(
-        conn,
-        gallery_threshold=gallery_threshold,
-        output_dir=output_dir,
-        species_locale=species_locale,
-        common_names=common_names,
+    ) = (
+        payloads
+        if payloads is not None
+        else _fetch_review_event_payloads(
+            conn,
+            gallery_threshold=gallery_threshold,
+            output_dir=output_dir,
+            species_locale=species_locale,
+            common_names=common_names,
+        )
     )
     continuity_batches = build_review_continuity_batches(raw_events)
-    completed_review_snapshots = fetch_current_station_event_reviews(conn)
-    priority_by_event = {
-        str(item["event_key"]): item
-        for item in build_candidate_review_priorities(conn, raw_events)
-    }
+    if selection is None:
+        selection = select_review_day(
+            raw_events, fetch_current_station_event_reviews(conn), "all"
+        )
+    priority_by_event = (
+        {
+            str(item["event_key"]): item
+            for item in build_candidate_review_priorities(conn, raw_events)
+        }
+        if sort_order == "priority"
+        else {}
+    )
     batch_lookup_by_event_key: dict[str, dict] = {}
     for batch in continuity_batches:
         for event_key in batch.get("event_keys") or []:
@@ -1535,30 +1574,12 @@ def _load_review_events(
     workspace_species_keys = _workspace_species_keys_from_raw_events(raw_events)
     workspace_colour_map = assign_species_colours(list(workspace_species_keys))
 
-    # Batch-fetch siblings once for every actionable member filename so
-    # the per-tile modal_detection build does not issue one query per
-    # detection (Review-Grid renders modal markup for every tile).
     siblings_cache: dict[str, list] | None = None
-    if include_detail:
-        siblings_cache = _collect_review_siblings_cache(conn, raw_events, row_map)
+    if include_detail and include_modal:
+        siblings_cache = _collect_review_siblings_cache(conn, selection.events, row_map)
 
     events: list[dict] = []
-    for raw_event in raw_events:
-        completed_review = completed_review_snapshots.get(
-            frozenset(raw_event.detection_ids)
-        )
-        if completed_review is not None and completed_review.outcome in {
-            "verified_species",
-            "unresolved_bird",
-            "no_bird",
-        }:
-            continue
-        if (
-            raw_event.context_only_count > 0
-            and raw_event.context_only_count == raw_event.photo_count
-        ):
-            # Pure Gallery anchor — Review has nothing actionable to show.
-            continue
+    for raw_event in selection.events:
         event = _build_review_event(
             raw_event,
             row_map=row_map,
@@ -1569,6 +1590,7 @@ def _load_review_events(
             recent_species=recent_species,
             include_detail=include_detail,
             siblings_cache=siblings_cache,
+            include_modal=include_modal,
         )
         if not event:
             continue
@@ -1586,8 +1608,11 @@ def _load_review_events(
         events.append(event)
     events.sort(
         key=lambda item: (
-            -int((item.get("review_priority") or {}).get("priority_score") or 0),
+            -int((item.get("review_priority") or {}).get("priority_score") or 0)
+            if sort_order == "priority"
+            else 0,
             item.get("start_time") or "",
+            item.get("event_key") or "",
         )
     )
     return events, continuity_batches, context_truncated, workspace_species_keys
@@ -1641,17 +1666,39 @@ def _load_single_review_event(
     species_locale: str,
     common_names: dict[str, str],
 ) -> dict | None:
-    events, _batches, _truncated, _species_keys = _load_review_events(
+    # Rebuild membership from current metadata, including Gallery anchors, but
+    # do not construct UI payloads for a write-path validation.
+    raw_events, row_map, _, _ = _fetch_review_event_payloads(
         conn,
         gallery_threshold=gallery_threshold,
         output_dir=output_dir,
         species_locale=species_locale,
         common_names=common_names,
-        include_detail=True,
+        recent_species=[],
     )
-    for event in events:
-        if event.get("event_key") == event_key:
-            return event
+    selection = select_review_day(
+        raw_events, fetch_current_station_event_reviews(conn), "all"
+    )
+    for event in selection.events:
+        if event.event_key != event_key:
+            continue
+        if not row_map.get(int(event.cover_detection_id or 0)):
+            return None
+        return {
+            "event_key": event.event_key,
+            "detection_ids": list(event.detection_ids),
+            "candidate_species": event.species,
+            "eligibility": event.eligibility,
+            "members": [
+                {
+                    "best_detection_id": row.get("active_detection_id")
+                    or row.get("best_detection_id"),
+                    "context_only": bool(row.get("context_only")),
+                }
+                for detection_id in event.detection_ids
+                if (row := row_map.get(int(detection_id)))
+            ],
+        }
     return None
 
 
@@ -1863,89 +1910,6 @@ def _workspace_species_keys_from_raw_events(raw_events) -> set[str]:
     return species_keys
 
 
-def _refresh_review_image_visibility(
-    conn, filename: str, gallery_threshold: float
-) -> str:
-    active_count = conn.execute(
-        """
-        SELECT COUNT(*)
-        FROM detections d
-        WHERE d.image_filename = ?
-          AND COALESCE(d.status, 'active') = 'active'
-        """,
-        (filename,),
-    ).fetchone()[0]
-
-    if active_count == 0:
-        image_fact = conn.execute(
-            """
-            SELECT answer_value
-            FROM current_human_label_facts
-            WHERE scope = 'image'
-              AND image_filename = ?
-              AND fact_type = 'bird_presence'
-            """,
-            (filename,),
-        ).fetchone()
-        if image_fact and image_fact[0] == "absent":
-            review_status = REVIEW_STATUS_NO_BIRD
-        elif image_fact and image_fact[0] == "present":
-            review_status = REVIEW_STATUS_CONFIRMED_BIRD
-        else:
-            review_status = REVIEW_STATUS_UNTAGGED
-        if review_status == REVIEW_STATUS_UNTAGGED:
-            conn.execute(
-                """
-                UPDATE images
-                SET review_status = 'untagged'
-                WHERE filename = ?
-                """,
-                (filename,),
-            )
-        else:
-            db_service.update_review_status(
-                conn, [filename], review_status, commit=False
-            )
-        return review_status
-
-    ex_unclear_predicate = _ex_unclear_predicate_sql(table_columns(conn, "detections"))
-    unresolved = conn.execute(
-        f"""
-        SELECT COUNT(*)
-        FROM detections d
-        WHERE d.image_filename = ?
-          AND COALESCE(d.status, 'active') = 'active'
-          AND (
-              (
-                  COALESCE(d.decision_state, '') NOT IN ('confirmed', 'rejected')
-                  AND (
-                      COALESCE(d.score, 0.0) < ?
-                      OR d.decision_state IN ('uncertain', 'unknown')
-                  )
-              )
-              OR {ex_unclear_predicate}
-          )
-        """,
-        (filename, gallery_threshold),
-    ).fetchone()[0]
-
-    if unresolved == 0:
-        db_service.update_review_status(
-            conn, [filename], REVIEW_STATUS_CONFIRMED_BIRD, commit=False
-        )
-        return REVIEW_STATUS_CONFIRMED_BIRD
-
-    conn.execute(
-        """
-        UPDATE images
-        SET review_status = 'untagged'
-        WHERE filename = ?
-        """,
-        (filename,),
-    )
-    return REVIEW_STATUS_UNTAGGED
-
-
 def _strip_image_orphans(orphans: list[dict]) -> list[dict]:
     """Drop ``item_kind == "image"`` rows from the review payload.
 
@@ -2010,11 +1974,17 @@ def _require_active_review_detection(conn, filename: str, detection_id: int):
 @review_bp.route("/admin/review", methods=["GET"])
 @login_required
 def review_page():
-    """
-    Review Queue: Images needing user decision.
-    Shows orphans (no detections) AND low-confidence detections.
-    Sorted oldest first.
-    """
+    """Review complete events by day, chronologically or by review priority."""
+    day = (request.args.get("day") or "latest").strip()
+    sort_order = (request.args.get("sort") or "chronological").strip()
+    if sort_order not in {"chronological", "priority"}:
+        abort(400, description="Invalid Review sort order")
+    if day not in {"latest", "all"}:
+        try:
+            if datetime.strptime(day, "%Y-%m-%d").strftime("%Y-%m-%d") != day:
+                raise ValueError
+        except ValueError:
+            abort(400, description="Invalid Review day")
     output_dir = config.get("OUTPUT_DIR", "output")
     gallery_threshold = config["GALLERY_DISPLAY_THRESHOLD"]
     species_locale = config.get("SPECIES_COMMON_NAME_LOCALE", "DE")
@@ -2029,12 +1999,42 @@ def review_page():
     is_grid_layout = layout_param != "legacy"
 
     with db_service.closing_connection() as conn:
+        rows = db_service.fetch_review_queue_images(conn, gallery_threshold)
+        recent_species = _load_recent_review_species(conn, common_names)
+        payloads = _fetch_review_event_payloads(
+            conn,
+            gallery_threshold=gallery_threshold,
+            output_dir=output_dir,
+            species_locale=species_locale,
+            common_names=common_names,
+            rows=rows,
+            recent_species=recent_species,
+        )
+        selection = select_review_day(
+            payloads[0], fetch_current_station_event_reviews(conn), day
+        )
+        selected_ids = {
+            detection_id
+            for event in selection.events
+            for detection_id in event.detection_ids
+        }
         orphans, _ = _load_review_items(
             conn,
             gallery_threshold=gallery_threshold,
             output_dir=output_dir,
             species_locale=species_locale,
             common_names=common_names,
+            rows=[
+                row
+                for row in rows
+                if row["item_kind"] == "detection"
+                and (
+                    selection.selected_day == "all"
+                    or int(row["active_detection_id"] or row["best_detection_id"] or 0)
+                    in selected_ids
+                )
+            ],
+            recent_species=recent_species,
         )
         (
             review_events,
@@ -2048,6 +2048,10 @@ def review_page():
             species_locale=species_locale,
             common_names=common_names,
             include_detail=is_grid_layout,
+            include_modal=False,
+            payloads=payloads,
+            selection=selection,
+            sort_order=sort_order,
         )
 
     orphans = _strip_image_orphans(orphans)
@@ -2101,7 +2105,66 @@ def review_page():
         species_colour_map=species_colour_map,
         species_colour_slots=SPECIES_COLOUR_SLOTS,
         current_path="/admin/review",
+        review_navigation={
+            "days": selection.days,
+            "selected_day": selection.selected_day,
+            "total_events": selection.total_events,
+            "sort_order": sort_order,
+            "is_grid_layout": is_grid_layout,
+            "older_url": url_for(
+                "review.review_page",
+                day=selection.older_day,
+                sort=sort_order,
+                **({} if is_grid_layout else {"layout": "legacy"}),
+            )
+            if selection.older_day
+            else None,
+            "newer_url": url_for(
+                "review.review_page",
+                day=selection.newer_day,
+                sort=sort_order,
+                **({} if is_grid_layout else {"layout": "legacy"}),
+            )
+            if selection.newer_day
+            else None,
+        },
     )
+
+
+@review_bp.route("/api/review/modal/<event_key>/<int:detection_id>", methods=["GET"])
+@login_required
+def review_modal_fragment(event_key: str, detection_id: int) -> Response:
+    """Load the shared image editor for one current Review detection."""
+    if not re.fullmatch(r"bird-event-[0-9a-f]{12}", event_key) or detection_id <= 0:
+        abort(404)
+    locale = config.get("SPECIES_COMMON_NAME_LOCALE", "DE")
+    with db_service.closing_connection() as conn:
+        row = db_service.fetch_review_queue_item_by_identity(
+            conn,
+            "detection",
+            str(detection_id),
+            gallery_threshold=config["GALLERY_DISPLAY_THRESHOLD"],
+        )
+        if row is None:
+            abort(404)
+        member = _build_review_event_member(
+            dict(row),
+            conn=conn,
+            species_locale=locale,
+            output_dir=config.get("OUTPUT_DIR", "output"),
+            common_names=load_common_names(locale),
+            recent_species=[],
+        )
+    # event_key scopes client navigation only; write routes revalidate membership.
+    response = current_app.make_response(
+        render_template(
+            "partials/review_modal.html",
+            detection=member["modal_detection"],
+            event_key=event_key,
+        )
+    )
+    response.headers["Cache-Control"] = "private, no-store"
+    return response
 
 
 @review_bp.route("/api/review/panel/<item_kind>/<item_id>", methods=["GET"])

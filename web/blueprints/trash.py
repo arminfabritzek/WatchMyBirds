@@ -231,7 +231,7 @@ def trash_empty():
 
     ``review_status='no_bird'`` images are intentionally preserved:
     they are the training-data hard-negative corpus
-    (``utils.db.user_groundtruth.fetch_hard_negatives``). Wiping them
+    (the canonical human-label history). Wiping them
     here would silently destroy verified FP crops. Per-item purge of
     no_bird images is still possible via ``/api/trash/purge`` with
     explicit ``image_filenames``, but the bulk-empty must not touch

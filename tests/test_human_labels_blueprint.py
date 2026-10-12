@@ -712,7 +712,7 @@ def test_manual_bird_rejects_nonbird_on_create_and_update(
     _make_original(filename)
     payload = {
         "filename": filename,
-        "bbox": {"x": 0.2, "y": 0.2, "w": 0.2, "h": 0.2},
+        "bbox": {"x": 0.65, "y": 0.2, "w": 0.2, "h": 0.2},
         "species_key": species_key,
         "request_id": "nonbird-create-test",
     }

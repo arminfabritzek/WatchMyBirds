@@ -411,14 +411,31 @@ def create_local_app(work: Path) -> Flask:
         "media",
         "analytics",
         "human_labels",
+        "canonical_dataset",
         "trash",
     }
     allowed_endpoints = {
         "pages.serve_asset",
+        "pages.settings_route",
         "system.healthz",
         "system.api_status",
         "api_v1.status",
         "api_v1.get_species_thumbnails",
+        "review.review_page",
+        "review.review_panel_fragment",
+        "review.review_modal_fragment",
+        "review.review_event_panel_fragment",
+        "review.review_thumb",
+        "review.review_decision",
+        "review.review_cleanup_preview",
+        "review.review_cleanup_run",
+        "review.update_bbox_review_state",
+        "review.review_quick_species",
+        "review.review_approve",
+        "review.review_event_approve",
+        "review.review_event_trash",
+        "review.review_event_unresolved",
+        "review.review_event_resolve",
     }
 
     def local_boundary() -> Any:

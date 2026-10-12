@@ -36,6 +36,11 @@
         </span>
 
         <div class="wm-bird-editor__actions">
+            <button type="button" class="btn btn--primary btn--sm"
+                data-editor-action="restore" aria-label="Restore bird" hidden
+                title="Restore this dismissed bird; species and box assessments stay unchanged">
+                Restore bird
+            </button>
             {% if box_walkthrough %}
             <button type="button" class="btn btn--primary btn--sm"
                 data-editor-action="bbox-verdict" data-bbox-verdict="suitable"
@@ -149,6 +154,12 @@
                         ↶ <span>Retract added bird</span>
                     </button>
                     <button type="button" class="wm-toolbox__item wm-toolbox__item--danger"
+                        data-editor-action="no-bird" role="menuitem"
+                        aria-label="Not a bird in this box"
+                        {% if not can_moderate %}aria-disabled="true" data-login-required="true"{% endif %}>
+                        ✗ <span>Not a bird in this box</span>
+                    </button>
+                    <button type="button" class="wm-toolbox__item wm-toolbox__item--danger"
                         data-action="review-no-bird" data-filename="{{ image_filename }}"
                         role="menuitem" aria-label="No birds in full image"
                         title="Review the full image before recording no birds"
@@ -159,6 +170,10 @@
             </div>
         </div>
     </div>
+    <label class="wm-bird-editor__match" data-editor-match hidden>
+        <span>A saved box overlaps this bird. Correct it or keep a different bird.</span>
+        <select data-editor-match-select aria-label="Match existing bird"></select>
+    </label>
     <div class="wm-bird-editor__status" data-editor-status role="status" aria-live="polite"></div>
 </div>
 {% endmacro %}

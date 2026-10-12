@@ -285,3 +285,141 @@ def test_static_file_routes_emit_browser_cache_headers(local_db_app):
         asset_response = client.get("/assets/design-system.css")
         assert asset_response.status_code == 200
         assert asset_response.headers["Cache-Control"] == "public, max-age=604800"
+
+
+@pytest.mark.parametrize("retired", [False, True])
+def test_review_lazy_modal_preserves_siblings_and_retention_guards(
+    seeded_client, retired: bool
+) -> None:
+    client, today = seeded_client
+    from web.blueprints import review
+
+    with db_connection.closing_connection() as conn:
+        row = conn.execute(
+            "SELECT detection_id, image_filename FROM detections WHERE score = 0.42"
+        ).fetchone()
+        detection_id, filename = row
+        crop_name = filename.replace(".jpg", "_crop_2.webp")
+        conn.execute(
+            "UPDATE detections SET thumbnail_path=? WHERE detection_id=?",
+            (crop_name, detection_id),
+        )
+        sibling_id = insert_detection(
+            conn,
+            {
+                "image_filename": filename,
+                "bbox_x": 0.55,
+                "bbox_y": 0.2,
+                "bbox_w": 0.2,
+                "bbox_h": 0.25,
+                "od_class_name": "bird",
+                "od_confidence": 0.85,
+                "score": 0.3,
+                "decision_state": "confirmed",
+            },
+        )
+        conn.execute(
+            "UPDATE images SET original_present = ? WHERE filename = ?",
+            (0 if retired else 1, filename),
+        )
+        conn.commit()
+
+    page = client.get("/admin/review")
+    assert page.status_code == 200
+    body = page.get_data(as_text=True)
+    assert "gallery-modal wm-modal" not in body
+    assert f"/{crop_name}" in body
+    urls = re.findall(r'data-modal-url="([^"]+)"', body)
+    url = next(value for value in urls if value.endswith(f"/{detection_id}"))
+    with patch.object(
+        review,
+        "_fetch_review_event_payloads",
+        side_effect=AssertionError("global queue"),
+    ):
+        response = client.get(url)
+    assert response.status_code == 200
+    assert response.headers["Cache-Control"] == "private, no-store"
+    modal = response.get_data(as_text=True)
+    assert modal.count("gallery-modal wm-modal") == 1
+    assert f"modal-review-{url.split('/')[-2]}-{detection_id}" in modal
+    assert f'"detection_id": {sibling_id}' in modal
+    assert "data-editor-object-select" in modal
+    assert (f"/api/image/download/{detection_id}" not in modal) == retired
+
+    with client.session_transaction() as session:
+        session.clear()
+    assert client.get(url).status_code == 302
+
+
+@pytest.mark.parametrize(
+    "suffix",
+    ["invalid/1", "bird-event-012345abcdef/0", "bird-event-012345abcdef/999999"],
+)
+def test_review_lazy_modal_rejects_missing_or_invalid_detection(
+    seeded_client, suffix: str
+) -> None:
+    client, _ = seeded_client
+    assert client.get("/api/review/modal/" + suffix).status_code == 404
+
+
+def test_event_action_lookup_preserves_fresh_members_without_display_work(
+    seeded_client,
+) -> None:
+    from web.blueprints import review
+
+    with db_connection.closing_connection() as conn:
+        kwargs = dict(
+            gallery_threshold=0.7,
+            output_dir=config.get_config()["OUTPUT_DIR"],
+            species_locale="DE",
+            common_names={},
+        )
+        events, _, _, _ = review._load_review_events(
+            conn, include_detail=True, **kwargs
+        )
+        assert events
+        with (
+            patch.object(
+                review, "_build_review_event", side_effect=AssertionError("UI")
+            ),
+            patch.object(
+                review,
+                "_build_review_modal_detection",
+                side_effect=AssertionError("modal"),
+            ),
+            patch.object(
+                review,
+                "_load_recent_review_species",
+                side_effect=AssertionError("picker"),
+            ),
+        ):
+            for expected in events:
+                actual = review._load_single_review_event(
+                    conn, event_key=expected["event_key"], **kwargs
+                )
+                for key in (
+                    "event_key",
+                    "detection_ids",
+                    "eligibility",
+                    "candidate_species",
+                ):
+                    assert actual[key] == expected[key]
+                assert sorted(
+                    (m["best_detection_id"], m["context_only"])
+                    for m in actual["members"]
+                ) == sorted(
+                    (m["best_detection_id"], m["context_only"])
+                    for m in expected["members"]
+                )
+            target = events[0]
+            conn.executemany(
+                "UPDATE detections SET status = 'rejected' WHERE detection_id = ?",
+                [(value,) for value in target["detection_ids"]],
+            )
+            assert (
+                review._load_single_review_event(
+                    conn, event_key=target["event_key"], **kwargs
+                )
+                is None
+            )
+            conn.rollback()

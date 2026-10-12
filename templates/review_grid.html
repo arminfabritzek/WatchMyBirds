@@ -44,7 +44,7 @@
             <input type="range"
                    id="review-grid-size-slider"
                    class="review-grid__size-slider"
-                   min="120" max="320" step="40" value="240"
+                   min="120" max="320" step="40" value="320"
                    title="Drag to resize tiles (Apple Photos style)"
                    aria-label="Tile size in pixels">
             <button type="button"
@@ -56,11 +56,13 @@
         <button type="button"
                 class="btn btn--secondary"
                 id="reviewClearQueueBtn"
-                title="{{ 'Review queue is empty — nothing to clear' if not review_events else 'Move active Review detections to Trash without creating training labels' }}"
-                {{ 'disabled' if not review_events }}>🧹 Move Review Detections to Trash</button>
+                title="Move active Review detections from all days to Trash without creating training labels"
+                {{ 'disabled' if not review_events and (review_navigation is not defined or not review_navigation.total_events) }}>🧹 Move Review Detections to Trash · All days</button>
         <a href="/" class="btn btn--secondary" title="Back to live stream">← Stream</a>
     </div>
 </nav>
+
+{% include 'partials/review_day_navigation.html' %}
 
 <div class="review-cleanup-modal" id="reviewCleanupModal" hidden
      role="dialog" aria-modal="true" aria-labelledby="reviewCleanupTitle">
@@ -72,6 +74,7 @@
         <div class="review-cleanup-modal__body" id="reviewCleanupBody">
             <p class="review-cleanup-modal__loading">Counting review items…</p>
         </div>
+        <p class="review-cleanup-modal__scope">This action covers the entire Review queue across all days.</p>
         <div class="review-cleanup-modal__actions">
             <button type="button" class="btn btn--secondary"
                     data-cleanup-dismiss>Cancel</button>
@@ -114,8 +117,13 @@
             {% endfor %}
         {% else %}
         <div class="alert alert-success review-grid__placeholder">
+            {% if review_navigation is defined and review_navigation.selected_day != 'all' %}
+            <h4>No open events on {{ review_navigation.selected_day }}.</h4>
+            <p>Choose another day or All days to continue reviewing.</p>
+            {% else %}
             <h4>Inbox zero.</h4>
             <p>No events currently need review.</p>
+            {% endif %}
         </div>
         {% endif %}
     </div>
@@ -125,11 +133,12 @@
 {% endblock %}
 
 {% block scripts %}
-<script src="/assets/js/gallery_utils.js?v=20260922-bbox-label-v4"></script>
-<script src="/assets/js/tile_actions.js?v=20260920-bird-editor-v4"></script>
+<script src="/assets/js/gallery_utils.js?v=review-lazy-modal-v1"></script>
+<script src="/assets/js/tile_actions.js?v=review-lazy-modal-v1"></script>
 <script src="/assets/js/species_picker.js?v=20260920-bird-editor-v5"></script>
 <script src="/assets/js/batch_actions.js?v=1"></script>
-<script src="/assets/js/review_grid.js?v=20260819-full-image-no-bird"></script>
-<script src="/assets/js/review_grid_keyboard.js?v=1"></script>
+<script src="/assets/js/review_modal.js?v=2"></script>
+<script src="/assets/js/review_grid.js?v=review-compact-sizing-v1"></script>
+<script src="/assets/js/review_grid_keyboard.js?v=review-lazy-modal-v1"></script>
 <script src="/assets/js/review_cleanup.js?v=2-trash-housekeeping"></script>
 {% endblock %}

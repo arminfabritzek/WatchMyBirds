@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import sqlite3
 
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, Response, jsonify, request
 
 from config import get_config
+from core.bird_identity import BirdMatchRequired
 from core.human_label_core import BBox, HumanAnswer, HumanLabelError
 from core.manual_object_core import ManualObjectDraft
 from logging_config import get_logger
@@ -63,7 +64,12 @@ def _manual_object_error(exc: Exception):
 def manual_object_create():
     """Create a missed-bird object with explicit human provenance."""
     data = request.get_json(silent=True) or {}
+    if not isinstance(data, dict):
+        return jsonify({"status": "error", "message": "invalid request"}), 400
     try:
+        for key in ("target_key", "match_token"):
+            if data.get(key) is not None and not isinstance(data[key], str):
+                raise HumanLabelError("manual object match is invalid")
         filename = str(data.get("filename") or "").strip()
         bbox = _request_bbox(data.get("bbox"))
         if bbox is None:
@@ -73,7 +79,13 @@ def manual_object_create():
         if species_key is not None and not isinstance(species_key, str):
             raise HumanLabelError("species is invalid")
         path_manager = PathManager(str(_shared["output_dir"]))
+        original_path = path_manager.contained_path(
+            path_manager.get_original_path(filename), path_manager.originals_dir
+        )
+        if original_path is None:
+            raise HumanLabelError("image path is invalid")
         with db_service.closing_connection() as conn:
+            conn.execute("BEGIN IMMEDIATE")
             obj, created = human_label_service.create_manual_object(
                 conn,
                 ManualObjectDraft(
@@ -82,11 +94,31 @@ def manual_object_create():
                     species_key=species_key,
                     request_id=request_id,
                 ),
-                original_path=path_manager.get_original_path(filename),
+                original_path=original_path,
                 locale=str(get_config().get("SPECIES_COMMON_NAME_LOCALE", "DE")),
                 app_version=_shared.get("app_version", ""),
+                target_key=data.get("target_key"),
+                match_token=data.get("match_token"),
             )
+            if obj.get("detection_id") is not None:
+                human_label_service.refresh_thumbnail_for_corrected_box(
+                    conn,
+                    detection_id=int(obj["detection_id"]),
+                    bbox=(bbox.x, bbox.y, bbox.w, bbox.h),
+                    original_resolver=lambda name: original_path,
+                    thumb_resolver=lambda name: path_manager.get_derivative_path(
+                        name, "thumb"
+                    ),
+                )
         gallery_service.invalidate_cache()
+    except BirdMatchRequired as exc:
+        payload = {
+            "status": "match_required",
+            "message": "Choose an existing box to correct, or a different bird.",
+            "candidates": exc.candidates,
+            "match_token": exc.token,
+        }
+        return jsonify(payload), 409
     except (HumanLabelError, sqlite3.IntegrityError) as exc:
         logger.info("Manual object create rejected: %s", type(exc).__name__)
         return _manual_object_error(exc)
@@ -366,4 +398,36 @@ def label_answer():
             "facts": facts,
             "review_state": review_state,
         }
+    )
+
+
+@human_labels_bp.route("/api/detections/<int:detection_id>/restore", methods=["POST"])
+@login_required
+def detection_restore(detection_id: int) -> Response | tuple[Response, int]:
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict) or not isinstance(data.get("filename"), str):
+        return jsonify({"status": "error", "message": "filename required"}), 400
+    filename = data["filename"].strip()
+    if not filename:
+        return jsonify({"status": "error", "message": "filename required"}), 400
+    try:
+        with db_service.closing_connection() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            fact_ids = human_label_service.restore_detection(
+                conn,
+                detection_id=detection_id,
+                image_filename=filename,
+                app_version=_shared.get("app_version", ""),
+            )
+            review_state = human_label_service.fetch_detection_review_states(
+                conn, [detection_id]
+            )[detection_id]
+        gallery_service.invalidate_cache()
+    except (HumanLabelError, sqlite3.IntegrityError) as exc:
+        message = safe_validation_message(
+            exc, allowed_prefixes=("detection ",), fallback="Restore rejected"
+        )
+        return jsonify({"status": "error", "message": message}), 409
+    return jsonify(
+        {"status": "success", "fact_ids": fact_ids, "review_state": review_state}
     )

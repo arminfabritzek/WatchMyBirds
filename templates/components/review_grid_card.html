@@ -18,7 +18,6 @@
   markup through data attributes.
 #}
 {% from "components/modal_image_viewer.html" import render_image_viewer %}
-{% from "components/detection_modal.html" import render_modal %}
 {% from "partials/tile_toolbox.html" import tile_toolbox %}
 
 {% macro render_review_grid_card(event, default_size=4, is_batch_lead=false) %}
@@ -280,7 +279,8 @@
                    500-1200px. thumb_url is too small for that. #}
                 <div class="review-grid__tile-button"
                      data-tile-image
-                     {% if member_modal_target %}data-modal-target="{{ member_modal_target }}"{% endif %}
+                     {% if member_modal_target %}data-modal-target="{{ member_modal_target }}"
+                     data-modal-url="{{ url_for('review.review_modal_fragment', event_key=event.event_key, detection_id=member.best_detection_id) }}"{% endif %}
                      {% if not member.context_only and member.best_detection_id %}data-detection-id="{{ member.best_detection_id }}"{% endif %}
                      title="Click to select · double-click to open">
 
@@ -339,12 +339,4 @@
     </div>
 </article>
 
-{# Detection-modal markup per actionable member — emitted once per
-   event card. Companion bboxes auto-render via render_image_viewer's
-   siblings payload. #}
-{% for member in _review_members %}
-    {% if member.modal_detection and member.best_detection_id %}
-    {{ render_modal(member.modal_detection, 'review-' ~ event.event_key) }}
-    {% endif %}
-{% endfor %}
 {% endmacro %}

@@ -1,11 +1,4 @@
-"""Artifact-retention DB queries (V1 — originals only).
-
-Candidate selection and the per-image favourite signal. The export-
-relevance predicate is NOT re-authored here — it lives in
-``utils.db.user_groundtruth.is_export_relevant_any`` (the export's own
-source of truth) and is consumed by the Planner via
-``core.user_groundtruth_core``.
-"""
+"""Artifact-retention queries; training evidence protection lives in core.training_retention."""
 
 from __future__ import annotations
 

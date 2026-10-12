@@ -111,10 +111,10 @@
             <summary>Included decisions <span>{{ included|length }}</span></summary>
             <div class="table-responsive">
                 <table class="table">
-                    <thead><tr><th>View</th><th>Image</th><th>Detection</th><th>Reason</th></tr></thead>
+                    <thead><tr><th>View</th><th>Image</th><th>Bird / image</th><th>Reason</th></tr></thead>
                     <tbody>
                     {% for row in included %}
-                        <tr><td>{{ row.view }}</td><td>{{ row.image_filename }}</td><td>{{ row.detection_id or 'image' }}</td><td><code>{{ row.reasons|join(', ') }}</code></td></tr>
+                        <tr><td>{{ row.view }}</td><td>{{ row.image_filename }}</td><td>{{ row.object_key | default('image') }}</td><td><code>{{ row.reasons|join(', ') }}</code></td></tr>
                     {% else %}
                         <tr><td colspan="4">No included samples yet.</td></tr>
                     {% endfor %}
@@ -127,10 +127,10 @@
             <summary>Excluded and unresolved decisions <span>{{ excluded|length }}</span></summary>
             <div class="table-responsive">
                 <table class="table">
-                    <thead><tr><th>View</th><th>Image</th><th>Detection</th><th>Reason</th></tr></thead>
+                    <thead><tr><th>View</th><th>Image</th><th>Bird / image</th><th>Reason</th></tr></thead>
                     <tbody>
                     {% for row in excluded %}
-                        <tr><td>{{ row.view }}</td><td>{{ row.image_filename }}</td><td>{{ row.detection_id or 'image' }}</td><td><code>{{ row.reasons|join(', ') }}</code></td></tr>
+                        <tr><td>{{ row.view }}</td><td>{{ row.image_filename }}</td><td>{{ row.object_key | default('image') }}</td><td><code>{{ row.reasons|join(', ') }}</code></td></tr>
                     {% endfor %}
                     </tbody>
                 </table>

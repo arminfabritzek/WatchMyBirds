@@ -10,15 +10,25 @@ from collections.abc import Iterable
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from config import get_config
 from utils.review_metadata import (
     REVIEW_STATUS_NO_BIRD,
     REVIEW_STATUS_UNTAGGED,
     VALID_BBOX_REVIEW_STATES,
 )
 from utils.species_names import (
-    HUMAN_UNKNOWN_SPECIES_SOURCES,
     UNKNOWN_SPECIES_KEY,
 )
+
+
+def object_review_pending_sql(columns: set[str], alias: str = "d") -> str:
+    level = f"{alias}.decision_level" if "decision_level" in columns else "NULL"
+    return f"""(
+        (COALESCE({alias}.decision_state, '') NOT IN ('confirmed', 'rejected')
+         AND (COALESCE({alias}.score, 0.0) < ? OR {alias}.decision_state IN ('uncertain', 'unknown')))
+        OR ({alias}.decision_state = 'confirmed'
+            AND lower(COALESCE({level}, '')) IN ('reject', 'species_review'))
+    )"""
 
 
 def _manual_active_count_sql(conn: sqlite3.Connection, image_expr: str) -> str:
@@ -170,40 +180,10 @@ def is_detection_visible_in_gallery(
 
 
 def _companion_visibility_sql(det_alias: str = "d", image_alias: str = "i") -> str:
-    """Visibility policy for companion boxes inside the detail modal.
-
-    ``UI_STANDARD.md`` §0c (binding) requires every active box on a photo
-    to be drawn, which is a wider contract than the gallery's. The gallery
-    gate additionally demands ``decision_state = 'confirmed'`` so that the
-    temporal smoother can veto single-frame model hallucinations.
-
-    That veto is meaningless once a person has answered. "There is a bird
-    here, I cannot name the species" leaves ``decision_state = 'unknown'``
-    on purpose — the row belongs in the review queue, not in the gallery —
-    but the box itself is a human assertion and outranks any smoother
-    verdict. Filtering it out drops a box the operator explicitly kept.
-
-    The exception is deliberately narrow: it keys on the human-answer
-    marker in ``species_source``, so model-uncertain rows (no human
-    answer) stay hidden exactly as before.
-    """
-    human_unknown_sources = ", ".join(
-        f"'{source}'" for source in sorted(HUMAN_UNKNOWN_SPECIES_SOURCES)
-    )
+    """Show active companions without widening gallery admission."""
     return f"""
         {det_alias}.status = 'active'
         AND ({image_alias}.review_status IS NULL OR {image_alias}.review_status != '{REVIEW_STATUS_NO_BIRD}')
-        AND COALESCE({det_alias}.quality_gallery_ok, 1) = 1
-        AND (
-            lower(COALESCE({det_alias}.species_source, '')) IN ({human_unknown_sources})
-            OR (
-                lower(COALESCE({det_alias}.decision_state, '')) = 'confirmed'
-                AND (
-                    {det_alias}.decision_level IS NULL
-                    OR lower({det_alias}.decision_level) NOT IN ('reject', 'species_review')
-                )
-            )
-        )
     """
 
 
@@ -600,7 +580,7 @@ def fetch_detections_for_gallery(
                     FROM detections d2
                     JOIN images i2 ON i2.filename = d2.image_filename
                     WHERE d2.image_filename = d.image_filename
-                      AND {_gallery_visibility_sql("d2", "i2")}
+                      AND {_companion_visibility_sql("d2", "i2")}
                 ) + {manual_count_d} as sibling_count
             FROM selected s
             JOIN detections d ON d.detection_id = s.detection_id
@@ -630,9 +610,11 @@ def fetch_detections_for_gallery(
             WHERE {where_sql}
         ),
         sibling_counts AS (
-            SELECT image_filename, COUNT(*) AS sibling_count
-            FROM visible
-            GROUP BY image_filename
+            SELECT d.image_filename, COUNT(*) AS sibling_count
+            FROM detections d
+            WHERE d.status = 'active'
+              AND d.image_filename IN (SELECT image_filename FROM visible)
+            GROUP BY d.image_filename
         )
         SELECT
             v.*,
@@ -921,7 +903,7 @@ def fetch_species_story_board_candidates(
             FROM detections d2
             JOIN images i2 ON i2.filename = d2.image_filename
             WHERE d2.image_filename = rf.original_name
-              AND {_gallery_visibility_sql("d2", "i2")}
+              AND {_companion_visibility_sql("d2", "i2")}
         ) + {manual_count_rf} AS sibling_count,
         rs.species_rank,
         rf.frame_rank,
@@ -940,19 +922,25 @@ def fetch_species_story_board_candidates(
 
 
 def fetch_sibling_detections(
-    conn: sqlite3.Connection, image_filename: str
+    conn: sqlite3.Connection, image_filename: str, *, include_rejected: bool = False
 ) -> list[sqlite3.Row | dict[str, object]]:
     """
-    Returns all active detections for a given image filename.
+    Return active companions, optionally including dismissed boxes for inspection.
     Used to display all birds when viewing a multi-detection image in the modal.
     Includes bbox coordinates for bounding box visualization.
     """
+    visibility = (
+        "d.status IN ('active', 'rejected')"
+        if include_rejected
+        else _companion_visibility_sql()
+    )
     species_sql = _effective_species_joined_sql("d", "c")
     bbox_sql, bbox_join_sql = effective_bbox_projection_sql(conn)
     verdict_sql = human_bbox_verdict_sql(conn)
     query = f"""
         SELECT
             d.detection_id,
+            d.status AS object_status,
             d.od_class_name,
             d.od_confidence,
             d.score,
@@ -963,6 +951,8 @@ def fetch_sibling_detections(
             {bbox_sql[3]} AS bbox_h,
             {verdict_sql} AS human_bbox_verdict,
             d.decision_state,
+            d.decision_level,
+            {object_review_pending_sql(table_columns(conn, "detections"))} AS needs_review,
             d.manual_species_override,
             d.species_source,
             d.is_favorite,
@@ -976,12 +966,14 @@ def fetch_sibling_detections(
         LEFT JOIN classifications c
           ON c.detection_id = d.detection_id
          AND c.rank = 1
-         AND COALESCE(c.status, 'active') = 'active'
+         AND (COALESCE(c.status, 'active') = 'active' OR d.status = 'rejected')
         {bbox_join_sql}
-        WHERE d.image_filename = ? AND {_companion_visibility_sql("d", "i")}
+        WHERE d.image_filename = ? AND {visibility}
         ORDER BY d.score DESC
     """
-    cur = conn.execute(query, (image_filename,))
+    cur = conn.execute(
+        query, (float(get_config()["GALLERY_DISPLAY_THRESHOLD"]), image_filename)
+    )
     rows: list[sqlite3.Row | dict[str, object]] = list(cur.fetchall())
     rows.extend(
         _fetch_manual_companions(conn, [image_filename]).get(image_filename, [])
@@ -990,7 +982,10 @@ def fetch_sibling_detections(
 
 
 def fetch_sibling_detections_batch(
-    conn: sqlite3.Connection, image_filenames: list[str]
+    conn: sqlite3.Connection,
+    image_filenames: list[str],
+    *,
+    include_rejected: bool = False,
 ) -> dict[str, list[sqlite3.Row | dict[str, object]]]:
     """
     Batch variant of fetch_sibling_detections. Returns siblings for several
@@ -1008,6 +1003,11 @@ def fetch_sibling_detections_batch(
     if not image_filenames:
         return {}
     placeholders = ",".join("?" * len(image_filenames))
+    visibility = (
+        "d.status IN ('active', 'rejected')"
+        if include_rejected
+        else _companion_visibility_sql()
+    )
     species_sql = _effective_species_joined_sql("d", "c")
     bbox_sql, bbox_join_sql = effective_bbox_projection_sql(conn)
     verdict_sql = human_bbox_verdict_sql(conn)
@@ -1015,6 +1015,7 @@ def fetch_sibling_detections_batch(
         SELECT
             d.image_filename,
             d.detection_id,
+            d.status AS object_status,
             d.od_class_name,
             d.od_confidence,
             d.score,
@@ -1025,6 +1026,8 @@ def fetch_sibling_detections_batch(
             {bbox_sql[3]} AS bbox_h,
             {verdict_sql} AS human_bbox_verdict,
             d.decision_state,
+            d.decision_level,
+            {object_review_pending_sql(table_columns(conn, "detections"))} AS needs_review,
             d.manual_species_override,
             d.species_source,
             d.is_favorite,
@@ -1038,12 +1041,14 @@ def fetch_sibling_detections_batch(
         LEFT JOIN classifications c
           ON c.detection_id = d.detection_id
          AND c.rank = 1
-         AND COALESCE(c.status, 'active') = 'active'
+         AND (COALESCE(c.status, 'active') = 'active' OR d.status = 'rejected')
         {bbox_join_sql}
-        WHERE d.image_filename IN ({placeholders}) AND {_companion_visibility_sql("d", "i")}
+        WHERE d.image_filename IN ({placeholders}) AND {visibility}
         ORDER BY d.image_filename, d.score DESC
     """
-    cur = conn.execute(query, tuple(image_filenames))
+    cur = conn.execute(
+        query, (float(get_config()["GALLERY_DISPLAY_THRESHOLD"]), *image_filenames)
+    )
     grouped: dict[str, list[sqlite3.Row | dict[str, object]]] = {}
     for row in cur.fetchall():
         grouped.setdefault(row["image_filename"], []).append(row)
@@ -1748,7 +1753,7 @@ def fetch_detections_last_24h(
                     FROM detections d2
                     JOIN images i2 ON i2.filename = d2.image_filename
                     WHERE d2.image_filename = d.image_filename
-                      AND {_gallery_visibility_sql("d2", "i2")}
+                      AND {_companion_visibility_sql("d2", "i2")}
                 ) + {manual_count_d} as sibling_count
             FROM selected s
             JOIN detections d ON d.detection_id = s.detection_id
@@ -1777,9 +1782,11 @@ def fetch_detections_last_24h(
             AND i.timestamp >= ?
         ),
         sibling_counts AS (
-            SELECT image_filename, COUNT(*) AS sibling_count
-            FROM visible
-            GROUP BY image_filename
+            SELECT d.image_filename, COUNT(*) AS sibling_count
+            FROM detections d
+            WHERE d.status = 'active'
+              AND d.image_filename IN (SELECT image_filename FROM visible)
+            GROUP BY d.image_filename
         )
         SELECT
             v.*,

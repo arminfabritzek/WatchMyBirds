@@ -277,13 +277,13 @@ def test_visibility_policy_filters_gallery_like_surfaces():
         for row in fetch_detections_for_gallery(conn, order_by="score")
         if row["detection_id"] == 2
     )
-    assert mixed_row["sibling_count"] == 1
+    assert mixed_row["sibling_count"] == 2
 
     sibling_ids = [
         row["detection_id"]
         for row in fetch_sibling_detections(conn, "20260327_130000_mixed.jpg")
     ]
-    assert sibling_ids == [2]
+    assert sibling_ids == [3, 2]
 
     favorite_ids = {
         row["detection_id"] for row in fetch_random_favorites(conn, limit=10)

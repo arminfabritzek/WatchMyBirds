@@ -186,11 +186,7 @@ def test_quick_species_sets_every_axis(seeded):
     }
 
 
-def test_quick_species_leaves_the_frame_review_status_alone(seeded):
-    """Asymmetry worth pinning: quick-species writes the species axes but
-    never touches ``images.review_status``, while ``/api/review/approve``
-    refreshes it. Migrating this site onto a service that always sets
-    ``confirmed_bird`` would silently change behaviour here."""
+def test_quick_species_resolves_queue_without_asserting_image_presence(seeded):
     post(
         seeded["client"],
         "/api/review/quick-species",
@@ -201,7 +197,7 @@ def test_quick_species_leaves_the_frame_review_status_alone(seeded):
         },
     )
 
-    assert review_status(seeded["frame_b"]) == "untagged"
+    assert review_status(seeded["frame_b"]) == "confirmed_bird"
 
 
 def test_quick_species_leaves_other_detections_untouched(seeded):

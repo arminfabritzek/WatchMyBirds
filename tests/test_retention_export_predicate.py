@@ -1,15 +1,8 @@
-"""Retention export-relevance predicate (P5).
-
-is_export_relevant_any(conn, filenames) returns the subset of `filenames`
-whose image has ANY detection in ANY user-groundtruth export bucket
-(hard-negative, confirmed-positive, species-relabel, favourite), all-time
-window. It is the single source of truth shared with the export so the two
-can never drift.
-"""
+"""Retention preserves canonical evidence and previously protected user signals."""
 
 import pytest
 
-from core import user_groundtruth_core
+from core import training_retention
 from utils.db.connection import closing_connection
 from utils.db.detections import insert_detection
 
@@ -60,7 +53,7 @@ def test_plain_unreviewed_detection_is_not_export_relevant():
         _add_image(conn, fn, review_status="untagged")
         _add_detection(conn, fn)
         conn.commit()
-        result = user_groundtruth_core.is_export_relevant_any(conn, [fn])
+        result = training_retention.is_export_relevant_any(conn, [fn])
     assert result == set()
 
 
@@ -70,7 +63,7 @@ def test_hard_negative_is_export_relevant():
         _add_image(conn, fn, review_status="no_bird")
         _add_detection(conn, fn)
         conn.commit()
-        result = user_groundtruth_core.is_export_relevant_any(conn, [fn])
+        result = training_retention.is_export_relevant_any(conn, [fn])
     assert result == {fn}
 
 
@@ -80,7 +73,7 @@ def test_favorite_is_export_relevant():
         _add_image(conn, fn)
         _add_detection(conn, fn, is_favorite=1, rating_source="manual")
         conn.commit()
-        result = user_groundtruth_core.is_export_relevant_any(conn, [fn])
+        result = training_retention.is_export_relevant_any(conn, [fn])
     assert result == {fn}
 
 
@@ -96,7 +89,7 @@ def test_species_relabel_is_export_relevant():
             species_source="manual",
         )
         conn.commit()
-        result = user_groundtruth_core.is_export_relevant_any(conn, [fn])
+        result = training_retention.is_export_relevant_any(conn, [fn])
     assert result == {fn}
 
 
@@ -110,11 +103,11 @@ def test_filter_only_returns_requested_filenames():
         _add_detection(conn, other)
         conn.commit()
         # Only ask about `keep`; `other` is export-relevant but not requested.
-        result = user_groundtruth_core.is_export_relevant_any(conn, [keep])
+        result = training_retention.is_export_relevant_any(conn, [keep])
     assert result == {keep}
 
 
 def test_empty_filenames_returns_empty_set():
     with closing_connection() as conn:
-        result = user_groundtruth_core.is_export_relevant_any(conn, [])
+        result = training_retention.is_export_relevant_any(conn, [])
     assert result == set()

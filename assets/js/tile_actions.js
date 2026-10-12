@@ -431,6 +431,10 @@
 
             case 'details':
             case 'view-details':
+                if (window.WmReviewModal && window.WmReviewModal.tileFor(actionEl)) {
+                    window.WmReviewModal.open(actionEl);
+                    return;
+                }
                 var modalTarget = actionEl.getAttribute('data-modal-target');
                 var detailsHref = actionEl.getAttribute('data-details-href');
                 if (modalTarget && typeof bootstrap !== 'undefined') {

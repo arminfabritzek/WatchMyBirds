@@ -27,6 +27,7 @@ endpoint by name (there are no ``url_for("index")`` callers in the codebase).
 """
 
 import time
+from copy import deepcopy
 from datetime import datetime, timedelta
 
 from flask import Blueprint, render_template
@@ -89,9 +90,6 @@ def index_route():
 
     def _load_modal_siblings(raw: dict) -> list[dict]:
 
-        sibling_count = raw.get("sibling_count", 1) or 1
-        if sibling_count <= 1:
-            return []
         original_name = raw.get("original_name", "")
         if not original_name:
             return []
@@ -257,15 +255,13 @@ def index_route():
     try:
         _sibling_keys: set[str] = set()
         for _det in last_24h_rows[:5]:
-            if (_det.get("sibling_count") or 1) > 1:
-                _name = _det.get("original_name") or ""
-                if _name:
-                    _sibling_keys.add(_name)
+            _name = _det.get("original_name") or ""
+            if _name:
+                _sibling_keys.add(_name)
         for _det in today_rows:
-            if (_det.get("sibling_count") or 1) > 1:
-                _name = _det.get("original_name") or ""
-                if _name:
-                    _sibling_keys.add(_name)
+            _name = _det.get("original_name") or ""
+            if _name:
+                _sibling_keys.add(_name)
         if _sibling_keys:
             sibling_rows_cache.update(
                 gallery_service.get_sibling_detections_batch(sorted(_sibling_keys))
@@ -615,6 +611,15 @@ def index_route():
     is_quiet_today = today_detection_count == 0
 
     noise_hourly = {"noise": [], "total_noise": 0, "total_birds": 0}
+
+    # Cached photo pools must not cache the current human answers.
+    best_species_modal_dets = deepcopy(best_species_modal_dets)
+    view_helpers.enrich_modal_review_states(
+        latest_detections
+        + visual_summary
+        + today_visitors_modal_dets
+        + best_species_modal_dets
+    )
 
     return render_template(
         "stream.html",

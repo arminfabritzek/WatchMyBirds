@@ -190,6 +190,52 @@ def _derived_source_ref(source_ref: str | None) -> str:
     )
 
 
+def restore_rejected_detection(
+    conn: sqlite3.Connection,
+    *,
+    detection_id: int,
+    image_filename: str,
+    provenance: LabelProvenance,
+) -> list[int]:
+    """Restore a dismissed bird with new facts, retaining its proposal and history."""
+    row = conn.execute(
+        "SELECT image_filename, status FROM detections WHERE detection_id = ?",
+        (detection_id,),
+    ).fetchone()
+    if row is None or row[0] != image_filename:
+        raise HumanLabelError("detection does not belong to image")
+    if row[1] != "rejected":
+        raise HumanLabelError("detection is no longer dismissed; reload the image")
+    fact_ids = []
+    if conn.execute(
+        """
+        SELECT 1 FROM current_human_label_facts
+        WHERE scope = 'image' AND image_filename = ?
+          AND fact_type = 'bird_presence' AND answer_value = 'absent'
+        """,
+        (image_filename,),
+    ).fetchone():
+        fact_ids.extend(
+            record_human_answer(
+                conn,
+                HumanAnswer(image_filename, image_bird_presence="present"),
+                provenance,
+            )
+        )
+    fact_ids.extend(
+        record_human_answer(
+            conn,
+            HumanAnswer(
+                image_filename,
+                detection_id=detection_id,
+                object_bird_presence="present",
+            ),
+            provenance,
+        )
+    )
+    return fact_ids
+
+
 def record_human_answer(
     conn: sqlite3.Connection,
     answer: HumanAnswer,
@@ -256,9 +302,7 @@ def record_human_answer(
             )
         )
         review_status = (
-            "confirmed_bird"
-            if answer.image_bird_presence == "present"
-            else "no_bird"
+            "confirmed_bird" if answer.image_bird_presence == "present" else "no_bird"
         )
         conn.execute(
             """
@@ -320,9 +364,7 @@ def record_human_answer(
                 provenance=provenance,
             )
         )
-        legacy_bbox_state = (
-            "correct" if answer.bbox_quality == "suitable" else "wrong"
-        )
+        legacy_bbox_state = "correct" if answer.bbox_quality == "suitable" else "wrong"
         conn.execute(
             """
             UPDATE detections

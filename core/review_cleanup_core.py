@@ -24,7 +24,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from core import user_groundtruth_core
+from core import training_retention
 from core.events import build_bird_events
 from utils.db.review_queue import (
     fetch_review_queue_summary,
@@ -101,7 +101,7 @@ def summarize_queue(conn, gallery_threshold: float = 0.7) -> dict[str, int]:
         if row["item_kind"] != "image":
             detection_rows.append(dict(row))
 
-    export_relevant = user_groundtruth_core.is_export_relevant_any(
+    export_relevant = training_retention.is_export_relevant_any(
         conn, sorted(touched_filenames)
     )
 

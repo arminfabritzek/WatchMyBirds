@@ -329,17 +329,6 @@ def create_web_interface(detection_manager, system_monitor=None):
 
     _build_meta = read_build_metadata()
 
-    from web.blueprints.user_groundtruth_export import (
-        init_user_groundtruth_export_bp,
-        user_groundtruth_export_bp,
-    )
-
-    init_user_groundtruth_export_bp(
-        output_dir=output_dir,
-        app_version=str(_build_meta.get("app_version") or ""),
-    )
-    server.register_blueprint(user_groundtruth_export_bp)
-
     from web.blueprints.canonical_dataset import (
         canonical_dataset_bp,
         init_canonical_dataset_bp,

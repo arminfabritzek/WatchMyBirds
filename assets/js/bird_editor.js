@@ -51,6 +51,8 @@
             objectKind: manualId ? 'manual' : 'detection',
             manualObjectId: manualId,
             detectionId: detectionId,
+            objectStatus: item.object_status || 'active',
+            needsReview: Boolean(item.needs_review),
             revision: item.revision == null ? null : Number(item.revision),
             speciesKey: speciesKey,
             commonName: item.common_name || (speciesKey ? speciesKey.replace(/_/g, ' ') : 'Bird · species unknown'),
@@ -90,6 +92,7 @@
         const confirmed = clone(saved);
         const answer = displayed || saved;
         const state = reviewState === 'corrected' ? 'corrected' : 'confirmed';
+        confirmed.needsReview = false;
         confirmed.speciesKey = answer.speciesKey;
         confirmed.commonName = answer.commonName;
         confirmed.humanReviewState = state;
@@ -110,7 +113,7 @@
     // so it is asked while simply viewing a bird — requiring an edit draft
     // first would hide it exactly where it is meant to be answered.
     function bboxVerdictView(item, inEditMode) {
-        if (!item || item.objectKind === 'manual') {
+        if (!item || item.objectKind === 'manual' || item.objectStatus === 'rejected') {
             return { visible: false, active: null };
         }
         return { visible: true, active: item.bboxVerdict || null };
@@ -126,9 +129,8 @@
     // Confirming a species writes immediately, so the second click is a
     // second write that undoes the first rather than a local reset.
     function speciesClickAction(item) {
-        if (!item || !item.speciesKey) return 'none';
-        const answered = item.provenance === 'human_confirmed'
-            || item.provenance === 'manually_identified';
+        if (!item || !item.speciesKey || item.objectStatus === 'rejected') return 'none';
+        const answered = ['confirmed', 'corrected'].includes(item.humanReviewState);
         return answered ? 'retract' : 'confirm';
     }
 
@@ -150,6 +152,7 @@
     }
 
     function bboxStatusText(item, initial) {
+        if (item.objectStatus === 'rejected') return 'Dismissed box · restore before assessing';
         if (item.objectKind === 'manual') return 'Manually drawn box';
         const verdict = effectiveBboxVerdict(item, initial);
         const text = verdict === 'suitable' ? '☑ Box confirmed'
@@ -204,7 +207,9 @@
             manual_object_id: object.manualObjectId,
             object_key: object.objectKey,
             object_kind: object.objectKind,
+            object_status: object.objectStatus || 'active',
             revision: object.revision,
+            needs_review: Boolean(object.needsReview),
             bbox_x: object.bbox.x, bbox_y: object.bbox.y,
             bbox_w: object.bbox.w, bbox_h: object.bbox.h,
             species_key: object.speciesKey,
@@ -238,6 +243,8 @@
     }
 
     function provenanceLabel(item) {
+        if (item.objectStatus === 'rejected') return 'Dismissed';
+        if (item.needsReview) return 'In Review';
         if (item.provenance === 'human_unknown') return 'Marked unknown by a person';
         if (item.provenance === 'manually_added') return 'Manually added';
         if (item.provenance === 'manually_identified') return 'Manually identified';
@@ -291,11 +298,15 @@
         let allowHide = false;
         let stale = false;
         let pendingObjects = null;
+        let matchState = null;
 
         const status = root.querySelector('[data-editor-status]');
+        const matchPanel = root.querySelector('[data-editor-match]');
+        const matchSelect = root.querySelector('[data-editor-match-select]');
         const objectSelect = root.querySelector('[data-editor-object-select]');
         const drawHint = root.querySelector('[data-editor-draw-hint]');
         const adjustButton = root.querySelector('[data-editor-action="adjust"]');
+        const restoreButton = root.querySelector('[data-editor-action="restore"]');
         const addButton = root.querySelector('[data-editor-action="add"]');
         const placeButton = root.querySelector('[data-editor-action="place"]');
         const cancelButton = root.querySelector('[data-editor-action="cancel"]');
@@ -403,7 +414,8 @@
             objects.forEach(function (item, index) {
                 const option = document.createElement('option');
                 option.value = item.objectKey;
-                option.textContent = String(index + 1) + ' · ' + item.commonName;
+                option.textContent = String(index + 1) + ' · ' + item.commonName
+                    + (item.objectStatus === 'rejected' ? ' · Dismissed' : item.needsReview ? ' · In Review' : '');
                 option.selected = item.objectKey === activeKey;
                 objectSelect.appendChild(option);
             });
@@ -415,7 +427,9 @@
                 objectSelect.appendChild(option);
             }
             objectSelect.disabled = mode !== 'browse' || objects.length <= 1;
-            objectSelect.title = objects.length <= 1 ? 'Only one bird in this image' : 'Switch the active bird';
+            const pendingCount = objects.filter(function (item) { return item.needsReview && item.objectStatus !== 'rejected'; }).length;
+            const dismissedCount = objects.filter(function (item) { return item.objectStatus === 'rejected'; }).length;
+            objectSelect.title = objects.length + ' saved box(es) · ' + pendingCount + ' in Review · ' + dismissedCount + ' dismissed';
         }
 
         function requireAuth() {
@@ -441,6 +455,12 @@
         }
 
         function syncLayer() {
+            const region = viewer.closest('.wm-modal__image');
+            if (region && region.clientHeight > 0) {
+                const cap = region.clientHeight + 'px';
+                if (img.style.maxHeight !== cap) img.style.maxHeight = cap;
+                root.style.width = '';
+            }
             const g = geometry();
             if (img.clientWidth <= 0 || img.clientHeight <= 0 || g.contentW <= 0 || g.contentH <= 0) return;
             root.style.width = img.clientWidth + 'px';
@@ -568,7 +588,9 @@
                     ? draft
                     : objects.find(function (candidate) {
                         return candidate.objectKey === node.dataset.editorObjectKey;
-                    });
+                    }) || (matchState && matchState.candidates.map(matchObject).find(function (candidate) {
+                        return candidate.objectKey === node.dataset.editorObjectKey;
+                    }));
                 if (!item) return;
                 node.style.left = (g.contentX + item.bbox.x * g.contentW) + 'px';
                 node.style.top = (g.contentY + item.bbox.y * g.contentH) + 'px';
@@ -591,10 +613,18 @@
             if (draft && !objects.some(function (item) { return item.objectKey === draft.objectKey; })) {
                 visible.push(draft);
             }
+            if (matchState && matchState.target !== 'new') {
+                matchState.candidates.forEach(function (candidate) {
+                    if (!visible.some(function (item) { return item.objectKey === candidate.object_key; })) visible.push(matchObject(candidate));
+                });
+            }
             visible.forEach(function (item, index) {
+                const matchIndex = matchState && matchState.target !== 'new'
+                    ? matchState.candidates.findIndex(function (candidate) { return candidate.object_key === item.objectKey; }) : -1;
                 const selected = item.objectKey === (draft ? draft.objectKey : selectedKey);
                 const shape = document.createElement('div');
-                shape.className = 'wm-bird-editor__box' + (selected ? ' is-selected' : '');
+                shape.className = 'wm-bird-editor__box' + (selected ? ' is-selected' : '') + (item.needsReview ? ' is-in-review' : '');
+                shape.classList.toggle('is-dismissed', item.objectStatus === 'rejected');
                 shape.dataset.editorObjectKey = item.objectKey;
                 const body = document.createElement('button');
                 body.type = 'button';
@@ -605,8 +635,33 @@
                 body.title = 'Select ' + item.commonName;
                 shape.appendChild(body);
 
+                if (matchIndex >= 0) {
+                    const candidate = matchState.candidates[matchIndex];
+                    const matchLabel = document.createElement('div');
+                    matchLabel.className = 'wm-bird-editor__box-label';
+                    const matchName = document.createElement('span');
+                    matchName.className = 'wm-bird-editor__box-label-name';
+                    matchName.textContent = 'Match ' + (matchIndex + 1) + ' · ' + item.commonName
+                        + (candidate.status === 'rejected' ? ' · dismissed' : '');
+                    matchName.title = matchName.textContent;
+                    matchLabel.appendChild(matchName);
+                    body.disabled = true;
+                    shape.appendChild(matchLabel);
+                    layer.appendChild(shape);
+                    return;
+                }
+
                 const label = document.createElement('div');
                 label.className = 'wm-bird-editor__box-label';
+                if (item.objectStatus === 'rejected') {
+                    const name = document.createElement('span');
+                    name.className = 'wm-bird-editor__box-label-name';
+                    name.textContent = String(index + 1) + ' · Dismissed · ' + item.commonName;
+                    label.appendChild(name);
+                    shape.appendChild(label);
+                    layer.appendChild(shape);
+                    return;
+                }
                 const reviewed = ['confirmed', 'corrected'].includes(item.humanReviewState)
                     && !!item.speciesKey;
                 label.classList.toggle('is-species-confirmed', reviewed);
@@ -618,7 +673,7 @@
                     confirm.className = 'wm-bird-editor__box-label-name';
                     confirm.dataset.editorConfirm = item.objectKey;
                     confirm.textContent = (undo ? '✓ ' : '')
-                        + String(index + 1) + ' · ' + item.commonName;
+                        + String(index + 1) + ' · ' + (item.needsReview ? 'Review · ' : '') + item.commonName + (item.needsReview && item.speciesKey ? '?' : '');
                     confirm.setAttribute(
                         'aria-label',
                         (undo ? 'Take back species: ' : 'Confirm species: ') + item.commonName
@@ -630,7 +685,7 @@
                 } else {
                     const name = document.createElement('span');
                     name.className = 'wm-bird-editor__box-label-name';
-                    name.textContent = (reviewed ? '✓ ' : '') + String(index + 1) + ' · ' + item.commonName;
+                    name.textContent = (reviewed ? '✓ ' : '') + String(index + 1) + ' · ' + (item.needsReview ? 'Review · ' : '') + item.commonName + (item.needsReview && item.speciesKey ? '?' : '');
                     name.title = item.objectKind === 'manual' ? 'Manually added bird' : 'Species already answered';
                     label.appendChild(name);
                 }
@@ -726,6 +781,10 @@
         }
 
         function render(message) {
+            if (matchState && (!draft || matchState.signature !== JSON.stringify([draft.bbox, draft.speciesKey]))) matchState = null;
+            if (matchPanel) matchPanel.hidden = !matchState;
+            saveButton.textContent = matchState && matchState.target && matchState.target !== 'new' ? 'Correct bird' : 'Save bird';
+            saveButton.setAttribute('aria-label', saveButton.textContent);
             const item = current();
             const editing = mode !== 'browse';
             root.classList.toggle('is-editing', editing);
@@ -733,13 +792,19 @@
             layer.classList.toggle('is-editing', editing);
             layer.classList.toggle('is-adding', mode === 'add');
             drawHint.hidden = mode !== 'add';
-            adjustButton.hidden = editing;
+            const dismissed = item && item.objectStatus === 'rejected';
+            adjustButton.hidden = editing || dismissed;
+            restoreButton.hidden = editing || !dismissed;
+            restoreButton.disabled = saving || stale;
+            const rejectButton = root.querySelector('[data-editor-action="no-bird"]');
+            if (rejectButton) rejectButton.hidden = !!dismissed;
             addButton.hidden = editing;
             placeButton.hidden = mode !== 'add';
             cancelButton.hidden = !editing;
             saveButton.hidden = !editing;
             menuButton.closest('.wm-bird-editor__menu').hidden = editing;
             saveButton.disabled = saving || stale || !hasChanges() || !draft || draft.bbox.w < MIN_BOX || draft.bbox.h < MIN_BOX;
+            if (matchState && !matchState.target) saveButton.disabled = true;
             renderBboxVerdict();
             cancelButton.disabled = saving;
             adjustButton.disabled = saving;
@@ -761,7 +826,7 @@
             if (saving || stale) return;
             if (!requireAuth()) return;
             const item = current();
-            if (!item) return;
+            if (!item || item.objectStatus === 'rejected') return;
             initialDraft = clone(item);
             draft = clone(item);
             mode = 'edit';
@@ -779,6 +844,7 @@
             forceFull();
             draft = null;
             initialDraft = null;
+            matchState = null;
             mode = 'add';
             boxesVisible = true;
             closeMenu();
@@ -787,6 +853,7 @@
         }
 
         function cancelEdit(message) {
+            matchState = null;
             draft = null;
             initialDraft = null;
             gesture = null;
@@ -854,7 +921,7 @@
             if (saving || stale) return;
             if (!requireAuth() || typeof window.WmSpeciesPicker === 'undefined') return;
             const item = (key && objects.find(function (candidate) { return candidate.objectKey === key; })) || current();
-            if (!item) return;
+            if (!item || item.objectStatus === 'rejected') return;
             if (mode !== 'browse' && (!draft || item.objectKey !== draft.objectKey)) {
                 render('Save or Cancel before editing a different bird');
                 return;
@@ -952,6 +1019,7 @@
                 const reverted = clone(saved);
                 reverted.provenance = 'model_proposal';
                 reverted.humanReviewState = 'unreviewed';
+                reverted.needsReview = true;
                 updateObjects(reverted);
                 message = reverted.commonName + ' · confirmation withdrawn';
                 broadcastObjects();
@@ -966,7 +1034,7 @@
         }
 
         async function postBboxVerdict(item, verdict) {
-            if (saving || stale || !requireAuth()) return;
+            if (item.objectStatus === 'rejected' || saving || stale || !requireAuth()) return;
             saving = true;
             render(verdict ? 'Saving box verdict…' : 'Clearing box verdict…');
             let message;
@@ -1014,18 +1082,51 @@
             viewer.dataset.siblings = JSON.stringify(serializedObjects());
         }
 
+        function matchObject(candidate) {
+            return normalize({ ...candidate, bbox_x: candidate.bbox.x, bbox_y: candidate.bbox.y,
+                bbox_w: candidate.bbox.w, bbox_h: candidate.bbox.h,
+                common_name: (candidate.species_key || 'Bird').replace(/_/g, ' ') });
+        }
+
+        function offerMatches(payload, savingDraft) {
+            matchState = { candidates: payload.candidates, token: payload.match_token,
+                target: payload.candidates.length === 1 ? payload.candidates[0].object_key : '',
+                signature: JSON.stringify([savingDraft.bbox, savingDraft.speciesKey]) };
+            matchSelect.replaceChildren();
+            if (!matchState.target) {
+                const placeholder = document.createElement('option');
+                placeholder.value = ''; placeholder.textContent = 'Choose a box';
+                matchSelect.appendChild(placeholder);
+            }
+            payload.candidates.forEach(function (candidate, index) {
+                const option = document.createElement('option');
+                option.value = candidate.object_key;
+                option.textContent = 'Match ' + (index + 1) + ' · ' + (candidate.species_key || 'Unknown bird').replace(/_/g, ' ')
+                    + (candidate.status === 'rejected' ? ' · previously dismissed' : '');
+                matchSelect.appendChild(option);
+            });
+            const separate = document.createElement('option');
+            separate.value = 'new'; separate.textContent = 'A different bird — keep both';
+            matchSelect.appendChild(separate);
+            matchSelect.value = matchState.target;
+        }
+
+        if (matchSelect) matchSelect.addEventListener('change', function () {
+            if (matchState) { matchState.target = matchSelect.value; render(); }
+        });
+
         function objectFromResponse(payload, commonName) {
             const object = payload.object;
+            const manual = object.manual_object_id != null;
             return normalize({
-                manual_object_id: object.manual_object_id,
-                object_key: 'manual:' + object.manual_object_id,
-                object_kind: 'manual',
-                revision: object.revision,
+                ...object,
+                object_key: object.object_key || 'manual:' + object.manual_object_id,
+                object_kind: manual ? 'manual' : 'detection',
                 bbox_x: object.bbox.x, bbox_y: object.bbox.y,
                 bbox_w: object.bbox.w, bbox_h: object.bbox.h,
-                species_key: object.species_key,
                 common_name: commonName || (object.species_key ? object.species_key.replace(/_/g, ' ') : 'Bird · species unknown'),
-                provenance: 'manually_added'
+                human_review_state: object.species_key ? 'corrected' : 'reviewed_unknown',
+                provenance: manual ? 'manually_added' : object.species_key ? 'manually_identified' : 'human_unknown'
             });
         }
 
@@ -1057,7 +1158,9 @@
                             filename: root.dataset.filename,
                             bbox: savingDraft.bbox,
                             species_key: savingDraft.speciesKey,
-                            request_id: savingDraft.requestId
+                            request_id: savingDraft.requestId,
+                            target_key: matchState ? matchState.target : null,
+                            match_token: matchState ? matchState.token : null
                         })
                     });
                 } else {
@@ -1071,6 +1174,13 @@
                     });
                 }
                 const payload = await response.json().catch(function () { return {}; });
+                if (payload.status === 'match_required') {
+                    offerMatches(payload, savingDraft);
+                    saving = false;
+                    render('Review the matching box, then save your choice');
+                    matchSelect.focus();
+                    return;
+                }
                 if (!response.ok || payload.status !== 'success') {
                     throw new Error(payload.message || 'Unable to save bird');
                 }
@@ -1083,6 +1193,7 @@
                     saved.bboxVerdict = payload.review_state.bbox_verdict || null;
                     delete saved.bboxVerdictTouched;
                     if (savingDraft.speciesKey !== savingInitial.speciesKey) {
+                        saved.needsReview = !savingDraft.speciesKey;
                         const reviewState = payload.review_state?.state;
                         saved.humanReviewState = reviewState || (
                             savingDraft.speciesKey ? 'corrected' : 'reviewed_unknown'
@@ -1092,6 +1203,7 @@
                     }
                 }
                 updateObjects(saved);
+                matchState = null;
                 draft = null;
                 initialDraft = null;
                 mode = 'browse';
@@ -1105,6 +1217,58 @@
                 saving = false;
                 render(error.message || 'Unable to save bird');
                 if (window.wmToast) window.wmToast(error.message || 'Unable to save bird', 'error', 4200);
+            }
+        }
+
+        async function rejectSelectedBird() {
+            const item = current();
+            if (!item || saving || mode !== 'browse' || !requireAuth()) return;
+            if (item.objectKind === 'manual') return retractManualObject();
+            saving = true;
+            try {
+                const response = await fetch('/api/labels/answer', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ filename: root.dataset.filename,
+                        detection_id: item.detectionId, object_bird_presence: 'absent' })
+                });
+                const payload = await response.json();
+                if (!response.ok || payload.status !== 'success') throw new Error(payload.message || 'Unable to save');
+                item.objectStatus = 'rejected';
+                updateObjects(item);
+                saving = false;
+                closeMenu();
+                render('Box dismissed · select Restore bird to undo');
+                broadcastObjects();
+            } catch (error) {
+                saving = false;
+                render(error.message || 'Unable to save');
+            }
+        }
+
+        async function restoreSelectedBird() {
+            const item = current();
+            if (!item || item.objectStatus !== 'rejected' || saving || stale || !requireAuth()) return;
+            saving = true;
+            render('Restoring bird…');
+            try {
+                const response = await fetch('/api/detections/' + encodeURIComponent(item.detectionId) + '/restore', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ filename: root.dataset.filename })
+                });
+                const payload = await response.json();
+                if (!response.ok || payload.status !== 'success') throw new Error(payload.message || 'Unable to restore bird');
+                item.objectStatus = 'active';
+                item.humanReviewState = payload.review_state.state;
+                item.provenance = item.humanReviewState === 'confirmed' ? 'human_confirmed'
+                    : item.humanReviewState === 'corrected' ? 'manually_identified'
+                        : item.humanReviewState === 'reviewed_unknown' ? 'human_unknown' : 'model_proposal';
+                updateObjects(item);
+                saving = false;
+                render('Bird restored · species and box assessments unchanged');
+                broadcastObjects();
+            } catch (error) {
+                saving = false;
+                render(error.message || 'Unable to restore bird');
             }
         }
 
@@ -1169,6 +1333,8 @@
             else if (action === 'save') save();
             else if (action === 'menu') openMenu();
             else if (action === 'retract') retractManualObject();
+            else if (action === 'no-bird') rejectSelectedBird();
+            else if (action === 'restore') restoreSelectedBird();
             else if (action === 'bbox-verdict') {
                 const item = current();
                 if (!bboxVerdictView(item, mode === 'edit').visible) return;
@@ -1407,7 +1573,10 @@
            editor rail claims its height. A ResizeObserver catches every such
            case; the listeners above stay for browsers that fire them first. */
         if (typeof ResizeObserver === 'function') {
-            new ResizeObserver(function () { syncLayer(); }).observe(img);
+            const observer = new ResizeObserver(function () { syncLayer(); });
+            observer.observe(img);
+            const region = viewer.closest('.wm-modal__image');
+            if (region) observer.observe(region);
         }
         document.addEventListener('wmb:bird-objects-updated', function (event) {
             const detail = event.detail || {};

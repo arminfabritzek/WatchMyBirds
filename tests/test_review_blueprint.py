@@ -1,12 +1,14 @@
 """Tests for review blueprint decision actions."""
 
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
 from flask import Flask
+from flask.testing import FlaskClient
 
-from core.events import build_bird_events
+from core.events import BirdEvent, build_bird_events
 from web.blueprints.review import (
     _build_review_event_member,
     build_review_continuity_batches,
@@ -71,6 +73,126 @@ def _label_recorder(client):
 
 def _event_review_recorder(client):
     return client.application.extensions["event_review_recorder"]
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "day=2026-02-30",
+        "day=2026-2-01",
+        "day=2026-10-12%27",
+        "day=unknown",
+        "sort=unknown",
+        "sort=priority%27",
+    ],
+)
+def test_review_navigation_rejects_invalid_parameters_before_database(
+    client: FlaskClient, query: str
+) -> None:
+    with patch("web.blueprints.review.db_service.closing_connection") as connection:
+        assert client.get(f"/admin/review?{query}").status_code == 400
+        connection.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "query, expected_ids",
+    [
+        ("", [2, 3]),
+        ("?day=all", [1, 2, 3]),
+        ("?day=2026-10-12&sort=priority", [3, 2]),
+        ("?day=2026-10-11&layout=legacy&sort=priority", []),
+    ],
+)
+def test_review_navigation_shares_queries_and_builds_only_selected_details(
+    client: FlaskClient,
+    query: str,
+    expected_ids: list[int],
+) -> None:
+    rows = [
+        {
+            "item_kind": "detection",
+            "item_id": str(detection_id),
+            "active_detection_id": detection_id,
+            "best_detection_id": detection_id,
+            "filename": f"frame-{detection_id}.jpg",
+            "timestamp": timestamp,
+            "species_key": "Parus_major",
+            "cls_class_name": "Parus_major",
+            "bbox_x": 0.2,
+            "bbox_y": 0.2,
+            "bbox_w": 0.2,
+            "bbox_h": 0.2,
+        }
+        for detection_id, timestamp in [
+            (1, "20261010_080000"),
+            (2, "20261012_090000"),
+            (3, "20261012_110000"),
+        ]
+    ]
+
+    def event_payload(event: BirdEvent, **kwargs: Any) -> dict[str, Any]:
+        return {
+            "event_key": event.event_key,
+            "start_time": event.start_time,
+            "detection_ids": event.detection_ids,
+        }
+
+    def priorities(conn: MagicMock, events: list[BirdEvent]) -> list[dict[str, Any]]:
+        return [
+            {"event_key": event.event_key, "priority_score": event.cover_detection_id}
+            for event in events
+        ]
+
+    with (
+        patch("web.blueprints.review.db_service") as db,
+        patch("web.blueprints.review.load_common_names", return_value={}),
+        patch(
+            "web.blueprints.review._load_recent_review_species", return_value=[]
+        ) as recent,
+        patch(
+            "web.blueprints.review.fetch_current_station_event_reviews", return_value={}
+        ),
+        patch("web.blueprints.review._load_review_items", return_value=([], [])),
+        patch(
+            "web.blueprints.review._collect_review_siblings_cache", return_value={}
+        ) as siblings,
+        patch(
+            "web.blueprints.review._build_review_event", side_effect=event_payload
+        ) as build,
+        patch(
+            "web.blueprints.review.build_candidate_review_priorities",
+            side_effect=priorities,
+        ) as rank,
+        patch("web.blueprints.review.render_template", return_value="ok") as render,
+    ):
+        db.fetch_review_queue_images.return_value = rows
+        db.fetch_review_cluster_context.return_value = ([], False)
+        response = client.get("/admin/review" + query)
+
+    assert response.status_code == 200
+    db.fetch_review_queue_images.assert_called_once()
+    recent.assert_called_once()
+    db.fetch_review_cluster_context.assert_called_once()
+    context = render.call_args.kwargs
+    assert [
+        event["detection_ids"][0] for event in context["review_events"]
+    ] == expected_ids
+    assert build.call_count == len(expected_ids)
+    nav = context["review_navigation"]
+    assert nav["total_events"] == 3
+    assert nav["days"] == (("2026-10-12", 2), ("2026-10-10", 1))
+    if "priority" in query:
+        rank.assert_called_once()
+        assert len(rank.call_args.args[1]) == 3
+    else:
+        rank.assert_not_called()
+    if "legacy" in query:
+        siblings.assert_not_called()
+        assert "layout=legacy" in nav["older_url"]
+        assert "sort=priority" in nav["newer_url"]
+        assert nav["selected_day"] == "2026-10-11"
+    siblings.assert_not_called()
+    assert all(not call.kwargs["include_modal"] for call in build.call_args_list)
 
 
 def test_review_decision_accepts_trash_alias(client):
@@ -186,6 +308,7 @@ def test_review_approve_confirms_after_manual_species_and_bbox(client):
                 "manual_species_override": "Parus_major",
                 "species_source": "manual",
             },
+            None,
             [1],
             [0],
         ]
@@ -193,6 +316,7 @@ def test_review_approve_confirms_after_manual_species_and_bbox(client):
     mock_conn.execute.return_value.fetchone.side_effect = lambda: next(fetchone_results)
 
     with (
+        patch("core.review_state.update_review_status") as mock_visibility,
         patch("web.blueprints.review.db_service") as mock_db,
         patch("web.blueprints.review._get_allowed_review_species") as mock_allowed,
         patch("web.blueprints.review.gallery_service.invalidate_cache") as mock_invalidate,
@@ -219,7 +343,7 @@ def test_review_approve_confirms_after_manual_species_and_bbox(client):
     assert data["review_status"] == "confirmed_bird"
     assert data["gallery_visible"] is True
     assert "now visible in the gallery" in data["message"]
-    mock_db.update_review_status.assert_called_once_with(
+    mock_visibility.assert_called_once_with(
         mock_conn, ["review-item.jpg"], "confirmed_bird", commit=False
     )
     answer = _label_recorder(client).call_args.args[1]
@@ -238,6 +362,7 @@ def test_review_approve_keeps_image_untagged_when_unresolved_siblings_remain(cli
                 "manual_species_override": "Parus_major",
                 "species_source": "manual",
             },
+            None,
             [3],
             [2],
         ]
@@ -426,6 +551,7 @@ def test_review_event_approve_confirms_event_and_recomputes_gallery_visibility(c
     mock_conn.execute.side_effect = execute_side_effect
 
     with (
+        patch("core.review_state.update_review_status") as mock_visibility,
         patch("web.blueprints.review.db_service") as mock_db,
         patch("web.blueprints.review._get_allowed_review_species") as mock_allowed,
         patch("web.blueprints.review._load_single_review_event") as mock_event,
@@ -462,7 +588,7 @@ def test_review_event_approve_confirms_event_and_recomputes_gallery_visibility(c
     assert answer.detection_id == 17
     assert answer.species_key == "Parus_major"
     assert answer.bbox_quality == "suitable"
-    mock_db.update_review_status.assert_called_once_with(
+    mock_visibility.assert_called_once_with(
         mock_conn, ["review-item.jpg"], "confirmed_bird", commit=False
     )
     mock_invalidate.assert_called_once()

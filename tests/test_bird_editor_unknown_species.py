@@ -82,6 +82,20 @@ def test_explicit_unknown_keeps_no_species_key() -> None:
     )
 
 
+@pytest.mark.parametrize("review_field", ["needsReview", "needs_review"])
+def test_pending_review_does_not_assert_human_unknown(review_field: str) -> None:
+    got = _normalize(
+        _unknown_row(
+            species_source="model_top1",
+            provenance="model_proposal",
+            **{review_field: True},
+        )
+    )
+    assert got["speciesKey"] == AI_SPECIES
+    assert got["humanReviewState"] == "unreviewed"
+    assert got["provenance"] == "model_proposal"
+
+
 def test_explicit_unknown_survives_a_missing_provenance_hint() -> None:
     """Surfaces that do not compute provenance must still be safe.
 

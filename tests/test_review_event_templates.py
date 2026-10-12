@@ -424,7 +424,7 @@ def test_review_grid_event_cards_have_stronger_boundaries():
     stack_end = content.index("}", stack_start)
     stack_block = content[stack_start:stack_end]
 
-    assert "gap: clamp(28px, 3vw, 44px);" in stack_block
+    assert "gap: clamp(16px, 2vw, 24px);" in stack_block
     assert ".review-grid__card::after" in content
     assert "height: 4px;" in content
     assert ".review-grid__card-window-chip" in content

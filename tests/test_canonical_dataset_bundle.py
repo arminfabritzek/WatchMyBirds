@@ -459,7 +459,7 @@ def test_disk_archive_preserves_legacy_compression_and_bytes(canonical_case, tmp
 
 
 @pytest.mark.parametrize("negative", [False, True])
-def test_manual_birds_prevent_incomplete_or_negative_od_export(
+def test_manual_birds_are_included_and_prevent_negative_od_export(
     canonical_case, negative: bool
 ) -> None:
     from core.human_label_core import BBox
@@ -506,8 +506,17 @@ def test_manual_birds_prevent_incomplete_or_negative_od_export(
         for row in after.manifest
         if row["image_filename"] == filename and row["view"] == view
     ]
-    assert decisions and all(row["decision"] == "excluded" for row in decisions)
-    assert all("manual_birds_not_exported" in row["reasons"] for row in decisions)
+    assert decisions
+    if negative:
+        assert all(row["decision"] == "excluded" for row in decisions)
+        assert all("image_has_positive_objects" in row["reasons"] for row in decisions)
+    else:
+        included = [row for row in decisions if row["decision"] == "included"]
+        assert len(included) == 2
+        assert {row["object_key"] for row in included} == {
+            f"detection:{partial_ids[0]}",
+            f"manual:{obj['manual_object_id']}",
+        }
     assert any(
         row["decision"] == "included"
         for row in before.manifest

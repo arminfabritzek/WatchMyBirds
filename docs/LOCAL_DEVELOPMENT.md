@@ -90,8 +90,12 @@ snapshot. Existing login, authorization and CSRF checks remain active.
 
 Server-side outbound sockets, DNS to external hosts and child processes are
 blocked by a process-local Python audit hook. HTTP routes permit browsing,
-media, analytics, local labels and trash/favorites; camera, configuration,
+media, analytics, local labels, canonical training export and trash/favorites; camera, configuration,
 system management, ingestion, rescans and background operations return 503.
+Review day navigation and local review decisions are available; Review Deep Scan
+remains blocked because it schedules background inference. The read-only Settings
+page is available for browser-local Light/Dark selection; configuration writes
+remain blocked.
 The browser is restricted to same-origin API connections and no embedded relay
 frames. The service listens only on 127.0.0.1 and rejects non-loopback Host values.
 This is a development guard, not an operating-system sandbox for arbitrary code.
@@ -111,6 +115,44 @@ Those require the normal appliance runtime with an explicitly selected test
 camera/device. Removing the local guards would not provide a representative
 hardware environment. Docker runs of the normal runtime have the same need for
 real camera/device integration tests.
+
+## Check a finished training export
+
+The offline checker reads the actual canonical v2 ZIP. It does not start Flask,
+connect to a camera or database, or change the ZIP or original images:
+
+```bash
+.venv/bin/python scripts/check_training_export.py /path/to/export.zip
+```
+
+Open `index.html` in the newly created, timestamped directory beside the ZIP.
+The same directory contains `report.json` for automated inspection and resized
+preview copies. It needs no server, login, JavaScript or external resources.
+Existing output directories are never overwritten. To choose a new destination:
+
+```bash
+.venv/bin/python scripts/check_training_export.py /path/to/export.zip --report /tmp/export-check
+```
+
+Checks cover required files and versions, unsafe/duplicate archive paths, image
+integrity, manifest counts and view membership, image/object references, COCO
+sizes/categories, pixel and normalized boxes, and species labels against exported
+object records. The report puts findings first and links image-specific findings
+to previews. Orange boxes come from COCO; blue boxes and species labels come
+from `classifier_ready.jsonl`. Toggle the two overlays independently.
+
+All media are checked; the default preview limit is 60. Use `--preview-limit 0`
+for all previews. Large or unreadable inputs fail explicitly: at most 100,000 ZIP
+entries, 64 MiB per metadata file / 128 MiB total metadata, 256 MiB per image and
+40 megapixels per decoded image. No archive entry is extracted to its supplied
+path. Reports contain image copies; keep them private like the source export.
+
+Exit codes: `0` means the supported consistency checks passed, `1` means findings
+include errors, and `2` means invalid usage or report-output failure. Warnings do
+not fail the process. The report includes the ZIP's SHA-256 for identification.
+Passing does not establish agreement with the live database, detect records
+omitted consistently from every export file, or prove biological labels/box
+placement correct. Those still need source comparison and visual review.
 
 ## Pi deployment
 

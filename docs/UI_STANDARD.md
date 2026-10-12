@@ -205,6 +205,30 @@ needed after editing this file. Restart the application after deploying asset
 changes so the URL reflects the installed content. Other assets retain their
 existing versioning until explicitly migrated.
 
+Pending boxes on an image already admitted to the gallery are visible companions:
+a dashed outline, `Review` in the box label, and `In Review` in the bird selector.
+They never admit another image or create species cards. Dismissed detector boxes
+remain visible and selectable in detail modals with a dashed, muted outline and
+an explicit `Dismissed` label. `Restore bird` appends a new object-presence answer
+and supersedes any contradictory whole-image absence. It keeps the existing
+species and box assessments, proposal, and history; it does not approve either
+axis. Dismissed boxes do not count as active birds or gain gallery admission.
+The gallery admission and quality filters continue to apply to cards, not companion
+visibility. Gallery and Review edit the same identities and current facts; closing
+an edited Review viewer refreshes the queue. Object actions do not approve events.
+
+`Add missing bird` checks its saved-image geometry against current and dismissed
+boxes before creating an identity. A match presents `Correct bird` and highlights
+the candidate; ambiguous matches require a selection. `A different bird — keep
+both` explicitly preserves genuinely overlapping birds. Overlap alone never merges
+objects. Correcting a dismissed detection retains its identity and model proposal.
+A new manual object has its own stable identity and no model scores. An explicit
+bird correction replaces a contradictory earlier full-image absence fact while
+preserving history; it does not assert image completeness.
+
+The Full viewer fits the entire bitmap into the height left by the editor rail.
+Its overlay uses that same image geometry at desktop and narrow widths.
+
 ## 0e. Offered-Box Species Confirmation (binding)
 
 Gallery detail modals may attach one compact species control directly to each
@@ -219,6 +243,9 @@ second toolbox or a blank-canvas labeling mode.
    detection. It does not introduce a second picker implementation.
 3. A check mark means canonical current human evidence exists. AI decision
    state and legacy review columns must never create the check appearance.
+   Label colour and the confirm/retract action use that same canonical state.
+   Homepage modal payloads refresh current human answers for both primary and
+   companion detections on each request, independently of cached photo pools.
 4. Confirmed and corrected known species use a fully green label, including
    the dropdown segment, with a white check and text.
    Species-unknown answers do not get a positive species confirmation colour.
@@ -249,6 +276,24 @@ second toolbox or a blank-canvas labeling mode.
 
 The Review Desk is the only surface that turns model-proposed events into
 biological station records.
+
+Review opens the newest day with open events and orders events by start time
+(oldest first within the selected day). Day navigation skips days without open
+events; `All days` and `Review priority` remain explicit choices. Priority order
+uses the existing queue-wide ranking, not a ranking recalculated from one day.
+Events belong to their start day and remain complete across midnight. Gallery
+context and continuity-batch membership are computed before day selection.
+Only selected events receive tile payloads. Review Grid image dialogs load the
+shared detection modal on first opening, through an authenticated, detection-scoped
+endpoint. Double-click, Enter, toolbox details, and previous/next navigation must
+all use this path. Navigation stays within the event, skips sibling detections on
+the same image, and retains the editor's unsaved-change guard. Gallery context
+remains read-only. Event actions rebuild current membership and apply all existing
+checks without materializing display payloads for other events. Both Review layouts use
+the same day and sort controls; links preserve the chosen sort and layout.
+Navigation controls retain native keyboard behavior, and initial event-cursor
+selection must not scroll past the navigation.
+The queue-cleanup action still covers all days and must state that scope.
 
 1. Event approval requires an explicit diagnostic-evidence assessment:
    `Diagnostic`, `Limited`, or `Insufficient`. No option is preselected.
@@ -971,6 +1016,13 @@ modal-detection markup for the shared lightbox path.
 sticky bulk-action footer below. **No left side rail. No right
 decision rail.** Per-card decision verbs live in the card header;
 selection-scoped verbs live in the footer.
+
+Review sizing keeps images primary: new Crop sessions start at 320px and
+Full at 640px; saved per-mode sizes remain respected. Tiles shrink to the
+available card width on narrow screens. Desktop event headers and day
+controls use compact spacing; narrow or touch layouts keep controls at least
+44px high. Shared image viewers, toolbox actions and image aspect ratios
+remain unchanged.
 
 The retired `review-stage-panel` shell stays in the tree as the consumer
 of the fragment endpoints (`/api/review/event-panel/<event_key>`,

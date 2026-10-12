@@ -9,6 +9,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from config import get_config
+from core.bird_identity import add_or_correct_bird
 from core.crop_refresh import refresh_detection_thumbnail
 from core.human_label_core import (
     BBox,
@@ -17,6 +18,7 @@ from core.human_label_core import (
     get_or_create_labeling_installation_id,
     object_training_readiness,
     record_human_answer,
+    restore_rejected_detection,
     species_review_state,
 )
 from core.human_label_core import (
@@ -29,14 +31,12 @@ from core.manual_object_core import (
     ManualObjectDraft,
 )
 from core.manual_object_core import (
-    create_manual_object as create_manual_object_core,
-)
-from core.manual_object_core import (
     retract_manual_object as retract_manual_object_core,
 )
 from core.manual_object_core import (
     update_manual_object as update_manual_object_core,
 )
+from core.review_state import refresh_review_image_visibility
 from core.station_report import record_station_event_review
 
 
@@ -68,7 +68,12 @@ def record_answer(
         source_kind=source_kind,
         source_ref=source_ref,
     )
-    return record_human_answer(conn, answer, provenance)
+    facts = record_human_answer(conn, answer, provenance)
+    if answer.image_bird_presence is None:
+        refresh_review_image_visibility(
+            conn, answer.image_filename, float(cfg["GALLERY_DISPLAY_THRESHOLD"])
+        )
+    return facts
 
 
 def _ui_provenance(*, source_ref: str | None, app_version: str) -> LabelProvenance:
@@ -82,6 +87,28 @@ def _ui_provenance(*, source_ref: str | None, app_version: str) -> LabelProvenan
     )
 
 
+def restore_detection(
+    conn: sqlite3.Connection,
+    *,
+    detection_id: int,
+    image_filename: str,
+    app_version: str = "",
+) -> list[int]:
+    facts = restore_rejected_detection(
+        conn,
+        detection_id=detection_id,
+        image_filename=image_filename,
+        provenance=_ui_provenance(
+            source_ref=f"image-correction:restore:{detection_id}",
+            app_version=app_version,
+        ),
+    )
+    refresh_review_image_visibility(
+        conn, image_filename, float(get_config()["GALLERY_DISPLAY_THRESHOLD"])
+    )
+    return facts
+
+
 def create_manual_object(
     conn: sqlite3.Connection,
     draft: ManualObjectDraft,
@@ -89,9 +116,11 @@ def create_manual_object(
     original_path: Path,
     locale: str,
     app_version: str = "",
+    target_key: str | None = None,
+    match_token: str | None = None,
 ) -> tuple[dict[str, object], bool]:
     """Persist one missed bird without fabricating a detector proposal."""
-    return create_manual_object_core(
+    return add_or_correct_bird(
         conn,
         draft,
         _ui_provenance(
@@ -100,6 +129,9 @@ def create_manual_object(
         ),
         original_path=original_path,
         locale=locale,
+        gallery_threshold=float(get_config()["GALLERY_DISPLAY_THRESHOLD"]),
+        target_key=target_key,
+        match_token=match_token,
     )
 
 
@@ -433,12 +465,16 @@ def retract_species_identity(
         source_kind="watchmybirds_ui",
         source_ref=source_ref,
     )
-    return retract_species_identity_core(
+    fact_id = retract_species_identity_core(
         conn,
         image_filename=image_filename,
         detection_id=detection_id,
         provenance=provenance,
     )
+    refresh_review_image_visibility(
+        conn, image_filename, float(cfg["GALLERY_DISPLAY_THRESHOLD"])
+    )
+    return fact_id
 
 
 def retract_bbox_quality(

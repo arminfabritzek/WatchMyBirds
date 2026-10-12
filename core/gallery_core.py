@@ -14,6 +14,7 @@ from typing import Any
 import cv2
 
 from config import get_config
+from core.crop_refresh import refresh_detection_thumbnail
 from utils.db import (
     closing_connection,
     fetch_daily_covers,
@@ -23,6 +24,7 @@ from utils.db import (
 from utils.db import (
     fetch_sibling_detections as db_fetch_sibling_detections,
 )
+from utils.db.detections import effective_bbox_projection_sql
 from utils.image_ops import generate_preview_thumbnail as _generate_preview_thumbnail
 from utils.log_safety import safe_log_value as _slv
 from utils.path_manager import get_path_manager
@@ -650,9 +652,7 @@ def pick_cover_for_group(
 
     interior = [d for d in candidates if not _story_board_bbox_touches_edge(d)]
     pool = interior if interior else candidates
-    ranked = sorted(
-        pool, key=lambda d: float(d.get("score") or 0.0), reverse=True
-    )
+    ranked = sorted(pool, key=lambda d: float(d.get("score") or 0.0), reverse=True)
     return ranked[0] if ranked else None
 
 
@@ -1010,7 +1010,7 @@ def get_sibling_detections(original_name: str) -> list[dict]:
         List of sibling detection dictionaries
     """
     with closing_connection() as conn:
-        rows = db_fetch_sibling_detections(conn, original_name)
+        rows = db_fetch_sibling_detections(conn, original_name, include_rejected=True)
         return [dict(row) for row in rows]
 
 
@@ -1027,7 +1027,9 @@ def get_sibling_detections_batch(image_filenames: list[str]) -> dict[str, list[d
     from utils.db.detections import fetch_sibling_detections_batch
 
     with closing_connection() as conn:
-        grouped_rows = fetch_sibling_detections_batch(conn, image_filenames)
+        grouped_rows = fetch_sibling_detections_batch(
+            conn, image_filenames, include_rejected=True
+        )
         return {
             name: [dict(row) for row in rows] for name, rows in grouped_rows.items()
         }
@@ -1111,16 +1113,14 @@ def regenerate_derivative(
             )
             return False
 
-        # 3. Load Original
-        img = cv2.imread(str(original_path))
-        if img is None:
-            return False
-
         # 4. Process
         target_path = None
         out_img = None
 
         if type == "optimized":
+            img = cv2.imread(str(original_path))
+            if img is None:
+                return False
             # Resize logic
             if img.shape[1] > 1920:
                 scale = 1920 / img.shape[1]
@@ -1138,12 +1138,14 @@ def regenerate_derivative(
             # regenerate from a different detection's bbox when sibling
             # rows had been hard-deleted.
             with closing_connection() as conn:
+                bbox_sql, bbox_join = effective_bbox_projection_sql(conn)
+                projection = ", ".join(bbox_sql)
                 cursor = conn.execute(
-                    """
-                    SELECT bbox_x, bbox_y, bbox_w, bbox_h
-                    FROM detections
-                    WHERE image_filename = ? AND thumbnail_path = ?
-                    ORDER BY detection_id ASC
+                    f"""
+                    SELECT {projection}
+                    FROM detections d {bbox_join}
+                    WHERE d.image_filename = ? AND d.thumbnail_path = ?
+                    ORDER BY d.detection_id ASC
                     LIMIT 1
                 """,
                     (original_filename, filename),
@@ -1154,11 +1156,11 @@ def regenerate_derivative(
                     # Fallback for legacy detections without a stored
                     # thumbnail_path: match by positional crop index.
                     cursor = conn.execute(
-                        """
-                        SELECT bbox_x, bbox_y, bbox_w, bbox_h
-                        FROM detections
-                        WHERE image_filename = ? AND thumbnail_path IS NULL
-                        ORDER BY detection_id ASC
+                        f"""
+                        SELECT {projection}
+                        FROM detections d {bbox_join}
+                        WHERE d.image_filename = ? AND d.thumbnail_path IS NULL
+                        ORDER BY d.detection_id ASC
                         LIMIT 1 OFFSET ?
                     """,
                         (original_filename, crop_index - 1),
@@ -1171,37 +1173,17 @@ def regenerate_derivative(
                     )
                     return False
 
-                # Crop Logic
-                h, w = img.shape[:2]
-                x1 = int(row[0] * w)
-                y1 = int(row[1] * h)
-                bw = int(row[2] * w)
-                bh = int(row[3] * h)
-                x2 = x1 + bw
-                y2 = y1 + bh
-
-                # Expand & Square
-                TARGET_SIZE = 256
-                EXPANSION = 0.1
-                side = int(max(bw, bh) * (1 + EXPANSION))
-                cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
-                sq_x1, sq_y1 = cx - side // 2, cy - side // 2
-                sq_x2, sq_y2 = sq_x1 + side, sq_y1 + side
-
-                # Clamp
-                sq_x1, sq_y1 = max(0, sq_x1), max(0, sq_y1)
-                sq_x2, sq_y2 = min(w, sq_x2), min(h, sq_y2)
-
-                if sq_x2 > sq_x1 and sq_y2 > sq_y1:
-                    crop_img = img[sq_y1:sq_y2, sq_x1:sq_x2]
-                    out_img = cv2.resize(
-                        crop_img,
-                        (TARGET_SIZE, TARGET_SIZE),
-                        interpolation=cv2.INTER_AREA,
-                    )
-                    target_path = path_mgr.get_derivative_path(filename, "thumb")
-                else:
+                target_path = path_mgr.contained_path(
+                    path_mgr.get_derivative_path(filename, "thumb"),
+                    path_mgr.derivatives_dir,
+                )
+                if target_path is None:
                     return False
+                return refresh_detection_thumbnail(
+                    original_path=original_path,
+                    thumbnail_path=target_path,
+                    bbox_norm=tuple(row),
+                )
 
         # 5. Save
         if target_path and out_img is not None:

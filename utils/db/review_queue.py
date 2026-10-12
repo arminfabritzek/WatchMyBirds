@@ -13,6 +13,7 @@ from utils.db.detections import (
     UNKNOWN_SPECIES_KEY,
     effective_bbox_projection_sql,
     effective_species_sql_for_columns,
+    object_review_pending_sql,
     table_columns,
 )
 
@@ -79,8 +80,6 @@ def _queue_where_clauses(
     where the lists are AND-joinable WHERE fragments and their bound params
     in order. The detection fragment binds ``gallery_threshold`` first.
     """
-    ex_unclear_predicate = _ex_unclear_predicate_sql(detection_columns)
-
     orphan_where = [
         "(i.review_status IS NULL OR i.review_status = 'untagged')",
         "NOT EXISTS (SELECT 1 FROM detections d WHERE d.image_filename = i.filename)",
@@ -91,16 +90,7 @@ def _queue_where_clauses(
     detection_where = [
         "COALESCE(d.status, 'active') = 'active'",
         "(i.review_status IS NULL OR i.review_status = 'untagged')",
-        f"""(
-            (
-                COALESCE(d.decision_state, '') NOT IN ('confirmed', 'rejected')
-                AND (
-                    COALESCE(d.score, 0.0) < ?
-                    OR d.decision_state IN ('uncertain', 'unknown')
-                )
-            )
-            OR {ex_unclear_predicate}
-        )""",
+        object_review_pending_sql(detection_columns),
         "i.filename IS NOT NULL",
     ]
     detection_params: list[object] = []
@@ -233,6 +223,7 @@ def fetch_review_queue_images(
             NULL as max_score,
             NULL as best_detection_id,
             NULL as active_detection_id,
+            NULL as thumbnail_path,
             NULL as bbox_x,
             NULL as bbox_y,
             NULL as bbox_w,
@@ -270,6 +261,7 @@ def fetch_review_queue_images(
             d.score as max_score,
             d.detection_id as best_detection_id,
             d.detection_id as active_detection_id,
+            {_detection_column_sql(detection_columns, "thumbnail_path")} as thumbnail_path,
             {bbox_sql[0]} AS bbox_x,
             {bbox_sql[1]} AS bbox_y,
             {bbox_sql[2]} AS bbox_w,
@@ -516,6 +508,7 @@ def fetch_review_queue_item_by_identity(
             NULL as max_score,
             NULL as best_detection_id,
             NULL as active_detection_id,
+            NULL as thumbnail_path,
             NULL as bbox_x,
             NULL as bbox_y,
             NULL as bbox_w,
@@ -555,6 +548,7 @@ def fetch_review_queue_item_by_identity(
             d.score as max_score,
             d.detection_id as best_detection_id,
             d.detection_id as active_detection_id,
+            {_detection_column_sql(detection_columns, "thumbnail_path")} as thumbnail_path,
             {bbox_sql[0]} AS bbox_x,
             {bbox_sql[1]} AS bbox_y,
             {bbox_sql[2]} AS bbox_w,
@@ -721,6 +715,7 @@ def fetch_review_cluster_context(
         d.score as max_score,
         d.detection_id as best_detection_id,
         d.detection_id as active_detection_id,
+            {_detection_column_sql(detection_columns, "thumbnail_path")} as thumbnail_path,
         {bbox_sql[0]} AS bbox_x,
         {bbox_sql[1]} AS bbox_y,
         {bbox_sql[2]} AS bbox_w,

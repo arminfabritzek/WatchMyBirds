@@ -43,7 +43,7 @@ def test_an_unconfirmed_species_confirms():
 
 def test_a_confirmed_species_retracts():
     assert (
-        _action({"provenance": "human_confirmed", "speciesKey": "Parus_major"})
+        _action({"humanReviewState": "confirmed", "speciesKey": "Parus_major"})
         == "retract"
     )
 
@@ -51,7 +51,7 @@ def test_a_confirmed_species_retracts():
 def test_a_corrected_species_also_retracts():
     """A relabel is a human answer too, so it is takeable back the same way."""
     assert (
-        _action({"provenance": "manually_identified", "speciesKey": "Parus_major"})
+        _action({"humanReviewState": "corrected", "speciesKey": "Parus_major"})
         == "retract"
     )
 

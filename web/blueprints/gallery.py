@@ -337,7 +337,6 @@ def species_route():
         [
             str(det.get("original_name") or det.get("image_filename") or "")
             for det in species_groups.values()
-            if (det.get("sibling_count") or 1) > 1
         ]
     )
     for species, det in sorted(
@@ -370,7 +369,7 @@ def species_route():
         sibling_count = det.get("sibling_count", 1) or 1
         siblings = []
         original_name = str(det.get("original_name") or det.get("image_filename") or "")
-        if sibling_count > 1 and original_name:
+        if original_name:
             for sibling in modal_siblings.get(original_name, []):
                 sibling_species = view_helpers.get_species_key(sibling)
                 sibling_thumb = sibling.get("thumbnail_path_virtual")
@@ -462,6 +461,11 @@ def species_overview_route():
     end_index = page * PAGE_SIZE
     page_detections_raw = filtered[start_index:end_index]
 
+    modal_siblings = gallery_service.get_sibling_detections_batch(
+        sorted(
+            {str(det.get("original_name") or "") for det in page_detections_raw} - {""}
+        )
+    )
     detections = []
     for det in page_detections_raw:
         full_path = det.get("relative_path") or det.get("optimized_name_virtual", "")
@@ -489,10 +493,10 @@ def species_overview_route():
 
         sibling_count = det.get("sibling_count", 1) or 1
         siblings = []
-        if sibling_count > 1:
+        if det.get("original_name"):
             original_name = det.get("original_name", "")
             if original_name:
-                sibling_rows = gallery_service.get_sibling_detections(original_name)
+                sibling_rows = modal_siblings.get(original_name, [])
                 for sib in sibling_rows:
                     sib_species_key = view_helpers.get_species_key(sib)
                     sib_thumb = sib.get("thumbnail_path_virtual")
@@ -702,6 +706,14 @@ def subgallery_route(date):
                 break
 
     det_by_id = {d.get("detection_id"): d for d in detections_for_gallery}
+    modal_filenames = {
+        str(det_by_id.get(did, {}).get("original_name") or "")
+        for observation in page_observations
+        for did in observation["detection_ids"]
+    }
+    modal_siblings = gallery_service.get_sibling_detections_batch(
+        sorted(modal_filenames - {""})
+    )
 
     def human_review_extra(det: dict) -> dict:
         detection_id = int(det.get("detection_id") or 0)
@@ -748,10 +760,10 @@ def subgallery_route(date):
         sibling_count = det.get("sibling_count", 1) or 1
 
         siblings = []
-        if sibling_count > 1:
+        if det.get("original_name"):
             original_name = det.get("original_name", "")
             if original_name:
-                sibling_rows = gallery_service.get_sibling_detections(original_name)
+                sibling_rows = modal_siblings.get(original_name, [])
                 for sib in sibling_rows:
                     sib_species_key = view_helpers.get_species_key(sib)
                     sib_thumb = sib["thumbnail_path_virtual"]

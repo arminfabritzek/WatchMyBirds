@@ -261,6 +261,11 @@ function navigateModal(btn, direction) {
     const currentModalEl = btn.closest('.modal');
     if (!currentModalEl) return;
 
+    if (currentModalEl.dataset.reviewLazy && window.WmReviewModal) {
+        window.WmReviewModal.navigate(currentModalEl, direction);
+        return;
+    }
+
     const navScope = currentModalEl.getAttribute('data-nav-scope');
     if (navScope) {
         const scopedModals = Array.from(

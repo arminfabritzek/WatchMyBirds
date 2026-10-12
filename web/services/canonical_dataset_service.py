@@ -16,6 +16,7 @@ from core.canonical_dataset import (
     RULE_VERSION,
     CanonicalDataset,
     build_canonical_dataset,
+    read_media_size,
 )
 
 PathResolver = Callable[[str], Path]
@@ -29,6 +30,7 @@ def build_bundle(conn, *, path_resolver: PathResolver) -> CanonicalDataset:
     return build_canonical_dataset(
         conn,
         media_exists=lambda filename: path_resolver(filename).is_file(),
+        media_size=lambda filename: read_media_size(path_resolver(filename)),
     )
 
 
@@ -49,11 +51,16 @@ def box_walkthrough_candidate_ids(bundle: CanonicalDataset) -> list[int]:
         for row in bundle.manifest
         if row["view"] == "cls_positive" and row["decision"] == "included"
     }
-    allowed_reasons = {"bbox_quality_unknown", "frame_has_unresolved_objects"}
+    allowed_reasons = {
+        "bbox_quality_unknown",
+        "frame_has_unresolved_objects",
+        "frame_dimensions_missing",
+    }
     return [
         int(row["detection_id"])
         for row in bundle.manifest
         if row["view"] == "od_positive"
+        and row["detection_id"] is not None
         and row["decision"] == "excluded"
         and "bbox_quality_unknown" in row["reasons"]
         and set(row["reasons"]) <= allowed_reasons
@@ -71,11 +78,10 @@ def missing_original_bird_count(bundle: CanonicalDataset) -> int:
     presence_blockers = {"object_bird_presence_unknown", "object_bird_absent"}
     return len(
         {
-            row["detection_id"]
+            row.get("object_key", row["detection_id"])
             for row in bundle.manifest
             if row["view"] in {"cls_positive", "od_positive"}
             and row["decision"] == "excluded"
-            and row["detection_id"] is not None
             and "media_missing" in row["reasons"]
             and not presence_blockers.intersection(row["reasons"])
         }
@@ -124,6 +130,9 @@ def _non_media_entries(bundle: CanonicalDataset) -> dict[str, bytes]:
         "bundle.json": _json_bytes(metadata),
         "subjects.jsonl": _jsonl_bytes(bundle.subjects),
         "facts.jsonl": _jsonl_bytes(bundle.facts),
+        "objects.jsonl": _jsonl_bytes(bundle.objects),
+        "manual_objects.jsonl": _jsonl_bytes(bundle.manual_objects),
+        "manual_object_revisions.jsonl": _jsonl_bytes(bundle.manual_revisions),
         "manifest.jsonl": _jsonl_bytes(bundle.manifest),
         "views/coco.json": _json_bytes(bundle.coco),
         "views/classifier_ready.jsonl": _jsonl_bytes(bundle.classifier_ready),

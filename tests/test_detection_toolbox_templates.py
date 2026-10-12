@@ -601,7 +601,12 @@ def test_gallery_utils_cache_key_reaches_every_image_surface():
     )
 
     for template in templates:
-        assert "gallery_utils.js?v=20260922-bbox-label-v4" in _read(template), template
+        version = (
+            "review-lazy-modal-v1"
+            if template == "templates/review_grid.html"
+            else "20260922-bbox-label-v4"
+        )
+        assert f"gallery_utils.js?v={version}" in _read(template), template
 
 
 def test_offered_box_labels_choose_visible_space_around_the_box():
@@ -738,7 +743,12 @@ def test_tile_action_cache_key_reaches_every_image_surface():
     )
 
     for template in templates:
-        assert "tile_actions.js?v=20260920-bird-editor-v4" in _read(template), template
+        version = (
+            "review-lazy-modal-v1"
+            if template == "templates/review_grid.html"
+            else "20260920-bird-editor-v4"
+        )
+        assert f"tile_actions.js?v={version}" in _read(template), template
 
 
 def test_box_walkthrough_is_a_shared_viewer_scope():

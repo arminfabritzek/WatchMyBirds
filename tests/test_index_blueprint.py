@@ -310,7 +310,11 @@ def test_modal_rows_carry_the_image_filename(seeded_client):
     context = captured["context"]
 
     checked = 0
-    for key in ("visual_summary", "today_visitors_modal_dets", "best_species_modal_dets"):
+    for key in (
+        "visual_summary",
+        "today_visitors_modal_dets",
+        "best_species_modal_dets",
+    ):
         for row in context[key]:
             name = str(row.get("original_name") or row.get("image_filename") or "")
             assert name.strip(), (
@@ -320,3 +324,62 @@ def test_modal_rows_carry_the_image_filename(seeded_client):
             checked += 1
 
     assert checked, "fixture produced no modal rows to check"
+
+
+def test_homepage_refreshes_canonical_answers_for_cached_modals_and_siblings(
+    seeded_client,
+) -> None:
+    from core.human_label_core import HumanAnswer, LabelProvenance, record_human_answer
+
+    client, _ = seeded_client
+    _, captured = _capture_index_context(client)
+    row = captured["context"]["visual_summary"][0]
+    detection_id = row["detection_id"]
+    with db_connection.closing_connection() as conn:
+        filename = conn.execute(
+            "SELECT image_filename FROM detections WHERE detection_id = ?",
+            (detection_id,),
+        ).fetchone()[0]
+    provenance = LabelProvenance(
+        "test-station", "test", "normal_correction", "watchmybirds_ui"
+    )
+
+    for species in (row["species_key"], "Cyanistes_caeruleus"):
+        with db_connection.closing_connection() as conn:
+            record_human_answer(
+                conn,
+                HumanAnswer(
+                    filename,
+                    detection_id=detection_id,
+                    object_bird_presence="present",
+                    species_identity="confirmed",
+                    species_key=species,
+                    bbox_quality="suitable",
+                ),
+                provenance,
+            )
+            conn.commit()
+        response, captured = _capture_index_context(client)
+        assert response.status_code == 200
+        checked = []
+        for key in (
+            "visual_summary",
+            "today_visitors_modal_dets",
+            "best_species_modal_dets",
+        ):
+            for item in captured["context"][key]:
+                for candidate in (item, *item.get("siblings", [])):
+                    if candidate.get("detection_id") == detection_id:
+                        checked.append(candidate)
+                        assert candidate["human_review_state"] in {
+                            "confirmed",
+                            "corrected",
+                        }
+                        assert candidate["human_species_key"] == species
+                        assert candidate["human_bbox_verdict"] == "suitable"
+                        assert candidate["needs_review"] is False
+        assert len(checked) >= 3
+        from web import web_interface
+
+        cached_modals = web_interface._best_species_cache["payload"]["modal_dets"]
+        assert all("human_review_state" not in item for item in cached_modals)

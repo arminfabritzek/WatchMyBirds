@@ -21,7 +21,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from core import user_groundtruth_core
+from core import training_retention
 from utils.db import retention as retention_db
 from utils.path_manager import PathManager
 
@@ -220,7 +220,7 @@ def _partition_candidates(
 ) -> RetentionPlan:
     """Resolve bounded DB facts and partition one candidate batch."""
     filenames = [candidate["filename"] for candidate in candidates]
-    export_relevant = user_groundtruth_core.is_export_relevant_any(conn, filenames)
+    export_relevant = training_retention.is_export_relevant_any(conn, filenames)
     thumb_names = retention_db.thumbnail_names_for_images(conn, filenames)
     plan = RetentionPlan()
     protected: Counter[str] = Counter()

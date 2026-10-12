@@ -29,7 +29,7 @@ def fetch_trash_items(
 
     ``review_status='no_bird'`` images are **not** trash — they are
     user-verified false-positive crops kept for the training-data
-    pipeline (``utils.db.user_groundtruth.fetch_hard_negatives``).
+    pipeline (the canonical human-label history).
     Surfacing them here would invite an "Empty Trash" sweep that
     silently wipes the hard-negative corpus. The legacy UNION ALL
     over ``images.review_status='no_bird'`` was removed for that

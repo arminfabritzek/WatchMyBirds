@@ -6519,6 +6519,10 @@ body {
     transition: border-color 120ms ease, box-shadow 120ms ease, background 120ms ease;
 }
 
+.wm-bird-editor__box.is-in-review {
+    border-style: dashed;
+}
+
 .wm-bird-editor__box.is-selected {
     z-index: 2;
     border-width: var(--wm-bird-editor-stroke, 1px);
@@ -6527,6 +6531,23 @@ body {
     box-shadow:
         0 0 0 var(--wm-bird-editor-soft-stroke, 0.75px) rgba(30, 23, 14, 0.64),
         0 0 var(--wm-bird-editor-glow, 14px) rgba(243, 191, 93, 0.2);
+}
+
+.wm-bird-editor__box.is-dismissed {
+    border-style: dashed;
+    border-color: #ced2d5;
+    background: rgba(48, 53, 58, 0.10);
+}
+
+.wm-bird-editor__box.is-dismissed .wm-bird-editor__box-label,
+.wm-bird-editor__box.is-dismissed.is-selected .wm-bird-editor__box-label {
+    background: #e4e7ea;
+    color: #30353a;
+}
+
+.wm-bird-editor__box.is-dismissed.is-selected {
+    border-color: #fff;
+    box-shadow: 0 0 0 2px #535b64;
 }
 
 .wm-bird-editor__box-body {
@@ -12471,7 +12492,77 @@ code {
 .review-grid__stack {
     display: flex;
     flex-direction: column;
-    gap: clamp(28px, 3vw, 44px);
+    gap: clamp(16px, 2vw, 24px);
+}
+
+.review-day-nav {
+    max-width: 1600px;
+    margin: 0 auto;
+    padding: 6px 16px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+
+.review-day-nav__arrows,
+.review-day-nav__form {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.review-day-nav .form-control {
+    width: auto;
+    min-height: 44px;
+}
+
+.review-day-nav [aria-disabled="true"] {
+    opacity: 0.45;
+    pointer-events: none;
+}
+
+.review-cleanup-modal__scope {
+    padding: 0 24px;
+    color: var(--color-text-muted);
+}
+
+@media (max-width: 600px) {
+    .review-day-nav__form {
+        display: grid;
+        grid-template-columns: auto minmax(0, 1fr);
+        width: 100%;
+    }
+
+    .review-day-nav__form .form-control {
+        width: 100%;
+        min-width: 0;
+    }
+
+    .review-day-nav__form button {
+        grid-column: 2;
+        justify-self: end;
+    }
+}
+
+.review-desk-bar {
+    height: auto;
+    min-height: 44px;
+    padding-block: 6px;
+    margin-bottom: 4px;
+}
+
+.review-day-nav {
+    font-size: 0.82rem;
+}
+
+.review-day-nav .btn,
+.review-day-nav .form-control {
+    min-height: 32px;
+    padding: 4px 10px;
+    font-size: 0.82rem;
 }
 
 .review-grid__placeholder {
@@ -12592,10 +12683,10 @@ code {
     display: flex;
     align-items: flex-start;
     justify-content: space-between;
-    gap: 12px;
+    gap: 6px 12px;
     flex-wrap: wrap;
-    margin: -12px -16px 12px -22px;
-    padding: 12px 16px 10px 22px;
+    margin: -12px -16px 8px -22px;
+    padding: 8px 16px 8px 22px;
     border-bottom: 1px solid color-mix(
         in srgb,
         var(--cell-species-colour, var(--color-border)) 28%,
@@ -12657,14 +12748,14 @@ code {
     align-items: center;
     gap: 6px;
     flex-wrap: wrap;
-    margin-top: 4px;
+    margin-top: 0;
 }
 
 .review-grid__card-window-chip {
     display: inline-flex;
     align-items: baseline;
     gap: 6px;
-    padding: 4px 9px;
+    padding: 2px 6px;
     border: 1px solid color-mix(
         in srgb,
         var(--cell-species-colour, var(--color-border)) 36%,
@@ -12703,7 +12794,7 @@ code {
 }
 
 .review-grid__card-window-value {
-    font-size: 0.98rem;
+    font-size: 0.82rem;
     font-weight: 800;
     line-height: 1.15;
     color: var(--color-text);
@@ -12759,7 +12850,7 @@ code {
 .review-grid__card-actions {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 4px;
     flex-wrap: wrap;
 }
 
@@ -12834,6 +12925,80 @@ code {
     }
 }
 
+@media (min-width: 761px) {
+    .review-grid__card-header {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        align-items: center;
+    }
+
+    .review-grid__card-identity {
+        flex-direction: row;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 4px 10px;
+    }
+
+    .review-grid__card-species-row {
+        flex-basis: 100%;
+    }
+
+    .review-grid__card-actions {
+        grid-column: 1 / -1;
+    }
+}
+
+@media (min-width: 761px) and (hover: hover) and (pointer: fine) {
+    .review-grid__card-actions .btn {
+        min-height: 30px;
+        padding: 4px 9px;
+    }
+
+    .review-grid__evidence-option {
+        min-height: 30px;
+        padding: 4px 8px;
+    }
+
+    .review-desk-bar .wm-view-mode-toggle__option {
+        min-width: 48px;
+        min-height: 28px;
+        padding-inline: 8px;
+    }
+}
+
+@media (max-width: 760px), (hover: none), (pointer: coarse) {
+    .review-day-nav .btn,
+    .review-day-nav .form-control,
+    .review-desk-bar .btn,
+    .review-desk-bar .wm-view-mode-toggle__option,
+    .review-grid__card-actions .btn,
+    .review-grid__evidence-option {
+        min-height: 44px;
+    }
+
+    .review-grid__size-btn {
+        min-width: 44px;
+    }
+}
+
+@media (max-width: 760px) {
+    .review-grid__card-actions {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        width: 100%;
+    }
+
+    .review-grid__card-actions .btn {
+        padding: 4px 6px;
+        font-size: 0.75rem;
+        white-space: normal;
+    }
+
+    .review-grid__card-species {
+        font-size: 1rem;
+    }
+}
+
 /* Keyboard navigation (review_grid_keyboard.js).
    The active event card gets an unmistakable blue focus ring that sits
    inside the existing hard-black event outline so the two never fight.
@@ -12869,7 +13034,7 @@ code {
    minmax() in every card's tile grid. */
 .review-grid {
     /* Default tile size; the slider rewrites this inline. */
-    --review-tile-size: 280px;
+    --review-tile-size: 320px;
 }
 
 .review-grid__size-control {
@@ -12880,7 +13045,7 @@ code {
 }
 
 .review-grid__size-slider {
-    width: 200px;
+    width: 120px;
     accent-color: var(--color-primary, #53676b);
     cursor: pointer;
 }
@@ -12907,25 +13072,10 @@ code {
     }
 }
 
-/* Card tile grid — auto-fill so the layout reflows to fit the
-   current --review-tile-size. minmax(N, 1fr) means tiles stretch
-   to fill leftover space rather than leaving a gap on the right. */
+/* Fixed tile sizes keep events comparable; cap them at the available width. */
 .review-grid__card-tiles {
-    /* Tile size is locked to the slider value, independent of frame count.
-       A 1-frame event and a 50-frame
-       event both render tiles at exactly --review-tile-size. The
-       operator's slider controls tile size predictably; left-over
-       horizontal space sits to the right as natural whitespace
-       (semantically correct — a 1-frame event genuinely has less
-       content). Prior auto-fit + 1fr stretched the single tile to
-       fill the card width, which broke size consistency across
-       cards and surprised the operator.
-
-       max-content keeps the column from collapsing below the tile's
-       intrinsic size if any tile content (image aspect ratio) is
-       larger than --review-tile-size. */
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(var(--review-tile-size, 320px), max-content));
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, var(--review-tile-size, 320px)), min(var(--review-tile-size, 320px), 100%)));
     justify-content: start;
     gap: 8px;
 }
@@ -13458,3 +13608,12 @@ button.wm-bird-editor__box-verdict:disabled { cursor: default; opacity: 0.65; }
     gap: 8px; padding: 12px; background: var(--color-surface-2); color: var(--color-text);
     text-align: center; font-size: .95rem;
 }
+
+.wm-bird-editor__match {
+    display: grid;
+    gap: 0.4rem;
+    padding: 0.75rem;
+    font-size: 0.875rem;
+}
+.wm-bird-editor__match[hidden] { display: none; }
+.wm-bird-editor__match select { width: 100%; min-width: 0; }

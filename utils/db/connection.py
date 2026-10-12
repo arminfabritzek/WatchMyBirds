@@ -429,73 +429,6 @@ def _init_schema(conn: sqlite3.Connection) -> None:
         "CREATE INDEX IF NOT EXISTS idx_rescan_proposals_status ON rescan_proposals(status);"
     )
 
-    # User-groundtruth export batches — book-keeping for the consolidated
-    # user-groundtruth export table.
-    # Each row records one export run: which time window it covered,
-    # how many rows per bucket, when it was built. ``until_at`` becomes
-    # the next batch's natural ``since_at`` so consecutive batches
-    # don't double-count user actions.
-    #
-    # Each row is per-batch state: a manifest of what was shipped.
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS export_batches (
-            batch_id TEXT PRIMARY KEY,
-            built_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            since_at TEXT,
-            until_at TEXT NOT NULL,
-            hard_negatives_count INTEGER NOT NULL DEFAULT 0,
-            confirmed_positives_count INTEGER NOT NULL DEFAULT 0,
-            species_relabels_count INTEGER NOT NULL DEFAULT 0,
-            favorites_count INTEGER NOT NULL DEFAULT 0,
-            frame_integrity_dropped_count INTEGER NOT NULL DEFAULT 0,
-            exporter_version TEXT NOT NULL,
-            wmb_app_version TEXT,
-            notes TEXT
-        );
-    """)
-    # Additive migrations for pre-existing DBs (the CREATE TABLE above
-    # is no-op once the table exists; ALTER adds the new columns).
-    _ensure_column_on_table(
-        conn,
-        "export_batches",
-        "favorites_count",
-        "INTEGER NOT NULL DEFAULT 0",
-    )
-    _ensure_column_on_table(
-        conn,
-        "export_batches",
-        "frame_integrity_dropped_count",
-        "INTEGER NOT NULL DEFAULT 0",
-    )
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_export_batches_built_at ON export_batches(built_at DESC);"
-    )
-
-    # Operator-reviewed export quarantine. This is deliberately
-    # non-destructive: it does not delete images or detections, it only
-    # prevents known-unsafe frames/detections from entering the
-    # user-groundtruth export.
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS groundtruth_export_exclusions (
-            exclusion_id INTEGER PRIMARY KEY AUTOINCREMENT,
-            scope TEXT NOT NULL CHECK(scope IN ('image', 'detection')),
-            image_filename TEXT NOT NULL,
-            detection_id INTEGER,
-            reason TEXT,
-            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            created_by TEXT NOT NULL DEFAULT 'dry_run',
-            released_at TEXT
-        );
-    """)
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_groundtruth_export_exclusions_image "
-        "ON groundtruth_export_exclusions(image_filename, released_at);"
-    )
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_groundtruth_export_exclusions_detection "
-        "ON groundtruth_export_exclusions(detection_id, released_at);"
-    )
-
     # Seen-species log for the "new species only" Telegram mode. One row per
     # species the operator has ever been notified about (by species_key, the
     # same Latin / OD-class identifier the rest of the stack uses). The mode
@@ -627,6 +560,16 @@ def _init_human_label_schema(conn: sqlite3.Connection) -> None:
             FOREIGN KEY(manual_object_id) REFERENCES manual_objects(manual_object_id)
                 ON DELETE CASCADE
         );
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS bird_add_requests (
+            request_id TEXT PRIMARY KEY,
+            image_filename TEXT NOT NULL REFERENCES images(filename) ON DELETE CASCADE,
+            payload_json TEXT NOT NULL,
+            result_json TEXT NOT NULL
+        )
         """
     )
     conn.execute(

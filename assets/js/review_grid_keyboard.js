@@ -167,17 +167,14 @@
             '.review-grid__tile:not(.review-grid__tile--context) [data-tile-image][data-modal-target]'
         );
         if (!tile) return;
-        const target = tile.dataset.modalTarget;
-        const modalEl = target && document.querySelector(target);
-        if (modalEl && window.bootstrap && window.bootstrap.Modal) {
-            window.bootstrap.Modal.getOrCreateInstance(modalEl).show();
-        }
+        if (window.WmReviewModal) window.WmReviewModal.open(tile);
     }
 
     function onKeydown(event) {
         if (event.defaultPrevented) return;
         if (event.metaKey || event.ctrlKey || event.altKey) return;
         if (isTypingTarget(event.target)) return;
+        if (event.target.closest('.review-day-nav')) return;
         if (aModalIsOpen()) return;
 
         switch (event.key) {
@@ -235,7 +232,7 @@
             if (card) setActiveCard(card, false);
         });
         // Arm the first card so the very first keystroke has a target.
-        ensureActive();
+        setActiveCard(allCards()[0], false);
     }
 
     document.addEventListener('DOMContentLoaded', bootstrap);

@@ -17,7 +17,7 @@ from utils.species_names import (
     species_key_from_candidates,
 )
 from web.security import safe_log_value as _slv
-from web.services import db_service, gallery_service
+from web.services import db_service, gallery_service, human_label_service
 
 logger = logging.getLogger(__name__)
 
@@ -158,6 +158,53 @@ def _detection_has_human_unknown_species(det: dict) -> bool:
     return det.get("human_review_state") == "reviewed_unknown"
 
 
+def enrich_modal_review_states(detections: list[dict]) -> None:
+    rows: list[dict] = []
+    seen: set[int] = set()
+
+    def collect(items: list[dict]) -> None:
+        for item in items:
+            if id(item) in seen:
+                continue
+            seen.add(id(item))
+            rows.append(item)
+            collect(item.get("siblings") or [])
+
+    collect(detections)
+    ids = [int(row["detection_id"]) for row in rows if row.get("detection_id")]
+    if not ids:
+        return
+    with db_service.closing_connection() as conn:
+        states = human_label_service.fetch_detection_review_states(conn, ids)
+    for row in rows:
+        if row.get("manual_object_id"):
+            continue
+        state = states.get(int(row.get("detection_id") or 0))
+        if state is None:
+            continue
+        answer = str(state["state"])
+        row["human_review_state"] = answer
+        row["human_reviewed"] = bool(state["reviewed"])
+        row["human_bbox_verdict"] = state.get("bbox_verdict")
+        row["human_species_key"] = state.get("species_key")
+        row.pop("human_common_name", None)
+        row["provenance"] = (
+            "human_confirmed"
+            if answer == "confirmed"
+            else "manually_identified"
+            if answer == "corrected"
+            else "human_unknown"
+            if answer == "reviewed_unknown"
+            else "model_proposal"
+        )
+        if answer in {"confirmed", "corrected"} and state.get("species_key"):
+            species_key = str(state["species_key"])
+            row["species_key"] = species_key
+            row["common_name"] = get_common_name(species_key)
+            row["human_common_name"] = row["common_name"]
+            row["needs_review"] = False
+
+
 def build_current_detection_payload(det: dict) -> dict:
     """Build the bird editor's ``current_detection`` payload in Python.
 
@@ -208,6 +255,8 @@ def build_current_detection_payload(det: dict) -> dict:
         "species_source": det.get("species_source"),
         "human_review_state": human_review_state,
         "human_bbox_verdict": det.get("human_bbox_verdict"),
+        "object_status": det.get("object_status", "active"),
+        "needs_review": bool(det.get("needs_review", False)),
         "formatted_date": det.get("formatted_date"),
         "formatted_time": det.get("formatted_time"),
         "species_colour": det.get("species_colour"),
@@ -371,13 +420,13 @@ def build_detection_view_dict(
     payload = {
         "detection_id": det.get("detection_id"),
         "manual_object_id": det.get("manual_object_id"),
-        "object_key": det.get("object_key") or (
-            f"detection:{det.get('detection_id')}" if det.get("detection_id") else ""
-        ),
+        "object_key": det.get("object_key")
+        or (f"detection:{det.get('detection_id')}" if det.get("detection_id") else ""),
         "object_kind": det.get("object_kind") or "detection",
         "revision": det.get("revision"),
         "provenance": det.get("provenance"),
         "species_state": det.get("species_state"),
+        "human_review_state": det.get("human_review_state") or "unreviewed",
         "species_key": species_key,
         "common_name": common_name,
         "od_class_name": det.get("od_class_name", ""),
@@ -398,6 +447,8 @@ def build_detection_view_dict(
         "bbox_w": det.get("bbox_w", 0.0) or 0.0,
         "bbox_h": det.get("bbox_h", 0.0) or 0.0,
         "human_bbox_verdict": det.get("human_bbox_verdict"),
+        "object_status": det.get("object_status", "active"),
+        "needs_review": bool(det.get("needs_review", False)),
         "rating": det.get("rating"),
         "rating_source": det.get("rating_source", "auto"),
         "is_favorite": is_favorite(det),
@@ -407,9 +458,7 @@ def build_detection_view_dict(
             if det.get("original_present", 1) is None
             else int(det.get("original_present", 1))
         ),
-        "image_filename": (
-            det.get("image_filename") or det.get("original_name") or ""
-        ),
+        "image_filename": (det.get("image_filename") or det.get("original_name") or ""),
     }
     if include_decision_state:
         payload["decision_state"] = det.get("decision_state")
@@ -510,9 +559,7 @@ def format_stream_timestamp(ts: str) -> str:
     if not ts:
         return "Unknown"
     try:
-        return datetime.strptime(ts[:15], "%Y%m%d_%H%M%S").strftime(
-            "%d.%m.%Y %H:%M"
-        )
+        return datetime.strptime(ts[:15], "%Y%m%d_%H%M%S").strftime("%d.%m.%Y %H:%M")
     except ValueError:
         return "Unknown"
 
@@ -578,9 +625,7 @@ def enrich_species_board(board: dict[str, list[dict]]) -> dict[str, list[dict]]:
                     "last_seen_display": format_stream_timestamp(
                         item.get("last_seen_timestamp") or ""
                     ),
-                    "is_favorite_available": bool(
-                        item.get("is_favorite_available")
-                    ),
+                    "is_favorite_available": bool(item.get("is_favorite_available")),
                     "best_cover_score": float(item.get("best_cover_score") or 0.0),
                     "detection_id": primary_payload["detection_id"],
                     "display_path": primary_payload["display_path"],
@@ -673,8 +718,7 @@ def render_best_species_board(
                 "last_seen_timestamp": pool["last_seen_timestamp"],
                 "best_cover_score": pool["best_cover_score"],
                 "is_favorite_available": pool["is_favorite_available"],
-                "primary_detection": primary
-                or (candidates[0] if candidates else None),
+                "primary_detection": primary or (candidates[0] if candidates else None),
                 "story_detections": frames,
             }
         )

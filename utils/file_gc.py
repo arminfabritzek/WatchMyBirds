@@ -261,6 +261,27 @@ def hard_delete_detections(
             total_orig_refs[op] = count
             total_opt_refs[opp] = count
 
+        if conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='manual_objects'"
+        ).fetchone():
+            manual_refs = conn.execute(
+                f"""
+                SELECT image_filename, COUNT(*) AS cnt FROM manual_objects
+                WHERE status = 'active' AND image_filename IN ({placeholders})
+                GROUP BY image_filename
+                """,
+                list(unique_orig_names),
+            )
+            for ref in manual_refs:
+                original = pm.get_original_path(ref["image_filename"])
+                optimized = pm.get_derivative_path(ref["image_filename"], "optimized")
+                total_orig_refs[original] = (
+                    total_orig_refs.get(original, 0) + ref["cnt"]
+                )
+                total_opt_refs[optimized] = (
+                    total_opt_refs.get(optimized, 0) + ref["cnt"]
+                )
+
     # Thumbnail global refs (basename-keyed in DB → resolve via map)
     if thumb_name_to_path:
         thumb_names = list(thumb_name_to_path.keys())

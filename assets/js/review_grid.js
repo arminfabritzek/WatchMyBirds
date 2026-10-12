@@ -21,8 +21,8 @@
      * source is only 256×256 —
      * anything beyond ~320px would be visibly upscaled. We split
      * the range by mode and persist per-mode positions:
-     *   crop mode  → 120..320 px,  default 240
-     *   full mode  → 120..1200 px, default 480
+     *   crop mode  → 120..320 px,  default 320
+     *   full mode  → 120..1200 px, default 640
      * Storage keys are mode-suffixed so switching back keeps the
      * size the operator last picked in that mode.
      * ---------------------------------------------------------- */
@@ -30,8 +30,8 @@
     const CROP_MAX = 320;
     const FULL_MAX = 1200;
     const SIZE_MIN = 120;
-    const CROP_DEFAULT = 240;
-    const FULL_DEFAULT = 480;
+    const CROP_DEFAULT = 320;
+    const FULL_DEFAULT = 640;
 
     function modeSettings(mode) {
         if (mode === 'full') {
@@ -529,14 +529,7 @@
     }
 
     function openTileModal(tileImage) {
-        const target = tileImage.dataset.modalTarget;
-        if (!target) return;
-        const modalEl = document.querySelector(target);
-        if (!modalEl) return;
-        if (window.bootstrap && window.bootstrap.Modal) {
-            const instance = window.bootstrap.Modal.getOrCreateInstance(modalEl);
-            instance.show();
-        }
+        if (window.WmReviewModal) window.WmReviewModal.open(tileImage);
     }
 
     document.addEventListener('click', function (event) {

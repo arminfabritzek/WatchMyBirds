@@ -30,6 +30,7 @@ WatchMyBirds is an AI-powered bird detection system that provides real-time vide
         Geographic scoring never consumes or writes human label facts.
     *   `label_subjects` / `human_label_facts`: Explicit human assertions, separate from model outputs.
     *   `manual_objects` / `manual_object_revisions`: Manually added birds and their revision history.
+    *   `bird_add_requests`: Idempotent add-or-correct receipts; geometric matches require an explicit identity choice before writing.
     *   `station_event_reviews`: Explicit biological-event review decisions.
 
 ## 4. Key Modules and Responsibilities
@@ -164,3 +165,20 @@ surface-specific compositions and exceptions are part of the contract;
 migration checkmarks and substring searches for class names are not UI
 acceptance tests. Validate affected flows in a browser as well as with their
 relevant template/JS tests.
+
+## Training export
+
+`core/canonical_dataset.py` derives the sole training bundle from current human
+facts and active manual objects. Stable `detection:<id>` and `manual:<id>` keys
+identify birds once per training view. Species crops are independent of unresolved
+neighbors; COCO contains only frames whose objects are all resolved, including
+manually drawn boxes. Historical facts and manual revisions remain audit evidence.
+Manual records never acquire synthetic model predictions. Bundle/rule version 2
+adds manual identities and history; unknown manual species can supply a box but
+cannot supply a species label. Missing originals exclude training use.
+
+The former User-Groundtruth pages, API and archive builder are removed. Existing
+legacy export bookkeeping tables are left untouched, but no longer created or
+used. `core/training_retention.py` conservatively protects human evidence and
+previously protected legacy signals from automatic original deletion; removing
+an old export must not make those originals newly deletable.

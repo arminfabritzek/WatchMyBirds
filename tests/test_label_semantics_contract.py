@@ -30,8 +30,7 @@ LABEL_COLUMNS = (
 def _label_state(detection_id: int) -> dict[str, str | None]:
     with db_connection.closing_connection() as conn:
         row = conn.execute(
-            f"SELECT {', '.join(LABEL_COLUMNS)} "
-            "FROM detections WHERE detection_id = ?",
+            f"SELECT {', '.join(LABEL_COLUMNS)} FROM detections WHERE detection_id = ?",
             (detection_id,),
         ).fetchone()
     return dict(zip(LABEL_COLUMNS, row, strict=True))
@@ -130,9 +129,7 @@ def test_whole_image_no_bird_requires_explicit_image_answer(semantic_case):
     assert response.status_code == 200, response.get_data(as_text=True)
     assert response.get_json()["action"] == "no_bird"
     assert _review_status(semantic_case["filename"]) == "no_bird"
-    assert _presence_facts(semantic_case["filename"]) == [
-        ("image", None, "absent")
-    ]
+    assert _presence_facts(semantic_case["filename"]) == [("image", None, "absent")]
 
 
 def test_unanswered_object_bbox_and_species_facts_remain_unknown(semantic_case):
@@ -147,24 +144,27 @@ def test_unanswered_object_bbox_and_species_facts_remain_unknown(semantic_case):
     assert _label_state(semantic_case["detection_id"]) == {
         column: None for column in LABEL_COLUMNS
     }
-    assert _presence_facts(semantic_case["filename"]) == [
-        ("image", None, "present")
-    ]
+    assert _presence_facts(semantic_case["filename"]) == [("image", None, "present")]
 
 
 def test_export_preview_does_not_create_or_change_label_facts(semantic_case):
     detection_id = semantic_case["detection_id"]
     before = _label_state(detection_id)
-    response = semantic_case["client"].get("/api/groundtruth-export/preview")
+    response = semantic_case["client"].get("/api/canonical-dataset/preview")
 
     assert response.status_code == 200, response.get_data(as_text=True)
     assert _label_state(detection_id) == before
 
 
-def test_groundtruth_export_page_remains_available(semantic_case):
-    response = semantic_case["client"].get("/admin/groundtruth-export")
-
-    assert response.status_code == 200, response.get_data(as_text=True)
+def test_old_groundtruth_export_is_removed(semantic_case):
+    for path in (
+        "/admin/groundtruth-export",
+        "/admin/groundtruth-export/dry-run",
+        "/api/groundtruth-export/preview",
+    ):
+        assert semantic_case["client"].get(path).status_code == 404
+    response = post(semantic_case["client"], "/api/groundtruth-export/build", {})
+    assert response.status_code == 404
 
 
 def test_removed_training_export_endpoint_is_not_available(semantic_case):
