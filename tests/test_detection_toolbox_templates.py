@@ -261,12 +261,12 @@ def test_stream_detection_previews_use_toolbox():
     content = _read("templates/stream.html")
 
     assert "{% from 'partials/tile_toolbox.html' import tile_toolbox %}" in content
-    assert content.count("{{ tile_toolbox(") >= 2
+    assert content.count("{{ tile_toolbox(") >= 1
     assert "quiet-preview__item fade-in-item wm-toolbox-host" in content
     assert "best-species-board__featured" in content
     assert 'class="best-species-card__media wm-toolbox-host"' in content
     assert "best-species-board__grid" in content
-    assert "details_href='/gallery/' ~ det.gallery_date" in content
+    assert "details_href='/gallery/' ~ frame.gallery_date" in content
     assert "filter: drop-shadow(0 2px 4px rgba(0,0,0,0.5));" not in content
 
 
@@ -639,7 +639,9 @@ def test_offered_box_labels_choose_visible_space_around_the_box():
     assert "const previousPlacement = label.dataset.placement;" in editor
     assert "candidate.name === previousPlacement" in editor
     assert "img.addEventListener('transitionend', syncFinishedTransform);" in editor
-    assert "candidate.fits && !candidate.overlapsBox && !candidate.overlapsLabel" in editor
+    assert (
+        "candidate.fits && !candidate.overlapsBox && !candidate.overlapsLabel" in editor
+    )
     assert "--wm-bird-editor-stroke" in editor
     assert "--wm-bird-editor-soft-stroke" in editor
     assert "label.style.transform = 'scale(' + inverse + ')'" in editor
@@ -772,3 +774,13 @@ def test_bird_editor_keeps_selection_confirmation_and_picker_separate():
     assert "actionEl.closest('.wm-bird-editor')" in tile_actions
     assert "const savingDraft = clone(draft)" in editor
     assert 'data-editor-action="retract"' in toolbar
+
+
+def test_homepage_species_cards_share_the_fixed_photo_grid():
+    content = _read("templates/stream.html")
+    assert "{% set frames = det.story_frames or [det] %}" in content
+    assert "{% for frame in frames %}" in content
+    assert "best-species-card__photos--single" in content
+    assert "variant == 'featured' and det.story_frames" not in content
+    assert '<details class="best-species-board__more">' in content
+    assert "<summary>Show more</summary>" in content

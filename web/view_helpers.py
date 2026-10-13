@@ -700,7 +700,7 @@ def render_best_species_board(
     *,
     total_limit: int = 12,
     featured_count: int = 3,
-    frame_count: int = 3,
+    frame_count: int = 4,
 ) -> dict[str, list[dict]]:
     from core.gallery_core import _choose_story_board_frames
 

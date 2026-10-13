@@ -71,6 +71,17 @@ Trash, modals, and everything else at once. Any drift defeats that goal.
 **Audit:** check this file against the codebase after touching
 image-bearing surfaces.
 
+## Homepage species cards
+
+Today's Visitors and Best of Species use the same fixed four-image budget,
+rendered as two equal columns and two rows without an image-count control.
+Choose distinct source images using the existing favorite and quality priorities;
+group photos receive no additional preference. Three available images reduce to
+two; one image spans the card width with `object-fit: contain` so the existing
+thumbnail is not cropped again. Image actions and detail modals stay shared.
+Best of Species initially shows the first three species; native Show more
+expands the remaining cards. Today's Visitors keeps all selected species visible.
+
 ## 0c. Detail Modal Companion Visibility (binding)
 
 When the user opens an **image-detail modal** — clicked through from

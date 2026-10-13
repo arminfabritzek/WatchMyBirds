@@ -2,6 +2,8 @@
 
 import random
 
+import pytest
+
 from core.gallery_core import build_species_story_board
 
 
@@ -75,9 +77,7 @@ def test_story_board_excludes_unknown_and_old_rows():
         rng=random.Random(2),
     )
 
-    assert [item["species_key"] for item in board["featured"]] == [
-        "Fringilla_coelebs"
-    ]
+    assert [item["species_key"] for item in board["featured"]] == ["Fringilla_coelebs"]
     assert board["grid"] == []
 
 
@@ -143,3 +143,53 @@ def test_story_board_single_favorite_still_allows_rotation():
 
     assert 1 in primary_ids
     assert len(set(primary_ids)) > 1
+
+
+@pytest.mark.parametrize(
+    "available,expected", [(0, 0), (1, 1), (2, 2), (3, 2), (4, 4), (7, 4)]
+)
+def test_homepage_frame_budget_uses_complete_rows(
+    available: int, expected: int
+) -> None:
+    from core.gallery_core import _choose_story_board_frames
+
+    rows = [
+        _det(i + 1, f"20260103_1200{i:02d}", "Parus_major") for i in range(available)
+    ]
+    primary, frames = _choose_story_board_frames(rows, rng=random.Random(1))
+    assert len(frames) == expected
+    assert primary == (frames[0] if frames else None)
+
+
+def test_homepage_frames_do_not_repeat_a_source_image() -> None:
+    from core.gallery_core import _choose_story_board_frames
+
+    rows = [
+        _det(i, f"20260103_1200{i:02d}", "Parus_major", favorite=i == 2)
+        for i in range(1, 7)
+    ]
+    for row in rows:
+        row["original_name"] = f"frame-{(row['detection_id'] - 1) // 2}.jpg"
+    primary, frames = _choose_story_board_frames(rows, rng=random.Random(1))
+    assert primary["detection_id"] == 2
+    assert len(frames) == 2
+    assert len({row["original_name"] for row in frames}) == len(frames)
+
+
+def test_homepage_secondary_species_receive_four_frames() -> None:
+    rows = [_det(i, f"20260103_1200{i:02d}", "Parus_major") for i in range(1, 5)]
+    board = build_species_story_board(rows, featured_count=0, rng=random.Random(1))
+    assert len(board["grid"][0]["story_detections"]) == 4
+
+
+def test_story_pool_does_not_spend_its_budget_on_duplicate_detections() -> None:
+    from core.gallery_core import _build_story_board_candidate_pool
+
+    rows = [_det(i, f"20260103_1200{i:02d}", "Parus_major") for i in range(1, 21)]
+    for row in rows:
+        row["original_name"] = (
+            "shared.jpg" if row["detection_id"] < 17 else f"{row['detection_id']}.jpg"
+        )
+    pool = _build_story_board_candidate_pool(rows, set())
+    assert len(pool) == 5
+    assert len({row["original_name"] for row in pool}) == 5

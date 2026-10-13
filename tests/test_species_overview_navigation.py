@@ -27,7 +27,7 @@ def test_stream_today_visitors_tiles_focus_matching_detection_on_subgallery():
     content = _read_text("templates/stream.html")
 
     assert (
-        "href=\"{{ url_for('gallery.subgallery', date=today_iso, focus=det.detection_id) }}\""
+        "href=\"{{ url_for('gallery.subgallery', date=today_iso, focus=frame.detection_id) }}\""
         in content
     )
 

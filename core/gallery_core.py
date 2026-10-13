@@ -718,6 +718,16 @@ def _rank_story_board_candidates(candidates: list[dict]) -> list[dict]:
     )
 
 
+def _story_board_image_key(det: dict) -> str:
+    return str(
+        det.get("original_name")
+        or det.get("image_filename")
+        or det.get("relative_path")
+        or det.get("image_timestamp")
+        or det.get("detection_id")
+    )
+
+
 def _build_story_board_candidate_pool(
     detections: list[dict],
     cover_detection_ids: set[int],
@@ -738,14 +748,17 @@ def _build_story_board_candidate_pool(
     ranked = _rank_story_board_candidates(detections)
     pool: list[dict] = []
     seen_ids: set[int] = set()
+    seen_images: set[str] = set()
 
     def _append_unique(items: list[dict]) -> None:
         for det in items:
             det_id = int(det.get("detection_id") or 0)
-            if det_id <= 0 or det_id in seen_ids:
+            image_key = _story_board_image_key(det)
+            if det_id <= 0 or det_id in seen_ids or image_key in seen_images:
                 continue
             pool.append(det)
             seen_ids.add(det_id)
+            seen_images.add(image_key)
             if len(pool) >= limit:
                 break
 
@@ -775,7 +788,7 @@ def _build_story_board_candidate_pool(
 def _choose_story_board_frames(
     candidates: list[dict],
     rng: random.Random | None = None,
-    frame_count: int = 3,
+    frame_count: int = 4,
 ) -> tuple[dict | None, list[dict]]:
     """Pick one primary cover and up to ``frame_count`` rotating frames."""
     if not candidates:
@@ -784,7 +797,14 @@ def _choose_story_board_frames(
     if rng is None:
         rng = random.Random()
 
-    ranked = _rank_story_board_candidates(candidates)
+    ranked = []
+    seen_images = set()
+    for det in _rank_story_board_candidates(candidates):
+        image_key = _story_board_image_key(det)
+        if image_key in seen_images:
+            continue
+        seen_images.add(image_key)
+        ranked.append(det)
     # Primary cover preference: manual-favorites first; only fall back to AI
     # picks if there are no manual ones. The "sieh mal mein Lieblingsbild"
     # surface should not get hijacked by a model pick when a human pick
@@ -813,6 +833,9 @@ def _choose_story_board_frames(
         shuffled = extra_pool[:]
         rng.shuffle(shuffled)
         frames.extend(shuffled[: frame_count - 1])
+
+    if frame_count == 4 and len(frames) == 3:
+        frames = frames[:2]
 
     return primary, frames
 
@@ -926,7 +949,7 @@ def build_species_story_board(
             species_detections.get(species_key, []),
             row.get("_cover_detection_ids") or set(),
         )
-        primary, frames = _choose_story_board_frames(candidates, rng=rng, frame_count=3)
+        primary, frames = _choose_story_board_frames(candidates, rng=rng, frame_count=4)
         if not primary:
             continue
 

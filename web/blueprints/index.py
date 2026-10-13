@@ -528,7 +528,7 @@ def index_route():
                 species_pools,
                 total_limit=12,
                 featured_count=3,
-                frame_count=3,
+                frame_count=4,
             )
             best_species_board = view_helpers.enrich_species_board(raw_best_board)
             best_species_preview = best_species_board.get(
