@@ -352,6 +352,10 @@ def create_web_interface(detection_manager, system_monitor=None):
 
     server.register_blueprint(retention_bp)
 
+    from web.blueprints.storage import storage_bp
+
+    server.register_blueprint(storage_bp)
+
     try:
         from web.blueprints.companion import (
             companion_bp,

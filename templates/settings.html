@@ -2373,6 +2373,7 @@
                 <button type="button" class="btn btn--danger" onclick="retentionRun()"
                         title="Start cleanup of eligible originals" aria-label="Run storage retention now">Clean up now</button>
             </div>
+            <p class="settings-field__help mt-3"><a href="{{ url_for('storage.storage_page') }}">Storage usage and protection reasons</a> — measure files and existing protections without cleanup.</p>
             <div id="retentionResult" class="settings-field__help mt-3" role="status"></div>
             <div id="retentionLastRun" class="settings-field__help mt-2" role="status">No cleanup run recorded.</div>
         </div>

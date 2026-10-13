@@ -182,3 +182,21 @@ legacy export bookkeeping tables are left untouched, but no longer created or
 used. `core/training_retention.py` conservatively protects human evidence and
 previously protected legacy signals from automatic original deletion; removing
 an old export must not make those originals newly deletable.
+
+## Storage diagnostics
+
+`core/storage_scan.py` owns one manually started scan per Flask application and
+persists the latest report plus at most 32 measurements via PathManager. Status
+requests read that bounded state; they never enumerate media or rebuild analytics.
+`core/storage_accounting.py` streams known application storage roots and reports
+logical file sizes separately from allocated blocks and filesystem capacity.
+Missing optional scopes, access failures and live changes remain visible. Inactive
+Linux automounts are detected from the kernel mount table and left unmounted.
+
+SQLite diagnostics use a read-only transaction. Connection-local TEMP views limit
+the unchanged canonical exporter to batches of 200 complete images; they never
+modify source tables. Protection attribution reuses the existing training predicate
+and retention decision, with overlapping reasons and a distinct protected union.
+Readiness does not release training protection. The filesystem scan is not atomic;
+concurrent files/DB changes make reclaim estimates provisional. Temporary export
+activity/expiry remains unknown until export jobs have a durable lifecycle registry.

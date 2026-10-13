@@ -2,7 +2,11 @@
 
 import sqlite3
 from datetime import datetime, timedelta
+from pathlib import Path
 
+import pytest
+
+from core.events import BirdEvent
 from utils.db.events import (
     calculate_effort,
     clear_events_cache,
@@ -264,3 +268,173 @@ def test_cached_events_invalidates_when_new_image_arrives():
     _insert(conn, 2, "20260425_180000", "Erithacus_rubecula")
     second = get_events_cached(conn)
     assert len(second) == 2
+
+
+def test_cache_replaces_arrivals_across_ttl_and_bounds_thresholds(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from core import read_cache
+    from utils.db import events
+
+    clear_events_cache()
+    clock = [1.0]
+    monkeypatch.setattr(read_cache, "monotonic", lambda: clock[0])
+    conn = _make_conn()
+    try:
+        for i in range(1, 20):
+            _insert(conn, i, f"20260425_{i:02d}0000", "Erithacus_rubecula")
+            clock[0] += 120
+            assert len(get_events_cached(conn)) == i
+            assert events._cache_state.size() == 1
+        for i in range(20):
+            get_events_cached(conn, min_score=i / 100)
+        assert events._cache_state.size() == 8
+    finally:
+        conn.close()
+        clear_events_cache()
+
+
+def test_cache_does_not_round_distinct_thresholds() -> None:
+    clear_events_cache()
+    conn = _make_conn()
+    _insert(conn, 1, "20260425_120000", "Parus_major")
+    conn.execute("UPDATE detections SET score = 0.95002")
+    assert len(get_events_cached(conn, min_score=0.95001)) == 1
+    assert get_events_cached(conn, min_score=0.95003) == []
+    conn.close()
+    clear_events_cache()
+
+
+def test_cache_separates_databases_and_handles_same_timestamp_correction(
+    tmp_path: Path,
+) -> None:
+    clear_events_cache()
+    source = _make_conn()
+    _insert(source, 1, "20260425_120000", "Parus_major")
+    source.commit()
+    target = sqlite3.connect(tmp_path / "events.db")
+    source.backup(target)
+    target.close()
+    source.close()
+    for journal in ("DELETE", "WAL"):
+        writer = sqlite3.connect(tmp_path / "events.db")
+        writer.row_factory = sqlite3.Row
+        writer.execute(f"PRAGMA journal_mode = {journal}")
+        writer.execute("UPDATE detections SET manual_species_override = 'Parus_major'")
+        writer.commit()
+        reader = sqlite3.connect(tmp_path / "events.db")
+        reader.row_factory = sqlite3.Row
+        assert get_events_cached(reader)[0].species == "Parus_major"
+        writer.execute(
+            "UPDATE detections SET manual_species_override = 'Turdus_merula'"
+        )
+        writer.commit()
+        assert get_events_cached(reader)[0].species == "Turdus_merula"
+        reader.close()
+        reader = sqlite3.connect(tmp_path / "events.db")
+        reader.row_factory = sqlite3.Row
+        assert get_events_cached(reader)[0].species == "Turdus_merula"
+        memory = _make_conn()
+        assert get_events_cached(memory) == []
+        memory.close()
+        writer.close()
+        reader.close()
+        clear_events_cache()
+
+
+def test_cache_reuses_result_across_closed_request_connections(tmp_path: Path) -> None:
+    clear_events_cache()
+    source = _make_conn()
+    _insert(source, 1, "20260425_120000", "Parus_major")
+    source.commit()
+    path = tmp_path / "requests.db"
+    writer = sqlite3.connect(path)
+    source.backup(writer)
+    writer.execute("PRAGMA journal_mode=WAL")
+    writer.close()
+    source.close()
+    reader = sqlite3.connect(path)
+    reader.row_factory = sqlite3.Row
+    first = get_events_cached(reader)
+    reader.close()
+    reader = sqlite3.connect(path)
+    reader.row_factory = sqlite3.Row
+    assert get_events_cached(reader) is first
+    reader.close()
+    writer = sqlite3.connect(path)
+    writer.execute("UPDATE detections SET manual_species_override = 'Turdus_merula'")
+    writer.commit()
+    writer.close()
+    reader = sqlite3.connect(path)
+    reader.row_factory = sqlite3.Row
+    assert get_events_cached(reader)[0].species == "Turdus_merula"
+    reader.close()
+    clear_events_cache()
+
+
+def test_uncommitted_file_changes_do_not_leak_through_cache(tmp_path: Path) -> None:
+    clear_events_cache()
+    source = _make_conn()
+    _insert(source, 1, "20260425_120000", "Parus_major")
+    source.commit()
+    writer = sqlite3.connect(tmp_path / "transaction.db")
+    writer.row_factory = sqlite3.Row
+    source.backup(writer)
+    source.close()
+    first = get_events_cached(writer)
+    writer.execute("UPDATE detections SET manual_species_override = 'Turdus_merula'")
+    assert get_events_cached(writer)[0].species == "Turdus_merula"
+    writer.rollback()
+    assert get_events_cached(writer) is first
+    writer.close()
+    clear_events_cache()
+
+
+def test_concurrent_event_requests_share_one_rebuild(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+
+    from utils.db import events
+
+    clear_events_cache()
+    source = _make_conn()
+    _insert(source, 1, "20260425_120000", "Parus_major")
+    source.commit()
+    path = tmp_path / "parallel.db"
+    writer = sqlite3.connect(path)
+    source.backup(writer)
+    writer.close()
+    source.close()
+    barrier = threading.Barrier(4)
+    entered = threading.Event()
+    release = threading.Event()
+    calls = []
+    original = events.fetch_events_for_analysis
+
+    def build(conn: sqlite3.Connection, *, min_score: float) -> list[BirdEvent]:
+        calls.append(1)
+        entered.set()
+        assert release.wait(3)
+        return original(conn, min_score=min_score)
+
+    monkeypatch.setattr(events, "fetch_events_for_analysis", build)
+
+    def read() -> list[BirdEvent]:
+        reader = sqlite3.connect(path)
+        reader.row_factory = sqlite3.Row
+        try:
+            barrier.wait(timeout=3)
+            return get_events_cached(reader)
+        finally:
+            reader.close()
+
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        jobs = [pool.submit(read) for _ in range(4)]
+        assert entered.wait(3)
+        release.set()
+        results = [job.result(timeout=3) for job in jobs]
+    assert len(calls) == 1
+    assert all(result is results[0] for result in results)
+    clear_events_cache()

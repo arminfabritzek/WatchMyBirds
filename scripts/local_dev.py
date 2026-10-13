@@ -412,6 +412,7 @@ def create_local_app(work: Path) -> Flask:
         "analytics",
         "human_labels",
         "canonical_dataset",
+        "storage",
         "trash",
     }
     allowed_endpoints = {

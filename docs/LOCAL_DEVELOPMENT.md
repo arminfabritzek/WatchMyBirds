@@ -90,8 +90,11 @@ snapshot. Existing login, authorization and CSRF checks remain active.
 
 Server-side outbound sockets, DNS to external hosts and child processes are
 blocked by a process-local Python audit hook. HTTP routes permit browsing,
-media, analytics, local labels, canonical training export and trash/favorites; camera, configuration,
-system management, ingestion, rescans and background operations return 503.
+media, analytics, local labels, canonical training export, manual storage diagnostics
+and trash/favorites; camera, configuration,
+system management, ingestion, rescans and automatic background operations return 503.
+The explicitly started storage scan runs in one background thread against the local
+working copy; it measures files without changing retention settings or media.
 Review day navigation and local review decisions are available; Review Deep Scan
 remains blocked because it schedules background inference. The read-only Settings
 page is available for browser-local Light/Dark selection; configuration writes

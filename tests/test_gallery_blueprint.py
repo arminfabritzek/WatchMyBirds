@@ -23,6 +23,7 @@ from datetime import datetime
 from unittest.mock import MagicMock, patch
 
 import pytest
+from flask.testing import FlaskClient
 
 import config
 from tests.labeling_helpers import post
@@ -223,7 +224,7 @@ def test_species_route_renders(seeded_client):
 
     assert response.status_code == 200
     body = response.get_data(as_text=True)
-    assert 'current_path' not in body  # sanity: template rendered, not echoed
+    assert "current_path" not in body  # sanity: template rendered, not echoed
     assert "species" in body.lower()
 
 
@@ -316,7 +317,7 @@ def test_gallery_review_progress_uses_canonical_human_facts(seeded_client):
     assert 'data-review-progress="1/1"' in reviewed_subgallery
     assert reviewed_subgallery.count('data-review-progress="0/1"') == 1
     assert "data-bird-editor" in reviewed_subgallery
-    assert 'data-current-detection=' in reviewed_subgallery
+    assert "data-current-detection=" in reviewed_subgallery
     assert '"human_review_state": "confirmed"' in reviewed_subgallery
 
     relabeled = post(
@@ -410,3 +411,29 @@ def test_species_answer_response_and_gallery_follow_proposal(seeded_client):
     assert '"human_review_state": "confirmed"' in client.get(
         f"/gallery/{today_iso}"
     ).get_data(as_text=True)
+
+
+def test_human_answer_invalidates_cached_analytics(
+    seeded_client: tuple[FlaskClient, str],
+) -> None:
+    from web.services import cache_service
+
+    client, _ = seeded_client
+    cache_service.clear()
+    cache_service.cached("analytics.summary", 60, lambda: "before correction")
+    with db_connection.closing_connection() as conn:
+        row = conn.execute(
+            "SELECT detection_id, image_filename FROM detections LIMIT 1"
+        ).fetchone()
+    response = post(
+        client,
+        "/api/labels/answer",
+        {
+            "filename": row["image_filename"],
+            "detection_id": row["detection_id"],
+            "species_identity": "corrected",
+            "species_key": "Cyanistes_caeruleus",
+        },
+    )
+    assert response.status_code == 200
+    assert cache_service.size() == 0

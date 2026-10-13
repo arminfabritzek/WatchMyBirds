@@ -297,8 +297,6 @@ def edit_actions_route():
 
 def species_route():
 
-    all_detections = view_helpers.get_captured_detections()
-
     try:
         min_score_param = request.args.get("min_score", type=float)
     except (ValueError, TypeError):
@@ -309,28 +307,12 @@ def species_route():
     else:
         current_threshold = config["GALLERY_DISPLAY_THRESHOLD"]
 
-    if current_threshold > 0:
-        all_detections = [
-            d for d in all_detections if (d.get("score") or 0.0) >= current_threshold
-        ]
-
     favorites_only = bool(request.args.get("favorites", type=int))
-    if favorites_only:
-        all_detections = [d for d in all_detections if gallery_service.is_favorite(d)]
-
-    species_candidates = {}
-    for det in all_detections:
-        species_key = view_helpers.get_species_key(det)
-        species_candidates.setdefault(species_key, []).append(det)
-
-    today_iso = datetime.now().strftime("%Y-%m-%d")
-    species_groups = {}
-    for s_key, candidates in species_candidates.items():
-        chosen = view_helpers.pick_cover_for_group(
-            candidates, seed_key=f"species:{s_key}", date_iso=today_iso
-        )
-        if chosen:
-            species_groups[s_key] = chosen
+    covers = gallery_service.get_species_covers(
+        min_score=current_threshold,
+        favorites_only=favorites_only,
+    )
+    species_groups = {view_helpers.get_species_key(det): det for det in covers}
 
     detections = []
     modal_siblings = gallery_service.get_sibling_detections_batch(
@@ -441,25 +423,14 @@ def species_overview_route():
 
     favorites_only = bool(request.args.get("favorites", type=int))
 
-    all_detections = view_helpers.get_captured_detections()
-
-    filtered = []
-    for det in all_detections:
-        det_species_key = view_helpers.get_species_key(det)
-        if det_species_key != species_key:
-            continue
-        if current_threshold > 0 and (det.get("score") or 0.0) < current_threshold:
-            continue
-        if favorites_only and not gallery_service.is_favorite(det):
-            continue
-        filtered.append(det)
-
-    total_items = len(filtered)
+    page_detections_raw, total_items, page = gallery_service.get_species_page(
+        species_key,
+        min_score=current_threshold,
+        favorites_only=favorites_only,
+        page=page,
+        per_page=PAGE_SIZE,
+    )
     total_pages = math.ceil(total_items / PAGE_SIZE) or 1
-    page = max(1, min(page, total_pages))
-    start_index = (page - 1) * PAGE_SIZE
-    end_index = page * PAGE_SIZE
-    page_detections_raw = filtered[start_index:end_index]
 
     modal_siblings = gallery_service.get_sibling_detections_batch(
         sorted(
@@ -571,56 +542,15 @@ def species_overview_route():
 
 def gallery_route():
 
-    daily_covers = view_helpers.get_daily_covers()
-    detections_by_date = view_helpers.get_captured_detections_by_date()
-    all_detection_ids = [
-        int(det["detection_id"])
-        for detections in detections_by_date.values()
-        for det in detections
-        if det.get("detection_id")
-    ]
-    with db_service.closing_connection() as conn:
-        review_states = human_label_service.fetch_detection_review_states(
-            conn, all_detection_ids
-        )
-    sorted_dates = sorted(daily_covers.keys(), reverse=True)
-
-    days = []
-    for date_str in sorted_dates:
-        data = daily_covers.get(date_str)
-        if not data:
-            continue
-
-        try:
-            dt = datetime.strptime(date_str, "%Y-%m-%d")
-            display_date = dt.strftime("%A, %d. %B %Y")
-        except Exception:
-            display_date = date_str
-
-        day_detection_ids = [
-            int(det["detection_id"])
-            for det in detections_by_date.get(date_str, [])
-            if det.get("detection_id")
-        ]
-        review_progress = human_label_service.summarize_detection_review_progress(
-            review_states, day_detection_ids
-        )
-        days.append(
-            {
-                "date": date_str,
-                "display_date": display_date,
-                "cover_path": data.get("path", ""),
-                "count": data.get("count", 0),
-                "cover_detection_id": data.get("detection_id"),
-                "review_progress": review_progress,
-            }
-        )
-
+    page = request.args.get("page", 1, type=int)
+    days, total_days, page = gallery_service.get_gallery_days(page=page)
     return render_template(
         "gallery.html",
         current_path="/gallery",
         days=days,
         image_width=IMAGE_WIDTH,
+        page=page,
+        total_pages=math.ceil(total_days / 30) or 1,
     )
 
 

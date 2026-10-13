@@ -156,6 +156,13 @@ class PathManager:
         """Return the persisted last-run status for storage retention."""
         return self.base_dir / "retention_status.json"
 
+    def get_storage_usage_path(self) -> Path:
+        """Return the bounded local storage-accounting history."""
+        return self.base_dir / "storage_usage.json"
+
+    def get_database_path(self) -> Path:
+        return self.base_dir / "images.db"
+
     def get_nightly_job_status_path(self, name: str) -> Path:
         """Return the lifecycle status path for one registered job."""
         if not name or any(

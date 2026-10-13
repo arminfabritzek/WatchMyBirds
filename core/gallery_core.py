@@ -1226,3 +1226,72 @@ def regenerate_derivative(
         return False
 
     return False
+
+
+def get_species_covers(*, min_score: float, favorites_only: bool) -> list[dict]:
+    from utils.db.detections import fetch_species_covers
+
+    with closing_connection() as conn:
+        conn.execute("BEGIN")
+        return [
+            dict(row)
+            for row in fetch_species_covers(
+                conn,
+                min_score=min_score,
+                favorites_only=favorites_only,
+            )
+        ]
+
+
+def get_species_page(
+    species: str,
+    *,
+    min_score: float,
+    favorites_only: bool,
+    page: int,
+    per_page: int,
+) -> tuple[list[dict], int, int]:
+    from utils.db.detections import fetch_species_page
+
+    with closing_connection() as conn:
+        conn.execute("BEGIN")
+        rows, total, page = fetch_species_page(
+            conn,
+            species,
+            min_score=min_score,
+            favorites_only=favorites_only,
+            page=page,
+            per_page=per_page,
+        )
+        return [dict(row) for row in rows], total, page
+
+
+def get_gallery_days(*, page: int, per_page: int = 30) -> tuple[list[dict], int, int]:
+    from utils.db.detections import fetch_gallery_days
+
+    with closing_connection() as conn:
+        conn.execute("BEGIN")
+        rows, total, page = fetch_gallery_days(
+            conn,
+            min_score=float(config["GALLERY_DISPLAY_THRESHOLD"]),
+            page=page,
+            per_page=per_page,
+        )
+    days = []
+    for row in rows:
+        thumb = row["thumbnail_path_virtual"]
+        path = (
+            f"/uploads/derivatives/thumbs/{thumb}"
+            if thumb
+            else f"/uploads/derivatives/optimized/{row['relative_path']}"
+        )
+        days.append(
+            {
+                "date": row["date_key"],
+                "cover_path": path,
+                "count": row["image_count"],
+                "cover_detection_id": row["detection_id"],
+                "review_progress": row["review_progress"],
+            }
+        )
+    return days, total, page

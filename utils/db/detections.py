@@ -497,7 +497,9 @@ def fetch_detections_for_gallery(
     params: list[Any] = []
     where_clauses = [_gallery_visibility_sql("d", "i")]
 
-    if detection_ids:
+    if detection_ids is not None:
+        if not detection_ids:
+            return []
         placeholders = ",".join("?" for _ in detection_ids)
         where_clauses.append(f"d.detection_id IN ({placeholders})")
         params.extend(detection_ids)
@@ -510,8 +512,8 @@ def fetch_detections_for_gallery(
 
     # Sort order
     if order_by == "time":
-        order_clause = "ORDER BY d.created_at DESC"
-        outer_order_clause = "ORDER BY v.created_at DESC"
+        order_clause = "ORDER BY d.created_at DESC, d.detection_id DESC"
+        outer_order_clause = "ORDER BY v.created_at DESC, v.detection_id DESC"
     else:  # default "score"
         order_clause = "ORDER BY d.score DESC, i.timestamp DESC"
         outer_order_clause = "ORDER BY v.score DESC, v.image_timestamp DESC"
@@ -1153,7 +1155,11 @@ def fetch_hourly_counts(
 
 
 def fetch_daily_covers(
-    conn: sqlite3.Connection, min_score: float = 0.0
+    conn: sqlite3.Connection,
+    min_score: float = 0.0,
+    *,
+    start_date: str | None = None,
+    end_date: str | None = None,
 ) -> list[sqlite3.Row]:
     """
     Returns the best detection (highest rating, then score) for each day to use as a cover.
@@ -1162,19 +1168,25 @@ def fetch_daily_covers(
     Args:
         min_score: Minimum score threshold for counting images (to match gallery display filter)
     """
+    date_filter = ""
+    bounds: list[str] = []
+    if start_date and end_date:
+        date_filter = "AND i.timestamp >= ? AND i.timestamp < ?"
+        bounds = [_day_bounds(start_date)[0], _day_bounds(end_date)[1]]
     query = f"""
     WITH DailyBest AS (
         SELECT
-            (substr(d.image_filename, 1, 4) || '-' || substr(d.image_filename, 5, 2) || '-' || substr(d.image_filename, 7, 2)) as date_iso,
+            (substr(i.timestamp, 1, 4) || '-' || substr(i.timestamp, 5, 2) || '-' || substr(i.timestamp, 7, 2)) as date_iso,
             d.detection_id,
             d.image_filename,
             i.filename as original_name,
+            i.timestamp as image_timestamp,
             d.bbox_x, d.bbox_y, d.bbox_w, d.bbox_h,
             d.od_class_name,
             d.score,
             d.thumbnail_path,
             ROW_NUMBER() OVER (
-                PARTITION BY (substr(d.image_filename, 1, 4) || '-' || substr(d.image_filename, 5, 2) || '-' || substr(d.image_filename, 7, 2))
+                PARTITION BY (substr(i.timestamp, 1, 4) || '-' || substr(i.timestamp, 5, 2) || '-' || substr(i.timestamp, 7, 2))
                 -- Cover ranking, highest priority first:
                 --   1. manual rating
                 --   2. PTZ preset bias — frames captured while the camera was
@@ -1190,30 +1202,30 @@ def fetch_daily_covers(
                              ELSE 0
                          END DESC,
                          COALESCE(d.aesthetic_score, -1) DESC,
-                         d.score DESC
+                         d.score DESC, d.detection_id DESC
             ) as rn
         FROM detections d
         JOIN images i ON d.image_filename = i.filename
-        WHERE {_gallery_visibility_sql("d", "i")}
+        WHERE {_gallery_visibility_sql("d", "i")} {date_filter}
     ),
     DayCounts AS (
         SELECT
-            (substr(d.image_filename, 1, 4) || '-' || substr(d.image_filename, 5, 2) || '-' || substr(d.image_filename, 7, 2)) as date_iso,
+            (substr(i.timestamp, 1, 4) || '-' || substr(i.timestamp, 5, 2) || '-' || substr(i.timestamp, 7, 2)) as date_iso,
             COUNT(*) as image_count
         FROM detections d
         JOIN images i ON d.image_filename = i.filename
-        WHERE {_gallery_visibility_sql("d", "i")}
+        WHERE {_gallery_visibility_sql("d", "i")} {date_filter}
         AND (d.score IS NULL OR d.score >= ?)
-        GROUP BY (substr(d.image_filename, 1, 4) || '-' || substr(d.image_filename, 5, 2) || '-' || substr(d.image_filename, 7, 2))
+        GROUP BY (substr(i.timestamp, 1, 4) || '-' || substr(i.timestamp, 5, 2) || '-' || substr(i.timestamp, 7, 2))
     )
     SELECT
         db.date_iso as date_key,
         db.detection_id,
         REPLACE(db.original_name, '.jpg', '.webp') as optimized_name_virtual,
-        (substr(db.image_filename, 1, 4) || '-' || substr(db.image_filename, 5, 2) || '-' || substr(db.image_filename, 7, 2) || '/' ||
+        (substr(db.image_timestamp, 1, 4) || '-' || substr(db.image_timestamp, 5, 2) || '-' || substr(db.image_timestamp, 7, 2) || '/' ||
          REPLACE(db.original_name, '.jpg', '.webp')) AS relative_path,
         db.bbox_x, db.bbox_y, db.bbox_w, db.bbox_h,
-        (substr(db.image_filename, 1, 4) || '-' || substr(db.image_filename, 5, 2) || '-' || substr(db.image_filename, 7, 2) || '/' ||
+        (substr(db.image_timestamp, 1, 4) || '-' || substr(db.image_timestamp, 5, 2) || '-' || substr(db.image_timestamp, 7, 2) || '/' ||
          COALESCE(db.thumbnail_path, REPLACE(db.original_name, '.jpg', '_crop_1.webp'))) AS thumbnail_path_virtual,
         dc.image_count
     FROM DailyBest db
@@ -1221,7 +1233,7 @@ def fetch_daily_covers(
     WHERE db.rn = 1
     ORDER BY date_key DESC;
     """
-    cur = conn.execute(query, (min_score,))
+    cur = conn.execute(query, (*bounds, *bounds, min_score))
     return cur.fetchall()
 
 
@@ -1844,3 +1856,194 @@ def fetch_bbox_centers(
     """
     cur = conn.execute(query)
     return cur.fetchall()
+
+
+def _species_listing_sql(
+    min_score: float, favorites_only: bool, *, extra_join: str = ""
+) -> tuple[str, list[Any]]:
+    where = _gallery_visibility_sql("d", "i")
+    params: list[Any] = []
+    if min_score > 0:
+        where += " AND COALESCE(d.score, 0) >= ?"
+        params.append(min_score)
+    if favorites_only:
+        where += " AND COALESCE(d.is_favorite, 0) != 0"
+    return (
+        f"""
+        FROM detections d
+        JOIN images i ON i.filename = d.image_filename
+        LEFT JOIN classifications c ON c.detection_id = d.detection_id
+            AND c.rank = 1 AND COALESCE(c.status, 'active') = 'active'
+        {extra_join}
+        WHERE {where}
+    """,
+        params,
+    )
+
+
+def fetch_species_page(
+    conn: sqlite3.Connection,
+    species: str,
+    *,
+    min_score: float = 0,
+    favorites_only: bool = False,
+    page: int = 1,
+    per_page: int = 50,
+) -> tuple[list[sqlite3.Row], int, int]:
+    """Filter/count in SQLite, then hydrate only the requested page."""
+    listing, params = _species_listing_sql(min_score, favorites_only)
+    listing += f" AND {_effective_species_joined_sql('d', 'c')} = ?"
+    params.append(species)
+    total = int(conn.execute("SELECT COUNT(*) " + listing, params).fetchone()[0])
+    per_page = max(1, min(int(per_page), 100))
+    page = max(1, min(page, max(1, (total + per_page - 1) // per_page)))
+    ids = [
+        int(row[0])
+        for row in conn.execute(
+            "SELECT d.detection_id "
+            + listing
+            + " ORDER BY d.created_at DESC, d.detection_id DESC LIMIT ? OFFSET ?",
+            [*params, per_page, (page - 1) * per_page],
+        )
+    ]
+    return (
+        fetch_detections_for_gallery(conn, detection_ids=ids, order_by="time"),
+        total,
+        page,
+    )
+
+
+def fetch_species_covers(
+    conn: sqlite3.Connection,
+    *,
+    min_score: float = 0,
+    favorites_only: bool = False,
+) -> list[sqlite3.Row]:
+    """Choose one cover per species without hydrating historical candidates."""
+    bbox, join = effective_bbox_projection_sql(conn)
+    listing, params = _species_listing_sql(min_score, favorites_only, extra_join=join)
+    species = _effective_species_joined_sql("d", "c")
+    interior = f"""{bbox[2]} > 0 AND {bbox[3]} > 0
+        AND {bbox[0]} > 0.01 AND {bbox[1]} > 0.01
+        AND ({bbox[0]} + {bbox[2]}) < 0.99 AND ({bbox[1]} + {bbox[3]}) < 0.99"""
+    ids = [
+        int(row[0])
+        for row in conn.execute(
+            f"""
+        WITH candidates AS (
+            SELECT d.detection_id, {species} AS species_key, d.score,
+                CASE
+                    WHEN COALESCE(d.is_favorite, 0) != 0 THEN 5
+                    WHEN i.ptz_origin IN ('preset', 'manual_drive')
+                        AND COALESCE(d.is_gallery_eligible, 0) != 0 THEN 4
+                    WHEN i.ptz_origin IN ('preset', 'manual_drive') THEN 3
+                    WHEN COALESCE(d.is_gallery_eligible, 0) != 0 THEN 2
+                    WHEN {interior} THEN 1 ELSE 0
+                END AS priority
+            {listing}
+        ), ranked AS (
+            SELECT detection_id, ROW_NUMBER() OVER (
+                PARTITION BY species_key ORDER BY priority DESC,
+                    CASE WHEN priority >= 2 THEN RANDOM() ELSE 0 END,
+                    COALESCE(score, 0) DESC, detection_id DESC
+            ) AS rn FROM candidates
+        )
+        SELECT detection_id FROM ranked WHERE rn = 1
+    """,
+            params,
+        )
+    ]
+    rows = []
+    for start in range(0, len(ids), 500):
+        rows.extend(
+            fetch_detections_for_gallery(conn, detection_ids=ids[start : start + 500])
+        )
+    return rows
+
+
+def fetch_gallery_days(
+    conn: sqlite3.Connection,
+    *,
+    min_score: float = 0,
+    page: int = 1,
+    per_page: int = 30,
+) -> tuple[list[dict[str, Any]], int, int]:
+    """Return paged covers and SQL review totals, never historical detail lists."""
+    day = "substr(i.timestamp, 1, 8)"
+    base = f"""FROM detections d JOIN images i ON i.filename = d.image_filename
+        WHERE {_gallery_visibility_sql("d", "i")}
+        GROUP BY {day} HAVING SUM(d.score IS NULL OR d.score >= ?) > 0"""
+    total = int(
+        conn.execute(
+            "SELECT COUNT(*) FROM (SELECT 1 " + base + ")", (min_score,)
+        ).fetchone()[0]
+    )
+    per_page = max(1, min(int(per_page), 100))
+    page = max(1, min(page, max(1, (total + per_page - 1) // per_page)))
+    dates = [
+        str(row[0])
+        for row in conn.execute(
+            f"SELECT {day} " + base + f" ORDER BY {day} DESC LIMIT ? OFFSET ?",
+            (min_score, per_page, (page - 1) * per_page),
+        )
+    ]
+    if not dates:
+        return [], total, page
+
+    def to_iso(value: str) -> str:
+        return f"{value[:4]}-{value[4:6]}-{value[6:8]}"
+
+    covers = fetch_daily_covers(
+        conn, min_score, start_date=to_iso(dates[-1]), end_date=to_iso(dates[0])
+    )
+    has_facts = (
+        conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE name = 'current_human_label_facts'"
+        ).fetchone()
+        is not None
+    )
+    reviewed = boxes = "0"
+    if has_facts:
+        reviewed = """(EXISTS (
+            SELECT 1 FROM current_human_label_facts f
+            WHERE f.scope = 'object' AND f.detection_id = d.detection_id
+                AND f.assertion_state = 'asserted' AND (
+                    (f.fact_type = 'bird_presence' AND f.answer_value = 'absent') OR
+                    (f.fact_type = 'species_identity' AND f.answer_value IN ('confirmed', 'corrected', 'unknown'))
+                )
+        ) OR EXISTS (
+            SELECT 1 FROM current_human_label_facts f
+            WHERE f.scope = 'image' AND f.image_filename = i.filename
+                AND f.assertion_state = 'asserted'
+                AND f.fact_type = 'bird_presence' AND f.answer_value = 'absent'
+        ))"""
+        boxes = """EXISTS (
+            SELECT 1 FROM current_human_label_facts f WHERE f.detection_id = d.detection_id
+                AND f.scope = 'object' AND f.assertion_state = 'asserted'
+                AND f.fact_type = 'bbox_quality' AND f.answer_value IN ('suitable', 'unsuitable')
+        )"""
+    progress = {
+        str(row["day"]): dict(row)
+        for row in conn.execute(
+            f"""
+        SELECT {day} AS day, COUNT(*) AS total, SUM({reviewed}) AS reviewed,
+            SUM({boxes}) AS boxes_reviewed
+        FROM detections d JOIN images i ON i.filename = d.image_filename
+        WHERE {_gallery_visibility_sql("d", "i")} AND i.timestamp >= ? AND i.timestamp < ?
+        GROUP BY {day}
+    """,
+            (dates[-1], _day_bounds(to_iso(dates[0]))[1]),
+        )
+    }
+    result = []
+    for cover in covers:
+        item = dict(cover)
+        counts = progress[item["date_key"].replace("-", "")]
+        item["review_progress"] = {
+            key: int(counts[key]) for key in ("total", "reviewed", "boxes_reviewed")
+        }
+        item["review_progress"]["complete"] = (
+            counts["total"] > 0 and counts["total"] == counts["reviewed"]
+        )
+        result.append(item)
+    return result, total, page

@@ -82,6 +82,13 @@ thumbnail is not cropped again. Image actions and detail modals stay shared.
 Best of Species initially shows the first three species; native Show more
 expands the remaining cards. Today's Visitors keeps all selected species visible.
 
+## Gallery day navigation
+
+The Gallery overview shows 30 days per server-rendered page, newest first.
+Previous/Next links retain access to older days. Review totals describe visible
+offered detections for each day and count current human facts only; pagination
+does not change the shared image or detail-modal interactions.
+
 ## 0c. Detail Modal Companion Visibility (binding)
 
 When the user opens an **image-detail modal** — clicked through from
@@ -1870,7 +1877,14 @@ and species answers continue through their normal controls.
 8. Continuity batch approvals (§6c) **must** post to `/api/review/event-approve` without an `event_key` and **must** filter `data-batch-context-detection-ids` out of the payload before posting. The server-side guard (refusal on `images.review_status='confirmed_bird'`) is the second line of defence, not the first.
 9. Species colour slots (§6d) are workspace-scoped, deterministic, and assigned across the union of (actionable events ∪ context anchors ∪ orphans). Per-event recomputation is forbidden — the same scientific name must keep one slot across the rail, the event-mode detection grid, the orphan modal, the batch stage, and the canvas bbox stroke.
 10. New surfaces that ship a bbox overlay must read the species slot from the host element's `data-species-colour` (or `box.speciesColour` on the canvas side), not from the legacy `BBOX_COLORS` rotation.
-11. Storage Retention lives as a Settings panel (`#panelRetention`), reusing the standard `settings-panel` / `settings-field` shells — it introduces no new image-bearing surface. When the retention policy has deleted an original, the original-serving routes (`/uploads/originals/...`, `/api/image/download/...`) return `410 Gone` with a human-readable message; gallery/stats/modals keep working off derivatives. (V1.1 will additionally hide the modal Download control when `original_present = 0`.)
+11. Storage usage (`/storage`) is an authenticated, non-image diagnostic page linked
+    from the Settings retention panel. One explicit Measure storage action starts
+    a background scan; normal page/status reads use the saved result. Show measured
+    file categories, filesystem free space, SQLite reuse, overlapping protection
+    reasons and their union separately. Show scan time, progress, partial errors,
+    unavailable scopes and bounded growth history. Offer no cleanup action or
+    automatic release of training protection on this page.
+12. Storage Retention lives as a Settings panel (`#panelRetention`), reusing the standard `settings-panel` / `settings-field` shells — it introduces no new image-bearing surface. When the retention policy has deleted an original, the original-serving routes (`/uploads/originals/...`, `/api/image/download/...`) return `410 Gone` with a human-readable message; gallery/stats/modals keep working off derivatives. (V1.1 will additionally hide the modal Download control when `original_present = 0`.)
 
 ## 7. Guided Recovery (non-image settings workflow)
 

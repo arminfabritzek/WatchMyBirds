@@ -14,6 +14,9 @@
 - Review supports day navigation and adding missing birds to stored images,
   with overlap checks that preserve existing bird identities and history.
 
+- Storage usage reports measured files, database reuse and overlapping
+  original-protection reasons through an authenticated background scan.
+
 ### Changed
 
 - Gallery, Review and Training Export share canonical bird identities, including
@@ -22,8 +25,13 @@
 - Homepage species cards show up to four distinct source photos in equal rows;
   Best of Species expands additional species through Show more.
 
+- Gallery day lists and species details use paginated database queries,
+  keeping older dates accessible while limiting loaded records.
+
 ### Fixed
 
+- Read caches remain bounded as images arrive and combine concurrent
+  rebuilds; saved human corrections invalidate cached analytics.
 - Geographic species ranking resolves documented scientific-name synonyms
   locally and preserves the original image ranking when bird candidates cannot
   all be mapped, preventing unmatched names from gaining a ranking advantage.
