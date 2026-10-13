@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.5.9 - 2026-10-13
+
 ### Added
 
 - Species classification can use the configured location and capture season
