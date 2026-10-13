@@ -9,6 +9,18 @@
   human corrections without installation-specific species rules.
 - Optional local UI development uses verified copies of appliance bird data,
   keeping edits local while camera controls and background jobs remain disabled.
+- An offline training-export checker validates canonical bundles and creates
+  private visual reports with independent box and species overlays.
+- Review supports day navigation and adding missing birds to stored images,
+  with overlap checks that preserve existing bird identities and history.
+
+### Changed
+
+- Gallery, Review and Training Export share canonical bird identities, including
+  manually added birds. Box training requires completely assessed positive frames.
+  The legacy User-Groundtruth pages and download endpoints are removed.
+- Homepage species cards show up to four distinct source photos in equal rows;
+  Best of Species expands additional species through Show more.
 
 ### Fixed
 
@@ -27,6 +39,13 @@
   updates, preventing stale editing controls without manual version changes.
 - Species review now distinguishes a confirmed model proposal from a corrected
   species, including in earlier labels shown in the gallery.
+- Homepage image modals refresh saved human answers independently of cached
+  photo selections; species confirmation and withdrawal follow the label state.
+- Restoring dismissed birds preserves their corrections and history, and human
+  evidence remains protected during retention cleanup.
+- Telemetry tooling uses updated dependencies to address known vulnerabilities.
+- PTZ preset diagnostics retain structured fault codes and the preceding
+  motion command.
 - Live-view Overview controls now report failed preset requests, prompt for
   login when the session expires, and clear the return countdown only after
   the server accepts the request.
