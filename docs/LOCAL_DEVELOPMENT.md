@@ -93,7 +93,9 @@ blocked by a process-local Python audit hook. HTTP routes permit browsing,
 media, analytics, local labels, canonical training export, manual storage diagnostics
 and trash/favorites; camera, configuration,
 system management, ingestion, rescans and automatic background operations return 503.
-The explicitly started storage scan runs in one background thread against the local
+The ordinary station report uses one automatic derived-view worker against the
+local database copy; it performs no inference, capture or retention. The
+explicitly started storage scan runs in one background thread against the local
 working copy; it measures files without changing retention settings or media.
 Review day navigation and local review decisions are available; Review Deep Scan
 remains blocked because it schedules background inference. The read-only Settings

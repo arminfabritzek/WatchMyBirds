@@ -12,9 +12,20 @@ Handles analytics routes:
 from calendar import month_abbr, monthrange
 from collections import Counter
 from datetime import date, datetime, timedelta
+from threading import Lock
 
 import numpy as np
-from flask import Blueprint, jsonify, render_template, request
+from flask import (
+    Blueprint,
+    Response,
+    abort,
+    current_app,
+    jsonify,
+    make_response,
+    render_template,
+    request,
+)
+from flask.blueprints import BlueprintSetupState
 
 from config import get_config
 from core.biodiversity import (
@@ -45,7 +56,7 @@ from utils.db.analytics import (
 )
 from utils.db.events import EffortStats, calculate_effort, get_events_cached
 from web.security import error_response_simple as _error_response_simple
-from web.services import cache_service, db_service
+from web.services import cache_service, db_service, station_service
 
 logger = get_logger(__name__)
 
@@ -851,8 +862,8 @@ def analytics_quality_metrics_api():
         return _error_response_simple("Quality metrics API error", exc)
 
 
-@analytics_bp.route("/analytics", methods=["GET"])
-def analytics_page():
+@analytics_bp.route("/analytics/diagnostic", methods=["GET"])
+def diagnostic_analytics_page():
     """Render the station report from one canonical BirdEvent cohort."""
     cfg = get_config()
     min_score = cfg["GALLERY_DISPLAY_THRESHOLD"]
@@ -1192,3 +1203,57 @@ def analytics_page():
         presence_calendar=presence_calendar,
         current_path="/analytics",
     )
+
+
+@analytics_bp.record
+def _initialize_report_lock(state: BlueprintSetupState) -> None:
+    state.app.extensions["station_report_lock"] = Lock()
+
+
+def _report_status() -> tuple[dict, dict[str, str]]:
+    try:
+        selection = station_service.validate_selection(
+            request.args.get("start", ""),
+            request.args.get("end", ""),
+            request.args.get("source", "all"),
+        )
+    except ValueError as exc:
+        abort(400, description=str(exc))
+    with current_app.extensions["station_report_lock"]:
+        cache = current_app.extensions.get("station_report")
+        if cache is None:
+            cache = station_service.create_report_cache()
+            current_app.extensions["station_report"] = cache
+    return cache.status(selection), selection
+
+
+@analytics_bp.route("/analytics", methods=["GET"])
+def analytics_page() -> Response:
+    from web import view_helpers
+
+    status, selection = _report_status()
+    report = status["report"]
+    highlights = (
+        view_helpers.build_station_views(report["highlights"]) if report else []
+    )
+    response = make_response(
+        render_template(
+            "station_report.html",
+            status=status,
+            report=report,
+            highlights=highlights,
+            common_name_for_species=view_helpers.get_common_name,
+            selection=selection,
+            current_path="/analytics",
+        )
+    )
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+@analytics_bp.route("/api/station-report", methods=["GET"])
+def station_report_status() -> Response:
+    status, _ = _report_status()
+    response = jsonify(state=status["state"], revision=status["revision"])
+    response.headers["Cache-Control"] = "no-store"
+    return response

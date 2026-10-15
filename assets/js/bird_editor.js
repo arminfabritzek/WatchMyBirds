@@ -189,7 +189,7 @@
         const body = { filename: filename, detection_id: draft.detectionId };
         const moved = !sameBox(draft.bbox, initial.bbox);
         if (moved) body.bbox_correction = draft.bbox;
-        if (draft.speciesKey !== initial.speciesKey) {
+        if (draft.speciesKey !== initial.speciesKey || draft.explicitSpeciesAnswer) {
             body.species_identity = draft.speciesKey ? 'corrected' : 'unknown';
             body.species_key = draft.speciesKey;
         }
@@ -274,6 +274,8 @@
         const layer = viewer && viewer.querySelector('[data-bird-editor-layer]');
         if (!root || !viewer || !img || !layer || !window.WmBboxMath) return;
         modal.dataset.birdEditorReady = 'true';
+        const subscriptions = new AbortController();
+        const listenerOptions = { signal: subscriptions.signal };
 
         const currentRaw = readJson(viewer.dataset.currentDetection, {});
         const siblingRaw = readJson(viewer.dataset.siblings, []);
@@ -329,7 +331,7 @@
             if (draft.objectKind === 'manual' && !draft.manualObjectId) return true;
             return !!initialDraft && (
                 !sameBox(draft.bbox, initialDraft.bbox) ||
-                draft.speciesKey !== initialDraft.speciesKey ||
+                draft.speciesKey !== initialDraft.speciesKey || draft.explicitSpeciesAnswer ||
                 (draft.bboxVerdict || null) !== (initialDraft.bboxVerdict || null)
             );
         }
@@ -463,7 +465,6 @@
             }
             const g = geometry();
             if (img.clientWidth <= 0 || img.clientHeight <= 0 || g.contentW <= 0 || g.contentH <= 0) return;
-            root.style.width = img.clientWidth + 'px';
             layer.style.left = g.left + 'px';
             layer.style.top = g.top + 'px';
             layer.style.width = img.clientWidth + 'px';
@@ -793,11 +794,15 @@
             layer.classList.toggle('is-adding', mode === 'add');
             drawHint.hidden = mode !== 'add';
             const dismissed = item && item.objectStatus === 'rejected';
+            root.querySelectorAll('[data-editor-action="confirm-species"]').forEach(function (button) {
+                button.disabled = saving || stale || editing || dismissed || !item || !item.speciesKey || item.objectKind !== 'detection';
+            });
             adjustButton.hidden = editing || dismissed;
             restoreButton.hidden = editing || !dismissed;
             restoreButton.disabled = saving || stale;
-            const rejectButton = root.querySelector('[data-editor-action="no-bird"]');
-            if (rejectButton) rejectButton.hidden = !!dismissed;
+            root.querySelectorAll('[data-editor-action="no-bird"]').forEach(function (button) {
+                button.hidden = !!dismissed;
+            });
             addButton.hidden = editing;
             placeButton.hidden = mode !== 'add';
             cancelButton.hidden = !editing;
@@ -1192,8 +1197,9 @@
                     saved = clone(savingDraft);
                     saved.bboxVerdict = payload.review_state.bbox_verdict || null;
                     delete saved.bboxVerdictTouched;
-                    if (savingDraft.speciesKey !== savingInitial.speciesKey) {
-                        saved.needsReview = !savingDraft.speciesKey;
+                    delete saved.explicitSpeciesAnswer;
+                    if (savingDraft.speciesKey !== savingInitial.speciesKey || savingDraft.explicitSpeciesAnswer) {
+                        saved.needsReview = false;
                         const reviewState = payload.review_state?.state;
                         saved.humanReviewState = reviewState || (
                             savingDraft.speciesKey ? 'corrected' : 'reviewed_unknown'
@@ -1217,6 +1223,27 @@
                 saving = false;
                 render(error.message || 'Unable to save bird');
                 if (window.wmToast) window.wmToast(error.message || 'Unable to save bird', 'error', 4200);
+            }
+        }
+
+        async function resolveImagePresence() {
+            if (saving || stale || mode !== 'browse' || !requireAuth()) return;
+            saving = true;
+            try {
+                const response = await fetch('/api/labels/answer', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ filename: root.dataset.filename, image_bird_presence: 'present' })
+                });
+                const payload = await response.json();
+                if (!response.ok || payload.status !== 'success') throw new Error(payload.message || 'Unable to save');
+                const notice = root.querySelector('[data-review-conflict]');
+                if (notice) notice.hidden = true;
+                saving = false;
+                render('Whole-image answer corrected · current object answers retained');
+                broadcastObjects();
+            } catch (error) {
+                saving = false;
+                render(error.message || 'Unable to save');
             }
         }
 
@@ -1314,7 +1341,21 @@
             const control = event.target.closest('[data-editor-action]');
             if (!control) return;
             const action = control.dataset.editorAction;
-            if (action === 'adjust') beginEdit();
+            if (action === 'confirm-species') {
+                const item = current();
+                if (item && mode === 'browse' && item.objectStatus !== 'rejected') confirmSpecies(item.objectKey, control);
+            } else if (action === 'choose-species') chooseSpecies(selectedKey);
+            else if (action === 'unknown-species') {
+                const item = current();
+                if (!item || stale || mode !== 'browse' || item.objectStatus === 'rejected' || !requireAuth()) return;
+                initialDraft = clone(item);
+                draft = clone(item);
+                draft.speciesKey = null;
+                draft.commonName = 'Bird · species unknown';
+                draft.explicitSpeciesAnswer = true;
+                mode = 'edit';
+                save();
+            } else if (action === 'adjust') beginEdit();
             else if (action === 'add') beginAdd();
             else if (action === 'place') {
                 draft = {
@@ -1334,6 +1375,7 @@
             else if (action === 'menu') openMenu();
             else if (action === 'retract') retractManualObject();
             else if (action === 'no-bird') rejectSelectedBird();
+            else if (action === 'image-has-bird') resolveImagePresence();
             else if (action === 'restore') restoreSelectedBird();
             else if (action === 'bbox-verdict') {
                 const item = current();
@@ -1559,9 +1601,10 @@
             if (menu && menu.classList.contains('wm-toolbox__dropdown--open') && !event.target.closest('.wm-bird-editor__menu')) {
                 closeMenu();
             }
-        });
-        window.addEventListener('resize', syncLayer);
-        new MutationObserver(syncLayer).observe(img, { attributes: true, attributeFilter: ['style'] });
+        }, listenerOptions);
+        window.addEventListener('resize', syncLayer, listenerOptions);
+        const imageObserver = new MutationObserver(syncLayer);
+        imageObserver.observe(img, { attributes: true, attributeFilter: ['style'] });
         function syncFinishedTransform(event) {
             if (event.target === img && event.propertyName === 'transform') syncLayer();
         }
@@ -1572,11 +1615,12 @@
            ancestor, and the modal's flex column reflows the image when the
            editor rail claims its height. A ResizeObserver catches every such
            case; the listeners above stay for browsers that fire them first. */
+        let sizeObserver;
         if (typeof ResizeObserver === 'function') {
-            const observer = new ResizeObserver(function () { syncLayer(); });
-            observer.observe(img);
+            sizeObserver = new ResizeObserver(function () { syncLayer(); });
+            sizeObserver.observe(img);
             const region = viewer.closest('.wm-modal__image');
-            if (region) observer.observe(region);
+            if (region) sizeObserver.observe(region);
         }
         document.addEventListener('wmb:bird-objects-updated', function (event) {
             const detail = event.detail || {};
@@ -1593,7 +1637,7 @@
             }
             viewer.dataset.siblings = JSON.stringify(detail.objects);
             render('Updated from another view');
-        });
+        }, listenerOptions);
         document.addEventListener('wmb:favorite-updated', function (event) {
             const detail = event.detail || {};
             const item = objects.find(function (candidate) {
@@ -1602,7 +1646,13 @@
             if (!item) return;
             item.isFavorite = Boolean(detail.isFavorite);
             if (item.objectKey === selectedKey) render();
-        });
+        }, listenerOptions);
+        modal._wmBirdEditorDispose = function () {
+            subscriptions.abort();
+            imageObserver.disconnect();
+            if (sizeObserver) sizeObserver.disconnect();
+            sharedObjectCache.delete(root.dataset.filename);
+        };
         render();
         requestAnimationFrame(function () {
             requestAnimationFrame(syncLayer);

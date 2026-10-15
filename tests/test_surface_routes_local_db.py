@@ -211,7 +211,7 @@ def test_local_sqlite_routes_render_species_colour_attrs(seeded_client):
 def test_local_sqlite_review_routes_render_real_continuity_batch(seeded_client):
     client, _today_iso = seeded_client
 
-    review_response = client.get("/admin/review")
+    review_response = client.get("/admin/review?diagnostic=1")
     assert review_response.status_code == 200
     review_body = review_response.get_data(as_text=True)
     # Review Grid is the default surface. The legacy
@@ -324,7 +324,7 @@ def test_review_lazy_modal_preserves_siblings_and_retention_guards(
         )
         conn.commit()
 
-    page = client.get("/admin/review")
+    page = client.get("/admin/review?diagnostic=1")
     assert page.status_code == 200
     body = page.get_data(as_text=True)
     assert "gallery-modal wm-modal" not in body

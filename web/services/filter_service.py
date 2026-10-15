@@ -15,7 +15,7 @@ from typing import Literal
 from config import get_config
 from core.species_names_core import UNKNOWN_SPECIES_KEY, species_key_from_candidates
 from logging_config import get_logger
-from web.services import db_service, gallery_service
+from web.services import db_service, gallery_service, station_service
 
 logger = get_logger(__name__)
 
@@ -55,6 +55,9 @@ class FilterContext:
     date: str | None = None  # YYYY-MM-DD
 
     # Species Overview surface
+    start: str = ""
+    end: str = ""
+    source: str = "all"
     species_key: str | None = None  # e.g. "Parus_major"
 
     # Score / confidence thresholds
@@ -83,6 +86,11 @@ class FilterContext:
             surface=data.get("surface", "gallery"),
             date=data.get("date"),
             species_key=species_key,
+            **station_service.validate_selection(
+                str(data.get("start") or ""),
+                str(data.get("end") or ""),
+                str(data.get("source") or "all"),
+            ),
             min_score=float(raw_min_score) if min_score_explicit else 0.0,
             min_conf=float(data.get("min_conf", 0.0)),
             min_score_explicit=min_score_explicit,
@@ -142,10 +150,7 @@ def _resolve_gallery(ctx: FilterContext) -> ResolvedSelection:
     if not ctx.date:
         return ResolvedSelection()
 
-    config = get_config()
-    threshold = (
-        ctx.min_score if ctx.min_score_explicit else config["GALLERY_DISPLAY_THRESHOLD"]
-    )
+    threshold = ctx.min_score if ctx.min_score_explicit else 0.0
 
     with db_service.closing_connection() as conn:
         rows = db_service.fetch_detections_for_gallery(conn, ctx.date, order_by="time")
@@ -169,31 +174,12 @@ def _resolve_gallery(ctx: FilterContext) -> ResolvedSelection:
 
 
 def _resolve_species_overview(ctx: FilterContext) -> ResolvedSelection:
-    """Species overview — all detections for one species, filtered by min_score."""
+    """Current species history with the page's period and source selection."""
     if not ctx.species_key:
         return ResolvedSelection()
 
-    config = get_config()
-    threshold = (
-        ctx.min_score if ctx.min_score_explicit else config["GALLERY_DISPLAY_THRESHOLD"]
-    )
-
-    with db_service.closing_connection() as conn:
-        rows = db_service.fetch_detections_for_gallery(conn, order_by="time")
-
-    ids = []
-    for row in rows:
-        row_dict = dict(row)
-        det_species = _resolved_species_key(row_dict)
-        if det_species != ctx.species_key:
-            continue
-        score = row_dict.get("score") or 0.0
-        if threshold > 0 and score < threshold:
-            continue
-        if ctx.favorites_only and not gallery_service.is_favorite(row_dict):
-            continue
-        ids.append(row_dict["detection_id"])
-
+    selection = station_service.validate_selection(ctx.start, ctx.end, ctx.source)
+    ids = station_service.species_selection_ids(ctx.species_key, selection)
     return ResolvedSelection(detection_ids=ids, total_count=len(ids))
 
 

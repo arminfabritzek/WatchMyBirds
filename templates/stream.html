@@ -1712,14 +1712,14 @@
     {% endblock %}
 
     {% block scripts %}
-    <script src="/assets/js/species_picker.js?v=20260920-bird-editor-v5"></script>
-    <script src="/assets/js/gallery_utils.js?v=20260922-bbox-label-v4"></script>
-    <script src="/assets/js/tile_actions.js?v=20260920-bird-editor-v4"></script>
+    <script src="/assets/js/species_picker.js?v={{ asset_version }}"></script>
+    <script src="/assets/js/gallery_utils.js?v={{ asset_version }}"></script>
+    <script src="/assets/js/tile_actions.js?v={{ asset_version }}"></script>
     {% if can_moderate %}
     {# Live auto-PTZ tracking overlay (debug overlay). Controlled by the
        "Live Tracking Overlay" setting; the status endpoint it polls is
        login_required, so it is only included for moderators. #}
-    <script src="/assets/js/tracking_overlay.js?v=20260604-trackoverlay" defer></script>
+    <script src="/assets/js/tracking_overlay.js?v={{ asset_version }}" defer></script>
     {% endif %}
     <script>
         async function startTelegramReportJob(options) {

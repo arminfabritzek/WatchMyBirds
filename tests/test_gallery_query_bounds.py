@@ -1,4 +1,4 @@
-"""SQL selection preserves gallery semantics with bounded detail hydration."""
+"""SQL photo selection and complete species history use bounded detail hydration."""
 
 import sqlite3
 from collections.abc import Iterator
@@ -83,7 +83,7 @@ def test_species_pages_ties_filters_and_empty_selection(
     filtered, count, page = fetch_species_page(
         conn, "Parus_major", min_score=0.5, favorites_only=True, page=999
     )
-    assert count == 1 and page == 1 and filtered[0]["detection_id"] == ids[0]
+    assert count == 105 and page == 3 and len(filtered) == 5
     assert fetch_species_page(conn, "missing", page=-10) == ([], 0, 1)
     assert fetch_detections_for_gallery(conn, detection_ids=[]) == []
     assert fetch_species_page(conn, "Turdus_merula")[0][0]["detection_id"] == other
@@ -119,7 +119,7 @@ def test_species_correction_unknown_visibility_and_companions(
     assert fetch_species_page(conn, "Parus_major")[1] == 0
     rows, total, _ = fetch_species_page(conn, "Cyanistes_caeruleus")
     assert total == 1 and rows[0]["detection_id"] == selected
-    assert fetch_species_page(conn, "Unknown_species")[1] == 1
+    assert fetch_species_page(conn, "Unknown_species")[1] == 0
     siblings = fetch_sibling_detections_batch(conn, [filename])
     assert {r["detection_id"] for r in siblings[filename]} == {selected, companion}
     conn.execute(
@@ -148,7 +148,12 @@ def test_species_covers_preserve_priority_and_hydrate_only_covers(
         assert fetch_species_covers(conn)[0]["detection_id"] == ids[0]
         assert hydrate.call_args.kwargs["detection_ids"] == [ids[0]]
     assert fetch_species_covers(conn, min_score=0.51)[0]["detection_id"] == ids[1]
-    assert fetch_species_covers(conn, min_score=0.51, favorites_only=True) == []
+    assert (
+        fetch_species_covers(conn, min_score=0.51, favorites_only=True)[0][
+            "detection_id"
+        ]
+        == ids[1]
+    )
     conn.execute(
         "UPDATE images SET ptz_origin = 'preset' WHERE filename = (SELECT image_filename FROM detections WHERE detection_id = ?)",
         (ids[2],),

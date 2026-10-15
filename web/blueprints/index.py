@@ -65,7 +65,6 @@ def index_route():
     threshold_24h = now - timedelta(hours=24)
     threshold_str = threshold_24h.strftime("%Y%m%d_%H%M%S")
     today_iso = now.strftime("%Y-%m-%d")
-    gallery_threshold = config["GALLERY_DISPLAY_THRESHOLD"]
 
     def _format_ts_parts(ts: str) -> tuple[str, str, str]:
         if not ts or len(ts) < 15:
@@ -194,9 +193,7 @@ def index_route():
                     conn, threshold_str, order_by="time"
                 )
             ]
-            last_24h_summary = gallery_service.summarize_observations(
-                last_24h_rows, min_score=gallery_threshold
-            )
+            last_24h_summary = gallery_service.summarize_observations(last_24h_rows)
             last_24h_count = last_24h_summary["summary"]["total_observations"]
             dashboard_stats["last_24h_count"] = last_24h_count
         except Exception as e:
@@ -227,9 +224,7 @@ def index_route():
                     conn, today_iso, order_by="time"
                 )
             ]
-            today_summary = gallery_service.summarize_observations(
-                today_rows, min_score=gallery_threshold
-            )
+            today_summary = gallery_service.summarize_observations(today_rows)
         except Exception as e:
             logger.error(f"Error fetching today observation stats: {e}")
 

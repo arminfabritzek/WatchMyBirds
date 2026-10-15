@@ -22,7 +22,7 @@ import math
 import re
 from datetime import datetime
 
-from flask import Blueprint, jsonify, redirect, render_template, request, url_for
+from flask import Blueprint, abort, jsonify, redirect, render_template, request, url_for
 
 from config import get_config
 from core.species_colours import assign_species_colours as _assign_species_colours
@@ -35,6 +35,7 @@ from web.services import (
     gallery_service,
     human_label_service,
     image_download_service,
+    station_service,
 )
 
 logger = get_logger(__name__)
@@ -295,7 +296,19 @@ def edit_actions_route():
     return redirect(_safe_date_redirect("/edit", date_iso))
 
 
+def _station_selection() -> dict[str, str]:
+    try:
+        return station_service.validate_selection(
+            request.args.get("start", ""),
+            request.args.get("end", ""),
+            request.args.get("source", "all"),
+        )
+    except ValueError as exc:
+        abort(400, description=str(exc))
+
+
 def species_route():
+    selection = _station_selection()
 
     try:
         min_score_param = request.args.get("min_score", type=float)
@@ -307,10 +320,11 @@ def species_route():
     else:
         current_threshold = config["GALLERY_DISPLAY_THRESHOLD"]
 
-    favorites_only = bool(request.args.get("favorites", type=int))
+    favorites_only = False
     covers = gallery_service.get_species_covers(
         min_score=current_threshold,
         favorites_only=favorites_only,
+        selection=selection,
     )
     species_groups = {view_helpers.get_species_key(det): det for det in covers}
 
@@ -385,22 +399,30 @@ def species_route():
                     "display_path": display_url,
                     "full_path": full_url,
                     "original_path": original_url,
+                    **station_service.media_paths(det),
                 },
             )
         )
 
+    view_helpers.enrich_modal_review_states(detections)
     return render_template(
         "species.html",
+        selection=selection,
         current_path="/species",
         detections=detections,
         image_width=IMAGE_WIDTH,
         current_threshold=current_threshold,
-        species_count=len(detections),
+        species_count=sum(
+            det["species_key"] != view_helpers.UNKNOWN_SPECIES_KEY
+            and det.get("observation_count", 0) > 0
+            for det in detections
+        ),
         favorites_only=favorites_only,
     )
 
 
 def species_overview_route():
+    selection = _station_selection()
 
     raw_species_key = request.args.get("species_key", type=str) or ""
     species_key = raw_species_key.strip().replace(" ", "_")
@@ -421,7 +443,7 @@ def species_overview_route():
     else:
         current_threshold = config["GALLERY_DISPLAY_THRESHOLD"]
 
-    favorites_only = bool(request.args.get("favorites", type=int))
+    favorites_only = False
 
     page_detections_raw, total_items, page = gallery_service.get_species_page(
         species_key,
@@ -429,6 +451,7 @@ def species_overview_route():
         favorites_only=favorites_only,
         page=page,
         per_page=PAGE_SIZE,
+        selection=selection,
     )
     total_pages = math.ceil(total_items / PAGE_SIZE) or 1
 
@@ -502,6 +525,7 @@ def species_overview_route():
                     "display_path": display_url,
                     "full_path": full_url,
                     "original_path": original_url,
+                    **station_service.media_paths(det),
                 },
             )
         )
@@ -524,8 +548,10 @@ def species_overview_route():
             pagination_range.append("...")
         pagination_range.append(total_pages)
 
+    view_helpers.enrich_modal_review_states(detections)
     return render_template(
         "species_overview.html",
+        selection=selection,
         current_path="/species",
         species_key=species_key,
         species_common_name=view_helpers.get_common_name(species_key),
@@ -571,7 +597,7 @@ def subgallery_route(date):
     if min_score_param is not None:
         current_threshold = min_score_param
     else:
-        current_threshold = config["GALLERY_DISPLAY_THRESHOLD"]
+        current_threshold = 0.0
 
     with db_service.closing_connection() as conn:
         rows = db_service.fetch_detections_for_gallery(conn, date, order_by="time")
@@ -835,7 +861,7 @@ def subgallery_route(date):
             enrich_detection(d)
             for d in sorted(
                 species_groups.values(),
-                key=lambda x: x.get("score", 0),
+                key=lambda x: x.get("score") or 0,
                 reverse=True,
             )
         ]

@@ -44,6 +44,7 @@
 
 <article class="review-grid__card{% if is_batch %} review-grid__card--batch{% endif %} wm-viewer-scope{% if event.species_colour is not none %} review-grid__card--has-species{% endif %}"
          data-review-grid-card
+         {% if event.ordinary_review %}data-ordinary-review="1"{% endif %}
          data-event-key="{{ event.event_key }}"
          data-actionable-detection-ids="{{ _review_members | map(attribute='best_detection_id') | select | join(',') }}"
          data-species="{{ event.selected_species or event.candidate_species or '' }}"
@@ -116,6 +117,17 @@
            No birds in full image uses an outline+warning style to stay
            visually distinct from the filled-red Trash button — one records a
            whole-image answer while the other is housekeeping. #}
+        {% if event.ordinary_review %}
+        <div class="review-grid__card-actions">
+            {% for verb, label in [('invert_selection', 'Invert'), ('approve_event', 'Confirm species'), ('relabel_event', 'Change species'), ('unresolved_event', 'Bird · species unknown'), ('no_bird_event', 'No bird')] %}
+            <button type="button" class="btn btn--secondary btn--sm"
+                    data-review-grid-action="{{ verb }}"
+                    data-scope-label-event="{{ label }}" data-scope-label-selection="{{ label }} ({N})"
+                    data-scope-tip-event="Apply to all open objects in this event"
+                    data-scope-tip-selection="Apply to the {N} selected objects">{{ label }}</button>
+            {% endfor %}
+        </div>
+        {% else %}
         <fieldset class="review-grid__evidence" data-review-grid-evidence>
             <legend>Evidence quality</legend>
             <div class="review-grid__evidence-options" role="group" aria-label="Evidence quality for this event">
@@ -197,6 +209,7 @@
                     title="Move every actionable frame in this event to Trash (not a no-bird label)"
                     aria-label="Move event to Trash">🗑 Trash</button>
         </div>
+        {% endif %}
     </header>
 
     {% if is_batch and is_batch_lead %}
@@ -238,7 +251,7 @@
            "modal-{group_id}-{detection_id}". Card uses group_id =
            "review-{event_key}", so the full selector is
            "#modal-review-{event_key}-{detection_id}". #}
-        {% set member_modal_target = '#modal-review-' ~ event.event_key ~ '-' ~ member.best_detection_id if member.best_detection_id and not member.context_only else none %}
+        {% set member_modal_target = ('#modal-station_review-' ~ member.best_detection_id if event.ordinary_review else '#modal-review-' ~ event.event_key ~ '-' ~ member.best_detection_id) if member.best_detection_id and not member.context_only else none %}
 
         {# Apple-Photos-style tile: just the image, a tiny timestamp,
            a hidden checkbox for selection, and the hover toolbox.
@@ -280,7 +293,7 @@
                 <div class="review-grid__tile-button"
                      data-tile-image
                      {% if member_modal_target %}data-modal-target="{{ member_modal_target }}"
-                     data-modal-url="{{ url_for('review.review_modal_fragment', event_key=event.event_key, detection_id=member.best_detection_id) }}"{% endif %}
+                     {% if not event.ordinary_review %}data-modal-url="{{ url_for('review.review_modal_fragment', event_key=event.event_key, detection_id=member.best_detection_id) }}"{% endif %}{% endif %}
                      {% if not member.context_only and member.best_detection_id %}data-detection-id="{{ member.best_detection_id }}"{% endif %}
                      title="Click to select · double-click to open">
 
@@ -290,6 +303,9 @@
                    full-frame optimized webp (~1280px). Default to the
                    crop since the operator triages "is there a bird?";
                    the toggle in the page header swaps every tile. #}
+                {% if event.ordinary_review and member.media_placeholder %}
+                <span class="station-media-placeholder" role="img" aria-label="No stored image available">No stored image available</span>
+                {% else %}
                 <img class="review-grid__tile-image"
                      src="{{ member.crop_url or member.thumb_url or member.optimized_url }}"
                      data-thumb-src="{{ member.crop_url or member.thumb_url }}"
@@ -304,6 +320,7 @@
                      alt="{{ member.candidate_species_common or member.current_species_common or member.filename }}"
                      loading="lazy"
                      decoding="async">
+                {% endif %}
 
                 {# BBox overlay canvas — only meaningful in Full mode
                    (the crop already centres on the bird). The JS layer
@@ -334,6 +351,11 @@
                     frame_variant='overlay'
                 ) }}
             </div>
+            {% if event.ordinary_review %}
+            {% if member.conflict %}<p class="station-card-meta">Conflicting answers · open the image to resolve the object and whole-image answers.</p>
+            {% elif member.warning %}<p class="station-card-meta">{{ member.warning }}</p>{% endif %}
+            {% if member.media_placeholder %}<p class="station-card-meta">No stored image available</p>{% endif %}
+            {% endif %}
         </div>
         {% endfor %}
     </div>

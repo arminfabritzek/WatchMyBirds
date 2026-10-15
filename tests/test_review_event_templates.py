@@ -21,16 +21,16 @@ def test_review_page_exposes_event_browser_and_event_payload():
     # The Queue / Bulk Review mode switch is gone.
     assert 'data-review-mode="queue"' not in content
     assert 'data-review-mode="bulk"' not in content
-    assert 'review-cluster-data' not in content
+    assert "review-cluster-data" not in content
 
     # The new event-based surface ships an event rail and a
     # single payload script tag.
     assert 'id="reviewEventBrowser"' in content
     assert 'id="reviewEventList"' in content
-    assert 'data-review-event' in content
+    assert "data-review-event" in content
     assert 'id="review-event-data"' in content
     assert "event.eligibility_label" in content
-    assert '/assets/js/batch_actions.js?v=1' in content
+    assert "/assets/js/batch_actions.js?v={{ asset_version }}" in content
 
 
 def test_review_event_rail_is_text_only_after_a0():
@@ -79,7 +79,10 @@ def test_review_page_keeps_orphan_only_workspace_alive():
     assert "{% if queue_orphans and not review_events %}" in content
     assert "for img in queue_orphans" in content
     # The default panel-type follows the available rail.
-    assert 'data-panel-type="{% if review_events %}event{% else %}queue{% endif %}"' in content
+    assert (
+        'data-panel-type="{% if review_events %}event{% else %}queue{% endif %}"'
+        in content
+    )
 
 
 def test_review_event_panel_exposes_event_actions_and_grid():
@@ -136,12 +139,18 @@ def test_review_workspace_js_handles_event_state_and_actions():
     assert "data-review-cluster-bbox-toggle" not in content
 
     # Event-based state and endpoints.
-    assert "const reviewEventDataEl = document.getElementById('review-event-data');" in content
+    assert (
+        "const reviewEventDataEl = document.getElementById('review-event-data');"
+        in content
+    )
     assert "function selectReviewEvent(eventKey, options = {})" in content
     assert "function renderEmptyEventStage()" in content
     assert "async function reviewApproveEvent(eventKey)" in content
     assert "async function reviewTrashEvent(eventKey)" in content
-    assert "async function reviewOpenEventSpeciesPicker(eventKey, detectionId, currentSpecies)" in content
+    assert (
+        "async function reviewOpenEventSpeciesPicker(eventKey, detectionId, currentSpecies)"
+        in content
+    )
     assert "action === 'select_event_species'" in content
     assert "action === 'open_event_species_picker'" in content
     assert "/api/review/event-panel/" in content
@@ -196,8 +205,14 @@ def test_review_event_panel_mounts_tile_toolbox_on_every_grid_cell():
     # Viewer tools, including the zoom toggle, are wired on the grid cells.
     assert "show_viewer_tools=true" in content
     assert "detection_id=member.best_detection_id" in content
-    assert "modal_target=member_modal_target if not member.context_only else none" in content
-    assert "details_href=('/gallery/' ~ member.gallery_date ~ '?focus=' ~ member.best_detection_id ~ '#detection-' ~ member.best_detection_id) if member.context_only and member.gallery_date and member.best_detection_id else none" in content
+    assert (
+        "modal_target=member_modal_target if not member.context_only else none"
+        in content
+    )
+    assert (
+        "details_href=('/gallery/' ~ member.gallery_date ~ '?focus=' ~ member.best_detection_id ~ '#detection-' ~ member.best_detection_id) if member.context_only and member.gallery_date and member.best_detection_id else none"
+        in content
+    )
     assert "allow_change_species=not member.context_only" in content
     assert "allow_move_to_trash=not member.context_only" in content
     assert "allow_review_no_bird=not member.context_only" in content
@@ -235,8 +250,13 @@ def test_review_event_panel_renders_every_member():
     content = _read("templates/components/review_event_panel.html")
 
     # Partition: review-frames first, context-frames second — no cap.
-    assert "_review_members = event.members | rejectattr('context_only') | list" in content
-    assert "_context_members = event.members | selectattr('context_only') | list" in content
+    assert (
+        "_review_members = event.members | rejectattr('context_only') | list" in content
+    )
+    assert (
+        "_context_members = event.members | selectattr('context_only') | list"
+        in content
+    )
     assert "display_members = _review_members + _context_members" in content
 
     # The old frame-budget variables are gone.
@@ -288,7 +308,10 @@ def test_review_event_panel_grid_cells_carry_lane_b_a1_wiring():
     # custom property style (both are required: the attribute drives the
     # CSS selector binding, the inline style sets the actual value).
     assert 'data-species-colour="{{ member.species_colour }}"' in content
-    assert "--cell-species-colour: var(--species-colour-{{ member.species_colour }})" in content
+    assert (
+        "--cell-species-colour: var(--species-colour-{{ member.species_colour }})"
+        in content
+    )
 
     # The bbox payload injected into tile_toolbox carries the species
     # slot so a future canvas-draw fix can read it off the box directly.
@@ -409,11 +432,14 @@ def test_review_grid_card_surfaces_start_end_window():
     assert "review-grid__card-window" in content
     assert "review-grid__card-window-chip--start" in content
     assert "review-grid__card-window-chip--end" in content
-    assert "review-grid__card-window-label\">Start" in content
-    assert "review-grid__card-window-label\">End" in content
+    assert 'review-grid__card-window-label">Start' in content
+    assert 'review-grid__card-window-label">End' in content
 
     # The raw range must not stay buried in the muted meta line.
-    assert '<span class="review-grid__card-time">{{ event.window_time }}</span>' not in content
+    assert (
+        '<span class="review-grid__card-time">{{ event.window_time }}</span>'
+        not in content
+    )
 
 
 def test_review_grid_event_cards_have_stronger_boundaries():
@@ -477,7 +503,10 @@ def test_review_grid_selected_trash_posts_detection_ids_payload():
     """Selected-frame Trash must match the moderation API contract."""
     content = _read("assets/js/review_grid.js")
 
-    assert "postJson('/api/moderation/bulk/reject', { detection_ids: scope.ids })" in content
+    assert (
+        "postJson('/api/moderation/bulk/reject', { detection_ids: scope.ids })"
+        in content
+    )
     assert "postJson('/api/moderation/bulk/reject', { ids: scope.ids })" not in content
 
 
@@ -489,7 +518,10 @@ def test_review_grid_partial_relabel_refreshes_event_shape():
     assert "function updateTilesSpeciesMetadata(ids, chosen)" in content
     assert "updateTilesSpeciesMetadata(scope.ids, chosen);" in content
     assert "const relabelCoversAllActionable = allIds.length > 0" in content
-    assert "const relabelChangesEventKey = chosen.scientific !== currentSpecies;" in content
+    assert (
+        "const relabelChangesEventKey = chosen.scientific !== currentSpecies;"
+        in content
+    )
     assert "window.location.reload();" in content
 
 
@@ -573,10 +605,16 @@ def test_review_workspace_js_handles_continuity_batch_actions():
 def test_review_workspace_event_fastpath_submits_actionable_ids_only():
     content = _read("assets/js/review_workspace.js")
 
-    assert "const actionableIds = (controls.dataset.actionableDetectionIds || '')" in content
+    assert (
+        "const actionableIds = (controls.dataset.actionableDetectionIds || '')"
+        in content
+    )
     assert "actionable detection ids only" in content
     assert "re-confirmed through event approval" in content
-    assert "submitDetectionIds = actionableIds.length > 0 ? actionableIds : detectionIds;" in content
+    assert (
+        "submitDetectionIds = actionableIds.length > 0 ? actionableIds : detectionIds;"
+        in content
+    )
     assert "fastpathBody.detection_ids = submitDetectionIds;" in content
 
 
@@ -860,7 +898,7 @@ def test_design_system_defines_dark_scope_with_wong_palette():
     # All 8 Wong slots must have a dark variant. The first `@media
     # ... {` opens the :root token scope.
     dark_scope_start = content.index("@media (prefers-color-scheme: dark) {")
-    dark_scope = content[dark_scope_start:dark_scope_start + 6000]
+    dark_scope = content[dark_scope_start : dark_scope_start + 6000]
     for slot in range(8):
         assert f"--species-colour-{slot}:" in dark_scope, (
             f"Dark scope missing --species-colour-{slot} override"
@@ -868,7 +906,11 @@ def test_design_system_defines_dark_scope_with_wong_palette():
 
     # Highlight rules ride on --color-primary*. The dark scope must
     # redefine the primary family so active accents follow the theme.
-    for token in ("--color-primary:", "--color-primary-dark:", "--color-primary-light:"):
+    for token in (
+        "--color-primary:",
+        "--color-primary-dark:",
+        "--color-primary-light:",
+    ):
         assert token in dark_scope, f"Dark scope missing {token}"
 
     # Core base tokens that carry text / surfaces / borders must also
@@ -902,7 +944,7 @@ def test_design_system_defines_review_surface_dark_overrides():
     anchor = "Scope rule: only Review surfaces are touched here."
     start = content.index(anchor)
     # 12k chars is a generous window — the whole block is ~170 lines.
-    review_scope = content[start:start + 12000]
+    review_scope = content[start : start + 12000]
 
     # Review-scope selectors that must be overridden explicitly.
     expected_selectors = [
@@ -1007,20 +1049,22 @@ def test_event_cell_species_label_is_clickable_relabel_button():
 def test_review_event_panel_exposes_explicit_multi_select_mode():
     content = _read("templates/components/review_event_panel.html")
 
-    assert 'data-review-multi-select-toggle' in content
-    assert 'data-review-event-grid' in content
+    assert "data-review-multi-select-toggle" in content
+    assert "data-review-event-grid" in content
     assert 'data-multi-select-mode="0"' in content
-    assert 'data-review-multi-select-checkbox' in content
-    assert 'data-review-multi-select-footer' in content
-    assert 'window.reviewEventBatchRelabelSelected()' in content
-    assert 'window.reviewEventBatchTrashSelected()' in content
-    assert 'window.reviewEventBatchCancelMultiSelect()' in content
+    assert "data-review-multi-select-checkbox" in content
+    assert "data-review-multi-select-footer" in content
+    assert "window.reviewEventBatchRelabelSelected()" in content
+    assert "window.reviewEventBatchTrashSelected()" in content
+    assert "window.reviewEventBatchCancelMultiSelect()" in content
 
 
 def test_review_event_panel_species_hint_mentions_selected_frame_shortcut():
     content = _read("templates/components/review_event_panel.html")
 
-    assert "Event-wide species choice stays local until you approve the event." in content
+    assert (
+        "Event-wide species choice stays local until you approve the event." in content
+    )
     assert "With selected frames, a quick-pick relabels them immediately." in content
 
 
@@ -1057,7 +1101,10 @@ def test_review_workspace_js_syncs_top_right_reference_image_on_species_change()
     assert "controls.dataset.selectedSpeciesRefImageUrl" in content
     assert "nextRef.matches('img.review-species-ref')" in content
     assert "nextRef.className = 'review-species-ref';" in content
-    assert "nextRef.className = 'review-species-ref review-species-ref--initial';" in content
+    assert (
+        "nextRef.className = 'review-species-ref review-species-ref--initial';"
+        in content
+    )
     assert "nextRef.setAttribute('src', nextRefImageUrl);" in content
 
 
@@ -1067,8 +1114,14 @@ def test_review_workspace_js_wires_event_multi_select_batch_actions():
     assert "function toggleReviewMultiSelectMode()" in content
     assert "function handleReviewMultiSelect(checkbox, shiftKey)" in content
     assert "toggleReviewMultiSelectRange" in content
-    assert "window.reviewEventBatchRelabelSelected = reviewEventBatchRelabelSelected;" in content
-    assert "window.reviewEventBatchTrashSelected = reviewEventBatchTrashSelected;" in content
+    assert (
+        "window.reviewEventBatchRelabelSelected = reviewEventBatchRelabelSelected;"
+        in content
+    )
+    assert (
+        "window.reviewEventBatchTrashSelected = reviewEventBatchTrashSelected;"
+        in content
+    )
     assert "window.WmBatchActions.runBatchRelabel" in content
     assert "window.WmBatchActions.runBatchAction(" in content
     assert "'/api/moderation/bulk/reject'" in content
@@ -1082,8 +1135,14 @@ def test_review_workspace_js_uses_quick_species_click_as_selected_frame_shortcut
     assert "async function quickRelabelSelectedReviewFrames" in content
     assert "function getSelectedReviewMultiSelectDetectionIds" in content
     assert "function updateReviewCellSpeciesDisplay" in content
-    assert "window.WmBatchActions.executeBatchAction('/api/moderation/bulk/relabel'" in content
-    assert "if (isReviewMultiSelectMode(panel) && getSelectedReviewMultiSelectDetectionIds(panel).length > 0)" in content
+    assert (
+        "window.WmBatchActions.executeBatchAction('/api/moderation/bulk/relabel'"
+        in content
+    )
+    assert (
+        "if (isReviewMultiSelectMode(panel) && getSelectedReviewMultiSelectDetectionIds(panel).length > 0)"
+        in content
+    )
     assert "clearReviewMultiSelect(panel);" in content
 
 
@@ -1102,7 +1161,7 @@ def test_species_reference_image_is_anchored_top_right():
 
     # Primary rule: top-anchored, bottom cleared.
     rule_start = content.index(".review-species-ref {")
-    rule_block = content[rule_start:rule_start + 400]
+    rule_block = content[rule_start : rule_start + 400]
     assert "top: 6px;" in rule_block
     assert "bottom: auto;" in rule_block
     assert "right: 6px;" in rule_block
@@ -1118,12 +1177,14 @@ def test_species_reference_image_is_anchored_top_right():
 
     # img-specific rule still has the 1/1 aspect-ratio guard.
     img_rule_start = content.index("img.review-species-ref {")
-    img_rule_block = content[img_rule_start:img_rule_start + 200]
+    img_rule_block = content[img_rule_start : img_rule_start + 200]
     assert "aspect-ratio: 1 / 1;" in img_rule_block
 
     # Mobile override also top-anchored and square.
-    mobile_idx = content.index("@media (max-width: 720px)", content.index(".review-species-ref"))
-    mobile_block = content[mobile_idx:mobile_idx + 400]
+    mobile_idx = content.index(
+        "@media (max-width: 720px)", content.index(".review-species-ref")
+    )
+    mobile_block = content[mobile_idx : mobile_idx + 400]
     assert "top: 4px;" in mobile_block
     assert "bottom: auto;" in mobile_block
     mobile_width = re.search(r"width:\s*(\d+)px;", mobile_block)

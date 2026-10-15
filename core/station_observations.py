@@ -1,0 +1,287 @@
+"""Station browsing selection and current observation use cases."""
+
+from __future__ import annotations
+
+import sqlite3
+from datetime import date
+from pathlib import Path
+
+from core.events import build_bird_events
+from core.human_label_core import HumanAnswer, LabelProvenance, record_human_answer
+from core.review_state import refresh_review_image_visibility
+from utils.db import closing_connection
+from utils.db.detections import fetch_observation_page, hydrate_observations
+from utils.db.observations import observations_cte, selection_sql
+
+
+def validate_selection(
+    start: str = "", end: str = "", source: str = "all"
+) -> dict[str, str]:
+    for value in (start, end):
+        if value and (
+            len(value) != 10 or date.fromisoformat(value).isoformat() != value
+        ):
+            raise ValueError("Use dates in YYYY-MM-DD format")
+    if start and end and start > end:
+        raise ValueError("Start date must precede end date")
+    if source not in {"all", "camera", "import"}:
+        raise ValueError("Invalid observation source")
+    return {"start": start, "end": end, "source": source}
+
+
+def review_page(
+    *, answered: bool, selection: dict[str, str], page: int = 1
+) -> tuple[list[dict], int, int]:
+    with closing_connection() as conn:
+        conn.execute("BEGIN")
+        return fetch_observation_page(
+            conn, answered=answered, selection=selection, page=page
+        )
+
+
+def grouped_review(
+    *, answered: bool, selection: dict[str, str], day: str = "latest", page: int = 1
+) -> dict:
+    if day not in {"latest", "all"}:
+        validate_selection(day, day)
+    where, params = selection_sql(selection)
+    where += (
+        " AND answered AND NOT COALESCE(conflict, 0)"
+        if answered
+        else " AND ((active AND NOT answered AND NOT admitted) OR COALESCE(conflict, 0))"
+    )
+    with closing_connection() as conn:
+        conn.execute("BEGIN")
+        rows = [
+            dict(row)
+            for row in conn.execute(
+                observations_cte(conn)
+                + "SELECT * FROM observations WHERE "
+                + where
+                + " ORDER BY timestamp DESC, object_key",
+                params,
+            )
+        ]
+        days: dict[str, int] = {}
+        for row in rows:
+            stamp = str(row["timestamp"]).replace("-", "")
+            row["day"] = f"{stamp[:4]}-{stamp[4:6]}-{stamp[6:8]}"
+            days[row["day"]] = days.get(row["day"], 0) + 1
+        selected_day = next(iter(days), "") if day == "latest" else day
+        selected = [
+            row for row in rows if selected_day == "all" or row["day"] == selected_day
+        ]
+        # Grouping IDs are local indexes so manual objects participate without
+        # colliding with detector IDs. Persisted object identities stay intact.
+        events = []
+        for event_day in dict.fromkeys(row["day"] for row in selected):
+            events.extend(
+                build_bird_events(
+                    [
+                        {
+                            **row,
+                            "detection_id": index + 1,
+                            "species_key": row["proposed_species"],
+                        }
+                        for index, row in enumerate(selected)
+                        if row["day"] == event_day
+                    ]
+                )
+            )
+        events.sort(
+            key=lambda event: (
+                not any(
+                    selected[index - 1]["conflict"] for index in event.detection_ids
+                )
+            )
+        )
+        page_count = max(1, (len(events) + 7) // 8)
+        page = max(1, min(page, page_count))
+        groups = []
+        for event in events[(page - 1) * 8 : page * 8]:
+            members = [selected[index - 1] for index in event.detection_ids]
+            groups.append(
+                {
+                    "rows": hydrate_observations(conn, members),
+                    "event_key": event.event_key,
+                    "species": event.species,
+                    "eligibility": event.eligibility,
+                    "fallback_reason": event.fallback_reason,
+                    "day": members[0]["day"],
+                    "start": event.start_time,
+                    "end": event.end_time,
+                }
+            )
+        return {
+            "groups": groups,
+            "days": days,
+            "selected_day": selected_day,
+            "total_items": len(rows),
+            "day_items": len(selected),
+            "page": page,
+            "page_count": page_count,
+        }
+
+
+def media_paths(det: dict) -> dict:
+    from urllib.parse import quote
+
+    from config import get_config
+    from utils.path_manager import PathManager
+
+    paths = PathManager(str(get_config()["OUTPUT_DIR"]))
+    filename = str(det.get("image_filename") or det.get("original_name") or "")
+    original = paths.contained_path(
+        paths.get_original_path(filename), paths.originals_dir
+    )
+    optimized = paths.contained_path(
+        paths.get_derivative_path(filename, "optimized"), paths.optimized_dir
+    )
+    thumb = paths.contained_path(
+        paths.thumbs_dir / str(det.get("thumbnail_path_virtual") or ""),
+        paths.thumbs_dir,
+    )
+
+    def url(path: Path | None, root: Path, prefix: str) -> str:
+        return (
+            prefix + quote(path.relative_to(root).as_posix())
+            if path and path.is_file()
+            else ""
+        )
+
+    original_url = (
+        url(original, paths.originals_dir, "/uploads/originals/")
+        if det.get("original_present", 1)
+        else ""
+    )
+    optimized_url = url(
+        optimized, paths.optimized_dir, "/uploads/derivatives/optimized/"
+    )
+    thumb_url = url(thumb, paths.thumbs_dir, "/uploads/derivatives/thumbs/")
+    full = (
+        optimized_url or original_url or thumb_url or "/assets/static_placeholder.jpg"
+    )
+    return {
+        "display_path": thumb_url or full,
+        "full_path": full,
+        "original_path": original_url,
+        "original_available": bool(original_url),
+        "optimized_path": optimized_url,
+        "media_status": (
+            (
+                "Original no longer available"
+                if not det.get("original_present", 1)
+                else "Original unavailable"
+            )
+            if not original_url
+            else ""
+        ),
+        "media_placeholder": not (original_url or optimized_url or thumb_url),
+    }
+
+
+def media_revision(output_dir: str) -> tuple:
+    """Watch media directory entries without enumerating the image history."""
+    from utils.path_manager import PathManager
+
+    paths = PathManager(output_dir)
+    signature = []
+    for root in (paths.originals_dir, paths.optimized_dir, paths.thumbs_dir):
+        try:
+            if not root.is_dir():
+                signature.append((str(root), None))
+                continue
+            signature.append((str(root), root.stat().st_mtime_ns))
+            for child in root.iterdir():
+                checked = paths.contained_path(child, root)
+                if checked is not None and checked.is_dir() and not child.is_symlink():
+                    signature.append((child.name, checked.stat().st_mtime_ns))
+        except OSError:
+            signature.append((str(root), "unavailable"))
+    return tuple(sorted(signature, key=str))
+
+
+def species_selection_ids(species: str, selection: dict[str, str]) -> list[int]:
+    from utils.db.observations import observations_cte, selection_sql
+
+    where, params = selection_sql(selection)
+    if species == "Unknown_species":
+        where += " AND unknown_bird"
+    else:
+        where += " AND species_key = ?"
+        params.append(species)
+    with closing_connection() as conn:
+        return [
+            int(row[0])
+            for row in conn.execute(
+                observations_cte(conn)
+                + "SELECT detection_id FROM observations WHERE detection_id IS NOT NULL AND "
+                + where
+                + " ORDER BY timestamp DESC, detection_id DESC",
+                params,
+            )
+        ]
+
+
+def answer_review_selection(
+    conn: sqlite3.Connection,
+    detection_ids: list[int],
+    action: str,
+    species: str | None,
+    provenance: LabelProvenance,
+    gallery_threshold: float,
+) -> int:
+    if (
+        not isinstance(detection_ids, list)
+        or not detection_ids
+        or len(detection_ids) > 1000
+        or any(type(value) is not int or value <= 0 for value in detection_ids)
+        or len(set(detection_ids)) != len(detection_ids)
+    ):
+        raise ValueError(
+            "Select between 1 and 1000 detector objects; use the viewer for manually added birds"
+        )
+    if not isinstance(action, str) or action not in {"species", "unknown", "no_bird"}:
+        raise ValueError("Invalid review answer")
+    if action == "species" and not species:
+        raise ValueError("Choose a species first")
+    conn.execute("BEGIN IMMEDIATE")
+    rows = []
+    for offset in range(0, len(detection_ids), 400):
+        batch = detection_ids[offset : offset + 400]
+        rows.extend(
+            dict(row)
+            for row in conn.execute(
+                observations_cte(conn)
+                + "SELECT * FROM observations WHERE detection_id IN ("
+                + ",".join("?" for _ in batch)
+                + ")",
+                batch,
+            )
+        )
+    if len(rows) != len(detection_ids) or any(
+        row["conflict"] or not row["active"] or row["answered"] or row["admitted"]
+        for row in rows
+    ):
+        raise ValueError(
+            "The selection has changed or contains conflicting answers. Reload Review and resolve conflicts in the image viewer."
+        )
+    for row in rows:
+        record_human_answer(
+            conn,
+            HumanAnswer(
+                image_filename=row["image_filename"],
+                detection_id=row["detection_id"],
+                object_bird_presence="absent" if action == "no_bird" else None,
+                species_identity="corrected"
+                if action == "species"
+                else "unknown"
+                if action == "unknown"
+                else None,
+                species_key=species if action == "species" else None,
+            ),
+            provenance,
+        )
+    for filename in {row["image_filename"] for row in rows}:
+        refresh_review_image_visibility(conn, filename, gallery_threshold)
+    return len(rows)

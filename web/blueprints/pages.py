@@ -5,10 +5,11 @@ from flask.blueprints import BlueprintSetupState
 
 from config import get_config, get_settings_payload
 from logging_config import get_logger
+from utils.deploy_info import read_build_metadata
 from utils.settings import mask_rtsp_url
 from web import view_helpers
 from web.blueprints.auth import login_required
-from web.services import asset_service, db_service
+from web.services import db_service
 
 logger = get_logger(__name__)
 config = get_config()
@@ -21,9 +22,7 @@ _ASSETS_FOLDER = os.path.join(_PROJECT_ROOT, "assets")
 
 @pages_bp.record_once
 def register_asset_versions(state: BlueprintSetupState) -> None:
-    state.app.jinja_env.globals["bird_editor_version"] = asset_service.editor_version(
-        _ASSETS_FOLDER
-    )
+    state.app.jinja_env.globals["asset_version"] = read_build_metadata()["git_commit"]
 
 
 RUNTIME_BOOL_KEYS = {
@@ -186,7 +185,9 @@ def settings_route():
     payload = get_settings_payload()
 
     if "VIDEO_SOURCE" in payload:
-        payload["VIDEO_SOURCE"]["value"] = mask_rtsp_url(payload["VIDEO_SOURCE"]["value"])
+        payload["VIDEO_SOURCE"]["value"] = mask_rtsp_url(
+            payload["VIDEO_SOURCE"]["value"]
+        )
     if "CAMERA_URL" in payload:
         payload["CAMERA_URL"]["value"] = mask_rtsp_url(payload["CAMERA_URL"]["value"])
 

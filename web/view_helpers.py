@@ -246,16 +246,17 @@ def build_current_detection_payload(det: dict) -> dict:
 
     return {
         "detection_id": detection_id,
-        "manual_object_id": None,
-        "object_key": f"detection:{detection_id}",
-        "object_kind": "detection",
+        "manual_object_id": det.get("manual_object_id"),
+        "object_key": det.get("object_key") or f"detection:{detection_id}",
+        "object_kind": "manual" if det.get("manual_object_id") else "detection",
+        "revision": det.get("revision"),
         "image_filename": image_filename,
         "species_key": species_key,
         "common_name": det.get("human_common_name") or det.get("common_name"),
         "species_source": det.get("species_source"),
         "human_review_state": human_review_state,
         "human_bbox_verdict": det.get("human_bbox_verdict"),
-        "object_status": det.get("object_status", "active"),
+        "object_status": det.get("object_status") or det.get("status") or "active",
         "needs_review": bool(det.get("needs_review", False)),
         "formatted_date": det.get("formatted_date"),
         "formatted_time": det.get("formatted_time"),
@@ -270,7 +271,6 @@ def build_current_detection_payload(det: dict) -> dict:
         "cls_class_name": det.get("cls_class_name"),
         "cls_confidence": det.get("cls_confidence"),
         "is_favorite": det.get("is_favorite"),
-        "revision": None,
     }
 
 
@@ -447,7 +447,7 @@ def build_detection_view_dict(
         "bbox_w": det.get("bbox_w", 0.0) or 0.0,
         "bbox_h": det.get("bbox_h", 0.0) or 0.0,
         "human_bbox_verdict": det.get("human_bbox_verdict"),
-        "object_status": det.get("object_status", "active"),
+        "object_status": det.get("object_status") or det.get("status") or "active",
         "needs_review": bool(det.get("needs_review", False)),
         "rating": det.get("rating"),
         "rating_source": det.get("rating_source", "auto"),
@@ -460,6 +460,36 @@ def build_detection_view_dict(
         ),
         "image_filename": (det.get("image_filename") or det.get("original_name") or ""),
     }
+    for key in (
+        "source_type",
+        "warning",
+        "origin",
+        "answer",
+        "answered",
+        "conflict",
+        "answered_at",
+        "presence",
+        "image_presence",
+        "observation_count",
+        "human_count",
+        "automatic_count",
+        "legacy_count",
+        "days",
+        "human_days",
+        "automatic_days",
+        "first_seen",
+        "first_seen_date",
+        "last_seen_date",
+        "archive_last_seen_date",
+        "last_seen",
+        "archive_last_seen",
+        "missing_originals",
+        "media_status",
+        "media_placeholder",
+        "unknown_bird",
+    ):
+        if key in det:
+            payload[key] = det[key]
     if include_decision_state:
         payload["decision_state"] = det.get("decision_state")
     if extra:
@@ -727,3 +757,91 @@ def render_best_species_board(
         "featured": board_items[:featured_count],
         "grid": board_items[featured_count:total_limit],
     }
+
+
+def build_station_views(rows: list[dict]) -> list[dict]:
+    from web.services import station_service
+
+    siblings = gallery_service.get_sibling_detections_batch(
+        sorted({str(row["image_filename"]) for row in rows})
+    )
+    result = []
+    for row in rows:
+        timestamp = str(row.get("timestamp") or row.get("image_timestamp") or "")
+        compact = timestamp.replace("-", "").replace(":", "").replace("T", "_")
+        date_iso = (
+            f"{compact[:4]}-{compact[4:6]}-{compact[6:8]}" if len(compact) >= 8 else ""
+        )
+        companions = [
+            build_detection_view_dict(
+                item,
+                species_key=get_species_key(item),
+                common_name=get_common_name(get_species_key(item)),
+                include_decision_state=True,
+            )
+            for item in siblings.get(str(row["image_filename"]), [])
+        ]
+        item = build_detection_view_dict(
+            row,
+            species_key=get_species_key(row),
+            common_name=get_common_name(get_species_key(row)),
+            formatted_date=date_iso,
+            formatted_time=f"{compact[9:11]}:{compact[11:13]}:{compact[13:15]}"
+            if len(compact) >= 15
+            else "",
+            gallery_date=date_iso,
+            siblings=companions,
+            sibling_count=len(companions),
+            include_decision_state=True,
+            extra=station_service.media_paths(row),
+        )
+        item["proposal_common_name"] = get_common_name(
+            row.get("proposed_species") or "Unknown_species"
+        )
+        result.append(item)
+    enrich_modal_review_states(result)
+    return result
+
+
+def build_station_review_events(groups: list[dict]) -> list[dict]:
+    colours = assign_species_colours(
+        [group["species"] for group in groups if group["species"]]
+    )
+    events = []
+    for group in groups:
+        detections = build_station_views(group["rows"])
+        members = []
+        for det in detections:
+            det["ordinary_review"] = True
+            members.append(
+                {
+                    **det,
+                    "best_detection_id": det["detection_id"],
+                    "filename": det["image_filename"],
+                    "context_only": False,
+                    "candidate_species": det.get("proposed_species"),
+                    "candidate_species_common": det["proposal_common_name"],
+                    "thumb_url": det["display_path"],
+                    "full_url": det["full_path"],
+                    "optimized_url": det["optimized_path"] or det["full_path"],
+                    "species_colour": colours.get(group["species"]),
+                    "modal_detection": det,
+                }
+            )
+        events.append(
+            {
+                **group,
+                "members": members,
+                "ordinary_review": True,
+                "candidate_species": group["species"],
+                "selected_species": group["species"],
+                "candidate_species_common": get_common_name(
+                    group["species"] or "Unknown_species"
+                ),
+                "species_colour": colours.get(group["species"]),
+                "photo_count": len(members),
+                "window_date": group["day"],
+                "window_time": f"{group['start'][9:11]}:{group['start'][11:13]} - {group['end'][9:11]}:{group['end'][11:13]}",
+            }
+        )
+    return events

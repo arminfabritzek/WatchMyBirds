@@ -90,7 +90,7 @@ def test_review_navigation_rejects_invalid_parameters_before_database(
     client: FlaskClient, query: str
 ) -> None:
     with patch("web.blueprints.review.db_service.closing_connection") as connection:
-        assert client.get(f"/admin/review?{query}").status_code == 400
+        assert client.get(f"/admin/review?diagnostic=1&{query}").status_code == 400
         connection.assert_not_called()
 
 
@@ -167,7 +167,9 @@ def test_review_navigation_shares_queries_and_builds_only_selected_details(
     ):
         db.fetch_review_queue_images.return_value = rows
         db.fetch_review_cluster_context.return_value = ([], False)
-        response = client.get("/admin/review" + query)
+        response = client.get(
+            "/admin/review?diagnostic=1" + ("&" + query.lstrip("?") if query else "")
+        )
 
     assert response.status_code == 200
     db.fetch_review_queue_images.assert_called_once()
@@ -179,6 +181,11 @@ def test_review_navigation_shares_queries_and_builds_only_selected_details(
     ] == expected_ids
     assert build.call_count == len(expected_ids)
     nav = context["review_navigation"]
+    assert all(
+        "diagnostic=1" in nav[key]
+        for key in ("older_url", "newer_url")
+        if nav[key]
+    )
     assert nav["total_events"] == 3
     assert nav["days"] == (("2026-10-12", 2), ("2026-10-10", 1))
     if "priority" in query:
@@ -722,7 +729,7 @@ def test_review_page_renders_workspace_for_detection_orphan_only_state(client):
         mock_load_events.return_value = ([], [], False, set())
         mock_common_names.return_value = {}
 
-        response = client.get("/admin/review")
+        response = client.get("/admin/review?diagnostic=1")
 
     assert response.status_code == 200
     body = response.get_data(as_text=True)
@@ -779,7 +786,7 @@ def test_review_page_strips_image_orphans_from_queue(client):
         mock_load_events.return_value = ([], [], False, set())
         mock_common_names.return_value = {}
 
-        response = client.get("/admin/review")
+        response = client.get("/admin/review?diagnostic=1")
 
     assert response.status_code == 200
     body = response.get_data(as_text=True)
@@ -853,7 +860,7 @@ def test_review_page_hides_queue_rail_while_event_workspace_is_active(client):
         mock_load_events.return_value = ([event_payload], [], False, {"Parus major"})
         mock_common_names.return_value = {}
 
-        response = client.get("/admin/review")
+        response = client.get("/admin/review?diagnostic=1")
 
     assert response.status_code == 200
     body = response.get_data(as_text=True)

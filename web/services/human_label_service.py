@@ -21,6 +21,7 @@ from core.human_label_core import (
     restore_rejected_detection,
     species_review_state,
 )
+from core.human_label_core import original_model_proposal as original_model_proposal
 from core.human_label_core import (
     retract_bbox_quality as retract_bbox_quality_core,
 )
@@ -499,4 +500,19 @@ def retract_bbox_quality(
         image_filename=image_filename,
         detection_id=detection_id,
         provenance=provenance,
+    )
+
+
+def record_review_answers(
+    conn: sqlite3.Connection, detection_ids: list[int], action: str, species: str | None
+) -> int:
+    from core.station_observations import answer_review_selection
+
+    return answer_review_selection(
+        conn,
+        detection_ids,
+        action,
+        species,
+        _ui_provenance(source_ref="review-event-selection", app_version=""),
+        float(get_config()["GALLERY_DISPLAY_THRESHOLD"]),
     )

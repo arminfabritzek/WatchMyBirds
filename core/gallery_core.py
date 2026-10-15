@@ -1228,7 +1228,9 @@ def regenerate_derivative(
     return False
 
 
-def get_species_covers(*, min_score: float, favorites_only: bool) -> list[dict]:
+def get_species_covers(
+    *, min_score: float, favorites_only: bool, selection: dict[str, str] | None = None
+) -> list[dict]:
     from utils.db.detections import fetch_species_covers
 
     with closing_connection() as conn:
@@ -1239,6 +1241,7 @@ def get_species_covers(*, min_score: float, favorites_only: bool) -> list[dict]:
                 conn,
                 min_score=min_score,
                 favorites_only=favorites_only,
+                selection=selection,
             )
         ]
 
@@ -1250,6 +1253,7 @@ def get_species_page(
     favorites_only: bool,
     page: int,
     per_page: int,
+    selection: dict[str, str] | None = None,
 ) -> tuple[list[dict], int, int]:
     from utils.db.detections import fetch_species_page
 
@@ -1262,6 +1266,7 @@ def get_species_page(
             favorites_only=favorites_only,
             page=page,
             per_page=per_page,
+            selection=selection,
         )
         return [dict(row) for row in rows], total, page
 

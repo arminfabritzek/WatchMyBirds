@@ -208,6 +208,9 @@ def label_state():
             image_filename=filename,
             detection_id=detection_id,
         )
+        model_proposal = human_label_service.original_model_proposal(
+            conn, image_filename=filename, detection_id=detection_id
+        )
         readiness = None
         object_progress = None
         if detection_id is not None:
@@ -221,6 +224,7 @@ def label_state():
         {
             "status": "success",
             "facts": facts,
+            "model_proposal": model_proposal,
             "readiness": readiness,
             "object_progress": object_progress,
         }

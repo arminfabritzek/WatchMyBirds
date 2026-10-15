@@ -85,7 +85,7 @@ def _compute_ticker_dashboard_stats() -> dict:
                         conn, today_iso, order_by="time"
                     )
                 ]
-                summary = _gc.summarize_observations(today_rows, min_score=threshold)
+                summary = _gc.summarize_observations(today_rows)
                 s = summary["summary"]
                 stats["today_visits"] = int(s.get("total_observations", 0) or 0)
                 stats["today_species_count"] = len(s.get("species_counts", {}) or {})

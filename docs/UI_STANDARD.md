@@ -71,6 +71,83 @@ Trash, modals, and everything else at once. Any drift defeats that goal.
 **Audit:** check this file against the codebase after touching
 image-bearing surfaces.
 
+## Current station history (binding)
+
+`utils/db/observations.py` projects current canonical object answers, legacy
+assignments, model decisions, source and media flags without creating labels.
+Human species answers take precedence; unknown, wrong, absence and explicit
+conflicts prevent positive named-species use. A species-only refutation never
+asserts bird presence. Existing legacy assignments remain distinguishable from
+canonical human confirmation. Genus buckets are not named species.
+
+Gallery, Species, saved Live observations and Station Report share the current
+admission projection. Automatic records need a confirmed species-level decision,
+no insufficient saved box/detector or uncertainty signal, the configured species
+and display-score floors, and no explicit sharpness veto. The sharpness percentile
+is retained as a conservative safeguard, not a biological presence verdict.
+Missing legacy measurements retain the persisted decision rather than inventing
+new evidence. Geographic zero-occurrence routes unreviewed proposals to Review;
+a human answer overrides this automatic doubt. A refutation blocks its own object,
+not every other well-supported proposal of the same species. Historical hints
+alone do not reopen Review. There is no species blacklist.
+
+Human and legacy assignments bypass automatic score and photo-quality gates.
+Standard Gallery does not apply a second score floor after admission; explicit
+photo filters may narrow it. Species covers prefer human records and available
+originals, then photo quality. Open Review and positive automatic membership do
+not overlap. Each excluded automatic record carries its reason; Answered remains
+an archive, not a new task. This admission change does not replace the Review layout.
+Confirmed archive species remain discoverable outside a selected period and
+are excluded from that period's totals. The always-visible `Bird · species
+unknown` link has an explicit empty state. Missing originals retain identity,
+dates and history; surviving previews and placeholders are identified.
+Localized and scientific names always use the same current species key.
+Correction Details lists the preserved raw model species and classifier
+selection separately from current human answers.
+
+Ordinary Review uses the original `review_grid.html` event cards, day navigation,
+selection controls and canonical detection modal. Its membership is the shared
+current observation projection: every active unanswered excluded proposal and
+all genuine answer conflicts. There is no separate Open surface. Completed
+answers remain accessible through the archive compatibility link.
+Event buttons answer selected open objects, or all open objects in that card
+when none are selected. They require no evidence-quality assessment. The server
+checks the whole selection under one write transaction; completed, admitted,
+missing or conflicting objects reject the entire operation. Conflicts and
+manually added birds are resolved in the shared viewer. No-bird answers concern
+the selected object, never unselected siblings or the whole image. Answered
+objects leave the queue; an event disappears once it has no open objects.
+The editor rail keeps the available modal width even when the image is narrow
+or missing, so answer controls and notices remain readable.
+Diagnostic event reviews retain their original endpoints and meaning (§0f).
+Station Report uses the same cards and viewer, current identifications and
+separate human/automatic days; total days use their union. Links preserve date
+and source filters. The calendar shows positive records; empty cells mean
+unknown, never absence. Knowledge links use existing references and own images;
+no behavior claims or unsourced local species profiles are fabricated.
+
+One bounded, per-application report worker coalesces database changes. Status
+reads never return stale payloads. Rebuild/error states hide superseded content,
+and results whose database revision changed during calculation are discarded.
+The browser polls status and replaces ready report content in place, without
+reloading the document. It preserves filter drafts, scroll positions and expanded
+details. Hidden superseded content retains its layout space while rebuilding.
+Editing keeps the active viewer open until it closes, then refreshes affected
+history; replaced editors release their listeners and observers. Diagnostic analysis
+is separately reachable at `/analytics/diagnostic` and retains strict evidence
+requirements. Local development runs this derived report worker on its isolated
+copy; camera, inference, integrations and retention jobs remain disabled.
+
+Ordinary Review uses day navigation and complete visit groups from the shared
+`build_bird_events` grouping rules. Group membership grants no approval. Each
+object exposes its proposal and admission reason; the shared viewer offers
+Confirm species, Change species, Bird · species unknown, and No bird. These
+answers do not require box quality or event approval. Answered is an optional
+archive, including object/image absence answers. An explicit object dismissal
+completes that object; an active identification conflicting with whole-image
+absence remains visibly unresolved. Diagnostic events retain their separate
+entry point and assessment semantics.
+
 ## Homepage species cards
 
 Today's Visitors and Best of Species use the same fixed four-image budget,
@@ -125,12 +202,11 @@ to discover that the frame had additional birds.
 
 **Visibility gate:** companions use their own SQL predicate
 (`_companion_visibility_sql`), not the gallery's. The gallery additionally
-requires `decision_state = 'confirmed'` so the temporal smoother can veto
-single-frame model hallucinations — a veto that is meaningless once a
-person has answered. A box someone marked "bird present, species unknown"
-keeps `decision_state = 'unknown'` on purpose (it belongs in the review
-queue) and MUST still render here. Do not route companions through the
-gallery predicate.
+applies the shared admission rule, including conservative quality safeguards only
+for automatic records. Its temporal gate applies to model-only records; current human species answers take precedence. A box
+someone marked "bird present, species unknown" keeps `decision_state = 'unknown'`
+on purpose (its species answer is complete) and MUST still render here. Do not
+route companions through the gallery predicate.
 
 **Out of scope of this rule:**
 
@@ -217,11 +293,11 @@ detail modal. It is not a separate labeling mode or page.
     a species-only save never repeats, changes or clears the stored box answer.
     Combined changes and retraction persist atomically through the answer API.
 
-The shared `bird_editor.js` URL uses a content hash computed when the pages
-blueprint is registered. No manual cache-token or test-snapshot update is
-needed after editing this file. Restart the application after deploying asset
-changes so the URL reflects the installed content. Other assets retain their
-existing versioning until explicitly migrated.
+Every packaged JS/CSS include uses the shared `asset_version` template value,
+read once from `utils.deploy_info.read_build_metadata()["git_commit"]` when the
+pages blueprint is registered. A new build commit changes all asset URLs after
+one page reload. Restart the application after installing a new build; tabs
+already open need a reload. CDN assets keep their upstream versioning.
 
 Pending boxes on an image already admitted to the gallery are visible companions:
 a dashed outline, `Review` in the box label, and `In Review` in the bird selector.
@@ -292,8 +368,15 @@ second toolbox or a blank-canvas labeling mode.
 
 ## 0f. Biological Event Evidence Decision (binding)
 
-The Review Desk is the only surface that turns model-proposed events into
-biological station records.
+The ordinary Review opens object answers in the shared image viewer. It needs
+no evidence-quality choice or event approval. `Bird · species unknown` and
+species-only refutations are completed answers; the Answered view keeps them
+reachable. Only a new conflict or an explicit retraction reopens an answer.
+
+Diagnostic event review remains available through `?diagnostic=1` (and the
+retained explicit layouts). It alone creates diagnostically verified events.
+The following evidence contract applies to those event decisions, not the
+ordinary station history or its object confirmations.
 
 Review opens the newest day with open events and orders events by start time
 (oldest first within the selected day). Day navigation skips days without open
@@ -1866,10 +1949,10 @@ and species answers continue through their normal controls.
 
 1. Every modal structure uses a defined type: `wm-modal` or `wm-modal wm-modal--form`.
 2. Standard image tiles use `wm-tile`, `wm-tile wm-tile--review` (legacy), or `wm-tile wm-tile--bbox`. Documented surface compositions such as Review Grid (§6/§6bb) use their own shared components; the legacy tile list is not exhaustive.
-3. The default Review workbench uses the `review-grid` event-card composition
+3. Diagnostic Review uses the `review-grid` event-card composition
    (§6 and §6bb). The retired `review-stage-panel` composition remains only for
    fragment endpoints, orphan-modal hosting, and explicit legacy-layout
-   verification; new default Review Desk work must not extend it.
+   verification; new diagnostic Review work must not extend it.
 4. Every detection-bearing browsing surface uses `tile_toolbox` (§5) for action overlays.
 5. No template may build its own modal, tile, or toolbox structures.
 6. Reuse the component families and surface-specific compositions documented here. This is not a global ban on every class without a `wm-` prefix.

@@ -229,7 +229,7 @@ def test_fetch_daily_covers_prefers_high_aesthetic_score(monkeypatch):
 
     monkeypatch.setattr(
         detections_module, "_gallery_visibility_sql",
-        lambda d, i: f"{d}.status = 'active'",
+        lambda d, i, conn=None: f"{d}.status = 'active'",
     )
 
     conn = _build_minimal_db()
@@ -254,7 +254,7 @@ def test_fetch_daily_covers_null_aesthetic_does_not_override(monkeypatch):
 
     monkeypatch.setattr(
         detections_module, "_gallery_visibility_sql",
-        lambda d, i: f"{d}.status = 'active'",
+        lambda d, i, conn=None: f"{d}.status = 'active'",
     )
 
     conn = _build_minimal_db()
@@ -276,7 +276,7 @@ def test_fetch_daily_covers_manual_rating_wins(monkeypatch):
 
     monkeypatch.setattr(
         detections_module, "_gallery_visibility_sql",
-        lambda d, i: f"{d}.status = 'active'",
+        lambda d, i, conn=None: f"{d}.status = 'active'",
     )
 
     conn = _build_minimal_db()
@@ -302,7 +302,7 @@ def test_gallery_select_includes_aesthetic_score(monkeypatch):
 
     monkeypatch.setattr(
         detections_module, "_gallery_visibility_sql",
-        lambda d, i: f"{d}.status = 'active'",
+        lambda d, i, conn=None: f"{d}.status = 'active'",
     )
 
     conn = _build_minimal_db()

@@ -1,0 +1,12 @@
+<form method="get" class="station-filters" aria-label="Observation period and source">
+    {% if species_key %}<input type="hidden" name="species_key" value="{{ species_key }}">{% endif %}
+    {% if ordinary_review %}<input type="hidden" name="answered" value="{{ 1 if answered else 0 }}">{% endif %}
+    <label>From <input type="date" name="start" value="{{ selection.start }}"></label>
+    <label>To <input type="date" name="end" value="{{ selection.end }}"></label>
+    <label>Source <select name="source">
+        {% for value, label in [('all', 'All sources'), ('camera', 'Camera'), ('import', 'Imported images')] %}
+        <option value="{{ value }}" {% if selection.source == value %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+    </select></label>
+    <button class="btn btn--secondary" type="submit" title="Apply period and source">Apply</button>
+</form>

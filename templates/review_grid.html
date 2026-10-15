@@ -53,16 +53,22 @@
                     title="Larger tiles (fewer per row)"
                     aria-label="Larger tiles">+</button>
         </div>
+        {% if not ordinary_review %}
         <button type="button"
                 class="btn btn--secondary"
                 id="reviewClearQueueBtn"
                 title="Move active Review detections from all days to Trash without creating training labels"
                 {{ 'disabled' if not review_events and (review_navigation is not defined or not review_navigation.total_events) }}>🧹 Move Review Detections to Trash · All days</button>
+        {% endif %}
         <a href="/" class="btn btn--secondary" title="Back to live stream">← Stream</a>
     </div>
 </nav>
 
 {% include 'partials/review_day_navigation.html' %}
+{% if ordinary_review %}
+<p>Select objects to answer just those, or answer all open objects in an event. A human answer completes each object. Double-click a photo to inspect or resolve conflicting answers.</p>
+<p>{{ review.day_items }} objects on this day · {{ review.total_items }} open objects across the selected period.</p>
+{% endif %}
 
 <div class="review-cleanup-modal" id="reviewCleanupModal" hidden
      role="dialog" aria-modal="true" aria-labelledby="reviewCleanupTitle">
@@ -130,15 +136,29 @@
 
 </section>
 
+{% if ordinary_review %}
+<nav class="station-filters" aria-label="Review pages">
+{% if review.page > 1 %}<a href="?day={{ review.selected_day }}&page={{ review.page-1 }}&{{ selection | urlencode }}">Previous</a>{% endif %}
+<span>Page {{ review.page }} of {{ review.page_count }}</span>
+{% if review.page < review.page_count %}<a href="?day={{ review.selected_day }}&page={{ review.page+1 }}&{{ selection | urlencode }}">Next</a>{% endif %}
+</nav>
+{% endif %}
+{% endblock %}
+
+{% block modals %}
+{% if ordinary_review %}
+{% from 'components/detection_modal.html' import render_modal %}
+{% for event in review_events %}{% for member in event.members %}{{ render_modal(member.modal_detection, 'station_review') }}{% endfor %}{% endfor %}
+{% endif %}
 {% endblock %}
 
 {% block scripts %}
-<script src="/assets/js/gallery_utils.js?v=review-lazy-modal-v1"></script>
-<script src="/assets/js/tile_actions.js?v=review-lazy-modal-v1"></script>
-<script src="/assets/js/species_picker.js?v=20260920-bird-editor-v5"></script>
-<script src="/assets/js/batch_actions.js?v=1"></script>
-<script src="/assets/js/review_modal.js?v=2"></script>
-<script src="/assets/js/review_grid.js?v=review-compact-sizing-v1"></script>
-<script src="/assets/js/review_grid_keyboard.js?v=review-lazy-modal-v1"></script>
-<script src="/assets/js/review_cleanup.js?v=2-trash-housekeeping"></script>
+<script src="/assets/js/gallery_utils.js?v={{ asset_version }}"></script>
+<script src="/assets/js/tile_actions.js?v={{ asset_version }}"></script>
+<script src="/assets/js/species_picker.js?v={{ asset_version }}"></script>
+<script src="/assets/js/batch_actions.js?v={{ asset_version }}"></script>
+<script src="/assets/js/review_modal.js?v={{ asset_version }}"></script>
+<script src="/assets/js/review_grid.js?v={{ asset_version }}"></script>
+<script src="/assets/js/review_grid_keyboard.js?v={{ asset_version }}"></script>
+{% if not ordinary_review %}<script src="/assets/js/review_cleanup.js?v={{ asset_version }}"></script>{% else %}<script src="/assets/js/station_browse.js?v={{ asset_version }}"></script>{% endif %}
 {% endblock %}

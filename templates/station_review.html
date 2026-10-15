@@ -1,0 +1,56 @@
+{% extends 'base.html' %}
+{% from 'components/station_cards.html' import station_cards %}
+{% block title %}Review · WatchMyBirds{% endblock %}
+{% block content %}
+<nav class="page-control-bar" aria-label="Review controls">
+    <span class="page-control-bar__title">Review</span>
+    {% include 'partials/station_filters.html' %}
+    <span>{{ total_items }} {{ 'answered' if answered else 'open' }} objects</span>
+</nav>
+<p class="station-intro">{% if answered %}Completed answers are kept here for reference. Open a photo only if you want to correct an answer.{% else %}Check the proposed bird in each photo. Confirm its species, choose another species, Bird · species unknown, or No bird. Your answer completes that object.{% endif %}</p>
+<nav class="station-filters" aria-label="Review state">
+    <a class="btn btn--secondary" href="/admin/review?answered=0&{{ selection | urlencode }}">Review events</a>
+    <a class="btn btn--secondary" href="/admin/review?answered=1&{{ selection | urlencode }}">Answered · archive</a>
+    <a class="btn btn--secondary" href="/species/overview?species_key=Unknown_species&{{ selection | urlencode }}">Bird · species unknown</a>
+    <a href="/admin/review?diagnostic=1">Diagnostic events</a>
+</nav>
+<form class="review-day-nav" method="get" aria-label="Review day navigation">
+    <input type="hidden" name="answered" value="{{ 1 if answered else 0 }}">
+    {% for key, value in selection.items() %}<input type="hidden" name="{{ key }}" value="{{ value }}">{% endfor %}
+    <label for="review-day">Day</label>
+    <select id="review-day" name="day" class="form-control">
+        <option value="all" {% if review.selected_day == 'all' %}selected{% endif %}>All days ({{ review.total_items }})</option>
+        {% if review.selected_day and review.selected_day != 'all' and review.selected_day not in review.days %}<option value="{{ review.selected_day }}" selected>{{ review.selected_day }} (0)</option>{% endif %}
+        {% for day, count in review.days.items() %}<option value="{{ day }}" {% if day == review.selected_day %}selected{% endif %}>{{ day }} ({{ count }})</option>{% endfor %}
+    </select>
+    <button class="btn btn--secondary" type="submit">Show day</button>
+    <span>{{ review.day_items }} objects {{ 'across all days' if review.selected_day == 'all' else 'on this day' }}</span>
+</form>
+<div class="review-grid review-grid__stack">
+{% for group in review.groups %}
+<section class="review-grid__card">
+    <header class="review-grid__card-header">
+        <span class="review-grid__card-proposal">{{ 'Completed answers' if answered else 'Proposed species' }}</span>
+        <h2>{{ group.detections[0].proposal_common_name or 'Unclear proposal' }}</h2>
+        <span>{{ group.day }} · {{ group.start[9:11] }}:{{ group.start[11:13] }}–{{ group.end[9:11] }}:{{ group.end[11:13] }} · {{ group.detections|length }} objects</span>
+    </header>
+    {{ station_cards(group.detections, 'station_review') }}
+</section>
+{% else %}<p class="empty-state">No {{ 'answered' if answered else 'open' }} objects in this selection.</p>{% endfor %}
+</div>
+<nav class="station-filters" aria-label="Review pages">
+{% if page > 1 %}<a href="?answered={{ 1 if answered else 0 }}&day={{ review.selected_day }}&page={{ page-1 }}&{{ selection | urlencode }}">Previous</a>{% endif %}
+<span>Page {{ page }} of {{ review.page_count }}</span>
+{% if page < review.page_count %}<a href="?answered={{ 1 if answered else 0 }}&day={{ review.selected_day }}&page={{ page+1 }}&{{ selection | urlencode }}">Next</a>{% endif %}
+</nav>
+{% endblock %}
+{% block modals %}
+{% from 'components/detection_modal.html' import render_modal %}
+{% for det in detections %}{{ render_modal(det, 'station_review') }}{% endfor %}
+{% endblock %}
+{% block scripts %}
+<script src="/assets/js/species_picker.js?v={{ asset_version }}"></script>
+<script src="/assets/js/gallery_utils.js?v={{ asset_version }}"></script>
+<script src="/assets/js/tile_actions.js?v={{ asset_version }}"></script>
+<script src="/assets/js/station_browse.js?v={{ asset_version }}"></script>
+{% endblock %}

@@ -262,12 +262,13 @@ def record_human_answer(
     if answer.image_bird_presence is not None or answer.detector_miss:
         image_subject_id = ensure_image_subject(conn, filename)
 
-    # Answering any species question already asserts a bird is in the box —
-    # "I cannot name the species" included. Without this the row fails OD
-    # readiness as object_bird_presence_unknown and a box the person
-    # endorsed is dropped from training. An explicit answer always wins.
+    # A wrong species proposal says nothing about whether the object is a bird.
     object_bird_presence = answer.object_bird_presence
-    if object_bird_presence is None and answer.species_identity is not None:
+    if object_bird_presence is None and answer.species_identity in {
+        "confirmed",
+        "corrected",
+        "unknown",
+    }:
         object_bird_presence = "present"
 
     object_axes_present = any(
@@ -872,3 +873,20 @@ def _reject_presence_conflict(
 
     if conflict is not None:
         raise HumanLabelError("bird-presence conflict requires explicit resolution")
+
+
+def original_model_proposal(
+    conn: sqlite3.Connection, *, image_filename: str, detection_id: int | None
+) -> dict[str, str | None] | None:
+    if detection_id is None:
+        return None
+    row = conn.execute(
+        """SELECT d.raw_species_name, c.cls_class_name
+           FROM detections d LEFT JOIN classifications c
+             ON c.detection_id = d.detection_id AND c.rank = 1
+           WHERE d.detection_id = ? AND d.image_filename = ? LIMIT 1""",
+        (detection_id, image_filename),
+    ).fetchone()
+    if row is None:
+        return None
+    return {"raw_species_key": row[0], "classifier_species_key": row[1]}

@@ -147,14 +147,14 @@ def favorites_fixture(local_db_app):
         yield client, today_iso, fav_id, plain_id
 
 
-def test_species_overview_favorites_only_hides_non_favorite(favorites_fixture):
+def test_species_overview_keeps_history_despite_favorites_parameter(favorites_fixture):
     client, _today, fav_id, plain_id = favorites_fixture
 
     resp = client.get("/species/overview?species_key=Pica_pica&favorites=1")
     assert resp.status_code == 200
     body = resp.get_data(as_text=True)
-    assert f'data-detection-id="{plain_id}"' not in body
-    assert "No detections found for this species" in body
+    assert f'data-detection-id="{plain_id}"' in body
+    assert "No detections found for this species" not in body
 
 
 def test_species_overview_favorites_only_keeps_favorite(favorites_fixture):
@@ -181,22 +181,19 @@ def test_species_overview_favorites_only_inline_context(favorites_fixture):
     resp = client.get("/species/overview?species_key=Parus_major&favorites=1")
     assert resp.status_code == 200
     body = resp.get_data(as_text=True)
-    assert "favorites_only: true" in body
+    assert "favorites_only: false" in body
 
 
-def test_species_grid_favorites_only_hides_species_without_favorite(favorites_fixture):
+def test_species_grid_preserves_membership_without_favorites(favorites_fixture):
     client, _today, _fav_id, _plain_id = favorites_fixture
 
     resp = client.get("/species?favorites=1")
     assert resp.status_code == 200
     body = resp.get_data(as_text=True)
-    # Parus_major has a favorite → its overview link is present.
     assert "species_key=Parus_major" in body
-    # Pica_pica has no favorite → its tile is gone.
-    assert "species_key=Pica_pica" not in body
-    # Overview link carries the filter so a bookmark/share keeps state.
-    assert "species_key=Parus_major&min_score" in body
-    assert "favorites=1" in body
+    assert "species_key=Pica_pica" in body
+    assert 'name="source"' in body and 'name="start"' in body
+    assert 'id="filter-favorites-select"' not in body
 
 
 def test_species_grid_no_param_shows_all(favorites_fixture):
@@ -283,8 +280,8 @@ def test_subgallery_favorites_only_empty_state(local_db_app):
 
 
 def test_filter_bar_renders_favorites_dropdown_unselected(favorites_fixture):
-    client, _today, _fav_id, _plain_id = favorites_fixture
-    resp = client.get("/species")
+    client, today, _fav_id, _plain_id = favorites_fixture
+    resp = client.get(f"/gallery/{today}")
     body = resp.get_data(as_text=True)
     assert 'id="filter-favorites-select"' in body
     # "All photos" selected by default (no favorites param).
@@ -292,13 +289,13 @@ def test_filter_bar_renders_favorites_dropdown_unselected(favorites_fixture):
 
 
 def test_filter_bar_marks_favorites_selected_when_active(favorites_fixture):
-    client, _today, _fav_id, _plain_id = favorites_fixture
-    resp = client.get("/species?favorites=1")
+    client, today, _fav_id, _plain_id = favorites_fixture
+    resp = client.get(f"/gallery/{today}?favorites=1")
     body = resp.get_data(as_text=True)
     assert 'value="1" selected' in body
 
 
-def test_all_filtered_species_overview_respects_favorites(favorites_fixture):
+def test_all_filtered_species_overview_matches_current_history(favorites_fixture):
     _client, today_iso, fav_id, _plain_id = favorites_fixture
     p = today_iso.replace("-", "")
     with db_connection.closing_connection() as conn:
@@ -322,7 +319,7 @@ def test_all_filtered_species_overview_respects_favorites(favorites_fixture):
     )
 
     assert fav_id in result.detection_ids
-    assert same_species_plain_id not in result.detection_ids
+    assert same_species_plain_id in result.detection_ids
 
 
 def test_all_filtered_gallery_respects_favorites(favorites_fixture):

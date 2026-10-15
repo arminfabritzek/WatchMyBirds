@@ -50,8 +50,13 @@ def _seed_detection(
         """,
         (image_filename, score, aesthetic_score, rating, image_filename),
     )
+    detection_id = int(cur.lastrowid)
+    conn.execute(
+        "INSERT INTO classifications(detection_id, cls_class_name, cls_confidence, rank) VALUES (?, 'Parus_major', 0.95, 1)",
+        (detection_id,),
+    )
     conn.commit()
-    return int(cur.lastrowid)
+    return detection_id
 
 
 # ---------------------------------------------------------------------------

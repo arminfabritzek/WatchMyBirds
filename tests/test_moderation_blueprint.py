@@ -8,6 +8,7 @@ Covers:
 - FilterContext validation
 """
 
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -594,46 +595,37 @@ class TestFilterContext:
 
 
 class TestFilterResolverThresholds:
-    @patch("web.services.filter_service.db_service")
-    @patch("web.services.filter_service.get_config")
-    def test_species_overview_explicit_zero_keeps_zero_threshold(
-        self, mock_get_config, mock_db
-    ):
+    def test_species_overview_uses_history_independent_of_photo_threshold(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        from config import get_config
+        from tests.test_station_observations import answer, seed
+        from utils.db import closing_connection
+        from utils.db.detections import fetch_detections_for_gallery
         from web.services.filter_service import FilterContext, resolve_filtered_ids
 
-        mock_get_config.return_value = {"GALLERY_DISPLAY_THRESHOLD": 0.5}
-        mock_conn = MagicMock()
-        mock_db.closing_connection.return_value.__enter__ = MagicMock(
-            return_value=mock_conn
-        )
-        mock_db.closing_connection.return_value.__exit__ = MagicMock(return_value=False)
-        mock_db.fetch_detections_for_gallery.return_value = [
-            {
-                "detection_id": 11,
-                "cls_class_name": "Parus_major",
-                "od_class_name": "Parus_major",
-                "score": 0.2,
-            }
-        ]
-
+        monkeypatch.setitem(get_config(), "OUTPUT_DIR", str(tmp_path))
+        with closing_connection() as conn:
+            filename = seed(conn, identifier=11, species="Parus_major", quality=0)
+            answer(conn, 11, filename, species="Parus_major")
+            assert [r["detection_id"] for r in fetch_detections_for_gallery(conn)] == [
+                11
+            ]
         ctx = FilterContext.from_dict(
             {
                 "surface": "species_overview",
                 "species_key": "Parus_major",
-                "min_score": 0.0,
+                "min_score": 1.0,
+                "favorites_only": True,
             }
         )
-
         result = resolve_filtered_ids(ctx)
-
         assert result.detection_ids == [11]
         assert result.total_count == 1
 
     @patch("web.services.filter_service.db_service")
     @patch("web.services.filter_service.get_config")
-    def test_gallery_missing_min_score_falls_back_to_config_threshold(
-        self, mock_get_config, mock_db
-    ):
+    def test_gallery_has_no_second_default_score_filter(self, mock_get_config, mock_db):
         from web.services.filter_service import FilterContext, resolve_filtered_ids
 
         mock_get_config.return_value = {"GALLERY_DISPLAY_THRESHOLD": 0.5}
@@ -672,8 +664,8 @@ class TestFilterResolverThresholds:
 
         result = resolve_filtered_ids(ctx)
 
-        assert result.detection_ids == [22]
-        assert result.total_count == 1
+        assert result.detection_ids == [22, 21]
+        assert result.total_count == 2
 
     @patch("web.services.filter_service.db_service")
     @patch("web.services.filter_service.get_config")
@@ -728,6 +720,7 @@ class TestFilterResolverThresholds:
             {
                 "surface": "gallery",
                 "date": "2026-03-06",
+                "min_score": 0.5,
             }
         )
 

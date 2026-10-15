@@ -321,6 +321,16 @@
             : 'Answers here apply only to the offered box. Full-image answers are listed separately.';
         panel.appendChild(scope);
 
+        const proposal = data.model_proposal || {};
+        if (proposal.raw_species_key) {
+            const original = document.createElement('p');
+            original.className = 'wm-correction-details__scope';
+            original.textContent = 'Raw model species: ' + String(proposal.raw_species_key).replace(/_/g, ' ')
+                + (proposal.classifier_species_key ? ' · Classifier selection: ' + String(proposal.classifier_species_key).replace(/_/g, ' ') : '')
+                + '. These are model proposals, not the current human answer.';
+            panel.appendChild(original);
+        }
+
         const readiness = document.createElement('div');
         readiness.className = 'wm-correction-details__readiness';
         ['od', 'cls'].forEach(function (kind) {

@@ -10,6 +10,20 @@
             but cannot currently be exported as training data.</p>
     </div>
     {% endif %}
+    {% if det.ordinary_review and det.conflict and det.image_presence == 'absent' %}
+    <div class="station-intro" data-review-conflict>
+        <p>This object has a species answer, but the whole image was marked “No birds”. If this object is not a bird, choose No bird below. If a bird is visible, correct the whole-image answer first.</p>
+        <button type="button" class="btn btn--secondary" data-editor-action="image-has-bird">This image contains a bird</button>
+    </div>
+    {% endif %}
+    {% if det.ordinary_review %}
+    <div class="station-filters" aria-label="Answer for selected object">
+            <button type="button" class="btn btn--primary btn--sm" data-editor-action="confirm-species">Confirm species</button>
+            <button type="button" class="btn btn--secondary btn--sm" data-editor-action="choose-species">Change species</button>
+            <button type="button" class="btn btn--secondary btn--sm" data-editor-action="unknown-species">Bird · species unknown</button>
+            <button type="button" class="btn btn--secondary btn--sm" data-editor-action="no-bird">No bird</button>
+    </div>
+    {% endif %}
     <div class="wm-bird-editor__toolbar" role="toolbar" aria-label="Bird editor">
         <div class="wm-view-mode-toggle wm-view-mode-toggle--editor smart-zoom-toggle"
             role="group" aria-label="Image view" data-view-mode="focus">

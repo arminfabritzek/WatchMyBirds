@@ -142,7 +142,7 @@
         return (rawValue || '')
             .split(',')
             .map(function (s) { return parseInt(s.trim(), 10); })
-            .filter(function (n) { return Number.isFinite(n) && n > 0; });
+            .filter(function (n) { return Number.isFinite(n) && n !== 0; });
     }
 
     function removeCard(card, label) {
@@ -191,7 +191,7 @@
         if (!card) return [];
         return Array.from(card.querySelectorAll('.review-grid__tile:not(.review-grid__tile--context):not([data-review-grid-removing])'))
             .map(function (tile) { return parseInt(tile.dataset.detectionId, 10); })
-            .filter(function (n) { return Number.isFinite(n) && n > 0; });
+            .filter(function (n) { return Number.isFinite(n) && n !== 0; });
     }
 
     function syncCardActionableState(card) {
@@ -254,6 +254,11 @@
         if (!approveBtn) return;
 
         const species = (card.dataset.species || '').trim();
+        if (card.dataset.ordinaryReview) {
+            approveBtn.disabled = !species || !scope || !scope.count;
+            if (unresolvedBtn) unresolvedBtn.disabled = !scope || !scope.count;
+            return;
+        }
         const evidenceQuality = (card.dataset.evidenceQuality || '').trim();
         const blockedReason = card.dataset.approveBlockedReason || 'Select frames before approving this event';
 
@@ -292,6 +297,31 @@
         }
         approveBtn.disabled = false;
         approveBtn.title = 'Approve this event with ' + evidenceQuality + ' evidence';
+    }
+
+    async function answerOrdinaryEvent(card, button, verb) {
+        if (card.dataset.saving) return;
+        const scope = getCardScopeIds(card);
+        if (!scope.count) return;
+        let species = card.dataset.species || '';
+        if (verb === 'relabel_event') {
+            const chosen = await window.WmSpeciesPicker.pickSpecies({
+                currentSpecies: species, detectionId: scope.ids[0], title: 'Choose species for selected objects'
+            });
+            if (!chosen || !chosen.scientific) return;
+            species = chosen.scientific;
+        }
+        const action = verb === 'no_bird_event' ? 'no_bird' : verb === 'unresolved_event' ? 'unknown' : 'species';
+        card.dataset.saving = '1';
+        button.disabled = true;
+        try {
+            await postJson('/api/review/answers', { detection_ids: scope.ids, action: action, species: species });
+            window.location.reload();
+        } catch (error) {
+            if (window.wmToast) window.wmToast(error.message || 'Unable to save answers', 'error', 5000);
+            delete card.dataset.saving;
+            button.disabled = false;
+        }
     }
 
     async function approveEvent(card) {
@@ -599,6 +629,10 @@
             if (actionBtn.disabled) return;
             const card = actionBtn.closest('[data-review-grid-card]');
             const verb = actionBtn.dataset.reviewGridAction;
+            if (card && card.dataset.ordinaryReview && verb !== 'invert_selection') {
+                answerOrdinaryEvent(card, actionBtn, verb);
+                return;
+            }
             if (verb === 'approve_event' && card) {
                 approveEvent(card);
             } else if (verb === 'unresolved_event' && card) {

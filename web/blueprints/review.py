@@ -1974,6 +1974,76 @@ def _require_active_review_detection(conn, filename: str, detection_id: int):
 @review_bp.route("/admin/review", methods=["GET"])
 @login_required
 def review_page():
+    if request.args.get("diagnostic") != "1" and not request.args.get("layout"):
+        from web import view_helpers
+        from web.services import station_service
+
+        try:
+            selection = station_service.validate_selection(
+                request.args.get("start", ""),
+                request.args.get("end", ""),
+                request.args.get("source", "all"),
+            )
+            answered_value = request.args.get("answered", "0")
+            if answered_value not in {"0", "1"}:
+                raise ValueError("Invalid review state")
+            answered = answered_value == "1"
+            review = station_service.grouped_review(
+                answered=answered,
+                selection=selection,
+                day=request.args.get("day", "latest"),
+                page=request.args.get("page", 1, type=int) or 1,
+            )
+        except ValueError as exc:
+            abort(400, description=str(exc))
+        if not answered:
+            events = view_helpers.build_station_review_events(review["groups"])
+            days = list(review["days"])
+            selected_day = review["selected_day"]
+
+            def day_url(value: str) -> str:
+                return url_for("review.review_page", day=value, **selection)
+
+            older = [day for day in days if day < selected_day]
+            newer = [day for day in days if day > selected_day]
+            return render_template(
+                "review_grid.html",
+                review_events=events,
+                ordinary_review=True,
+                review=review,
+                selection=selection,
+                current_path="/admin/review",
+                review_navigation={
+                    "days": list(review["days"].items()),
+                    "selected_day": selected_day,
+                    "total_events": review["total_items"],
+                    "is_grid_layout": True,
+                    "older_url": day_url(max(older))
+                    if older and selected_day != "all"
+                    else None,
+                    "newer_url": day_url(min(newer))
+                    if newer and selected_day != "all"
+                    else None,
+                    "sort_order": "priority",
+                },
+            )
+        for group in review["groups"]:
+            group["detections"] = view_helpers.build_station_views(group.pop("rows"))
+            for det in group["detections"]:
+                det["ordinary_review"] = True
+        return render_template(
+            "station_review.html",
+            review=review,
+            detections=[
+                det for group in review["groups"] for det in group["detections"]
+            ],
+            selection=selection,
+            ordinary_review=True,
+            answered=answered,
+            total_items=review["total_items"],
+            page=review["page"],
+            current_path="/admin/review",
+        )
     """Review complete events by day, chronologically or by review priority."""
     day = (request.args.get("day") or "latest").strip()
     sort_order = (request.args.get("sort") or "chronological").strip()
@@ -2113,6 +2183,7 @@ def review_page():
             "is_grid_layout": is_grid_layout,
             "older_url": url_for(
                 "review.review_page",
+                diagnostic=1,
                 day=selection.older_day,
                 sort=sort_order,
                 **({} if is_grid_layout else {"layout": "legacy"}),
@@ -2121,6 +2192,7 @@ def review_page():
             else None,
             "newer_url": url_for(
                 "review.review_page",
+                diagnostic=1,
                 day=selection.newer_day,
                 sort=sort_order,
                 **({} if is_grid_layout else {"layout": "legacy"}),
@@ -3820,3 +3892,29 @@ def analyze_review_item(filename):
 
     except Exception as e:
         return _error_response("Error triggering analysis", e)
+
+
+@review_bp.route("/api/review/answers", methods=["POST"])
+@login_required
+@cache_service.invalidates("analytics.")
+def review_answers():
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify(status="error", message="Invalid review answer"), 400
+    species = data.get("species")
+    try:
+        with db_service.closing_connection() as conn:
+            if data.get("action") == "species" and (
+                not isinstance(species, str)
+                or species
+                not in _get_allowed_review_species(
+                    conn, config.get("SPECIES_COMMON_NAME_LOCALE", "DE")
+                )
+            ):
+                raise ValueError("Choose a valid species")
+            count = human_label_service.record_review_answers(
+                conn, data.get("detection_ids"), data.get("action"), species
+            )
+        return jsonify(status="success", answered=count)
+    except ValueError as exc:
+        return jsonify(status="error", message=str(exc)), 409

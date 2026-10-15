@@ -409,7 +409,7 @@ def test_review_modal_uses_quick_review_layout():
     assert "width: 44px;" in css
     assert "height: 44px;" in css
     assert "statusEl.hidden = true;" in review_js
-    assert "/assets/js/review_workspace.js?v=20260819-full-image-no-bird" in review_page
+    assert "/assets/js/review_workspace.js?v={{ asset_version }}" in review_page
     assert "data-review-item" in review_page
     assert 'id="dsManualConfirmed"' in review_page
     assert 'onchange="toggleOrphanFilter(this)"' not in review_page
@@ -601,12 +601,7 @@ def test_gallery_utils_cache_key_reaches_every_image_surface():
     )
 
     for template in templates:
-        version = (
-            "review-lazy-modal-v1"
-            if template == "templates/review_grid.html"
-            else "20260922-bbox-label-v4"
-        )
-        assert f"gallery_utils.js?v={version}" in _read(template), template
+        assert "gallery_utils.js?v={{ asset_version }}" in _read(template), template
 
 
 def test_offered_box_labels_choose_visible_space_around_the_box():
@@ -745,12 +740,7 @@ def test_tile_action_cache_key_reaches_every_image_surface():
     )
 
     for template in templates:
-        version = (
-            "review-lazy-modal-v1"
-            if template == "templates/review_grid.html"
-            else "20260920-bird-editor-v4"
-        )
-        assert f"tile_actions.js?v={version}" in _read(template), template
+        assert "tile_actions.js?v={{ asset_version }}" in _read(template), template
 
 
 def test_box_walkthrough_is_a_shared_viewer_scope():

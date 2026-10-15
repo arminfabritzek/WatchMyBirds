@@ -28,7 +28,7 @@ def fetch_all_time_daily_counts(conn: sqlite3.Connection) -> list[sqlite3.Row]:
             COUNT(*) AS count
         FROM detections d
         JOIN images i ON d.image_filename = i.filename
-        WHERE {_gallery_visibility_sql("d", "i")}
+        WHERE {_gallery_visibility_sql("d", "i", conn)}
         GROUP BY date_iso
         ORDER BY date_iso ASC
         """)

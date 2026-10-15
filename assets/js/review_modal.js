@@ -7,7 +7,7 @@
 
     function tileFor(trigger) {
         const tile = trigger.closest('.review-grid__tile');
-        return tile && tile.querySelector('[data-tile-image][data-modal-url]');
+        return tile && tile.querySelector('[data-tile-image][data-modal-target]');
     }
 
     async function load(tile) {
@@ -67,11 +67,11 @@
 
     async function navigate(current, direction) {
         if (navigating || modalNavigationInFlight) return;
-        const tile = Array.from(document.querySelectorAll('[data-tile-image][data-modal-url]'))
+        const tile = Array.from(document.querySelectorAll('[data-tile-image][data-modal-target]'))
             .find(function (item) { return item.dataset.modalTarget === '#' + current.id; });
         const card = tile && tile.closest('[data-review-grid-card]');
         if (!card) return;
-        const tiles = Array.from(card.querySelectorAll('[data-tile-image][data-modal-url]'));
+        const tiles = Array.from(card.querySelectorAll('[data-tile-image][data-modal-target]'));
         const index = tiles.indexOf(tile);
         const filename = tile.closest('.review-grid__tile').dataset.imageFilename;
         const step = direction === 'next' ? 1 : -1;
