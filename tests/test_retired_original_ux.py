@@ -271,8 +271,3 @@ def test_detection_modal_uses_optimized_path_with_full_path_fallback():
     content = _read("templates/components/detection_modal.html")
     assert "det.optimized_path" in content
     assert "det.full_path" in content  # gallery fallback (full_path == optimized)
-
-
-def test_orphan_modal_gates_action_bar_on_retired():
-    content = _read("templates/components/orphan_modal.html")
-    assert "original_retired=" in content

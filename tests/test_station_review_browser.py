@@ -136,12 +136,14 @@ def test_review_answers_complete_and_can_be_corrected(local_db_app: Flask) -> No
                 has=page.locator('[data-detection-id="71"]')
             )
             card.locator('input[value="71"]').check()
-            with page.expect_response(
-                lambda r: "/api/review/answers" in r.url
-            ) as result:
+            with (
+                page.expect_navigation(wait_until="load"),
+                page.expect_response(
+                    lambda r: "/api/review/answers" in r.url
+                ) as result,
+            ):
                 card.locator('[data-review-grid-action="unresolved_event"]').click()
             assert result.value.status == 200
-            page.wait_for_load_state("load")
             page.goto(base + "/admin/review")
             assert (
                 page.locator('.review-grid__tile[data-detection-id="71"]').count() == 0
@@ -149,18 +151,24 @@ def test_review_answers_complete_and_can_be_corrected(local_db_app: Flask) -> No
             assert (
                 page.locator('.review-grid__tile[data-detection-id="72"]').count() == 1
             )
-            with page.expect_response(
-                lambda r: "/api/review/answers" in r.url
-            ) as result:
+            with (
+                page.expect_navigation(wait_until="load"),
+                page.expect_response(
+                    lambda r: "/api/review/answers" in r.url
+                ) as result,
+            ):
                 page.locator('[data-review-grid-action="approve_event"]').click()
             assert result.value.status == 200
             with closing_connection() as conn:
                 assert fetch_observation_page(conn, answered=False)[1] == 0
                 seed(conn, identifier=73, species="Pica_pica")
             page.goto(base + "/admin/review")
-            with page.expect_response(
-                lambda r: "/api/review/answers" in r.url
-            ) as result:
+            with (
+                page.expect_navigation(wait_until="load"),
+                page.expect_response(
+                    lambda r: "/api/review/answers" in r.url
+                ) as result,
+            ):
                 page.locator('[data-review-grid-action="no_bird_event"]').click()
             assert result.value.status == 200
             with closing_connection() as conn:

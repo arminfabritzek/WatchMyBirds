@@ -34,8 +34,7 @@ from detectors.services.crop_service import CropService
 from detectors.services.decision_policy_service import DecisionPolicyService
 from detectors.services.detection_service import DetectionService
 from detectors.services.mqtt_detection_service import MqttDetectionService
-from detectors.services.scoring_pipeline import ScoringResult, compute_detection_signals
-from detectors.services.temporal_decision_service import TemporalDecisionService
+from detectors.services.scoring_pipeline import compute_detection_signals
 from logging_config import get_logger
 from utils.db import get_connection, get_or_create_default_source
 from utils.path_manager import get_path_manager
@@ -161,10 +160,6 @@ class DetectionManager:
 
         # Control flags
         self.paused = False
-        self._deep_scan_active = False
-        self._deep_scan_gate_count = 0
-        self._paused_before_deep_scan = False
-        self._deep_scan_lock = threading.Lock()
         self.last_detection_had_frame = True
         self._last_components_ready_state = True
         self._last_frame_was_stale = False
@@ -244,80 +239,9 @@ class DetectionManager:
         )
         self.crop_service = CropService()
         self.decision_policy_service = DecisionPolicyService()
-        self.temporal_decision_service = TemporalDecisionService()
         self.capability_registry = build_default_registry()
 
         logger.info("DetectionManager V2 initialized (with Services)")
-
-    # =========================================================================
-    # SIGNAL DELEGATE — single-entry scoring pipeline for external callers
-    # (e.g. analysis_service) without requiring cross-layer imports.
-    # =========================================================================
-
-    def compute_detection_signals(
-        self,
-        *,
-        bbox: tuple[int, int, int, int],
-        frame_shape: tuple[int, ...],
-        od_conf: float,
-        cls_conf: float,
-        top_k_confidences: list[float] | None,
-        species_key: str,
-        od_class_name: str | None = None,
-    ) -> "ScoringResult":
-        """Delegate to :func:`scoring_pipeline.compute_detection_signals`.
-
-        ``od_class_name`` routes deep-review reanalysis through the same
-        non-bird gate as live ingest. Omitting it preserves the legacy
-        bird-track-only behaviour for callers that have no class info.
-
-        Builds the same per-class resolver as the live `_processing_loop`
-        so deep-review reanalysis uses the model's per-class floors when
-        a v2-coco-shaped detector is loaded, and falls back to the scalar
-        for 5-class models.
-        """
-        detection_service = getattr(self, "detection_service", None)
-        detector_obj = getattr(detection_service, "_detector", None)
-        underlying = getattr(detector_obj, "model", None) if detector_obj else None
-        per_class_map: dict[str, float] = (
-            getattr(underlying, "conf_per_class_name", {}) or {}
-            if underlying is not None
-            else {}
-        )
-        global_non_bird_floor = float(
-            self.config.get("NON_BIRD_CONFIRM_THRESHOLD", 0.80)
-        )
-
-        def non_bird_floor_for(class_name: str) -> float:
-            # See non_bird_floor_for() in run() for the rationale:
-            # global NON_BIRD_CONFIRM_THRESHOLD is the minimum; per-class
-            # entries from the detector YAML may only RAISE it.
-            per_class = per_class_map.get(class_name)
-            if per_class is None:
-                return global_non_bird_floor
-            return max(float(per_class), global_non_bird_floor)
-
-        return compute_detection_signals(
-            bbox=bbox,
-            frame_shape=frame_shape,
-            od_conf=od_conf,
-            cls_conf=cls_conf,
-            top_k_confidences=top_k_confidences,
-            decision_policy=self.decision_policy_service,
-            temporal_service=self.temporal_decision_service,
-            capability_registry=self.capability_registry,
-            species_key=species_key,
-            od_class_name=od_class_name,
-            non_bird_confirm_threshold=global_non_bird_floor,
-            non_bird_confirm_threshold_fn=non_bird_floor_for,
-        )
-
-    def run_exhaustive_scan(self, frame: np.ndarray) -> list:
-        """Compatibility adapter for orphan deep-scan workflows."""
-        detections = self.detection_service.exhaustive_detect(frame)
-        if not self.detector_model_id:
-            self.detector_model_id = self.detection_service.get_model_id()
-        return detections
 
     # =========================================================================
     # LIFECYCLE
@@ -408,33 +332,6 @@ class DetectionManager:
         self.auto_ptz_controller.stop()
 
         logger.info("DetectionManager V2 stopped.")
-
-    def enter_deep_scan_mode(self) -> None:
-        """Pause live loops while a manual/nightly deep scan is running."""
-        with self._deep_scan_lock:
-            if self._deep_scan_gate_count == 0:
-                self._paused_before_deep_scan = self.paused
-                self.paused = True
-                self._deep_scan_active = True
-            self._deep_scan_gate_count += 1
-
-    def exit_deep_scan_mode(self) -> None:
-        """Restore live loops after deep scan completes."""
-        with self._deep_scan_lock:
-            if self._deep_scan_gate_count <= 0:
-                self._deep_scan_gate_count = 0
-                self._deep_scan_active = False
-                return
-
-            self._deep_scan_gate_count -= 1
-            if self._deep_scan_gate_count == 0:
-                self._deep_scan_active = False
-                self.paused = self._paused_before_deep_scan
-
-    def is_deep_scan_active(self) -> bool:
-        """Whether deep-scan gating is currently active."""
-        with self._deep_scan_lock:
-            return self._deep_scan_active
 
     # =========================================================================
     # OD NIGHT-PAUSE GATE
@@ -1227,14 +1124,6 @@ class DetectionManager:
                     except Exception as e:
                         logger.error(f"Classification error: {e}")
 
-                # Species key for temporal smoothing:
-                # - bird track: CLS result, or "unknown" when CLS failed
-                # - non-bird track: the OD class name itself (it IS the species)
-                if is_bird:
-                    species_key = cls_name or "unknown"
-                else:
-                    species_key = od_class_name
-
                 # Centralised scoring pipeline (single source of truth)
                 signals = compute_detection_signals(
                     bbox=bbox_tuple,
@@ -1247,16 +1136,14 @@ class DetectionManager:
                         else None
                     ),
                     decision_policy=self.decision_policy_service,
-                    temporal_service=self.temporal_decision_service,
                     capability_registry=self.capability_registry,
-                    species_key=species_key,
                     od_class_name=od_class_name,
                     non_bird_confirm_threshold=global_non_bird_floor,
                     non_bird_confirm_threshold_fn=non_bird_floor_for,
                 )
                 score = signals.score
                 agreement = signals.agreement_score
-                smoothed_state = signals.decision_state
+                decision_state = signals.decision_state
 
                 # Save detection via PersistenceService
                 det_data = DetectionData(
@@ -1267,7 +1154,7 @@ class DetectionManager:
                     cls_confidence=cls_conf,
                     score=score,
                     agreement_score=agreement,
-                    decision_state=smoothed_state,
+                    decision_state=decision_state,
                     bbox_quality=signals.bbox_quality,
                     unknown_score=signals.unknown_score,
                     decision_reasons=signals.decision_reasons_json,
@@ -1355,9 +1242,7 @@ class DetectionManager:
                                 if cls_result is not None
                                 else None,
                                 "top1_prob": top1,
-                                "decision_state": str(smoothed_state)
-                                if smoothed_state is not None
-                                else None,
+                                "decision_state": str(decision_state),
                                 "decision_reasons": signals.decision_reasons_json,
                                 "detector_model_id": self.detector_model_id,
                                 "classifier_model_id": self.classifier_model_id,
@@ -1371,8 +1256,8 @@ class DetectionManager:
                     # Still bump the session counter so the operational
                     # dashboard counts reject as a real decision event,
                     # not just silent loss.
-                    if smoothed_state and smoothed_state in self.decision_state_counts:
-                        self.decision_state_counts[smoothed_state] += 1
+                    if decision_state in self.decision_state_counts:
+                        self.decision_state_counts[decision_state] += 1
                     continue
 
                 # First keeper of this frame triggers the lazy image
@@ -1434,34 +1319,17 @@ class DetectionManager:
                                 "confidence": float(score),
                                 "od_confidence": float(od_conf),
                                 "cls_confidence": float(cls_conf),
-                                "decision_state": (
-                                    smoothed_state.value
-                                    if smoothed_state is not None
-                                    else None
-                                ),
+                                "decision_state": decision_state.value,
                             }
                         )
                     except Exception as bus_err:
                         logger.debug("live_event_bus publish failed: %s", bus_err)
 
                     # P1-03: session counter for operational monitoring
-                    if smoothed_state and smoothed_state in self.decision_state_counts:
-                        self.decision_state_counts[smoothed_state] += 1
+                    if decision_state in self.decision_state_counts:
+                        self.decision_state_counts[decision_state] += 1
 
-                    # Track best detection for notification.
-                    # Policy ON:  gate on smoothed decision state == CONFIRMED.
-                    # Policy OFF: conservative legacy gate — cls_conf > 0
-                    #             AND score >= SAVE_THRESHOLD.
-                    notify_eligible = False
-                    if smoothed_state is not None:
-                        # Decision policy active → require CONFIRMED
-                        notify_eligible = smoothed_state == DecisionState.CONFIRMED
-                    else:
-                        # Legacy-conservative fallback (no decision policy).
-                        # Reuses save_thr already resolved at the top of the
-                        # detection loop so auto and manual modes stay
-                        # consistent across gates.
-                        notify_eligible = cls_conf > 0 and score >= save_thr
+                    notify_eligible = decision_state == DecisionState.CONFIRMED
 
                     if score > best_score and notify_eligible:
                         best_score = score
@@ -1590,30 +1458,3 @@ class DetectionManager:
         self.classifier_model_id = ""
         self.config["CLASSIFIER_BACKEND"] = normalized
         logger.info("Classifier backend switched to %s", normalized)
-
-    def start_user_ingest(self, folder_path: str | None = None) -> None:
-        """Orchestrates User Ingest process."""
-        from utils.db import get_or_create_user_import_source
-        from utils.ingest import ingest_folder
-
-        if folder_path is None:
-            folder_path = self.config.get("INGEST_DIR", "")
-
-        try:
-            logger.info("Initiating User Ingest. Pausing detection...")
-            self.paused = True
-            time.sleep(2)
-
-            source_id = get_or_create_user_import_source(self.db_conn)
-
-            if os.path.exists(folder_path):
-                logger.info(f"Running ingest on {folder_path}...")
-                ingest_folder(folder_path, source_id, move_files=True)
-                logger.info("User Ingest complete.")
-            else:
-                logger.error(f"Ingest folder not found: {folder_path}")
-        except Exception as e:
-            logger.error(f"Error during User Ingest: {e}", exc_info=True)
-        finally:
-            logger.info("Resuming detection...")
-            self.paused = False

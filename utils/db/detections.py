@@ -585,8 +585,6 @@ def fetch_detections_for_gallery(
             c.cls_class_name,
             c.cls_confidence,
             {species_sql} as species_key,
-            d.rating,
-            d.rating_source,
             d.is_favorite,
             d.is_gallery_eligible,
             d.aesthetic_score,
@@ -801,8 +799,6 @@ def fetch_species_story_board_candidates(
             c.cls_class_name,
             c.cls_confidence,
             {species_sql} AS species_key,
-            d.rating,
-            d.rating_source,
             d.is_favorite,
             d.is_gallery_eligible,
             d.aesthetic_score,
@@ -924,8 +920,6 @@ def fetch_species_story_board_candidates(
         rf.cls_class_name,
         rf.cls_confidence,
         rf.species_key,
-        rf.rating,
-        rf.rating_source,
         rf.is_favorite,
         rf.is_gallery_eligible,
         rf.aesthetic_score,
@@ -1196,7 +1190,7 @@ def fetch_daily_covers(
     end_date: str | None = None,
 ) -> list[sqlite3.Row | dict[str, Any]]:
     """
-    Returns the best detection (highest rating, then score) for each day to use as a cover.
+    Returns each day's cover by PTZ origin, aesthetic score, then detection score.
     Includes bbox for dynamic cropping and image count per day.
 
     Args:
@@ -1219,9 +1213,7 @@ def fetch_daily_covers(
                             AND f.fact_type = 'bbox_quality' AND f.answer_value IN ('suitable', 'unsuitable')))
                         OVER (PARTITION BY substr(REPLACE(timestamp, '-', ''), 1, 8)) AS boxes_reviewed_count,
                     ROW_NUMBER() OVER (PARTITION BY substr(REPLACE(timestamp, '-', ''), 1, 8)
-                        ORDER BY COALESCE((SELECT d.rating FROM detections d
-                                WHERE d.detection_id = observations.detection_id), 0) DESC,
-                            CASE WHEN ptz_origin IN ('preset', 'manual_drive') THEN 1 ELSE 0 END DESC,
+                        ORDER BY CASE WHEN ptz_origin IN ('preset', 'manual_drive') THEN 1 ELSE 0 END DESC,
                             COALESCE((SELECT d.aesthetic_score FROM detections d
                                 WHERE d.detection_id = observations.detection_id), -1) DESC,
                             score DESC, detection_id DESC, object_key) AS rn
@@ -1260,15 +1252,13 @@ def fetch_daily_covers(
             ROW_NUMBER() OVER (
                 PARTITION BY (substr(i.timestamp, 1, 4) || '-' || substr(i.timestamp, 5, 2) || '-' || substr(i.timestamp, 7, 2))
                 -- Cover ranking, highest priority first:
-                --   1. manual rating
-                --   2. PTZ preset bias — frames captured while the camera was
+                --   1. PTZ preset bias — frames captured while the camera was
                 --      driven to a non-overview preset are physically closer
                 --      to the bird. Auto and manual drives rank equally; legacy
                 --      NULL rows sort behind anything tagged.
-                --   3. nightly aesthetic score from scripts/aesthetic_tag_nightly.py
-                --   4. detector confidence (legacy fallback)
-                ORDER BY COALESCE(d.rating, 0) DESC,
-                         CASE i.ptz_origin
+                --   2. nightly aesthetic score from scripts/aesthetic_tag_nightly.py
+                --   3. detector confidence (legacy fallback)
+                ORDER BY CASE i.ptz_origin
                              WHEN 'preset' THEN 1
                              WHEN 'manual_drive' THEN 1
                              ELSE 0

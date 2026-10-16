@@ -38,7 +38,6 @@ from core.manual_object_core import (
     update_manual_object as update_manual_object_core,
 )
 from core.review_state import refresh_review_image_visibility
-from core.station_report import record_station_event_review
 
 
 def _app_version(explicit_version: str = "") -> str:
@@ -185,45 +184,6 @@ def retract_manual_object(
             source_ref=f"manual-object:retract:{manual_object_id}",
             app_version=app_version,
         ),
-    )
-
-
-def record_event_review(
-    conn: sqlite3.Connection,
-    *,
-    event_key: str,
-    detection_ids: list[int],
-    anchor_detection_id: int,
-    outcome: str,
-    evidence_quality: str,
-    event_start: str,
-    event_end: str,
-    candidate_species_key: str | None = None,
-    species_key: str | None = None,
-    source_ref: str | None = None,
-    app_version: str = "",
-) -> int:
-    """Append the event-level diagnostic-evidence statement."""
-    cfg = get_config()
-    provenance = LabelProvenance(
-        installation_id=get_or_create_labeling_installation_id(str(cfg["OUTPUT_DIR"])),
-        app_version=_app_version(app_version),
-        context="normal_correction",
-        source_kind="watchmybirds_ui",
-        source_ref=source_ref,
-    )
-    return record_station_event_review(
-        conn,
-        event_key=event_key,
-        detection_ids=detection_ids,
-        anchor_detection_id=anchor_detection_id,
-        outcome=outcome,
-        evidence_quality=evidence_quality,
-        event_start=event_start,
-        event_end=event_end,
-        provenance=provenance,
-        candidate_species_key=candidate_species_key,
-        species_key=species_key,
     )
 
 

@@ -191,10 +191,6 @@ def selection_sql(selection: dict[str, str] | None = None) -> tuple[str, list[st
         if selection.get(key):
             clauses.append(f"{day} {op} ?")
             params.append(selection[key])
-    if selection.get("source") == "camera":
-        clauses.append("source_type IN ('ipcam', 'webcam', 'rtsp', 'camera')")
-    elif selection.get("source") == "import":
-        clauses.append("source_type IN ('folder_upload', 'import', 'folder')")
     return " AND ".join(clauses), params
 
 

@@ -105,7 +105,7 @@ TAG_UNKNOWN_SPECIES = False
 # - 0.10 is calibrated against the current live CLIP-rescore
 #   distribution: every manual-favorited pick scores at or above it,
 #   so the floor doesn't lose preferred picks while still cutting the
-#   candidate pool roughly in half. Should track TELEGRAM_MIN_AESTHETIC_SCORE.
+#   candidate pool roughly in half.
 MIN_SCORE_FOR_TAG = 0.10
 
 # Detections must have passed all upstream Pipeline-Stages before the
@@ -129,9 +129,8 @@ TOP_N_PER_SPECIES_PER_DAY = 3
 # differently (eye-visible side view = good, eye-hidden rear view = bad).
 # Both prompts retain a sharpness term so a sharp 3/4 view ranks above
 # a blurry frontal one. Existing per-species AUCs from earlier validation
-# runs are no longer directly applicable; expect MIN_SCORE_FOR_TAG and
-# TELEGRAM_MIN_AESTHETIC_SCORE to need re-calibration once a few days
-# of fresh picks are in.
+# runs are no longer directly applicable; expect MIN_SCORE_FOR_TAG to need
+# re-calibration once a few days of fresh picks are in.
 CLIP_MODEL_NAME = "ViT-B-32"
 CLIP_PRETRAINED = "laion2b_s34b_b79k"
 CLIP_PROMPT_POSITIVE = "a sharp, well-focused close-up portrait of a bird with its eye visible and its head turned toward the camera"

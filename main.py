@@ -146,8 +146,7 @@ def _create_runtime():
     # Initialise the compute lease BEFORE the aesthetic tag scheduler so the
     # tagger's pre-telegram bridge run (which can fire seconds after boot)
     # acquires the lease instead of falling back to the unguarded direct
-    # call. The Companion backend re-uses the same lease later in
-    # create_web_interface(); init_compute_lease_service is idempotent.
+    # call.
     try:
         from web.services.compute_lease_service import init_compute_lease_service
 
@@ -196,32 +195,6 @@ def _create_runtime():
         start_weather_loop(interval=1800)
     except Exception as e:
         logger.warning(f"Weather service failed to start: {e}")
-
-    # Start Analysis Queue Worker (Deep Review)
-    try:
-        from core.analysis_queue import analysis_queue
-        from web.services.analysis_service import (
-            process_deep_analysis_job,
-            start_nightly_analysis_sweep,
-        )
-
-        # Inject DetectionManager for deep-scan gate control
-        analysis_queue.set_detection_manager(detection_manager)
-
-        # Use lambda to inject detection_manager dependency
-        analysis_queue.start(
-            lambda job: process_deep_analysis_job(detection_manager, job)
-        )
-
-        # Start nightly sweep (feature-flag gated)
-        if config.get("ENABLE_NIGHTLY_DEEP_SCAN", False):
-            start_nightly_analysis_sweep()
-        else:
-            logger.info("Nightly deep scan disabled by feature flag")
-
-        atexit.register(analysis_queue.stop)
-    except Exception as e:
-        logger.warning(f"Analysis Queue failed to start: {e}")
 
     # Start Daily Report Scheduler (sends Telegram evening report)
     try:

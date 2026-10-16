@@ -57,7 +57,6 @@ class FilterContext:
     # Species Overview surface
     start: str = ""
     end: str = ""
-    source: str = "all"
     species_key: str | None = None  # e.g. "Parus_major"
 
     # Score / confidence thresholds
@@ -89,7 +88,6 @@ class FilterContext:
             **station_service.validate_selection(
                 str(data.get("start") or ""),
                 str(data.get("end") or ""),
-                str(data.get("source") or "all"),
             ),
             min_score=float(raw_min_score) if min_score_explicit else 0.0,
             min_conf=float(data.get("min_conf", 0.0)),
@@ -174,11 +172,11 @@ def _resolve_gallery(ctx: FilterContext) -> ResolvedSelection:
 
 
 def _resolve_species_overview(ctx: FilterContext) -> ResolvedSelection:
-    """Current species history with the page's period and source selection."""
+    """Current species history with the page's period selection."""
     if not ctx.species_key:
         return ResolvedSelection()
 
-    selection = station_service.validate_selection(ctx.start, ctx.end, ctx.source)
+    selection = station_service.validate_selection(ctx.start, ctx.end)
     ids = station_service.species_selection_ids(ctx.species_key, selection)
     return ResolvedSelection(detection_ids=ids, total_count=len(ids))
 

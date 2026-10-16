@@ -13,6 +13,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from flask import Flask
+from flask.testing import FlaskClient
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -394,8 +395,13 @@ class TestBulkRelabel:
     @patch(
         "web.blueprints.moderation.build_species_picker_entries",
         return_value=[
-            {"scientific": "Parus_major", "common": "Great Tit",
-             "source": "model", "score": None, "rank": None}
+            {
+                "scientific": "Parus_major",
+                "common": "Great Tit",
+                "source": "model",
+                "score": None,
+                "rank": None,
+            }
         ],
     )
     def test_relabel_flips_decision_level_to_species(
@@ -530,9 +536,6 @@ class TestAuthExpiry:
         ("/api/moderation/resolve-selection", "POST"),
         ("/api/moderation/bulk/relabel", "POST"),
         ("/api/moderation/bulk/reject", "POST"),
-        ("/api/moderation/bulk/rescan", "POST"),
-        ("/api/moderation/rescan-jobs/abc123/status", "GET"),
-        ("/api/moderation/rescan-proposals/1/apply", "POST"),
     ]
 
     @pytest.mark.parametrize("url,method", ENDPOINTS)
@@ -762,3 +765,17 @@ class TestFilterResolverThresholds:
 
         assert result.detection_ids == [31]
         assert result.total_count == 1
+
+
+@pytest.mark.parametrize(
+    "url,method",
+    [
+        ("/api/moderation/bulk/rescan", "POST"),
+        ("/api/moderation/rescan-jobs/abc123/status", "GET"),
+        ("/api/moderation/rescan-proposals/1/apply", "POST"),
+    ],
+)
+def test_removed_rescan_routes_return_404(
+    client: FlaskClient, url: str, method: str
+) -> None:
+    assert client.open(url, method=method).status_code == 404

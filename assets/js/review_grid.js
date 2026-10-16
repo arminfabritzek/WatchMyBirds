@@ -124,36 +124,11 @@
         return data;
     }
 
-    function reloadReviewEventsSoon(message, tone) {
-        if (window.wmToast && message) {
-            window.wmToast(message, tone || 'info', 3500);
-        }
-        window.setTimeout(function () { window.location.reload(); }, 900);
-    }
-
-    function isStaleReviewEventError(err) {
-        const message = (err && err.message ? err.message : '').toLowerCase();
-        return message.indexOf('no longer exists') !== -1
-            || message.indexOf('event changed') !== -1
-            || message.indexOf('must be reloaded') !== -1;
-    }
-
     function parseDetectionIds(rawValue) {
         return (rawValue || '')
             .split(',')
             .map(function (s) { return parseInt(s.trim(), 10); })
             .filter(function (n) { return Number.isFinite(n) && n !== 0; });
-    }
-
-    function removeCard(card, label) {
-        if (!card) return;
-        card.style.transition = 'opacity 220ms ease, transform 220ms ease';
-        card.style.opacity = '0';
-        card.style.transform = 'scale(0.98)';
-        setTimeout(function () { card.remove(); refreshVisibleCount(); }, 240);
-        if (label && window.wmToast) {
-            window.wmToast(label, 'success', 2500);
-        }
     }
 
     function refreshVisibleCount() {
@@ -203,22 +178,6 @@
         syncCardSelectionUi(card);
     }
 
-    function updateTilesSpeciesMetadata(ids, chosen) {
-        const species = chosen && chosen.scientific;
-        if (!species) return;
-        const label = chosen.common || species.replace(/_/g, ' ');
-        ids.map(Number).forEach(function (id) {
-            const tile = document.querySelector('.review-grid__tile[data-detection-id="' + id + '"]');
-            if (!tile) return;
-            tile.dataset.species = species;
-            tile.querySelectorAll('[data-current-species]').forEach(function (el) {
-                el.dataset.currentSpecies = species;
-            });
-            const img = tile.querySelector('.review-grid__tile-image');
-            if (img) img.alt = label;
-        });
-    }
-
     /* Update the card-header action button labels + tooltips to reflect
      * the current selection state. Fires on every checkbox change.
      * Uses textContent throughout — no innerHTML — because labels come
@@ -251,52 +210,9 @@
     function updateCardApproveState(card, scope) {
         const approveBtn = card.querySelector('[data-review-grid-action="approve_event"]');
         const unresolvedBtn = card.querySelector('[data-review-grid-action="unresolved_event"]');
-        if (!approveBtn) return;
-
         const species = (card.dataset.species || '').trim();
-        if (card.dataset.ordinaryReview) {
-            approveBtn.disabled = !species || !scope || !scope.count;
-            if (unresolvedBtn) unresolvedBtn.disabled = !scope || !scope.count;
-            return;
-        }
-        const evidenceQuality = (card.dataset.evidenceQuality || '').trim();
-        const blockedReason = card.dataset.approveBlockedReason || 'Select frames before approving this event';
-
-        if (unresolvedBtn) {
-            unresolvedBtn.disabled = !scope || scope.count === 0 || scope.isSelectionScoped || !evidenceQuality;
-            unresolvedBtn.title = scope && scope.isSelectionScoped
-                ? 'Species unresolved is an event-wide decision'
-                : !evidenceQuality
-                    ? 'Assess evidence before closing this event'
-                    : 'Record bird presence without asserting a species';
-        }
-
-        if (!species) {
-            approveBtn.disabled = true;
-            approveBtn.title = 'Pick a species before approving';
-            return;
-        }
-        if (!scope || scope.count === 0) {
-            approveBtn.disabled = true;
-            approveBtn.title = 'No actionable frames to approve';
-            return;
-        }
-        if (scope.isSelectionScoped) {
-            approveBtn.disabled = false;
-            return;
-        }
-        if (card.dataset.eventEligible !== '1') {
-            approveBtn.disabled = true;
-            approveBtn.title = blockedReason;
-            return;
-        }
-        if (!evidenceQuality) {
-            approveBtn.disabled = true;
-            approveBtn.title = 'Assess evidence before approving this event';
-            return;
-        }
-        approveBtn.disabled = false;
-        approveBtn.title = 'Approve this event with ' + evidenceQuality + ' evidence';
+        if (approveBtn) approveBtn.disabled = !species || !scope || !scope.count;
+        if (unresolvedBtn) unresolvedBtn.disabled = !scope || !scope.count;
     }
 
     async function answerOrdinaryEvent(card, button, verb) {
@@ -321,176 +237,6 @@
             if (window.wmToast) window.wmToast(error.message || 'Unable to save answers', 'error', 5000);
             delete card.dataset.saving;
             button.disabled = false;
-        }
-    }
-
-    async function approveEvent(card) {
-        const eventKey = card.dataset.eventKey;
-        const species = card.dataset.species;
-        const scope = getCardScopeIds(card);
-        const eventEligible = card.dataset.eventEligible === '1';
-        const evidenceQuality = (card.dataset.evidenceQuality || '').trim();
-        const blockedReason = card.dataset.approveBlockedReason || 'Select frames before approving this event';
-        if (!eventKey || !species || scope.count === 0) {
-            if (window.wmToast) window.wmToast('Approve refused — missing event key, species, or detections', 'error', 3500);
-            return;
-        }
-        if (!scope.isSelectionScoped && !eventEligible) {
-            if (window.wmToast) window.wmToast(blockedReason, 'warning', 3500);
-            return;
-        }
-        if (!scope.isSelectionScoped && !evidenceQuality) {
-            if (window.wmToast) window.wmToast('Assess evidence before approving this event', 'warning', 3500);
-            return;
-        }
-        try {
-            const payload = {
-                species: species,
-                detection_ids: scope.ids
-            };
-            // Selection-scoped approval is intentionally ID-scoped.
-            // Blind event-wide approval still goes through the
-            // event-key safety gate.
-            if (!scope.isSelectionScoped && eventEligible) {
-                payload.event_key = eventKey;
-                payload.evidence_quality = evidenceQuality;
-            }
-            await postJson('/api/review/event-approve', payload);
-            if (scope.isSelectionScoped) {
-                // Partial approval — remove the approved tiles but leave
-                // the card if other actionable frames remain.
-                removeTilesByDetectionIds(scope.ids);
-                if (window.wmToast) window.wmToast(scope.count + ' frame(s) approved', 'success', 2500);
-            } else {
-                removeCard(card, 'Event approved');
-            }
-        } catch (err) {
-            if (isStaleReviewEventError(err)) {
-                reloadReviewEventsSoon('Review changed — reloading events…', 'info');
-                return;
-            }
-            if (window.wmToast) window.wmToast('Approve failed: ' + err.message, 'error', 4000);
-        }
-    }
-
-    async function unresolvedEvent(card) {
-        const eventKey = card.dataset.eventKey;
-        const evidenceQuality = (card.dataset.evidenceQuality || '').trim();
-        const scope = getCardScopeIds(card);
-        if (scope.isSelectionScoped) {
-            if (window.wmToast) window.wmToast('Species unresolved is an event-wide decision', 'warning', 3500);
-            return;
-        }
-        if (!eventKey || !evidenceQuality || scope.count === 0) {
-            if (window.wmToast) window.wmToast('Assess evidence before closing this event', 'warning', 3500);
-            return;
-        }
-        try {
-            await postJson('/api/review/event-unresolved', {
-                event_key: eventKey,
-                detection_ids: scope.ids,
-                evidence_quality: evidenceQuality
-            });
-            removeCard(card, 'Bird recorded; species remains unresolved');
-        } catch (err) {
-            if (isStaleReviewEventError(err)) {
-                reloadReviewEventsSoon('Review changed — reloading events…', 'info');
-                return;
-            }
-            if (window.wmToast) window.wmToast('Could not close event: ' + err.message, 'error', 4000);
-        }
-    }
-
-    async function trashEvent(card) {
-        const eventKey = card.dataset.eventKey;
-        if (!eventKey) {
-            if (window.wmToast) window.wmToast('Trash refused — missing event key', 'error', 3500);
-            return;
-        }
-        const scope = getCardScopeIds(card);
-        if (scope.count === 0) {
-            if (window.wmToast) window.wmToast('Nothing to trash.', 'warning', 2500);
-            return;
-        }
-        const promptText = scope.isSelectionScoped
-            ? 'Move ' + scope.count + ' selected frame(s) to Trash?'
-            : 'Move every actionable frame in this event to Trash?';
-        if (!confirm(promptText)) return;
-        try {
-            if (scope.isSelectionScoped) {
-                // Per-detection bulk-reject — keeps the event open if
-                // other frames remain.
-                await postJson('/api/moderation/bulk/reject', { detection_ids: scope.ids });
-                removeTilesByDetectionIds(scope.ids);
-                if (window.wmToast) window.wmToast(scope.count + ' frame(s) moved to Trash', 'success', 2500);
-            } else {
-                await postJson('/api/review/event-trash', {
-                    event_key: eventKey,
-                    detection_ids: scope.ids
-                });
-                removeCard(card, 'Event moved to Trash');
-            }
-        } catch (err) {
-            if (isStaleReviewEventError(err)) {
-                removeCard(card, null);
-                reloadReviewEventsSoon('Event already gone — reloading…', 'info');
-                return;
-            }
-            if (window.wmToast) window.wmToast('Trash failed: ' + err.message, 'error', 4000);
-        }
-    }
-
-    async function noBirdEvent(card) {
-        const scope = getCardScopeIds(card);
-        if (scope.count === 0) {
-            if (window.wmToast) window.wmToast('Nothing to mark.', 'warning', 2500);
-            return;
-        }
-        // No birds in full image is per-image-filename, not per-detection. Resolve
-        // the checked tiles back to their image filenames so the
-        // /api/review/decision endpoint can flag the source images.
-        const tilesInScope = scope.isSelectionScoped
-            ? Array.from(card.querySelectorAll('.review-grid__tile-checkbox:checked'))
-                .map(function (cb) { return cb.closest('.review-grid__tile'); })
-                .filter(Boolean)
-            : Array.from(card.querySelectorAll('.review-grid__tile[data-image-filename]:not([data-context-only])'));
-        const filenames = Array.from(new Set(
-            tilesInScope.map(function (t) { return t.dataset.imageFilename; }).filter(Boolean)
-        ));
-        if (!filenames.length) {
-            if (window.wmToast) window.wmToast('No image filenames found.', 'error', 3500);
-            return;
-        }
-        if (typeof window.wmConfirmFullImageNoBird !== 'function') {
-            if (window.wmToast) {
-                window.wmToast('Full-image confirmation is unavailable. Nothing was changed.', 'error', 4000);
-            }
-            return;
-        }
-        const frames = tilesInScope.map(function (tile) {
-            const image = tile.querySelector('img[data-full-src], .review-grid__tile-image');
-            return {
-                filename: tile.dataset.imageFilename,
-                fullSrc: image && (image.getAttribute('data-full-src') || image.getAttribute('src')),
-                triggerEl: tile
-            };
-        });
-        const confirmed = await window.wmConfirmFullImageNoBird(frames, card);
-        if (!confirmed) return;
-        try {
-            await postJson('/api/review/decision', {
-                filenames: filenames,
-                action: 'no_bird'
-            });
-            const ids = scope.ids;
-            if (scope.isSelectionScoped) {
-                removeTilesByDetectionIds(ids);
-                if (window.wmToast) window.wmToast(filenames.length + ' full image(s) recorded as containing no birds', 'success', 2500);
-            } else {
-                removeCard(card, filenames.length + ' full image(s) recorded as containing no birds');
-            }
-        } catch (err) {
-            if (window.wmToast) window.wmToast('Full-image no-bird action failed: ' + err.message, 'error', 4000);
         }
     }
 
@@ -599,22 +345,6 @@
     });
 
     document.addEventListener('click', function (event) {
-        const evidenceBtn = event.target.closest('[data-review-grid-evidence-quality]');
-        if (evidenceBtn) {
-            event.preventDefault();
-            const card = evidenceBtn.closest('[data-review-grid-card]');
-            if (!card) return;
-            const quality = evidenceBtn.dataset.reviewGridEvidenceQuality || '';
-            card.dataset.evidenceQuality = quality;
-            card.querySelectorAll('[data-review-grid-evidence-quality]').forEach(function (btn) {
-                const selected = btn === evidenceBtn;
-                btn.classList.toggle('is-selected', selected);
-                btn.setAttribute('aria-pressed', selected ? 'true' : 'false');
-            });
-            refreshCardActionLabels(card);
-            return;
-        }
-
         const sizeBtn = event.target.closest('[data-review-grid-size-action]');
         if (sizeBtn) {
             event.preventDefault();
@@ -629,26 +359,11 @@
             if (actionBtn.disabled) return;
             const card = actionBtn.closest('[data-review-grid-card]');
             const verb = actionBtn.dataset.reviewGridAction;
-            if (card && card.dataset.ordinaryReview && verb !== 'invert_selection') {
-                answerOrdinaryEvent(card, actionBtn, verb);
-                return;
-            }
-            if (verb === 'approve_event' && card) {
-                approveEvent(card);
-            } else if (verb === 'unresolved_event' && card) {
-                unresolvedEvent(card);
-            } else if (verb === 'trash_event' && card) {
-                trashEvent(card);
-            } else if (verb === 'relabel_event' && card) {
-                relabelEvent(card, actionBtn);
-            } else if (verb === 'no_bird_event' && card) {
-                noBirdEvent(card);
-            } else if (verb === 'invert_selection' && card) {
+            if (!card) return;
+            if (verb === 'invert_selection') {
                 invertCardSelection(card);
-            } else if (verb === 'apply_batch_species') {
-                applyBatchSpecies(actionBtn);
-            } else if (verb === 'approve_batch') {
-                approveBatch(actionBtn);
+            } else {
+                answerOrdinaryEvent(card, actionBtn, verb);
             }
         }
     });
@@ -675,220 +390,6 @@
      * species pill update in-place so the next Approve picks up the
      * new species without a page reload.
      */
-    async function relabelEvent(card, btn) {
-        if (!window.WmSpeciesPicker || typeof window.WmSpeciesPicker.pickSpecies !== 'function') {
-            if (window.wmToast) window.wmToast('Species picker unavailable on this page.', 'error', 3500);
-            return;
-        }
-        const scope = getCardScopeIds(card);
-        if (!scope.count) {
-            if (window.wmToast) window.wmToast('No actionable frames to relabel.', 'warning', 2500);
-            return;
-        }
-        const currentSpecies = btn.dataset.currentSpecies || card.dataset.species || '';
-        let chosen = null;
-        try {
-            chosen = await window.WmSpeciesPicker.pickSpecies({
-                currentSpecies: currentSpecies,
-                detectionId: scope.ids[0],
-                title: scope.isSelectionScoped
-                    ? 'Relabel ' + scope.count + ' selected frame(s)'
-                    : 'Relabel event'
-            });
-        } catch (e) {
-            return;
-        }
-        if (!chosen || !chosen.scientific) return;
-        if (chosen.scientific === currentSpecies) {
-            if (window.wmToast) window.wmToast('Same species — no change.', 'info', 2500);
-            return;
-        }
-        try {
-            await postJson('/api/moderation/bulk/relabel', {
-                detection_ids: scope.ids,
-                species: chosen.scientific
-            });
-            updateTilesSpeciesMetadata(scope.ids, chosen);
-
-            const allIds = parseDetectionIds(card.dataset.actionableDetectionIds || '');
-            const selectedSet = new Set(scope.ids.map(Number));
-            const relabelCoversAllActionable = allIds.length > 0
-                && allIds.every(function (id) { return selectedSet.has(id); });
-            const relabelChangesEventKey = chosen.scientific !== currentSpecies;
-
-            // Update card-level species when relabeling the whole event.
-            // A species change also changes the server-side event_key,
-            // so the honest UI update is an automatic reload after the
-            // operator sees the receipt.
-            if (!scope.isSelectionScoped || relabelCoversAllActionable) {
-                card.dataset.species = chosen.scientific;
-                const speciesEl = card.querySelector('.review-grid__card-species');
-                if (speciesEl) speciesEl.textContent = chosen.common || chosen.scientific.replace(/_/g, ' ');
-                btn.dataset.currentSpecies = chosen.scientific;
-                // Re-enable Approve if it was disabled for missing species.
-                const approveBtn = card.querySelector('[data-review-grid-action="approve_event"]');
-                if (approveBtn) refreshCardActionLabels(card);
-            }
-            if (relabelChangesEventKey) {
-                reloadReviewEventsSoon(
-                    scope.count + ' frame(s) relabeled to ' + (chosen.common || chosen.scientific)
-                    + '. Reloading review events…',
-                    'success'
-                );
-                return;
-            }
-            if (window.wmToast) window.wmToast(scope.count + ' frame(s) relabeled to ' + (chosen.common || chosen.scientific), 'success', 3500);
-        } catch (err) {
-            if (window.wmToast) window.wmToast('Relabel failed: ' + err.message, 'error', 4000);
-        }
-    }
-
-    /* ------------------------------------------------------------
-     * Continuity batch actions.
-     *
-     * Apply species: POST /api/moderation/bulk/relabel with the batch's
-     *   actionable detection ids (every member of every event in the
-     *   batch). Then update each card's data-species so subsequent
-     *   Approve Batch / Approve Event picks the new species.
-     *
-     * Approve batch: POST /api/review/event-approve with **no**
-     *   event_key and the union of review_detection_ids, after filtering
-     *   context-only ids on the client. Each batch-member card is then
-     *   removed.
-     * ---------------------------------------------------------- */
-
-    function batchCards(batchKey) {
-        return Array.from(document.querySelectorAll(
-            '[data-review-grid-card][data-continuity-batch-key="' + batchKey + '"]'
-        ));
-    }
-
-    function batchReviewDetectionIds(batchKey) {
-        // Merge per-card data-batch-review-detection-ids. They are
-        // identical across siblings of the same batch but reading them
-        // from the DOM keeps the JS state-free.
-        const cards = batchCards(batchKey);
-        const ids = new Set();
-        cards.forEach(function (card) {
-            (card.dataset.batchReviewDetectionIds || '').split(',').forEach(function (raw) {
-                const n = parseInt(raw, 10);
-                if (n > 0) ids.add(n);
-            });
-        });
-        return Array.from(ids);
-    }
-
-    async function applyBatchSpecies(btn) {
-        const batchKey = btn.dataset.batchKey;
-        const species = btn.dataset.batchRecommendedSpecies;
-        if (!batchKey || !species) return;
-        const ids = batchReviewDetectionIds(batchKey);
-        if (!ids.length) {
-            if (window.wmToast) window.wmToast('Batch has no actionable frames.', 'error', 3500);
-            return;
-        }
-        if (!confirm('Relabel ' + ids.length + ' frame(s) to ' + species.replace(/_/g, ' ') + '?')) return;
-        try {
-            await postJson('/api/moderation/bulk/relabel', {
-                detection_ids: ids,
-                species: species
-            });
-            // Update every card in the batch so Approve picks the new
-            // species.
-            batchCards(batchKey).forEach(function (card) {
-                card.dataset.species = species;
-                const speciesEl = card.querySelector('.review-grid__card-species');
-                if (speciesEl) speciesEl.textContent = species.replace(/_/g, ' ');
-            });
-            if (window.wmToast) window.wmToast(ids.length + ' frame(s) relabeled · Approve Batch is now ready', 'success', 3500);
-        } catch (err) {
-            if (window.wmToast) window.wmToast('Apply Species failed: ' + err.message, 'error', 4000);
-        }
-    }
-
-    async function approveBatch(btn) {
-        const batchKey = btn.dataset.batchKey;
-        if (!batchKey) return;
-        const cards = batchCards(batchKey);
-        if (!cards.length) {
-            if (window.wmToast) window.wmToast('Batch has no rendered cards.', 'error', 3500);
-            return;
-        }
-        // Batch approval requires convergence on a single species.
-        const speciesSet = new Set(cards.map(function (c) { return c.dataset.species || ''; }).filter(Boolean));
-        if (speciesSet.size !== 1) {
-            if (window.wmToast) window.wmToast('Batch events disagree on species — relabel first.', 'warning', 3500);
-            return;
-        }
-        const species = Array.from(speciesSet)[0];
-        const reviewIds = batchReviewDetectionIds(batchKey);
-        if (!reviewIds.length) {
-            if (window.wmToast) window.wmToast('Batch has no actionable frames left.', 'info', 3500);
-            return;
-        }
-        if (!confirm('Approve every actionable frame in this batch (' + reviewIds.length + ' frame(s)) as ' + species.replace(/_/g, ' ') + '?')) return;
-        try {
-            // §6c rule 7: POST without event_key.
-            await postJson('/api/review/event-approve', {
-                species: species,
-                detection_ids: reviewIds
-            });
-            cards.forEach(function (card) { removeCard(card, null); });
-            if (window.wmToast) window.wmToast('Batch approved · ' + reviewIds.length + ' frame(s) confirmed', 'success', 3500);
-        } catch (err) {
-            if (window.wmToast) window.wmToast('Approve Batch failed: ' + err.message, 'error', 4000);
-        }
-    }
-
-    /* ------------------------------------------------------------
-     * Multi-select and bulk action wiring.
-     *
-     * Selection is page-scoped: a Trash Selected can span multiple
-     * events. Approve Selected groups picks by event_key and posts
-     * one /api/review/event-approve per event. No birds in full image Selected
-     * resolves the picks to image filenames via
-     * /api/moderation/resolve-selection, then POSTs /api/review/decision
-     * with action=no_bird. Relabel Selected reuses the existing
-     * runBatchRelabel helper.
-     * ---------------------------------------------------------- */
-
-    function removeTilesByDetectionIds(ids) {
-        const set = new Set(ids.map(Number));
-        const affectedCards = new Set();
-        set.forEach(function (id) {
-            const tile = document.querySelector('.review-grid__tile[data-detection-id="' + id + '"]');
-            if (tile) {
-                const card = tile.closest('[data-review-grid-card]');
-                if (card) affectedCards.add(card);
-                tile.dataset.reviewGridRemoving = '1';
-                const cb = tile.querySelector('.review-grid__tile-checkbox');
-                if (cb) cb.checked = false;
-                tile.style.transition = 'opacity 200ms ease';
-                tile.style.opacity = '0';
-                setTimeout(function () {
-                    tile.remove();
-                    if (card) syncCardActionableState(card);
-                    pruneEmptyCards();
-                }, 220);
-            }
-        });
-        affectedCards.forEach(syncCardActionableState);
-    }
-
-    function pruneEmptyCards() {
-        document.querySelectorAll('[data-review-grid-card]').forEach(function (card) {
-            const remaining = card.querySelectorAll('.review-grid__tile:not(.review-grid__tile--context)').length;
-            if (remaining === 0) {
-                removeCard(card, null);
-            }
-        });
-    }
-
-    /* Bulk-footer + cross-event bulk handlers removed.
-       Card-header Smart-Mode covers every per-card
-       bulk path; cross-event bulk is no longer reachable from this
-       page. removeTilesByDetectionIds stays because it is shared by
-       the Smart-Mode handlers and Apple-Photos tile-click flow. */
 
     function updateCardSelectionCounter(card) {
         const tiles = card.querySelectorAll('.review-grid__tile:not([data-review-grid-removing]) .review-grid__tile-checkbox');

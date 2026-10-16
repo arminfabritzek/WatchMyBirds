@@ -21,7 +21,6 @@ ENV XDG_CACHE_HOME=/tmp/fontconfig \
     DEBUG_MODE=False \
     VIDEO_SOURCE=0 \
     OUTPUT_DIR=/output \
-    INGEST_DIR=/ingest \
     MODEL_BASE_PATH=/models
 
 # Set the working directory
@@ -73,7 +72,7 @@ COPY go2rtc.yaml.example ./
 
 # Copy analytics build
 # Create runtime directories (no model/output copy at build time)
-RUN mkdir -p /models /output /ingest
+RUN mkdir -p /models /output
 
 # Persist build metadata as runtime-readable files. Use ${VAR:-unknown}
 # fallbacks so that an empty build-arg never produces an empty file --
@@ -103,7 +102,6 @@ EXPOSE 8050
 
 # Set runtime path defaults to match Docker mount convention
 ENV OUTPUT_DIR="/output"
-ENV INGEST_DIR="/ingest"
 ENV MODEL_BASE_PATH="/models"
 
 # Use entrypoint script to handle user permissions

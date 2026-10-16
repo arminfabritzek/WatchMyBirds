@@ -211,7 +211,6 @@ def get_daily_species_summary(
 
 # ── Observation Grouping (Issue #12) ────────────────────────────────
 
-# Clustering constants – must match utils/db/analytics.py
 _OBS_MAX_GAP_SEC = 60
 _OBS_MAX_BBOX_DIST = 0.25
 _OBS_MIN_BBOX_IOU = 0.02
@@ -223,37 +222,6 @@ _OBS_MIN_AREA_SIMILARITY = 0.2
 # called inside this module; bbox_dist was retired together with the
 # legacy max_bbox_dist event-policy and no longer has a call site.
 from core._geom_helpers import ts_to_epoch as _ts_to_epoch  # noqa: E402
-
-
-def _bbox_iou_local(
-    ax: float,
-    ay: float,
-    aw: float,
-    ah: float,
-    bx: float,
-    by: float,
-    bw: float,
-    bh: float,
-) -> float:
-    """IoU for normalised xywh boxes."""
-    ax1, ay1 = (ax or 0), (ay or 0)
-    ax2, ay2 = ax1 + (aw or 0), ay1 + (ah or 0)
-    bx1, by1 = (bx or 0), (by or 0)
-    bx2, by2 = bx1 + (bw or 0), by1 + (bh or 0)
-    inter_w = max(0.0, min(ax2, bx2) - max(ax1, bx1))
-    inter_h = max(0.0, min(ay2, by2) - max(ay1, by1))
-    inter = inter_w * inter_h
-    union = max(0.0, (aw or 0) * (ah or 0)) + max(0.0, (bw or 0) * (bh or 0)) - inter
-    return inter / union if union > 0 else 0.0
-
-
-def _bbox_area_sim(aw: float, ah: float, bw: float, bh: float) -> float:
-    """Area similarity ratio [0..1]."""
-    a = max(0.0, (aw or 0) * (ah or 0))
-    b = max(0.0, (bw or 0) * (bh or 0))
-    if a <= 0 or b <= 0:
-        return 1.0
-    return min(a, b) / max(a, b)
 
 
 def group_detections_into_observations(

@@ -71,7 +71,6 @@ def _rows_for_image(conn: sqlite3.Connection, image_filename: str) -> list:
             COALESCE(d.detector_model_name, d.od_model_id) AS detector_model,
             d.classifier_model_name AS classifier_model,
             d.is_favorite,
-            d.rating,
             i.review_status AS review_status
         FROM detections d
         JOIN images i ON d.image_filename = i.filename
@@ -150,8 +149,10 @@ def build_event_metadata(image_filename: str) -> EventMetadata:
         # A bird is anything whose identity does NOT come from a non-bird OD
         # token. Garden mammals (squirrel/marten/…) come straight off the OD
         # class and must not receive Aves/Animalia.
-        is_bird = is_non_species_od_token(od_class) or not od_class or (
-            row["cls_class_name"] is not None
+        is_bird = (
+            is_non_species_od_token(od_class)
+            or not od_class
+            or (row["cls_class_name"] is not None)
         )
         # The override can name a non-bird too; if the resolved key matches
         # the raw OD non-bird token, treat as non-bird.
@@ -161,7 +162,6 @@ def build_event_metadata(image_filename: str) -> EventMetadata:
         scientific = key.replace("_", " ")
         common = resolve_common_name(key, common_names)
         confidence = row["confidence"]
-        rating = row["rating"]
         species.append(
             SpeciesEntry(
                 scientific=scientific,
@@ -170,7 +170,6 @@ def build_event_metadata(image_filename: str) -> EventMetadata:
                 detection_id=row["detection_id"],
                 confidence=float(confidence) if confidence is not None else None,
                 is_favorite=bool(row["is_favorite"]),
-                rating=int(rating) if rating is not None else None,
             )
         )
         detector_model = detector_model or row["detector_model"]

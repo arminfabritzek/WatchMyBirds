@@ -26,13 +26,6 @@ def test_get_species_key_local_prefers_explicit_then_override():
     assert view_helpers.get_species_key(None) == view_helpers.UNKNOWN_SPECIES_KEY
 
 
-def test_compute_auto_rating_buckets():
-    # high visual score -> 4
-    assert view_helpers.compute_auto_rating(0.9, 0.9, 0.3, 0.3) == 4
-    # tiny bbox penalty pushes low
-    assert view_helpers.compute_auto_rating(0.1, 0.1, 0.01, 0.01) == 1
-
-
 def test_bbox_touches_edge():
     assert (
         view_helpers.bbox_touches_edge(
@@ -126,9 +119,7 @@ def test_get_daily_covers_passes_common_names_and_swallows_errors(monkeypatch):
         captured["common_names"] = common_names
         return {"2026-06-13": {"x": 1}}
 
-    monkeypatch.setattr(
-        view_helpers.gallery_service, "get_daily_covers", fake_covers
-    )
+    monkeypatch.setattr(view_helpers.gallery_service, "get_daily_covers", fake_covers)
 
     out = view_helpers.get_daily_covers()
     assert out == {"2026-06-13": {"x": 1}}
@@ -160,9 +151,7 @@ def test_get_daily_species_summary_maps_and_handles_errors(monkeypatch):
     assert summary == [
         {
             "species": "Parus_major",
-            "common_name": view_helpers.COMMON_NAMES.get(
-                "Parus_major", "Parus major"
-            ),
+            "common_name": view_helpers.COMMON_NAMES.get("Parus_major", "Parus major"),
             "count": 3,
         }
     ]
@@ -216,10 +205,7 @@ def test_get_captured_detections_by_date_groups_and_skips_short_ts(monkeypatch):
 
 
 def test_format_stream_timestamp():
-    assert (
-        view_helpers.format_stream_timestamp("20260613_142500")
-        == "13.06.2026 14:25"
-    )
+    assert view_helpers.format_stream_timestamp("20260613_142500") == "13.06.2026 14:25"
     assert view_helpers.format_stream_timestamp("") == "Unknown"
     assert view_helpers.format_stream_timestamp("not-a-timestamp") == "Unknown"
 
@@ -228,9 +214,7 @@ def test_pick_cover_for_group_delegates_to_gallery_core(monkeypatch):
     import core.gallery_core as gallery_core
 
     candidates = [{"detection_id": 1}, {"detection_id": 2}]
-    monkeypatch.setattr(
-        gallery_core, "pick_cover_for_group", lambda c: c[-1]
-    )
+    monkeypatch.setattr(gallery_core, "pick_cover_for_group", lambda c: c[-1])
     assert view_helpers.pick_cover_for_group(candidates) == {"detection_id": 2}
 
 

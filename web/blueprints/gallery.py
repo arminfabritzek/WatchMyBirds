@@ -2,7 +2,7 @@
 
 Extracted from the ``create_web_interface`` factory closure in
 ``web/web_interface.py``. Follows the ``init_*_bp()`` pattern used across
-``web/blueprints/`` (reference: ``web/blueprints/inbox.py``): a module-level
+``web/blueprints/`` (reference: ``web/blueprints/stream.py``): a module-level
 ``Blueprint``, an ``init_gallery_bp(detection_manager=...)`` injector, and
 routes as top-level functions.
 
@@ -301,7 +301,6 @@ def _station_selection() -> dict[str, str]:
         return station_service.validate_selection(
             request.args.get("start", ""),
             request.args.get("end", ""),
-            request.args.get("source", "all"),
         )
     except ValueError as exc:
         abort(400, description=str(exc))

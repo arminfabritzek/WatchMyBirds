@@ -1,5 +1,7 @@
 """Tests for Capability Registry (P2-02)."""
 
+from unittest.mock import MagicMock
+
 import pytest
 
 from detectors.services.capability_registry import (
@@ -17,22 +19,18 @@ def registry_all_enabled():
         "ENABLE_CLASSIFIER": "true",
         "ENABLE_BBOX_QUALITY": "true",
         "ENABLE_OOD": "true",
-        "ENABLE_TEMPORAL_SMOOTHING": "true",
-        "ENABLE_DECISION_POLICY": "true",
     }
     return build_default_registry(config=config)
 
 
 @pytest.fixture
 def registry_some_disabled():
-    """Registry with temporal and OOD disabled."""
+    """Registry with OOD disabled."""
     config = {
         "ENABLE_DETECTOR": "true",
         "ENABLE_CLASSIFIER": "true",
         "ENABLE_BBOX_QUALITY": "true",
         "ENABLE_OOD": "false",
-        "ENABLE_TEMPORAL_SMOOTHING": "false",
-        "ENABLE_DECISION_POLICY": "true",
     }
     return build_default_registry(config=config)
 
@@ -44,9 +42,10 @@ def test_enabled_capabilities_listed(registry_all_enabled):
 
     assert "detector" in names
     assert "classifier" in names
-    assert "temporal" in names
+    assert "temporal" not in snap.to_dict()
     assert "ood" in names
     assert "decision_policy" in names
+    assert "nightly_deep_scan" not in snap.to_dict()
 
 
 def test_disabled_capabilities_excluded(registry_some_disabled):
@@ -113,3 +112,33 @@ def test_empty_registry_version_tag():
     """Empty registry should produce 'none' version tag."""
     snap = CapabilitySnapshot()
     assert snap.version_tag() == "none"
+
+
+def test_decision_policy_ignores_disabled_config() -> None:
+    from detectors.services.decision_policy_service import POLICY_VERSION
+
+    registry = build_default_registry(
+        config={"ENABLE_DECISION_POLICY": "false", "ENABLE_OOD": "false"}
+    )
+
+    assert registry.is_enabled("decision_policy")
+    assert (
+        f"decision_policy_{POLICY_VERSION}"
+        in registry.snapshot().version_tag().split("+")
+    )
+    assert not registry.is_enabled("ood")
+
+
+@pytest.mark.parametrize("flag_key", [None, "CUSTOM_POLICY_ENABLED"])
+def test_decision_policy_registration_does_not_read_flags(flag_key: str | None) -> None:
+    config = MagicMock(spec=dict)
+    config.get.side_effect = AssertionError(
+        "Decision policy must not read config flags"
+    )
+    registry = CapabilityRegistry(config=config)
+
+    registry.register("decision_policy", "v1", flag_key=flag_key)
+
+    assert registry.is_enabled("decision_policy")
+    assert registry.snapshot().version_tag() == "decision_policy_v1"
+    config.get.assert_not_called()

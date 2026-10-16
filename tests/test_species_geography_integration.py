@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import sqlite3
-from contextlib import contextmanager
 from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
@@ -20,7 +18,6 @@ from core.species_geography_runtime import (
 )
 from detectors.interfaces.classification import ClassificationResult
 from detectors.services.classification_service import ClassificationService
-from utils.db.connection import _init_schema
 
 
 @pytest.fixture
@@ -299,50 +296,6 @@ def test_import_exif_requires_actual_date_and_coordinates() -> None:
         assert geographic_exif_context(value) == (None, None)
 
 
-def test_deep_scan_uses_capture_origin_and_never_station_location_for_import(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from web.services import analysis_service
-
-    conn = sqlite3.connect(":memory:")
-    _init_schema(conn)
-    conn.execute(
-        "INSERT INTO sources(source_id,name,type) VALUES (99,'Imported','folder_upload')"
-    )
-    conn.execute(
-        "INSERT INTO images(filename,timestamp,source_id) VALUES ('20200101_123000.jpg','20200101_123000',99)"
-    )
-
-    @contextmanager
-    def connection():
-        yield conn
-
-    monkeypatch.setattr(analysis_service.db_service, "closing_connection", connection)
-    monkeypatch.setattr(analysis_service, "config", {"LOCATION_DATA_CONFIGURED": True})
-    path = tmp_path / "image.jpg"
-    import cv2
-
-    cv2.imwrite(str(path), np.zeros((8, 8, 3), np.uint8))
-    assert analysis_service._image_geography("20200101_123000.jpg", str(path)) == (
-        None,
-        None,
-    )
-    piexif.insert(exif_sample(), str(path))
-    assert analysis_service._image_geography(
-        "20200101_123000.jpg", str(path)
-    ) == geographic_exif_context(exif_sample())
-    conn.execute(
-        "UPDATE images SET source_id=(SELECT source_id FROM sources WHERE type='ipcam' LIMIT 1)"
-    )
-    monkeypatch.setitem(analysis_service.config, "LOCATION_DATA_CONFIGURED", False)
-    assert analysis_service._image_geography("20200101_123000.jpg", str(path)) == (
-        None,
-        None,
-    )
-    conn.close()
-
-
 def test_explicit_location_and_disable_setting_survive_reload(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -362,73 +315,3 @@ def test_explicit_location_and_disable_setting_survive_reload(
     assert result["LOCATION_DATA"] == {"latitude": 0.0, "longitude": 0.0}
     assert result["SPECIES_GEOGRAPHY_ENABLED"] is False
     assert "LOCATION_DATA_CONFIGURED" not in (tmp_path / "settings.yaml").read_text()
-
-
-@pytest.mark.parametrize("with_exif", [False, True])
-def test_ingest_persists_top5_and_uses_photo_geography_only(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    raw_prediction: ClassificationResult,
-    with_exif: bool,
-) -> None:
-    import cv2
-
-    from utils import ingest
-
-    output = tmp_path / "output"
-    monkeypatch.setattr(
-        ingest, "config", {"OUTPUT_DIR": str(output), "SAVE_THRESHOLD": 0.1}
-    )
-    conn = sqlite3.connect(":memory:")
-    conn.row_factory = sqlite3.Row
-    _init_schema(conn)
-    source = conn.execute("SELECT source_id FROM sources LIMIT 1").fetchone()[0]
-    image = tmp_path / "photo.jpg"
-    cv2.imwrite(str(image), np.zeros((100, 100, 3), np.uint8))
-    if with_exif:
-        piexif.insert(exif_sample(), str(image))
-    detector = Mock(model_id="detector")
-    detector.detect_objects.return_value = (
-        True,
-        None,
-        [
-            {
-                "x1": 10,
-                "y1": 10,
-                "x2": 60,
-                "y2": 60,
-                "confidence": 0.9,
-                "class_name": "bird",
-            },
-        ],
-    )
-    classifier = configured_service(raw_prediction)
-    classifier.backend.get_model_id.return_value = "image-model"
-    assert (
-        ingest.ingest_file(conn, str(image), source, detector, classifier) == "ingested"
-    )
-    rows = conn.execute(
-        "SELECT cls_class_name,cls_confidence FROM classifications ORDER BY rank"
-    ).fetchall()
-    assert len(rows) == 5 and len({r[0] for r in rows}) == 5
-    assert rows[0][0] == ("B" if with_exif else "A")
-    assert {r[0]: r[1] for r in rows} == dict(
-        zip(raw_prediction.top_k_classes, raw_prediction.top_k_confidences, strict=True)
-    )
-    if with_exif:
-        assert classifier._geography._model.predict.call_args.args == (
-            -33.5,
-            -70.25,
-            datetime(2023, 12, 31, 23, 59),
-        )
-    else:
-        classifier._geography._model.predict.assert_not_called()
-    detection = conn.execute(
-        "SELECT raw_species_name,geography_json FROM detections"
-    ).fetchone()
-    assert detection["raw_species_name"] == "A"
-    assert bool(detection["geography_json"]) is with_exif
-    assert (
-        ingest.ingest_file(conn, str(image), source, detector, classifier) == "skipped"
-    )
-    conn.close()

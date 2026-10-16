@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-import re
 from contextlib import nullcontext
 from datetime import datetime
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+from flask.testing import FlaskClient
 
 import config
 from utils import path_manager
@@ -17,11 +17,8 @@ from web.web_interface import create_web_interface
 
 def _reset_test_config(monkeypatch, tmp_path):
     output_dir = tmp_path / "output"
-    ingest_dir = tmp_path / "ingest"
     output_dir.mkdir()
-    ingest_dir.mkdir()
     monkeypatch.setenv("OUTPUT_DIR", str(output_dir))
-    monkeypatch.setenv("INGEST_DIR", str(ingest_dir))
     monkeypatch.setenv("EDIT_PASSWORD", "test-password")
     config._CONFIG = None
     db_connection._schema_initialized_paths.clear()
@@ -208,49 +205,31 @@ def test_local_sqlite_routes_render_species_colour_attrs(seeded_client):
     assert "--cell-species-colour: var(--species-colour-0)" in trash_body
 
 
-def test_local_sqlite_review_routes_render_real_continuity_batch(seeded_client):
-    client, _today_iso = seeded_client
-
-    review_response = client.get("/admin/review?diagnostic=1")
-    assert review_response.status_code == 200
-    review_body = review_response.get_data(as_text=True)
-    # Review Grid is the default surface. The legacy
-    # `#reviewEventBrowser` rail lives behind ?layout=legacy. The grid
-    # renders one `[data-review-grid-card]` per event with its own
-    # `data-event-key`.
-    assert "data-review-grid-card" in review_body
-    event_keys = re.findall(r'data-event-key="([^"]+)"', review_body)
-    # Each grid card stamps `data-event-key` on the article root, on
-    # every member tile, and (when a batch is present) on the
-    # batch-strip CTAs — so the count is event-card-count × constant,
-    # not == 2. Assert "every event from the fixture has at least one
-    # marker".
-    distinct_keys = sorted(set(event_keys))
-    assert len(distinct_keys) == 2
-    # Regression guard: the page renderer must request
-    # include_detail=True from _load_review_events so
-    # event.members is populated. Without this, the cards would
-    # render with empty grids (header only, no tiles). At least one
-    # `review-grid__tile` must exist in the rendered HTML.
-    assert "review-grid__tile" in review_body, (
-        "Review Grid rendered card headers but no member tiles — "
-        "the review_page() loader is probably back to include_detail=False."
-    )
-
-    panel_response = client.get(f"/api/review/event-panel/{distinct_keys[0]}")
-    assert panel_response.status_code == 200
-    panel_body = panel_response.get_data(as_text=True)
-    assert "data-review-batch-panel" in panel_body
-    assert "Already in Gallery" in panel_body
-    assert "Review now" in panel_body
-    assert 'data-zoom-pref-key="wmb_review_zoom_pref"' in panel_body
-    assert "data-species-colour=" in panel_body
-    assert 'data-review-panel-action="trash_event"' in panel_body
+def test_review_keeps_current_grid_and_removes_diagnostic_surfaces(
+    seeded_client: tuple[FlaskClient, str],
+) -> None:
+    client, _ = seeded_client
+    response = client.get("/admin/review")
+    assert response.status_code == 200
+    body = response.get_data(as_text=True)
+    assert "data-review-grid-card" in body
+    assert "review-grid__tile" in body
+    assert 'data-review-grid-action="invert_selection"' in body
+    assert "Diagnostic events" not in body
+    assert "data-review-grid-evidence" not in body
+    for path in (
+        "/admin/review?diagnostic=1",
+        "/admin/review?layout=legacy",
+        "/admin/review?layout=grid",
+        "/api/review/panel/detection/1",
+        "/api/review/event-panel/bird-event-012345abcdef",
+    ):
+        assert client.get(path).status_code == 404
 
 
 def test_authenticated_page_routes_render_without_build_errors(seeded_client):
     # Single-blueprint unit tests can't catch cross-blueprint url_for() refs
-    # (e.g. settings.html → onvif_ingest.start_ingest_endpoint); render the
+    # between settings and camera discovery; render the
     # heavy authenticated pages against the FULL app to surface BuildErrors.
     client, _today_iso = seeded_client
 
@@ -324,13 +303,7 @@ def test_review_lazy_modal_preserves_siblings_and_retention_guards(
         )
         conn.commit()
 
-    page = client.get("/admin/review?diagnostic=1")
-    assert page.status_code == 200
-    body = page.get_data(as_text=True)
-    assert "gallery-modal wm-modal" not in body
-    assert f"/{crop_name}" in body
-    urls = re.findall(r'data-modal-url="([^"]+)"', body)
-    url = next(value for value in urls if value.endswith(f"/{detection_id}"))
+    url = f"/api/review/modal/bird-event-012345abcdef/{detection_id}"
     with patch.object(
         review,
         "_fetch_review_event_payloads",
@@ -374,13 +347,14 @@ def test_event_action_lookup_preserves_fresh_members_without_display_work(
             species_locale="DE",
             common_names={},
         )
-        events, _, _, _ = review._load_review_events(
-            conn, include_detail=True, **kwargs
-        )
+        events, _, _, _ = review._fetch_review_event_payloads(conn, **kwargs)
+        events = [
+            event for event in events if event.context_only_count < event.photo_count
+        ]
         assert events
         with (
             patch.object(
-                review, "_build_review_event", side_effect=AssertionError("UI")
+                review, "_build_review_item", side_effect=AssertionError("UI")
             ),
             patch.object(
                 review,
@@ -395,31 +369,79 @@ def test_event_action_lookup_preserves_fresh_members_without_display_work(
         ):
             for expected in events:
                 actual = review._load_single_review_event(
-                    conn, event_key=expected["event_key"], **kwargs
+                    conn, event_key=expected.event_key, **kwargs
                 )
-                for key in (
-                    "event_key",
-                    "detection_ids",
-                    "eligibility",
-                    "candidate_species",
-                ):
-                    assert actual[key] == expected[key]
-                assert sorted(
-                    (m["best_detection_id"], m["context_only"])
-                    for m in actual["members"]
-                ) == sorted(
-                    (m["best_detection_id"], m["context_only"])
-                    for m in expected["members"]
-                )
+                assert actual["event_key"] == expected.event_key
+                assert actual["detection_ids"] == expected.detection_ids
+                assert actual["eligibility"] == expected.eligibility
+                assert actual["candidate_species"] == expected.species
             target = events[0]
             conn.executemany(
                 "UPDATE detections SET status = 'rejected' WHERE detection_id = ?",
-                [(value,) for value in target["detection_ids"]],
+                [(value,) for value in target.detection_ids],
             )
             assert (
                 review._load_single_review_event(
-                    conn, event_key=target["event_key"], **kwargs
+                    conn, event_key=target.event_key, **kwargs
                 )
                 is None
             )
             conn.rollback()
+
+
+@pytest.mark.parametrize(
+    ("method", "path"),
+    [
+        ("GET", "/inbox"),
+        ("POST", "/api/inbox"),
+        ("GET", "/api/inbox/status"),
+        ("POST", "/api/inbox/process"),
+        ("POST", "/api/ingest/start"),
+    ],
+)
+def test_removed_image_import_routes_return_404(
+    seeded_client, method: str, path: str
+) -> None:
+    client, _ = seeded_client
+    with client.session_transaction() as session:
+        session["_csrf_token"] = "test-token"
+    response = client.open(path, method=method, headers={"X-CSRF-Token": "test-token"})
+    assert response.status_code == 404
+
+
+def test_station_pages_offer_date_filters_without_source_filter(seeded_client) -> None:
+    client, _ = seeded_client
+    for path in (
+        "/species",
+        "/species/overview?species_key=Parus_major",
+        "/analytics",
+        "/admin/review",
+    ):
+        response = client.get(path)
+        assert response.status_code == 200
+        body = response.get_data(as_text=True)
+        assert 'name="start"' in body and 'name="end"' in body
+        assert 'name="source"' not in body
+    settings = client.get("/settings").get_data(as_text=True)
+    assert "Image Ingest" not in settings
+    assert "/inbox" not in settings and "/api/ingest/start" not in settings
+
+
+def test_removed_import_settings_are_ignored(monkeypatch, tmp_path: Path) -> None:
+    output = tmp_path / "output"
+    output.mkdir()
+    legacy = tmp_path / "legacy-ingest"
+    (output / "settings.yaml").write_text(
+        "INGEST_DIR: /unused\nINBOX_REQUIRE_EXIF_DATETIME: true\nINBOX_REQUIRE_EXIF_GPS: true\n"
+    )
+    monkeypatch.setenv("OUTPUT_DIR", str(output))
+    monkeypatch.setenv("MODEL_BASE_PATH", str(tmp_path / "models"))
+    monkeypatch.setenv("INGEST_DIR", str(legacy))
+    monkeypatch.setattr(config, "_CONFIG", None)
+    loaded = config.get_config()
+    config.ensure_app_directories(loaded)
+    assert (
+        not {"INGEST_DIR", "INBOX_REQUIRE_EXIF_DATETIME", "INBOX_REQUIRE_EXIF_GPS"}
+        & loaded.keys()
+    )
+    assert not legacy.exists()

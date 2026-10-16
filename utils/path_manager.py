@@ -23,16 +23,9 @@ class PathManager:
         self.optimized_dir = self.derivatives_dir / "optimized"
         self.ptz_snapshots_dir = self.derivatives_dir / "ptz_snapshots"
         self.visual_ptz_dir = self.derivatives_dir / "visual_ptz"
-        # Inbox directories (for web upload ingest)
-        self.inbox_dir = self.base_dir / "inbox"
-        self.inbox_pending_dir = self.inbox_dir / "pending"
-        self.inbox_error_dir = self.inbox_dir / "error"
         # Backup directory
         self.backup_dir = self.base_dir / "backup"
 
-    # -------------------------------------------------------------------------
-    # Inbox Path Methods
-    # -------------------------------------------------------------------------
     def get_ptz_snapshot_path(self, camera_id: int, kind: str = "overview") -> Path:
         """Absolute path for a PTZ overview snapshot used by the Mini-Map UI."""
         self.ptz_snapshots_dir.mkdir(parents=True, exist_ok=True)
@@ -71,39 +64,6 @@ class PathManager:
         if not safe:
             raise ValueError("keyframe_id must contain a letter or digit")
         return safe[:80]
-
-    def get_inbox_root_dir(self) -> Path:
-        """Returns the inbox root directory."""
-        self.inbox_dir.mkdir(parents=True, exist_ok=True)
-        return self.inbox_dir
-
-    def get_inbox_pending_dir(self) -> Path:
-        """Returns the inbox/pending directory, creates if needed."""
-        self.inbox_pending_dir.mkdir(parents=True, exist_ok=True)
-        return self.inbox_pending_dir
-
-    def get_inbox_processed_dir(self, date_str: str) -> Path:
-        """
-        Returns inbox/processed/YYYYMMDD directory.
-        date_str should be in YYYYMMDD format.
-        """
-        processed_dir = self.inbox_dir / "processed" / date_str
-        processed_dir.mkdir(parents=True, exist_ok=True)
-        return processed_dir
-
-    def get_inbox_skipped_dir(self, date_str: str) -> Path:
-        """
-        Returns inbox/skipped/YYYYMMDD directory.
-        date_str should be in YYYYMMDD format.
-        """
-        skipped_dir = self.inbox_dir / "skipped" / date_str
-        skipped_dir.mkdir(parents=True, exist_ok=True)
-        return skipped_dir
-
-    def get_inbox_error_dir(self) -> Path:
-        """Returns the inbox/error directory, creates if needed."""
-        self.inbox_error_dir.mkdir(parents=True, exist_ok=True)
-        return self.inbox_error_dir
 
     # -------------------------------------------------------------------------
     # Backup Path Methods

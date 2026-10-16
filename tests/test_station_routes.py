@@ -11,27 +11,26 @@ from utils.db import closing_connection
 
 def test_ordinary_review_keeps_answered_unknown_reachable(local_db_app: Flask) -> None:
     with closing_connection() as conn:
-        filename = seed(conn, identifier=82165)
-        answer(conn, 82165, filename, state="unknown", species=None)
-        seed(conn, identifier=81068, state="uncertain")
+        filename = seed(conn, identifier=101)
+        answer(conn, 101, filename, state="unknown", species=None)
+        seed(conn, identifier=102, state="uncertain")
     with local_db_app.test_client() as client:
         assert client.get("/admin/review").status_code == 302
         with client.session_transaction() as session:
             session["authenticated"] = True
         open_body = client.get("/admin/review").get_data(as_text=True)
-        assert 'data-detection-id="81068"' in open_body
-        assert 'data-detection-id="82165"' not in open_body
+        assert 'data-detection-id="102"' in open_body
+        assert 'data-detection-id="101"' not in open_body
         assert "review-grid__evidence" not in open_body
         answered = client.get("/admin/review?answered=1").get_data(as_text=True)
-        assert 'data-detection-id="82165"' in answered
+        assert 'data-detection-id="101"' in answered
         assert "Bird · species unknown · Answered" in answered
-        assert "modal-station_review-82165" in answered
+        assert "modal-station_review-101" in answered
         unknown = client.get("/species/overview?species_key=Unknown_species").get_data(
             as_text=True
         )
-        assert 'data-detection-id="82165"' in unknown
+        assert 'data-detection-id="101"' in unknown
         assert client.get("/admin/review?answered=invalid").status_code == 400
-        assert client.get("/admin/review?source=invalid").status_code == 400
 
 
 def test_report_builds_automatically_and_stale_claims_are_hidden(
@@ -39,7 +38,7 @@ def test_report_builds_automatically_and_stale_claims_are_hidden(
 ) -> None:
     with closing_connection() as conn:
         filename = seed(conn)
-        answer(conn, 82165, filename, species="Pica_pica")
+        answer(conn, 101, filename, species="Pica_pica")
     try:
         with local_db_app.test_client() as client:
             first = client.get("/analytics")
@@ -58,7 +57,7 @@ def test_report_builds_automatically_and_stale_claims_are_hidden(
             assert "data-current-report" in body
             assert "No sourced local species profiles" in body
             with closing_connection() as conn:
-                answer(conn, 82165, filename, species="Picus_viridis")
+                answer(conn, 101, filename, species="Picus_viridis")
             stale = client.get("/analytics").get_data(as_text=True)
             assert "data-current-report" not in stale and "Pica pica" not in stale
             assert "Earlier results are hidden" in stale
@@ -66,7 +65,6 @@ def test_report_builds_automatically_and_stale_claims_are_hidden(
                 client.get("/api/station-report").headers["Cache-Control"] == "no-store"
             )
             assert client.get("/analytics?start=2026-02-30").status_code == 400
-            assert client.get("/analytics?source=invalid").status_code == 400
     finally:
         local_db_app.extensions["station_report"].close()
 
@@ -79,13 +77,13 @@ def test_raw_model_proposal_is_separate_and_scoped_to_its_image(
         conn.execute(
             "UPDATE detections SET raw_species_name='Himantopus_leucocephalus'"
         )
-        answer(conn, 82165, filename, species="Pica_pica")
+        answer(conn, 101, filename, species="Pica_pica")
     with local_db_app.test_client() as client:
         with client.session_transaction() as session:
             session["authenticated"] = True
         result = client.get(
             "/api/labels/state",
-            query_string={"filename": filename, "detection_id": 82165},
+            query_string={"filename": filename, "detection_id": 101},
         ).get_json()
         assert result["model_proposal"]["raw_species_key"] == "Himantopus_leucocephalus"
         assert (
@@ -96,7 +94,7 @@ def test_raw_model_proposal_is_separate_and_scoped_to_its_image(
         )
         other = client.get(
             "/api/labels/state",
-            query_string={"filename": "another.jpg", "detection_id": 82165},
+            query_string={"filename": "another.jpg", "detection_id": 101},
         ).get_json()
         assert other["model_proposal"] is None
 

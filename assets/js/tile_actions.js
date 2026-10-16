@@ -54,7 +54,7 @@
     /* =========================================
        No-Bird Frame — surface-agnostic fallback
        Used on Gallery / Subgallery / Species / Detection-Modal surfaces
-       where review_workspace.js (and its singleAction) is not loaded.
+       that use the shared image toolbox.
        ========================================= */
 
     /**
@@ -503,26 +503,6 @@
             case 'move-trash':
                 if (typeof deleteDetection === 'function' && detectionId) {
                     deleteDetection(null, parseInt(detectionId, 10));
-                }
-                break;
-
-            case 'deep-scan':
-                if (typeof analyzeAction === 'function' && filename) {
-                    analyzeAction(null, filename);
-                } else if (filename) {
-                    // Fallback: direct API call
-                    fetch('/api/review/analyze/' + encodeURIComponent(filename), { method: 'POST' })
-                        .then(function (r) { return r.json(); })
-                        .then(function (data) {
-                            if (data.status === 'success') {
-                                if (window.wmToast) window.wmToast('Deep Scan queued', 'success', 2000);
-                            } else {
-                                if (window.wmToast) window.wmToast('Error: ' + data.message, 'error', 4000);
-                            }
-                        })
-                        .catch(function (e) {
-                            console.error('Deep scan error:', e);
-                        });
                 }
                 break;
 

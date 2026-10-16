@@ -245,16 +245,6 @@ def api_status():
         }
 
         try:
-            from core.analysis_queue import analysis_queue
-            from web.services.analysis_service import count_deep_scan_candidates
-
-            response["deep_scan_active"] = _detection_manager.is_deep_scan_active()
-            response["deep_scan_queue_pending"] = analysis_queue.pending_count()
-            response["deep_scan_candidates_remaining"] = count_deep_scan_candidates()
-        except Exception as ds_err:
-            logger.debug(f"Could not compute deep scan status: {ds_err}")
-
-        try:
             response["decision_state_counts"] = dict(
                 _detection_manager.decision_state_counts
             )

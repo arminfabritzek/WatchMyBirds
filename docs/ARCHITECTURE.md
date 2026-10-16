@@ -31,7 +31,7 @@ WatchMyBirds is an AI-powered bird detection system that provides real-time vide
     *   `label_subjects` / `human_label_facts`: Explicit human assertions, separate from model outputs.
     *   `manual_objects` / `manual_object_revisions`: Manually added birds and their revision history.
     *   `bird_add_requests`: Idempotent add-or-correct receipts; geometric matches require an explicit identity choice before writing.
-    *   `station_event_reviews`: Explicit biological-event review decisions.
+    *   `station_event_reviews` / `station_event_review_members`: Unused legacy event assessments, retained without readers or writers.
 
 ## 4. Key Modules and Responsibilities
 ### `utils/path_manager.py`
@@ -120,7 +120,7 @@ must not be used as evidence that legacy route logic has been removed.
   are attempted first, then DB rows; missing files do not stop DB cleanup.
 - Corrections: `web.blueprints.human_labels` → `human_label_service` →
   core human-label/manual-object logic. Model proposals, manual objects,
-  image-wide facts, and biological event review are distinct evidence.
+  and image-wide facts remain distinct evidence.
 
 ### Validation and limits
 
@@ -135,13 +135,9 @@ imports; none establish full UI, persistence, or architectural correctness.
 
 ### Persistence gap
 
-`utils.ingest.ingest_file` derives detection-bearing image filenames from
-EXIF time with one-second precision, then writes to that original path.
-Hash deduplication prevents identical inputs but does not prevent different
-images with the same timestamp from sharing a destination. The immutability
-contract remains in force; collision-safe publication is an implementation
-gap, not permission to overwrite. Live capture uses microsecond filenames,
-but its writer also does not enforce exclusive creation.
+Live capture uses microsecond filenames, but its writer does not enforce
+exclusive creation. Collision-safe publication remains an implementation gap,
+not permission to overwrite an existing original.
 
 ## 8. UI Architecture Contract
 

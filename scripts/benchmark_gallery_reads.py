@@ -264,7 +264,7 @@ def main() -> None:
                 builds.append(1)
                 with closing(connect()) as reader:
                     result = (
-                        events._fetch_event_intelligence_rows(reader)
+                        detections.fetch_detections_for_gallery(reader, order_by="time")
                         if args.parallel_rows_only
                         else events.fetch_events_for_analysis(reader)
                     )

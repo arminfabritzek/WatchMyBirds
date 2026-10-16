@@ -30,9 +30,9 @@ def client(app):
         yield client
 
 
-def test_tbwd_pages_render(client):
-    assert client.get("/tbwd").status_code == 200
-    assert client.get("/tbwd-vision").status_code == 200
+def test_removed_presentation_pages_return_not_found(client):
+    assert client.get("/tbwd").status_code == 404
+    assert client.get("/tbwd-vision").status_code == 404
 
 
 def test_privacy_renders(client):

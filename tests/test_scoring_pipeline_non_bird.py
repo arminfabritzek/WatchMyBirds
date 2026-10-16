@@ -18,7 +18,6 @@ from detectors.interfaces.classification import DecisionState
 from detectors.services.capability_registry import build_default_registry
 from detectors.services.decision_policy_service import DecisionPolicyService
 from detectors.services.scoring_pipeline import compute_detection_signals
-from detectors.services.temporal_decision_service import TemporalDecisionService
 
 
 @pytest.fixture()
@@ -37,11 +36,6 @@ def decision_policy() -> DecisionPolicyService:
 
 
 @pytest.fixture()
-def temporal_service() -> TemporalDecisionService:
-    return TemporalDecisionService()
-
-
-@pytest.fixture()
 def capability_registry():
     return build_default_registry()
 
@@ -55,7 +49,6 @@ def test_non_bird_high_conf_confirmed(
     good_bbox,
     hd_frame_shape,
     decision_policy,
-    temporal_service,
     capability_registry,
 ):
     """squirrel at od=0.90 with no CLS -> CONFIRMED, score=od, unknown=0."""
@@ -66,9 +59,7 @@ def test_non_bird_high_conf_confirmed(
         cls_conf=0.0,
         top_k_confidences=None,
         decision_policy=decision_policy,
-        temporal_service=temporal_service,
         capability_registry=capability_registry,
-        species_key="squirrel",
         od_class_name="squirrel",
         non_bird_confirm_threshold=0.65,
     )
@@ -85,7 +76,6 @@ def test_non_bird_low_conf_uncertain(
     good_bbox,
     hd_frame_shape,
     decision_policy,
-    temporal_service,
     capability_registry,
 ):
     """squirrel at od=0.30 below threshold -> UNCERTAIN."""
@@ -96,9 +86,7 @@ def test_non_bird_low_conf_uncertain(
         cls_conf=0.0,
         top_k_confidences=None,
         decision_policy=decision_policy,
-        temporal_service=temporal_service,
         capability_registry=capability_registry,
-        species_key="squirrel",
         od_class_name="squirrel",
         non_bird_confirm_threshold=0.65,
     )
@@ -116,7 +104,6 @@ def test_non_bird_all_garden_animals_confirmed(
     good_bbox,
     hd_frame_shape,
     decision_policy,
-    temporal_service,
     capability_registry,
     class_name,
 ):
@@ -128,9 +115,7 @@ def test_non_bird_all_garden_animals_confirmed(
         cls_conf=0.0,
         top_k_confidences=None,
         decision_policy=decision_policy,
-        temporal_service=temporal_service,
         capability_registry=capability_registry,
-        species_key=class_name,
         od_class_name=class_name,
         non_bird_confirm_threshold=0.65,
     )
@@ -141,7 +126,6 @@ def test_non_bird_threshold_boundary(
     good_bbox,
     hd_frame_shape,
     decision_policy,
-    temporal_service,
     capability_registry,
 ):
     """od_conf == non_bird_confirm_threshold -> CONFIRMED (>=)."""
@@ -152,9 +136,7 @@ def test_non_bird_threshold_boundary(
         cls_conf=0.0,
         top_k_confidences=None,
         decision_policy=decision_policy,
-        temporal_service=temporal_service,
         capability_registry=capability_registry,
-        species_key="squirrel",
         od_class_name="squirrel",
         non_bird_confirm_threshold=0.65,
     )
@@ -170,7 +152,6 @@ def test_bird_track_with_cls_still_uses_cls_conf(
     good_bbox,
     hd_frame_shape,
     decision_policy,
-    temporal_service,
     capability_registry,
 ):
     """od_class_name='bird' with cls_conf -> score = cls_conf (bird track)."""
@@ -181,9 +162,7 @@ def test_bird_track_with_cls_still_uses_cls_conf(
         cls_conf=0.8,
         top_k_confidences=[0.8, 0.05, 0.03, 0.02, 0.01],
         decision_policy=decision_policy,
-        temporal_service=temporal_service,
         capability_registry=capability_registry,
-        species_key="Parus_major",
         od_class_name="bird",
         non_bird_confirm_threshold=0.65,
     )
@@ -196,7 +175,6 @@ def test_bird_track_without_cls_uses_od(
     good_bbox,
     hd_frame_shape,
     decision_policy,
-    temporal_service,
     capability_registry,
 ):
     """od_class_name='bird' with cls_conf=0 -> score = od_conf fallback.
@@ -213,9 +191,7 @@ def test_bird_track_without_cls_uses_od(
         cls_conf=0.0,
         top_k_confidences=None,
         decision_policy=decision_policy,
-        temporal_service=temporal_service,
         capability_registry=capability_registry,
-        species_key="unknown",
         od_class_name="bird",
         non_bird_confirm_threshold=0.65,
     )
@@ -240,9 +216,7 @@ def test_default_od_class_name_is_bird_track():
         cls_conf=0.8,
         top_k_confidences=[0.8, 0.05],
         decision_policy=DecisionPolicyService(),
-        temporal_service=TemporalDecisionService(),
         capability_registry=build_default_registry(),
-        species_key="Parus_major",
         # no od_class_name, no non_bird_confirm_threshold
     )
     assert result.score == pytest.approx(0.8)  # bird track: score = cls_conf
@@ -270,7 +244,6 @@ def test_non_bird_marten_at_077_is_uncertain_with_default(
     good_bbox,
     hd_frame_shape,
     decision_policy,
-    temporal_service,
     capability_registry,
 ):
     """marten_mustelid at the observed max (0.77) -> UNCERTAIN by default.
@@ -287,9 +260,7 @@ def test_non_bird_marten_at_077_is_uncertain_with_default(
         cls_conf=0.0,
         top_k_confidences=None,
         decision_policy=decision_policy,
-        temporal_service=temporal_service,
         capability_registry=capability_registry,
-        species_key="marten_mustelid",
         od_class_name="marten_mustelid",
         # no explicit non_bird_confirm_threshold -> use the new 0.80 default
     )
@@ -300,7 +271,6 @@ def test_non_bird_high_conf_cat_still_confirms_at_default(
     good_bbox,
     hd_frame_shape,
     decision_policy,
-    temporal_service,
     capability_registry,
 ):
     """A genuine cat sighting (od=0.90) still CONFIRMS at the new default.
@@ -316,9 +286,7 @@ def test_non_bird_high_conf_cat_still_confirms_at_default(
         cls_conf=0.0,
         top_k_confidences=None,
         decision_policy=decision_policy,
-        temporal_service=temporal_service,
         capability_registry=capability_registry,
-        species_key="cat",
         od_class_name="cat",
         # no explicit non_bird_confirm_threshold -> use the new 0.80 default
     )
@@ -329,7 +297,6 @@ def test_bird_track_at_077_unaffected_by_non_bird_default(
     good_bbox,
     hd_frame_shape,
     decision_policy,
-    temporal_service,
     capability_registry,
 ):
     """Bird detections at OD 0.77 are unaffected by the non-bird default.
@@ -346,9 +313,7 @@ def test_bird_track_at_077_unaffected_by_non_bird_default(
         cls_conf=0.85,
         top_k_confidences=[0.85, 0.05, 0.03, 0.02, 0.01],
         decision_policy=decision_policy,
-        temporal_service=temporal_service,
         capability_registry=capability_registry,
-        species_key="Columba_palumbus",
         od_class_name="bird",
         # no explicit non_bird_confirm_threshold -> default does not apply
     )

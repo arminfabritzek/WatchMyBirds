@@ -363,7 +363,6 @@ def create_local_app(work: Path) -> Flask:
     os.environ["PYTHON_DOTENV_DISABLED"] = "1"
     os.environ["OUTPUT_DIR"] = str(output)
     os.environ["MODEL_BASE_PATH"] = str(work / "models")
-    os.environ["INGEST_DIR"] = str(work / "ingest")
     os.environ["EDIT_PASSWORD"] = credentials["edit_password"]
     os.environ.pop("FLASK_SECRET_KEY", None)
     from config import get_config
@@ -374,7 +373,6 @@ def create_local_app(work: Path) -> Flask:
         {
             "OUTPUT_DIR": str(output),
             "MODEL_BASE_PATH": str(work / "models"),
-            "INGEST_DIR": str(work / "ingest"),
             "EDIT_PASSWORD": credentials["edit_password"],
             "VIDEO_SOURCE": "",
             "CAMERA_URL": "",
@@ -389,9 +387,6 @@ def create_local_app(work: Path) -> Flask:
             "telemetry_enabled": False,
             "telemetry_installation_id": "",
             "AESTHETIC_TAG_ENABLED": False,
-            "COMPANION_ENABLED": False,
-            "COMPANION_LLAMA_CPP_GGUF_PATH": "",
-            "ENABLE_NIGHTLY_DEEP_SCAN": False,
             "RETENTION_AUTO_ENABLED": False,
             "DEBUG_MODE": False,
             "STATION_NAME": "Local development",
@@ -423,9 +418,7 @@ def create_local_app(work: Path) -> Flask:
         "api_v1.status",
         "api_v1.get_species_thumbnails",
         "review.review_page",
-        "review.review_panel_fragment",
         "review.review_modal_fragment",
-        "review.review_event_panel_fragment",
         "review.review_thumb",
         "review.review_decision",
         "review.review_cleanup_preview",
@@ -442,6 +435,11 @@ def create_local_app(work: Path) -> Flask:
     def local_boundary() -> Any:
         if request.host.split(":")[0] not in {"127.0.0.1", "localhost"}:
             return jsonify(error="Local development accepts loopback hosts only"), 403
+        if (
+            request.routing_exception is not None
+            and request.routing_exception.code == 404
+        ):
+            return request.routing_exception
         if (
             request.blueprint not in allowed_blueprints
             and request.endpoint not in allowed_endpoints

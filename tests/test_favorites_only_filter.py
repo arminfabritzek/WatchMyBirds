@@ -16,11 +16,8 @@ from web.web_interface import create_web_interface
 
 def _reset_test_config(monkeypatch, tmp_path):
     output_dir = tmp_path / "output"
-    ingest_dir = tmp_path / "ingest"
     output_dir.mkdir()
-    ingest_dir.mkdir()
     monkeypatch.setenv("OUTPUT_DIR", str(output_dir))
-    monkeypatch.setenv("INGEST_DIR", str(ingest_dir))
     monkeypatch.setenv("EDIT_PASSWORD", "test-password")
     config._CONFIG = None
     db_connection._schema_initialized_paths.clear()
@@ -192,7 +189,8 @@ def test_species_grid_preserves_membership_without_favorites(favorites_fixture):
     body = resp.get_data(as_text=True)
     assert "species_key=Parus_major" in body
     assert "species_key=Pica_pica" in body
-    assert 'name="source"' in body and 'name="start"' in body
+    assert 'name="source"' not in body
+    assert 'name="start"' in body and 'name="end"' in body
     assert 'id="filter-favorites-select"' not in body
 
 

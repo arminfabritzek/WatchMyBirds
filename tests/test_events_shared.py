@@ -18,42 +18,9 @@ from utils.db.events import (
 def _make_conn() -> sqlite3.Connection:
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row
-    conn.executescript(
-        """
-        CREATE TABLE images (
-            filename TEXT PRIMARY KEY,
-            timestamp TEXT NOT NULL,
-            source_id INTEGER,
-            review_status TEXT DEFAULT 'untagged'
-        );
+    from utils.db.connection import _init_schema
 
-        CREATE TABLE detections (
-            detection_id INTEGER PRIMARY KEY,
-            image_filename TEXT NOT NULL,
-            bbox_x REAL,
-            bbox_y REAL,
-            bbox_w REAL,
-            bbox_h REAL,
-            od_class_name TEXT,
-            score REAL,
-            status TEXT NOT NULL DEFAULT 'active',
-            decision_state TEXT,
-            decision_level TEXT,
-            quality_gallery_ok INTEGER DEFAULT 1,
-            manual_species_override TEXT,
-            species_source TEXT
-        );
-
-        CREATE TABLE classifications (
-            classification_id INTEGER PRIMARY KEY,
-            detection_id INTEGER NOT NULL,
-            cls_class_name TEXT,
-            cls_confidence REAL,
-            rank INTEGER DEFAULT 1,
-            status TEXT NOT NULL DEFAULT 'active'
-        );
-        """
-    )
+    _init_schema(conn)
     return conn
 
 
@@ -438,3 +405,26 @@ def test_concurrent_event_requests_share_one_rebuild(
     assert len(calls) == 1
     assert all(result is results[0] for result in results)
     clear_events_cache()
+
+
+def test_events_use_current_answers_and_historical_admission() -> None:
+    from core.human_label_core import HumanAnswer, record_human_answer
+    from tests.test_station_observations import answer, provenance, seed
+
+    conn = _make_conn()
+    try:
+        seed(conn, identifier=1, species="Parus_major", level=None)
+        filename = seed(conn, identifier=2, species="Turdus_merula", state="uncertain")
+        answer(conn, 2, filename, species="Pica_pica")
+        absent = seed(conn, identifier=3, species="Cyanistes_caeruleus")
+        record_human_answer(
+            conn,
+            HumanAnswer(absent, detection_id=3, object_bird_presence="absent"),
+            provenance(),
+        )
+        assert {event.species for event in fetch_events_for_analysis(conn)} == {
+            "Parus_major",
+            "Pica_pica",
+        }
+    finally:
+        conn.close()

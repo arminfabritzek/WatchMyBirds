@@ -4194,14 +4194,6 @@
     }
 
     // ─── Click interaction ─────────────────────────────────────────
-    // Tapping the bird plays a random "fun" animation. Tapping too many
-    // times in a short window annoys it: it droops into the Sad anim and
-    // scolds via a speech bubble. The scold line comes from a local
-    // German phrase bank by default; if the on-device Companion LLM is
-    // enabled (COMPANION_ENABLED), we ask it for a fresh line and fall
-    // back to the phrase bank on any error/disabled response — so this
-    // works with or without a running model and never un-parks the
-    // Companion plan as a hard dependency.
     var bubbleEl = document.getElementById('mascotBirdBubble');
 
     // Curated pool of short, lively animations that read well as a
@@ -4211,9 +4203,6 @@
         'HeadShake', 'Excited', 'Singing', 'Preening', 'ShakeOff', 'Yawn'
     ];
 
-    // Scold lines — kept light and never cruel, matching the mascot's
-    // warm tone. Used directly when the LLM is off, and as the fallback
-    // when an LLM call fails. Two sentences max each.
     var SCOLD_PHRASES = [
         'Ouch! Not so rough, okay?',
         'Hey! Quit poking me already.',
@@ -4267,46 +4256,9 @@
         return SCOLD_PHRASES[Math.floor(Math.random() * SCOLD_PHRASES.length)];
     }
 
-    // Ask the on-device Companion for a scold line. Resolves to a string
-    // on success, or null if the Companion is disabled/unreachable/slow —
-    // the caller then uses the local phrase bank. We send a short prompt
-    // describing the situation; the service handles persona + language.
-    function fetchLlmScold() {
-        var controller = new AbortController();
-        var timer = setTimeout(function () { controller.abort(); }, 4000);
-        return fetch('/api/v1/companion/chat', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            credentials: 'same-origin',
-            signal: controller.signal,
-            body: JSON.stringify({
-                message: 'The human keeps poking you far too often. '
-                       + 'Scold them briefly and look sad about it.',
-                language: 'en'
-            })
-        }).then(function (resp) {
-            clearTimeout(timer);
-            if (!resp.ok) return null;
-            return resp.json();
-        }).then(function (data) {
-            if (!data || !data.ok) return null;
-            var line = (data.text || data.reply || data.message || '').trim();
-            return line || null;
-        }).catch(function () {
-            clearTimeout(timer);
-            return null;
-        });
-    }
-
     function scold() {
         window.wmbMascot.fire('Sad');
-        // Try the LLM first; whatever comes back (or the fallback) goes
-        // into the bubble. The fallback fires immediately if the LLM is
-        // off, so there's no perceptible wait in the common (disabled)
-        // case — fetch() rejects fast on a disabled/unreachable endpoint.
-        fetchLlmScold().then(function (llmLine) {
-            showBubble(llmLine || randomScold(), true);
-        });
+        showBubble(randomScold(), true);
     }
 
     function onPoke() {

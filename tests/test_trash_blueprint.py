@@ -1,4 +1,4 @@
-"""Tests for trash blueprint relabel/rate/species-list APIs."""
+"""Tests for trash blueprint relabel/favorite/species-list APIs."""
 
 import json
 import time
@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from flask import Flask
+from flask.testing import FlaskClient
 
 
 @pytest.fixture
@@ -200,9 +201,7 @@ def test_relabel_updates_detection_and_classification(client):
     }
     with (
         patch("web.blueprints.trash.db_service.get_connection", return_value=mock_conn),
-        patch(
-            "web.blueprints.trash.human_label_service.record_answer"
-        ) as mock_record,
+        patch("web.blueprints.trash.human_label_service.record_answer") as mock_record,
         patch(
             "web.blueprints.trash.build_species_picker_entries",
             return_value=[
@@ -245,14 +244,17 @@ def test_relabel_flips_decision_level_to_species(client):
     }
     with (
         patch("web.blueprints.trash.db_service.get_connection", return_value=mock_conn),
-        patch(
-            "web.blueprints.trash.human_label_service.record_answer"
-        ) as mock_record,
+        patch("web.blueprints.trash.human_label_service.record_answer") as mock_record,
         patch(
             "web.blueprints.trash.build_species_picker_entries",
             return_value=[
-                {"scientific": "Turdus_merula", "common": "Amsel",
-                 "source": "model", "score": None, "rank": None}
+                {
+                    "scientific": "Turdus_merula",
+                    "common": "Amsel",
+                    "source": "model",
+                    "score": None,
+                    "rank": None,
+                }
             ],
         ),
     ):
@@ -312,29 +314,11 @@ def test_relabel_invalidates_best_species_cache(client):
     assert age >= web_interface._BEST_SPECIES_CACHE_TTL_SECONDS
 
 
-def test_rate_rejects_out_of_range_values(client):
+def test_removed_rating_endpoint_returns_not_found(client: FlaskClient) -> None:
     response = client.post(
-        "/api/detections/rate",
-        json={"detection_id": 7, "rating": 6},
+        "/api/detections/rate", json={"detection_id": 7, "rating": 5}
     )
-    assert response.status_code == 400
-    assert "1-5" in response.get_json()["error"]
-
-
-def test_rate_rejects_zero_rating(client):
-    mock_conn = MagicMock()
-    with patch(
-        "web.blueprints.trash.db_service.get_connection", return_value=mock_conn
-    ):
-        response = client.post(
-            "/api/detections/rate",
-            json={"detection_id": 7, "rating": 0},
-        )
-
-    assert response.status_code == 400
-    data = response.get_json()
-    assert "1-5" in data["error"]
-    mock_conn.commit.assert_not_called()
+    assert response.status_code == 404
 
 
 def test_favorite_stamps_manual_source_and_action_time(client):
@@ -395,9 +379,7 @@ def test_reject_is_housekeeping_without_human_label(client):
         mock_db.closing_connection.return_value.__enter__ = MagicMock(
             return_value=mock_conn
         )
-        mock_db.closing_connection.return_value.__exit__ = MagicMock(
-            return_value=False
-        )
+        mock_db.closing_connection.return_value.__exit__ = MagicMock(return_value=False)
 
         response = client.post("/api/detections/reject", json={"ids": [7]})
 

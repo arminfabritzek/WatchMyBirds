@@ -75,8 +75,7 @@ for shared transformations. Legacy deviations are not permission to add more.
 - Runtime dependencies: `requirements.txt` plus `requirements-aesthetic.txt`.
   The latter isolates the torch/open_clip CPU index, is included in standard
   builds, and is default-ON. Opt out with `AESTHETIC_TAG_ENABLED=False`, not by
-  omitting its dependencies. `requirements-companion.txt` is an optional extra
-  for the default-OFF Companion.
+  omitting its dependencies.
 - Python tool configuration lives in `pyproject.toml`. Run from the repo root;
   use `.venv/bin/python -m` when available. `<files>` below is a placeholder.
 
@@ -107,11 +106,9 @@ deletion, and auth changes; tests belong in `tests/`.
 
 - UI: `web/`, `templates/`, `assets/`; analytics: `web/blueprints/analytics.py`,
   `core/analytics_core.py`.
-- Pipeline/storage: `detectors/`, `core/`, `utils/`; inbox ingestion:
-  `core/ingest_core.py`, `utils/ingest.py`.
+- Pipeline/storage: `detectors/`, `core/`, `utils/`.
 - Camera/deployment: `camera/`, `rpi/`, `systemd/`, `scripts/`, `infra/`,
   `.github/workflows/`, `docker-compose.example.yml`.
-- Optional Companion: `web/services/companion/`, `web/blueprints/companion.py`.
 
 ## Completion
 

@@ -17,6 +17,7 @@ from core.human_label_core import (
 from core.station_observations import validate_selection
 from tests.test_station_observations import answer, provenance, seed
 from utils.db.connection import _init_schema
+from utils.db.detections import fetch_species_covers, fetch_species_page
 
 
 @pytest.fixture
@@ -199,7 +200,6 @@ def test_failure_hides_old_payload_and_retries_automatically(
     [
         dict(start="2026-02-30"),
         dict(start="2026-10-15", end="2026-10-14"),
-        dict(source="camera' OR 1=1"),
     ],
 )
 def test_invalid_selection_is_rejected(selection: dict[str, str] | None) -> None:
@@ -207,7 +207,7 @@ def test_invalid_selection_is_rejected(selection: dict[str, str] | None) -> None
         validate_selection(**selection)
 
 
-def test_period_source_and_missing_profile_do_not_invent_claims(
+def test_period_keeps_imported_records_without_inventing_profile(
     database: Callable[[], sqlite3.Connection],
 ) -> None:
     conn = database()
@@ -215,11 +215,14 @@ def test_period_source_and_missing_profile_do_not_invent_claims(
         "INSERT INTO sources(source_id,name,type) VALUES (2, 'Imported', 'folder_upload')"
     )
     conn.execute("UPDATE images SET source_id=2")
-    report = build_report(conn, validate_selection(source="camera"))
-    assert report["summary"]["species_count"] == 0 and not report["highlights"]
-    report = build_report(conn, validate_selection(source="import"))
+    report = build_report(conn, validate_selection())
     assert report["summary"]["species_count"] == 1
-    assert report["summary"]["imported_objects"] == 2
+    assert report["summary"]["objects"] == 2
+    assert report["highlights"]
+    selection = validate_selection(end="2026-10-13")
+    assert fetch_species_covers(conn, selection=selection)[0]["observation_count"] == 2
+    rows, total, _ = fetch_species_page(conn, "Parus_major", selection=selection)
+    assert total == 2 and {r["detection_id"] for r in rows} == {1, 2}
     assert report["runtime"]["samples"] == 0 and report["gaps"] == []
     report = build_report(conn, validate_selection(start="2026-10-14"))
     assert not report["species"]

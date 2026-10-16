@@ -27,9 +27,6 @@ def build_report(conn: sqlite3.Connection, selection: dict[str, str]) -> dict:
         conn.execute(
             cte
             + f"""SELECT COUNT(*) AS objects,
-        COUNT(CASE WHEN source_type IN ('ipcam', 'webcam', 'rtsp', 'camera') THEN 1 END) AS camera_objects,
-        COUNT(CASE WHEN source_type IN ('folder_upload', 'import', 'folder') THEN 1 END) AS imported_objects,
-        COUNT(CASE WHEN source_type NOT IN ('ipcam', 'webcam', 'rtsp', 'camera', 'folder_upload', 'import', 'folder') THEN 1 END) AS unknown_source_objects,
         COUNT(CASE WHEN species_key != 'Unknown_species' THEN 1 END) AS identified_objects,
         COUNT(CASE WHEN unknown_bird THEN 1 END) AS unknown_birds,
         COUNT(CASE WHEN COALESCE(conflict, 0) THEN 1 END) AS conflicts,

@@ -33,7 +33,7 @@ def conn() -> Iterator[sqlite3.Connection]:
 
 def seed(
     conn: sqlite3.Connection,
-    identifier: int = 82165,
+    identifier: int = 101,
     species: str | None = "Himantopus_leucocephalus",
     quality: int = 0,
     state: str = "confirmed",
@@ -85,8 +85,8 @@ def provenance() -> LabelProvenance:
 @pytest.mark.parametrize(
     ("identifier", "raw", "current"),
     [
-        (82165, "Himantopus_leucocephalus", "Pica_pica"),
-        (81068, "Picus_viridis", "Picus_viridis"),
+        (101, "Himantopus_leucocephalus", "Pica_pica"),
+        (102, "Picus_viridis", "Picus_viridis"),
         (3, "Poecile_carolinensis", "Poecile_palustris"),
     ],
 )
@@ -125,7 +125,7 @@ def test_answered_unknown_or_refuted_proposal_stays_completed(
     conn: sqlite3.Connection, state: str
 ) -> None:
     filename = seed(conn)
-    answer(conn, 82165, filename, state=state, species=None)
+    answer(conn, 101, filename, state=state, species=None)
     assert not any(
         r["species_key"] != "Unknown_species" for r in fetch_species_covers(conn)
     )
@@ -153,9 +153,9 @@ def test_retraction_removes_human_claim_without_resurrecting_history(
     conn: sqlite3.Connection,
 ) -> None:
     filename = seed(conn, species="Parus_major", quality=1)
-    answer(conn, 82165, filename)
+    answer(conn, 101, filename)
     retract_species_identity(
-        conn, image_filename=filename, detection_id=82165, provenance=provenance()
+        conn, image_filename=filename, detection_id=101, provenance=provenance()
     )
     assert not any(
         r["species_key"] != "Unknown_species" for r in fetch_species_covers(conn)
@@ -171,7 +171,7 @@ def test_period_keeps_archive_species_without_counting_them(
     conn: sqlite3.Connection,
 ) -> None:
     filename = seed(conn)
-    answer(conn, 82165, filename)
+    answer(conn, 101, filename)
     row = fetch_species_covers(conn, selection={"start": "2026-10-14"})[0]
     assert (
         row["observation_count"] == 0 and row["archive_last_seen"] == "20261013_082211"
@@ -196,7 +196,7 @@ def test_old_human_species_without_presence_is_usable_without_backfill(
     from core.human_label_core import append_fact, ensure_object_subject
 
     filename = seed(conn)
-    subject = ensure_object_subject(conn, 82165)
+    subject = ensure_object_subject(conn, 101)
     append_fact(
         conn,
         subject_id=subject,
@@ -221,10 +221,10 @@ def test_conflicting_facts_exclude_positive_species_and_reopen_review(
     from core.human_label_core import append_fact, ensure_object_subject
 
     filename = seed(conn)
-    answer(conn, 82165, filename)
+    answer(conn, 101, filename)
     append_fact(
         conn,
-        subject_id=ensure_object_subject(conn, 82165),
+        subject_id=ensure_object_subject(conn, 101),
         fact_type="bird_presence",
         answer_value="absent",
         provenance=provenance(),
@@ -288,7 +288,7 @@ def test_geographic_doubt_requires_review_until_human_identification(
     assert fetch_species_covers(conn) == []
     assert fetch_observation_page(conn, answered=False)[0][0]["review_reason"]
     assert fetch_observation_page(conn, answered=False)[1] == 1
-    answer(conn, 82165, filename, species="Pica_pica")
+    answer(conn, 101, filename, species="Pica_pica")
     assert fetch_species_covers(conn)[0]["human_count"] == 1
     assert fetch_observation_page(conn, answered=False)[1] == 0
 
@@ -348,7 +348,7 @@ def test_current_canonical_species_overrules_stale_compatibility_source(
     conn: sqlite3.Connection,
 ) -> None:
     filename = seed(conn, quality=1)
-    answer(conn, 82165, filename, species="Pica_pica")
+    answer(conn, 101, filename, species="Pica_pica")
     conn.execute(
         "UPDATE detections SET species_source='manual_wrong', manual_species_override=NULL"
     )
@@ -399,11 +399,11 @@ def test_uncertain_automatic_records_share_one_gate_and_human_override(
     assert build_report(conn, {})["summary"]["species_count"] == 0
     pending, count, _ = fetch_observation_page(conn, answered=False)
     assert count == 1 and reason in pending[0]["review_reason"]
-    answer(conn, 82165, filename, species="Pica_pica")
+    answer(conn, 101, filename, species="Pica_pica")
     assert fetch_detections_for_gallery(conn)[0]["species_key"] == "Pica_pica"
     assert fetch_detections_last_24h(conn, "20261001")[0]["species_key"] == "Pica_pica"
     assert fetch_gallery_days(conn)[1] == 1
-    assert is_detection_visible_in_gallery(conn, 82165, min_score=1)
+    assert is_detection_visible_in_gallery(conn, 101, min_score=1)
     assert build_report(conn, {})["summary"]["species_count"] == 1
     assert fetch_observation_page(conn, answered=False)[1] == 0
     assert tuple(conn.execute("SELECT * FROM classifications").fetchone()) == raw

@@ -12,7 +12,6 @@
     <a class="btn btn--secondary" href="/admin/review?answered=0&{{ selection | urlencode }}">Review events</a>
     <a class="btn btn--secondary" href="/admin/review?answered=1&{{ selection | urlencode }}">Answered · archive</a>
     <a class="btn btn--secondary" href="/species/overview?species_key=Unknown_species&{{ selection | urlencode }}">Bird · species unknown</a>
-    <a href="/admin/review?diagnostic=1">Diagnostic events</a>
 </nav>
 <form class="review-day-nav" method="get" aria-label="Review day navigation">
     <input type="hidden" name="answered" value="{{ 1 if answered else 0 }}">

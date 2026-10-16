@@ -1073,33 +1073,6 @@
             .catch(err => { out.textContent = `Error: ${err.message || 'request failed'}`; });
     }
 
-    // Replaces the former nested <form action=...> for the /ingest
-    // trigger. Nesting a form inside settingsForm auto-closed the
-    // outer form in every browser, which silently killed the Apply
-    // Settings submit. Sending the POST as fetch + X-CSRF-Token
-    // header keeps the outer form intact and is behaviour-equivalent
-    // to the old submit (same endpoint, same auth, same side effect).
-    function triggerIngestStart(btn, url, csrfToken) {
-        const originalText = btn.textContent;
-        btn.textContent = 'Starting…';
-        btn.disabled = true;
-        fetch(url, {
-            method: 'POST',
-            credentials: 'same-origin',
-            headers: { 'X-CSRF-Token': csrfToken },
-        })
-            .then(res => { if (!res.ok) { return res.json().then(err => { throw new Error(err.message || 'API Error'); }); } return res.json(); })
-            .then(data => {
-                alert(data.message || 'Ingest started.');
-                btn.textContent = originalText;
-                btn.disabled = false;
-            })
-            .catch(err => {
-                alert('Ingest failed: ' + (err.message || err));
-                btn.textContent = originalText;
-                btn.disabled = false;
-            });
-    }
 </script>
 {% endblock %}
 
@@ -1967,7 +1940,7 @@
                             <option value="true" {% if payload['EXPORT_BURN_IN_METADATA'].value %}selected{% endif %}>Yes</option>
                             <option value="false" {% if not payload['EXPORT_BURN_IN_METADATA'].value %}selected{% endif %}>No</option>
                         </select>
-                        <div class="settings-field__help">Embed species, location, favorite and rating into downloaded copies (for iNaturalist re-import). The stored original is never changed; Off downloads the raw original.</div>
+                        <div class="settings-field__help">Embed species, location and favorite into downloaded copies (for iNaturalist re-import). The stored original is never changed; Off downloads the raw original.</div>
                     </div>
                 </div>
                 <div class="col-md-6">
@@ -2386,7 +2359,7 @@
     <div class="settings-panel" id="panelTools">
         <button type="button" class="settings-panel__trigger" onclick="togglePanel('panelTools')">
             Data & Backups
-            <span class="settings-panel__trigger-info">Automatic backups, recovery, migration, Ingest, System Info</span>
+            <span class="settings-panel__trigger-info">Automatic backups, recovery, migration, System Info</span>
             <svg class="settings-panel__chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
         </button>
         <div class="settings-panel__body">
@@ -3639,23 +3612,6 @@
                         </div>
                     </div>
                 </div>
-            </div>
-
-            <hr>
-
-            <!-- Ingest -->
-            {# Nested forms are HTML-illegal: the browser auto-closes
-               the outer settingsForm at this tag, which then drops
-               the Apply button out of the form. Using a plain button
-               with a click handler keeps the outer form intact.
-               #}
-            <div class="mb-4">
-                <strong class="d-block mb-2">Image Ingest</strong>
-                <p class="settings-field__help mb-2">Docker: Import images from mounted <code>/ingest</code> folder. For normal uploads use the <a href="/inbox">Inbox</a>.</p>
-                <button type="button" class="btn btn--secondary btn--sm"
-                    onclick="triggerIngestStart(this, '{{ url_for('onvif_ingest.start_ingest_endpoint') }}', '{{ csrf_token }}')">
-                    Start Ingest from /ingest
-                </button>
             </div>
 
             <!-- System Info -->

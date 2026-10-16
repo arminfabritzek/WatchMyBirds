@@ -851,100 +851,6 @@ class ONNXDetectionModel(BaseDetectionModel):
 
         return detection_info_list
 
-    def exhaustive_detect(self, frame):
-        """
-        Performs an exhaustive detection using tiling and low thresholds.
-        Returns a list of all detections mapped back to the original frame.
-        """
-        logger.info("Starting exhaustive deep scan (Full + Tiled 0.1)...")
-        all_detections = []
-        low_conf = 0.1
-
-        # 1. Full frame scan with low confidence
-        full_dets = self.detect(frame, low_conf)
-        for d in full_dets:
-            d["method"] = "full"
-        all_detections.extend(full_dets)
-
-        # 2. Tiling (2x2 with overlap)
-        h, w = frame.shape[:2]
-        # Define 4 tiles with overlap
-        # overlap ~20%
-        mid_x = w // 2
-        mid_y = h // 2
-
-        # Coordinates: x1, y1, x2, y2
-        tiles = [
-            (0, 0, mid_x + 100, mid_y + 100),  # TL
-            (mid_x - 100, 0, w, mid_y + 100),  # TR
-            (0, mid_y - 100, mid_x + 100, h),  # BL
-            (mid_x - 100, mid_y - 100, w, h),  # BR
-        ]
-
-        for tx1, ty1, tx2, ty2 in tiles:
-            # Clip to image bounds
-            tx1, ty1 = max(0, tx1), max(0, ty1)
-            tx2, ty2 = min(w, tx2), min(h, ty2)
-
-            tile_img = frame[ty1:ty2, tx1:tx2]
-            if tile_img.size == 0:
-                continue
-
-            tile_dets = self.detect(tile_img, low_conf)
-
-            # Map back to original coordinates
-            for d in tile_dets:
-                d["x1"] += tx1
-                d["y1"] += ty1
-                d["x2"] += tx1
-                d["y2"] += ty1
-                d["method"] = "tiled"
-                all_detections.append(d)
-
-        # 3. Simple NMS (Non-Maximum Suppression) to remove duplicates
-        # We prefer 'tiled' detections if they have higher confidence, but 'full' gives better context.
-        # Simple approach: sort by confidence, check IoU.
-
-        keep = []
-        all_detections.sort(key=lambda x: x["confidence"], reverse=True)
-
-        for current in all_detections:
-            is_new = True
-            cx1, cy1, cx2, cy2 = (
-                current["x1"],
-                current["y1"],
-                current["x2"],
-                current["y2"],
-            )
-            current_area = (cx2 - cx1) * (cy2 - cy1)
-
-            for kept in keep:
-                kx1, ky1, kx2, ky2 = kept["x1"], kept["y1"], kept["x2"], kept["y2"]
-
-                # Intersection
-                ix1 = max(cx1, kx1)
-                iy1 = max(cy1, ky1)
-                ix2 = min(cx2, kx2)
-                iy2 = min(cy2, ky2)
-
-                if ix2 > ix1 and iy2 > iy1:
-                    inter_area = (ix2 - ix1) * (iy2 - iy1)
-                    kept_area = (kx2 - kx1) * (ky2 - ky1)
-                    union_area = current_area + kept_area - inter_area
-                    iou = inter_area / union_area if union_area > 0 else 0
-
-                    if iou > 0.5:  # 50% overlap considered same object
-                        is_new = False
-                        break
-
-            if is_new:
-                keep.append(current)
-
-        logger.info(
-            f"Exhaustive scan complete. Found {len(keep)} objects (merged from {len(all_detections)})."
-        )
-        return keep
-
 
 # ------------------------------------------------------------------------------
 # Detector Class (Modularized)
@@ -973,7 +879,3 @@ class Detector:
             det["confidence"] >= save_threshold for det in detection_info_list
         )
         return object_detected, original_frame, detection_info_list
-
-    def exhaustive_detect(self, frame):
-        """Delegates exhaustive detection to the model."""
-        return self.model.exhaustive_detect(frame)

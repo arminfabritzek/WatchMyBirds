@@ -13,8 +13,6 @@ WEB_SERVICE_EXCEPTIONS = {
         "open_clip",
         "torch",
     },
-    "analysis_service.py": {"cv2", "web.security.safe_log_value"},
-    "companion/llama_cpp_adapter.py": {"llama_cpp"},
     "model_registry_service.py": {"yaml"},
     "nightly_jobs/sharpness_job.py": {"cv2", "utils.image_ops"},
     "report_scheduler.py": {"utils.daily_report"},
@@ -26,11 +24,9 @@ WEB_SERVICE_EXCEPTIONS = {
 DETECTOR_SERVICE_EDGES = {
     ("persistence_service", "crop_service"),
     ("capability_registry", "decision_policy_service"),
-    ("capability_registry", "temporal_decision_service"),
     ("scoring_pipeline", "bbox_quality_service"),
     ("scoring_pipeline", "capability_registry"),
     ("scoring_pipeline", "decision_policy_service"),
-    ("scoring_pipeline", "temporal_decision_service"),
 }
 
 
@@ -301,10 +297,10 @@ class TestTemplateArchitecture:
             "settings.html",
             "species.html",
             "subgallery.html",
-            "analytics.html",
+            "station_report.html",
+            "review_grid.html",
+            "station_review.html",
             "edit.html",
-            "inbox.html",
-            "orphans.html",
             "trash.html",
             "backup.html",
             "restore.html",

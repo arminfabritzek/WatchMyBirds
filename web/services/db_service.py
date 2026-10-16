@@ -46,9 +46,7 @@ def fetch_active_detection_selection_in_date_range(
     )
 
 
-def fetch_active_detection_selection_by_source_type(
-    conn, source_type: str
-) -> dict:
+def fetch_active_detection_selection_by_source_type(conn, source_type: str) -> dict:
     return db_core.fetch_active_detection_selection_by_source_type(conn, source_type)
 
 
@@ -64,9 +62,7 @@ def fetch_trash_candidate_selection_by_source_type(conn, source_type: str) -> di
     return db_core.fetch_trash_candidate_selection_by_source_type(conn, source_type)
 
 
-def reject_detections(
-    conn, detection_ids: list[int], *, commit: bool = True
-) -> None:
+def reject_detections(conn, detection_ids: list[int], *, commit: bool = True) -> None:
     db_core.reject_detections(conn, detection_ids, commit=commit)
 
 
@@ -80,9 +76,7 @@ def apply_species_override_many(
     return db_core.apply_species_override_many(conn, detection_ids, species, source)
 
 
-def set_manual_bbox_review(
-    conn, detection_id: int, review_state: str | None
-) -> None:
+def set_manual_bbox_review(conn, detection_id: int, review_state: str | None) -> None:
     db_core.set_manual_bbox_review(conn, detection_id, review_state)
 
 
@@ -152,18 +146,6 @@ def restore_no_bird_images(conn, image_filenames: list[str]) -> int:
 # --- Analytics Operations ---
 
 
-def fetch_analytics_summary(conn, min_score: float = 0.0) -> dict:
-    return db_core.fetch_analytics_summary(conn, min_score=min_score)
-
-
-def fetch_all_detection_times(conn, min_score: float = 0.0) -> list:
-    return db_core.fetch_all_detection_times(conn, min_score=min_score)
-
-
-def fetch_species_timestamps(conn, min_score: float = 0.0) -> list:
-    return db_core.fetch_species_timestamps(conn, min_score=min_score)
-
-
 def fetch_day_count(conn, date_str_iso: str) -> int:
     return db_core.fetch_day_count(conn, date_str_iso)
 
@@ -175,12 +157,10 @@ def fetch_review_queue_count(conn, gallery_threshold: float) -> int:
 def fetch_review_queue_images(
     conn,
     gallery_threshold: float,
-    exclude_deep_scanned: bool = False,
 ) -> list:
     return db_core.fetch_review_queue_images(
         conn,
         gallery_threshold,
-        exclude_deep_scanned=exclude_deep_scanned,
     )
 
 
@@ -188,13 +168,11 @@ def fetch_review_queue_image(
     conn,
     filename: str,
     gallery_threshold: float,
-    exclude_deep_scanned: bool = False,
 ):
     return db_core.fetch_review_queue_image(
         conn,
         filename,
         gallery_threshold=gallery_threshold,
-        exclude_deep_scanned=exclude_deep_scanned,
     )
 
 
@@ -227,9 +205,7 @@ def fetch_review_queue_item_by_identity(
     )
 
 
-def fetch_recent_review_species(
-    conn, limit: int = 8, lookback_days: int = 7
-) -> list:
+def fetch_recent_review_species(conn, limit: int = 8, lookback_days: int = 7) -> list:
     return db_core.fetch_recent_review_species(
         conn, limit=limit, lookback_days=lookback_days
     )

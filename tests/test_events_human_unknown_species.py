@@ -135,51 +135,6 @@ def test_a_human_confirmed_species_still_forms_an_eligible_event() -> None:
     assert events[0].eligibility == "event_eligible"
 
 
-# --- the Review Desk card must not arm Approve with the withdrawn species ---
-
-
-def test_review_event_payload_does_not_preselect_the_withdrawn_species() -> None:
-    """``data-species`` on the card is what an Approve would submit.
-
-    The event species is resolved to None correctly, but the payload then
-    falls back to the classifier's default suggestion - the same
-    "None means unset, so use a default" confusion that the per-detection
-    resolver already had to fix.
-    """
-    from web.blueprints.review import _resolve_review_event_selected_species
-
-    # Event species unresolved (explicit human unknown), AI default available.
-    assert (
-        _resolve_review_event_selected_species(
-            candidate_species=None,
-            default_species=AI_SPECIES,
-            fallback_reason="unknown_species",
-        )
-        is None
-    ), "Approve would be armed with the species the human withdrew"
-
-
-def test_review_event_payload_still_defaults_for_ordinary_events() -> None:
-    from web.blueprints.review import _resolve_review_event_selected_species
-
-    assert (
-        _resolve_review_event_selected_species(
-            candidate_species=None,
-            default_species=AI_SPECIES,
-            fallback_reason=None,
-        )
-        == AI_SPECIES
-    )
-    assert (
-        _resolve_review_event_selected_species(
-            candidate_species="Parus_major",
-            default_species=AI_SPECIES,
-            fallback_reason=None,
-        )
-        == "Parus_major"
-    )
-
-
 def test_review_member_candidate_species_respects_an_explicit_unknown() -> None:
     """The tile's relabel control must not carry the withdrawn species.
 

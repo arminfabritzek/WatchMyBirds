@@ -7,6 +7,7 @@ Restore/Import functionality for backup archives.
 Implements safe tar handling, DB merge/replace, and settings import.
 """
 
+import hashlib
 import json
 import logging
 import os
@@ -22,7 +23,6 @@ from typing import Any
 import yaml
 
 from utils.db import _get_db_path as get_db_path
-from utils.ingest import calculate_sha256
 from utils.path_manager import PathManager, get_path_manager
 from utils.settings import get_settings_path
 
@@ -59,6 +59,15 @@ SECRET_KEYS = frozenset(
 
 # Global restore lock state
 _restore_lock = {"active": False, "started_at": None, "stage": None}
+
+
+def calculate_sha256(filepath: str) -> str:
+    """Calculates the SHA-256 hash of a file."""
+    sha256_hash = hashlib.sha256()
+    with open(filepath, "rb") as f:
+        for byte_block in iter(lambda: f.read(4096), b""):
+            sha256_hash.update(byte_block)
+    return sha256_hash.hexdigest()
 
 
 def is_restore_active() -> bool:

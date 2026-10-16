@@ -11,15 +11,6 @@ Usage:
     from utils.db.detections import insert_detection
 """
 
-# Analytics Operations
-from utils.db.analytics import (
-    fetch_all_detection_times,
-    fetch_all_time_daily_counts,
-    fetch_analytics_summary,
-    fetch_simulation_data,
-    fetch_species_timestamps,
-)
-
 # Connection and Schema
 from utils.db.connection import (
     DB_FILENAME,
@@ -30,7 +21,6 @@ from utils.db.connection import (
     closing_connection,
     get_connection,
     get_or_create_default_source,
-    get_or_create_user_import_source,
 )
 
 # Detection Operations
@@ -65,13 +55,9 @@ from utils.db.detections import (
 
 # Image Operations
 from utils.db.images import (
-    check_image_exists_by_hash,
     insert_image,
     update_downloaded_timestamp,
 )
-
-# Inbox ingest audit log
-from utils.db.inbox_ingest_events import insert_inbox_ingest_event
 
 # Reject-audit log (metadata-only, no image/crop/detection row)
 from utils.db.reject_audit import (
@@ -108,12 +94,10 @@ __all__ = [
     "get_connection",
     "_init_schema",
     "get_or_create_default_source",
-    "get_or_create_user_import_source",
     "_ensure_column",
     "_ensure_column_on_table",
     # Images
     "insert_image",
-    "check_image_exists_by_hash",
     "update_downloaded_timestamp",
     # Detections
     "insert_detection",
@@ -147,12 +131,6 @@ __all__ = [
     "fetch_trash_count",
     # Reject-audit log
     "insert_reject_audit",
-    # Analytics
-    "fetch_all_time_daily_counts",
-    "fetch_all_detection_times",
-    "fetch_species_timestamps",
-    "fetch_analytics_summary",
-    "fetch_simulation_data",
     # Review Queue
     "fetch_orphan_images",
     "delete_orphan_images",
@@ -166,6 +144,4 @@ __all__ = [
     "restore_no_bird_images",
     "delete_no_bird_images",
     "update_review_status",
-    # Inbox ingest audit log
-    "insert_inbox_ingest_event",
 ]

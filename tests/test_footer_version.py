@@ -125,11 +125,8 @@ def logged_out_app(monkeypatch, tmp_path):
     from web.web_interface import create_web_interface
 
     output_dir = tmp_path / "output"
-    ingest_dir = tmp_path / "ingest"
     output_dir.mkdir()
-    ingest_dir.mkdir()
     monkeypatch.setenv("OUTPUT_DIR", str(output_dir))
-    monkeypatch.setenv("INGEST_DIR", str(ingest_dir))
     monkeypatch.setenv("EDIT_PASSWORD", "test-password")
     config._CONFIG = None
     db_connection._schema_initialized_paths.clear()

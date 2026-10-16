@@ -14,9 +14,7 @@ from utils.db.detections import fetch_observation_page, hydrate_observations
 from utils.db.observations import observations_cte, selection_sql
 
 
-def validate_selection(
-    start: str = "", end: str = "", source: str = "all"
-) -> dict[str, str]:
+def validate_selection(start: str = "", end: str = "") -> dict[str, str]:
     for value in (start, end):
         if value and (
             len(value) != 10 or date.fromisoformat(value).isoformat() != value
@@ -24,9 +22,7 @@ def validate_selection(
             raise ValueError("Use dates in YYYY-MM-DD format")
     if start and end and start > end:
         raise ValueError("Start date must precede end date")
-    if source not in {"all", "camera", "import"}:
-        raise ValueError("Invalid observation source")
-    return {"start": start, "end": end, "source": source}
+    return {"start": start, "end": end}
 
 
 def review_page(

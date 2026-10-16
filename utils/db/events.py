@@ -26,7 +26,7 @@ from pathlib import Path
 from core.event_intelligence import EventGroupingProfile
 from core.events import BirdEvent, build_bird_events
 from core.read_cache import ReadCache
-from utils.db.analytics import _fetch_event_intelligence_rows
+from utils.db.detections import hydrate_observations
 
 
 @dataclass(frozen=True)
@@ -94,15 +94,22 @@ def fetch_events_for_analysis(
     min_score: float = 0.0,
     profile_overrides: Mapping[str, EventGroupingProfile] | None = None,
 ) -> list[BirdEvent]:
-    """Fetch detections and group them into BirdEvents in one call.
-
-    This is the sole entry point both dashboards should use for event-based
-    metrics. It reuses the visibility predicate and species resolution logic
-    that the rest of the app depends on. Moderation exclusions apply here,
-    while aesthetic thumbnail quality deliberately does not erase a valid
-    confirmed event from Analytics or Insights.
-    """
-    rows = _fetch_event_intelligence_rows(conn, min_score=min_score)
+    """Group admitted observations, optionally narrowed by a photo score filter."""
+    rows = hydrate_observations(
+        conn,
+        [
+            dict(row)
+            for row in conn.execute(
+                """SELECT * FROM current_observations WHERE admitted
+                AND timestamp IS NOT NULL AND TRIM(timestamp) != ''
+                AND (score IS NULL OR score >= ?)
+                ORDER BY timestamp ASC, object_key""",
+                (min_score,),
+            )
+        ],
+    )
+    for row in rows:
+        row["sibling_detection_count"] = row.get("sibling_count", 1)
     if not rows:
         return []
     return build_bird_events(rows, profile_overrides=profile_overrides)

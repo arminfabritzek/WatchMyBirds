@@ -77,7 +77,6 @@ _CONFIG = None
 DEFAULTS = {
     "DEBUG_MODE": False,
     "OUTPUT_DIR": "./data/output",
-    "INGEST_DIR": "./data/ingest",
     "VIDEO_SOURCE": "0",
     "LOCATION_DATA": {"latitude": 52.516, "longitude": 13.377},
     # Human-readable label for this WMB instance. Shown in the
@@ -188,16 +187,6 @@ DEFAULTS = {
     # frame. 1 = keep all confirmed species; raise to 2 or 3 for stricter
     # rarity filtering.
     "TELEGRAM_MIN_CONFIRMED_OBSERVATIONS": 1,
-    # Reserved aesthetic-score floor for future per-photo filtering inside
-    # the daily Telegram report. Currently NOT applied (the previous
-    # implementation treated it as a species-level gate, which made
-    # taggable species vanish on days when none cleared the floor —
-    # see utils/daily_report.py:_fetch_species_best_photos for the
-    # full rationale). The constant stays so we can re-introduce it as
-    # a per-photo floor later (e.g. "use detector_confidence ranking
-    # instead of aesthetic_score when no photo of the species clears
-    # this threshold"). Today it is purely informational.
-    "TELEGRAM_MIN_AESTHETIC_SCORE": 0.10,
     # Nightly aesthetic auto-tagger (CLIP-based). The scheduler in
     # web/services/aesthetic_tag_scheduler.py reads these. Time is HH:MM
     # 24h, default 02:10 (low-traffic). Disable on slim images / low-RAM
@@ -235,8 +224,6 @@ DEFAULTS = {
     "AESTHETIC_BRIDGE_PER_SPECIES_CAP": 8,
     "DEVICE_NAME": "",
     "EXIF_GPS_ENABLED": True,
-    "INBOX_REQUIRE_EXIF_DATETIME": True,
-    "INBOX_REQUIRE_EXIF_GPS": True,
     # When True, human-facing downloads (detail-modal "Download" and the
     # edit-page batch ZIP) serve a COPY with species/location/provenance
     # burned into XMP at current DB state, never touching the immutable
@@ -256,34 +243,11 @@ DEFAULTS = {
     "MOTION_DETECTION_ENABLED": False,
     "MOTION_SENSITIVITY": 500,
     "CAMERA_URL": "",
-    "ENABLE_NIGHTLY_DEEP_SCAN": False,
     "STREAM_SOURCE_MODE": "auto",  # "auto", "relay", "direct"
     "GO2RTC_STREAM_NAME": "camera",
     "GO2RTC_API_BASE": "http://127.0.0.1:1984",
     "GO2RTC_CONFIG_PATH": "./go2rtc.yaml",
     "SPECIES_COMMON_NAME_LOCALE": "DE",
-    # --- Companion v1 backend (default OFF) ---
-    # Backend-only in v1. All keys default conservative so a fresh
-    # install never reaches an LLM runtime by accident.
-    #
-    # The default backend is `llama_cpp` (in-process GGUF via
-    # llama-cpp-python). Ollama remains an alternative for hosts that
-    # already serve the model via a local daemon. Switching the backend
-    # takes effect on next boot.
-    "COMPANION_ENABLED": False,
-    "COMPANION_INFERENCE_BACKEND": "llama_cpp",  # "llama_cpp" | "ollama"
-    # llama_cpp adapter knobs:
-    "COMPANION_LLAMA_CPP_GGUF_PATH": "",  # empty -> auto-pick newest .gguf under <models>/companion/
-    "COMPANION_LLAMA_CPP_N_CTX": 4096,
-    "COMPANION_LLAMA_CPP_N_THREADS": 0,  # 0 -> library default (typically all cores)
-    # ollama adapter knobs:
-    "COMPANION_OLLAMA_URL": "http://127.0.0.1:11434",
-    "COMPANION_OLLAMA_MODEL_TAG": "wmb-companion:1b-q4",
-    # shared:
-    "COMPANION_INFERENCE_TIMEOUT_S": 60,
-    "COMPANION_PAUSE_DETECTION_DURING_INFERENCE": True,
-    "COMPANION_LANGUAGE": "de",
-    "COMPANION_TONE": "adult_dry",
     # --- Anonymous opt-in usage heartbeat (default OFF) ---
     # See web/services/telemetry_service.py and docs/PRIVACY.md.
     # The toggle is the ONLY enable surface; there is no banner or
@@ -347,34 +311,14 @@ RUNTIME_KEYS = {
     "TELEGRAM_MODE",
     "TELEGRAM_REPORT_INTERVAL_HOURS",
     "TELEGRAM_MIN_CONFIRMED_OBSERVATIONS",
-    "TELEGRAM_MIN_AESTHETIC_SCORE",
     "AESTHETIC_TAG_ENABLED",
     "AESTHETIC_TAG_TIME",
     "AESTHETIC_TAGGER_NICE",
     "AESTHETIC_TAGGER_TORCH_THREADS",
     "AESTHETIC_BRIDGE_PER_SPECIES_CAP",
-    # Companion runtime knobs. Enable / pause / language / tone are
-    # safe to flip live; backend, GGUF path, n_ctx, n_threads, the URL
-    # and model tag re-bind on next service init (read once when
-    # constructing the adapter at process boot, not on every API call),
-    # so those changes need a restart — same as the existing telemetry
-    # endpoint key.
-    "COMPANION_ENABLED",
-    "COMPANION_PAUSE_DETECTION_DURING_INFERENCE",
-    "COMPANION_LANGUAGE",
-    "COMPANION_TONE",
-    "COMPANION_INFERENCE_TIMEOUT_S",
-    "COMPANION_INFERENCE_BACKEND",
-    "COMPANION_LLAMA_CPP_GGUF_PATH",
-    "COMPANION_LLAMA_CPP_N_CTX",
-    "COMPANION_LLAMA_CPP_N_THREADS",
-    "COMPANION_OLLAMA_URL",
-    "COMPANION_OLLAMA_MODEL_TAG",
     "DEVICE_NAME",
     "LOCATION_DATA",
     "EXIF_GPS_ENABLED",
-    "INBOX_REQUIRE_EXIF_DATETIME",
-    "INBOX_REQUIRE_EXIF_GPS",
     "MOTION_DETECTION_ENABLED",
     "MOTION_SENSITIVITY",
     "SPECIES_COMMON_NAME_LOCALE",
@@ -404,8 +348,6 @@ def _load_config() -> dict[str, Any]:
         config["DEBUG_MODE"] = os.getenv("DEBUG_MODE")
     if os.getenv("OUTPUT_DIR") is not None:
         config["OUTPUT_DIR"] = os.getenv("OUTPUT_DIR")
-    if os.getenv("INGEST_DIR") is not None:
-        config["INGEST_DIR"] = os.getenv("INGEST_DIR")
     if os.getenv("VIDEO_SOURCE") is not None:
         config["VIDEO_SOURCE"] = os.getenv("VIDEO_SOURCE")
     if os.getenv("CAMERA_URL") is not None:
@@ -465,8 +407,6 @@ def _load_config() -> dict[str, Any]:
         config["EXIF_GPS_ENABLED"] = os.getenv("EXIF_GPS_ENABLED")
     if os.getenv("TELEGRAM_ENABLED") is not None:
         config["TELEGRAM_ENABLED"] = os.getenv("TELEGRAM_ENABLED")
-    if os.getenv("ENABLE_NIGHTLY_DEEP_SCAN") is not None:
-        config["ENABLE_NIGHTLY_DEEP_SCAN"] = os.getenv("ENABLE_NIGHTLY_DEEP_SCAN")
     if os.getenv("CPU_LIMIT") is not None:
         config["CPU_LIMIT"] = os.getenv("CPU_LIMIT")
 
@@ -491,10 +431,6 @@ def _load_config() -> dict[str, Any]:
         config["TELEGRAM_REPORT_TIME"] = os.getenv("TELEGRAM_REPORT_TIME")
     if os.getenv("TELEGRAM_MODE") is not None:
         config["TELEGRAM_MODE"] = os.getenv("TELEGRAM_MODE")
-    if os.getenv("TELEGRAM_MIN_AESTHETIC_SCORE") is not None:
-        config["TELEGRAM_MIN_AESTHETIC_SCORE"] = os.getenv(
-            "TELEGRAM_MIN_AESTHETIC_SCORE"
-        )
     if os.getenv("AESTHETIC_TAG_ENABLED") is not None:
         config["AESTHETIC_TAG_ENABLED"] = os.getenv("AESTHETIC_TAG_ENABLED")
     if os.getenv("AESTHETIC_TAG_TIME") is not None:
@@ -603,7 +539,6 @@ def ensure_app_directories(config_dict: dict[str, Any] | None = None) -> None:
 
     dirs_to_create = [
         config_dict["OUTPUT_DIR"],
-        config_dict["INGEST_DIR"],
         config_dict["MODEL_BASE_PATH"],
         os.path.join(config_dict["OUTPUT_DIR"], "logs"),  # Ensure log dir exists
     ]
@@ -844,10 +779,7 @@ def _coerce_config_types(config: dict[str, Any]) -> None:
         "DAY_AND_NIGHT_CAPTURE",
         "TELEGRAM_ENABLED",
         "EXIF_GPS_ENABLED",
-        "INBOX_REQUIRE_EXIF_DATETIME",
-        "INBOX_REQUIRE_EXIF_GPS",
         "MOTION_DETECTION_ENABLED",
-        "ENABLE_NIGHTLY_DEEP_SCAN",
         "NON_BIRD_DROP_BELOW_CONFIRM",
         "RETENTION_ENABLED",
         "RETENTION_AUTO_ENABLED",
@@ -1088,17 +1020,6 @@ def _coerce_config_types(config: dict[str, Any]) -> None:
         min_obs = 1
     config["TELEGRAM_MIN_CONFIRMED_OBSERVATIONS"] = max(1, min(100, min_obs))
 
-    # TELEGRAM_MIN_AESTHETIC_SCORE: float in [0, 1]. Floor for the daily
-    # report's photo-picking. Anything outside the range falls back to
-    # the default so a fat-fingered "30" can't suddenly empty the report.
-    try:
-        min_aes = float(config.get("TELEGRAM_MIN_AESTHETIC_SCORE", 0.20))
-    except (TypeError, ValueError):
-        min_aes = 0.20
-    if not (0.0 <= min_aes <= 1.0):
-        min_aes = 0.20
-    config["TELEGRAM_MIN_AESTHETIC_SCORE"] = min_aes
-
     # AESTHETIC_TAG_ENABLED: bool. Coerce loose strings ("true"/"yes"/"1").
     # AESTHETIC_TAG_TIME: HH:MM 24h. Re-uses the same regex as
     # TELEGRAM_REPORT_TIME further down (validator path); here we just
@@ -1260,8 +1181,6 @@ def _validate_value(key: str, value: Any) -> tuple[bool, Any]:
         "TELEGRAM_ENABLED",
         "MQTT_ENABLED",
         "MQTT_TLS",
-        "INBOX_REQUIRE_EXIF_DATETIME",
-        "INBOX_REQUIRE_EXIF_GPS",
         "MOTION_DETECTION_ENABLED",
         "DEBUG_MODE",
         "EXIF_GPS_ENABLED",
@@ -1442,15 +1361,6 @@ def _validate_value(key: str, value: Any) -> tuple[bool, Any]:
             return False, None
         if 1 <= count <= 100:
             return True, count
-        return False, None
-
-    if key == "TELEGRAM_MIN_AESTHETIC_SCORE":
-        try:
-            v = float(value)
-        except (TypeError, ValueError):
-            return False, None
-        if 0.0 <= v <= 1.0:
-            return True, v
         return False, None
 
     if key == "AESTHETIC_TAG_ENABLED":

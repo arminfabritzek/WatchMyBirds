@@ -11,11 +11,10 @@
     {% if report %}
     <div data-current-report>
         <header class="station-report__overview">
-            <p class="station-report__eyebrow">{{ selection.start or 'First archived capture' }} – {{ selection.end or 'Latest archived capture' }} · {{ selection.source }} sources</p>
+            <p class="station-report__eyebrow">{{ selection.start or 'First archived capture' }} – {{ selection.end or 'Latest archived capture' }}</p>
             <h1>Your station history</h1>
             <p>{{ report.summary.species_count }} recorded species · of these, {{ report.summary.human_species }} with user confirmations · {{ report.summary.automatic_species }} with automatic records. Species with both origins count once in the total.</p>
             <p class="station-card-meta">Data calculated {{ report.built_at }} · {{ report.summary.identified_objects }} identified objects · {{ report.summary.unknown_birds }} birds with unknown species.</p>
-            <p class="station-card-meta">Source records: {{ report.summary.camera_objects }} camera · {{ report.summary.imported_objects }} imported · {{ report.summary.unknown_source_objects }} source unknown.</p>
             <p>Dates describe positive records in stored images. They do not establish arrival, absence, individuals or visit totals.</p>
         </header>
         <section aria-labelledby="report-pictures">
@@ -58,7 +57,6 @@
             <p>Technical samples cover {{ report.runtime.first_sample or 'an unknown start' }} – {{ report.runtime.last_sample or 'an unknown end' }} ({{ report.runtime.samples }} samples across the station archive). Earlier coverage is unknown. Samples do not establish valid biological observation hours.</p>
             {% if report.gaps %}<details data-report-details="sample-gaps"><summary>{{ report.gaps[0].total_gaps }} technical sample gaps · largest {{ '%.2f' | format(report.gaps[0].hours) }} hours</summary><ul>{% for gap in report.gaps %}<li>{{ gap.previous }} – {{ gap.sampled_at }} · {{ '%.2f' | format(gap.hours) }} hours</li>{% endfor %}</ul></details>{% endif %}
             <details data-report-details="models"><summary>Capture context and model history</summary><p>PTZ framing and review effort may vary. Model changes limit comparisons. No change in bird abundance, behavior or observation rate is inferred.</p><ul>{% for model in report.models %}<li>{{ model.model }} · {{ model.first_capture }} – {{ model.last_capture }}</li>{% endfor %}</ul></details>
-            <p><a href="/analytics/diagnostic">Diagnostic event analysis</a> retains its separate evidence requirements.</p>
         </section>
     </div>
     {% endif %}

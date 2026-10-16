@@ -42,8 +42,6 @@ only for the file/module pairs below (paths relative to `web/services/`):
 | File | Additional allowed modules or symbols | Reason for retaining this dependency here |
 |------|---------------------------------------|------------------------------------------|
 | `aesthetic_tag_scheduler.py` | `scripts.aesthetic_tag_nightly`, `open_clip`, `torch` | The scheduler invokes the existing worker and probes optional dependencies before starting. Preserve one worker implementation; this exception does not move model inference into the scheduler. |
-| `analysis_service.py` | `cv2`, `web.security.safe_log_value` | Retain image decoding at the existing deep-analysis job boundary and reuse the shared log sanitizer. This is a bounded legacy IO exception, not a general image-processing layer. |
-| `companion/llama_cpp_adapter.py` | `llama_cpp` | The inference adapter owns lazy SDK loading and model invocation; a core wrapper would duplicate this adapter boundary. |
 | `model_registry_service.py` | `yaml` | The registry service parses model metadata for its existing presentation payloads. YAML decoding belongs with that adapter, not in a separate pass-through module. |
 | `nightly_jobs/sharpness_job.py` | `cv2`, `utils.image_ops` | The existing job owns crop decoding and calls shared metrics instead of duplicating transformations. Retain this bounded job exception; shared image algorithms remain in `image_ops`. |
 | `report_scheduler.py` | `utils.daily_report` | The scheduler invokes the existing report entrypoint. Retain that composition point without duplicating report generation. |
@@ -86,8 +84,8 @@ Allow only these directed imports between modules under `detectors/services/`:
 | Source | Allowed targets |
 |--------|-----------------|
 | `persistence_service` | `crop_service` |
-| `capability_registry` | `decision_policy_service`, `temporal_decision_service` |
-| `scoring_pipeline` | `bbox_quality_service`, `capability_registry`, `decision_policy_service`, `temporal_decision_service` |
+| `capability_registry` | `decision_policy_service` |
+| `scoring_pipeline` | `bbox_quality_service`, `capability_registry`, `decision_policy_service` |
 
 The root `detectors/services/__init__.py` may re-export services. Service
 implementations import concrete modules rather than consuming package

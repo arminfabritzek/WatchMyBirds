@@ -16,9 +16,6 @@ multi-worker setup ever appears, every worker will hold its own
 cache and the prefix-invalidate decorator must broadcast — that is
 out of scope here and called out in the plan as non-goal.
 
-Co-exists with the older `core.analytics_core._species_summary_cache`
-single-payload cache. That cache is domain-shaped (knows its payload)
-and stays as-is; this service is for the generic `key -> value` shape.
 """
 
 from __future__ import annotations

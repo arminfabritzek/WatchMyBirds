@@ -65,7 +65,6 @@ def _ex_unclear_reason_case_sql(
 def _queue_where_clauses(
     detection_columns: set[str],
     *,
-    exclude_deep_scanned: bool = False,
     filename: str | None = None,
 ) -> tuple[list[str], list[object], list[str], list[object]]:
     """Build the orphan/detection WHERE fragments for the review queue.
@@ -94,12 +93,6 @@ def _queue_where_clauses(
         "i.filename IS NOT NULL",
     ]
     detection_params: list[object] = []
-
-    if exclude_deep_scanned:
-        orphan_where.append(
-            "NOT EXISTS (SELECT 1 FROM detections d WHERE d.image_filename = i.filename AND d.od_model_id LIKE 'deep_scan_%')"
-        )
-        detection_where.append("COALESCE(d.od_model_id, '') NOT LIKE 'deep_scan_%'")
 
     if filename:
         orphan_where.append("i.filename = ?")
@@ -164,7 +157,6 @@ def fetch_orphan_count(conn: sqlite3.Connection) -> int:
 def fetch_review_queue_images(
     conn: sqlite3.Connection,
     gallery_threshold: float = 0.7,
-    exclude_deep_scanned: bool = False,
     filename: str | None = None,
 ) -> list[sqlite3.Row]:
     """
@@ -200,7 +192,6 @@ def fetch_review_queue_images(
     orphan_where, orphan_params, detection_where, detection_params = (
         _queue_where_clauses(
             detection_columns,
-            exclude_deep_scanned=exclude_deep_scanned,
             filename=filename,
         )
     )
@@ -325,7 +316,6 @@ def fetch_review_queue_images(
 def fetch_review_queue_summary_rows(
     conn: sqlite3.Connection,
     gallery_threshold: float = 0.7,
-    exclude_deep_scanned: bool = False,
 ) -> list[sqlite3.Row]:
     """Lean review-queue projection for the cleanup preview/run path.
 
@@ -348,9 +338,7 @@ def fetch_review_queue_summary_rows(
     is_favorite_sql = _detection_column_sql(detection_columns, "is_favorite", "0")
 
     orphan_where, orphan_params, detection_where, detection_params = (
-        _queue_where_clauses(
-            detection_columns, exclude_deep_scanned=exclude_deep_scanned
-        )
+        _queue_where_clauses(detection_columns)
     )
     detection_params = [gallery_threshold, *detection_params]
 
@@ -399,7 +387,6 @@ def fetch_review_queue_summary_rows(
 def fetch_review_queue_summary(
     conn: sqlite3.Connection,
     gallery_threshold: float = 0.7,
-    exclude_deep_scanned: bool = False,
 ) -> dict[str, int]:
     """Count-only review-queue summary for the cleanup preview.
 
@@ -412,9 +399,7 @@ def fetch_review_queue_summary(
     is_favorite_sql = _detection_column_sql(detection_columns, "is_favorite", "0")
 
     orphan_where, orphan_params, detection_where, detection_params = (
-        _queue_where_clauses(
-            detection_columns, exclude_deep_scanned=exclude_deep_scanned
-        )
+        _queue_where_clauses(detection_columns)
     )
     detection_params = [gallery_threshold, *detection_params]
 
@@ -449,13 +434,11 @@ def fetch_review_queue_image(
     conn: sqlite3.Connection,
     filename: str,
     gallery_threshold: float = 0.7,
-    exclude_deep_scanned: bool = False,
 ) -> sqlite3.Row | None:
     """Return the first review-queue row for a filename, or ``None`` if absent."""
     rows = fetch_review_queue_images(
         conn,
         gallery_threshold=gallery_threshold,
-        exclude_deep_scanned=exclude_deep_scanned,
         filename=filename,
     )
     return rows[0] if rows else None

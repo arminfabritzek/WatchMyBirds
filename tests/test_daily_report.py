@@ -8,13 +8,8 @@ import pytest
 
 from utils.daily_report import (
     _fetch_species_best_photos,
-    build_production_collage,
     build_report_mobile_album,
-    build_report_variant_previews,
-    render_species_photo_caption,
     render_text_report,
-    send_report_variant_previews,
-    send_species_best_photos_album,
 )
 
 
@@ -54,140 +49,12 @@ def test_render_text_report_handles_no_species():
     assert "<b>0</b> species" in message
 
 
-def test_render_species_photo_caption_uses_singular_and_escapes_html():
-    caption = render_species_photo_caption("Meise & <Co>", 1)
-
-    assert "<b>Meise &amp; &lt;Co&gt;</b>" in caption
-    assert "1 visit today" in caption
-    assert "🖼️" not in caption
-
-
-def test_build_report_variant_previews_renders_local_files():
-    with TemporaryDirectory() as tmpdir:
-        image_paths = []
-        for idx in range(3):
-            img = np.full((720, 960, 3), (30 + idx * 20, 90 + idx * 10, 160 - idx * 15), dtype=np.uint8)
-            cv2.rectangle(img, (260, 180), (700, 560), (220, 220, 220), thickness=-1)
-            path = Path(tmpdir) / f"photo-{idx}.jpg"
-            cv2.imwrite(str(path), img)
-            image_paths.append(str(path))
-
-        species_photos = [
-            {
-                "species": f"Species_{idx}",
-                "count": idx + 2,
-                "best_photo_path": image_paths[idx],
-                "bbox_x": 0.27,
-                "bbox_y": 0.25,
-                "bbox_w": 0.46,
-                "bbox_h": 0.5,
-            }
-            for idx in range(3)
-        ]
-
-        variants = build_report_variant_previews(
-            species_photos,
-            {"Species_0": "Blaumeise", "Species_1": "Kohlmeise", "Species_2": "Rotkehlchen"},
-            report_date="2026-04-15",
-            output_dir=tmpdir,
-        )
-
-        assert len(variants) == 5
-        assert [variant["name"] for variant in variants] == [
-            "Variante A · Zoom-Collage",
-            "Variante B · Vollbild plus Crop",
-            "Variante C · Crop-Story Board",
-            "Variante D · Drei Zoom-Stufen",
-            "Variante E · Weite Kontext-Collage",
-        ]
-        for variant in variants:
-            assert Path(variant["photo_path"]).is_file()
-            assert variant["caption"].startswith("<b>Variante ")
-
-
-def test_send_report_variant_previews_sends_intro_and_each_variant():
-    variants = [
-        {"caption": "<b>Variante A</b>", "photo_path": "/tmp/a.jpg"},
-        {"caption": "<b>Variante B</b>", "photo_path": "/tmp/b.jpg"},
-    ]
-
-    with patch("utils.daily_report.send_telegram_message") as mock_send:
-        mock_send.side_effect = [[{"ok": True}], [{"ok": True}], [{"ok": True}]]
-        responses = send_report_variant_previews(variants)
-
-    assert len(responses) == 3
-    assert mock_send.call_count == 3
-    assert mock_send.call_args_list[0].args[0].startswith("<b>Daily Report Variant Test</b>")
-    assert mock_send.call_args_list[1].kwargs["photo_path"] == "/tmp/a.jpg"
-    assert mock_send.call_args_list[2].kwargs["photo_path"] == "/tmp/b.jpg"
-
-
-def test_send_species_best_photos_album_chunks_media_groups():
-    with patch("utils.daily_report.send_telegram_media_group") as mock_send:
-        mock_send.side_effect = [[{"ok": True}], [{"ok": True}]]
-
-        species_photos = [
-            {
-                "species": f"Species_{idx}",
-                "count": idx + 1,
-                "best_photo_path": f"/tmp/photo-{idx}.jpg",
-            }
-            for idx in range(11)
-        ]
-
-        responses = send_species_best_photos_album(species_photos, {})
-
-    assert responses == [{"ok": True}, {"ok": True}]
-    assert mock_send.call_count == 2
-    first_chunk = mock_send.call_args_list[0].args[0]
-    second_chunk = mock_send.call_args_list[1].args[0]
-    assert len(first_chunk) == 10
-    assert len(second_chunk) == 1
-    assert first_chunk[0]["caption"].startswith("<b>Species 0</b>")
-
-
-def test_build_production_collage_creates_single_image():
-    with TemporaryDirectory() as tmpdir:
-        image_paths = []
-        for idx in range(4):
-            img = np.full((720, 960, 3), (30 + idx * 20, 90 + idx * 10, 160 - idx * 15), dtype=np.uint8)
-            cv2.rectangle(img, (260, 180), (700, 560), (220, 220, 220), thickness=-1)
-            path = Path(tmpdir) / f"photo-{idx}.jpg"
-            cv2.imwrite(str(path), img)
-            image_paths.append(str(path))
-
-        species_photos = [
-            {
-                "species": f"Species_{idx}",
-                "count": idx + 2,
-                "best_photo_path": image_paths[idx],
-                "bbox_x": 0.27,
-                "bbox_y": 0.25,
-                "bbox_w": 0.46,
-                "bbox_h": 0.5,
-            }
-            for idx in range(4)
-        ]
-
-        collage = build_production_collage(
-            species_photos,
-            {"Species_0": "Blaumeise", "Species_1": "Kohlmeise",
-             "Species_2": "Rotkehlchen", "Species_3": "Amsel"},
-            report_date="2026-04-15",
-            output_dir=tmpdir,
-        )
-
-        assert collage is not None
-        assert Path(collage["photo_path"]).is_file()
-        assert "Daily Report" in collage["caption"]
-        assert "15.04.2026" in collage["caption"]
-
-
 # Phantom-species filter coverage. Each test seeds a small in-memory-ish
 # detections table on tmp_path, then asserts what survives the report
 # query. The seed data mirrors the real-world failure modes captured from
 # the RPi snapshot (catalog-orphan genus fallbacks; unconfirmed low-score
 # rows; legitimate confirmed rows that should pass).
+
 
 @pytest.fixture
 def report_db(tmp_path, monkeypatch):
@@ -258,7 +125,10 @@ def test_build_report_mobile_album_appends_collector_card_last():
                 "species": s,
                 "count": c,
                 "best_photo_path": photo_paths[i],
-                "bbox_x": 0.30, "bbox_y": 0.25, "bbox_w": 0.45, "bbox_h": 0.55,
+                "bbox_x": 0.30,
+                "bbox_y": 0.25,
+                "bbox_w": 0.45,
+                "bbox_h": 0.55,
             }
             for i, (s, c) in enumerate(
                 [
@@ -317,7 +187,10 @@ def test_build_report_mobile_album_renders_square_1080_cards():
                 "species": "Columba_palumbus",
                 "count": 5,
                 "best_photo_path": str(path),
-                "bbox_x": 0.30, "bbox_y": 0.25, "bbox_w": 0.45, "bbox_h": 0.55,
+                "bbox_x": 0.30,
+                "bbox_y": 0.25,
+                "bbox_w": 0.45,
+                "bbox_h": 0.55,
             },
         ]
 
@@ -353,13 +226,19 @@ def test_build_report_mobile_album_pluralises_count_and_drops_pagination():
                 "species": "Columba_palumbus",
                 "count": 7,
                 "best_photo_path": image_paths[0],
-                "bbox_x": 0.27, "bbox_y": 0.25, "bbox_w": 0.46, "bbox_h": 0.5,
+                "bbox_x": 0.27,
+                "bbox_y": 0.25,
+                "bbox_w": 0.46,
+                "bbox_h": 0.5,
             },
             {
                 "species": "Dendrocopos_major",
                 "count": 1,
                 "best_photo_path": image_paths[1],
-                "bbox_x": 0.27, "bbox_y": 0.25, "bbox_w": 0.46, "bbox_h": 0.5,
+                "bbox_x": 0.27,
+                "bbox_y": 0.25,
+                "bbox_w": 0.46,
+                "bbox_h": 0.5,
             },
         ]
 
@@ -408,9 +287,7 @@ def test_fetch_species_best_photos_drops_unconfirmed(report_db, tmp_path):
     # we only care which species survive the SQL+catalog filter, not whether
     # the JPEG is on disk.
     with patch("utils.daily_report.get_path_manager") as mock_pm:
-        mock_pm.return_value.get_original_path.return_value = (
-            tmp_path / "fake.jpg"
-        )
+        mock_pm.return_value.get_original_path.return_value = tmp_path / "fake.jpg"
         # Make os.path.isfile return True for the fake path so we don't drop
         # results on the disk check.
         with patch("utils.daily_report.os.path.isfile", return_value=True):
@@ -443,15 +320,11 @@ def test_fetch_species_best_photos_drops_catalog_orphans(report_db, tmp_path):
         report_db, species="not_a_real_species", decision_state="confirmed", score=0.7
     )
     # Confirmed non-bird OD class (cat) -> survives, OD label IS the species
-    _seed_detection(
-        report_db, species="cat", decision_state="confirmed", score=0.85
-    )
+    _seed_detection(report_db, species="cat", decision_state="confirmed", score=0.85)
     report_db.commit()
 
     with patch("utils.daily_report.get_path_manager") as mock_pm:
-        mock_pm.return_value.get_original_path.return_value = (
-            tmp_path / "fake.jpg"
-        )
+        mock_pm.return_value.get_original_path.return_value = tmp_path / "fake.jpg"
         with patch("utils.daily_report.os.path.isfile", return_value=True):
             results = _fetch_species_best_photos(report_db, "2026-04-30")
 
@@ -495,9 +368,7 @@ def test_fetch_species_best_photos_does_not_apply_visit_threshold(
     monkeypatch.setattr("utils.daily_report.get_config", stricter_config)
 
     with patch("utils.daily_report.get_path_manager") as mock_pm:
-        mock_pm.return_value.get_original_path.return_value = (
-            tmp_path / "fake.jpg"
-        )
+        mock_pm.return_value.get_original_path.return_value = tmp_path / "fake.jpg"
         with patch("utils.daily_report.os.path.isfile", return_value=True):
             results = _fetch_species_best_photos(report_db, "2026-04-30")
 

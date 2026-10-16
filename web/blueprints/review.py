@@ -7,17 +7,14 @@ Handles review queue routes:
 - POST /api/review/decision - Review decisions (confirm/trash/no_bird/skip)
 - POST /api/review/bbox-review - Persist bbox review state
 - POST /api/review/quick-species - Confirm + relabel via quick species buttons
-- GET /api/review/event-panel/<event_key> - Event detail fragment
 - POST /api/review/event-approve - Approve a whole BirdEvent at once
 - POST /api/review/event-trash - Reject / trash a whole BirdEvent at once
 """
 
-import os
 import re
 import time
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
-from typing import Any
 
 from flask import (
     Blueprint,
@@ -34,13 +31,8 @@ from flask import (
 from config import get_config
 from core.events import build_bird_events
 from core.human_label_core import HumanAnswer
-from core.review_navigation import ReviewDaySelection, select_review_day
 from core.review_state import (
     refresh_review_image_visibility as _refresh_review_image_visibility,
-)
-from core.station_report import (
-    build_candidate_review_priorities,
-    fetch_current_station_event_reviews,
 )
 from logging_config import get_logger
 from utils.db import fetch_sibling_detections
@@ -71,7 +63,6 @@ from web.services import (
     review_cleanup_service,
 )
 from web.species_thumbnails import (
-    get_species_thumbnail_map,
     resolve_species_thumbnail_url,
 )
 
@@ -82,101 +73,6 @@ review_bp = Blueprint("review", __name__)
 
 _REVIEW_ALLOWED_SPECIES_TTL_SECONDS = 60
 _review_allowed_species_cache: dict[str, tuple[float, set[str]]] = {}
-# Mapping of BirdEvent.fallback_reason values to human-readable labels.
-# Keep this list aligned with ``core/events._resolve_event_species`` and
-# ``core/events.build_bird_events``: any new fallback the builder can
-# emit must show up here too.
-_REVIEW_EVENT_FALLBACK_LABELS = {
-    "unknown_species": "No reliable species suggestion",
-    "partial_unknown_species": "Some frames still need a species decision",
-    "multi_bird_ambiguity": "Multiple open birds on one source image",
-    "bbox_jump": "Bird moves far across frames — select checked frames, then approve",
-}
-
-# Reasons that mean "this event has no species a human would stand behind".
-# The other reasons leave a trustworthy species and only question the framing.
-_UNRESOLVED_EVENT_SPECIES_REASONS = frozenset(
-    {"unknown_species", "partial_unknown_species"}
-)
-
-
-# Per-species colour and reference-image helpers.
-#
-# Filesystem scan cache for assets/review_species/*.webp|*.png. Built once
-# per process (filenames do not change at runtime in the review surface).
-_SPECIES_REF_IMAGE_CACHE: dict[str, str] | None = None
-
-
-def _species_ref_image_dir() -> Path:
-    project_root = Path(__file__).resolve().parents[2]
-    return project_root / "assets" / "review_species"
-
-
-def _build_species_ref_image_map() -> dict[str, str]:
-    """Scan ``assets/review_species/`` once and return scientific→URL map.
-
-    Filenames use the scientific name with underscores (``Parus_major``)
-    and a ``.webp`` or ``.png`` extension, exactly matching the
-    ``species_key`` shape used in detection rows. ``.webp`` wins over
-    ``.png`` when both exist — smaller payload for the same species.
-    """
-    ref_dir = _species_ref_image_dir()
-    mapping: dict[str, str] = {}
-    if not ref_dir.is_dir():
-        return mapping
-    # Two passes so ``.webp`` always wins over ``.png``.
-    for extension in (".webp", ".png"):
-        for entry in os.listdir(ref_dir):
-            if not entry.endswith(extension):
-                continue
-            species_key = entry[: -len(extension)]
-            if not species_key or species_key in mapping:
-                continue
-            mapping[species_key] = f"/assets/review_species/{entry}"
-    return mapping
-
-
-def get_species_ref_image_map() -> dict[str, str]:
-    """Return the cached scientific→URL map, building it on first use."""
-    global _SPECIES_REF_IMAGE_CACHE
-    if _SPECIES_REF_IMAGE_CACHE is None:
-        _SPECIES_REF_IMAGE_CACHE = _build_species_ref_image_map()
-    return _SPECIES_REF_IMAGE_CACHE
-
-
-def resolve_species_ref_image_url(species_key: str | None) -> str | None:
-    """Look up the reference image URL for a scientific name, or ``None``."""
-    if not species_key:
-        return None
-    cleaned = str(species_key).strip()
-    if not cleaned:
-        return None
-    return get_species_ref_image_map().get(cleaned)
-
-
-def _resolve_species_display_key(payload: dict) -> str:
-    """Pick the scientific name a review dict should be coloured by.
-
-    Detection / member dicts carry a mix of fields depending on the
-    pipeline stage they come from. Preference order mirrors what the
-    templates already display as the species label, so the colour
-    matches the visible text.
-    """
-    for field in ("candidate_species", "species_key", "current_species"):
-        value = payload.get(field)
-        if value:
-            cleaned = str(value).strip()
-            if cleaned:
-                return cleaned
-    return ""
-
-
-# Moved to core/species_colours.py so Gallery / Stream / Trash routes
-# can import it without a circular dependency on this blueprint.
-from core.species_colours import (
-    SPECIES_COLOUR_SLOTS,
-    assign_species_colours,
-)
 
 
 def _score_pct(value) -> int | None:
@@ -346,27 +242,6 @@ def _resolve_review_selected_species(
     )
 
 
-def _resolve_review_event_selected_species(
-    *,
-    candidate_species: str | None,
-    default_species: str | None,
-    fallback_reason: str | None,
-) -> str | None:
-    """Resolve the species a Review Desk event card would submit on Approve.
-
-    ``candidate_species`` is ``None`` both when nobody has answered and when
-    the event is deliberately unresolved, so falling back to the classifier's
-    suggestion would re-arm Approve with a species a human withdrew. The
-    event-level twin of :func:`_resolve_review_selected_species`.
-    """
-    candidate = str(candidate_species or "").strip()
-    if candidate:
-        return candidate
-    if fallback_reason in _UNRESOLVED_EVENT_SPECIES_REASONS:
-        return None
-    return str(default_species or "").strip() or None
-
-
 def _resolve_review_member_candidate_species(row: dict) -> str | None:
     """Species a review tile offers for confirmation or relabelling.
 
@@ -505,43 +380,6 @@ def _split_review_datetime(timestamp: str | None) -> tuple[str, str]:
         return dt.strftime("%d.%m.%Y"), dt.strftime("%H:%M:%S")
     except ValueError:
         return format_review_timestamp(timestamp), ""
-
-
-def _format_review_duration(duration_sec: float | None) -> str:
-    total_seconds = max(0, int(round(float(duration_sec or 0.0))))
-    if total_seconds < 60:
-        return f"{total_seconds}s"
-    minutes, seconds = divmod(total_seconds, 60)
-    return f"{minutes}m {seconds:02d}s"
-
-
-def _format_review_event_window(
-    start_time: str | None,
-    end_time: str | None,
-) -> tuple[str, str]:
-    start_date, start_clock = _split_review_datetime(start_time)
-    end_date, end_clock = _split_review_datetime(end_time)
-
-    if start_date == end_date and start_date:
-        if start_clock and end_clock:
-            return start_date, f"{start_clock} - {end_clock}"
-        return start_date, start_clock or end_clock or ""
-
-    if start_date and end_date and start_clock and end_clock:
-        return f"{start_date} - {end_date}", f"{start_clock} - {end_clock}"
-
-    return start_date or end_date or "", start_clock or end_clock or ""
-
-
-def _review_event_fallback_label(reason: str | None) -> str:
-    return _REVIEW_EVENT_FALLBACK_LABELS.get(
-        str(reason or "").strip(),
-        "Needs individual review",
-    )
-
-
-def _review_event_eligibility_label(eligibility: str | None) -> str:
-    return "Event Ready" if eligibility == "event_eligible" else "Review Individually"
 
 
 def _build_review_modal_siblings(
@@ -969,183 +807,6 @@ def _fetch_review_event_payloads(
     return raw_events, detection_rows, recent_species, context_truncated
 
 
-def build_review_continuity_batches(raw_events: list) -> list[dict]:
-    """Group split BirdEvents that share a confirmed Gallery anchor.
-
-    A continuity batch collects every actionable BirdEvent in a
-    Gallery-anchored neighbourhood so the operator can compare them in
-    one place.
-
-    Rules:
-    - A batch only forms when at least one **pure context** BirdEvent
-      (``context_only_count == photo_count``) sits in the same time
-      neighbourhood as at least one actionable BirdEvent. Shared time
-      alone without a confirmed Gallery anchor is **not** enough.
-    - Anchor neighbourhood is ``[anchor.start_time-30min,
-      anchor.end_time+30min]``. An actionable event joins the batch
-      when its time window overlaps that interval.
-    - ``recommended_species`` is only set when **all** confirmed
-      anchors in the batch resolve to exactly one species.
-    - ``review_detection_ids`` only contains actionable detection ids.
-      ``context_only`` detections are read-only and stay out of the
-      batch action targets.
-    - ``batch_bbox_map`` is a flat list of bbox entries (one per
-      detection across all members of the batch) carrying
-      ``context_only``, ``event_key``, and ``trail_role`` so the UI can
-      render one combined continuity mini-map without recomputing
-      geometry.
-    """
-    if not raw_events:
-        return []
-
-    anchors: list[Any] = []
-    actionables: list[Any] = []
-    for event in raw_events:
-        is_pure_context = (
-            event.context_only_count > 0
-            and event.context_only_count == event.photo_count
-        )
-        if is_pure_context:
-            anchors.append(event)
-        elif event.context_only_count < event.photo_count:
-            actionables.append(event)
-
-    if not anchors or not actionables:
-        return []
-
-    batches: list[dict] = []
-    seen_anchor_keys: set[str] = set()
-    for anchor in anchors:
-        if anchor.event_key in seen_anchor_keys:
-            continue
-        window_start = _shift_review_window(anchor.start_time, minutes=-30)
-        window_end = _shift_review_window(anchor.end_time, minutes=30)
-        joined_actionables = [
-            event
-            for event in actionables
-            if _events_overlap(
-                event.start_time, event.end_time, window_start, window_end
-            )
-        ]
-        if not joined_actionables:
-            continue
-
-        # Pull every confirmed anchor that overlaps the same neighbourhood
-        # so a batch with two confirmed anchors of the same species still
-        # earns its recommended_species.
-        joined_anchors = [
-            other
-            for other in anchors
-            if _events_overlap(
-                other.start_time, other.end_time, window_start, window_end
-            )
-        ]
-        for joined in joined_anchors:
-            seen_anchor_keys.add(joined.event_key)
-
-        anchor_species = {other.species for other in joined_anchors if other.species}
-        recommended_species: str | None = None
-        if len(anchor_species) == 1:
-            recommended_species = next(iter(anchor_species))
-
-        review_detection_ids: list[int] = []
-        for event in joined_actionables:
-            for trail_point in event.bbox_trail:
-                if trail_point.get("context_only"):
-                    continue
-                review_detection_ids.append(int(trail_point.get("detection_id") or 0))
-        review_detection_ids = [det_id for det_id in review_detection_ids if det_id > 0]
-
-        context_detection_ids: list[int] = []
-        context_species_summary: dict[str, int] = {}
-        for joined in joined_anchors:
-            for trail_point in joined.bbox_trail:
-                det_id = int(trail_point.get("detection_id") or 0)
-                if det_id > 0:
-                    context_detection_ids.append(det_id)
-            if joined.species:
-                context_species_summary[joined.species] = (
-                    context_species_summary.get(joined.species, 0) + joined.photo_count
-                )
-        # Also pick up context_only members that were attached to actionable
-        # events (same-species continuation): they belong to the read-only
-        # set, never to review_detection_ids.
-        for event in joined_actionables:
-            for trail_point in event.bbox_trail:
-                if not trail_point.get("context_only"):
-                    continue
-                det_id = int(trail_point.get("detection_id") or 0)
-                if det_id > 0:
-                    context_detection_ids.append(det_id)
-
-        batch_bbox_map: list[dict] = []
-        for joined in joined_anchors:
-            for trail_point in joined.bbox_trail:
-                batch_bbox_map.append(
-                    {
-                        **trail_point,
-                        "event_key": joined.event_key,
-                        "context_only": True,
-                    }
-                )
-        for event in joined_actionables:
-            for trail_point in event.bbox_trail:
-                batch_bbox_map.append(
-                    {
-                        **trail_point,
-                        "event_key": event.event_key,
-                        "context_only": bool(trail_point.get("context_only")),
-                    }
-                )
-
-        all_event_starts = [
-            event.start_time for event in joined_anchors + joined_actionables
-        ]
-        all_event_ends = [
-            event.end_time for event in joined_anchors + joined_actionables
-        ]
-        batch_window_start = (
-            min(all_event_starts) if all_event_starts else anchor.start_time
-        )
-        batch_window_end = max(all_event_ends) if all_event_ends else anchor.end_time
-
-        batch_key = "review-batch-" + "-".join(
-            sorted(joined.event_key for joined in joined_anchors)
-        )
-
-        batches.append(
-            {
-                "batch_key": batch_key,
-                "window_start": batch_window_start,
-                "window_end": batch_window_end,
-                "event_keys": [event.event_key for event in joined_actionables],
-                "anchor_event_keys": [joined.event_key for joined in joined_anchors],
-                "review_detection_ids": review_detection_ids,
-                "context_detection_ids": context_detection_ids,
-                "context_species_summary": context_species_summary,
-                "recommended_species": recommended_species,
-                "batch_bbox_map": batch_bbox_map,
-            }
-        )
-    return batches
-
-
-def _shift_review_window(ts: str, *, minutes: int) -> str:
-    """Shift a Review timestamp by minutes for batch neighbourhood checks."""
-    try:
-        dt = datetime.strptime(ts, "%Y%m%d_%H%M%S")
-    except (TypeError, ValueError):
-        return ts
-    return (dt + timedelta(minutes=minutes)).strftime("%Y%m%d_%H%M%S")
-
-
-def _events_overlap(a_start: str, a_end: str, b_start: str, b_end: str) -> bool:
-    """Two ``YYYYMMDD_HHMMSS`` intervals overlap."""
-    if not a_start or not a_end or not b_start or not b_end:
-        return False
-    return a_start <= b_end and b_start <= a_end
-
-
 def _build_review_event_member(
     row: dict,
     *,
@@ -1213,450 +874,6 @@ def _build_review_event_member(
     return member
 
 
-def _build_review_event(
-    raw_event,
-    *,
-    row_map: dict[int, dict],
-    conn,
-    species_locale: str,
-    output_dir: str,
-    common_names: dict[str, str],
-    recent_species: list[dict],
-    include_detail: bool = False,
-    siblings_cache: dict[str, list] | None = None,
-    include_modal: bool = True,
-) -> dict | None:
-    """Translate a ``BirdEvent`` into the dict shape the templates expect.
-
-    The template-side keys deliberately keep the same shape as the
-    cluster surface used to (cover_*, members, eligibility, ...) so the
-    review_event_panel.html partial only needs to swap the action verbs.
-    """
-    cover_detection_id = int(raw_event.cover_detection_id or 0)
-    cover_row = row_map.get(cover_detection_id)
-    if not cover_row:
-        return None
-
-    cover_item = _build_review_event_member(
-        cover_row,
-        conn=conn,
-        species_locale=species_locale,
-        output_dir=output_dir,
-        common_names=common_names,
-        recent_species=recent_species,
-        siblings_cache=siblings_cache,
-        include_modal=include_modal,
-    )
-    window_date, window_time = _format_review_event_window(
-        raw_event.start_time,
-        raw_event.end_time,
-    )
-    candidate_species = raw_event.species
-    candidate_species_common = (
-        resolve_common_name(candidate_species, common_names)
-        or cover_item.get("current_species_common")
-        or "Unknown species"
-    )
-    bbox_trail = list(raw_event.bbox_trail or [])
-    bbox_trail_preview = [
-        point
-        for point in bbox_trail
-        if point.get("trail_role") in {"start", "mid", "end"}
-    ] or bbox_trail
-
-    # Expose the cover frame's native resolution so trail maps that
-    # render bbox data in percentage space can match the real camera
-    # aspect ratio instead of assuming 16:9. The columns ride along on
-    # the queue row (fetch_review_queue_images selects them) so no
-    # extra per-event SELECT is needed.
-    cover_frame_width = None
-    cover_frame_height = None
-    cover_row_keys = cover_row.keys() if hasattr(cover_row, "keys") else cover_row
-    raw_w = cover_row["frame_width"] if "frame_width" in cover_row_keys else None
-    raw_h = cover_row["frame_height"] if "frame_height" in cover_row_keys else None
-    try:
-        cover_frame_width = int(raw_w) if raw_w else None
-    except (TypeError, ValueError):
-        cover_frame_width = None
-    try:
-        cover_frame_height = int(raw_h) if raw_h else None
-    except (TypeError, ValueError):
-        cover_frame_height = None
-
-    event_payload = {
-        "event_key": raw_event.event_key,
-        "cover_detection_id": cover_detection_id,
-        "detection_ids": list(raw_event.detection_ids),
-        "candidate_species": candidate_species,
-        "candidate_species_common": candidate_species_common,
-        "species_source": raw_event.species_source,
-        "photo_count": int(raw_event.photo_count),
-        "duration_sec": float(raw_event.duration_sec),
-        "duration_display": _format_review_duration(raw_event.duration_sec),
-        "start_time": raw_event.start_time or "",
-        "end_time": raw_event.end_time or "",
-        "window_date": window_date,
-        "window_time": window_time,
-        "bbox_trail": bbox_trail,
-        "bbox_trail_preview": bbox_trail_preview,
-        "cover_frame_width": cover_frame_width,
-        "cover_frame_height": cover_frame_height,
-        "eligibility": raw_event.eligibility,
-        "eligibility_label": _review_event_eligibility_label(raw_event.eligibility),
-        "fallback_reason": raw_event.fallback_reason,
-        "fallback_label": _review_event_fallback_label(raw_event.fallback_reason),
-        "touched_filenames": list(raw_event.touched_filenames),
-        "cover_item": cover_item,
-        "cover_thumb_url": cover_item["thumb_url"],
-        "cover_full_url": cover_item["full_url"],
-        "quick_species": [],
-        "default_species": None,
-        "default_species_common": None,
-        "selected_species": candidate_species,
-        "selected_species_common": candidate_species_common,
-        "selected_species_origin": raw_event.species_source or None,
-    }
-
-    if not include_detail:
-        return event_payload
-
-    picker_entries = []
-    quick_species: list[dict] = []
-    default_species = None
-    default_species_common = None
-    if cover_detection_id:
-        picker_entries = _fetch_prediction_entries(
-            conn, cover_detection_id, common_names
-        )
-        quick_species = _build_review_quick_species(
-            candidate_species or cover_item.get("species_key"),
-            picker_entries,
-            recent_species,
-            common_names,
-            thumbnail_cache_key=f"review:{species_locale}",
-        )
-        default_species, default_species_common = _resolve_review_default_species(
-            quick_species,
-            common_names=common_names,
-        )
-
-    selected_species = _resolve_review_event_selected_species(
-        candidate_species=candidate_species,
-        default_species=default_species,
-        fallback_reason=raw_event.fallback_reason,
-    )
-    selected_species_common = (
-        resolve_common_name(selected_species, common_names)
-        if selected_species
-        else default_species_common
-    )
-    selected_species_origin = str(raw_event.species_source or "").strip() or (
-        "default" if selected_species else None
-    )
-
-    event_payload["quick_species"] = quick_species
-    event_payload["default_species"] = default_species
-    event_payload["default_species_common"] = default_species_common
-    event_payload["selected_species"] = selected_species
-    event_payload["selected_species_common"] = selected_species_common
-    event_payload["selected_species_origin"] = selected_species_origin
-
-    members: list[dict] = []
-    for detection_id in raw_event.detection_ids:
-        row = row_map.get(int(detection_id))
-        if not row:
-            continue
-        members.append(
-            _build_review_event_member(
-                row,
-                conn=conn,
-                species_locale=species_locale,
-                output_dir=output_dir,
-                common_names=common_names,
-                recent_species=recent_species,
-                siblings_cache=siblings_cache,
-                include_modal=include_modal,
-            )
-        )
-
-    members.sort(
-        key=lambda member: (
-            member.get("timestamp", ""),
-            int(member.get("best_detection_id") or 0),
-        )
-    )
-    event_payload["members"] = members
-    event_payload["event_bbox_review"] = None
-    return event_payload
-
-
-def _load_review_items(
-    conn,
-    *,
-    gallery_threshold: float,
-    output_dir: str,
-    species_locale: str,
-    common_names: dict[str, str],
-    rows: list | None = None,
-    recent_species: list[dict] | None = None,
-) -> tuple[list[dict], list[dict]]:
-    if rows is None:
-        rows = db_service.fetch_review_queue_images(conn, gallery_threshold)
-    if recent_species is None:
-        recent_species = _load_recent_review_species(conn, common_names)
-    items = [
-        _build_review_item(
-            row,
-            conn=conn,
-            species_locale=species_locale,
-            output_dir=output_dir,
-            common_names=common_names,
-            recent_species=recent_species,
-            include_detail=False,
-        )
-        for row in rows
-    ]
-    return items, recent_species
-
-
-def _load_single_review_item(
-    conn,
-    *,
-    filename: str,
-    gallery_threshold: float,
-    output_dir: str,
-    species_locale: str,
-    common_names: dict[str, str],
-    recent_species: list[dict] | None = None,
-    species_thumbnail_map: dict[str, str] | None = None,
-) -> dict | None:
-    row = db_service.fetch_review_queue_image(
-        conn,
-        filename,
-        gallery_threshold=gallery_threshold,
-    )
-    if not row:
-        return None
-    if recent_species is None:
-        recent_species = _load_recent_review_species(conn, common_names)
-    return _build_review_item(
-        row,
-        conn=conn,
-        species_locale=species_locale,
-        output_dir=output_dir,
-        common_names=common_names,
-        recent_species=recent_species,
-        species_thumbnail_map=species_thumbnail_map,
-    )
-
-
-def _load_single_review_item_by_identity(
-    conn,
-    *,
-    item_kind: str,
-    item_id: str,
-    gallery_threshold: float,
-    output_dir: str,
-    species_locale: str,
-    common_names: dict[str, str],
-    recent_species: list[dict] | None = None,
-    species_thumbnail_map: dict[str, str] | None = None,
-) -> dict | None:
-    row = db_service.fetch_review_queue_item_by_identity(
-        conn,
-        item_kind,
-        item_id,
-        gallery_threshold=gallery_threshold,
-    )
-    if not row:
-        return None
-    if recent_species is None:
-        recent_species = _load_recent_review_species(conn, common_names)
-    return _build_review_item(
-        row,
-        conn=conn,
-        species_locale=species_locale,
-        output_dir=output_dir,
-        common_names=common_names,
-        recent_species=recent_species,
-        species_thumbnail_map=species_thumbnail_map,
-    )
-
-
-def _collect_review_siblings_cache(
-    conn,
-    raw_events,
-    row_map: dict[int, dict],
-) -> dict[str, list]:
-    """One batch fetch for every actionable member's sibling list.
-
-    Eager detail fragments need each actionable member's source-image siblings.
-    Per-tile querying is O(events × members) round-trips against SQLite;
-    batching collapses it to one query for the whole page render.
-    """
-    filenames: set[str] = set()
-    for raw_event in raw_events or []:
-        for detection_id in getattr(raw_event, "detection_ids", None) or []:
-            row = row_map.get(int(detection_id))
-            if not row:
-                continue
-            filename = row.get("filename") if isinstance(row, dict) else row["filename"]
-            if filename:
-                filenames.add(str(filename))
-    if not filenames:
-        return {}
-    from utils.db.detections import fetch_sibling_detections_batch
-
-    grouped = fetch_sibling_detections_batch(
-        conn, sorted(filenames), include_rejected=True
-    )
-    return {name: list(rows) for name, rows in grouped.items()}
-
-
-def _load_review_events(
-    conn,
-    *,
-    gallery_threshold: float,
-    output_dir: str,
-    species_locale: str,
-    common_names: dict[str, str],
-    include_detail: bool = False,
-    payloads: tuple[list, dict[int, dict], list[dict], bool] | None = None,
-    selection: ReviewDaySelection | None = None,
-    sort_order: str = "priority",
-    include_modal: bool = True,
-) -> tuple[list[dict], list[dict], bool, set[str]]:
-    """Return ``(review_events, continuity_batches, context_truncated, workspace_species_keys)``.
-
-    The events list excludes pure-context-only BirdEvents (nothing to
-    review there). Continuity batch payloads are computed from the full
-    raw event list before that filter so a batch can still surface its
-    Gallery anchors via ``batch_bbox_map`` and
-    ``context_detection_ids``.
-    """
-    (
-        raw_events,
-        row_map,
-        recent_species,
-        context_truncated,
-    ) = (
-        payloads
-        if payloads is not None
-        else _fetch_review_event_payloads(
-            conn,
-            gallery_threshold=gallery_threshold,
-            output_dir=output_dir,
-            species_locale=species_locale,
-            common_names=common_names,
-        )
-    )
-    continuity_batches = build_review_continuity_batches(raw_events)
-    if selection is None:
-        selection = select_review_day(
-            raw_events, fetch_current_station_event_reviews(conn), "all"
-        )
-    priority_by_event = (
-        {
-            str(item["event_key"]): item
-            for item in build_candidate_review_priorities(conn, raw_events)
-        }
-        if sort_order == "priority"
-        else {}
-    )
-    batch_lookup_by_event_key: dict[str, dict] = {}
-    for batch in continuity_batches:
-        for event_key in batch.get("event_keys") or []:
-            batch_lookup_by_event_key[event_key] = batch
-
-    # Build one workspace-scoped colour map so context anchors and
-    # actionable events share deterministic slots. Stamping happens
-    # here so callers do not need to know about colour assignment.
-    workspace_species_keys = _workspace_species_keys_from_raw_events(raw_events)
-    workspace_colour_map = assign_species_colours(list(workspace_species_keys))
-
-    siblings_cache: dict[str, list] | None = None
-    if include_detail and include_modal:
-        siblings_cache = _collect_review_siblings_cache(conn, selection.events, row_map)
-
-    events: list[dict] = []
-    for raw_event in selection.events:
-        event = _build_review_event(
-            raw_event,
-            row_map=row_map,
-            conn=conn,
-            species_locale=species_locale,
-            output_dir=output_dir,
-            common_names=common_names,
-            recent_species=recent_species,
-            include_detail=include_detail,
-            siblings_cache=siblings_cache,
-            include_modal=include_modal,
-        )
-        if not event:
-            continue
-        event["context_only_count"] = int(raw_event.context_only_count)
-        event["context_anchored"] = bool(raw_event.context_anchored)
-        batch = batch_lookup_by_event_key.get(raw_event.event_key)
-        if batch is not None:
-            event["continuity_batch_key"] = batch["batch_key"]
-            event["continuity_batch_recommended_species"] = batch["recommended_species"]
-            event["continuity_batch_review_detection_ids"] = list(
-                batch["review_detection_ids"]
-            )
-        _stamp_species_display_on_event(event, workspace_colour_map)
-        event["review_priority"] = priority_by_event.get(raw_event.event_key, {})
-        events.append(event)
-    events.sort(
-        key=lambda item: (
-            -int((item.get("review_priority") or {}).get("priority_score") or 0)
-            if sort_order == "priority"
-            else 0,
-            item.get("start_time") or "",
-            item.get("event_key") or "",
-        )
-    )
-    return events, continuity_batches, context_truncated, workspace_species_keys
-
-
-def _stamp_species_display_on_event(
-    event: dict,
-    colour_map: dict[str, int],
-) -> None:
-    """Apply ``species_colour`` + ``species_ref_image_url`` to one event.
-
-    Stamps the event itself, every member, every continuity-batch
-    member (anchor + review), and every quick-pick species so the
-    template can read the slot off any payload.
-    """
-
-    def stamp(payload: dict) -> None:
-        key = _resolve_species_display_key(payload)
-        if key:
-            payload["species_colour_key"] = key
-            payload["species_colour"] = colour_map.get(key)
-            payload["species_ref_image_url"] = resolve_species_ref_image_url(key)
-        else:
-            payload["species_colour_key"] = ""
-            payload["species_colour"] = None
-            payload["species_ref_image_url"] = None
-
-    stamp(event)
-    for member in event.get("members") or []:
-        stamp(member)
-    batch = event.get("continuity_batch")
-    if batch:
-        for member in batch.get("review_members") or []:
-            stamp(member)
-        for member in batch.get("anchor_members") or []:
-            stamp(member)
-    for picker in event.get("quick_species") or []:
-        key = str(picker.get("scientific") or "").strip()
-        picker["species_colour"] = colour_map.get(key) if key else None
-        picker["species_ref_image_url"] = (
-            resolve_species_ref_image_url(key) if key else None
-        )
-
-
 def _load_single_review_event(
     conn,
     *,
@@ -1676,10 +893,9 @@ def _load_single_review_event(
         common_names=common_names,
         recent_species=[],
     )
-    selection = select_review_day(
-        raw_events, fetch_current_station_event_reviews(conn), "all"
-    )
-    for event in selection.events:
+    for event in raw_events:
+        if event.context_only_count == event.photo_count:
+            continue
         if event.event_key != event_key:
             continue
         if not row_map.get(int(event.cover_detection_id or 0)):
@@ -1702,261 +918,6 @@ def _load_single_review_event(
     return None
 
 
-def _load_event_with_continuity_batch(
-    conn,
-    *,
-    event_key: str,
-    gallery_threshold: float,
-    output_dir: str,
-    species_locale: str,
-    common_names: dict[str, str],
-) -> dict | None:
-    """Load one Review event plus its continuity batch.
-
-    Returns the event payload from ``_load_single_review_event``, but
-    when the event participates in a continuity batch the payload also
-    carries an ``event["continuity_batch"]`` dict shaped for the
-    template:
-
-        {
-            "batch_key": str,
-            "recommended_species": str | None,
-            "recommended_species_common": str | None,
-            "review_detection_ids": [int, ...],
-            "context_detection_ids": [int, ...],
-            "context_species_summary": {sci_name: int, ...},
-            "anchor_members": [member_dict, ...],   # context anchors
-            "review_members": [member_dict, ...],   # actionable frames
-            "review_event_keys": [event_key, ...],
-            "anchor_event_keys": [event_key, ...],
-            "batch_bbox_map": [trail_point, ...],
-        }
-
-    ``review_members`` and ``anchor_members`` are materialized via
-    ``_build_review_event_member`` so the template can render them with
-    the same shape as ``event.members``. Sibling actionable events that
-    share the batch are folded into ``review_members`` so the operator
-    sees every comparable frame in one stage without flipping events.
-    """
-    raw_events, row_map, recent_species, _truncated = _fetch_review_event_payloads(
-        conn,
-        gallery_threshold=gallery_threshold,
-        output_dir=output_dir,
-        species_locale=species_locale,
-        common_names=common_names,
-    )
-    if not raw_events:
-        return None
-
-    raw_event = next(
-        (event for event in raw_events if event.event_key == event_key),
-        None,
-    )
-    if raw_event is None:
-        return None
-
-    # Skip pure-context anchors — Review never opens an anchor as the
-    # primary event, even if a stale fragment URL points at one.
-    if (
-        raw_event.context_only_count > 0
-        and raw_event.context_only_count == raw_event.photo_count
-    ):
-        return None
-
-    siblings_cache = _collect_review_siblings_cache(conn, raw_events, row_map)
-    event_payload = _build_review_event(
-        raw_event,
-        row_map=row_map,
-        conn=conn,
-        species_locale=species_locale,
-        output_dir=output_dir,
-        common_names=common_names,
-        recent_species=recent_species,
-        include_detail=True,
-        siblings_cache=siblings_cache,
-    )
-    if not event_payload:
-        return None
-    event_payload["context_only_count"] = int(raw_event.context_only_count)
-    event_payload["context_anchored"] = bool(raw_event.context_anchored)
-
-    # Rebuild the workspace-scoped colour map from the full raw-event
-    # set so fragment rendering matches the page rail for overlapping
-    # species.
-    workspace_species_keys = _workspace_species_keys_from_raw_events(raw_events)
-    workspace_colour_map = assign_species_colours(list(workspace_species_keys))
-
-    continuity_batches = build_review_continuity_batches(raw_events)
-    matching_batch = None
-    for batch in continuity_batches:
-        if event_key in (batch.get("event_keys") or []):
-            matching_batch = batch
-            break
-    if matching_batch is None:
-        _stamp_species_display_on_event(event_payload, workspace_colour_map)
-        return event_payload
-
-    # Mirror the rail-side hint fields _load_review_events sets for
-    # JS. Templates rely on the nested ``continuity_batch`` dict, but
-    # JS handlers also read these flat hints.
-    event_payload["continuity_batch_key"] = matching_batch["batch_key"]
-    event_payload["continuity_batch_recommended_species"] = matching_batch[
-        "recommended_species"
-    ]
-    event_payload["continuity_batch_review_detection_ids"] = list(
-        matching_batch["review_detection_ids"]
-    )
-
-    def _materialize(detection_ids):
-        members: list[dict] = []
-        for detection_id in detection_ids:
-            row = row_map.get(int(detection_id))
-            if not row:
-                continue
-            members.append(
-                _build_review_event_member(
-                    row,
-                    conn=conn,
-                    species_locale=species_locale,
-                    output_dir=output_dir,
-                    common_names=common_names,
-                    recent_species=recent_species,
-                    siblings_cache=siblings_cache,
-                )
-            )
-        members.sort(
-            key=lambda member: (
-                member.get("timestamp", ""),
-                int(member.get("best_detection_id") or 0),
-            )
-        )
-        return members
-
-    review_members = _materialize(matching_batch.get("review_detection_ids") or [])
-    anchor_members = _materialize(matching_batch.get("context_detection_ids") or [])
-
-    # Tag every review member with the source event_key so the template
-    # can highlight frames belonging to the currently rail-selected
-    # event without losing the cross-event view.
-    review_event_keys = list(matching_batch.get("event_keys") or [])
-    detection_to_event: dict[int, str] = {}
-    for raw in raw_events:
-        if raw.event_key not in review_event_keys:
-            continue
-        for trail_point in raw.bbox_trail:
-            if trail_point.get("context_only"):
-                continue
-            try:
-                det_id = int(trail_point.get("detection_id") or 0)
-            except (TypeError, ValueError):
-                continue
-            if det_id > 0:
-                detection_to_event[det_id] = raw.event_key
-    for member in review_members:
-        det_id = int(member.get("best_detection_id") or 0)
-        member_event_key = detection_to_event.get(det_id, "")
-        member["batch_event_key"] = member_event_key
-        member["is_active_event_member"] = member_event_key == event_key
-
-    recommended_species = matching_batch.get("recommended_species")
-    recommended_species_common = (
-        resolve_common_name(recommended_species, common_names)
-        if recommended_species
-        else None
-    )
-
-    event_payload["continuity_batch"] = {
-        "batch_key": matching_batch["batch_key"],
-        "recommended_species": recommended_species,
-        "recommended_species_common": recommended_species_common,
-        "review_detection_ids": list(matching_batch.get("review_detection_ids") or []),
-        "context_detection_ids": list(
-            matching_batch.get("context_detection_ids") or []
-        ),
-        "context_species_summary": dict(
-            matching_batch.get("context_species_summary") or {}
-        ),
-        "anchor_members": anchor_members,
-        "review_members": review_members,
-        "review_event_keys": review_event_keys,
-        "anchor_event_keys": list(matching_batch.get("anchor_event_keys") or []),
-        "batch_bbox_map": list(matching_batch.get("batch_bbox_map") or []),
-    }
-    # Stamp the event payload with the shared workspace colour map so
-    # anchor and review batch members keep the same slots as the rail.
-    _stamp_species_display_on_event(event_payload, workspace_colour_map)
-    return event_payload
-
-
-def _workspace_species_keys_from_raw_events(raw_events) -> set[str]:
-    """Collect every scientific name across a raw BirdEvent list.
-
-    Used by the fragment endpoint so its standalone render of one event
-    still matches the page-level colour assignment for overlapping
-    species. Pulls from ``raw_event.species`` plus every trail member
-    (context + actionable) so context anchors participate in colour
-    assignment exactly like actionable frames.
-    """
-    species_keys: set[str] = set()
-    for raw_event in raw_events or []:
-        species = getattr(raw_event, "species", None)
-        if species:
-            species_keys.add(str(species).strip())
-        for trail_point in getattr(raw_event, "bbox_trail", None) or []:
-            trail_species = trail_point.get("species") or trail_point.get("species_key")
-            if trail_species:
-                species_keys.add(str(trail_species).strip())
-    species_keys.discard("")
-    return species_keys
-
-
-def _strip_image_orphans(orphans: list[dict]) -> list[dict]:
-    """Drop ``item_kind == "image"`` rows from the review payload.
-
-    Image-orphans are frames the OD backbone admitted at the frame gate
-    but whose individual detections were all dropped by Filters A / A2
-    in ``detection_manager._processing_loop``. They have no detection
-    row, no bbox, and nothing for the operator to confirm or correct —
-    the Review desk has no actionable workflow for them. They stay in
-    the ``images`` table (the future dual-tier persistence plan will
-    surface them as Layer-1 telemetry), they just do not show up in the
-    Hobby Review UI.
-    """
-    return [orphan for orphan in orphans if orphan.get("item_kind") != "image"]
-
-
-def _compute_queue_orphans(
-    orphans: list[dict],
-    review_events: list[dict],
-) -> list[dict]:
-    """Filter the orphans list down to items the event rail does not cover.
-
-    Detection orphans that already belong to a rendered event are
-    removed here so the Queue rail and Event rail never duplicate the
-    same detection. Image-orphans were already stripped upstream by
-    ``_strip_image_orphans``.
-    """
-    event_detection_ids: set[int] = set()
-    for event_payload in review_events:
-        for detection_id in event_payload.get("detection_ids") or []:
-            try:
-                event_detection_ids.add(int(detection_id))
-            except (TypeError, ValueError):
-                continue
-
-    queue_orphans: list[dict] = []
-    for orphan in orphans:
-        if orphan.get("item_kind") == "detection":
-            try:
-                detection_id = int(orphan.get("item_id") or 0)
-            except (TypeError, ValueError):
-                detection_id = 0
-            if detection_id and detection_id in event_detection_ids:
-                continue
-        queue_orphans.append(orphan)
-    return queue_orphans
-
-
 def _require_active_review_detection(conn, filename: str, detection_id: int):
     return conn.execute(
         """
@@ -1974,232 +935,73 @@ def _require_active_review_detection(conn, filename: str, detection_id: int):
 @review_bp.route("/admin/review", methods=["GET"])
 @login_required
 def review_page():
-    if request.args.get("diagnostic") != "1" and not request.args.get("layout"):
-        from web import view_helpers
-        from web.services import station_service
+    if "diagnostic" in request.args or "layout" in request.args:
+        abort(404)
+    from web import view_helpers
+    from web.services import station_service
 
-        try:
-            selection = station_service.validate_selection(
-                request.args.get("start", ""),
-                request.args.get("end", ""),
-                request.args.get("source", "all"),
-            )
-            answered_value = request.args.get("answered", "0")
-            if answered_value not in {"0", "1"}:
-                raise ValueError("Invalid review state")
-            answered = answered_value == "1"
-            review = station_service.grouped_review(
-                answered=answered,
-                selection=selection,
-                day=request.args.get("day", "latest"),
-                page=request.args.get("page", 1, type=int) or 1,
-            )
-        except ValueError as exc:
-            abort(400, description=str(exc))
-        if not answered:
-            events = view_helpers.build_station_review_events(review["groups"])
-            days = list(review["days"])
-            selected_day = review["selected_day"]
-
-            def day_url(value: str) -> str:
-                return url_for("review.review_page", day=value, **selection)
-
-            older = [day for day in days if day < selected_day]
-            newer = [day for day in days if day > selected_day]
-            return render_template(
-                "review_grid.html",
-                review_events=events,
-                ordinary_review=True,
-                review=review,
-                selection=selection,
-                current_path="/admin/review",
-                review_navigation={
-                    "days": list(review["days"].items()),
-                    "selected_day": selected_day,
-                    "total_events": review["total_items"],
-                    "is_grid_layout": True,
-                    "older_url": day_url(max(older))
-                    if older and selected_day != "all"
-                    else None,
-                    "newer_url": day_url(min(newer))
-                    if newer and selected_day != "all"
-                    else None,
-                    "sort_order": "priority",
-                },
-            )
-        for group in review["groups"]:
-            group["detections"] = view_helpers.build_station_views(group.pop("rows"))
-            for det in group["detections"]:
-                det["ordinary_review"] = True
-        return render_template(
-            "station_review.html",
-            review=review,
-            detections=[
-                det for group in review["groups"] for det in group["detections"]
-            ],
-            selection=selection,
-            ordinary_review=True,
+    try:
+        selection = station_service.validate_selection(
+            request.args.get("start", ""),
+            request.args.get("end", ""),
+        )
+        answered_value = request.args.get("answered", "0")
+        if answered_value not in {"0", "1"}:
+            raise ValueError("Invalid review state")
+        answered = answered_value == "1"
+        review = station_service.grouped_review(
             answered=answered,
-            total_items=review["total_items"],
-            page=review["page"],
-            current_path="/admin/review",
-        )
-    """Review complete events by day, chronologically or by review priority."""
-    day = (request.args.get("day") or "latest").strip()
-    sort_order = (request.args.get("sort") or "chronological").strip()
-    if sort_order not in {"chronological", "priority"}:
-        abort(400, description="Invalid Review sort order")
-    if day not in {"latest", "all"}:
-        try:
-            if datetime.strptime(day, "%Y-%m-%d").strftime("%Y-%m-%d") != day:
-                raise ValueError
-        except ValueError:
-            abort(400, description="Invalid Review day")
-    output_dir = config.get("OUTPUT_DIR", "output")
-    gallery_threshold = config["GALLERY_DISPLAY_THRESHOLD"]
-    species_locale = config.get("SPECIES_COMMON_NAME_LOCALE", "DE")
-    common_names = load_common_names(species_locale)
-
-    # The Review Grid renders every event's members inline as tiles, so
-    # it needs the full member payload at page-render time. The Legacy
-    # layout keeps its lazy fragment-load contract via
-    # /api/review/event-panel/<event_key>, which is why the original
-    # default was include_detail=False.
-    layout_param = (request.args.get("layout") or "").strip().lower()
-    is_grid_layout = layout_param != "legacy"
-
-    with db_service.closing_connection() as conn:
-        rows = db_service.fetch_review_queue_images(conn, gallery_threshold)
-        recent_species = _load_recent_review_species(conn, common_names)
-        payloads = _fetch_review_event_payloads(
-            conn,
-            gallery_threshold=gallery_threshold,
-            output_dir=output_dir,
-            species_locale=species_locale,
-            common_names=common_names,
-            rows=rows,
-            recent_species=recent_species,
-        )
-        selection = select_review_day(
-            payloads[0], fetch_current_station_event_reviews(conn), day
-        )
-        selected_ids = {
-            detection_id
-            for event in selection.events
-            for detection_id in event.detection_ids
-        }
-        orphans, _ = _load_review_items(
-            conn,
-            gallery_threshold=gallery_threshold,
-            output_dir=output_dir,
-            species_locale=species_locale,
-            common_names=common_names,
-            rows=[
-                row
-                for row in rows
-                if row["item_kind"] == "detection"
-                and (
-                    selection.selected_day == "all"
-                    or int(row["active_detection_id"] or row["best_detection_id"] or 0)
-                    in selected_ids
-                )
-            ],
-            recent_species=recent_species,
-        )
-        (
-            review_events,
-            continuity_batches,
-            context_truncated,
-            workspace_species_keys,
-        ) = _load_review_events(
-            conn,
-            gallery_threshold=gallery_threshold,
-            output_dir=output_dir,
-            species_locale=species_locale,
-            common_names=common_names,
-            include_detail=is_grid_layout,
-            include_modal=False,
-            payloads=payloads,
             selection=selection,
-            sort_order=sort_order,
+            day=request.args.get("day", "latest"),
+            page=request.args.get("page", 1, type=int) or 1,
         )
+    except ValueError as exc:
+        abort(400, description=str(exc))
+    if not answered:
+        events = view_helpers.build_station_review_events(review["groups"])
+        days = list(review["days"])
+        selected_day = review["selected_day"]
 
-    orphans = _strip_image_orphans(orphans)
-    queue_orphans = _compute_queue_orphans(orphans, review_events)
+        def day_url(value: str) -> str:
+            return url_for("review.review_page", day=value, **selection)
 
-    # Stamp orphans with the same workspace-scoped colour slots already
-    # applied to events by ``_load_review_events``. The map is rebuilt
-    # from the union of workspace species and orphan species so
-    # additional scientific names still get deterministic slots.
-    all_species_keys = set(workspace_species_keys)
-    for orphan in orphans:
-        key = _resolve_species_display_key(orphan)
-        if key:
-            all_species_keys.add(key)
-    species_colour_map = assign_species_colours(list(all_species_keys))
-    # Re-stamp events so the slot assignment matches the combined map
-    # whenever an orphan introduces a new scientific name that would
-    # otherwise shift slots for species sorted after it.
-    for event in review_events:
-        _stamp_species_display_on_event(event, species_colour_map)
-    for orphan in orphans:
-        key = _resolve_species_display_key(orphan)
-        if key:
-            orphan["species_colour_key"] = key
-            orphan["species_colour"] = species_colour_map.get(key)
-            orphan["species_ref_image_url"] = resolve_species_ref_image_url(key)
-        else:
-            orphan["species_colour_key"] = ""
-            orphan["species_colour"] = None
-            orphan["species_ref_image_url"] = None
-        for picker in orphan.get("quick_species") or []:
-            pkey = str(picker.get("scientific") or "").strip()
-            picker["species_colour"] = species_colour_map.get(pkey) if pkey else None
-
-    # Review-Grid layout is now the default. The
-    # legacy Stage-Panel layout (orphans.html → review_event_panel.html)
-    # is still reachable via ?layout=legacy for RPi-side parallel
-    # verification and as the per-detection queue / orphan-modal
-    # consumer of the legacy templates. The fragment endpoints
-    # (/api/review/event-panel/<event_key>, /api/review/panel/...)
-    # continue to render the Stage-Panel partials unchanged.
-    template_name = "review_grid.html" if is_grid_layout else "orphans.html"
-
+        older = [day for day in days if day < selected_day]
+        newer = [day for day in days if day > selected_day]
+        return render_template(
+            "review_grid.html",
+            review_events=events,
+            ordinary_review=True,
+            review=review,
+            selection=selection,
+            current_path="/admin/review",
+            review_navigation={
+                "days": list(review["days"].items()),
+                "selected_day": selected_day,
+                "total_events": review["total_items"],
+                "is_grid_layout": True,
+                "older_url": day_url(max(older))
+                if older and selected_day != "all"
+                else None,
+                "newer_url": day_url(min(newer))
+                if newer and selected_day != "all"
+                else None,
+                "sort_order": "priority",
+            },
+        )
+    for group in review["groups"]:
+        group["detections"] = view_helpers.build_station_views(group.pop("rows"))
+        for det in group["detections"]:
+            det["ordinary_review"] = True
     return render_template(
-        template_name,
-        orphans=orphans,
-        queue_orphans=queue_orphans,
-        review_events=review_events,
-        continuity_batches=continuity_batches,
-        context_truncated=context_truncated,
-        species_colour_map=species_colour_map,
-        species_colour_slots=SPECIES_COLOUR_SLOTS,
+        "station_review.html",
+        review=review,
+        detections=[det for group in review["groups"] for det in group["detections"]],
+        selection=selection,
+        ordinary_review=True,
+        answered=answered,
+        total_items=review["total_items"],
+        page=review["page"],
         current_path="/admin/review",
-        review_navigation={
-            "days": selection.days,
-            "selected_day": selection.selected_day,
-            "total_events": selection.total_events,
-            "sort_order": sort_order,
-            "is_grid_layout": is_grid_layout,
-            "older_url": url_for(
-                "review.review_page",
-                diagnostic=1,
-                day=selection.older_day,
-                sort=sort_order,
-                **({} if is_grid_layout else {"layout": "legacy"}),
-            )
-            if selection.older_day
-            else None,
-            "newer_url": url_for(
-                "review.review_page",
-                diagnostic=1,
-                day=selection.newer_day,
-                sort=sort_order,
-                **({} if is_grid_layout else {"layout": "legacy"}),
-            )
-            if selection.newer_day
-            else None,
-        },
     )
 
 
@@ -2237,82 +1039,6 @@ def review_modal_fragment(event_key: str, detection_id: int) -> Response:
     )
     response.headers["Cache-Control"] = "private, no-store"
     return response
-
-
-@review_bp.route("/api/review/panel/<item_kind>/<item_id>", methods=["GET"])
-@login_required
-def review_panel_fragment(item_kind, item_id):
-    """Render a single review stage panel on demand."""
-    output_dir = config.get("OUTPUT_DIR", "output")
-    gallery_threshold = config["GALLERY_DISPLAY_THRESHOLD"]
-    species_locale = config.get("SPECIES_COMMON_NAME_LOCALE", "DE")
-    common_names = load_common_names(species_locale)
-
-    with db_service.closing_connection() as conn:
-        recent_species = _load_recent_review_species(conn, common_names)
-        species_thumbnail_map = get_species_thumbnail_map(
-            common_names=common_names,
-            cache_key=f"review:{species_locale}",
-        )
-        orphan = _load_single_review_item_by_identity(
-            conn,
-            item_kind=item_kind,
-            item_id=item_id,
-            gallery_threshold=gallery_threshold,
-            output_dir=output_dir,
-            species_locale=species_locale,
-            common_names=common_names,
-            recent_species=recent_species,
-            species_thumbnail_map=species_thumbnail_map,
-        )
-
-    if not orphan:
-        abort(404)
-
-    # A single-orphan fragment only needs a one-species colour map.
-    key = _resolve_species_display_key(orphan)
-    single_map = assign_species_colours([key] if key else [])
-    if key:
-        orphan["species_colour_key"] = key
-        orphan["species_colour"] = single_map.get(key)
-        orphan["species_ref_image_url"] = resolve_species_ref_image_url(key)
-    else:
-        orphan["species_colour_key"] = ""
-        orphan["species_colour"] = None
-        orphan["species_ref_image_url"] = None
-    for picker in orphan.get("quick_species") or []:
-        pkey = str(picker.get("scientific") or "").strip()
-        picker["species_colour"] = single_map.get(pkey) if pkey else None
-    return render_template("components/review_stage_panel.html", orphan=orphan)
-
-
-@review_bp.route("/api/review/event-panel/<event_key>", methods=["GET"])
-@login_required
-def review_event_panel_fragment(event_key):
-    """Render a single review event detail panel on demand."""
-    output_dir = config.get("OUTPUT_DIR", "output")
-    gallery_threshold = config["GALLERY_DISPLAY_THRESHOLD"]
-    species_locale = config.get("SPECIES_COMMON_NAME_LOCALE", "DE")
-    common_names = load_common_names(species_locale)
-
-    with db_service.closing_connection() as conn:
-        event = _load_event_with_continuity_batch(
-            conn,
-            event_key=event_key,
-            gallery_threshold=gallery_threshold,
-            output_dir=output_dir,
-            species_locale=species_locale,
-            common_names=common_names,
-        )
-
-    if not event:
-        return abort(404)
-
-    # Stamping already happened inside _load_event_with_continuity_batch
-    # using a workspace-scoped colour map built from the full raw_events
-    # set, so anchor + review members match what the page rail renders
-    # for the same scientific names.
-    return render_template("components/review_event_panel.html", event=event)
 
 
 @review_bp.route("/api/review-thumb/<filename>", methods=["GET"])
@@ -2429,8 +1155,6 @@ def review_decision():
         conn = db_service.get_connection()
         try:
             if action == "confirm":
-                # Confirming "Bird Present" requires an existing detection.
-                # Otherwise the image becomes non-eligible for Deep Scan and can get stuck.
                 placeholders = ",".join("?" for _ in filenames)
                 rows = conn.execute(
                     f"""
@@ -2453,7 +1177,7 @@ def review_decision():
                         jsonify(
                             {
                                 "status": "error",
-                                "message": "Cannot confirm Bird Present for items without detections. Use Deep Scan first.",
+                                "message": "Cannot confirm Bird Present for items without detections.",
                                 "filenames": missing,
                             }
                         ),
@@ -2848,7 +1572,6 @@ def review_event_approve():
     data = request.get_json() or {}
     species = str(data.get("species") or "").strip()
     bbox_review = (data.get("bbox_review") or "").strip().lower() or None
-    evidence_quality = str(data.get("evidence_quality") or "").strip().lower()
     event_key = str(data.get("event_key") or "").strip()
     raw_detection_ids = data.get("detection_ids") or []
 
@@ -2891,22 +1614,6 @@ def review_event_approve():
                 {
                     "status": "error",
                     "message": f"Invalid bbox_review: {bbox_review}",
-                }
-            ),
-            409,
-        )
-
-    valid_evidence_qualities = {"diagnostic", "limited", "insufficient"}
-    if (event_key and evidence_quality not in valid_evidence_qualities) or (
-        not event_key
-        and evidence_quality
-        and evidence_quality not in valid_evidence_qualities
-    ):
-        return (
-            jsonify(
-                {
-                    "status": "error",
-                    "message": "Assess diagnostic evidence before event approval",
                 }
             ),
             409,
@@ -3096,35 +1803,6 @@ def review_event_approve():
                         species_identity="corrected",
                         species_key=chosen_species,
                     ),
-                    source_ref="review:event-approve",
-                )
-
-            if event_key:
-                timestamps = conn.execute(
-                    f"""
-                    SELECT MIN(i.timestamp) AS event_start, MAX(i.timestamp) AS event_end
-                    FROM detections d
-                    JOIN images i ON i.filename = d.image_filename
-                    WHERE d.detection_id IN ({placeholders})
-                    """,
-                    detection_ids,
-                ).fetchone()
-                anchor_detection_id = int(
-                    event.get("cover_detection_id") or detection_ids[0]
-                )
-                if anchor_detection_id not in detection_ids:
-                    anchor_detection_id = detection_ids[0]
-                human_label_service.record_event_review(
-                    conn,
-                    event_key=event_key,
-                    detection_ids=detection_ids,
-                    anchor_detection_id=anchor_detection_id,
-                    outcome="verified_species",
-                    evidence_quality=evidence_quality,
-                    event_start=str(timestamps["event_start"] or ""),
-                    event_end=str(timestamps["event_end"] or ""),
-                    candidate_species_key=event.get("candidate_species"),
-                    species_key=species,
                     source_ref="review:event-approve",
                 )
 
@@ -3318,27 +1996,6 @@ def review_event_trash():
             # with callers that provide an alternative label recorder.
             db_service.reject_detections(conn, detection_ids, commit=False)
 
-            timestamps = conn.execute(
-                f"""
-                SELECT MIN(i.timestamp) AS event_start, MAX(i.timestamp) AS event_end
-                FROM detections d
-                JOIN images i ON i.filename = d.image_filename
-                WHERE d.detection_id IN ({placeholders})
-                """,
-                detection_ids,
-            ).fetchone()
-            human_label_service.record_event_review(
-                conn,
-                event_key=event_key or f"manual-event-{detection_ids[0]}",
-                detection_ids=detection_ids,
-                anchor_detection_id=detection_ids[0],
-                outcome="no_bird",
-                evidence_quality="insufficient",
-                event_start=str(timestamps["event_start"] or ""),
-                event_end=str(timestamps["event_end"] or ""),
-                source_ref="review:event-no-bird",
-            )
-
             touched_filenames = list(
                 dict.fromkeys(
                     row["image_filename"] for row in rows if row["image_filename"]
@@ -3402,7 +2059,6 @@ def review_event_unresolved():
     """Close an event as bird-present without asserting a species."""
     data = request.get_json() or {}
     event_key = str(data.get("event_key") or "").strip()
-    evidence_quality = str(data.get("evidence_quality") or "").strip().lower()
     detection_ids: list[int] = []
     for value in data.get("detection_ids") or []:
         try:
@@ -3415,16 +2071,6 @@ def review_event_unresolved():
 
     if not event_key or not detection_ids:
         return jsonify({"status": "error", "message": "event is required"}), 400
-    if evidence_quality not in {"diagnostic", "limited", "insufficient"}:
-        return (
-            jsonify(
-                {
-                    "status": "error",
-                    "message": "Assess diagnostic evidence before closing the event",
-                }
-            ),
-            409,
-        )
 
     try:
         with db_service.closing_connection() as conn:
@@ -3495,20 +2141,6 @@ def review_event_unresolved():
                     source_ref="review:event-unresolved",
                 )
 
-            timestamps = [str(row["timestamp"] or "") for row in rows]
-            human_label_service.record_event_review(
-                conn,
-                event_key=event_key,
-                detection_ids=detection_ids,
-                anchor_detection_id=detection_ids[0],
-                outcome="unresolved_bird",
-                evidence_quality=evidence_quality,
-                event_start=min(timestamps),
-                event_end=max(timestamps),
-                candidate_species_key=event.get("candidate_species"),
-                source_ref="review:event-unresolved",
-            )
-
             touched_filenames = list(
                 dict.fromkeys(str(row["image_filename"]) for row in rows)
             )
@@ -3556,7 +2188,6 @@ def review_event_resolve():
     data = request.get_json() or {}
     species = str(data.get("species") or "").strip()
     bbox_review = (data.get("bbox_review") or "").strip().lower() or None
-    evidence_quality = str(data.get("evidence_quality") or "").strip().lower()
     event_key = str(data.get("event_key") or "").strip()
     raw_keep = data.get("keep_detection_ids") or []
     raw_trash = data.get("trash_detection_ids") or []
@@ -3619,17 +2250,6 @@ def review_event_resolve():
                 {
                     "status": "error",
                     "message": "Bounding box review is required before event resolve",
-                }
-            ),
-            409,
-        )
-
-    if evidence_quality not in {"diagnostic", "limited", "insufficient"}:
-        return (
-            jsonify(
-                {
-                    "status": "error",
-                    "message": "Assess diagnostic evidence before event resolve",
                 }
             ),
             409,
@@ -3780,29 +2400,6 @@ def review_event_resolve():
 
             db_service.reject_detections(conn, trash_ids, commit=False)
 
-            keep_timestamps = []
-            for detection_id in keep_ids:
-                try:
-                    timestamp = rows_by_id[detection_id]["timestamp"]
-                except (KeyError, IndexError):
-                    timestamp = event.get("start_time", "") if event else ""
-                keep_timestamps.append(str(timestamp or ""))
-            human_label_service.record_event_review(
-                conn,
-                event_key=event_key or f"manual-event-{keep_ids[0]}",
-                detection_ids=keep_ids,
-                anchor_detection_id=keep_ids[0],
-                outcome="verified_species",
-                evidence_quality=evidence_quality,
-                event_start=min(keep_timestamps),
-                event_end=max(keep_timestamps),
-                candidate_species_key=(
-                    event.get("candidate_species") if event else None
-                ),
-                species_key=species,
-                source_ref="review:event-resolve",
-            )
-
             touched_filenames = list(
                 dict.fromkeys(
                     row["image_filename"] for row in rows if row["image_filename"]
@@ -3849,49 +2446,6 @@ def review_event_resolve():
         )
     except Exception as e:
         return _error_response("Error resolving review event", e)
-
-
-@review_bp.route("/api/review/analyze/<filename>", methods=["POST"])
-@login_required
-def analyze_review_item(filename):
-    """
-    Triggers a manual deep analysis for exactly one review item.
-    Query params:
-      force=1  — bypass no-hit DB exclusion (re-scan already-scanned images)
-    """
-    try:
-        from web.services.analysis_service import (
-            check_deep_analysis_eligibility,
-            submit_analysis_job,
-        )
-
-        force = request.args.get("force", "0") in ("1", "true", "yes")
-
-        is_eligible, reason = check_deep_analysis_eligibility(filename, force=force)
-        if not is_eligible:
-            return (
-                jsonify(
-                    {
-                        "status": "error",
-                        "message": reason
-                        or "Manual deep scan is only available for unreviewed items without detections.",
-                    }
-                ),
-                409,
-            )
-
-        if submit_analysis_job(filename, force=force):
-            return jsonify(
-                {
-                    "status": "success",
-                    "message": "Manual deep scan queued for this image.",
-                }
-            )
-
-        return jsonify({"status": "error", "message": "Failed to queue analysis"}), 500
-
-    except Exception as e:
-        return _error_response("Error triggering analysis", e)
 
 
 @review_bp.route("/api/review/answers", methods=["POST"])

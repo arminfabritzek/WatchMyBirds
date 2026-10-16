@@ -14,10 +14,9 @@ that every legacy surface has already been converted.
 ## 0. Unified Image UX (binding, app-wide)
 
 Every place in the app that shows a bird image — Stream, Gallery, Subgallery,
-Species, Species Overview, Review Desk (event panel + queue panel), Trash,
-Orphans, Inbox, Restore, detail modals, and any future surface — must present
+Species, Species Overview, Review Desk, Trash, Restore, detail modals, and any future surface — must present
 the **same image UX**. This is a hard rule, not a guideline. It exists so that
-shared concerns (rating stars, favorite, change-species, view-details, hover
+shared concerns (favorite, change-species, view-details, hover
 tooltips, keyboard navigation, bbox overlay behavior, zoom modal) can be added
 or changed in **one place** and instantly apply everywhere.
 
@@ -26,14 +25,13 @@ or changed in **one place** and instantly apply everywhere.
 1. **One viewer component.** Every image is rendered through
    `templates/components/modal_image_viewer.html` (`render_image_viewer`)
    inside the canonical `wm-image-viewer` / `wm-modal__image` /
-   `review-stage-panel__image-frame` shells. No surface builds its own
+   shared viewer shells. No surface builds its own
    `<img>` + bbox overlay stack.
 2. **One toolbox.** Every image-bearing surface hosts the shared
    `tile_toolbox` macro (§5) inside a `wm-toolbox-host` container. The toolbox
    is the only place per-image actions live (Favorite, View Details,
-   Change Species, Adjust Bounding Box, Move to Trash, Restore, Deep Scan,
-   No birds in full image, future
-   star ratings, …). Surfaces may *omit* an action when the route does not
+   Change Species, Adjust Bounding Box, Move to Trash, Restore,
+   No birds in full image, …). Surfaces may *omit* an action when the route does not
    support it; they may **not** rename it, reorder it, or add a parallel
    surface-local button for the same action. The offered-box species control
    defined in §0e is the sole object-anchored exception. See §0b for which
@@ -44,14 +42,14 @@ or changed in **one place** and instantly apply everywhere.
    single template.
 4. **One zoom path.** Clicking any image opens the same `wm-modal` viewer
    (detection-backed → `detection_modal.html`, image-only fallback →
-   `orphan_modal.html`). No surface ships its own lightbox.
+   the shared image viewer). No surface ships its own lightbox.
 5. **Action position is fixed.** Tile toolboxes sit at the bottom of the image
    on hover/focus (`wm-toolbox`). Detection detail modals use the fixed
    `wm-bird-editor` rail immediately below the photo; it is the sole modal
    toolbar and owns object editing plus one overflow menu. Surfaces do not
    add a second action row or menu.
 6. **Per-image state surfaces are uniform.** Things like favorite stars,
-   future rating stars, eligibility badges, and selection checkboxes use
+   eligibility badges, and selection checkboxes use
    shared classes (`wm-tile__badge`, `wm-toolbox__fav`, …) and the same DOM
    position across surfaces.
 7. **No new image-bearing surface ships without reusing this contract.**
@@ -64,9 +62,12 @@ or changed in **one place** and instantly apply everywhere.
    position stay stable while the selected bird changes.
 
 **Why this matters:** the explicit goal is that adding a new per-image
-affordance — for example star ratings — becomes a single edit to the toolbox
+affordance becomes a single edit to the toolbox
 macro plus the design-system CSS, and lights up Stream, Gallery, Review,
 Trash, modals, and everything else at once. Any drift defeats that goal.
+
+Favorite is the image preference; star ratings are not supported. Downloads
+retain favorite labels and flags without numeric rating tags.
 
 **Audit:** check this file against the codebase after touching
 image-bearing surfaces.
@@ -119,10 +120,9 @@ the selected object, never unselected siblings or the whole image. Answered
 objects leave the queue; an event disappears once it has no open objects.
 The editor rail keeps the available modal width even when the image is narrow
 or missing, so answer controls and notices remain readable.
-Diagnostic event reviews retain their original endpoints and meaning (§0f).
 Station Report uses the same cards and viewer, current identifications and
 separate human/automatic days; total days use their union. Links preserve date
-and source filters. The calendar shows positive records; empty cells mean
+filters. The calendar shows positive records; empty cells mean
 unknown, never absence. Knowledge links use existing references and own images;
 no behavior claims or unsourced local species profiles are fabricated.
 
@@ -133,9 +133,8 @@ The browser polls status and replaces ready report content in place, without
 reloading the document. It preserves filter drafts, scroll positions and expanded
 details. Hidden superseded content retains its layout space while rebuilding.
 Editing keeps the active viewer open until it closes, then refreshes affected
-history; replaced editors release their listeners and observers. Diagnostic analysis
-is separately reachable at `/analytics/diagnostic` and retains strict evidence
-requirements. Local development runs this derived report worker on its isolated
+history; replaced editors release their listeners and observers. Local development
+runs this derived report worker on its isolated
 copy; camera, inference, integrations and retention jobs remain disabled.
 
 Ordinary Review uses day navigation and complete visit groups from the shared
@@ -145,8 +144,7 @@ Confirm species, Change species, Bird · species unknown, and No bird. These
 answers do not require box quality or event approval. Answered is an optional
 archive, including object/image absence answers. An explicit object dismissal
 completes that object; an active identification conflicting with whole-image
-absence remains visibly unresolved. Diagnostic events retain their separate
-entry point and assessment semantics.
+absence remains visibly unresolved.
 
 ## Homepage species cards
 
@@ -203,7 +201,7 @@ to discover that the frame had additional birds.
 **Visibility gate:** companions use their own SQL predicate
 (`_companion_visibility_sql`), not the gallery's. The gallery additionally
 applies the shared admission rule, including conservative quality safeguards only
-for automatic records. Its temporal gate applies to model-only records; current human species answers take precedence. A box
+for automatic records. Its decision-state gate applies to model-only records; current human species answers take precedence. A box
 someone marked "bird present, species unknown" keeps `decision_state = 'unknown'`
 on purpose (its species answer is complete) and MUST still render here. Do not
 route companions through the gallery predicate.
@@ -214,9 +212,7 @@ route companions through the gallery predicate.
   one-cover-per-image (UI_STANDARD §0 contract preserved).
 - Notifications and the Review queue's `MAX(score)` grouping —
   intentional summary surfaces.
-- The orphan-image solo-modal (`wm-modal__image--solo`) — by
-  definition has no detections to overlay (§ 1.1).
-- Inline review-event-panel tile cells — those are queue/list cells,
+- Review grid tile cells — those are queue/list cells,
   not detail modals.
 
 **Closing the loop with §0:** §0 establishes that "shared concerns
@@ -366,64 +362,18 @@ second toolbox or a blank-canvas labeling mode.
 | `is-reviewed` | Current canonical species evidence exists for this box |
 | `is-corrected` | The current human species answer differs from the proposal |
 
-## 0f. Biological Event Evidence Decision (binding)
+## 0f. Review object answers (binding)
 
-The ordinary Review opens object answers in the shared image viewer. It needs
-no evidence-quality choice or event approval. `Bird · species unknown` and
-species-only refutations are completed answers; the Answered view keeps them
-reachable. Only a new conflict or an explicit retraction reopens an answer.
+Review groups open objects by day and event. Event membership grants no approval.
+Card actions answer selected open objects, or all open objects on the card when
+none are selected, without an evidence-quality assessment. The shared viewer
+resolves conflicts and keeps image-level statements distinct from object answers.
+The diagnostic query and layout variants, rail panels and continuity-batch UI
+have been removed. There is one Review layout.
 
-Diagnostic event review remains available through `?diagnostic=1` (and the
-retained explicit layouts). It alone creates diagnostically verified events.
-The following evidence contract applies to those event decisions, not the
-ordinary station history or its object confirmations.
-
-Review opens the newest day with open events and orders events by start time
-(oldest first within the selected day). Day navigation skips days without open
-events; `All days` and `Review priority` remain explicit choices. Priority order
-uses the existing queue-wide ranking, not a ranking recalculated from one day.
-Events belong to their start day and remain complete across midnight. Gallery
-context and continuity-batch membership are computed before day selection.
-Only selected events receive tile payloads. Review Grid image dialogs load the
-shared detection modal on first opening, through an authenticated, detection-scoped
-endpoint. Double-click, Enter, toolbox details, and previous/next navigation must
-all use this path. Navigation stays within the event, skips sibling detections on
-the same image, and retains the editor's unsaved-change guard. Gallery context
-remains read-only. Event actions rebuild current membership and apply all existing
-checks without materializing display payloads for other events. Both Review layouts use
-the same day and sort controls; links preserve the chosen sort and layout.
-Navigation controls retain native keyboard behavior, and initial event-cursor
-selection must not scroll past the navigation.
-The queue-cleanup action still covers all days and must state that scope.
-
-1. Event approval requires an explicit diagnostic-evidence assessment:
-   `Diagnostic`, `Limited`, or `Insufficient`. No option is preselected.
-2. `Diagnostic` means visible traits support the asserted species. `Limited`
-   and `Insufficient` preserve the human review but never enter verified
-   biological metrics.
-3. The decision vocabulary is `Approve Event`, `Bird · species unresolved`,
-   and `Move Event to Trash`. The unresolved action asserts bird presence but
-   deliberately leaves species identity unknown.
-4. Model confidence, automated decision state, image aesthetics, and legacy
-   review columns may provide context but can never select an evidence option
-   or create a verified event.
-5. Evidence controls live in the established event control rail. They are not
-   per-image toolbox actions and do not create another image viewer.
-6. Every Review Desk layout that exposes an event-level decision MUST expose
-   the same unselected evidence control. The server rejects event approval or
-   resolution when that explicit value is absent; no legacy/default value is
-   inferred.
-
-**Class vocabulary:**
-
-| Class | Role |
-|---|---|
-| `review-grid__evidence` | Evidence-quality fieldset in the default Review Grid card header |
-| `review-grid__evidence-options` | Segmented option group for the three evidence levels |
-| `review-grid__evidence-option` | One Review Grid evidence-quality choice |
-| `review-event-panel__evidence-options` | Evidence option group in the retained event-panel fragment |
-| `review-event-panel__evidence-option` | One retained event-panel evidence-quality choice |
-| `is-selected` | Explicit operator selection; never inferred from model state |
+The authenticated `/api/review/modal/<event_key>/<detection_id>` endpoint keeps
+the shared detection editor available. `/api/review-thumb/<filename>` is shared
+with Trash. Removed panel endpoints return 404.
 
 ## 0a. Hover Tooltip Convention (binding)
 
@@ -497,12 +447,11 @@ stop being visually primary.
 
 | Surface                          | Primary (always visible)                 | Overflow                                                                                |
 |----------------------------------|------------------------------------------|-----------------------------------------------------------------------------------------|
-| Stream                           | Favorite, View Details                   | Change Species, Move to Trash, Deep Scan, No birds in full image                        |
-| Gallery                          | Favorite, View Details                   | Change Species, Move to Trash, Deep Scan, No birds in full image                        |
-| Subgallery                       | Favorite, View Details                   | Change Species, Move to Trash, Deep Scan, No birds in full image                        |
+| Stream                           | Favorite, View Details                   | Change Species, Move to Trash, No birds in full image                        |
+| Gallery                          | Favorite, View Details                   | Change Species, Move to Trash, No birds in full image                        |
+| Subgallery                       | Favorite, View Details                   | Change Species, Move to Trash, No birds in full image                        |
 | Species / Species Overview       | Favorite, View Details                   | Change Species, Move to Trash                                                           |
-| Review event-level (rail outside tile_toolbox) | Approve Event, Move Event to Trash | — (lives in `review-stage-panel__action` rail, not the toolbox) |
-| Review per-member tile (inside tile_toolbox) | Favorite, Change Species, Move to Trash, No birds in full image | View Details, Deep Scan |
+| Review per-member tile (inside tile_toolbox) | Favorite, Change Species, Move to Trash, No birds in full image | View Details |
 | Trash                            | Restore                                  | View Details, Change Species *(if exposed)* — Favorite is intentionally suppressed |
 | Detail modals (`wm-bird-editor`) | Full / Focus, Species, Adjust box, Add missing bird | Bounding boxes, Full screen, Download, Open day, Favorite, Move to Trash, No birds in full image |
 
@@ -536,7 +485,7 @@ stop being visually primary.
   image remains primary, while selection and editing stay visible in one
   stable rail. Detection-only actions such as Favorite and Move to Trash are
   disabled when the active object was manually added.
-- Inbox, Orphans (top-level), and Restore are listed in `web/` as
+- Orphans (top-level) and Restore are listed in `web/` as
   routes but do not render image tiles with the `tile_toolbox`
   macro. They are intentionally absent from this table. If a future
   plan adds toolbox-bearing tiles to one of these surfaces, that
@@ -582,38 +531,7 @@ class (for example `wm-modal wm-modal--form`, `wm-tile wm-tile--review`).
   `templates/components/detection_modal.html`, which already composes
   `modal_image_viewer.html`, `modal_detection_info.html`, and
   `modal_action_bar.html`.
-- Review-stage composition should continue to flow through
-  `templates/components/review_stage_panel.html` and
-  `templates/components/orphan_modal.html`.
-- Review-stage panels should read as one operator workbench:
-  queue rail on the left, image viewer in the center, inspector/action rail on
-  the right. Keep utility copy short and prefer compact section labels such as
-  `Actions`, `BBox`, `Species`, and `Approve`.
-- The inline Review viewer should sit inside one stable stage frame with a
-  consistent aspect ratio and `contain` behavior so portrait vs landscape images
-  do not reflow the workbench or misalign the control strip.
-- Review bbox overlays must stay bound to the real rendered image frame inside
-  that stage, not to the outer stage container, so inline bbox geometry matches
-  the modal viewer.
-- The Review facts row, viewer stage, and under-image control strip should share
-  the same content width so the workbench reads as one aligned column rather
-  than separate floating blocks.
-- Review previous/next controls should read as compact centered stage buttons,
-  not as stretched side rails that change the perceived height of the viewer.
-- Review metrics/facts should not live as a permanent full-width badge row above
-  the stage. When shown, prefer a compact toggle-revealed metadata panel inside
-  the Review viewer shell so the image remains primary.
-- The Review workbench viewer may stay inline for fast triage, but clicking the
-  image should open the same larger `wm-modal` viewer style used elsewhere in
-  the app when closer inspection is needed.
-- When practical, the prominent inline Review image should reuse the same
-  shared image-viewer composition (`render_image_viewer` plus toolbox/zoom
-  affordances) as the detail modal instead of maintaining a separate Review-only
-  image engine.
-- Detection-backed Review zoom must reuse
-  `templates/components/detection_modal.html` instead of forking a review-only
-  modal shell. Only true no-detection review items may fall back to a simpler
-  image-backed modal.
+- Review uses the shared event-card grid and detection modal (§6).
 - Trash should follow the same `workbench shell` logic:
   summary bar above, left-side ops rail for batch/range/import controls, and
   the item surface on the right.
@@ -633,7 +551,7 @@ detection-bearing tiles, filmstrips, and modal/detail surfaces.
 - Canonical action vocabulary:
   `View Details`, `Favorite`, `Change Species`, `Adjust Bounding Box`,
   `Correction Details`, `Move to Trash`, `Restore`, `Correct`, `Wrong`,
-  `Approve`, `Deep Scan`, `No birds in full image`
+  `Approve`, `No birds in full image`
 - Surfaces may omit actions only when the subject identity or route does not
   support them. They must not rename the same underlying action on another
   surface.
@@ -792,8 +710,6 @@ canvas, and re-applies smart-zoom if active. Surfaces consuming
 ---
 
 **Review-specific modifiers:**
-- `wm-modal__body--review` — applied to the modal body in the Review workbench
-  context (orphan_modal.html). Adjusts layout for the inline review stage.
 - `wm-modal__image--solo` — applied to the modal image container when displaying
   a non-detection image without bbox overlays or sibling panels.
 
@@ -812,8 +728,7 @@ canvas, and re-applies smart-zoom if active. Surfaces consuming
   below the image. Single-detection content moved into
   `.wm-modal__title-sub`; multi-detection content reduced to the
   `.wm-modal__sibling-strip` chip variant. The CSS rule remains;
-  it is no longer rendered by `detection_modal.html` or
-  `orphan_modal.html`.
+  it is no longer rendered by `detection_modal.html`.
 
 **New classes (2026-05-23):**
 - `wm-modal__header-actions` — flex slot on the right side of
@@ -913,7 +828,7 @@ canvas, and re-applies smart-zoom if active. Surfaces consuming
 
 ### 2.2 Review Tile (wm-tile wm-tile--review) — Legacy
 
-> **Note:** This tile type has been replaced by the `review-stage-panel`
+> **Note:** This tile type has been replaced by the `review-grid`
 > composition (see §6). The CSS class `wm-tile--review` still exists in
 > `design-system.css` but the HTML structure below is no longer produced by any
 > template. Retained here for reference only.
@@ -1046,7 +961,7 @@ filmstrip items, and modal image viewers. It is rendered by the
 | `wm-toolbox` | Toolbox root — positioned overlay inside the host |
 | `wm-toolbox--bar` | Bar variant — horizontal strip layout |
 | `wm-toolbox__btn` | Individual action button |
-| `wm-toolbox__btn--toggled` | Pressed-state modifier for stateful buttons (zoom toggle, future star ratings, …) |
+| `wm-toolbox__btn--toggled` | Pressed-state modifier for stateful buttons (zoom toggle, …) |
 | `wm-toolbox__btn--locked` | Disabled / login-required state |
 | `wm-toolbox__fav` | Favorite toggle button (special styling) |
 | `wm-toolbox__menu` | Dropdown trigger (three-dot / more button) |
@@ -1056,7 +971,7 @@ filmstrip items, and modal image viewers. It is rendered by the
 
 **Stateful toolbox buttons:** any
 toolbox button that carries an on/off state — the legacy Review smart-zoom toggle,
-the bbox-overlay toggle, future star ratings — must mirror its state
+the bbox-overlay toggle — must mirror its state
 on **all three** of the following at the same time:
 
 1. `aria-pressed="true|false"` — for assistive tech.
@@ -1074,14 +989,9 @@ in detail viewers and the legacy single-button Review control. Segmented
 options expose one `aria-pressed="true"` choice; the legacy button retains the
 pressed modifier, state-aware title, and emoji-label swap.
 
-**Workspace-scoped persistence:** stateful
-toolbox toggles that persist their state across rail navigation must
-share **one** persistence scope per workbench, not per individual
-viewer element. The Review workbench uses a single `.wm-viewer-scope`
-on the `.review-event-panel__grid` plus an explicit
-`data-zoom-pref-key="wmb_review_zoom_pref"` so every cell in the grid
-shares one zoom intent and the operator's "I want zoomed-in" choice
-survives stepping between sibling events.
+**Workspace-scoped persistence:** Review cards use `.wm-viewer-scope` and
+`data-zoom-pref-key="wmb_review_zoom_pref"` so sibling cards share the same zoom
+preference. Shared viewer controls retain their normal state behavior.
 
 ```html
 <div class="wm-toolbox-host">
@@ -1109,14 +1019,14 @@ The Review Desk renders as a **vertical stack of self-contained event
 cards** (`templates/review_grid.html` +
 `templates/components/review_grid_card.html`). One card per BirdEvent.
 Each card carries its own header (date · time window · frame count ·
-species · Approve · Trash · tile-size stepper), its own tile grid
-sized by the stepper (1 / 2 / 4 / 8 / 16 per row), and its own
+species and object-answer controls), its own tile grid
+sized by the shared page slider, and its own
 modal-detection markup for the shared lightbox path.
 
 **Layout:** vertical event-card stack with a filter card above and a
-sticky bulk-action footer below. **No left side rail. No right
+day navigation above the cards. **No left side rail. No right
 decision rail.** Per-card decision verbs live in the card header;
-selection-scoped verbs live in the footer.
+each action follows the card selection.
 
 Review sizing keeps images primary: new Crop sessions start at 320px and
 Full at 640px; saved per-mode sizes remain respected. Tiles shrink to the
@@ -1124,13 +1034,6 @@ available card width on narrow screens. Desktop event headers and day
 controls use compact spacing; narrow or touch layouts keep controls at least
 44px high. Shared image viewers, toolbox actions and image aspect ratios
 remain unchanged.
-
-The retired `review-stage-panel` shell stays in the tree as the consumer
-of the fragment endpoints (`/api/review/event-panel/<event_key>`,
-`/api/review/panel/<item_kind>/<item_id>`) and as the orphan-modal
-host (`templates/components/orphan_modal.html`). Those are single-item
-detail surfaces; the Review Desk no longer composes them as its default
-view.
 
 ### Keyboard navigation (review_grid_keyboard.js)
 
@@ -1142,7 +1045,7 @@ Smart-Mode scope, confirm dialogs and toasts are all inherited.
 | Key | Action |
 |---|---|
 | `↑` / `↓` | Move the event cursor to the previous / next card. The active card shows `.review-grid__card--kbd-active` (a blue focus ring inside the hard-black event outline) and scrolls to centre. |
-| `←` / `→` | Cycle the *armed* action within the active card: **Invert → Approve → Relabel → No birds in full image → Trash**. The armed button shows `.review-grid__card-action--armed`. Disabled verbs (e.g. Approve before a species is picked) are skipped. |
+| `←` / `→` | Cycle the *armed* action within the active card: **Invert → Confirm species → Change species → No bird**. The armed button shows `.review-grid__card-action--armed`. Disabled verbs (e.g. Approve before a species is picked) are skipped. |
 | `Space` | Fire the armed action (clicks the armed button). |
 | `Enter` | Open the active event's detail modal (first actionable tile). |
 
@@ -1166,658 +1069,29 @@ e.g. after Relabel):
 | `Space` / `Enter` | Pick the highlighted species. `Space` only picks once a cursor exists, so a space can still be typed into the search box before navigating. |
 | `←` / `Esc` | Cancel — resolves to no change and returns to the event card. |
 
-### Layout (retired)
-
-The pre-2026-05-23 layout — *"Event rail on the left, image viewer
-in the center, decision rail on the right"* — is retired as the
-default Review Desk view. Reachable via `?layout=legacy` for
-parallel verification only.
-
-**Key class families:**
-
-| Class prefix | Role |
-|---|---|
-| `review-stage-panel__content` | Outer content wrapper |
-| `review-stage-panel__workbench` | Main workbench grid |
-| `review-stage-panel__canvas` | Center canvas area |
-| `review-stage-panel__viewer-shell` | Viewer container with stable aspect ratio |
-| `review-stage-panel__viewer` | Inner viewer |
-| `review-stage-panel__viewer-media` | Media container |
-| `review-stage-panel__image-frame` | Stable image frame for bbox alignment |
-| `review-stage-panel__facts-toggle` | Toggle control for metadata reveal |
-| `review-stage-panel__facts-panel` | Collapsible metadata panel |
-| `review-stage-panel__facts-grid` | Grid layout for fact items |
-| `review-stage-panel__facts-item` | Individual metadata fact |
-| `review-stage-panel__decision-rail` | Right-side decision/action rail |
-| `review-stage-panel__section` | Grouped section in the decision rail |
-| `review-stage-panel__section-label` | Section heading |
-| `review-stage-panel__bbox-actions` | BBox action group |
-| `review-stage-panel__species-strip` | Quick species selection strip |
-| `review-stage-panel__species-btn` | Individual species button |
-| `review-stage-panel__nav` | Navigation controls |
-| `review-stage-panel__controls` | General control group |
-
-**Section labels in the decision rail:**
-`BBox`, `Species`, `Decision`, `Utilities`
-
----
-
-## 6b. Review Event Panel (review-event-*)  [retired as default]
-
-> **Status:** the rail-based event panel described below is no
-> longer the default Review Desk surface. The
-> default is now the vertical event-card grid in §6 (rendered by
-> `templates/components/review_grid_card.html`). The `review-event-*`
-> class family stays in the codebase to serve the fragment endpoints
-> (`/api/review/event-panel/<event_key>`) and as a reference for the
-> per-detection queue panel. Do **not** add new code paths to this
-> section; new Review-Desk work belongs in §6.
->
-> The biological-unit principle ("BirdEvent: same species, gap ≤
-> 30 min, no Queue|Bulk Review mode switch") is unchanged and now
-> embodied by the cards in §6 — every card is one BirdEvent.
-
-The Review workbench operates on a single biological unit — the `BirdEvent`
-(same species, gap ≤ 30 min) — instead of two parallel paths (per-detection
-queue + bulk cluster). There is no `Queue | Bulk Review` mode switch. The
-Review rail renders event cards; the stage panel composes the event detail
-via the `review-event-*` class family, still inside the shared
-`review-stage-panel` shell from §6.
-
-The per-detection queue panel remains reachable as a single-shot escape
-hatch from the right control rail via `Review in Queue`, which opens the
-event cover frame in the queue. Per-cell drill-downs are gone — mixed
-events are now resolved inside the event grid itself via per-frame
-`Keep this frame` / `Trash this frame` toggles (see **Mixed-event
-resolution** below).
-
-### Mixed-event resolution
-
-Every actionable cell in the event grid carries a local decision toggle
-(`data-review-frame-decision`) with two states: `keep` (default) and
-`trash`. State is held in the DOM dataset and in cell classes
-(`.is-frame-keep` / `.is-frame-trash`); no API call fires on click.
-
-`Approve Event` inspects the toggle state when pressed:
-
-- **All frames `keep`** → fast path, POST to `/api/review/event-approve`
-  (unchanged contract).
-- **Any frame `trash`** → mixed path, POST to `/api/review/event-resolve`
-  with `keep_detection_ids` + `trash_detection_ids`. The server enforces
-  disjoint sets, full event coverage, and a non-empty `keep` list.
-  `species` + `bbox_review` apply only to the `keep` frames; `trash`
-  frames are rejected in the same transaction via the same code path as
-  `/api/review/event-trash`, so image visibility recomputes consistently.
-
-`Move Event to Trash` stays as the homogeneous all-wrong shortcut and
-still targets `/api/review/event-trash` directly. The operator never has
-to drill into the per-detection queue to split a mixed event.
-
-### Event rail — text-only
-
-The side rail renders every event as a compact text row — **no thumbnail,
-no per-card trail preview**. The detail view owns the trail via its own
-mini-map. The former cover + trail layout is retired.
-
-**Rail class families:**
-
-| Class | Role |
-|---|---|
-| `review-event-browser` | Side rail container holding the event cards |
-| `review-event-browser__grid` | Vertical stack of event cards |
-| `review-event-card` | Individual event card — compact count-first row |
-| `review-event-card__accent` | Left accent bar, coloured only when `.is-active` |
-| `review-event-card__count` | Numeric summary block (`N` + `frame(s)`) |
-| `review-event-card__count-value` | Large frame count, tabular-nums |
-| `review-event-card__count-label` | Small uppercase `frame(s)` label |
-| `review-event-card__body` | Secondary stack: time first, species second |
-| `review-event-card__time` | Primary scan target after the count block |
-| `review-event-card__species` | Secondary common-name line; legible but not required for scanning |
-| `review-event-card__badge` | Eligibility badge (`--ready` / `--fallback`) |
-
-**Rail scan rule:** the rail is now
-**count-first**. Operators should be able to scan the left column by
-frame count + time window alone; the species line is secondary support,
-not the primary wayfinding cue.
-
-**Active-state contract:** the active
-card is unmistakable from the rest of the rail. All of the following
-ride on the same `--color-primary` token family so the dark-mode scope
-picks the highlight up automatically by redefining the token alone,
-without any surface-rule edit:
-
-1. `.is-active` adds an accent-fill background (linear gradient on
-   the warm-green primary family) plus a 2 px accent border, so the
-   card visually pops out of the rail.
-2. The left accent bar (`.review-event-card__accent`) lights up in
-   the same primary token.
-3. The active card mirrors its state as `aria-current="true"` for
-   assistive tech. `review_workspace.js` rotates both `is-active`
-   **and** `aria-current` atomically inside the same DOM-write block
-   on rail navigation, so there is no flicker when the operator
-   presses `‹ / ›`.
-4. **Stage-connecting cue:** `.review-stage-panel.is-active` carries a
-   3 px left border in the same `--color-primary` token, so the rail
-   card and the stage panel read as one bound unit at a glance.
-5. Non-active cards drop to ~92% opacity and a much lighter border so
-   the contrast between the active card and the rest is unmistakable
-   without the rail looking "broken" when nothing is selected.
-6. The card padding is compensated by 1 px on every side when active
-   so the geometry does not jitter as the rail rotates between cards.
-7. Token-only — no hardcoded hex anywhere in the active-state rules.
-   The dark-mode scope (see §6d) redefines
-   `--color-primary*` inside an `@media (prefers-color-scheme: dark)`
-   block and the entire highlight chain follows for free.
-
-### Event stage — equal-size detection grid
-
-The event-mode stage renders every `event.members` entry as a first-class
-cell in a responsive grid. **There is no cover frame, no filmstrip strip,
-no special per-event "primary image".** Every frame is comparably sized,
-comparably actionable, and carries its own bbox overlay + zoom toggle +
-toolbox — which makes visual species decisions a direct comparison task
-instead of a filmstrip toggling task.
-
-**Grid class families:**
-
-| Class | Role |
-|---|---|
-| `review-event-panel__grid` | Responsive CSS grid: `repeat(auto-fill, minmax(240px, 1fr))` |
-| `review-event-panel__cell` | Individual detection cell — a `wm-toolbox-host` with its own `render_image_viewer` + `tile_toolbox` |
-| `review-event-panel__cell-media` | Image frame; positioning parent for `.review-species-ref` and the bbox canvas |
-| `review-event-panel__cell-time` | Timestamp badge overlaid on the media frame |
-| `review-event-panel__cell-body` | Species + reason line |
-| `review-event-panel__cell-species` | Common name, tinted with `var(--cell-species-colour)` |
-| `review-event-panel__cell-reason` | `reason_label` for the frame |
-| `review-event-panel__cell-action` | Per-frame `Keep this frame` / `Trash this frame` decision toggle (`data-review-frame-decision`); carries `is-keep` / `is-trash` state classes |
-| `review-event-panel__grid-caption` | One-line caption under the grid: `N frame(s) of <species> across <duration>. Approve once the pattern is consistent.` |
-| `review-event-panel__trail-section--aside` | Mini-map variant inside the right control rail; replaces the retired `--compact` under-grid form |
-| `review-event-panel__trail-map` | Full trail visualisation inside the aside section |
-| `review-event-panel__trail-box` | Individual bbox marker inside the trail map |
-| `review-event-panel__controls` | Right-side event control rail |
-| `review-event-panel__species-pill` | Event species summary pill |
-| `review-event-panel__badge` | Eligibility badge (`--ready` / `--fallback`) |
-
-**Per-cell contract:**
-1. Every cell is a `wm-toolbox-host` — the delegated toolbox handlers
-   (`data-action="favorite" | "view-details" | "change-species" | "move-trash"`)
-   reach the new DOM without any new event listeners.
-2. Every cell mounts `tile_toolbox` with `show_viewer_tools=true` so the
-   zoom toggle and bbox-overlay toggle are available on every frame, not
-   just on the former cover image. This is the binding form of the
-   on-image toolbox rule plus the forward-compatibility hook for the
-   shared zoom-toggle pressed state.
-3. Every cell uses `render_image_viewer` with its own per-frame `bbox`
-   payload — each cell has its own bbox canvas, scoped to its own
-   detection.
-4. The first cell in DOM order carries `data-cover-detection="true"` as a
-   reserved hook for a future "jump to cover" affordance. It carries **no**
-   visual difference from the other cells — equal-size grid is mandatory
-   for every frame.
-5. Cells marked `data-context-only="1"` (rare outside the continuity-batch
-   path) do **not** mount a toolbox, carry a dashed border, and are muted
-   to 65% opacity — the same visual treatment as the batch anchor cells
-   from §6c.
-6. Grid-cell species-colour wiring rides on the same
-   `data-species-colour` + inline `--cell-species-colour` style pattern
-   as the continuity-batch cells (see §6d). The species colour token drives the cell border, the
-   cell-species name tint, and an inset left accent on the media frame.
-   The `tile_toolbox` `current_bbox_json` payload carries a
-   `speciesColour` field so a future canvas-draw fix can colour the bbox
-   stroke without touching the template.
-
-**Mini-map placement:** the trail section lives
-as the **first element of the right control rail**, via the
-`--aside` modifier. Always visible. Never behind an accordion, a
-modal, or a hover trigger. The retired `--compact` under-grid
-variant is retired. The map carries an `aspect-ratio: 16/9` so it
-keeps a sensible shape inside the narrow aside without dominating
-the rail's vertical budget.
-
-**Species change-receipt strip (shared component):** the receipt is rendered by the shared partial
-`templates/partials/review_species_receipt.html` and mounted on both
-review surfaces (orphan modal Species section, event panel Species
-section). The contract:
-
-1. The server always renders an empty slot wrapper
-   (`[data-review-species-receipt]`). The slot is hidden via CSS
-   when empty (`.review-species-receipt-slot:not(.is-active)`).
-2. JS rebuilds the slot contents on every quick-pick species click
-   inside `applyReviewSpeciesUi(controls, species, options)`. The
-   write happens in the same DOM mutation as the `is-selected` toggle,
-   so prev/new + Undo land atomically with the quick-pick state.
-3. JS uses `createElement` + `textContent` exclusively — never
-   `innerHTML`. XSS-safe by construction. Pinned by the
-   `test_review_workspace_js_handles_species_change_receipt` template
-   test.
-4. The "previous" side is anchored to `data-original-species` /
-   `data-original-species-common` on the controls root. These attributes
-   are set once at initial render and **never** mutated by JS.
-5. The Undo button (`data-review-panel-action="undo_species_change"`)
-   resolves the controls root via
-   `closest('[data-review-controls], [data-review-event-controls]')`
-   and reverts to the original via `applyReviewSpeciesUi(controls,
-   originalKey, ...)` — the same code path as a regular species click.
-6. `stepReviewItem` calls `clearReviewSpeciesReceipts()` synchronously
-   **before** loading the next panel so a receipt from the previous
-   item never leaks into the next one.
-7. The event-panel surface uses the same receipt strip for its new
-   event-local species change path. Without multi-select, quick picks +
-   the picker button update the pill + receipt immediately, but the
-   choice stays local until `Approve Event` commits it.
-8. When event-grid multi-select is active and at least one frame is
-   checked, clicking a quick-pick species in the right rail no longer
-   changes the event pill. Instead it relabels the selected frames
-   immediately via `/api/moderation/bulk/relabel`, keeps the operator in
-   multi-select mode, clears the selection, and updates the selected
-   grid-cell species labels in place so the change is visible "oben bei
-   den Bildern" before any panel reload.
-
-**Data attributes (delegated handlers):**
-
-| Attribute | Role |
-|---|---|
-| `data-review-event` | Side-rail event card |
-| `data-event-key` | Stable event identifier (DOM + API) |
-| `data-review-event-controls` | Event control rail root |
-| `data-review-event-bbox-toggle` | Event-scope bbox correct/wrong toggle |
-| `data-review-event-bbox-copy` | Copy element inside the bbox toggle |
-| `data-review-panel-action="approve_event"` | Single-button event approve action |
-| `data-review-panel-action="trash_event"` | Reject every detection in the event |
-| `data-review-panel-action="select_event_species"` | Event-local quick-pick species selection, or selected-frame relabel shortcut while multi-select is active |
-| `data-review-panel-action="open_event_species_picker"` | Event-local full species picker trigger |
-| `data-review-open-item` | Drill-down into the per-detection queue panel |
-| `data-cover-detection="true"` | Reserved hook on the first grid cell (no visual effect today) |
-| `data-context-only="1"` | Read-only Gallery anchor cell (no toolbox, dashed border, muted) |
-
-**Section labels in the decision rail:** `Species`, `BBox`, `Decision`, `Utilities`
-
-**Species hint copy:** `Event-wide species choice stays local until you approve the event. With selected frames, a quick-pick relabels them immediately.`
-
-**Action verbs:** `Approve Event` (primary), `Move Event to Trash`,
-`Choose another species`, `Review in Queue` / `Open in Queue`
-(drill-down). The canonical event-wide destructive verb is
-`Move Event to Trash`, which rejects detections only; image visibility
-is then recomputed from the remaining active detections. If an image has
-no active detections left, it becomes `no_bird` and surfaces in Trash.
-
-**Legacy note:** the former cover + filmstrip layout
-(`__filmstrip-shell`, `__filmstrip-head`, `__member`,
-`__member-media`, `__member-image`, …) is retired. If you find
-references to those classes, do not revive them; migrate them to the
-`__grid` / `__cell` vocabulary.
-
----
-
 ## 6bb. Review Grid card (review-grid-card-*)
 
-Each event card in the default Review Desk view (§6) carries one
-`BirdEvent` and is rendered by
-`templates/components/review_grid_card.html`.
+`templates/components/review_grid_card.html` renders one event card. The header
+shows the species proposal, date, time window and frame count. Controls are
+Invert, Confirm species, Change species, Bird · species unknown and No bird.
+Selecting objects scopes an answer to that selection; without a selection it
+answers every open object in the card. No bird here is an object answer.
+The full-image no-bird action remains in the shared viewer with its safety gate.
 
-**Layout per card:**
-- Header row: date · time window · frame count · species pill ·
-  `[✓ Approve]` · `[🗑 Trash]` · tile-size stepper `[− N +]`.
-- Tile grid: CSS Grid with `grid-template-columns: repeat(var(--card-tile-cols), 1fr)`.
-  The stepper writes `--card-tile-cols` directly on the card root
-  (`<article>`); session default is persisted to
-  `localStorage.wmb_review_tile_size` and applied to every card on
-  page load.
-- Modal-detection markup: one Bootstrap modal per actionable
-  member is emitted directly after the card so tile-click opens the
-  shared `detection_modal.html` (UI_STANDARD §0 point 4).
-  Companion-bbox visibility (§0c) flows through `siblings=` on the
-  per-tile `render_image_viewer` call.
+Cards keep the shared viewer, toolbox, species colour and selection state.
+`assets/js/review_grid.js` owns selection and per-mode tile sizing; the page emits
+one shared detection modal per object. There are no evidence controls, continuity
+batch actions or panel layouts.
 
-**Class vocabulary:**
+## 6d. Species colour coding
 
-| Class | Role |
-|---|---|
-| `review-grid` | Outer section wrapper for the whole desk |
-| `review-grid__filter-card` | Top filter card |
-| `review-grid__stack` | Vertical event-card stack container |
-| `review-grid__card` | Single event card root (`<article>`). Carries `--cell-species-colour` inline so the rail (`::before`), the header tint, and the tile borders all share one token. |
-| `review-grid__card--has-species` | Set when the event has a known species token — gives the rail an extra inner shadow for visual weight. |
-| `review-grid__card--batch` | Card belongs to a continuity batch (left-edge accent) |
-| `review-grid__card-header` | Card header row — left zone holds `review-grid__card-identity`, right zone holds `review-grid__card-actions`. Background carries a soft `color-mix` gradient of the species colour over an opaque `--color-surface` base. **Sticky** under the fixed app-bar (`position: sticky; top: 112px`) so the operator can always act on the currently-scrolled event; replaced by the next card's header when it scrolls into view (iOS section-header pattern). |
-| `review-grid__card-identity` | Flex-column wrapper for the dominant species-name row + the muted meta row. |
-| `review-grid__card-species-row` | Row inside `review-grid__card-identity` carrying the species name + warn-badge. |
-| `review-grid__card-meta` | Sub-line under the species name: date · time · count · `0 selected`. |
-| `review-grid__card-species` | Species name — 1.15rem bold, 3px coloured underline from `--cell-species-colour` (§6d). The visually dominant header element. |
-| `review-grid__card-badge--warn` | Multi-bird / event-ineligible warning chip |
-| `review-grid__card-actions` | Button group (Approve / Trash / stepper) |
-| `review-grid__card-stepper` | Tile-size stepper `[− N +]` |
-| `review-grid__stepper-btn` | One of the two stepper buttons |
-| `review-grid__stepper-value` | Current tile-size value display |
-| `review-grid__card-tiles` | Inner CSS grid that holds the tiles |
-| `review-grid__tile` | Single member tile — a `wm-tile--bbox` + `wm-toolbox-host`. Carries a 2px species-coloured border inherited from the card root, preserving species identity at the frame even when the header scrolls out of view. |
-| `review-grid__tile--context` | Read-only context-anchor tile (dashed border, muted; overrides the species border) |
-| `review-grid__tile-select` | Checkbox holder for multi-select |
-| `review-grid__tile-checkbox` | The selection checkbox itself (shares `.wm-tile__checkbox`) |
-| `review-grid__tile-media` | Image frame inside the tile |
-| `review-grid__tile-button` | Click-target wrapper around the image (opens detail modal) |
-| `review-grid__tile-time` | Timestamp badge overlaid on the media frame |
-| `review-grid__tile-badge` | Generic top-right badge holder |
-| `review-grid__tile-badge--anchor` | `In Gallery` badge for context-anchor cells |
-| `review-grid__batch-strip` | Continuity-batch header strip (§6c, batch-lead card only) |
-| `review-grid__batch-footer` | Sticky page-bottom bulk-action footer |
-
-**Data attributes (delegated handlers):**
-
-| Attribute | Role |
-|---|---|
-| `data-review-grid-card` | Card root marker |
-| `data-event-key` | Stable event identifier (DOM + API) |
-| `data-actionable-detection-ids` | Comma-separated actionable detection ids (drives Approve) |
-| `data-species` | Currently-selected event species (drives Approve) |
-| `data-continuity-batch-key` | Continuity batch identifier (§6c) |
-| `data-batch-recommended-species` | Pre-computed batch recommendation |
-| `data-batch-review-detection-ids` | Comma-separated actionable ids across the whole batch |
-| `data-batch-is-lead` | `1` on the first card of a batch (the strip renders) |
-| `data-review-grid-action="approve_event"` | Card-level Approve |
-| `data-review-grid-action="trash_event"` | Card-level Trash |
-| `data-review-grid-action="apply_batch_species"` | Batch-strip CTA |
-| `data-review-grid-action="approve_batch"` | Batch-strip Approve |
-| `data-review-grid-stepper="up\|down"` | Tile-size stepper buttons |
-| `data-review-grid-tiles` | Inner grid container |
-| `data-review-grid-stack` | Stack container |
-
-**Action verbs:** Each card header
-carries four Smart-Mode buttons: `✓ Approve`, `🏷️ Relabel`,
-`✗ No birds in full image`, `🗑 Trash`. Plus continuity-batch lead cards carry
-`Apply <species> to all frames` and `Approve Batch` in the
-batch-strip below the header.
-
-The legacy bulk-action footer (`Trash Selected` / `Relabel Selected`
-/ `No birds in selected full images` / `Approve Selected`) is **retired** on
-the Review Desk surface. Cross-event bulk action is no longer
-reachable from `/admin/review`; the per-card workflow is the only
-path.
-
-**Smart-Mode (binding):** every card-header action button flips its
-scope based on the current selection inside the card. If any
-`.review-grid__tile-checkbox` in the card is checked, the action
-targets only those frames. If nothing is checked, the action falls
-back to every actionable frame in the event (the legacy event-wide
-behaviour). The button label updates live to reflect the active
-scope: `✓ Approve` becomes `✓ Approve (3)` when 3 frames are
-selected. Tooltips swap to the selection-scoped form too. This
-behaviour is wired through `data-scope-label-event` /
-`data-scope-label-selection` / `data-scope-tip-event` /
-`data-scope-tip-selection` attribute pairs on every action button,
-read by `refreshCardActionLabels` in `assets/js/review_grid.js`.
-
-Tooltips on every button per §0a — Approve disabled states explain
-*why* (`Pick a species before approving`).
-
-**Trash vs. No birds in full image (binding):** `🗑 Trash` routes to
-`/api/review/event-trash` for event-wide and
-`/api/moderation/bulk/reject` for selection-scoped — both *reject
-the detections* (housekeeping). `✗ No birds in full image` (header and per-tile
-toolbox) routes to `/api/review/decision` with
-`action=no_bird` (records an explicit whole-image no-bird answer
-**without** rejecting the detection). These verbs stay verbally,
-behaviourally **and visually** distinct:
-
-- `🗑 Trash` is filled-red (`.btn--danger`), housekeeping language.
-- `✗ No birds in full image` is outline-yellow (`.btn--outline-warning`), training
-  language. Tooltip explicitly says *"Record that this full image contains
-  no bird (training signal; not Trash)"*.
-
-The visual distinction is binding: future surfaces that expose both
-verbs must use the same outline-vs-filled, warning-vs-danger split.
-
-## 6c. Continuity Batch Stage
-
-> **Layout change:** in the default Review Desk view (§6, §6bb),
-> continuity batches no longer render as a separate
-> prepended stage. They render as a **batch-strip header** on the
-> *first* event card of the batch (`is_batch_lead=true` in
-> `render_review_grid_card`). The strip carries the
-> `Apply <species> to all frames` CTA and the `Approve Batch` button.
-> Sibling cards in the same batch still carry the `data-continuity-
-> batch-key` + `data-batch-review-detection-ids` attributes so the JS
-> can reach every member of the batch from any card.
->
-> Hard rules 1–7 below are **unchanged** — they describe the
-> persistence/refusal contract that lives on the server and in the JS
-> post path. Only the *visual shell* moved from "prepended stage" to
-> "card strip".
->
-> The legacy `review-batch-panel__*` class family stays in the tree
-> as the consumer of the fragment endpoint; the default Review Desk
-> uses `review-grid__batch-strip` (§6bb) instead.
-
-When the continuity-batch helper attaches a continuity batch
-to a Review event, the event panel **prepends** a batch-scoped stage
-above the single-event sections. In the current event-grid layout,
-the "focused split event" detail under the batch panel
-is the same `review-event-panel__grid` that the normal event-mode path
-uses (§6b), visually de-emphasised via
-`.review-stage-panel__content--batch` (opacity dim + a `::before`
-"Focused split event" label). The retired `__filmstrip-shell` variant
-is no longer rendered in either mode.
-
-**Hard rules:**
-- The continuity batch stage only renders when `event.continuity_batch`
-  is set on the payload. The backend wires this in
-  `_load_event_with_continuity_batch` (`web/blueprints/review.py`)
-  whenever the event participates in a batch from
-  `build_review_continuity_batches`.
-- `Already in Gallery` (read-only context anchors) and `Review now`
-  (every actionable frame across sibling events) render as two
-  distinct grids inside `.review-batch-panel`.
-- Context anchors carry `data-context-only="1"`, never get a
-  `tile_toolbox`, never accept clicks (`pointer-events: none`), and
-  never appear in any `Approve Batch` payload.
-- A combined continuity mini-map (`.review-batch-panel__minimap`) is
-  always visible, driven by `batch_bbox_map`. Markers use the
-  `--context` and `--review` modifier classes plus an `is-active-event`
-  ring on whichever frames belong to the rail-selected split event.
-- The `Apply <species> to all N review frames` CTA is hard-gated on
-  `continuity_batch.recommended_species` being truthy. When mixed
-  anchors disagree the panel shows a neutral hint, **never** an
-  aggressive default CTA.
-- `Approve Batch` is rendered disabled and only enables once every
-  actionable cell has converged on the same species (handled by
-  `updateBatchApproveGate` in `assets/js/review_workspace.js`).
-- The batch approval submits to `/api/review/event-approve` **without**
-  an `event_key` so the backend skips the strict
-  `event_key`/`detection_ids` parity check. The server-side guard
-  refuses any submitted detection whose image is already
-  `review_status='confirmed_bird'` (i.e. a Gallery anchor); the JS-side
-  guard mirrors this by filtering against
-  `data-batch-context-detection-ids` before posting.
-
-**Class vocabulary:**
-
-| Class | Role |
-|---|---|
-| `review-stage-panel__content--batch` | Outer wrapper modifier; de-emphasises the single-event sections below |
-| `review-batch-panel` | Continuity batch stage root |
-| `review-batch-panel__head` | Title block + anchor chips |
-| `review-batch-panel__title` | "Anchored by …" / "Mixed Gallery anchors" |
-| `review-batch-panel__anchor-chips` | Confirmed-anchor species chips |
-| `review-batch-panel__minimap` | Always-visible combined continuity mini-map |
-| `review-batch-panel__minimap-box--context` | Context-anchor bbox marker (dashed) |
-| `review-batch-panel__minimap-box--review` | Actionable review-frame bbox marker |
-| `.is-active-event` | Marker ring for the rail-selected split event |
-| `review-batch-panel__decision` | Decision strip wrapper |
-| `review-batch-panel__cta` | Apply-to-all primary CTA |
-| `review-batch-panel__approve` | Approve Batch button (disabled until convergence) |
-| `review-batch-panel__receipt` | Apply receipt slot with Undo |
-| `review-batch-panel__section--anchors` | Already in Gallery section |
-| `review-batch-panel__section--review` | Review now section |
-| `review-batch-cell--context` | Read-only context anchor cell |
-| `review-batch-cell--review` | Actionable review-frame cell |
-| `is-active-event-member` | Cell modifier highlighting the rail-selected event |
-
-**Data attributes (delegated handlers):**
-
-| Attribute | Role |
-|---|---|
-| `data-review-batch-panel` | Stage root marker |
-| `data-batch-key` | Continuity batch identifier |
-| `data-batch-recommended-species` | Pre-computed batch recommendation |
-| `data-batch-review-detection-ids` | Comma-separated actionable detection ids |
-| `data-batch-context-detection-ids` | Comma-separated read-only anchor detection ids — used as the JS-side refusal guard |
-| `data-active-event-key` | The currently rail-selected split event |
-| `data-context-only` | `1` for anchors, `0` for actionable frames |
-| `data-batch-event-key` | Source event_key for sibling-event highlighting |
-| `data-review-batch-receipt` | Receipt slot for the apply-to-all summary |
-| `data-review-panel-action="apply_batch_species"` | Apply CTA |
-| `data-review-panel-action="undo_batch_species_change"` | Undo CTA inside the receipt |
-| `data-review-panel-action="approve_batch"` | Approve Batch action |
-
----
-
-## 6d. Species Colour Coding + Reference Images
-
-Every Review surface that displays a detection or species name carries
-a deterministic colour token and an inline species reference image.
-This is the fastest possible visual sanity check the operator gets:
-"everything blue is Kohlmeise, everything orange is Blaumeise" without
-reading a label.
-
-**Wong (2011) palette tokens** live in `:root` of `design-system.css`:
-
-| Token | Hex | Notes |
-|---|---|---|
-| `--species-colour-0` | `#0072B2` | blue |
-| `--species-colour-1` | `#E69F00` | orange |
-| `--species-colour-2` | `#009E73` | green |
-| `--species-colour-3` | `#CC79A7` | pink |
-| `--species-colour-4` | `#56B4E9` | sky |
-| `--species-colour-5` | `#D55E00` | vermilion |
-| `--species-colour-6` | `#F0E442` | yellow — non-text only, insufficient contrast on white |
-| `--species-colour-7` | `#000000` | black — fallback |
-
-The JS canvas-bbox draw code in `assets/js/gallery_utils.js` mirrors
-the same palette as `SPECIES_COLOURS` because a detached canvas can't
-read the CSS custom property from a DOM ancestor. Both must stay in
-sync — if a slot is added, update both files in the same commit.
-
-**Server-side contract:**
-- `assign_species_colours(scientific_names)` returns
-  `dict[str, int]` mapping each name to a slot in `[0..7]`. Sort is
-  alphabetical, slot wraps at 8, blanks ignored. Deterministic across
-  identical inputs.
-- The colour map is computed **once per workspace load** from the full
-  `raw_events` set (including pure-context anchors) so the same
-  scientific name keeps the same slot across the rail, the filmstrip,
-  the orphan modal, and the continuity batch stage.
-- The fragment endpoint (`/api/review/event-panel/<event_key>`) builds
-  its own workspace-scoped map from the same raw events and stamps
-  even when no batch is present. The "no-batch early return without
-  stamping" regression is locked
-  down by `tests/test_species_colour.py::test_stamp_species_display_on_event_without_members_or_batch`.
-- `species_ref_image_url` is resolved from a process-scoped cache of
-  `assets/review_species/`. `.webp` wins over `.png`. Filenames must
-  match the scientific name (`Parus_major.webp` etc.) — the same
-  shape used by `species_key` in the database.
-
-**Template wiring:**
-- Every coloured surface carries `data-species-colour="N"` plus an
-  inline `style="--cell-species-colour: var(--species-colour-N)"` so
-  one CSS variable drives bbox border, accent bar, badge tint, and
-  the reference image overlay border.
-- The reference image renders as `<img class="review-species-ref">`
-  inside the same `.wm-toolbox-host` frame, anchored **top-right** with
-  `pointer-events: none` so it never blocks toolbox hover. Top-right
-  keeps it clear of the tile toolbox strip that anchors to the bottom
-  edge of each frame. The image must keep an explicit square box
-  (`width == height`, `aspect-ratio: 1 / 1`) so global
-  `img { max-width: 100%; height: auto; }` rules do not stretch it
-  into an oval.
-- Fallback when no reference image exists for a species:
-  `<span class="review-species-ref review-species-ref--initial">` with
-  the first letter of the common name. **Never** a broken-image icon.
-
-**Responsive bbox label:** `truncateBboxLabel(text, maxPx, ctx)`
-in `gallery_utils.js` shrinks labels by **dropping a level**, never
-by scaling the font. Order: full → first 4 chars + `.` → first letter
-→ empty. On mobile (`window.innerWidth < 640`) it starts at the
-abbreviated level even for wide boxes. The container border + species
-colour still carry species identity when the text is dropped entirely.
-
-**Surfaces currently wired:**
-- Event-mode detection grid cells (`.review-event-panel__cell`) —
-  replaces the retired cover image + filmstrip member bindings
-- Continuity batch cells, both `--context` and `--review`
-  (`.review-batch-cell`)
-- Orphan modal cover frame
-- Quick-pick species buttons (`.review-stage-panel__species-btn`)
-
-**Surfaces still needing wiring:**
-- Stream / Gallery / Trash surfaces
-
-**Dark-mode palette:** the
-Wong (2011) palette has a dark-variant scope inside an
-`@media (prefers-color-scheme: dark)` block at the top of
-`assets/design-system.css` that redefines every load-bearing
-`:root` token. The scope follows the OS preference via
-`prefers-color-scheme` without any JS toggle infrastructure.
-
-- **Wong dark variants.** Same hues as the light palette but lifted
-  toward the brighter Wong family so they stay readable on dark
-  backgrounds without breaking the colour-blind-friendly contrast
-  relationships between slots:
-  | Slot | Light | Dark | Note |
-  |---|---|---|---|
-  | 0 | `#0072B2` | `#4aa3d9` | blue — lifted |
-  | 1 | `#E69F00` | `#f3b340` | orange — lifted |
-  | 2 | `#009E73` | `#3fbe93` | green — lifted |
-  | 3 | `#CC79A7` | `#e09bc2` | pink — lifted |
-  | 4 | `#56B4E9` | `#7bc4ee` | sky — lifted |
-  | 5 | `#D55E00` | `#e8793a` | vermilion — lifted |
-  | 6 | `#F0E442` | `#f5ea63` | yellow — **text-safe on dark**, the light-scope "non-text only" constraint no longer applies |
-  | 7 | `#000000` | `#ececec` | fallback — flipped from black to near-white so the fallback is actually visible on dark surfaces |
-
-- **Primary highlights ride on `--color-primary*`, so they pick up
-  the dark scope automatically.** The active-event accent fill, the
-  left accent bar, the stage-connecting cue, the grid border accent,
-  and the species change-receipt `border-left` are all
-  `var(--color-primary, ...)` today. The dark scope redefines
-  `--color-primary` from `#53676b` to `#92a7ab` and the entire
-  highlight chain tracks the change without a single surface-rule
-  edit.
-
-- **Review-surface overrides block.** A secondary
-  `@media (prefers-color-scheme: dark)` block near
-  `.review-event-panel__species-meta` in `design-system.css`
-  explicitly overrides the handful of Review-scope rules that paint
-  **hardcoded** rgba() light backgrounds (the rail aside linear
-  gradient, the rail card background, the active rail card gradient,
-  the trail-section aside background, the detection-grid gradient,
-  the grid-cell background, the species pill, the species change-
-  receipt background, the eligibility badges, the species quick-pick
-  media fallback, and the continuity-batch panel fallback).
-  Token-only overrides cannot reach those surfaces, so they are
-  written out explicitly. Stream / Gallery / Trash rules are **not**
-  touched here — wire them separately when those surfaces adopt the
-  same contract.
-
-- **JS `SPECIES_COLOURS` mirror.** The canvas-side palette in
-  `gallery_utils.js` now reads `--species-colour-0..7` live from
-  `:root` via `getComputedStyle(document.documentElement)`, so the
-  bbox stroke automatically tracks the dark scope. CSS stays the
-  single source of truth. A `window.matchMedia('(prefers-color-scheme: dark)')`
-  listener invalidates the cache on OS theme change so the next draw
-  picks up the new tokens. A `SPECIES_COLOURS_FALLBACK` array
-  remains as a SSR / detached-node safety net with the light
-  variants. `const SPECIES_COLOURS` stays as a `Proxy` that always
-  returns the currently resolved palette, so legacy index access
-  (`SPECIES_COLOURS[slot]`) keeps working without any call-site
-  edits.
-
-- **Slot 6 (yellow) text-contrast:** the light-scope constraint
-  "non-text only" can be relaxed inside the dark scope because
-  `#f5ea63` on a dark surface has comfortable contrast. If any
-  future surface paints a text label inside a slot-6-coloured
-  element, remember to gate it on the OS preference — the light
-  fallback is still not text-safe.
-
----
+`core.species_colours.assign_species_colours` maps sorted scientific names to
+eight Wong palette slots. Page builders assign the colour map across the visible
+objects. Cards carry `data-species-colour` and `--cell-species-colour`; canvas
+boxes carry `speciesColour`. The CSS palette owns Light/Dark variants, and
+`gallery_utils.js` reads it for canvas strokes. Responsive bbox labels retain
+species colour when abbreviated. The removed diagnostic species-reference
+image overlays have no current consumer.
 
 ## 6e. Subgallery Concurrent Visits
 
@@ -1949,16 +1223,12 @@ and species answers continue through their normal controls.
 
 1. Every modal structure uses a defined type: `wm-modal` or `wm-modal wm-modal--form`.
 2. Standard image tiles use `wm-tile`, `wm-tile wm-tile--review` (legacy), or `wm-tile wm-tile--bbox`. Documented surface compositions such as Review Grid (§6/§6bb) use their own shared components; the legacy tile list is not exhaustive.
-3. Diagnostic Review uses the `review-grid` event-card composition
-   (§6 and §6bb). The retired `review-stage-panel` composition remains only for
-   fragment endpoints, orphan-modal hosting, and explicit legacy-layout
-   verification; new diagnostic Review work must not extend it.
+3. Review uses the `review-grid` event-card composition (§6 and §6bb).
 4. Every detection-bearing browsing surface uses `tile_toolbox` (§5) for action overlays.
 5. No template may build its own modal, tile, or toolbox structures.
 6. Reuse the component families and surface-specific compositions documented here. This is not a global ban on every class without a `wm-` prefix.
 7. Shared component styling belongs in the design system; preserve the documented structure and design tokens across surfaces.
-8. Continuity batch approvals (§6c) **must** post to `/api/review/event-approve` without an `event_key` and **must** filter `data-batch-context-detection-ids` out of the payload before posting. The server-side guard (refusal on `images.review_status='confirmed_bird'`) is the second line of defence, not the first.
-9. Species colour slots (§6d) are workspace-scoped, deterministic, and assigned across the union of (actionable events ∪ context anchors ∪ orphans). Per-event recomputation is forbidden — the same scientific name must keep one slot across the rail, the event-mode detection grid, the orphan modal, the batch stage, and the canvas bbox stroke.
+8. Species colour slots (§6d) are deterministic across the visible page.
 10. New surfaces that ship a bbox overlay must read the species slot from the host element's `data-species-colour` (or `box.speciesColour` on the canvas side), not from the legacy `BBOX_COLORS` rotation.
 11. Storage usage (`/storage`) is an authenticated, non-image diagnostic page linked
     from the Settings retention panel. One explicit Measure storage action starts

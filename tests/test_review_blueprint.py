@@ -1,17 +1,14 @@
 """Tests for review blueprint decision actions."""
 
 from pathlib import Path
-from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
 from flask import Flask
 from flask.testing import FlaskClient
 
-from core.events import BirdEvent, build_bird_events
 from web.blueprints.review import (
     _build_review_event_member,
-    build_review_continuity_batches,
 )
 
 
@@ -54,14 +51,9 @@ def client(app):
             "web.blueprints.review.human_label_service.record_answer",
             return_value=[1],
         ) as label_recorder,
-        patch(
-            "web.blueprints.review.human_label_service.record_event_review",
-            return_value=1,
-        ) as event_review_recorder,
         app.test_client() as client,
     ):
         app.extensions["human_label_recorder"] = label_recorder
-        app.extensions["event_review_recorder"] = event_review_recorder
         with client.session_transaction() as sess:
             sess["authenticated"] = True
         yield client
@@ -69,137 +61,6 @@ def client(app):
 
 def _label_recorder(client):
     return client.application.extensions["human_label_recorder"]
-
-
-def _event_review_recorder(client):
-    return client.application.extensions["event_review_recorder"]
-
-
-@pytest.mark.parametrize(
-    "query",
-    [
-        "day=2026-02-30",
-        "day=2026-2-01",
-        "day=2026-10-12%27",
-        "day=unknown",
-        "sort=unknown",
-        "sort=priority%27",
-    ],
-)
-def test_review_navigation_rejects_invalid_parameters_before_database(
-    client: FlaskClient, query: str
-) -> None:
-    with patch("web.blueprints.review.db_service.closing_connection") as connection:
-        assert client.get(f"/admin/review?diagnostic=1&{query}").status_code == 400
-        connection.assert_not_called()
-
-
-@pytest.mark.parametrize(
-    "query, expected_ids",
-    [
-        ("", [2, 3]),
-        ("?day=all", [1, 2, 3]),
-        ("?day=2026-10-12&sort=priority", [3, 2]),
-        ("?day=2026-10-11&layout=legacy&sort=priority", []),
-    ],
-)
-def test_review_navigation_shares_queries_and_builds_only_selected_details(
-    client: FlaskClient,
-    query: str,
-    expected_ids: list[int],
-) -> None:
-    rows = [
-        {
-            "item_kind": "detection",
-            "item_id": str(detection_id),
-            "active_detection_id": detection_id,
-            "best_detection_id": detection_id,
-            "filename": f"frame-{detection_id}.jpg",
-            "timestamp": timestamp,
-            "species_key": "Parus_major",
-            "cls_class_name": "Parus_major",
-            "bbox_x": 0.2,
-            "bbox_y": 0.2,
-            "bbox_w": 0.2,
-            "bbox_h": 0.2,
-        }
-        for detection_id, timestamp in [
-            (1, "20261010_080000"),
-            (2, "20261012_090000"),
-            (3, "20261012_110000"),
-        ]
-    ]
-
-    def event_payload(event: BirdEvent, **kwargs: Any) -> dict[str, Any]:
-        return {
-            "event_key": event.event_key,
-            "start_time": event.start_time,
-            "detection_ids": event.detection_ids,
-        }
-
-    def priorities(conn: MagicMock, events: list[BirdEvent]) -> list[dict[str, Any]]:
-        return [
-            {"event_key": event.event_key, "priority_score": event.cover_detection_id}
-            for event in events
-        ]
-
-    with (
-        patch("web.blueprints.review.db_service") as db,
-        patch("web.blueprints.review.load_common_names", return_value={}),
-        patch(
-            "web.blueprints.review._load_recent_review_species", return_value=[]
-        ) as recent,
-        patch(
-            "web.blueprints.review.fetch_current_station_event_reviews", return_value={}
-        ),
-        patch("web.blueprints.review._load_review_items", return_value=([], [])),
-        patch(
-            "web.blueprints.review._collect_review_siblings_cache", return_value={}
-        ) as siblings,
-        patch(
-            "web.blueprints.review._build_review_event", side_effect=event_payload
-        ) as build,
-        patch(
-            "web.blueprints.review.build_candidate_review_priorities",
-            side_effect=priorities,
-        ) as rank,
-        patch("web.blueprints.review.render_template", return_value="ok") as render,
-    ):
-        db.fetch_review_queue_images.return_value = rows
-        db.fetch_review_cluster_context.return_value = ([], False)
-        response = client.get(
-            "/admin/review?diagnostic=1" + ("&" + query.lstrip("?") if query else "")
-        )
-
-    assert response.status_code == 200
-    db.fetch_review_queue_images.assert_called_once()
-    recent.assert_called_once()
-    db.fetch_review_cluster_context.assert_called_once()
-    context = render.call_args.kwargs
-    assert [
-        event["detection_ids"][0] for event in context["review_events"]
-    ] == expected_ids
-    assert build.call_count == len(expected_ids)
-    nav = context["review_navigation"]
-    assert all(
-        "diagnostic=1" in nav[key]
-        for key in ("older_url", "newer_url")
-        if nav[key]
-    )
-    assert nav["total_events"] == 3
-    assert nav["days"] == (("2026-10-12", 2), ("2026-10-10", 1))
-    if "priority" in query:
-        rank.assert_called_once()
-        assert len(rank.call_args.args[1]) == 3
-    else:
-        rank.assert_not_called()
-    if "legacy" in query:
-        siblings.assert_not_called()
-        assert "layout=legacy" in nav["older_url"]
-        assert "sort=priority" in nav["newer_url"]
-        assert nav["selected_day"] == "2026-10-11"
-    siblings.assert_not_called()
-    assert all(not call.kwargs["include_modal"] for call in build.call_args_list)
 
 
 def test_review_decision_accepts_trash_alias(client):
@@ -326,7 +187,9 @@ def test_review_approve_confirms_after_manual_species_and_bbox(client):
         patch("core.review_state.update_review_status") as mock_visibility,
         patch("web.blueprints.review.db_service") as mock_db,
         patch("web.blueprints.review._get_allowed_review_species") as mock_allowed,
-        patch("web.blueprints.review.gallery_service.invalidate_cache") as mock_invalidate,
+        patch(
+            "web.blueprints.review.gallery_service.invalidate_cache"
+        ) as mock_invalidate,
     ):
         mock_allowed.return_value = {"Parus_major"}
         mock_db.closing_connection.return_value.__enter__ = MagicMock(
@@ -420,18 +283,25 @@ def test_quick_species_entries_include_server_resolved_thumb_urls():
     ]
 
     with patch("web.blueprints.review.resolve_species_thumbnail_url") as mock_thumb:
-        mock_thumb.return_value = "/uploads/derivatives/optimized/2026-04-02/nuthatch.webp"
+        mock_thumb.return_value = (
+            "/uploads/derivatives/optimized/2026-04-02/nuthatch.webp"
+        )
         quick_species = _build_review_quick_species(
             "Sitta_europaea",
             picker_entries,
             [],
             {"Sitta_europaea": "Kleiber"},
-            species_thumbnail_map={"Sitta_europaea": "/uploads/derivatives/optimized/2026-04-02/nuthatch.webp"},
+            species_thumbnail_map={
+                "Sitta_europaea": "/uploads/derivatives/optimized/2026-04-02/nuthatch.webp"
+            },
             thumbnail_cache_key="review:DE",
         )
 
     assert quick_species[0]["scientific"] == "Sitta_europaea"
-    assert quick_species[0]["thumb_url"] == "/uploads/derivatives/optimized/2026-04-02/nuthatch.webp"
+    assert (
+        quick_species[0]["thumb_url"]
+        == "/uploads/derivatives/optimized/2026-04-02/nuthatch.webp"
+    )
 
 
 def test_quick_species_filters_non_bird_from_every_source():
@@ -448,10 +318,18 @@ def test_quick_species_filters_non_bird_from_every_source():
     from web.blueprints.review import _build_review_quick_species
 
     picker_entries = [
-        {"scientific": "Parus_major", "common": "Kohlmeise",
-         "source": "prediction", "score": 0.82},
-        {"scientific": "non_bird", "common": "non bird",
-         "source": "prediction", "score": 0.08},
+        {
+            "scientific": "Parus_major",
+            "common": "Kohlmeise",
+            "source": "prediction",
+            "score": 0.82,
+        },
+        {
+            "scientific": "non_bird",
+            "common": "non bird",
+            "source": "prediction",
+            "score": 0.08,
+        },
     ]
     recent_species = [
         {"scientific": "non_bird", "common": "non bird"},
@@ -461,16 +339,18 @@ def test_quick_species_filters_non_bird_from_every_source():
     def fake_is_known(key, locale="DE"):
         return key in {"Parus_major", "Cyanistes_caeruleus"}
 
-    with patch("web.blueprints.review.resolve_species_thumbnail_url",
-               return_value=""), \
-         patch("web.blueprints.review.is_known_species",
-               side_effect=fake_is_known):
+    with (
+        patch("web.blueprints.review.resolve_species_thumbnail_url", return_value=""),
+        patch("web.blueprints.review.is_known_species", side_effect=fake_is_known),
+    ):
         quick_species = _build_review_quick_species(
             current_species="non_bird",
             picker_entries=picker_entries,
             recent_species=recent_species,
-            common_names={"Parus_major": "Kohlmeise",
-                          "Cyanistes_caeruleus": "Blaumeise"},
+            common_names={
+                "Parus_major": "Kohlmeise",
+                "Cyanistes_caeruleus": "Blaumeise",
+            },
         )
 
     scientifics = [entry["scientific"] for entry in quick_species]
@@ -490,53 +370,32 @@ def test_load_recent_review_species_filters_non_bird():
     fake_rows = [
         {"species_key": "Parus_major", "hit_count": 12, "last_seen": "20260522_120000"},
         {"species_key": "non_bird", "hit_count": 1, "last_seen": "20260522_210000"},
-        {"species_key": "Cyanistes_caeruleus", "hit_count": 5, "last_seen": "20260522_110000"},
+        {
+            "species_key": "Cyanistes_caeruleus",
+            "hit_count": 5,
+            "last_seen": "20260522_110000",
+        },
     ]
 
     def fake_is_known(key, locale="DE"):
         return key in {"Parus_major", "Cyanistes_caeruleus"}
 
-    with patch("web.blueprints.review.db_service.fetch_recent_review_species",
-               return_value=fake_rows), \
-         patch("web.blueprints.review.is_known_species", side_effect=fake_is_known):
+    with (
+        patch(
+            "web.blueprints.review.db_service.fetch_recent_review_species",
+            return_value=fake_rows,
+        ),
+        patch("web.blueprints.review.is_known_species", side_effect=fake_is_known),
+    ):
         recent = _load_recent_review_species(
             conn=MagicMock(),
-            common_names={"Parus_major": "Kohlmeise",
-                          "Cyanistes_caeruleus": "Blaumeise"},
+            common_names={
+                "Parus_major": "Kohlmeise",
+                "Cyanistes_caeruleus": "Blaumeise",
+            },
         )
 
     assert [r["scientific"] for r in recent] == ["Parus_major", "Cyanistes_caeruleus"]
-
-
-def test_stamp_species_display_adds_ref_image_urls_to_event_quick_species():
-    from web.blueprints.review import _stamp_species_display_on_event
-
-    event = {
-        "candidate_species": "Parus_major",
-        "members": [],
-        "quick_species": [
-            {"scientific": "Parus_major"},
-            {"scientific": "Cyanistes_caeruleus"},
-        ],
-    }
-
-    with patch("web.blueprints.review.resolve_species_ref_image_url") as mock_ref:
-        mock_ref.side_effect = (
-            lambda species_key: f"/assets/review_species/{species_key}.png"
-        )
-        _stamp_species_display_on_event(
-            event,
-            {"Parus_major": 1, "Cyanistes_caeruleus": 2},
-        )
-
-    assert (
-        event["quick_species"][0]["species_ref_image_url"]
-        == "/assets/review_species/Parus_major.png"
-    )
-    assert (
-        event["quick_species"][1]["species_ref_image_url"]
-        == "/assets/review_species/Cyanistes_caeruleus.png"
-    )
 
 
 def test_review_event_approve_confirms_event_and_recomputes_gallery_visibility(client):
@@ -544,11 +403,15 @@ def test_review_event_approve_confirms_event_and_recomputes_gallery_visibility(c
 
     def execute_side_effect(query, params=None):
         if "SELECT d.detection_id, d.image_filename" in query:
-            return _sql_result(fetchall=[{
-                "detection_id": 17,
-                "image_filename": "review-item.jpg",
-                "review_status": "untagged",
-            }])
+            return _sql_result(
+                fetchall=[
+                    {
+                        "detection_id": 17,
+                        "image_filename": "review-item.jpg",
+                        "review_status": "untagged",
+                    }
+                ]
+            )
         if "COALESCE(d.decision_state" in query:
             return _sql_result(fetchone=[0])
         if "SELECT COUNT(*)" in query:
@@ -562,7 +425,9 @@ def test_review_event_approve_confirms_event_and_recomputes_gallery_visibility(c
         patch("web.blueprints.review.db_service") as mock_db,
         patch("web.blueprints.review._get_allowed_review_species") as mock_allowed,
         patch("web.blueprints.review._load_single_review_event") as mock_event,
-        patch("web.blueprints.review.gallery_service.invalidate_cache") as mock_invalidate,
+        patch(
+            "web.blueprints.review.gallery_service.invalidate_cache"
+        ) as mock_invalidate,
     ):
         mock_allowed.return_value = {"Parus_major"}
         mock_event.return_value = {
@@ -583,7 +448,6 @@ def test_review_event_approve_confirms_event_and_recomputes_gallery_visibility(c
                 "detection_ids": [17],
                 "species": "Parus_major",
                 "bbox_review": "correct",
-                "evidence_quality": "diagnostic",
             },
         )
 
@@ -623,7 +487,6 @@ def test_review_event_approve_returns_conflict_when_event_disappears(client):
                 "detection_ids": [17],
                 "species": "Parus_major",
                 "bbox_review": "correct",
-                "evidence_quality": "diagnostic",
             },
         )
 
@@ -633,256 +496,20 @@ def test_review_event_approve_returns_conflict_when_event_disappears(client):
     assert "no longer exists" in data["message"]
 
 
-def test_review_event_approve_requires_explicit_event_evidence(client):
-    response = client.post(
-        "/api/review/event-approve",
-        json={
-            "event_key": "bird-event-abc123",
-            "detection_ids": [17],
-            "species": "Parus_major",
-        },
-    )
-
-    assert response.status_code == 409
-    assert "evidence" in response.get_json()["message"].lower()
-    _label_recorder(client).assert_not_called()
-    _event_review_recorder(client).assert_not_called()
-
-
-def test_compute_queue_orphans_drops_detection_orphans_inside_events():
-    """Detection orphans already in an event are removed from the queue rail."""
-    from web.blueprints.review import _compute_queue_orphans
-
-    orphans = [
-        {"item_kind": "detection", "item_id": "17", "filename": "a.jpg"},
-        {"item_kind": "detection", "item_id": "18", "filename": "b.jpg"},
-        {"item_kind": "image", "item_id": "img-99", "filename": "c.jpg"},
-    ]
-    review_events = [
-        {"event_key": "bird-event-x", "detection_ids": [17]},
-    ]
-
-    queue_orphans = _compute_queue_orphans(orphans, review_events)
-
-    assert [item["item_id"] for item in queue_orphans] == ["18", "img-99"]
-
-
-def test_compute_queue_orphans_keeps_everything_when_no_events():
-    from web.blueprints.review import _compute_queue_orphans
-
-    orphans = [
-        {"item_kind": "detection", "item_id": "17", "filename": "a.jpg"},
-        {"item_kind": "image", "item_id": "img-99", "filename": "b.jpg"},
-    ]
-    queue_orphans = _compute_queue_orphans(orphans, [])
-    assert len(queue_orphans) == 2
-    assert queue_orphans[0]["item_id"] == "17"
-
-
-def test_compute_queue_orphans_handles_invalid_detection_ids():
-    from web.blueprints.review import _compute_queue_orphans
-
-    orphans = [
-        {"item_kind": "detection", "item_id": "abc", "filename": "a.jpg"},
-        {"item_kind": "detection", "item_id": None, "filename": "b.jpg"},
-    ]
-    review_events = [{"event_key": "bird-event-x", "detection_ids": [17]}]
-
-    queue_orphans = _compute_queue_orphans(orphans, review_events)
-    # Defensive leftovers (zero/invalid detection_id) stay in the queue
-    # rail so they remain reachable.
-    assert len(queue_orphans) == 2
-
-
-def test_review_page_renders_workspace_for_detection_orphan_only_state(client):
-    """Detection-orphan-only pages must render the workspace, not the empty state.
-
-    A detection orphan is a real Detection row that is low-score /
-    uncertain / unknown — the operator still needs to act on it
-    (confirm, relabel, trash). It is rendered in the Queue rail when
-    no events exist alongside it.
-    """
-    mock_conn = MagicMock()
-    detection_orphan_payload = {
-        "item_kind": "detection",
-        "item_id": "42",
-        "item_key": "detection:42",
-        "filename": "frame-with-detection.jpg",
-        "review_reason": "uncertain",
-        "reason_label": "Uncertain",
-        "thumb_url": "/thumb/frame-with-detection.jpg",
-        "current_species_common": "Kohlmeise",
-        "source_image_filename": "frame-with-detection.jpg",
-    }
-
-    with (
-        patch("web.blueprints.review.db_service") as mock_db,
-        patch("web.blueprints.review._load_review_items") as mock_load_items,
-        patch("web.blueprints.review._load_review_events") as mock_load_events,
-        patch("web.blueprints.review.load_common_names") as mock_common_names,
-    ):
-        mock_db.closing_connection.return_value.__enter__ = MagicMock(
-            return_value=mock_conn
-        )
-        mock_db.closing_connection.return_value.__exit__ = MagicMock(return_value=False)
-        mock_load_items.return_value = ([detection_orphan_payload], [])
-        mock_load_events.return_value = ([], [], False, set())
-        mock_common_names.return_value = {}
-
-        response = client.get("/admin/review?diagnostic=1")
-
-    assert response.status_code == 200
-    body = response.get_data(as_text=True)
-    # The detection-orphan-only page must render the workspace, not
-    # the empty state.
-    #
-    # /admin/review defaults to the Review Grid layout
-    # (templates/review_grid.html). The legacy Stage-Panel hooks
-    # (`#reviewWorkspace`, `#reviewQueueBrowser`, `data-panel-type`)
-    # live only in templates/orphans.html, reachable via ?layout=legacy.
-    # The grid renders `.review-grid__stack` regardless of whether there
-    # are events, and the former sticky bulk-action footer stays retired
-    # in favour of per-card Smart-Mode buttons.
-    assert "Review Queue Empty" not in body
-    assert 'class="review-grid' in body
-    assert 'data-review-grid-stack' in body
-    assert 'id="reviewGridBatchFooter"' not in body
-
-
-def test_review_page_strips_image_orphans_from_queue(client):
-    """Image-orphans (frames with no detection at all) must not appear
-    in the Hobby Review queue. They have no bbox, no detection, and
-    nothing for the operator to confirm or correct — the Review desk
-    has no actionable workflow for them.
-
-    They stay in the ``images`` table (the future dual-tier persistence
-    plan will surface them as Layer-1 telemetry), they just do not show
-    up in the Hobby Review UI.
-    """
-    mock_conn = MagicMock()
-    image_orphan_payload = {
-        "item_kind": "image",
-        "item_id": "orphan-img-1.jpg",
-        "item_key": "image:orphan-img-1.jpg",
-        "filename": "orphan-img-1.jpg",
-        "review_reason": "orphan",
-        "reason_label": "No Detection",
-        "thumb_url": "/thumb/orphan-img-1.jpg",
-        "current_species_common": "",
-        "source_image_filename": "orphan-img-1.jpg",
-    }
-
-    with (
-        patch("web.blueprints.review.db_service") as mock_db,
-        patch("web.blueprints.review._load_review_items") as mock_load_items,
-        patch("web.blueprints.review._load_review_events") as mock_load_events,
-        patch("web.blueprints.review.load_common_names") as mock_common_names,
-    ):
-        mock_db.closing_connection.return_value.__enter__ = MagicMock(
-            return_value=mock_conn
-        )
-        mock_db.closing_connection.return_value.__exit__ = MagicMock(return_value=False)
-        mock_load_items.return_value = ([image_orphan_payload], [])
-        mock_load_events.return_value = ([], [], False, set())
-        mock_common_names.return_value = {}
-
-        response = client.get("/admin/review?diagnostic=1")
-
-    assert response.status_code == 200
-    body = response.get_data(as_text=True)
-    # With only image-orphans loaded, the queue is effectively empty
-    # and the empty-state placeholder must render. The default surface
-    # uses "Inbox zero." (review_grid.html); the legacy
-    # "Review Queue Empty" wording lives in orphans.html behind
-    # ?layout=legacy.
-    assert "Inbox zero." in body
-    # The orphan filename must not leak into the rendered HTML at all.
-    assert "orphan-img-1.jpg" not in body
-
-
-def test_strip_image_orphans_keeps_detection_items():
-    """``_strip_image_orphans`` removes only ``item_kind == 'image'``
-    rows; detection-backed items (the actionable ones) pass through.
-    """
-    from web.blueprints.review import _strip_image_orphans
-
-    orphans = [
-        {"item_kind": "image", "item_id": "img-1.jpg"},
-        {"item_kind": "detection", "item_id": "17"},
-        {"item_kind": "image", "item_id": "img-2.jpg"},
-        {"item_kind": "detection", "item_id": "42"},
-    ]
-    filtered = _strip_image_orphans(orphans)
-
-    assert [item["item_id"] for item in filtered] == ["17", "42"]
-
-
-def test_review_page_hides_queue_rail_while_event_workspace_is_active(client):
-    """Events keep the left rail focused even when queue leftovers exist."""
-    mock_conn = MagicMock()
-    orphan_payload = {
-        "item_kind": "image",
-        "item_id": "img-2",
-        "item_key": "image:img-2",
-        "filename": "orphan-2.jpg",
-        "review_reason": "no_detection",
-        "reason_label": "No detection",
-        "thumb_url": "/thumb/orphan-2.jpg",
-        "current_species_common": "Unknown",
-        "source_image_filename": "orphan-2.jpg",
-    }
-    event_payload = {
-        "event_key": "bird-event-1",
-        "cover_detection_id": 17,
-        "eligibility": "event_eligible",
-        "eligibility_label": "Event ready",
-        "photo_count": 3,
-        "window_time": "07:00:00 - 07:12:00",
-        "window_date": "07.04.2026",
-        "candidate_species": "Parus major",
-        "candidate_species_common": "Kohlmeise",
-        "detection_ids": [17],
-        "members": [],
-        "bbox_trail": [],
-    }
-
-    with (
-        patch("web.blueprints.review.db_service") as mock_db,
-        patch("web.blueprints.review._load_review_items") as mock_load_items,
-        patch("web.blueprints.review._load_review_events") as mock_load_events,
-        patch("web.blueprints.review.load_common_names") as mock_common_names,
-    ):
-        mock_db.closing_connection.return_value.__enter__ = MagicMock(
-            return_value=mock_conn
-        )
-        mock_db.closing_connection.return_value.__exit__ = MagicMock(return_value=False)
-        mock_load_items.return_value = ([orphan_payload], [])
-        mock_load_events.return_value = ([event_payload], [], False, {"Parus major"})
-        mock_common_names.return_value = {}
-
-        response = client.get("/admin/review?diagnostic=1")
-
-    assert response.status_code == 200
-    body = response.get_data(as_text=True)
-    # Review Grid is the default surface. Legacy hooks
-    # (`#reviewWorkspace`, `#reviewEventBrowser`, `data-panel-type`)
-    # are reachable via ?layout=legacy. The grid renders one
-    # `.review-grid__card` per event.
-    assert 'class="review-grid' in body
-    assert 'data-review-grid-card' in body
-    assert 'data-event-key="bird-event-' in body or 'data-event-key=' in body
-
-
 def test_review_event_approve_keeps_images_hidden_when_open_detections_remain(client):
     mock_conn = MagicMock()
 
     def execute_side_effect(query, params=None):
         if "SELECT d.detection_id, d.image_filename" in query:
-            return _sql_result(fetchall=[{
-                "detection_id": 17,
-                "image_filename": "review-item.jpg",
-                "review_status": "untagged",
-            }])
+            return _sql_result(
+                fetchall=[
+                    {
+                        "detection_id": 17,
+                        "image_filename": "review-item.jpg",
+                        "review_status": "untagged",
+                    }
+                ]
+            )
         if "COALESCE(d.decision_state" in query:
             return _sql_result(fetchone=[2])
         if "SELECT COUNT(*)" in query:
@@ -916,7 +543,6 @@ def test_review_event_approve_keeps_images_hidden_when_open_detections_remain(cl
                 "detection_ids": [17],
                 "species": "Parus_major",
                 "bbox_review": "correct",
-                "evidence_quality": "diagnostic",
             },
         )
 
@@ -935,11 +561,15 @@ def test_review_event_approve_ignores_gallery_anchors_for_event_payload(client):
     def execute_side_effect(query, params=None):
         if "SELECT d.detection_id, d.image_filename" in query:
             assert params == [17]
-            return _sql_result(fetchall=[{
-                "detection_id": 17,
-                "image_filename": "review-item.jpg",
-                "review_status": "untagged",
-            }])
+            return _sql_result(
+                fetchall=[
+                    {
+                        "detection_id": 17,
+                        "image_filename": "review-item.jpg",
+                        "review_status": "untagged",
+                    }
+                ]
+            )
         if "COALESCE(d.decision_state" in query:
             return _sql_result(fetchone=[0])
         if "SELECT COUNT(*)" in query:
@@ -977,7 +607,6 @@ def test_review_event_approve_ignores_gallery_anchors_for_event_payload(client):
                 "detection_ids": [17, 42],
                 "species": "Parus_major",
                 "bbox_review": "correct",
-                "evidence_quality": "diagnostic",
             },
         )
 
@@ -1002,11 +631,15 @@ def test_review_event_approve_allows_user_selected_species_override(client):
 
     def execute_side_effect(query, params=None):
         if "SELECT d.detection_id, d.image_filename" in query:
-            return _sql_result(fetchall=[{
-                "detection_id": 17,
-                "image_filename": "review-item.jpg",
-                "review_status": "untagged",
-            }])
+            return _sql_result(
+                fetchall=[
+                    {
+                        "detection_id": 17,
+                        "image_filename": "review-item.jpg",
+                        "review_status": "untagged",
+                    }
+                ]
+            )
         if "COALESCE(d.decision_state" in query:
             return _sql_result(fetchone=[0])
         if "SELECT COUNT(*)" in query:
@@ -1040,7 +673,6 @@ def test_review_event_approve_allows_user_selected_species_override(client):
                 "detection_ids": [17],
                 "species": "Parus_major",
                 "bbox_review": "correct",
-                "evidence_quality": "diagnostic",
             },
         )
 
@@ -1064,36 +696,38 @@ def test_review_event_approve_preserves_per_frame_manual_species(client):
 
     def execute_side_effect(query, params=None):
         if "SELECT d.detection_id, d.image_filename" in query:
-            return _sql_result(fetchall=[
-                {
-                    "detection_id": 17,
-                    "image_filename": "pigeon-frame-1.jpg",
-                    "review_status": "untagged",
-                    "manual_species_override": "",
-                    "species_source": "cls",
-                },
-                {
-                    "detection_id": 18,
-                    "image_filename": "pigeon-frame-2.jpg",
-                    "review_status": "untagged",
-                    "manual_species_override": "",
-                    "species_source": "cls",
-                },
-                {
-                    "detection_id": 19,
-                    "image_filename": "cat-frame-1.jpg",
-                    "review_status": "untagged",
-                    "manual_species_override": "Felis_catus",
-                    "species_source": "manual",
-                },
-                {
-                    "detection_id": 20,
-                    "image_filename": "cat-frame-2.jpg",
-                    "review_status": "untagged",
-                    "manual_species_override": "Felis_catus",
-                    "species_source": "manual",
-                },
-            ])
+            return _sql_result(
+                fetchall=[
+                    {
+                        "detection_id": 17,
+                        "image_filename": "pigeon-frame-1.jpg",
+                        "review_status": "untagged",
+                        "manual_species_override": "",
+                        "species_source": "cls",
+                    },
+                    {
+                        "detection_id": 18,
+                        "image_filename": "pigeon-frame-2.jpg",
+                        "review_status": "untagged",
+                        "manual_species_override": "",
+                        "species_source": "cls",
+                    },
+                    {
+                        "detection_id": 19,
+                        "image_filename": "cat-frame-1.jpg",
+                        "review_status": "untagged",
+                        "manual_species_override": "Felis_catus",
+                        "species_source": "manual",
+                    },
+                    {
+                        "detection_id": 20,
+                        "image_filename": "cat-frame-2.jpg",
+                        "review_status": "untagged",
+                        "manual_species_override": "Felis_catus",
+                        "species_source": "manual",
+                    },
+                ]
+            )
         if "COALESCE(d.decision_state" in query:
             return _sql_result(fetchone=[0])
         if "SELECT COUNT(*)" in query:
@@ -1133,7 +767,6 @@ def test_review_event_approve_preserves_per_frame_manual_species(client):
                 "detection_ids": [17, 18, 19, 20],
                 "species": "Columba_livia",
                 "bbox_review": "correct",
-                "evidence_quality": "diagnostic",
             },
         )
 
@@ -1155,10 +788,14 @@ def test_review_event_trash_moves_images_without_active_detections_to_trash(clie
 
     def execute_side_effect(query, params=None):
         if "SELECT d.detection_id, d.image_filename" in query:
-            return _sql_result(fetchall=[{
-                "detection_id": 17,
-                "image_filename": "review-item.jpg",
-            }])
+            return _sql_result(
+                fetchall=[
+                    {
+                        "detection_id": 17,
+                        "image_filename": "review-item.jpg",
+                    }
+                ]
+            )
         if "SELECT COUNT(*)" in query:
             return _sql_result(fetchone=[0])
         return _sql_result()
@@ -1168,7 +805,9 @@ def test_review_event_trash_moves_images_without_active_detections_to_trash(clie
     with (
         patch("web.blueprints.review.db_service") as mock_db,
         patch("web.blueprints.review._load_single_review_event") as mock_event,
-        patch("web.blueprints.review.gallery_service.invalidate_cache") as mock_invalidate,
+        patch(
+            "web.blueprints.review.gallery_service.invalidate_cache"
+        ) as mock_invalidate,
     ):
         mock_event.return_value = {
             "event_key": "bird-event-abc123",
@@ -1201,15 +840,21 @@ def test_review_event_trash_moves_images_without_active_detections_to_trash(clie
     mock_invalidate.assert_called_once()
 
 
-def test_review_event_trash_keeps_images_in_review_when_active_detections_remain(client):
+def test_review_event_trash_keeps_images_in_review_when_active_detections_remain(
+    client,
+):
     mock_conn = MagicMock()
 
     def execute_side_effect(query, params=None):
         if "SELECT d.detection_id, d.image_filename" in query:
-            return _sql_result(fetchall=[{
-                "detection_id": 17,
-                "image_filename": "review-item.jpg",
-            }])
+            return _sql_result(
+                fetchall=[
+                    {
+                        "detection_id": 17,
+                        "image_filename": "review-item.jpg",
+                    }
+                ]
+            )
         if "COALESCE(d.decision_state" in query:
             return _sql_result(fetchone=[1])
         if "SELECT COUNT(*)" in query:
@@ -1270,18 +915,20 @@ def test_review_event_approve_batch_refuses_gallery_anchor_detection_ids(client)
 
     def execute_side_effect(query, params=None):
         if "SELECT d.detection_id, d.image_filename" in query:
-            return _sql_result(fetchall=[
-                {
-                    "detection_id": 17,
-                    "image_filename": "review-item.jpg",
-                    "review_status": "untagged",
-                },
-                {
-                    "detection_id": 42,
-                    "image_filename": "gallery-anchor.jpg",
-                    "review_status": "confirmed_bird",
-                },
-            ])
+            return _sql_result(
+                fetchall=[
+                    {
+                        "detection_id": 17,
+                        "image_filename": "review-item.jpg",
+                        "review_status": "untagged",
+                    },
+                    {
+                        "detection_id": 42,
+                        "image_filename": "gallery-anchor.jpg",
+                        "review_status": "confirmed_bird",
+                    },
+                ]
+            )
         return _sql_result()
 
     mock_conn.execute.side_effect = execute_side_effect
@@ -1328,18 +975,20 @@ def test_review_event_approve_batch_confirms_actionable_ids_without_event_key(cl
 
     def execute_side_effect(query, params=None):
         if "SELECT d.detection_id, d.image_filename" in query:
-            return _sql_result(fetchall=[
-                {
-                    "detection_id": 17,
-                    "image_filename": "spatz-frame.jpg",
-                    "review_status": "untagged",
-                },
-                {
-                    "detection_id": 18,
-                    "image_filename": "kleiber-frame.jpg",
-                    "review_status": "untagged",
-                },
-            ])
+            return _sql_result(
+                fetchall=[
+                    {
+                        "detection_id": 17,
+                        "image_filename": "spatz-frame.jpg",
+                        "review_status": "untagged",
+                    },
+                    {
+                        "detection_id": 18,
+                        "image_filename": "kleiber-frame.jpg",
+                        "review_status": "untagged",
+                    },
+                ]
+            )
         if "COALESCE(d.decision_state" in query:
             return _sql_result(fetchone=[0])
         if "SELECT COUNT(*)" in query:
@@ -1376,17 +1025,6 @@ def test_review_event_approve_batch_confirms_actionable_ids_without_event_key(cl
     answers = [call.args[1] for call in _label_recorder(client).call_args_list]
     assert [answer.detection_id for answer in answers] == [17, 18]
     assert all(answer.species_key == "Pica_pica" for answer in answers)
-    _event_review_recorder(client).assert_not_called()
-
-
-# ---------------------------------------------------------------------------
-# Review continuity-batch builder
-#
-# These tests exercise build_review_continuity_batches directly. The
-# batch builder is a pure function over BirdEvent objects, so we feed it
-# real events constructed via build_bird_events instead of mocking the
-# Flask request lifecycle.
-# ---------------------------------------------------------------------------
 
 
 def _detection_dict(
@@ -1413,91 +1051,6 @@ def _detection_dict(
         "sibling_detection_count": 1,
         "context_only": context_only,
     }
-
-
-def test_continuity_batch_groups_split_events_around_a_single_anchor():
-    detections = [
-        # Confirmed Pica anchor (read-only Gallery context).
-        _detection_dict(101, "20260407_120000", "Pica_pica", context_only=True),
-        _detection_dict(102, "20260407_120020", "Pica_pica", context_only=True),
-        # Two actionable Review events the AI predicted as different species
-        # but that should be reviewed together against the Pica anchor.
-        _detection_dict(201, "20260407_121000", "Passer_domesticus"),
-        _detection_dict(202, "20260407_121010", "Passer_domesticus"),
-        _detection_dict(301, "20260407_122000", "Sitta_europaea"),
-    ]
-    raw_events = build_bird_events(detections)
-    batches = build_review_continuity_batches(raw_events)
-
-    assert len(batches) == 1
-    batch = batches[0]
-    # The two split actionable events both belong to the batch.
-    assert len(batch["event_keys"]) == 2
-    # Single confirmed-species anchor → recommended species fires.
-    assert batch["recommended_species"] == "Pica_pica"
-    # Action targets must only include actionable detections.
-    assert sorted(batch["review_detection_ids"]) == [201, 202, 301]
-    assert 101 in batch["context_detection_ids"]
-    assert 102 in batch["context_detection_ids"]
-    assert 101 not in batch["review_detection_ids"]
-    assert 102 not in batch["review_detection_ids"]
-    # Anchor species summary reports the Pica context.
-    assert batch["context_species_summary"].get("Pica_pica") == 2
-    # batch_bbox_map carries both context and actionable bbox entries
-    # with the context_only flag and an event_key tag.
-    assert batch["batch_bbox_map"], "batch_bbox_map must not be empty"
-    assert any(point["context_only"] for point in batch["batch_bbox_map"])
-    assert any(not point["context_only"] for point in batch["batch_bbox_map"])
-    assert all("event_key" in point for point in batch["batch_bbox_map"])
-
-
-def test_continuity_batch_drops_recommendation_when_anchors_disagree():
-    detections = [
-        _detection_dict(101, "20260407_120000", "Pica_pica", context_only=True),
-        _detection_dict(102, "20260407_120030", "Parus_major", context_only=True),
-        _detection_dict(201, "20260407_121000", "Passer_domesticus"),
-    ]
-    raw_events = build_bird_events(detections)
-    batches = build_review_continuity_batches(raw_events)
-
-    assert len(batches) == 1
-    batch = batches[0]
-    assert batch["recommended_species"] is None
-    # Both confirmed anchors must show up in the species summary.
-    assert set(batch["context_species_summary"].keys()) == {
-        "Pica_pica",
-        "Parus_major",
-    }
-
-
-def test_no_continuity_batch_without_a_confirmed_anchor():
-    """Pure unanchored time coincidence is not enough to form a batch."""
-    detections = [
-        _detection_dict(201, "20260407_121000", "Passer_domesticus"),
-        _detection_dict(202, "20260407_121005", "Passer_domesticus"),
-        _detection_dict(301, "20260407_122000", "Sitta_europaea"),
-    ]
-    raw_events = build_bird_events(detections)
-    batches = build_review_continuity_batches(raw_events)
-    assert batches == []
-
-
-def test_no_continuity_batch_when_anchor_has_no_actionable_neighbour():
-    """A confirmed Gallery anchor without nearby Review work emits nothing."""
-    detections = [
-        _detection_dict(101, "20260407_120000", "Pica_pica", context_only=True),
-        _detection_dict(102, "20260407_120020", "Pica_pica", context_only=True),
-        # Actionable Review event hours later — outside the ±30 min window.
-        _detection_dict(201, "20260407_180000", "Passer_domesticus"),
-    ]
-    raw_events = build_bird_events(detections)
-    batches = build_review_continuity_batches(raw_events)
-    assert batches == []
-
-
-# ─────────────────────────────────────────────────────────────────────
-# Mixed-event resolve endpoint
-# ─────────────────────────────────────────────────────────────────────
 
 
 def _make_resolve_conn(rows):
@@ -1541,7 +1094,9 @@ def test_review_event_resolve_commits_keep_and_trash_in_one_call(client):
         patch("web.blueprints.review.db_service") as mock_db,
         patch("web.blueprints.review._get_allowed_review_species") as mock_allowed,
         patch("web.blueprints.review._load_single_review_event") as mock_event,
-        patch("web.blueprints.review.gallery_service.invalidate_cache") as mock_invalidate,
+        patch(
+            "web.blueprints.review.gallery_service.invalidate_cache"
+        ) as mock_invalidate,
     ):
         mock_allowed.return_value = {"Columba_palumbus"}
         mock_event.return_value = {
@@ -1563,7 +1118,6 @@ def test_review_event_resolve_commits_keep_and_trash_in_one_call(client):
                 "trash_detection_ids": [18],
                 "species": "Columba_palumbus",
                 "bbox_review": "correct",
-                "evidence_quality": "diagnostic",
             },
         )
 
@@ -1646,7 +1200,6 @@ def test_review_event_resolve_rejects_partial_event_coverage(client):
                 "trash_detection_ids": [18],
                 "species": "Columba_palumbus",
                 "bbox_review": "correct",
-                "evidence_quality": "diagnostic",
             },
         )
 
@@ -1699,7 +1252,6 @@ def test_review_event_resolve_refuses_gallery_anchors(client):
                 "trash_detection_ids": [18],
                 "species": "Columba_palumbus",
                 "bbox_review": "correct",
-                "evidence_quality": "diagnostic",
             },
         )
 
@@ -1762,7 +1314,6 @@ def test_review_event_resolve_preserves_per_frame_manual_override(client):
                 "trash_detection_ids": [],
                 "species": "Pica_pica",
                 "bbox_review": "correct",
-                "evidence_quality": "diagnostic",
             },
         )
 
@@ -1825,7 +1376,6 @@ def test_review_event_resolve_preserves_override_when_all_keeps_are_manual(clien
                 "trash_detection_ids": [],
                 "species": "Pica_pica",
                 "bbox_review": "correct",
-                "evidence_quality": "diagnostic",
             },
         )
 
@@ -1899,3 +1449,7 @@ def test_review_thumb_serves_cached_preview_inside_root(client, tmp_path):
 
     assert resp.status_code == 200
     mock_gallery.generate_preview_thumbnail.assert_not_called()
+
+
+def test_removed_analysis_route_returns_404(client: FlaskClient) -> None:
+    assert client.post("/api/review/analyze/test.jpg").status_code == 404

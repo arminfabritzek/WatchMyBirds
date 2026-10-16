@@ -13,12 +13,9 @@
         {% endif %}
     </div>
     <form class="review-day-nav__form" method="get" action="{{ url_for('review.review_page') }}">
-        {% if not ordinary_review %}<input type="hidden" name="diagnostic" value="1">{% else %}
+
         {% for key, value in selection.items() %}<input type="hidden" name="{{ key }}" value="{{ value }}">{% endfor %}
-        {% endif %}
-        {% if not review_navigation.is_grid_layout %}
-        <input type="hidden" name="layout" value="legacy">
-        {% endif %}
+
         <label for="review-day">Day</label>
         <select class="form-control" id="review-day" name="day">
             <option value="all" {% if review_navigation.selected_day == 'all' %}selected{% endif %}>All days ({{ review_navigation.total_events }}{{ " objects" if ordinary_review else "" }})</option>
@@ -29,13 +26,7 @@
             <option value="{{ date }}" {% if date == review_navigation.selected_day %}selected{% endif %}>{{ date }} ({{ count }})</option>
             {% endfor %}
         </select>
-        {% if not ordinary_review %}
-        <label for="review-sort">Sort</label>
-        <select class="form-control" id="review-sort" name="sort">
-            <option value="chronological" {% if review_navigation.sort_order == 'chronological' %}selected{% endif %}>Chronological</option>
-            <option value="priority" {% if review_navigation.sort_order == 'priority' %}selected{% endif %}>Review priority</option>
-        </select>
-        {% endif %}
+
         <button type="submit" class="btn btn--secondary">Apply</button>
     </form>
 </nav>

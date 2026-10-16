@@ -19,7 +19,6 @@ Covered endpoints:
 - POST /api/review/event-approve
 - POST /api/review/event-resolve
 - POST /api/moderation/bulk/relabel
-- POST /api/moderation/rescan-proposals/<id>/apply
 - POST /api/detections/relabel
 """
 
@@ -27,6 +26,7 @@ from __future__ import annotations
 
 from contextlib import nullcontext
 from datetime import datetime
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -346,7 +346,6 @@ def test_event_resolve_confirms_keeps_and_rejects_trash_together(seeded):
             "trash_detection_ids": [seeded["a2"]],
             "species": TARGET_SPECIES,
             "bbox_review": "correct",
-            "evidence_quality": "diagnostic",
         },
     )
 
@@ -396,40 +395,6 @@ def test_detections_relabel_sets_every_axis(seeded):
     assert current_facts(seeded["b"])["species_identity"]["source_ref"] == (
         "detections:relabel"
     )
-
-
-# --- 6. POST /api/moderation/rescan-proposals/<id>/apply -------------------
-
-
-def test_rescan_proposal_apply_records_a_non_manual_provenance(seeded):
-    """This site is deliberately NOT a human answer.
-
-    Accepting a rescan proposal writes ``species_source='proposal_applied'``,
-    not ``'manual'`` — the distinction says whether a person named the
-    species or merely waved a model suggestion through. A migration that
-    forces ``'manual'`` here would destroy that provenance.
-    """
-    with db_connection.closing_connection() as conn:
-        conn.execute(
-            """
-            INSERT INTO rescan_proposals (
-                proposal_id, job_id, target_detection_id, image_filename,
-                suggested_species, status
-            ) VALUES (1, 'job-test', ?, ?, ?, 'ready')
-            """,
-            (seeded["b"], seeded["frame_b"], TARGET_SPECIES),
-        )
-        conn.commit()
-
-    response = post(seeded["client"], "/api/moderation/rescan-proposals/1/apply", {})
-
-    assert response.status_code == 200, response.get_data(as_text=True)
-    state = axes(seeded["b"])
-    assert state["decision_state"] == "confirmed"
-    assert state["decision_level"] == "species"
-    assert state["manual_species_override"] == TARGET_SPECIES
-    assert state["species_source"] == "proposal_applied"
-    assert current_facts(seeded["b"]) == {}
 
 
 def test_event_approve_does_not_overwrite_a_per_frame_relabel(seeded):
@@ -489,10 +454,61 @@ def test_event_resolve_does_not_overwrite_a_per_frame_relabel(seeded):
             "trash_detection_ids": [seeded["a2"]],
             "species": TARGET_SPECIES,
             "bbox_review": "correct",
-            "evidence_quality": "diagnostic",
         },
     )
 
     assert response.status_code == 200, response.get_data(as_text=True)
     assert axes(seeded["a1"])["manual_species_override"] == PRIOR_SPECIES
     assert axes(seeded["a1"])["decision_state"] == "confirmed"
+
+
+@pytest.mark.parametrize("action", ["approve", "trash", "unresolved", "resolve"])
+def test_event_answers_preserve_unused_legacy_assessments(
+    seeded: dict[str, Any], action: str
+) -> None:
+    detection_id = seeded["b"]
+    with db_connection.closing_connection() as conn:
+        conn.execute(
+            """INSERT INTO station_event_reviews (
+                event_key_snapshot, anchor_detection_id, outcome, evidence_quality,
+                event_start, event_end, source_kind, installation_id, app_version, created_at
+            ) VALUES ('old-event', ?, 'unresolved_bird', 'limited',
+                'start', 'end', 'test', 'test', 'test', 'created')""",
+            (detection_id,),
+        )
+        conn.execute(
+            "INSERT INTO station_event_review_members VALUES (last_insert_rowid(), ?)",
+            (detection_id,),
+        )
+        before = {
+            table: [tuple(row) for row in conn.execute(f"SELECT * FROM {table}")]
+            for table in ("station_event_reviews", "station_event_review_members")
+        }
+    event = {
+        "event_key": "current-event",
+        "detection_ids": [detection_id],
+        "eligibility": "event_eligible",
+        "candidate_species": PRIOR_SPECIES,
+        "members": [{"best_detection_id": detection_id, "context_only": False}],
+    }
+    payload = {
+        "event_key": event["event_key"],
+        "species": TARGET_SPECIES,
+        "bbox_review": "correct",
+    }
+    if action == "resolve":
+        payload.update(keep_detection_ids=[detection_id], trash_detection_ids=[])
+    else:
+        payload["detection_ids"] = [detection_id]
+    with patch("web.blueprints.review._load_single_review_event", return_value=event):
+        response = post(seeded["client"], f"/api/review/event-{action}", payload)
+    assert response.status_code == 200, response.get_data(as_text=True)
+    with db_connection.closing_connection() as conn:
+        for table, rows in before.items():
+            assert [
+                tuple(row) for row in conn.execute(f"SELECT * FROM {table}")
+            ] == rows
+    facts = current_facts(detection_id)
+    assert facts["bird_presence"]["answer_value"] == (
+        "absent" if action == "trash" else "present"
+    )

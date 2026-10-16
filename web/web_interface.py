@@ -266,9 +266,8 @@ def create_web_interface(detection_manager, system_monitor=None):
 
     server.register_blueprint(media_bp)
 
-    from web.blueprints.onvif_ingest import init_onvif_ingest_bp, onvif_ingest_bp
+    from web.blueprints.onvif_ingest import onvif_ingest_bp
 
-    init_onvif_ingest_bp(detection_manager=detection_manager)
     server.register_blueprint(onvif_ingest_bp)
 
     from web.blueprints.cameras import cameras_bp, init_cameras_bp
@@ -306,11 +305,6 @@ def create_web_interface(detection_manager, system_monitor=None):
     from web.blueprints.review import review_bp
 
     server.register_blueprint(review_bp)
-
-    from web.blueprints.inbox import inbox_bp, init_inbox_bp
-
-    init_inbox_bp(detection_manager)
-    server.register_blueprint(inbox_bp)
 
     from web.blueprints.analytics import analytics_bp
 
@@ -356,45 +350,6 @@ def create_web_interface(detection_manager, system_monitor=None):
 
     server.register_blueprint(storage_bp)
 
-    try:
-        from web.blueprints.companion import (
-            companion_bp,
-            init_companion_bp,
-        )
-        from web.services.companion.factory import build_inference_client
-        from web.services.companion.recorder import CompanionRecorder
-        from web.services.companion.service import CompanionService
-        from web.services.compute_lease_service import init_compute_lease_service
-
-        lease_service = init_compute_lease_service(detection_manager)
-        companion_client = build_inference_client(
-            config,
-            model_base_path=str(config.get("MODEL_BASE_PATH", "./data/models")),
-        )
-        companion_recorder = CompanionRecorder(base_dir=output_dir)
-        companion_service = CompanionService(
-            client=companion_client,
-            recorder=companion_recorder,
-            lease=lease_service,
-            enabled=bool(config.get("COMPANION_ENABLED", False)),
-            pause_detection=bool(
-                config.get("COMPANION_PAUSE_DETECTION_DURING_INFERENCE", True)
-            ),
-            timeout_s=float(config.get("COMPANION_INFERENCE_TIMEOUT_S", 60)),
-        )
-        init_companion_bp(companion_service)
-        server.register_blueprint(companion_bp)
-        backend = str(config.get("COMPANION_INFERENCE_BACKEND", "llama_cpp"))
-        model_id = getattr(companion_client, "model_id", "<unconfigured>")
-        logger.info(
-            "Companion v1 backend registered (enabled=%s, backend=%s, model=%s)",
-            companion_service.enabled,
-            backend,
-            model_id,
-        )
-    except Exception as exc:
-        logger.error("Companion v1 backend registration failed: %s", exc, exc_info=True)
-
     from web.blueprints.index import index_bp, init_index_bp
 
     init_index_bp(detection_manager=detection_manager)
@@ -416,7 +371,6 @@ def create_web_interface(detection_manager, system_monitor=None):
         "/api/v1/cameras",
         "/healthz",
         "/logs",
-        "/api/inbox/status",
         "/api/v1/system/backup/status",
         "/api/v1/system/backup/format/status",
         "/api/v1/system/backup/format/devices",

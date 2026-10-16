@@ -61,11 +61,9 @@ def _build_mgr_fixture():
     # Real scoring services (cheap, isolated)
     from detectors.services.capability_registry import build_default_registry
     from detectors.services.decision_policy_service import DecisionPolicyService
-    from detectors.services.temporal_decision_service import TemporalDecisionService
 
     mgr.capability_registry = build_default_registry()
     mgr.decision_policy_service = DecisionPolicyService()
-    mgr.temporal_decision_service = TemporalDecisionService()
 
     mgr.classifier_model_id = "20260427_143835"
     mgr.detector_model_id = "yolox_s_v2_coco"
@@ -165,9 +163,30 @@ def test_reject_only_frame_does_not_call_save_image():
     """Statik-FP scenario: 3 bird detections all rejected → no image saved."""
     mgr = _build_mgr_fixture()
     detections = [
-        {"class_name": "bird", "confidence": 0.43, "x1": 1456, "y1": 288, "x2": 1712, "y2": 864},
-        {"class_name": "bird", "confidence": 0.51, "x1": 1456, "y1": 290, "x2": 1712, "y2": 868},
-        {"class_name": "bird", "confidence": 0.47, "x1": 1455, "y1": 287, "x2": 1715, "y2": 864},
+        {
+            "class_name": "bird",
+            "confidence": 0.43,
+            "x1": 1456,
+            "y1": 288,
+            "x2": 1712,
+            "y2": 864,
+        },
+        {
+            "class_name": "bird",
+            "confidence": 0.51,
+            "x1": 1456,
+            "y1": 290,
+            "x2": 1712,
+            "y2": 868,
+        },
+        {
+            "class_name": "bird",
+            "confidence": 0.47,
+            "x1": 1455,
+            "y1": 287,
+            "x2": 1715,
+            "y2": 864,
+        },
     ]
     cls_results = [
         _make_cls_result("reject", 0.22, "Troglodytes_troglodytes"),
@@ -186,7 +205,14 @@ def test_reject_audit_payload_carries_bbox_and_species():
     """Each audit insert gets normalised bbox + raw_species_name."""
     mgr = _build_mgr_fixture()
     detections = [
-        {"class_name": "bird", "confidence": 0.43, "x1": 1280, "y1": 288, "x2": 1536, "y2": 864},
+        {
+            "class_name": "bird",
+            "confidence": 0.43,
+            "x1": 1280,
+            "y1": 288,
+            "x2": 1536,
+            "y2": 864,
+        },
     ]
     cls_results = [_make_cls_result("reject", 0.22, "Troglodytes_troglodytes")]
     mock_audit = _enqueue_one_frame(mgr, detections, cls_results)
@@ -212,8 +238,22 @@ def test_mixed_frame_saves_image_for_keeper_and_audits_reject():
     """1 species + 1 reject → save_image once, save_detection once, 1 audit."""
     mgr = _build_mgr_fixture()
     detections = [
-        {"class_name": "bird", "confidence": 0.85, "x1": 100, "y1": 100, "x2": 400, "y2": 500},
-        {"class_name": "bird", "confidence": 0.45, "x1": 1456, "y1": 288, "x2": 1712, "y2": 864},
+        {
+            "class_name": "bird",
+            "confidence": 0.85,
+            "x1": 100,
+            "y1": 100,
+            "x2": 400,
+            "y2": 500,
+        },
+        {
+            "class_name": "bird",
+            "confidence": 0.45,
+            "x1": 1456,
+            "y1": 288,
+            "x2": 1712,
+            "y2": 864,
+        },
     ]
     cls_results = [
         _make_cls_result("species", 0.95, "Parus_major"),
@@ -233,8 +273,22 @@ def test_two_keepers_share_a_single_image_save():
     """First keeper triggers save_image; second keeper reuses base_filename."""
     mgr = _build_mgr_fixture()
     detections = [
-        {"class_name": "bird", "confidence": 0.85, "x1": 100, "y1": 100, "x2": 400, "y2": 500},
-        {"class_name": "bird", "confidence": 0.80, "x1": 600, "y1": 100, "x2": 900, "y2": 500},
+        {
+            "class_name": "bird",
+            "confidence": 0.85,
+            "x1": 100,
+            "y1": 100,
+            "x2": 400,
+            "y2": 500,
+        },
+        {
+            "class_name": "bird",
+            "confidence": 0.80,
+            "x1": 600,
+            "y1": 100,
+            "x2": 900,
+            "y2": 500,
+        },
     ]
     cls_results = [
         _make_cls_result("species", 0.95, "Parus_major"),
@@ -260,7 +314,14 @@ def test_species_review_keeper_persists_normally():
     """
     mgr = _build_mgr_fixture()
     detections = [
-        {"class_name": "bird", "confidence": 0.55, "x1": 100, "y1": 100, "x2": 400, "y2": 500},
+        {
+            "class_name": "bird",
+            "confidence": 0.55,
+            "x1": 100,
+            "y1": 100,
+            "x2": 400,
+            "y2": 500,
+        },
     ]
     cls_results = [_make_cls_result("species_review", 0.50, "Sylvia_atricapilla")]
     mock_audit = _enqueue_one_frame(mgr, detections, cls_results)
@@ -281,7 +342,14 @@ def test_non_bird_high_conf_skips_classifier_and_persists(class_name):
     """
     mgr = _build_mgr_fixture()
     detections = [
-        {"class_name": class_name, "confidence": 0.85, "x1": 100, "y1": 100, "x2": 400, "y2": 500},
+        {
+            "class_name": class_name,
+            "confidence": 0.85,
+            "x1": 100,
+            "y1": 100,
+            "x2": 400,
+            "y2": 500,
+        },
     ]
     mock_audit = _enqueue_one_frame(mgr, detections, [])
 

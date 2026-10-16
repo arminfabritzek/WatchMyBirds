@@ -19,15 +19,7 @@ WatchMyBirds uses a **two-layer configuration model**:
 - Runtime editability controls persistence; when a value takes effect depends
   on its consumer and must be checked per setting. For example,
   `STREAM_WIDTH_OUTPUT_RESIZE` is captured by
-  `web/blueprints/stream.py` at import, and Companion backend/model/context
-  settings are read when the inference adapter is constructed. The current
-  Companion service also captures enable, pause-detection, and timeout at
-  construction; saving their YAML values does not reconfigure that instance.
-  These settings require a restart in the current implementation.
-- Companion language/tone on `/chat` and `/event` come from each request
-  (defaults: `de` / `kid_friendly`), not from the persisted
-  `COMPANION_LANGUAGE` / `COMPANION_TONE` keys. Those keys currently do not
-  establish API defaults; this is an implementation gap.
+  `web/blueprints/stream.py` at import and requires a restart.
 - `config.RUNTIME_KEYS` controls generic editability. Telemetry uses a
   dedicated settings endpoint and explicit YAML loading. The generic
   `restart_required` flag currently derives from `BOOT_KEYS` and does not
@@ -55,7 +47,6 @@ Set these in your `.env` file, `docker-compose.yml`, or system environment.
 |----------|---------|-------------|
 | `DEBUG_MODE` | `False` | Enable verbose logging and debug behavior |
 | `OUTPUT_DIR` | `/output` | Base directory for images and `images.db` |
-| `INGEST_DIR` | `/ingest` | Directory for bulk image ingestion |
 | `MODEL_BASE_PATH` | `/models` | Base directory for AI model files |
 
 ### Camera Source Resolution
@@ -156,11 +147,8 @@ the synonym-reference hash, name matches and whether weighting was applied;
 `raw_species_name` retains the original top choice. Human answers remain
 authoritative. Existing detections are not rewritten automatically.
 
-Live capture uses the capture time and configured camera location. Imports use
-their own EXIF capture date **and** GPS, and skip weighting if either is absent.
-Deep scans use the stored image's origin: camera captures need a configured
-location; imports need their own complete EXIF. Rescans of existing detections
-remain proposals, including geographic evidence, rather than overwriting them.
+Live capture uses the capture time and configured camera location.
+Existing detections retain their stored predictions and geographic evidence.
 
 The first eligible prediction downloads the fixed BirdNET Geomodel v3.0.4 FP16
 model and labels (about 8.6 MB total) into
@@ -275,12 +263,6 @@ are outside this release.
 |----------|---------|-------------|
 | `CPU_LIMIT` | `0` | CPU affinity cap (`0` disables affinity; `1+` pins to first N available CPUs) |
 
-### Deep Scan Stability
-
-| Key | Default | Description |
-|-----|---------|-------------|
-| `DEEP_SCAN_GATE_ENABLED` | `True` | When `True`, live detection and classification loops pause while a Deep Scan job runs (prevents resource contention on RPi). Set `False` to allow concurrent Deep Scan + live detection. Runtime-changeable via Settings UI. |
-
 ### Storage Retention
 
 | Key | Default | Description |
@@ -298,29 +280,9 @@ this feature does not impose a fixed upper bound on total storage growth.
 
 ## Important Notes
 
-### Inbox Import Requirements (EXIF Date/Time + GPS)
-
-Inbox imports (files uploaded/copied into the Inbox) can be configured to require
-EXIF metadata before a file is ingested into the main database.
-
-If enabled, the app will **skip** inbox files unless they contain:
-- EXIF capture timestamp: `DateTimeOriginal` (preferred) or `DateTimeDigitized`
-- EXIF GPS coordinates: `GPSLatitude` and `GPSLongitude`
-
-Runtime settings:
-- `INBOX_REQUIRE_EXIF_DATETIME` (default: `True`)
-- `INBOX_REQUIRE_EXIF_GPS` (default: `True`)
-
-Skipped files are moved to `inbox/skipped/YYYYMMDD/`.
-
-### Ingest vs. Live Operation
-
-| Mode | Behavior |
-|------|----------|
-| **Live Mode** | Only saves images with valid detections (filtered by `SAVE_THRESHOLD`) |
-| **Ingest Tool** | Saves **every** image to ensure hash idempotency and reproducibility |
-
-The Ingest behavior is intentionally different to prevent re-ingest loops.
+Image import is no longer available. Existing imported photos remain in the
+archive. Legacy `INGEST_DIR` values, `/ingest` Docker mounts, and removed Inbox
+settings are ignored; existing Docker configurations need no changes.
 
 ### Threshold Interaction
 
@@ -361,7 +323,6 @@ The Ingest behavior is intentionally different to prevent re-ingest loops.
 ```bash
 # Core
 OUTPUT_DIR=/data/watchmybirds/output
-INGEST_DIR=/data/watchmybirds/ingest
 MODEL_BASE_PATH=/data/watchmybirds/models
 
 # Camera
@@ -392,38 +353,6 @@ TELEGRAM_CHAT_ID=987654321
 
 Set `TELEGRAM_ENABLED=True` only after `TELEGRAM_BOT_TOKEN` and
 `TELEGRAM_CHAT_ID` are configured.
-
----
-
-## Inbox (Web Upload)
-
-The Inbox feature allows uploading images through the web UI for later processing.
-
-### Directory Structure
-
-```
-OUTPUT_DIR/
-└── inbox/
-    ├── pending/           # Uploaded files waiting for processing
-    ├── processed/YYYYMMDD/  # Successfully ingested files
-    ├── skipped/YYYYMMDD/    # Duplicate files (by SHA-256 hash)
-    └── error/               # Files that failed to process
-```
-
-### Upload Limits
-
-| Limit | Value |
-|-------|-------|
-| Max files per upload | 20 |
-| Max file size | 50 MB |
-| Allowed formats | `.jpg`, `.jpeg`, `.png` |
-
-### Processing Policy
-
-- **Detection must be stopped** before processing inbox files
-- Processing is manual (button click required)
-- A snapshot of `pending/` is taken at start; new uploads during processing remain for next run
-- Duplicates are detected by SHA-256 hash and moved to `skipped/`
 
 ---
 

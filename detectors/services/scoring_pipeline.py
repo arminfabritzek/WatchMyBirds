@@ -2,9 +2,7 @@
 Scoring Pipeline — single source of truth for detection signal computation.
 
 Centralises the score formula, unknown-score fallback, decision evaluation,
-temporal smoothing, and capability version tagging that was previously
-duplicated across ``detection_manager._processing_loop`` and
-``analysis_service._build_detection_payload``.
+and capability version tagging for the live detection pipeline.
 """
 
 from __future__ import annotations
@@ -17,7 +15,6 @@ from detectors.od_classes import is_bird_od_class
 from detectors.services.bbox_quality_service import compute_bbox_quality
 from detectors.services.capability_registry import CapabilityRegistry
 from detectors.services.decision_policy_service import DecisionPolicyService
-from detectors.services.temporal_decision_service import TemporalDecisionService
 
 # Default OD-confidence threshold above which a non-bird detection is
 # considered CONFIRMED. Higher than SAVE_THRESHOLD because non-bird OD
@@ -37,7 +34,7 @@ class ScoringResult:
     agreement_score: float
     bbox_quality: float
     unknown_score: float
-    decision_state: DecisionState | None
+    decision_state: DecisionState
     decision_reasons_json: str
     policy_version: str
 
@@ -50,9 +47,7 @@ def compute_detection_signals(
     cls_conf: float,
     top_k_confidences: list[float] | None,
     decision_policy: DecisionPolicyService,
-    temporal_service: TemporalDecisionService,
     capability_registry: CapabilityRegistry,
-    species_key: str,
     od_class_name: str | None = None,
     non_bird_confirm_threshold: float = DEFAULT_NON_BIRD_CONFIRM_THRESHOLD,
     non_bird_confirm_threshold_fn: Callable[[str], float] | None = None,
@@ -62,7 +57,7 @@ def compute_detection_signals(
 
     This is the **single source of truth** for the composite score formula,
     agreement score, bbox quality, unknown score, decision evaluation,
-    temporal smoothing, and capability version tag.
+    and capability version tag.
 
     Two routing tracks are supported:
 
@@ -80,12 +75,6 @@ def compute_detection_signals(
       intentionally bypassed because its ``unknown_score >= 0.6`` branch would
       otherwise mark every non-bird as UNKNOWN and hide it from every surface.
 
-    When ``ENABLE_DECISION_POLICY`` is disabled in the capability registry,
-    the bird track's decision evaluation and temporal smoothing are skipped
-    and ``decision_state`` is set to ``None`` (legacy-compatible). Non-bird
-    CONFIRMED/UNCERTAIN routing still applies because it does not go through
-    the capability gate.
-
     Args:
         bbox:                Pixel coordinates ``(x1, y1, x2, y2)``.
         frame_shape:         Shape of the source frame ``(H, W, ...)``.
@@ -94,10 +83,7 @@ def compute_detection_signals(
         top_k_confidences:   Top-k class probabilities from classifier, or
                              ``None`` if classification did not run.
         decision_policy:     :class:`DecisionPolicyService` instance.
-        temporal_service:    :class:`TemporalDecisionService` instance.
         capability_registry: :class:`CapabilityRegistry` instance.
-        species_key:         Grouping key for temporal smoothing (species name
-                             or ``"unknown"``).
         od_class_name:       OD class name from the detector output. When
                              omitted, the bird track runs (legacy behaviour).
         non_bird_confirm_threshold: Scalar fallback minimum OD confidence
@@ -139,28 +125,16 @@ def compute_detection_signals(
         else:
             floor = non_bird_confirm_threshold
         if od_conf >= floor:
-            decision_state: DecisionState | None = DecisionState.CONFIRMED
+            decision_state: DecisionState = DecisionState.CONFIRMED
         else:
             decision_state = DecisionState.UNCERTAIN
-
-        # Temporal smoothing still applies (it groups by species_key,
-        # and a non-bird species is a valid key). The decision_policy
-        # service is NOT consulted for non-bird detections.
-        smoothed_state: DecisionState | None
-        if capability_registry.is_enabled("decision_policy"):
-            smoothed_state = temporal_service.smooth(
-                species_key=species_key,
-                raw_state=decision_state,
-            )
-        else:
-            smoothed_state = None
 
         return ScoringResult(
             score=score,
             agreement_score=agreement,
             bbox_quality=bbox_q,
             unknown_score=unknown_s,
-            decision_state=smoothed_state,
+            decision_state=decision_state,
             decision_reasons_json="[]",
             policy_version=cap_tag,
         )
@@ -185,29 +159,18 @@ def compute_detection_signals(
     else:
         unknown_s = compute_unknown_score([])
 
-    policy_enabled = capability_registry.is_enabled("decision_policy")
-
-    if policy_enabled:
-        decision_res = decision_policy.evaluate(
-            bbox_quality=bbox_q,
-            species_conf=cls_conf if cls_conf > 0 else None,
-            unknown_score=unknown_s,
-        )
-        smoothed_state = temporal_service.smooth(
-            species_key=species_key,
-            raw_state=decision_res.decision_state,
-        )
-        reasons_json = decision_res.reasons_json
-    else:
-        smoothed_state = None
-        reasons_json = "[]"
+    decision_res = decision_policy.evaluate(
+        bbox_quality=bbox_q,
+        species_conf=cls_conf if cls_conf > 0 else None,
+        unknown_score=unknown_s,
+    )
 
     return ScoringResult(
         score=score,
         agreement_score=agreement,
         bbox_quality=bbox_q,
         unknown_score=unknown_s,
-        decision_state=smoothed_state,
-        decision_reasons_json=reasons_json,
+        decision_state=decision_res.decision_state,
+        decision_reasons_json=decision_res.reasons_json,
         policy_version=cap_tag,
     )

@@ -38,7 +38,6 @@ from web.security import safe_log_value as _safe_log_value
 from web.security import safe_validation_message as _safe_validation_message
 from web.services import (
     backup_restore_service,
-    db_service,
     onvif_service,
     ptz_aim_service,
     ptz_capabilities_service,
@@ -73,9 +72,7 @@ def _read_file_tail(path: Path, max_lines: int = 200) -> dict:
         result["tail_text"] = text
         result["line_count"] = len(text.splitlines())
     except Exception as exc:
-        logger.warning(
-            "log-tail read failed [%s]", type(exc).__name__, exc_info=True
-        )
+        logger.warning("log-tail read failed [%s]", type(exc).__name__, exc_info=True)
         result["error"] = type(exc).__name__
 
     return result
@@ -237,9 +234,7 @@ def status():
             }
         )
     except Exception as exc:
-        logger.error(
-            "Status API error [%s]", type(exc).__name__, exc_info=True
-        )
+        logger.error("Status API error [%s]", type(exc).__name__, exc_info=True)
         return jsonify({"error": "Status read failed"}), 500
 
 
@@ -1689,9 +1684,7 @@ def aesthetic_rescore():
             with _rescore_jobs_lock:
                 if jid in _rescore_jobs:
                     _rescore_jobs[jid]["status"] = "error"
-                    _rescore_jobs[jid]["message"] = (
-                        "Aesthetic worker not available"
-                    )
+                    _rescore_jobs[jid]["message"] = "Aesthetic worker not available"
             logger.error(
                 "Aesthetic rescore job %s: worker missing [%s]",
                 jid,
@@ -1796,9 +1789,7 @@ def telegram_seen_species_list():
             type(exc).__name__,
             exc_info=True,
         )
-        return jsonify(
-            {"status": "error", "message": "Seen-species list failed"}
-        ), 500
+        return jsonify({"status": "error", "message": "Seen-species list failed"}), 500
 
 
 @api_v1.route("/telegram/seen-species", methods=["DELETE"])
@@ -1820,9 +1811,7 @@ def telegram_seen_species_reset():
             type(exc).__name__,
             exc_info=True,
         )
-        return jsonify(
-            {"status": "error", "message": "Seen-species reset failed"}
-        ), 500
+        return jsonify({"status": "error", "message": "Seen-species reset failed"}), 500
 
 
 # =============================================================================
@@ -2329,9 +2318,7 @@ def camera_ptz_capabilities(camera_id: int):
 # ---------------------------------------------------------------------------
 
 
-@api_v1.route(
-    "/cameras/<int:camera_id>/ptz/empirical-probe/start", methods=["POST"]
-)
+@api_v1.route("/cameras/<int:camera_id>/ptz/empirical-probe/start", methods=["POST"])
 @login_required
 def camera_ptz_empirical_probe_start(camera_id: int):
     """Start (or resume) the empirical-probe wizard for this camera.
@@ -2351,15 +2338,19 @@ def camera_ptz_empirical_probe_start(camera_id: int):
         try:
             slot_int = int(probe_slot)
         except (TypeError, ValueError):
-            return jsonify({
-                "status": "error",
-                "message": f"probe_slot must be an integer 1–32 (got {probe_slot!r})",
-            }), 400
+            return jsonify(
+                {
+                    "status": "error",
+                    "message": f"probe_slot must be an integer 1–32 (got {probe_slot!r})",
+                }
+            ), 400
         if not (1 <= slot_int <= 32):
-            return jsonify({
-                "status": "error",
-                "message": f"probe_slot {slot_int} out of range 1–32",
-            }), 400
+            return jsonify(
+                {
+                    "status": "error",
+                    "message": f"probe_slot {slot_int} out of range 1–32",
+                }
+            ), 400
         probe_slot = str(slot_int)
     try:
         data = ptz_empirical_probe_service.start_session(
@@ -2389,9 +2380,7 @@ def camera_ptz_empirical_probe_start(camera_id: int):
         return _error_response("PTZ empirical probe start error", exc)
 
 
-@api_v1.route(
-    "/cameras/<int:camera_id>/ptz/empirical-probe/status", methods=["GET"]
-)
+@api_v1.route("/cameras/<int:camera_id>/ptz/empirical-probe/status", methods=["GET"])
 @login_required
 def camera_ptz_empirical_probe_status(camera_id: int):
     """Return the current session metadata + current step.
@@ -2405,9 +2394,7 @@ def camera_ptz_empirical_probe_status(camera_id: int):
     return jsonify({"status": "success", "data": data})
 
 
-@api_v1.route(
-    "/cameras/<int:camera_id>/ptz/empirical-probe/execute", methods=["POST"]
-)
+@api_v1.route("/cameras/<int:camera_id>/ptz/empirical-probe/execute", methods=["POST"])
 @login_required
 def camera_ptz_empirical_probe_execute(camera_id: int):
     """Fire the ONVIF move for a specific step by step_id (free-form).
@@ -2417,13 +2404,16 @@ def camera_ptz_empirical_probe_execute(camera_id: int):
     the live stream behind the wizard and rates via /feedback.
     """
     from core.ptz_empirical_probe import ExecuteInFlightError
+
     body = request.get_json(silent=True) or {}
     step_id = str(body.get("step_id") or "").strip()
     if not step_id:
-        return jsonify({
-            "status": "error",
-            "message": "step_id is required (free-form execute API)",
-        }), 400
+        return jsonify(
+            {
+                "status": "error",
+                "message": "step_id is required (free-form execute API)",
+            }
+        ), 400
     try:
         data = ptz_empirical_probe_service.execute_step(camera_id, step_id)
         return jsonify({"status": "success", "data": data})
@@ -2452,9 +2442,7 @@ def camera_ptz_empirical_probe_execute(camera_id: int):
         return _error_response("PTZ empirical probe execute error", exc)
 
 
-@api_v1.route(
-    "/cameras/<int:camera_id>/ptz/empirical-probe/feedback", methods=["POST"]
-)
+@api_v1.route("/cameras/<int:camera_id>/ptz/empirical-probe/feedback", methods=["POST"])
 @login_required
 def camera_ptz_empirical_probe_feedback(camera_id: int):
     """Record the operator's verdict for a specific step (free-form).
@@ -2466,10 +2454,12 @@ def camera_ptz_empirical_probe_feedback(camera_id: int):
     body = request.get_json(silent=True) or {}
     step_id = str(body.get("step_id") or "").strip()
     if not step_id:
-        return jsonify({
-            "status": "error",
-            "message": "step_id is required (free-form feedback API)",
-        }), 400
+        return jsonify(
+            {
+                "status": "error",
+                "message": "step_id is required (free-form feedback API)",
+            }
+        ), 400
     feedback = str(body.get("result") or "").strip().lower()
     if feedback not in {"yes", "no", "skip"}:
         return (
@@ -2486,6 +2476,7 @@ def camera_ptz_empirical_probe_feedback(camera_id: int):
         )
     comment = str(body.get("comment") or "")
     from core.ptz_empirical_probe import ExecuteInFlightError
+
     try:
         data = ptz_empirical_probe_service.record_feedback(
             camera_id, step_id=step_id, feedback=feedback, comment=comment
@@ -2515,9 +2506,7 @@ def camera_ptz_empirical_probe_feedback(camera_id: int):
         return _error_response("PTZ empirical probe feedback error", exc)
 
 
-@api_v1.route(
-    "/cameras/<int:camera_id>/ptz/empirical-probe/finalize", methods=["POST"]
-)
+@api_v1.route("/cameras/<int:camera_id>/ptz/empirical-probe/finalize", methods=["POST"])
 @login_required
 def camera_ptz_empirical_probe_finalize(camera_id: int):
     """Operator-triggered finalize: write the empirical YAML and end
@@ -2565,9 +2554,7 @@ def camera_ptz_empirical_probe_apply_budget(camera_id: int):
         return _error_response("PTZ near-focus budget apply error", exc)
 
 
-@api_v1.route(
-    "/cameras/<int:camera_id>/ptz/empirical-probe/abort", methods=["POST"]
-)
+@api_v1.route("/cameras/<int:camera_id>/ptz/empirical-probe/abort", methods=["POST"])
 @login_required
 def camera_ptz_empirical_probe_abort(camera_id: int):
     """Emergency-stop the cam, clear the session, resume Auto-PTZ.
@@ -2823,166 +2810,6 @@ def ptz_auto_return_overview():
         return jsonify({"status": "success"})
     except Exception as exc:
         return _error_response("PTZ overview return error", exc)
-
-
-# =============================================================================
-# Analytics
-# =============================================================================
-
-
-@api_v1.route("/analytics/summary", methods=["GET"])
-@login_required
-def analytics_summary():
-    """
-    Returns detection analytics summary.
-    Mirror of: GET /api/analytics/summary (via add_url_rule)
-    """
-    conn = db_service.get_connection()
-    try:
-        summary = db_service.fetch_analytics_summary(conn)
-    finally:
-        conn.close()
-    return jsonify(summary)
-
-
-@api_v1.route("/analytics/decisions", methods=["GET"])
-@api_v1.route("/decision-metrics", methods=["GET"])
-@login_required
-def analytics_decisions():
-    """
-    Returns decision state distribution for active detections.
-
-    Response::
-
-        {
-            "status": "success",
-            "total": 1234,
-            "states": {
-                "confirmed": 900,
-                "uncertain": 150,
-                "unknown": 80,
-                "rejected": 54,
-                "null": 50
-            },
-            "review_queue_count": 230,
-            "manual_confirmed_count": 42
-        }
-    """
-    conn = db_service.get_connection()
-    try:
-        rows = conn.execute(
-            """
-            SELECT
-                COALESCE(d.decision_state, 'null') as state,
-                COUNT(*) as cnt
-            FROM detections d
-            WHERE d.status = 'active'
-            GROUP BY COALESCE(d.decision_state, 'null')
-            """
-        ).fetchall()
-
-        states = {row["state"]: row["cnt"] for row in rows}
-        total = sum(states.values())
-
-        review_count = db_service.fetch_review_queue_count(
-            conn, config["GALLERY_DISPLAY_THRESHOLD"]
-        )
-        manual_confirmed_row = conn.execute(
-            """
-            SELECT COUNT(*)
-            FROM images
-            WHERE review_status = 'confirmed_bird'
-            """
-        ).fetchone()
-        manual_confirmed_count = (
-            int(manual_confirmed_row[0]) if manual_confirmed_row else 0
-        )
-    finally:
-        conn.close()
-
-    return jsonify(
-        {
-            "status": "success",
-            "total": total,
-            "states": states,
-            "review_queue_count": review_count,
-            "manual_confirmed_count": manual_confirmed_count,
-        }
-    )
-
-
-@api_v1.route("/analytics/decisions/daily", methods=["GET"])
-@login_required
-def analytics_decisions_daily():
-    """
-    Returns per-day decision state distribution for the last N days.
-
-    Query params:
-        days (int): Number of days to look back (default: 14, max: 90)
-
-    Response::
-
-        {
-            "status": "success",
-            "days": [
-                {
-                    "date": "2026-03-04",
-                    "confirmed": 45,
-                    "uncertain": 5,
-                    "unknown": 3,
-                    "rejected": 1,
-                    "total": 54
-                },
-                ...
-            ]
-        }
-    """
-    days_back = min(request.args.get("days", 14, type=int), 90)
-
-    conn = db_service.get_connection()
-    try:
-        rows = conn.execute(
-            """
-            SELECT
-                substr(i.timestamp, 1, 4) || '-' || substr(i.timestamp, 5, 2) || '-' || substr(i.timestamp, 7, 2) AS day,
-                COALESCE(d.decision_state, 'null') AS state,
-                COUNT(*) AS cnt
-            FROM detections d
-            JOIN images i ON d.image_filename = i.filename
-            WHERE d.status = 'active'
-              AND i.timestamp >= strftime('%Y%m%d', 'now', ? || ' days') || '_000000'
-            GROUP BY day, state
-            ORDER BY day DESC, state
-            """,
-            (f"-{days_back}",),
-        ).fetchall()
-    finally:
-        conn.close()
-
-    # Pivot into per-day dicts
-    day_map: dict[str, dict[str, int]] = {}
-    for row in rows:
-        day = row["day"]
-        state = row["state"]
-        cnt = row["cnt"]
-        if day not in day_map:
-            day_map[day] = {
-                "date": day,
-                "confirmed": 0,
-                "uncertain": 0,
-                "unknown": 0,
-                "rejected": 0,
-                "null": 0,
-                "total": 0,
-            }
-        if state in day_map[day]:
-            day_map[day][state] = cnt
-        day_map[day]["total"] += cnt
-
-    # Sort by date descending
-    days_list = sorted(day_map.values(), key=lambda d: d["date"], reverse=True)
-
-    return jsonify({"status": "success", "days": days_list})
 
 
 # =============================================================================
@@ -3573,22 +3400,6 @@ def go2rtc_health_public():
                 "message": "go2rtc health check failed",
             }
         ), 500
-
-
-@api_v1.route("/public/bbox-heatmap", methods=["GET"])
-def bbox_heatmap_public():
-    """
-    Disabled in the public backport build.
-    """
-    return (
-        jsonify(
-            {
-                "status": "error",
-                "message": "This feature is not available in the public backport build.",
-            }
-        ),
-        404,
-    )
 
 
 # OTA Update Endpoints intentionally absent.

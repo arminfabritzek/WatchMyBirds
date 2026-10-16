@@ -880,13 +880,7 @@ def _init_human_label_schema(conn: sqlite3.Connection) -> None:
 
 
 def _init_station_event_review_schema(conn: sqlite3.Connection) -> None:
-    """Install append-only biological event assessments.
-
-    Human-label facts remain the authority for object presence and species
-    identity.  This table records the additional event-level statement that
-    cannot be projected from those independent axes: whether the reviewed
-    evidence is diagnostically usable for the station report.
-    """
+    """Retain the unused event-assessment schema for existing databases."""
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS station_event_reviews (
@@ -984,23 +978,6 @@ def get_or_create_default_source(conn: sqlite3.Connection) -> int:
     # Create if not exists
     cur = conn.execute(
         "INSERT INTO sources (name, type) VALUES (?, ?)", ("Default Camera", "ipcam")
-    )
-    conn.commit()
-    return cur.lastrowid
-
-
-def get_or_create_user_import_source(conn: sqlite3.Connection) -> int:
-    """Gets the ID of the 'User Import' source, or creates it if missing."""
-    row = conn.execute(
-        "SELECT source_id FROM sources WHERE name='User Import'"
-    ).fetchone()
-    if row:
-        return row[0]
-
-    # Create if not exists
-    cur = conn.execute(
-        "INSERT INTO sources (name, type) VALUES (?, ?)",
-        ("User Import", "folder_upload"),
     )
     conn.commit()
     return cur.lastrowid

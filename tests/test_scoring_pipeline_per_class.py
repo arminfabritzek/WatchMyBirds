@@ -17,7 +17,6 @@ from detectors.interfaces.classification import DecisionState
 from detectors.services.capability_registry import build_default_registry
 from detectors.services.decision_policy_service import DecisionPolicyService
 from detectors.services.scoring_pipeline import compute_detection_signals
-from detectors.services.temporal_decision_service import TemporalDecisionService
 
 
 @pytest.fixture()
@@ -33,11 +32,6 @@ def good_bbox() -> tuple[int, int, int, int]:
 @pytest.fixture()
 def decision_policy() -> DecisionPolicyService:
     return DecisionPolicyService()
-
-
-@pytest.fixture()
-def temporal_service() -> TemporalDecisionService:
-    return TemporalDecisionService()
 
 
 @pytest.fixture()
@@ -72,7 +66,6 @@ def test_person_at_032_confirmed_with_per_class_resolver(
     good_bbox,
     hd_frame_shape,
     decision_policy,
-    temporal_service,
     capability_registry,
     v2_coco_resolver,
 ):
@@ -85,9 +78,7 @@ def test_person_at_032_confirmed_with_per_class_resolver(
         cls_conf=0.0,
         top_k_confidences=None,
         decision_policy=decision_policy,
-        temporal_service=temporal_service,
         capability_registry=capability_registry,
-        species_key="person",
         od_class_name="person",
         non_bird_confirm_threshold=0.80,  # ignored
         non_bird_confirm_threshold_fn=v2_coco_resolver,
@@ -99,7 +90,6 @@ def test_person_at_028_uncertain_with_per_class_resolver(
     good_bbox,
     hd_frame_shape,
     decision_policy,
-    temporal_service,
     capability_registry,
     v2_coco_resolver,
 ):
@@ -111,9 +101,7 @@ def test_person_at_028_uncertain_with_per_class_resolver(
         cls_conf=0.0,
         top_k_confidences=None,
         decision_policy=decision_policy,
-        temporal_service=temporal_service,
         capability_registry=capability_registry,
-        species_key="person",
         od_class_name="person",
         non_bird_confirm_threshold_fn=v2_coco_resolver,
     )
@@ -124,7 +112,6 @@ def test_marten_at_050_confirmed_per_class(
     good_bbox,
     hd_frame_shape,
     decision_policy,
-    temporal_service,
     capability_registry,
     v2_coco_resolver,
 ):
@@ -136,9 +123,7 @@ def test_marten_at_050_confirmed_per_class(
         cls_conf=0.0,
         top_k_confidences=None,
         decision_policy=decision_policy,
-        temporal_service=temporal_service,
         capability_registry=capability_registry,
-        species_key="marten_mustelid",
         od_class_name="marten_mustelid",
         non_bird_confirm_threshold_fn=v2_coco_resolver,
     )
@@ -149,7 +134,6 @@ def test_squirrel_at_060_uncertain_per_class(
     good_bbox,
     hd_frame_shape,
     decision_policy,
-    temporal_service,
     capability_registry,
     v2_coco_resolver,
 ):
@@ -167,9 +151,7 @@ def test_squirrel_at_060_uncertain_per_class(
         cls_conf=0.0,
         top_k_confidences=None,
         decision_policy=decision_policy,
-        temporal_service=temporal_service,
         capability_registry=capability_registry,
-        species_key="squirrel",
         od_class_name="squirrel",
         non_bird_confirm_threshold_fn=v2_coco_resolver,
     )
@@ -185,7 +167,6 @@ def test_scalar_path_still_works_when_fn_none(
     good_bbox,
     hd_frame_shape,
     decision_policy,
-    temporal_service,
     capability_registry,
 ):
     """5-class regression: with non_bird_confirm_threshold_fn=None,
@@ -198,9 +179,7 @@ def test_scalar_path_still_works_when_fn_none(
         cls_conf=0.0,
         top_k_confidences=None,
         decision_policy=decision_policy,
-        temporal_service=temporal_service,
         capability_registry=capability_registry,
-        species_key="marten_mustelid",
         od_class_name="marten_mustelid",
         non_bird_confirm_threshold=0.80,
         non_bird_confirm_threshold_fn=None,
@@ -212,7 +191,6 @@ def test_unlisted_class_falls_back_to_resolver_default(
     good_bbox,
     hd_frame_shape,
     decision_policy,
-    temporal_service,
     capability_registry,
     v2_coco_resolver,
 ):
@@ -225,9 +203,7 @@ def test_unlisted_class_falls_back_to_resolver_default(
         cls_conf=0.0,
         top_k_confidences=None,
         decision_policy=decision_policy,
-        temporal_service=temporal_service,
         capability_registry=capability_registry,
-        species_key="fox",
         od_class_name="fox",
         non_bird_confirm_threshold_fn=v2_coco_resolver,
     )
@@ -244,7 +220,6 @@ def test_bird_track_unaffected_by_per_class_resolver(
     good_bbox,
     hd_frame_shape,
     decision_policy,
-    temporal_service,
     capability_registry,
     v2_coco_resolver,
 ):
@@ -260,9 +235,7 @@ def test_bird_track_unaffected_by_per_class_resolver(
         cls_conf=0.85,
         top_k_confidences=[0.85, 0.05, 0.02, 0.01],
         decision_policy=decision_policy,
-        temporal_service=temporal_service,
         capability_registry=capability_registry,
-        species_key="Columba_palumbus",
         od_class_name="bird",
         non_bird_confirm_threshold_fn=v2_coco_resolver,
     )

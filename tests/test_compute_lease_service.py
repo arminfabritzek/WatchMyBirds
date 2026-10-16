@@ -26,10 +26,10 @@ class _DM:
 def test_acquire_pauses_detection_and_restores():
     dm = _DM(paused=False)
     svc = ComputeLeaseService(dm)
-    with svc.acquire("companion_inference", pause_detection=True):
+    with svc.acquire("worker", pause_detection=True):
         assert dm.paused is True
         s = svc.status()
-        assert s.holder == "companion_inference"
+        assert s.holder == "worker"
         assert s.pause_detection is True
     assert dm.paused is False
     assert svc.status().holder is None
@@ -46,7 +46,7 @@ def test_acquire_without_pause_does_not_touch_detection():
 def test_acquire_preserves_already_paused_state():
     dm = _DM(paused=True)
     svc = ComputeLeaseService(dm)
-    with svc.acquire("companion_inference", pause_detection=True):
+    with svc.acquire("worker", pause_detection=True):
         assert dm.paused is True
     # Was already paused before lease — must remain paused after release.
     assert dm.paused is True
@@ -55,19 +55,19 @@ def test_acquire_preserves_already_paused_state():
 def test_busy_holder_blocks_other_callers():
     dm = _DM()
     svc = ComputeLeaseService(dm)
-    with svc.acquire("companion_inference", pause_detection=True):
+    with svc.acquire("worker", pause_detection=True):
         with pytest.raises(LeaseBusy) as exc_info:
             with svc.acquire("aesthetic_tagger", pause_detection=False):
                 pass  # pragma: no cover
-        assert exc_info.value.current_holder == "companion_inference"
+        assert exc_info.value.current_holder == "worker"
         assert exc_info.value.requested_holder == "aesthetic_tagger"
 
 
 def test_same_holder_can_reenter():
     dm = _DM()
     svc = ComputeLeaseService(dm)
-    with svc.acquire("companion_inference", pause_detection=True):
-        with svc.acquire("companion_inference", pause_detection=True):
+    with svc.acquire("worker", pause_detection=True):
+        with svc.acquire("worker", pause_detection=True):
             assert dm.paused is True
             assert svc.status().reentry_depth == 2
         # Inner release does not flip paused back yet.
@@ -79,7 +79,7 @@ def test_exception_inside_lease_still_releases():
     dm = _DM(paused=False)
     svc = ComputeLeaseService(dm)
     with pytest.raises(RuntimeError):
-        with svc.acquire("companion_inference", pause_detection=True):
+        with svc.acquire("worker", pause_detection=True):
             assert dm.paused is True
             raise RuntimeError("boom")
     assert dm.paused is False
@@ -97,7 +97,7 @@ def test_watchdog_force_releases_on_timeout():
     def worker():
         try:
             with svc.acquire(
-                "companion_inference",
+                "worker",
                 pause_detection=True,
                 timeout_s=timeout,
             ):
@@ -131,7 +131,7 @@ def test_release_after_watchdog_does_not_crash():
     svc = ComputeLeaseService(dm)
     timeout = 0.02
 
-    with svc.acquire("companion_inference", pause_detection=True, timeout_s=timeout):
+    with svc.acquire("worker", pause_detection=True, timeout_s=timeout):
         time.sleep(timeout * 5)
         # Watchdog has fired; lease state is reset.
         assert svc.status().holder is None

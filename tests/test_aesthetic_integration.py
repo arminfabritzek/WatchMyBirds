@@ -29,6 +29,7 @@ from core.gallery_core import _story_board_candidate_quality  # noqa: E402
 #    is_favorite and is_interior, ahead of score and bbox_quality.
 # ---------------------------------------------------------------------------
 
+
 def _det(**overrides) -> dict:
     """Minimal detection dict with safe defaults for the storyboard ranker."""
     base = {
@@ -63,8 +64,9 @@ def test_aesthetic_score_overrides_lower_detector_score():
     """
     pretty_but_low_conf = _det(detection_id=1, score=0.4, aesthetic_score=0.95)
     confident_but_ugly = _det(detection_id=2, score=0.95, aesthetic_score=0.10)
-    assert _story_board_candidate_quality(pretty_but_low_conf) > \
-           _story_board_candidate_quality(confident_but_ugly)
+    assert _story_board_candidate_quality(
+        pretty_but_low_conf
+    ) > _story_board_candidate_quality(confident_but_ugly)
 
 
 def test_manual_favorite_still_wins_over_aesthetic():
@@ -74,13 +76,20 @@ def test_manual_favorite_still_wins_over_aesthetic():
     score. This is the safety contract for the integration.
     """
     manual_favorite_low_aesthetic = _det(
-        detection_id=1, is_favorite=1, score=0.5, aesthetic_score=0.05,
+        detection_id=1,
+        is_favorite=1,
+        score=0.5,
+        aesthetic_score=0.05,
     )
     auto_high_aesthetic = _det(
-        detection_id=2, is_favorite=0, score=0.9, aesthetic_score=0.99,
+        detection_id=2,
+        is_favorite=0,
+        score=0.9,
+        aesthetic_score=0.99,
     )
-    assert _story_board_candidate_quality(manual_favorite_low_aesthetic) > \
-           _story_board_candidate_quality(auto_high_aesthetic)
+    assert _story_board_candidate_quality(
+        manual_favorite_low_aesthetic
+    ) > _story_board_candidate_quality(auto_high_aesthetic)
 
 
 def test_null_aesthetic_loses_to_any_real_score():
@@ -94,16 +103,18 @@ def test_null_aesthetic_loses_to_any_real_score():
     """
     legacy_high_score = _det(detection_id=1, score=0.9, aesthetic_score=None)
     scored_low_score = _det(detection_id=2, score=0.2, aesthetic_score=0.05)
-    assert _story_board_candidate_quality(scored_low_score) > \
-           _story_board_candidate_quality(legacy_high_score)
+    assert _story_board_candidate_quality(
+        scored_low_score
+    ) > _story_board_candidate_quality(legacy_high_score)
 
 
 def test_two_null_aesthetic_detections_rank_by_score():
     """Among NULL-aesthetic detections, the higher detector score wins."""
     legacy_better = _det(detection_id=1, score=0.9, aesthetic_score=None)
     legacy_worse = _det(detection_id=2, score=0.2, aesthetic_score=None)
-    assert _story_board_candidate_quality(legacy_better) > \
-           _story_board_candidate_quality(legacy_worse)
+    assert _story_board_candidate_quality(
+        legacy_better
+    ) > _story_board_candidate_quality(legacy_worse)
 
 
 def test_interior_bbox_still_outranks_aesthetic():
@@ -114,22 +125,30 @@ def test_interior_bbox_still_outranks_aesthetic():
     """
     edge_high_aesthetic = _det(
         detection_id=1,
-        bbox_x=0.0, bbox_y=0.0, bbox_w=0.3, bbox_h=0.3,  # touches edge
+        bbox_x=0.0,
+        bbox_y=0.0,
+        bbox_w=0.3,
+        bbox_h=0.3,  # touches edge
         aesthetic_score=0.99,
     )
     interior_mid_aesthetic = _det(
         detection_id=2,
-        bbox_x=0.3, bbox_y=0.3, bbox_w=0.3, bbox_h=0.3,  # interior
+        bbox_x=0.3,
+        bbox_y=0.3,
+        bbox_w=0.3,
+        bbox_h=0.3,  # interior
         aesthetic_score=0.5,
     )
-    assert _story_board_candidate_quality(interior_mid_aesthetic) > \
-           _story_board_candidate_quality(edge_high_aesthetic)
+    assert _story_board_candidate_quality(
+        interior_mid_aesthetic
+    ) > _story_board_candidate_quality(edge_high_aesthetic)
 
 
 # ---------------------------------------------------------------------------
 # 2 + 4) SQL: fetch_daily_covers ORDER BY uses aesthetic_score; the
 #       gallery SELECT includes aesthetic_score in its column list.
 # ---------------------------------------------------------------------------
+
 
 def _build_minimal_db() -> sqlite3.Connection:
     """Create an in-memory DB with the columns these queries reference.
@@ -210,8 +229,16 @@ def _insert_image_and_det(
         ) VALUES (?, ?, 'bird', ?, ?, 0.5, 0.3, 0.3, 0.2, 0.2,
                   ?, ?, ?, 'active', 'confirmed', 'species', ?)
         """,
-        (filename, filename.replace(".jpg", "_crop_1.webp"), score, score,
-         rating, is_favorite, aesthetic_score, filename[:14]),
+        (
+            filename,
+            filename.replace(".jpg", "_crop_1.webp"),
+            score,
+            score,
+            rating,
+            is_favorite,
+            aesthetic_score,
+            filename[:14],
+        ),
     )
     det_id = cur.lastrowid
     conn.execute(
@@ -228,16 +255,19 @@ def test_fetch_daily_covers_prefers_high_aesthetic_score(monkeypatch):
     from utils.db import detections as detections_module
 
     monkeypatch.setattr(
-        detections_module, "_gallery_visibility_sql",
+        detections_module,
+        "_gallery_visibility_sql",
         lambda d, i, conn=None: f"{d}.status = 'active'",
     )
 
     conn = _build_minimal_db()
     # Same day, same species, same detector score → aesthetic_score breaks tie.
-    _insert_image_and_det(conn, filename="20260501_080000_a.jpg",
-                          score=0.7, aesthetic_score=0.20)
-    _insert_image_and_det(conn, filename="20260501_090000_b.jpg",
-                          score=0.7, aesthetic_score=0.95)
+    _insert_image_and_det(
+        conn, filename="20260501_080000_a.jpg", score=0.7, aesthetic_score=0.20
+    )
+    _insert_image_and_det(
+        conn, filename="20260501_090000_b.jpg", score=0.7, aesthetic_score=0.95
+    )
 
     rows = detections_module.fetch_daily_covers(conn, min_score=0.0)
     assert len(rows) == 1, "exactly one cover row per day"
@@ -253,15 +283,18 @@ def test_fetch_daily_covers_null_aesthetic_does_not_override(monkeypatch):
     from utils.db import detections as detections_module
 
     monkeypatch.setattr(
-        detections_module, "_gallery_visibility_sql",
+        detections_module,
+        "_gallery_visibility_sql",
         lambda d, i, conn=None: f"{d}.status = 'active'",
     )
 
     conn = _build_minimal_db()
-    _insert_image_and_det(conn, filename="20260501_080000_legacy.jpg",
-                          score=0.95, aesthetic_score=None)
-    _insert_image_and_det(conn, filename="20260501_090000_scored.jpg",
-                          score=0.5, aesthetic_score=0.40)
+    _insert_image_and_det(
+        conn, filename="20260501_080000_legacy.jpg", score=0.95, aesthetic_score=None
+    )
+    _insert_image_and_det(
+        conn, filename="20260501_090000_scored.jpg", score=0.5, aesthetic_score=0.40
+    )
 
     rows = detections_module.fetch_daily_covers(conn, min_score=0.0)
     cover = rows[0]
@@ -270,44 +303,25 @@ def test_fetch_daily_covers_null_aesthetic_does_not_override(monkeypatch):
     )
 
 
-def test_fetch_daily_covers_manual_rating_wins(monkeypatch):
-    """User's manual rating still ranks first, ahead of aesthetic_score."""
-    from utils.db import detections as detections_module
-
-    monkeypatch.setattr(
-        detections_module, "_gallery_visibility_sql",
-        lambda d, i, conn=None: f"{d}.status = 'active'",
-    )
-
-    conn = _build_minimal_db()
-    _insert_image_and_det(conn, filename="20260501_080000_rated.jpg",
-                          score=0.4, aesthetic_score=0.10, rating=5)
-    _insert_image_and_det(conn, filename="20260501_090000_pretty.jpg",
-                          score=0.9, aesthetic_score=0.99)
-
-    rows = detections_module.fetch_daily_covers(conn, min_score=0.0)
-    cover = rows[0]
-    assert "_rated" in cover["optimized_name_virtual"], (
-        "5-star manual rating must outrank a high aesthetic score"
-    )
-
-
 # ---------------------------------------------------------------------------
 # 4) Gallery SELECT carries aesthetic_score through to consumers.
 # ---------------------------------------------------------------------------
+
 
 def test_gallery_select_includes_aesthetic_score(monkeypatch):
     """fetch_detections_for_gallery returns aesthetic_score in the row dict."""
     from utils.db import detections as detections_module
 
     monkeypatch.setattr(
-        detections_module, "_gallery_visibility_sql",
+        detections_module,
+        "_gallery_visibility_sql",
         lambda d, i, conn=None: f"{d}.status = 'active'",
     )
 
     conn = _build_minimal_db()
-    _insert_image_and_det(conn, filename="20260501_080000_a.jpg",
-                          score=0.5, aesthetic_score=0.77)
+    _insert_image_and_det(
+        conn, filename="20260501_080000_a.jpg", score=0.5, aesthetic_score=0.77
+    )
 
     rows = detections_module.fetch_detections_for_gallery(conn)
     assert len(rows) == 1

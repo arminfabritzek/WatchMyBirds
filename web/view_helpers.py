@@ -324,56 +324,6 @@ def build_detection_view_from_gallery_row(det_row: dict) -> dict:
     )
 
 
-def compute_auto_rating(od_confidence, cls_confidence, bbox_w, bbox_h):
-    od_conf = od_confidence or 0
-    cls_conf = cls_confidence or 0
-    bbox_area = (bbox_w or 0) * (bbox_h or 0)
-
-    visual_score = od_conf * 0.4 + cls_conf * 0.6
-    if bbox_area > 0.05:
-        visual_score += 0.1
-    elif bbox_area < 0.005:
-        visual_score -= 0.15
-
-    if visual_score >= 0.65:
-        return 4
-    if visual_score >= 0.45:
-        return 3
-    if visual_score >= 0.25:
-        return 2
-    return 1
-
-
-def compute_rating_lazy(det):
-    rating = compute_auto_rating(
-        det.get("od_confidence", 0),
-        det.get("cls_confidence", 0),
-        det.get("bbox_w", 0),
-        det.get("bbox_h", 0),
-    )
-
-    try:
-        det_id = det.get("detection_id")
-        if det_id:
-            conn = db_service.get_connection()
-            try:
-                conn.execute(
-                    "UPDATE detections SET rating = ?, rating_source = 'auto' "
-                    "WHERE detection_id = ? AND rating IS NULL",
-                    (rating, det_id),
-                )
-                conn.commit()
-            finally:
-                conn.close()
-    except Exception:
-        logger.debug(
-            "auto-rating persistence failed; returning computed rating",
-            exc_info=True,
-        )
-
-    return rating
-
-
 def bbox_touches_edge(det: dict, margin: float = 0.01) -> bool:
     bx = det.get("bbox_x") or 0.0
     by = det.get("bbox_y") or 0.0
@@ -449,8 +399,6 @@ def build_detection_view_dict(
         "human_bbox_verdict": det.get("human_bbox_verdict"),
         "object_status": det.get("object_status") or det.get("status") or "active",
         "needs_review": bool(det.get("needs_review", False)),
-        "rating": det.get("rating"),
-        "rating_source": det.get("rating_source", "auto"),
         "is_favorite": is_favorite(det),
         "is_gallery_eligible": is_gallery_eligible(det),
         "original_present": (

@@ -175,7 +175,7 @@ def _run_tagger(
     score every detection of the previous day for completeness.
 
     Acquires the shared compute lease with ``pause_detection=False`` so
-    Companion inference and the tagger cannot run concurrently. The
+    heavy tagger jobs cannot run concurrently. The
     tagger does not pause OD on its own — the existing throttle
     behaviour stays in place.
 

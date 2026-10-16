@@ -7,6 +7,7 @@ The active capability snapshot is persisted on each detection.
 
 All capabilities default to ``enabled=False`` until explicitly registered.
 Feature flags read from config: ``ENABLE_<CAPABILITY_NAME>``.
+The decision policy is always enabled.
 """
 
 from __future__ import annotations
@@ -43,7 +44,7 @@ class CapabilitySnapshot:
         """
         Compact version tag for persistence.
 
-        Example: ``"detector_v8+cls_v2+ood_v1+temporal_v1"``
+        Example: ``"detector_v8+cls_v2+ood_v1"``
         """
         parts = [
             f"{c.name}_{c.version}"
@@ -91,11 +92,14 @@ class CapabilityRegistry:
             name:     Short identifier, e.g. ``"detector"``, ``"ood"``.
             version:  Version string, e.g. ``"v8"``, ``"v1"``.
             flag_key: Optional config key to read enabled state from.
-                      Defaults to ``ENABLE_<NAME>``.
+                      Defaults to ``ENABLE_<NAME>``; ignored for decision_policy.
         """
-        key = flag_key or f"ENABLE_{name.upper()}"
-        raw = str(self._config.get(key, "true")).lower()
-        enabled = raw in ("1", "true", "yes")
+        if name == "decision_policy":
+            enabled = True
+        else:
+            key = flag_key or f"ENABLE_{name.upper()}"
+            raw = str(self._config.get(key, "true")).lower()
+            enabled = raw in ("1", "true", "yes")
         self._capabilities[name] = Capability(
             name=name, version=version, enabled=enabled
         )
@@ -126,26 +130,11 @@ def build_default_registry(config: dict | None = None) -> CapabilityRegistry:
     Call at startup before the first detection loop iteration.
     """
     from detectors.services.decision_policy_service import POLICY_VERSION
-    from detectors.services.temporal_decision_service import TEMPORAL_VERSION
 
     reg = CapabilityRegistry(config=config)
     reg.register("detector", "v8")  # YOLOX object detection
     reg.register("classifier", "v2")  # ONNX species classifier
     reg.register("bbox_quality", "v1")  # Geometric bbox quality
     reg.register("ood", "v1")  # Unknown/OOD score (margin+entropy)
-    reg.register(
-        "temporal",
-        TEMPORAL_VERSION,
-        flag_key="ENABLE_TEMPORAL_SMOOTHING",
-    )
-    reg.register(
-        "decision_policy",
-        POLICY_VERSION,
-        flag_key="ENABLE_DECISION_POLICY",
-    )
-    reg.register(
-        "nightly_deep_scan",
-        "v1",
-        flag_key="ENABLE_NIGHTLY_DEEP_SCAN",
-    )
+    reg.register("decision_policy", POLICY_VERSION)
     return reg

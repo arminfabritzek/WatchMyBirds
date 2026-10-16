@@ -24,12 +24,6 @@ from utils.db import (
     fetch_active_detection_selection_in_date_range as _fetch_active_detection_selection_in_date_range,
 )
 from utils.db import (
-    fetch_all_detection_times as _fetch_all_detection_times,
-)
-from utils.db import (
-    fetch_analytics_summary as _fetch_analytics_summary,
-)
-from utils.db import (
     fetch_count_last_24h as _fetch_count_last_24h,
 )
 from utils.db import (
@@ -73,9 +67,6 @@ from utils.db import (
 )
 from utils.db import (
     fetch_species_story_board_candidates as _fetch_species_story_board_candidates,
-)
-from utils.db import (
-    fetch_species_timestamps as _fetch_species_timestamps,
 )
 from utils.db import (
     fetch_trash_candidate_selection_by_source_type as _fetch_trash_candidate_selection_by_source_type,
@@ -149,9 +140,7 @@ def fetch_active_detection_selection_in_date_range(
     return _fetch_active_detection_selection_in_date_range(conn, from_date, to_date)
 
 
-def fetch_active_detection_selection_by_source_type(
-    conn, source_type: str
-) -> dict:
+def fetch_active_detection_selection_by_source_type(conn, source_type: str) -> dict:
     return _fetch_active_detection_selection_by_source_type(conn, source_type)
 
 
@@ -161,15 +150,11 @@ def fetch_trash_candidate_selection_in_date_range(
     return _fetch_trash_candidate_selection_in_date_range(conn, from_date, to_date)
 
 
-def fetch_trash_candidate_selection_by_source_type(
-    conn, source_type: str
-) -> dict:
+def fetch_trash_candidate_selection_by_source_type(conn, source_type: str) -> dict:
     return _fetch_trash_candidate_selection_by_source_type(conn, source_type)
 
 
-def reject_detections(
-    conn, detection_ids: list[int], *, commit: bool = True
-) -> None:
+def reject_detections(conn, detection_ids: list[int], *, commit: bool = True) -> None:
     _reject_detections(conn, detection_ids, commit=commit)
 
 
@@ -183,9 +168,7 @@ def apply_species_override_many(
     return _apply_species_override_many(conn, detection_ids, species, source)
 
 
-def set_manual_bbox_review(
-    conn, detection_id: int, review_state: str | None
-) -> None:
+def set_manual_bbox_review(conn, detection_id: int, review_state: str | None) -> None:
     _set_manual_bbox_review(conn, detection_id, review_state)
 
 
@@ -255,18 +238,6 @@ def restore_no_bird_images(conn, image_filenames: list[str]) -> int:
 # --- Analytics Operations ---
 
 
-def fetch_analytics_summary(conn, min_score: float = 0.0) -> dict:
-    return _fetch_analytics_summary(conn, min_score=min_score)
-
-
-def fetch_all_detection_times(conn, min_score: float = 0.0) -> list:
-    return _fetch_all_detection_times(conn, min_score=min_score)
-
-
-def fetch_species_timestamps(conn, min_score: float = 0.0) -> list:
-    return _fetch_species_timestamps(conn, min_score=min_score)
-
-
 def fetch_day_count(conn, date_str_iso: str) -> int:
     return _fetch_day_count(conn, date_str_iso)
 
@@ -278,12 +249,10 @@ def fetch_review_queue_count(conn, gallery_threshold: float) -> int:
 def fetch_review_queue_images(
     conn,
     gallery_threshold: float,
-    exclude_deep_scanned: bool = False,
 ) -> list:
     return _fetch_review_queue_images(
         conn,
         gallery_threshold,
-        exclude_deep_scanned=exclude_deep_scanned,
     )
 
 
@@ -291,13 +260,11 @@ def fetch_review_queue_image(
     conn,
     filename: str,
     gallery_threshold: float,
-    exclude_deep_scanned: bool = False,
 ):
     return _fetch_review_queue_image(
         conn,
         filename,
         gallery_threshold=gallery_threshold,
-        exclude_deep_scanned=exclude_deep_scanned,
     )
 
 
@@ -330,12 +297,8 @@ def fetch_review_queue_item_by_identity(
     )
 
 
-def fetch_recent_review_species(
-    conn, limit: int = 8, lookback_days: int = 7
-) -> list:
-    return _fetch_recent_review_species(
-        conn, limit=limit, lookback_days=lookback_days
-    )
+def fetch_recent_review_species(conn, limit: int = 8, lookback_days: int = 7) -> list:
+    return _fetch_recent_review_species(conn, limit=limit, lookback_days=lookback_days)
 
 
 # --- 24h Rolling Window Operations ---

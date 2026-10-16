@@ -130,7 +130,7 @@ def test_review_queue_uses_score_threshold_no_dead_zone():
         conn.close()
 
 
-def test_review_queue_can_exclude_deep_scanned_items():
+def test_review_queue_keeps_previous_scan_detections():
     conn = _make_conn()
     try:
         conn.execute(
@@ -146,10 +146,8 @@ def test_review_queue_can_exclude_deep_scanned_items():
         )
         conn.commit()
 
-        rows = fetch_review_queue_images(
-            conn, gallery_threshold=0.7, exclude_deep_scanned=True
-        )
-        assert [row["filename"] for row in rows] == []
+        rows = fetch_review_queue_images(conn, gallery_threshold=0.7)
+        assert [row["filename"] for row in rows] == ["ds.jpg"]
     finally:
         conn.close()
 
@@ -340,9 +338,7 @@ def _insert_confirmed_detection(
 def test_review_cluster_context_returns_empty_for_empty_range():
     conn = _make_conn()
     try:
-        rows, truncated = fetch_review_cluster_context(
-            conn, untagged_time_range=None
-        )
+        rows, truncated = fetch_review_cluster_context(conn, untagged_time_range=None)
         assert rows == []
         assert truncated is False
     finally:
