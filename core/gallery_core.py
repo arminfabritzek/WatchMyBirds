@@ -847,11 +847,11 @@ def build_species_story_board(
             continue
 
         species = species_key_from_candidates(
-            manual_override=det.get("manual_species_override"),
+            manual_override=det.get("human_species_key"),
             species_key=det.get("species_key"),
             cls_class_name=det.get("cls_class_name"),
             od_class_name=det.get("od_class_name"),
-            species_source=det.get("species_source"),
+            species_source=det.get("human_species_source"),
         )
         if species == UNKNOWN_SPECIES_KEY or species in excluded_species:
             continue

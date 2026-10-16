@@ -7,6 +7,7 @@ import os
 import sqlite3
 from collections.abc import Callable
 from pathlib import Path
+from uuid import uuid4
 
 from config import get_config
 from core.bird_identity import add_or_correct_bird
@@ -14,11 +15,13 @@ from core.crop_refresh import refresh_detection_thumbnail
 from core.human_label_core import (
     BBox,
     HumanAnswer,
+    HumanLabelError,
     LabelProvenance,
     get_or_create_labeling_installation_id,
     object_training_readiness,
     record_human_answer,
-    restore_rejected_detection,
+    require_no_manual_birds,
+    retract_answer,
     species_review_state,
 )
 from core.human_label_core import original_model_proposal as original_model_proposal
@@ -37,7 +40,6 @@ from core.manual_object_core import (
 from core.manual_object_core import (
     update_manual_object as update_manual_object_core,
 )
-from core.review_state import refresh_review_image_visibility
 
 
 def _app_version(explicit_version: str = "") -> str:
@@ -66,13 +68,9 @@ def record_answer(
         app_version=_app_version(app_version),
         context=context,
         source_kind=source_kind,
-        source_ref=source_ref,
+        source_ref=source_ref or "answer:" + uuid4().hex,
     )
     facts = record_human_answer(conn, answer, provenance)
-    if answer.image_bird_presence is None:
-        refresh_review_image_visibility(
-            conn, answer.image_filename, float(cfg["GALLERY_DISPLAY_THRESHOLD"])
-        )
     return facts
 
 
@@ -83,30 +81,8 @@ def _ui_provenance(*, source_ref: str | None, app_version: str) -> LabelProvenan
         app_version=_app_version(app_version),
         context="normal_correction",
         source_kind="watchmybirds_ui",
-        source_ref=source_ref,
+        source_ref=source_ref or "answer:" + uuid4().hex,
     )
-
-
-def restore_detection(
-    conn: sqlite3.Connection,
-    *,
-    detection_id: int,
-    image_filename: str,
-    app_version: str = "",
-) -> list[int]:
-    facts = restore_rejected_detection(
-        conn,
-        detection_id=detection_id,
-        image_filename=image_filename,
-        provenance=_ui_provenance(
-            source_ref=f"image-correction:restore:{detection_id}",
-            app_version=app_version,
-        ),
-    )
-    refresh_review_image_visibility(
-        conn, image_filename, float(get_config()["GALLERY_DISPLAY_THRESHOLD"])
-    )
-    return facts
 
 
 def create_manual_object(
@@ -190,6 +166,149 @@ def retract_manual_object(
 logger = logging.getLogger(__name__)
 
 
+def full_image_absence_blocker(conn: sqlite3.Connection, filename: str) -> str | None:
+    try:
+        require_no_manual_birds(conn, filename)
+    except HumanLabelError as exc:
+        return str(exc)
+    return None
+
+
+def apply_answer_request(
+    conn: sqlite3.Connection, data: dict, *, app_version: str = ""
+) -> dict:
+    """Validate the whole selection and write one atomic human action."""
+    conn.execute("BEGIN IMMEDIATE")
+    ids = data.get("detection_ids")
+    if ids is None and data.get("detection_id") is not None:
+        ids = [data["detection_id"]]
+    filename = data.get("filename")
+    targets: list[tuple[str, int | None]] = []
+    if ids is not None:
+        if (
+            not isinstance(ids, list)
+            or not 1 <= len(ids) <= 1000
+            or any(type(did) is not int or did <= 0 for did in ids)
+            or len(set(ids)) != len(ids)
+        ):
+            raise HumanLabelError(
+                "detection_ids must contain 1 to 1000 unique object IDs"
+            )
+        for did in ids:
+            row = conn.execute(
+                "SELECT image_filename FROM detections WHERE detection_id=?", (did,)
+            ).fetchone()
+            if row is None or (filename is not None and filename != row[0]):
+                raise HumanLabelError("detection does not belong to image")
+            targets.append((row[0], did))
+    elif isinstance(filename, str) and filename.strip():
+        filename = filename.strip()
+        if not conn.execute(
+            "SELECT 1 FROM images WHERE filename=?", (filename,)
+        ).fetchone():
+            raise HumanLabelError("image does not exist")
+        targets.append((filename, None))
+    else:
+        raise HumanLabelError("answer requires a filename or detection_ids")
+    if data.get("review_only"):
+        from core.station_observations import validate_review_targets
+
+        validate_review_targets(conn, [did for _, did in targets if did is not None])
+    for key in ("retract_bbox_quality", "detector_miss", "review_only"):
+        if key in data and not isinstance(data[key], bool):
+            raise HumanLabelError("answer flags must be boolean")
+    for key in (
+        "species_identity",
+        "object_bird_presence",
+        "image_bird_presence",
+        "bbox_quality",
+        "retract",
+    ):
+        if data.get(key) is not None and not isinstance(data[key], str):
+            raise HumanLabelError("answer values must be text")
+    bbox_data = data.get("bbox_correction")
+    try:
+        bbox = BBox(**bbox_data).validated() if isinstance(bbox_data, dict) else None
+    except HumanLabelError:
+        raise
+    except (TypeError, ValueError):
+        raise HumanLabelError("bbox is invalid") from None
+    if bbox_data is not None and bbox is None:
+        raise HumanLabelError("bbox is invalid")
+    if data.get("species_key") is not None and not isinstance(data["species_key"], str):
+        raise HumanLabelError("answer species is invalid")
+    provenance = _ui_provenance(
+        source_ref="answer:" + uuid4().hex, app_version=app_version
+    )
+    fact_ids = []
+    for image_filename, did in targets:
+        if data.get("retract"):
+            if any(
+                data.get(key) is not None
+                for key in (
+                    "species_identity",
+                    "object_bird_presence",
+                    "image_bird_presence",
+                    "bbox_quality",
+                    "bbox_correction",
+                    "detector_miss",
+                )
+            ):
+                raise HumanLabelError("answer cannot be set and withdrawn together")
+            fact_ids.extend(
+                retract_answer(
+                    conn,
+                    image_filename=image_filename,
+                    detection_id=did,
+                    fact_type=data["retract"],
+                    provenance=provenance,
+                )
+            )
+        else:
+            fact_ids.extend(
+                record_human_answer(
+                    conn,
+                    HumanAnswer(
+                        image_filename=image_filename,
+                        detection_id=did,
+                        image_bird_presence=data.get("image_bird_presence"),
+                        object_bird_presence=data.get("object_bird_presence"),
+                        bbox_quality=data.get("bbox_quality"),
+                        bbox_correction=bbox,
+                        species_identity=data.get("species_identity"),
+                        species_key=data.get("species_key"),
+                        detector_miss=data.get("detector_miss") is True,
+                        retract_bbox_quality=data.get("retract_bbox_quality") is True,
+                    ),
+                    provenance,
+                )
+            )
+    thumbnail_targets: set[tuple[str, int]] = set()
+    for start in range(0, len(fact_ids), 400):
+        batch = fact_ids[start : start + 400]
+        placeholders = ",".join("?" for _ in batch)
+        thumbnail_targets.update(
+            (row[0], row[1])
+            for row in conn.execute(
+                f"SELECT s.image_filename,s.detection_id FROM human_label_facts f JOIN label_subjects s USING(subject_id) WHERE f.fact_id IN ({placeholders}) AND f.fact_type='bbox_correction' AND s.detection_id IS NOT NULL",
+                batch,
+            )
+        )
+    states = fetch_detection_review_states(
+        conn, [did for _, did in targets if did is not None]
+    )
+    return {
+        "fact_ids": fact_ids,
+        "answered": len(targets),
+        "targets": sorted(thumbnail_targets),
+        "facts": fetch_current_facts(
+            conn, image_filename=targets[0][0], detection_id=targets[0][1]
+        ),
+        "review_state": states.get(targets[0][1]),
+        "review_states": states,
+    }
+
+
 def refresh_thumbnail_for_corrected_box(
     conn: sqlite3.Connection,
     *,
@@ -226,6 +345,25 @@ def refresh_thumbnail_for_corrected_box(
         return False
 
 
+def refresh_answer_thumbnails(
+    conn: sqlite3.Connection, targets: list[tuple[str, int | None]], paths: object
+) -> None:
+    from core.crop_refresh import current_detection_bbox
+
+    for _, did in targets:
+        if did is None:
+            continue
+        row = current_detection_bbox(conn, did)
+        if row:
+            refresh_thumbnail_for_corrected_box(
+                conn,
+                detection_id=did,
+                bbox=tuple(row),
+                original_resolver=paths.get_original_path,
+                thumb_resolver=lambda name: paths.get_derivative_path(name, "thumb"),
+            )
+
+
 def fetch_current_facts(
     conn: sqlite3.Connection,
     *,
@@ -256,10 +394,7 @@ def fetch_detection_review_states(
 ) -> dict[int, dict[str, object]]:
     """Return canonical human species-review state for offered detections.
 
-    AI decision state and legacy review columns are intentionally absent from
-    this projection. An explicit image-level no-bird answer is a reviewed
-    negative for every offered detection on that image, but it remains an
-    image-scoped fact in storage.
+    Image statements are training evidence; object facts determine review state.
     """
     ids = sorted({int(detection_id) for detection_id in detection_ids if detection_id})
     states: dict[int, dict[str, object]] = {
@@ -297,22 +432,7 @@ def fetch_detection_review_states(
             """,
             chunk,
         ).fetchall()
-        image_rows = conn.execute(
-            f"""
-            SELECT d.detection_id, current.scope, current.fact_type,
-                   current.assertion_state, current.answer_value,
-                   current.species_key
-            FROM detections d
-            JOIN current_human_label_facts current
-              ON current.scope = 'image'
-             AND current.image_filename = d.image_filename
-             AND current.fact_type = 'bird_presence'
-            WHERE d.detection_id IN ({placeholders})
-            """,
-            chunk,
-        ).fetchall()
-
-        for row in (*object_rows, *image_rows):
+        for row in object_rows:
             if row["assertion_state"] != "asserted":
                 continue
             if row["fact_type"] == "bbox_quality":
@@ -424,16 +544,13 @@ def retract_species_identity(
         app_version=_app_version(app_version),
         context="normal_correction",
         source_kind="watchmybirds_ui",
-        source_ref=source_ref,
+        source_ref=source_ref or "answer:" + uuid4().hex,
     )
     fact_id = retract_species_identity_core(
         conn,
         image_filename=image_filename,
         detection_id=detection_id,
         provenance=provenance,
-    )
-    refresh_review_image_visibility(
-        conn, image_filename, float(cfg["GALLERY_DISPLAY_THRESHOLD"])
     )
     return fact_id
 
@@ -453,26 +570,11 @@ def retract_bbox_quality(
         app_version=_app_version(app_version),
         context="normal_correction",
         source_kind="watchmybirds_ui",
-        source_ref=source_ref,
+        source_ref=source_ref or "answer:" + uuid4().hex,
     )
     return retract_bbox_quality_core(
         conn,
         image_filename=image_filename,
         detection_id=detection_id,
         provenance=provenance,
-    )
-
-
-def record_review_answers(
-    conn: sqlite3.Connection, detection_ids: list[int], action: str, species: str | None
-) -> int:
-    from core.station_observations import answer_review_selection
-
-    return answer_review_selection(
-        conn,
-        detection_ids,
-        action,
-        species,
-        _ui_provenance(source_ref="review-event-selection", app_version=""),
-        float(get_config()["GALLERY_DISPLAY_THRESHOLD"]),
     )

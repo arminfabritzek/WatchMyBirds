@@ -20,7 +20,7 @@ def test_get_species_key_local_prefers_explicit_then_override():
         == "Erithacus_rubecula"
     )
     assert (
-        view_helpers.get_species_key({"manual_species_override": "Parus_major"})
+        view_helpers.get_species_key({"human_species_key": "Parus_major"})
         == "Parus_major"
     )
     assert view_helpers.get_species_key(None) == view_helpers.UNKNOWN_SPECIES_KEY

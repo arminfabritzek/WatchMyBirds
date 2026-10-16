@@ -156,8 +156,7 @@
                 ) }}
             </div>
 
-            {% if member.conflict %}<p class="station-card-meta">Conflicting answers · open the image to resolve the object and whole-image answers.</p>
-            {% elif member.warning %}<p class="station-card-meta">{{ member.warning }}</p>{% endif %}
+            {% if member.warning %}<p class="station-card-meta">{{ member.warning }}</p>{% endif %}
             {% if member.media_placeholder %}<p class="station-card-meta">No stored image available</p>{% endif %}
 
         </div>

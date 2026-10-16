@@ -7,11 +7,9 @@ from datetime import date
 from pathlib import Path
 
 from core.events import build_bird_events
-from core.human_label_core import HumanAnswer, LabelProvenance, record_human_answer
-from core.review_state import refresh_review_image_visibility
 from utils.db import closing_connection
 from utils.db.detections import fetch_observation_page, hydrate_observations
-from utils.db.observations import observations_cte, selection_sql
+from utils.db.observations import selection_sql
 
 
 def validate_selection(start: str = "", end: str = "") -> dict[str, str]:
@@ -42,17 +40,14 @@ def grouped_review(
         validate_selection(day, day)
     where, params = selection_sql(selection)
     where += (
-        " AND answered AND NOT COALESCE(conflict, 0)"
-        if answered
-        else " AND ((active AND NOT answered AND NOT admitted) OR COALESCE(conflict, 0))"
+        " AND answered" if answered else " AND active AND NOT answered AND NOT admitted"
     )
     with closing_connection() as conn:
         conn.execute("BEGIN")
         rows = [
             dict(row)
             for row in conn.execute(
-                observations_cte(conn)
-                + "SELECT * FROM observations WHERE "
+                "SELECT * FROM current_observations WHERE "
                 + where
                 + " ORDER BY timestamp DESC, object_key",
                 params,
@@ -84,13 +79,6 @@ def grouped_review(
                     ]
                 )
             )
-        events.sort(
-            key=lambda event: (
-                not any(
-                    selected[index - 1]["conflict"] for index in event.detection_ids
-                )
-            )
-        )
         page_count = max(1, (len(events) + 7) // 8)
         page = max(1, min(page, page_count))
         groups = []
@@ -198,7 +186,7 @@ def media_revision(output_dir: str) -> tuple:
 
 
 def species_selection_ids(species: str, selection: dict[str, str]) -> list[int]:
-    from utils.db.observations import observations_cte, selection_sql
+    from utils.db.observations import selection_sql
 
     where, params = selection_sql(selection)
     if species == "Unknown_species":
@@ -210,8 +198,7 @@ def species_selection_ids(species: str, selection: dict[str, str]) -> list[int]:
         return [
             int(row[0])
             for row in conn.execute(
-                observations_cte(conn)
-                + "SELECT detection_id FROM observations WHERE detection_id IS NOT NULL AND "
+                "SELECT detection_id FROM current_observations WHERE detection_id IS NOT NULL AND "
                 + where
                 + " ORDER BY timestamp DESC, detection_id DESC",
                 params,
@@ -219,65 +206,22 @@ def species_selection_ids(species: str, selection: dict[str, str]) -> list[int]:
         ]
 
 
-def answer_review_selection(
-    conn: sqlite3.Connection,
-    detection_ids: list[int],
-    action: str,
-    species: str | None,
-    provenance: LabelProvenance,
-    gallery_threshold: float,
-) -> int:
-    if (
-        not isinstance(detection_ids, list)
-        or not detection_ids
-        or len(detection_ids) > 1000
-        or any(type(value) is not int or value <= 0 for value in detection_ids)
-        or len(set(detection_ids)) != len(detection_ids)
-    ):
-        raise ValueError(
-            "Select between 1 and 1000 detector objects; use the viewer for manually added birds"
-        )
-    if not isinstance(action, str) or action not in {"species", "unknown", "no_bird"}:
-        raise ValueError("Invalid review answer")
-    if action == "species" and not species:
-        raise ValueError("Choose a species first")
-    conn.execute("BEGIN IMMEDIATE")
+def validate_review_targets(conn: sqlite3.Connection, detection_ids: list[int]) -> None:
+    if not detection_ids:
+        raise ValueError("Select detector objects in Review")
     rows = []
     for offset in range(0, len(detection_ids), 400):
         batch = detection_ids[offset : offset + 400]
         rows.extend(
             dict(row)
             for row in conn.execute(
-                observations_cte(conn)
-                + "SELECT * FROM observations WHERE detection_id IN ("
+                "SELECT * FROM current_observations WHERE detection_id IN ("
                 + ",".join("?" for _ in batch)
                 + ")",
                 batch,
             )
         )
     if len(rows) != len(detection_ids) or any(
-        row["conflict"] or not row["active"] or row["answered"] or row["admitted"]
-        for row in rows
+        not row["active"] or row["answered"] or row["admitted"] for row in rows
     ):
-        raise ValueError(
-            "The selection has changed or contains conflicting answers. Reload Review and resolve conflicts in the image viewer."
-        )
-    for row in rows:
-        record_human_answer(
-            conn,
-            HumanAnswer(
-                image_filename=row["image_filename"],
-                detection_id=row["detection_id"],
-                object_bird_presence="absent" if action == "no_bird" else None,
-                species_identity="corrected"
-                if action == "species"
-                else "unknown"
-                if action == "unknown"
-                else None,
-                species_key=species if action == "species" else None,
-            ),
-            provenance,
-        )
-    for filename in {row["image_filename"] for row in rows}:
-        refresh_review_image_visibility(conn, filename, gallery_threshold)
-    return len(rows)
+        raise ValueError("The selection has changed. Reload Review before answering.")

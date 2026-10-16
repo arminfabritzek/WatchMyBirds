@@ -180,7 +180,7 @@ for path in ['/api/v1/cameras', '/api/v1/onvif/discover', '/video_feed', '/api/v
 assert client.get('/api/v1/storage/status').status_code == 302
 assert client.post('/api/v1/storage/scan').status_code == 403
 assert client.post('/api/labels/answer', json={}).status_code == 403
-assert client.post('/api/review/event-approve', json={}).status_code == 403
+assert client.post('/api/review/event-approve', json={}).status_code == 404
 login = client.get('/login')
 assert login.status_code == 200
 with client.session_transaction() as session:

@@ -1,7 +1,6 @@
 """Tests for trash blueprint relabel/favorite/species-list APIs."""
 
 import json
-import time
 from datetime import datetime
 from unittest.mock import MagicMock, patch
 
@@ -188,132 +187,6 @@ def test_species_list_with_detection_id_includes_predictions_first(client):
     )
 
 
-def test_relabel_requires_detection_and_species(client):
-    response = client.post("/api/detections/relabel", json={})
-    assert response.status_code == 400
-    assert "required" in response.get_json()["error"]
-
-
-def test_relabel_updates_detection_and_classification(client):
-    mock_conn = MagicMock()
-    mock_conn.execute.return_value.fetchone.return_value = {
-        "image_filename": "frame.jpg"
-    }
-    with (
-        patch("web.blueprints.trash.db_service.get_connection", return_value=mock_conn),
-        patch("web.blueprints.trash.human_label_service.record_answer") as mock_record,
-        patch(
-            "web.blueprints.trash.build_species_picker_entries",
-            return_value=[
-                {
-                    "scientific": "False_Positive",
-                    "common": "False Positive",
-                    "source": "extended",
-                    "score": None,
-                    "rank": None,
-                }
-            ],
-        ),
-    ):
-        response = client.post(
-            "/api/detections/relabel",
-            json={"detection_id": 7, "species": "False_Positive"},
-        )
-
-    assert response.status_code == 200
-    data = response.get_json()
-    assert data["status"] == "success"
-    assert data["new_species"] == "False_Positive"
-    assert mock_conn.execute.call_count == 1
-    answer = mock_record.call_args.args[1]
-    assert answer.detection_id == 7
-    assert answer.species_identity == "corrected"
-    assert answer.species_key == "False_Positive"
-    mock_conn.commit.assert_called_once()
-    mock_conn.close.assert_called_once()
-
-
-def test_relabel_flips_decision_level_to_species(client):
-    """Regression: a user-chosen species via the gallery picker must flip
-    decision_level to 'species' so the row re-enters /species and gallery.
-    Pre-fix, 377 rows drifted into species_review-after-confirm because
-    only decision_state was set."""
-    mock_conn = MagicMock()
-    mock_conn.execute.return_value.fetchone.return_value = {
-        "image_filename": "frame.jpg"
-    }
-    with (
-        patch("web.blueprints.trash.db_service.get_connection", return_value=mock_conn),
-        patch("web.blueprints.trash.human_label_service.record_answer") as mock_record,
-        patch(
-            "web.blueprints.trash.build_species_picker_entries",
-            return_value=[
-                {
-                    "scientific": "Turdus_merula",
-                    "common": "Amsel",
-                    "source": "model",
-                    "score": None,
-                    "rank": None,
-                }
-            ],
-        ),
-    ):
-        response = client.post(
-            "/api/detections/relabel",
-            json={"detection_id": 42101, "species": "Turdus_merula"},
-        )
-
-    assert response.status_code == 200
-    answer = mock_record.call_args.args[1]
-    assert answer.species_identity == "corrected"
-    assert answer.species_key == "Turdus_merula"
-
-
-def test_relabel_invalidates_best_species_cache(client):
-    """A relabel must clear the Live page's Best-of-Species memo so the next
-    render does not echo the old species (the 5-min TTL would otherwise
-    delay the change well past the user's reload)."""
-    from web import web_interface
-
-    # Seed a fresh-looking cache the way the production renderer does
-    # (web_interface.py:2833); the relabel handler should then reset it.
-    web_interface._best_species_cache["timestamp"] = 9999.0
-    web_interface._best_species_cache["payload"] = {"board": "stale"}
-
-    mock_conn = MagicMock()
-    mock_conn.execute.return_value.fetchone.return_value = {
-        "image_filename": "frame.jpg"
-    }
-    with (
-        patch("web.blueprints.trash.db_service.get_connection", return_value=mock_conn),
-        patch("web.blueprints.trash.human_label_service.record_answer"),
-        patch(
-            "web.blueprints.trash.build_species_picker_entries",
-            return_value=[
-                {
-                    "scientific": "Parus_major",
-                    "common": "Great Tit",
-                    "source": "model",
-                    "score": None,
-                    "rank": None,
-                }
-            ],
-        ),
-    ):
-        response = client.post(
-            "/api/detections/relabel",
-            json={"detection_id": 7, "species": "Parus_major"},
-        )
-
-    assert response.status_code == 200
-    # Match the renderer's own freshness gate (web_interface.py:2813): any
-    # state the cold path would treat as "expired" is acceptable.
-    cache = web_interface._best_species_cache
-    assert cache["payload"] is None
-    age = time.time() - float(cache["timestamp"] or 0.0)
-    assert age >= web_interface._BEST_SPECIES_CACHE_TTL_SECONDS
-
-
 def test_removed_rating_endpoint_returns_not_found(client: FlaskClient) -> None:
     response = client.post(
         "/api/detections/rate", json={"detection_id": 7, "rating": 5}
@@ -362,36 +235,8 @@ def unauth_client(app):
 
 def test_unauth_reject_redirects_to_login(unauth_client):
     response = unauth_client.post(
-        "/api/detections/reject",
-        json={"ids": [1]},
-        follow_redirects=False,
-    )
-    assert response.status_code == 302
-    assert "/login" in response.headers["Location"]
-
-
-def test_reject_is_housekeeping_without_human_label(client):
-    mock_conn = MagicMock()
-    with (
-        patch("web.blueprints.trash.db_service") as mock_db,
-        patch("web.blueprints.trash.human_label_service.record_answer") as mock_record,
-    ):
-        mock_db.closing_connection.return_value.__enter__ = MagicMock(
-            return_value=mock_conn
-        )
-        mock_db.closing_connection.return_value.__exit__ = MagicMock(return_value=False)
-
-        response = client.post("/api/detections/reject", json={"ids": [7]})
-
-    assert response.status_code == 200
-    mock_db.reject_detections.assert_called_once_with(mock_conn, [7])
-    mock_record.assert_not_called()
-
-
-def test_unauth_relabel_redirects_to_login(unauth_client):
-    response = unauth_client.post(
-        "/api/detections/relabel",
-        json={"detection_id": 1, "species": "Parus_major"},
+        "/api/trash/move",
+        json={"detection_ids": [1]},
         follow_redirects=False,
     )
     assert response.status_code == 302

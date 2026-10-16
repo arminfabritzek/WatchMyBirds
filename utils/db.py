@@ -45,5 +45,4 @@ from utils.db import (  # noqa: F401
     restore_detections,
     restore_no_bird_images,
     update_downloaded_timestamp,
-    update_review_status,
 )

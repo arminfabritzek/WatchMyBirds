@@ -1,14 +1,4 @@
-"""Tests for the non-bird track of detectors.services.scoring_pipeline.
-
-These cover:
-
-- non-bird detections skip CLS yet survive the pipeline
-- score = od_conf (no CLS mixing)
-- unknown_score = 0.0 (not the killer 1.0 from compute_unknown_score([]))
-- decision_state = CONFIRMED when od_conf >= non_bird_confirm_threshold
-- decision_state = UNCERTAIN when below threshold
-- bird track still behaves as before (regression guard)
-"""
+"""Non-bird proposals retain OD scores but never admit a bird species."""
 
 from __future__ import annotations
 
@@ -45,17 +35,17 @@ def capability_registry():
 # ---------------------------------------------------------------------------
 
 
-def test_non_bird_high_conf_confirmed(
+def test_non_bird_high_conf_not_admitted(
     good_bbox,
     hd_frame_shape,
     decision_policy,
     capability_registry,
 ):
-    """squirrel at od=0.90 with no CLS -> CONFIRMED, score=od, unknown=0."""
     result = compute_detection_signals(
         bbox=good_bbox,
         frame_shape=hd_frame_shape,
         od_conf=0.90,
+        species_key="Parus_major",
         cls_conf=0.0,
         top_k_confidences=None,
         decision_policy=decision_policy,
@@ -67,9 +57,8 @@ def test_non_bird_high_conf_confirmed(
     assert result.score == pytest.approx(0.90)
     assert result.agreement_score == pytest.approx(0.90)
     assert result.unknown_score == pytest.approx(0.0)  # NOT 1.0
-    assert result.decision_state == DecisionState.CONFIRMED
-    # Non-bird bypass does NOT consult the decision policy -> no reasons
-    assert result.decision_reasons_json == "[]"
+    assert result.decision_state == DecisionState.UNCERTAIN
+    assert "NO_NAMED_BIRD_SPECIES" in result.decision_reasons_json
 
 
 def test_non_bird_low_conf_uncertain(
@@ -78,11 +67,11 @@ def test_non_bird_low_conf_uncertain(
     decision_policy,
     capability_registry,
 ):
-    """squirrel at od=0.30 below threshold -> UNCERTAIN."""
     result = compute_detection_signals(
         bbox=good_bbox,
         frame_shape=hd_frame_shape,
         od_conf=0.30,
+        species_key="Parus_major",
         cls_conf=0.0,
         top_k_confidences=None,
         decision_policy=decision_policy,
@@ -100,18 +89,18 @@ def test_non_bird_low_conf_uncertain(
     "class_name",
     ["squirrel", "cat", "marten_mustelid", "hedgehog"],
 )
-def test_non_bird_all_garden_animals_confirmed(
+def test_non_bird_garden_animals_not_admitted(
     good_bbox,
     hd_frame_shape,
     decision_policy,
     capability_registry,
     class_name,
 ):
-    """All four non-bird classes follow the same non-bird pipeline."""
     result = compute_detection_signals(
         bbox=good_bbox,
         frame_shape=hd_frame_shape,
         od_conf=0.85,
+        species_key="Parus_major",
         cls_conf=0.0,
         top_k_confidences=None,
         decision_policy=decision_policy,
@@ -119,7 +108,7 @@ def test_non_bird_all_garden_animals_confirmed(
         od_class_name=class_name,
         non_bird_confirm_threshold=0.65,
     )
-    assert result.decision_state == DecisionState.CONFIRMED
+    assert result.decision_state == DecisionState.UNCERTAIN
 
 
 def test_non_bird_threshold_boundary(
@@ -128,11 +117,11 @@ def test_non_bird_threshold_boundary(
     decision_policy,
     capability_registry,
 ):
-    """od_conf == non_bird_confirm_threshold -> CONFIRMED (>=)."""
     result = compute_detection_signals(
         bbox=good_bbox,
         frame_shape=hd_frame_shape,
         od_conf=0.65,
+        species_key="Parus_major",
         cls_conf=0.0,
         top_k_confidences=None,
         decision_policy=decision_policy,
@@ -140,7 +129,7 @@ def test_non_bird_threshold_boundary(
         od_class_name="squirrel",
         non_bird_confirm_threshold=0.65,
     )
-    assert result.decision_state == DecisionState.CONFIRMED
+    assert result.decision_state == DecisionState.UNCERTAIN
 
 
 # ---------------------------------------------------------------------------
@@ -159,6 +148,7 @@ def test_bird_track_with_cls_still_uses_cls_conf(
         bbox=good_bbox,
         frame_shape=hd_frame_shape,
         od_conf=0.9,
+        species_key="Parus_major",
         cls_conf=0.8,
         top_k_confidences=[0.8, 0.05, 0.03, 0.02, 0.01],
         decision_policy=decision_policy,
@@ -188,6 +178,7 @@ def test_bird_track_without_cls_uses_od(
         bbox=good_bbox,
         frame_shape=hd_frame_shape,
         od_conf=0.9,
+        species_key="Parus_major",
         cls_conf=0.0,
         top_k_confidences=None,
         decision_policy=decision_policy,
@@ -213,6 +204,7 @@ def test_default_od_class_name_is_bird_track():
         bbox=(400, 300, 700, 600),
         frame_shape=(1080, 1920, 3),
         od_conf=0.9,
+        species_key="Parus_major",
         cls_conf=0.8,
         top_k_confidences=[0.8, 0.05],
         decision_policy=DecisionPolicyService(),
@@ -228,13 +220,6 @@ def test_default_od_class_name_is_bird_track():
 
 
 def test_default_non_bird_threshold_is_80():
-    """The default DEFAULT_NON_BIRD_CONFIRM_THRESHOLD is 0.80.
-
-    Live RPi data on 2026-05-10 showed marten_mustelid never exceeds OD
-    confidence 0.77 across 1760 detections in 7 days. A 0.80 default gates
-    every observed marten while leaving bird detections (separate track)
-    unaffected.
-    """
     from detectors.services.scoring_pipeline import DEFAULT_NON_BIRD_CONFIRM_THRESHOLD
 
     assert DEFAULT_NON_BIRD_CONFIRM_THRESHOLD == pytest.approx(0.80)
@@ -246,17 +231,11 @@ def test_non_bird_marten_at_077_is_uncertain_with_default(
     decision_policy,
     capability_registry,
 ):
-    """marten_mustelid at the observed max (0.77) -> UNCERTAIN by default.
-
-    This is the key behaviour change: the same detection that would have
-    been CONFIRMED under the previous 0.65 default is now correctly
-    classified as UNCERTAIN, removing it from gallery / Stream / Telegram
-    surfaces while keeping it in the DB for review.
-    """
     result = compute_detection_signals(
         bbox=good_bbox,
         frame_shape=hd_frame_shape,
         od_conf=0.77,
+        species_key="Parus_major",
         cls_conf=0.0,
         top_k_confidences=None,
         decision_policy=decision_policy,
@@ -267,22 +246,17 @@ def test_non_bird_marten_at_077_is_uncertain_with_default(
     assert result.decision_state == DecisionState.UNCERTAIN
 
 
-def test_non_bird_high_conf_cat_still_confirms_at_default(
+def test_non_bird_high_conf_cat_not_admitted_at_default(
     good_bbox,
     hd_frame_shape,
     decision_policy,
     capability_registry,
 ):
-    """A genuine cat sighting (od=0.90) still CONFIRMS at the new default.
-
-    Cats max out at 0.92 in the live data — they pass the 0.80 floor cleanly
-    when the OD model is genuinely confident. Only the low-confidence,
-    static-bbox night triggers fall through.
-    """
     result = compute_detection_signals(
         bbox=good_bbox,
         frame_shape=hd_frame_shape,
         od_conf=0.90,
+        species_key="Parus_major",
         cls_conf=0.0,
         top_k_confidences=None,
         decision_policy=decision_policy,
@@ -290,7 +264,7 @@ def test_non_bird_high_conf_cat_still_confirms_at_default(
         od_class_name="cat",
         # no explicit non_bird_confirm_threshold -> use the new 0.80 default
     )
-    assert result.decision_state == DecisionState.CONFIRMED
+    assert result.decision_state == DecisionState.UNCERTAIN
 
 
 def test_bird_track_at_077_unaffected_by_non_bird_default(
@@ -310,6 +284,7 @@ def test_bird_track_at_077_unaffected_by_non_bird_default(
         bbox=good_bbox,
         frame_shape=hd_frame_shape,
         od_conf=0.77,
+        species_key="Parus_major",
         cls_conf=0.85,
         top_k_confidences=[0.85, 0.05, 0.03, 0.02, 0.01],
         decision_policy=decision_policy,

@@ -22,6 +22,7 @@ from PIL import Image
 
 import config
 from core.event_metadata import EventMetadata, SpeciesEntry
+from core.human_label_core import HumanAnswer, LabelProvenance, record_human_answer
 from utils import path_manager
 from utils.db import connection as db_connection
 from utils.db import insert_classification, insert_detection, insert_image
@@ -174,6 +175,19 @@ def _seed(
                 "created_at": timestamp,
             },
         )
+    if override:
+        record_human_answer(
+            conn,
+            HumanAnswer(
+                image_filename=filename,
+                detection_id=det_id,
+                species_identity="corrected",
+                species_key=override,
+            ),
+            LabelProvenance(
+                "synthetic", "test", "normal_correction", "watchmybirds_ui"
+            ),
+        )
     conn.commit()
     return det_id
 
@@ -203,9 +217,17 @@ def test_core_resolves_effective_species_and_relabel(db_env):
 
     # relabel via manual override → next copy reflects it
     with db_connection.closing_connection() as conn:
-        conn.execute(
-            "UPDATE detections SET manual_species_override = ? WHERE detection_id = ?",
-            ("Cyanistes_caeruleus", det_id),
+        record_human_answer(
+            conn,
+            HumanAnswer(
+                image_filename=fn,
+                detection_id=det_id,
+                species_identity="corrected",
+                species_key="Cyanistes_caeruleus",
+            ),
+            LabelProvenance(
+                "synthetic", "test", "normal_correction", "watchmybirds_ui"
+            ),
         )
         conn.commit()
     copy2 = core.produce_copy_bytes(fn)
@@ -355,8 +377,8 @@ def test_core_provenance_creator_tool_and_review_status(db_env):
     # Fixed app attribution, independent of DEVICE_NAME.
     assert meta.creator_tool == "WatchMyBirds"
     assert meta.creator == "WatchMyBirds"
-    assert meta.review_status == "confirmed_bird"
+    assert meta.review_status is None
     xmp = build_xmp_packet(meta)
     assert "<xmp:CreatorTool>WatchMyBirds</xmp:CreatorTool>" in xmp
     assert "<dc:creator><rdf:Seq><rdf:li>WatchMyBirds</rdf:li>" in xmp
-    assert "<wmb:reviewStatus>confirmed_bird</wmb:reviewStatus>" in xmp
+    assert "<wmb:reviewStatus>" not in xmp

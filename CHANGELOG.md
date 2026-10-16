@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Human answers use one API and one fact history. Withdrawing an answer removes
+  everything written by that action; stored automatic decisions stay separate.
+- Updates preserve older answers, keep withdrawn answers withdrawn, and return
+  conflicting bird answers to Review. No-bird answers appear under Done instead
+  of Trash. Deliberate trash actions record their date.
+- Automatic deletion starts off on existing installations, with a Settings
+  notice. Deletion waits for the answer migration to finish.
+- Full-image no-bird answers and manually added birds now exclude each other.
+
+
 ## 0.5.9 - 2026-10-13
 
 ### Added

@@ -13,7 +13,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from config import get_config
-from tests.test_label_write_endpoints_contract import _reset_test_config, _seed, post
+from tests.labeling_helpers import _reset_test_config, _seed, post
 from utils.db import connection as db_connection
 from utils.path_manager import PathManager
 from web.web_interface import create_web_interface
@@ -208,7 +208,9 @@ def test_box_walkthrough_shows_the_candidate_editor(canonical_client) -> None:
     assert "data-bird-editor" in content
     assert "Box fits" in content
     assert 'class="btn btn--primary btn--sm"' in content
-    assert content.index('data-editor-action="bbox-verdict"') < content.index('data-editor-action="menu"')
+    assert content.index('data-editor-action="bbox-verdict"') < content.index(
+        'data-editor-action="menu"'
+    )
     assert f"skip={detection_id}" in content
     assert "/assets/js/species_picker.js?v=" in content
     assert "/assets/js/gallery_utils.js?v=" in content

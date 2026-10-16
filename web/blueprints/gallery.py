@@ -29,7 +29,6 @@ from core.species_colours import assign_species_colours as _assign_species_colou
 from logging_config import get_logger
 from web import view_helpers
 from web.blueprints.auth import login_required
-from web.security import safe_log_value as _slv
 from web.services import (
     db_service,
     gallery_service,
@@ -238,47 +237,12 @@ def edit_actions_route():
         if safe_date is None:
             return redirect("/gallery")
 
-    if action == "reject_all":
-        if not safe_date:
-            return redirect("/gallery")
-
-        with db_service.closing_connection() as conn:
-            date_prefix = safe_date.replace("-", "")
-
-            query = """
-                SELECT d.detection_id
-                FROM detections d
-                JOIN images i ON d.image_filename = i.filename
-                WHERE i.timestamp LIKE ?
-                AND (d.status IS NULL OR d.status != 'rejected')
-            """
-            rows = conn.execute(query, (f"{date_prefix}%",)).fetchall()
-            all_ids = [r["detection_id"] for r in rows]
-
-            if all_ids:
-                db_service.reject_detections(conn, all_ids)
-                logger.info(
-                    "Rejected ALL %d detections for %s",
-                    len(all_ids),
-                    _slv(safe_date),
-                )
-
-        gallery_service.invalidate_cache()
-        return redirect(_safe_date_redirect("/gallery", safe_date))
-
     if not det_ids:
         return redirect(_safe_date_redirect("/edit", safe_date))
 
     ids_int = [int(i) for i in det_ids]
 
-    if action == "reject":
-        with db_service.closing_connection() as conn:
-            db_service.reject_detections(conn, ids_int)
-
-        gallery_service.invalidate_cache()
-        return redirect(_safe_date_redirect("/edit", safe_date))
-
-    elif action == "download":
+    if action == "download":
         from flask import send_file
 
         zip_buffer = image_download_service.build_download_archive(ids_int)
@@ -669,6 +633,19 @@ def subgallery_route(date):
     modal_siblings = gallery_service.get_sibling_detections_batch(
         sorted(modal_filenames - {""})
     )
+
+    with db_service.closing_connection() as conn:
+        review_states.update(
+            human_label_service.fetch_detection_review_states(
+                conn,
+                [
+                    int(sibling["detection_id"])
+                    for siblings in modal_siblings.values()
+                    for sibling in siblings
+                    if sibling.get("detection_id")
+                ],
+            )
+        )
 
     def human_review_extra(det: dict) -> dict:
         detection_id = int(det.get("detection_id") or 0)

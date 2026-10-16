@@ -14,9 +14,8 @@
     <div class="wm-tile__body">
         <span class="wm-tile__name">{{ det.proposal_common_name if group == 'station_review' else det.common_name }}</span>
         {% if det.species_key != 'Unknown_species' %}<span class="wm-tile__latin">{{ det.species_key | replace('_', ' ') }}</span>{% endif %}
-        {% if group == 'station_review' and det.conflict %}<span class="station-card-meta">This species answer conflicts with a “No bird” answer. Check the selected object and the whole-image answer before resolving it.</span>{% endif %}
         {% if det.warning and not det.answered %}<span class="station-card-meta">{{ det.warning }}</span>{% endif %}
-            <span class="station-card-status">{% if det.presence == 'absent' and not det.conflict %}No bird · Answered{% elif det.image_presence == 'absent' and not det.conflict %}No birds in image · Answered{% elif det.conflict %}Conflicting answers · Review{% elif det.answer == 'wrong' %}Species proposal refuted · Answered{% elif det.answer == 'unknown' %}Bird · species unknown · Answered{% elif det.origin == 'human' %}User confirmed{% elif det.origin == 'legacy' %}Earlier assignment{% elif det.species_key != 'Unknown_species' %}Automatically identified{% else %}Detection unclear{% endif %}</span>
+            <span class="station-card-status">{% if det.presence == 'absent' %}No bird · Answered{% elif det.answer == 'wrong' %}Species proposal refuted · Answered{% elif det.answer == 'unknown' %}Bird · species unknown · Answered{% elif det.origin == 'human' %}User confirmed{% elif det.origin == 'legacy' %}Earlier assignment{% elif det.species_key != 'Unknown_species' %}Automatically identified{% else %}Detection unclear{% endif %}</span>
         <span class="station-card-meta">{{ det.formatted_date }} {{ det.formatted_time }} · {{ 'Imported image' if det.source_type in ['folder_upload', 'import', 'folder'] else 'Camera' if det.source_type in ['ipcam', 'webcam', 'rtsp', 'camera'] else 'Source unknown' }}{% if det.media_status %} · {{ det.media_status }}{% endif %}{% if det.media_placeholder %} · No image available{% endif %}</span>
     </div>
 </article>

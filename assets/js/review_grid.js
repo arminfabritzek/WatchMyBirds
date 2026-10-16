@@ -231,7 +231,10 @@
         card.dataset.saving = '1';
         button.disabled = true;
         try {
-            await postJson('/api/review/answers', { detection_ids: scope.ids, action: action, species: species });
+            await postJson('/api/labels/answer', { detection_ids: scope.ids, review_only: true,
+                ...(action === 'no_bird' ? { object_bird_presence: 'absent' }
+                    : { species_identity: action === 'unknown' ? 'unknown' : 'corrected',
+                        species_key: action === 'species' ? species : null }) });
             window.location.reload();
         } catch (error) {
             if (window.wmToast) window.wmToast(error.message || 'Unable to save answers', 'error', 5000);
@@ -385,7 +388,7 @@
 
     /* Relabel Event from the card header.
      * Opens WmSpeciesPicker for the event's cover detection, then
-     * POSTs /api/moderation/bulk/relabel for every actionable
+     * POSTs /api/labels/answer for every actionable
      * detection_id in the card. The card's data-species + visible
      * species pill update in-place so the next Approve picks up the
      * new species without a page reload.

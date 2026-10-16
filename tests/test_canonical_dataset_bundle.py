@@ -460,7 +460,7 @@ def test_disk_archive_preserves_legacy_compression_and_bytes(canonical_case, tmp
 
 @pytest.mark.parametrize("negative", [False, True])
 def test_manual_birds_are_included_and_prevent_negative_od_export(
-    canonical_case, negative: bool
+    canonical_case, negative: bool, monkeypatch
 ) -> None:
     from core.human_label_core import BBox
     from core.manual_object_core import (
@@ -486,6 +486,11 @@ def test_manual_birds_are_included_and_prevent_negative_od_export(
     before = build_canonical_dataset(
         conn, media_exists=lambda name: pm.get_original_path(name).is_file()
     )
+    if negative:
+        # Older station data can contain contradictions that current writers reject.
+        monkeypatch.setattr(
+            "core.manual_object_core.require_no_image_absence", lambda *args: None
+        )
     obj, _ = create_manual_object(
         conn,
         ManualObjectDraft(

@@ -220,35 +220,10 @@ def _count_label(count: int, singular: str, plural: str) -> str:
 
 
 def _fetch_species_best_photos(conn: sqlite3.Connection, date_iso: str) -> list[dict]:
-    """
-    Fetch the best photo per species for a given date.
-
-    Species resolution uses effective_species_sql() so non-bird OD class
-    names (squirrel, cat, marten_mustelid, hedgehog) appear as their own
-    species and bird detections without CLS collapse into
-    UNKNOWN_SPECIES_KEY instead of leaking as 'bird'. This keys the
-    daily report consistently with summarize_observations() across the
-    rest of the analytics stack.
-
-    The query restricts to ``decision_state = 'confirmed'`` so the
-    Telegram report cannot surface low-evidence species the gallery
-    already hides (the gallery applies the same filter via
-    ``_gallery_visibility_sql``). Catalog-orphan species
-    (e.g. classifier genus-fallbacks like ``Phoenicurus_sp.``) are
-    dropped in the Python pass below using ``is_known_species``.
-
-    Returns a list of dicts sorted by count DESC, score DESC.
-    """
-    from utils.db.detections import effective_species_sql
-    from utils.species_names import UNKNOWN_SPECIES_KEY, is_known_species
+    """Rank daily photos from the same admitted observations as the UI."""
 
     date_prefix = date_iso.replace("-", "")
 
-    # Use effective_species_sql("d") and match via the outer grouping key
-    # (d.species == d2.species) instead of raw CLS comparison — this keeps
-    # the manual-override / CLS top1 / normalized-OD priority chain in sync
-    # across the whole query.
-    # Aesthetic scores rank photos without excluding low-scoring species.
     config = get_config()
 
     # The PTZ preset bias ("preset" or future "manual_drive" → 1, else 0)
@@ -263,27 +238,19 @@ def _fetch_species_best_photos(conn: sqlite3.Connection, date_iso: str) -> list[
 
     query = f"""
         WITH effective AS (
-            SELECT
-                d.detection_id,
-                d.image_filename,
-                d.score,
-                d.bbox_quality,
+            SELECT o.object_key, o.image_filename, o.score, o.bbox_quality,
                 d.aesthetic_score,
-                d.bbox_x,
-                d.bbox_y,
-                d.bbox_w,
-                d.bbox_h,
-                i.ptz_origin,
-                {effective_species_sql("d", conn)} AS species
-            FROM detections d
-            LEFT JOIN images i ON i.filename = d.image_filename
-            WHERE d.image_filename LIKE ? || '%'
-              AND d.status = 'active'
-              AND lower(COALESCE(d.decision_state, '')) = 'confirmed'
-              AND (
-                  d.decision_level IS NULL
-                  OR lower(d.decision_level) NOT IN ('reject', 'species_review')
-              )
+                COALESCE(b.bbox_x, d.bbox_x, m.bbox_x) AS bbox_x,
+                COALESCE(b.bbox_y, d.bbox_y, m.bbox_y) AS bbox_y,
+                COALESCE(b.bbox_w, d.bbox_w, m.bbox_w) AS bbox_w,
+                COALESCE(b.bbox_h, d.bbox_h, m.bbox_h) AS bbox_h,
+                o.ptz_origin, o.species_key AS species
+            FROM current_observations o
+            LEFT JOIN detections d ON d.detection_id = o.detection_id
+            LEFT JOIN manual_objects m ON m.manual_object_id = o.manual_object_id
+            LEFT JOIN current_human_label_facts b ON b.detection_id = o.detection_id
+                AND b.scope = 'object' AND b.fact_type = 'bbox_correction'
+            WHERE o.timestamp LIKE ? || '%' AND o.admitted
         )
         -- "Best photo" ranking, highest priority first:
         --   1. PTZ preset bias — preset-targeted frames are physically
@@ -294,7 +261,7 @@ def _fetch_species_best_photos(conn: sqlite3.Connection, date_iso: str) -> list[
         --   4. bbox-quality heuristic
         SELECT
             species,
-            COUNT(detection_id) AS count,
+            COUNT(object_key) AS count,
             (SELECT image_filename FROM effective e2
              WHERE e2.species = effective.species
              ORDER BY {ptz_bias_sql}, COALESCE(e2.aesthetic_score, -1) DESC, e2.score DESC, e2.bbox_quality DESC LIMIT 1) AS best_image_filename,
@@ -312,7 +279,6 @@ def _fetch_species_best_photos(conn: sqlite3.Connection, date_iso: str) -> list[
              ORDER BY {ptz_bias_sql}, COALESCE(e2.aesthetic_score, -1) DESC, e2.score DESC, e2.bbox_quality DESC LIMIT 1) AS best_bbox_h,
             MAX(score) AS best_score
         FROM effective
-        WHERE species != '{UNKNOWN_SPECIES_KEY}'
         GROUP BY species
         ORDER BY count DESC, best_score DESC;
     """
@@ -321,7 +287,6 @@ def _fetch_species_best_photos(conn: sqlite3.Connection, date_iso: str) -> list[
     rows = cur.fetchall()
 
     pm = get_path_manager(config.get("OUTPUT_DIR"))
-    locale = str(config.get("SPECIES_COMMON_NAME_LOCALE", "DE") or "DE").upper()
 
     # NOTE: TELEGRAM_MIN_CONFIRMED_OBSERVATIONS is *not* applied here.
     # The raw `count` we read in this query is the per-detection row count
@@ -346,10 +311,6 @@ def _fetch_species_best_photos(conn: sqlite3.Connection, date_iso: str) -> list[
         score = float(_row_value(row, "best_score", 7, 0.0) or 0.0)
 
         if not image_filename:
-            continue
-
-        if not is_known_species(species, locale=locale):
-            logger.debug("Dropping catalog-orphan species from report: %r", species)
             continue
 
         photo_path = str(pm.get_original_path(image_filename))
@@ -701,13 +662,12 @@ def main(**_kwargs: Any) -> None:
 
     try:
         config = get_config()
-        gallery_threshold = float(config.get("GALLERY_DISPLAY_THRESHOLD", 0.0))
 
         today_rows = [
             dict(row)
             for row in fetch_detections_for_gallery(conn, report_date, order_by="time")
         ]
-        obs_summary = summarize_observations(today_rows, min_score=gallery_threshold)
+        obs_summary = summarize_observations(today_rows, min_score=0.0)
         obs_stats = obs_summary["summary"]
         species_counts: dict[str, int] = obs_stats["species_counts"]
 

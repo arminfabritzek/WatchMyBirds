@@ -266,7 +266,7 @@ cancel_label='Cancel'
             const result = await WmBatchActions.runBatchAction(
                 'Move Selected to Trash',
                 selection,
-                '/api/moderation/bulk/reject'
+                '/api/trash/move'
             );
 
             if (result.success) {
@@ -314,7 +314,7 @@ cancel_label='Cancel'
             const result = await WmBatchActions.runBatchAction(
                 '⚠️ Move All Filtered to Trash',
                 selection,
-                '/api/moderation/bulk/reject'
+                '/api/trash/move'
             );
 
             if (result.success) {

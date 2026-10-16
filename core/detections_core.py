@@ -5,6 +5,7 @@ Provides all detection-related database operations and business logic.
 """
 
 import logging
+import sqlite3
 from pathlib import Path
 from typing import Any
 
@@ -23,18 +24,49 @@ from utils.db import (
 from utils.db import (
     restore_detections as db_restore_detections,
 )
-from utils.db import (
-    update_review_status as db_update_review_status,
-)
 from utils.file_gc import (
     hard_delete_detections as gc_hard_delete_detections,
-)
-from utils.file_gc import (
-    hard_delete_images as gc_hard_delete_images,
 )
 from utils.path_manager import get_path_manager
 
 logger = logging.getLogger(__name__)
+
+
+def move_to_trash(conn: sqlite3.Connection, data: dict) -> dict[str, int]:
+    ids = data.get("detection_ids", data.get("ids", []))
+    filenames = data.get("image_filenames", [])
+    if (
+        not isinstance(ids, list)
+        or not isinstance(filenames, list)
+        or len(ids) + len(filenames) > 1000
+        or any(type(did) is not int or did <= 0 for did in ids)
+        or any(not isinstance(name, str) or not name for name in filenames)
+        or not (ids or filenames)
+    ):
+        raise ValueError("Choose between 1 and 1000 objects or photos")
+    conn.execute("BEGIN IMMEDIATE")
+    selected = set(ids)
+    for filename in filenames:
+        selected.update(
+            row[0]
+            for row in conn.execute(
+                "SELECT detection_id FROM detections WHERE image_filename=?",
+                (filename,),
+            )
+        )
+    active = []
+    images = set()
+    for did in sorted(selected):
+        row = conn.execute(
+            "SELECT status, image_filename FROM detections WHERE detection_id=?", (did,)
+        ).fetchone()
+        if row is None:
+            raise ValueError("The selection has changed; reload before moving objects")
+        if row[0] == "active":
+            active.append(did)
+            images.add(row[1])
+    db_reject_detections(conn, active, commit=False)
+    return {"rejected_detections": len(active), "rejected_images": len(images)}
 
 
 def reject_detections(detection_ids: list[int]) -> bool:
@@ -78,25 +110,6 @@ def hard_delete_detections(detection_ids: list[int]) -> dict[str, Any]:
         Dictionary with deletion results
     """
     return gc_hard_delete_detections(detection_ids)
-
-
-def update_review_status(
-    detection_id: int, save_threshold: float | None = None, reviewed: bool = True
-) -> bool:
-    """
-    Updates the review status of a detection.
-
-    Args:
-        detection_id: ID of the detection
-        save_threshold: Threshold value if applicable
-        reviewed: Whether the detection has been reviewed
-
-    Returns:
-        True on success
-    """
-    with closing_connection() as conn:
-        db_update_review_status(conn, detection_id, save_threshold, reviewed)
-    return True
 
 
 def get_trash_items() -> list[dict]:
@@ -156,46 +169,13 @@ def hard_delete_detections_with_conn(
     Returns:
         Dictionary with deletion results
     """
+    from utils.db.connection import human_answers_migrated
+
+    if not human_answers_migrated(conn):
+        raise ValueError("Human answer migration must finish before deleting trash")
     return gc_hard_delete_detections(
         conn, detection_ids=detection_ids, before_date=before_date
     )
-
-
-def hard_delete_images(
-    filenames: list[str] | None = None,
-    delete_all: bool = False,
-) -> dict[str, Any]:
-    """
-    Permanently deletes images from database and filesystem.
-
-    Args:
-        filenames: Optional list of image filenames to delete
-        delete_all: If True, delete all images
-
-    Returns:
-        Dictionary with deletion results
-    """
-    with closing_connection() as conn:
-        return gc_hard_delete_images(conn, filenames=filenames, delete_all=delete_all)
-
-
-def hard_delete_images_with_conn(
-    conn,
-    filenames: list[str] | None = None,
-    delete_all: bool = False,
-) -> dict[str, Any]:
-    """
-    Permanently deletes images using an existing connection.
-
-    Args:
-        conn: Database connection
-        filenames: Optional list of image filenames to delete
-        delete_all: If True, delete all images
-
-    Returns:
-        Dictionary with deletion results
-    """
-    return gc_hard_delete_images(conn, filenames=filenames, delete_all=delete_all)
 
 
 # --- Review Queue ---

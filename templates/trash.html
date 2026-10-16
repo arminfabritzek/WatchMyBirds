@@ -62,25 +62,6 @@
             </div>
         </section>
 
-        <section class="page-control-bar page-control-bar--trash-panel" aria-label="Imported source trash controls">
-            <div class="page-control-bar__left">
-                <span class="page-control-bar__title">User Import</span>
-                <span class="page-control-bar__select-all">
-                    <span class="page-control-bar__select-label">Imported detections</span>
-                </span>
-            </div>
-            <div class="page-control-bar__meta">
-                <span id="trash-import-preview-status">Preview imported detections.</span>
-            </div>
-            <div class="page-control-bar__right">
-                <button id="trash-import-preview-btn" type="button" class="btn btn--secondary">
-                    Preview
-                </button>
-                <button id="trash-import-confirm-btn" type="button" class="btn btn--danger" disabled>
-                    Move to Trash
-                </button>
-            </div>
-        </section>
     </aside>
 
     <section class="trash-workbench__content" aria-label="Trash items">
@@ -167,12 +148,8 @@
         const rangePreviewBtn = document.getElementById('trash-range-preview-btn');
         const rangeConfirmBtn = document.getElementById('trash-range-confirm-btn');
         const rangeStatus = document.getElementById('trash-range-preview-status');
-        const importPreviewBtn = document.getElementById('trash-import-preview-btn');
-        const importConfirmBtn = document.getElementById('trash-import-confirm-btn');
-        const importStatus = document.getElementById('trash-import-preview-status');
         let lastClickedIndex = null;
         let previewedDateRangeSelection = null;
-        let previewedImportSelection = null;
 
         function updateButtons() {
             const checked = document.querySelectorAll('.trash-checkbox:checked').length;
@@ -337,11 +314,6 @@
             rangeStatus.textContent = message;
         }
 
-        function resetImportPreview(message) {
-            previewedImportSelection = null;
-            importConfirmBtn.disabled = true;
-            importStatus.textContent = message;
-        }
 
         async function previewDateRangeTrash() {
             const fromDate = rangeFromInput.value;
@@ -417,7 +389,7 @@
             rangeConfirmBtn.disabled = true;
 
             try {
-                await WmBatchActions.executeBatchAction('/api/moderation/bulk/reject', {
+                await WmBatchActions.executeBatchAction('/api/trash/move', {
                     detection_ids: previewedDateRangeSelection.detection_ids,
                     image_filenames: previewedDateRangeSelection.image_filenames || []
                 });
@@ -438,88 +410,6 @@
             }
         }
 
-        async function previewImportedTrash() {
-            importPreviewBtn.disabled = true;
-            importConfirmBtn.disabled = true;
-            importStatus.textContent = 'Resolving detections from Source: User Import...';
-
-            try {
-                const resolved = await WmBatchActions.resolveSelection({
-                    mode: 'logical_filter',
-                    source_type: 'folder_upload'
-                });
-
-                previewedImportSelection = resolved;
-
-                if (resolved.total_count > 0) {
-                    importConfirmBtn.disabled = false;
-                    if ((resolved.detection_count || 0) > 0 && (resolved.orphan_count || 0) > 0) {
-                        importStatus.textContent =
-                            (resolved.detection_count || 0) + ' detection(s) plus ' +
-                            (resolved.orphan_count || 0) + ' orphan imported image(s) across ' +
-                            (resolved.image_count || 0) + ' image(s) will be moved to trash.';
-                    } else if ((resolved.detection_count || 0) > 0) {
-                        importStatus.textContent =
-                            (resolved.detection_count || 0) + ' detection(s) across ' +
-                            (resolved.image_count || 0) +
-                            ' imported image(s) will be moved to trash.';
-                    } else {
-                        importStatus.textContent =
-                            (resolved.orphan_count || 0) + ' orphan imported image(s) will be moved to trash.';
-                    }
-                } else {
-                    importStatus.textContent = 'No trash candidates found for Source: User Import.';
-                }
-            } catch (err) {
-                console.error('[trash-import-filter] Preview failed:', err);
-                resetImportPreview('Preview failed: ' + err.message);
-            } finally {
-                importPreviewBtn.disabled = false;
-            }
-        }
-
-        async function executeImportedTrash() {
-            if (!previewedImportSelection || !previewedImportSelection.total_count) {
-                resetImportPreview('Preview imported detections before moving them to trash.');
-                return;
-            }
-
-            const count = previewedImportSelection.total_count;
-            const imageCount = previewedImportSelection.image_count || 0;
-            const detectionCount = previewedImportSelection.detection_count || 0;
-            const orphanCount = previewedImportSelection.orphan_count || 0;
-            const confirmed = confirm(
-                'Move ' + count + ' trash candidate(s) across ' + imageCount + ' imported image(s) to Trash?\n\n' +
-                detectionCount + ' detection(s), ' + orphanCount + ' orphan image(s)\n' +
-                'This is reversible and will not delete files.'
-            );
-            if (!confirmed) return;
-
-            importPreviewBtn.disabled = true;
-            importConfirmBtn.disabled = true;
-
-            try {
-                await WmBatchActions.executeBatchAction('/api/moderation/bulk/reject', {
-                    detection_ids: previewedImportSelection.detection_ids,
-                    image_filenames: previewedImportSelection.image_filenames || []
-                });
-
-                if (window.wmToast) {
-                    window.wmToast(
-                        count + ' imported items moved to trash',
-                        'success',
-                        3000
-                    );
-                }
-                setTimeout(function () { location.reload(); }, 800);
-            } catch (err) {
-                console.error('[trash-import-filter] Execute failed:', err);
-                resetImportPreview('Move to Trash failed: ' + err.message);
-            } finally {
-                importPreviewBtn.disabled = false;
-            }
-        }
-
         [rangeFromInput, rangeToInput].forEach(function (input) {
             function handleDateInputChange() {
                 resetDateRangePreview('Date range changed. Preview again to confirm the new selection.');
@@ -531,8 +421,6 @@
 
         rangePreviewBtn.addEventListener('click', previewDateRangeTrash);
         rangeConfirmBtn.addEventListener('click', executeDateRangeTrash);
-        importPreviewBtn.addEventListener('click', previewImportedTrash);
-        importConfirmBtn.addEventListener('click', executeImportedTrash);
     });
 </script>
 {% endblock %}

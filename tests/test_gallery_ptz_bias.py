@@ -42,11 +42,11 @@ def _seed_detection(
 ) -> int:
     cur = conn.execute(
         """
-        INSERT INTO detections (
+        INSERT INTO detections (decision_level,
             image_filename, bbox_x, bbox_y, bbox_w, bbox_h,
             od_class_name, score, aesthetic_score, rating,
             status, decision_state, created_at
-        ) VALUES (?, 0.1, 0.1, 0.3, 0.3, 'bird', ?, ?, ?, 'active', 'confirmed', ?);
+        ) VALUES ('species', ?, 0.1, 0.1, 0.3, 0.3, 'bird', ?, ?, ?, 'active', 'confirmed', ?);
         """,
         (image_filename, score, aesthetic_score, rating, image_filename),
     )

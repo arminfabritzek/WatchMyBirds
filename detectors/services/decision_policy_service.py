@@ -95,3 +95,59 @@ class DecisionPolicyService:
             reasons_json=json.dumps(reasons) if reasons else "[]",
             policy_version=POLICY_VERSION,
         )
+
+    def admission_reasons(
+        self,
+        *,
+        score: float | None,
+        species_key: str | None,
+        geography_json: str | None,
+        allow_missing: bool = False,
+    ) -> list[str]:
+        """Check admission inputs shared by capture and the one-time upgrade."""
+        reasons: list[str] = []
+        if score is None:
+            if not allow_missing:
+                reasons.append("MISSING_DISPLAY_SCORE")
+        elif score < float(self._config["GALLERY_DISPLAY_THRESHOLD"]):
+            reasons.append("LOW_DISPLAY_SCORE")
+        species = species_key.replace(" ", "_") if species_key else None
+        if species is None:
+            if not allow_missing:
+                reasons.append("MISSING_SPECIES")
+        elif (
+            "_" not in species
+            or species.rstrip(".").lower().endswith("_sp")
+            or species.lower()
+            in {
+                "unknown_species",
+                "unknown",
+                "bird",
+                "unclassified",
+                "marten_mustelid",
+                "squirrel",
+                "cat",
+                "hedgehog",
+            }
+        ):
+            reasons.append("NO_NAMED_BIRD_SPECIES")
+        try:
+            geography = json.loads(geography_json or "null")
+        except (ValueError, TypeError):
+            geography = None
+        if isinstance(geography, dict) and isinstance(geography.get("ranking"), list):
+            for entry in geography["ranking"]:
+                if not isinstance(entry, dict):
+                    continue
+                candidate = entry.get("species")
+                if (
+                    isinstance(candidate, str)
+                    and candidate.replace(" ", "_") == species
+                ):
+                    if (
+                        type(entry.get("occurrence_score")) in (int, float)
+                        and entry["occurrence_score"] == 0
+                    ):
+                        reasons.append("ZERO_GEOGRAPHIC_OCCURRENCE")
+                    break
+        return reasons

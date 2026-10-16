@@ -267,6 +267,14 @@ def test_corrected_no_bird_is_not_exported_as_negative(
         image_bird_presence="absent",
         object_bird_presence="absent",
     )
+    assert (
+        post(
+            client,
+            "/api/labels/answer",
+            dict(filename=filename, retract="bird_presence"),
+        ).status_code
+        == 200
+    )
     payload = dict(
         filename=filename,
         bbox=dict(x=0.2, y=0.2, w=0.3, h=0.3),

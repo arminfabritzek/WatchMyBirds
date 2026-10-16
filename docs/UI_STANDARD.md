@@ -74,30 +74,34 @@ image-bearing surfaces.
 
 ## Current station history (binding)
 
-`utils/db/observations.py` projects current canonical object answers, legacy
-assignments, model decisions, source and media flags without creating labels.
-Human species answers take precedence; unknown, wrong, absence and explicit
-conflicts prevent positive named-species use. A species-only refutation never
-asserts bird presence. Existing legacy assignments remain distinguishable from
-canonical human confirmation. Genus buckets are not named species.
+`current_observations` is the single SQL view for current object identity and
+admission. Startup drops and recreates it after schema setup. Gallery, Species,
+Station Report, saved Live observations, homepage selections and counts read
+this view; readers do not re-evaluate model thresholds or legacy assignments.
+Manual objects participate without model scores or synthetic decisions.
 
-Gallery, Species, saved Live observations and Station Report share the current
-admission projection. Automatic records need a confirmed species-level decision,
-no insufficient saved box/detector or uncertainty signal, the configured species
-and display-score floors, and no explicit sharpness veto. The sharpness percentile
-is retained as a conservative safeguard, not a biological presence verdict.
-Missing legacy measurements retain the persisted decision rather than inventing
-new evidence. Geographic zero-occurrence routes unreviewed proposals to Review;
-a human answer overrides this automatic doubt. A refutation blocks its own object,
-not every other well-supported proposal of the same species. Historical hints
-alone do not reopen Review. There is no species blacklist.
+Active objects with a current bird-presence answer `absent` are never admitted,
+even if a species answer remains current. Otherwise a current confirmed or
+corrected species answer wins; `unknown` and `wrong` never admit the proposed
+species. Without a species answer, only the stored `decision_state = confirmed`
+and a species-level decision admit an object. Stored historical rows with NULL
+or empty `decision_level` count as species level. New captures always store a
+level; a missing capture input still keeps the decision unresolved. Missing
+`decision_state` values stay unresolved.
+Image statements are training evidence and do not control display.
 
-Human and legacy assignments bypass automatic score and photo-quality gates.
-Standard Gallery does not apply a second score floor after admission; explicit
-photo filters may narrow it. Species covers prefer human records and available
-originals, then photo quality. Open Review and positive automatic membership do
-not overlap. Each excluded automatic record carries its reason; Answered remains
-an archive, not a new task. This admission change does not replace the Review layout.
+The capture policy owns box, species-confidence, uncertainty, display-score,
+named-bird and geographic checks. Ticker, Telegram and MQTT use that same capture
+decision; unresolved ticker events carry no species name. Geography excludes at
+exactly zero occurrence; thresholds are unchanged. Settings affect new captures
+only. No background job re-evaluates stored admission decisions.
+
+Sharpness and CLIP rank photos, covers and event representatives only. They never
+veto admission or send a confident bird to Review. Standard Gallery applies no
+second score floor. Human answers bypass automatic thresholds. Refutations affect
+their own object; historical hints do not blacklist a species or reopen Review.
+Excluded automatic records expose the persisted decision reason. Open Review and
+admitted observations do not overlap. This rule does not change Review's layout.
 Confirmed archive species remain discoverable outside a selected period and
 are excluded from that period's totals. The always-visible `Bird · species
 unknown` link has an explicit empty state. Missing originals retain identity,
@@ -108,15 +112,15 @@ selection separately from current human answers.
 
 Ordinary Review uses the original `review_grid.html` event cards, day navigation,
 selection controls and canonical detection modal. Its membership is the shared
-current observation projection: every active unanswered excluded proposal and
-all genuine answer conflicts. There is no separate Open surface. Completed
-answers remain accessible through the archive compatibility link.
+current observation projection: every active unanswered excluded proposal.
+There is no separate Open surface. Completed answers remain accessible through
+the archive compatibility link.
 Event buttons answer selected open objects, or all open objects in that card
 when none are selected. They require no evidence-quality assessment. The server
 checks the whole selection under one write transaction; completed, admitted,
-missing or conflicting objects reject the entire operation. Conflicts and
-manually added birds are resolved in the shared viewer. No-bird answers concern
-the selected object, never unselected siblings or the whole image. Answered
+or missing objects reject the entire operation. Manually added birds are edited
+in the shared viewer. No-bird answers concern the selected object, never
+unselected siblings or the whole image. Answered
 objects leave the queue; an event disappears once it has no open objects.
 The editor rail keeps the available modal width even when the image is narrow
 or missing, so answer controls and notices remain readable.
@@ -142,9 +146,12 @@ Ordinary Review uses day navigation and complete visit groups from the shared
 object exposes its proposal and admission reason; the shared viewer offers
 Confirm species, Change species, Bird · species unknown, and No bird. These
 answers do not require box quality or event approval. Answered is an optional
-archive, including object/image absence answers. An explicit object dismissal
-completes that object; an active identification conflicting with whole-image
-absence remains visibly unresolved.
+archive, including object absence answers. An explicit object dismissal completes
+that object. Whole-image statements are training facts and do not control display.
+The migration withdraws contradictory image and object answers before Review opens;
+ordinary answer writes reject bird-presence contradictions. A valid whole-image
+absence still has a withdrawal notice in the shared viewer, including Answered.
+It is an existing image answer, not an unresolved conflict.
 
 ## Homepage species cards
 
@@ -1176,7 +1183,12 @@ and species answers continue through their normal controls.
 - `Cancel`, `Escape`, backdrop dismissal, an unavailable full-image preview,
   or an unavailable dialog implementation must fail closed and send no write.
 - Only the affirmative button shown after the complete image may submit
-  `action=no_bird` to `/api/review/decision`.
+  `image_bird_presence=absent` to `/api/labels/answer`. The transaction writes
+  absence for each detected object and the image statement.
+- Active manually added birds block confirmation. The dialog names the number
+  to remove first, for example `Remove the 2 birds you added by hand first`.
+- A current `No birds in full image` statement blocks adding a manual bird
+  until that statement is withdrawn. Manual objects keep their own revisions.
 
 **Component ownership:**
 

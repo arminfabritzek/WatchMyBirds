@@ -6,19 +6,10 @@ serving as an abstraction over utils.db.
 """
 
 from utils.db import (
-    apply_species_override as _apply_species_override,
-)
-from utils.db import (
-    apply_species_override_many as _apply_species_override_many,
-)
-from utils.db import (
     closing_connection as _closing_connection,
 )
 from utils.db import (
     fetch_active_detection_ids_in_date_range as _fetch_active_detection_ids_in_date_range,
-)
-from utils.db import (
-    fetch_active_detection_selection_by_source_type as _fetch_active_detection_selection_by_source_type,
 )
 from utils.db import (
     fetch_active_detection_selection_in_date_range as _fetch_active_detection_selection_in_date_range,
@@ -69,9 +60,6 @@ from utils.db import (
     fetch_species_story_board_candidates as _fetch_species_story_board_candidates,
 )
 from utils.db import (
-    fetch_trash_candidate_selection_by_source_type as _fetch_trash_candidate_selection_by_source_type,
-)
-from utils.db import (
     fetch_trash_candidate_selection_in_date_range as _fetch_trash_candidate_selection_in_date_range,
 )
 from utils.db import (
@@ -90,16 +78,7 @@ from utils.db import (
     restore_detections as _restore_detections,
 )
 from utils.db import (
-    restore_no_bird_images as _restore_no_bird_images,
-)
-from utils.db import (
-    set_manual_bbox_review as _set_manual_bbox_review,
-)
-from utils.db import (
     update_downloaded_timestamp as _update_downloaded_timestamp,
-)
-from utils.db import (
-    update_review_status as _update_review_status,
 )
 
 # --- Connection Management ---
@@ -140,46 +119,18 @@ def fetch_active_detection_selection_in_date_range(
     return _fetch_active_detection_selection_in_date_range(conn, from_date, to_date)
 
 
-def fetch_active_detection_selection_by_source_type(conn, source_type: str) -> dict:
-    return _fetch_active_detection_selection_by_source_type(conn, source_type)
-
-
 def fetch_trash_candidate_selection_in_date_range(
     conn, from_date: str, to_date: str
 ) -> dict:
     return _fetch_trash_candidate_selection_in_date_range(conn, from_date, to_date)
 
 
-def fetch_trash_candidate_selection_by_source_type(conn, source_type: str) -> dict:
-    return _fetch_trash_candidate_selection_by_source_type(conn, source_type)
-
-
 def reject_detections(conn, detection_ids: list[int], *, commit: bool = True) -> None:
     _reject_detections(conn, detection_ids, commit=commit)
 
 
-def apply_species_override(conn, detection_id: int, species: str, source: str) -> None:
-    _apply_species_override(conn, detection_id, species, source)
-
-
-def apply_species_override_many(
-    conn, detection_ids: list[int], species: str, source: str
-) -> int:
-    return _apply_species_override_many(conn, detection_ids, species, source)
-
-
-def set_manual_bbox_review(conn, detection_id: int, review_state: str | None) -> None:
-    _set_manual_bbox_review(conn, detection_id, review_state)
-
-
 def restore_detections(conn, detection_ids: list[int]) -> None:
     _restore_detections(conn, detection_ids)
-
-
-def update_review_status(
-    conn, filenames, new_status: str, *, commit: bool = True
-) -> int:
-    return _update_review_status(conn, filenames, new_status, commit=commit)
 
 
 def update_downloaded_timestamp(conn, filenames, download_time) -> None:
@@ -229,10 +180,6 @@ def fetch_trash_items(conn, page: int = 1, limit: int = 50) -> tuple:
 
 def fetch_trash_count(conn) -> int:
     return _fetch_trash_count(conn)
-
-
-def restore_no_bird_images(conn, image_filenames: list[str]) -> int:
-    return _restore_no_bird_images(conn, image_filenames)
 
 
 # --- Analytics Operations ---

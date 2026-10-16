@@ -23,33 +23,11 @@ from utils.db.detections import (
 
 
 def _minimal_schema() -> sqlite3.Connection:
-    """Build just enough schema for the gallery visibility queries.
+    from utils.db.connection import _init_schema
 
-    Tracks the real schema shape in utils/db/connection.py — keep in
-    sync if columns that the gallery queries touch ever move.
-    """
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row
-    conn.executescript(
-        """
-        CREATE TABLE images (
-            filename TEXT PRIMARY KEY,
-            timestamp TEXT,
-            source_id INTEGER,
-            review_status TEXT DEFAULT 'untagged'
-        );
-
-        CREATE TABLE detections (
-            detection_id INTEGER PRIMARY KEY,
-            image_filename TEXT NOT NULL,
-            status TEXT DEFAULT 'active',
-            decision_state TEXT,
-            decision_level TEXT,
-            raw_species_name TEXT,
-            quality_gallery_ok INTEGER
-        );
-        """
-    )
+    _init_schema(conn)
     return conn
 
 
@@ -72,8 +50,7 @@ class TestRejectLevelExcluded:
             ("a.jpg", "20260423_120000"),
         )
         conn.execute(
-            "INSERT INTO detections(detection_id, image_filename, status, "
-            "decision_state, decision_level) VALUES (?, ?, ?, ?, ?)",
+            """INSERT INTO detections(od_class_name, detection_id, image_filename, status, decision_state, decision_level) VALUES ('Parus_major', ?, ?, ?, ?, ?)""",
             (1, "a.jpg", "active", "confirmed", "reject"),
         )
         ids = fetch_active_detection_ids_in_date_range(conn, "2026-04-23", "2026-04-23")
@@ -86,50 +63,39 @@ class TestRejectLevelExcluded:
             ("a.jpg", "20260423_120000"),
         )
         conn.execute(
-            "INSERT INTO detections(detection_id, image_filename, status, "
-            "decision_state, decision_level) VALUES (?, ?, ?, ?, ?)",
+            """INSERT INTO detections(od_class_name, detection_id, image_filename, status, decision_state, decision_level) VALUES ('Parus_major', ?, ?, ?, ?, ?)""",
             (1, "a.jpg", "active", "confirmed", "species"),
         )
         ids = fetch_active_detection_ids_in_date_range(conn, "2026-04-23", "2026-04-23")
         assert ids == [1]
 
-    def test_genus_level_is_included(self):
-        """Genus fallback rows (Sylvia_sp. etc.) stay in the gallery —
-        they have a meaningful label, unlike reject."""
+    def test_genus_level_is_excluded(self):
         conn = _minimal_schema()
         conn.execute(
             "INSERT INTO images(filename, timestamp) VALUES (?, ?)",
             ("a.jpg", "20260423_120000"),
         )
         conn.execute(
-            "INSERT INTO detections(detection_id, image_filename, status, "
-            "decision_state, decision_level) VALUES (?, ?, ?, ?, ?)",
+            """INSERT INTO detections(od_class_name, detection_id, image_filename, status, decision_state, decision_level) VALUES ('Parus_major', ?, ?, ?, ?, ?)""",
             (1, "a.jpg", "active", "confirmed", "genus"),
         )
         ids = fetch_active_detection_ids_in_date_range(conn, "2026-04-23", "2026-04-23")
-        assert ids == [1]
+        assert ids == []
 
-    def test_null_decision_level_is_included_for_backward_compat(self):
-        """Historical rows saved before the decision_level column
-        existed have NULL in that column. They must stay visible when
-        their decision_state=confirmed — otherwise the gallery would
-        silently drop all pre-2026-04-23 data."""
+    def test_null_decision_level_is_included(self):
         conn = _minimal_schema()
         conn.execute(
             "INSERT INTO images(filename, timestamp) VALUES (?, ?)",
             ("a.jpg", "20260423_120000"),
         )
         conn.execute(
-            "INSERT INTO detections(detection_id, image_filename, status, "
-            "decision_state, decision_level) VALUES (?, ?, ?, ?, ?)",
+            """INSERT INTO detections(od_class_name, detection_id, image_filename, status, decision_state, decision_level) VALUES ('Parus_major', ?, ?, ?, ?, ?)""",
             (1, "a.jpg", "active", "confirmed", None),
         )
         ids = fetch_active_detection_ids_in_date_range(conn, "2026-04-23", "2026-04-23")
         assert ids == [1]
 
-    def test_mixed_fixture_only_surfaces_species_and_genus(self):
-        """All four decision levels in one batch — species and genus
-        survive, reject is filtered, NULL survives for compat."""
+    def test_mixed_fixture_surfaces_species_and_historical_empty_level(self):
         conn = _minimal_schema()
         conn.executemany(
             "INSERT INTO images(filename, timestamp) VALUES (?, ?)",
@@ -141,8 +107,7 @@ class TestRejectLevelExcluded:
             ],
         )
         conn.executemany(
-            "INSERT INTO detections(detection_id, image_filename, status, "
-            "decision_state, decision_level) VALUES (?, ?, ?, ?, ?)",
+            """INSERT INTO detections(od_class_name, detection_id, image_filename, status, decision_state, decision_level) VALUES ('Parus_major', ?, ?, ?, ?, ?)""",
             [
                 (1, "species.jpg", "active", "confirmed", "species"),
                 (2, "genus.jpg", "active", "confirmed", "genus"),
@@ -153,7 +118,7 @@ class TestRejectLevelExcluded:
         selection = fetch_active_detection_selection_in_date_range(
             conn, "2026-04-23", "2026-04-23"
         )
-        assert sorted(selection["detection_ids"]) == [1, 2, 4]
+        assert sorted(selection["detection_ids"]) == [1, 4]
 
 
 class TestStrictConfirmedFilter:
@@ -167,8 +132,7 @@ class TestStrictConfirmedFilter:
             ("a.jpg", "20260423_120000"),
         )
         conn.execute(
-            "INSERT INTO detections(detection_id, image_filename, status, decision_state) "
-            "VALUES (?, ?, ?, ?)",
+            """INSERT INTO detections(decision_level, od_class_name, detection_id, image_filename, status, decision_state) VALUES ('species', 'Parus_major', ?, ?, ?, ?)""",
             (1, "a.jpg", "active", None),
         )
         ids = fetch_active_detection_ids_in_date_range(conn, "2026-04-23", "2026-04-23")
@@ -181,8 +145,7 @@ class TestStrictConfirmedFilter:
             ("a.jpg", "20260423_120000"),
         )
         conn.execute(
-            "INSERT INTO detections(detection_id, image_filename, status, decision_state) "
-            "VALUES (?, ?, ?, ?)",
+            """INSERT INTO detections(decision_level, od_class_name, detection_id, image_filename, status, decision_state) VALUES ('species', 'Parus_major', ?, ?, ?, ?)""",
             (1, "a.jpg", "active", "uncertain"),
         )
         ids = fetch_active_detection_ids_in_date_range(conn, "2026-04-23", "2026-04-23")
@@ -195,8 +158,7 @@ class TestStrictConfirmedFilter:
             ("a.jpg", "20260423_120000"),
         )
         conn.execute(
-            "INSERT INTO detections(detection_id, image_filename, status, decision_state) "
-            "VALUES (?, ?, ?, ?)",
+            """INSERT INTO detections(decision_level, od_class_name, detection_id, image_filename, status, decision_state) VALUES ('species', 'Parus_major', ?, ?, ?, ?)""",
             (1, "a.jpg", "active", "unknown"),
         )
         ids = fetch_active_detection_ids_in_date_range(conn, "2026-04-23", "2026-04-23")
@@ -209,8 +171,7 @@ class TestStrictConfirmedFilter:
             ("a.jpg", "20260423_120000"),
         )
         conn.execute(
-            "INSERT INTO detections(detection_id, image_filename, status, decision_state) "
-            "VALUES (?, ?, ?, ?)",
+            """INSERT INTO detections(decision_level, od_class_name, detection_id, image_filename, status, decision_state) VALUES ('species', 'Parus_major', ?, ?, ?, ?)""",
             (1, "a.jpg", "active", "confirmed"),
         )
         ids = fetch_active_detection_ids_in_date_range(conn, "2026-04-23", "2026-04-23")
@@ -228,8 +189,7 @@ class TestStrictConfirmedFilter:
             ],
         )
         conn.executemany(
-            "INSERT INTO detections(detection_id, image_filename, status, decision_state) "
-            "VALUES (?, ?, ?, ?)",
+            """INSERT INTO detections(decision_level, od_class_name, detection_id, image_filename, status, decision_state) VALUES ('species', 'Parus_major', ?, ?, ?, ?)""",
             [
                 (1, "null.jpg", "active", None),
                 (2, "confirmed.jpg", "active", "confirmed"),
@@ -275,7 +235,7 @@ class TestDecisionLevelColumnsMigrate:
             "CREATE TABLE detections (detection_id INTEGER PRIMARY KEY, od_class_name TEXT);"
         )
         conn.execute(
-            "INSERT INTO detections(detection_id, od_class_name) VALUES (1, 'bird');"
+            """INSERT INTO detections(detection_id, od_class_name) VALUES (1, 'bird');"""
         )
 
         _ensure_column_on_table(conn, "detections", "decision_level", "TEXT")

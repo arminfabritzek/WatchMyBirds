@@ -341,7 +341,7 @@ async function deleteDetection(event, id) {
     if (!confirm('Move this detection to trash?')) return;
 
     try {
-        const response = await fetch('/api/detections/reject', {
+        const response = await fetch('/api/trash/move', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json'
@@ -420,10 +420,10 @@ async function relabelDetection(event, detectionId, currentSpecies) {
 
     // Perform the single-item relabel POST
     try {
-        const resp = await fetch('/api/detections/relabel', {
+        const resp = await fetch('/api/labels/answer', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ detection_id: detectionId, species: choice.scientific })
+            body: JSON.stringify({ detection_id: detectionId, species_identity: 'corrected', species_key: choice.scientific })
         });
         if (isAuthRedirect(resp)) {
             redirectToLogin();

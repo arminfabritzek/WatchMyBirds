@@ -74,11 +74,11 @@ def _resolve_detection_species_key(det: dict) -> str:
     from utils.species_names import UNKNOWN_SPECIES_KEY, species_key_from_candidates
 
     resolved = species_key_from_candidates(
-        manual_override=det.get("manual_species_override"),
+        manual_override=det.get("human_species_key"),
         species_key=det.get("species_key"),
         cls_class_name=det.get("cls_class_name"),
         od_class_name=det.get("od_class_name"),
-        species_source=det.get("species_source"),
+        species_source=det.get("human_species_source"),
     )
     # Preserve historical contract: empty-key result when nothing resolved.
     return "" if resolved == UNKNOWN_SPECIES_KEY else normalize_species_key(resolved)
@@ -167,9 +167,11 @@ def get_species_thumbnail_map(
             _assign_species_keys(mapping, species_key, url, common_names)
 
     for species_key, (_score, url) in general_by_species.items():
-        if (species_key not in static_species
-                and species_key not in favorite_by_species
-                and species_key not in ki_pick_by_species):
+        if (
+            species_key not in static_species
+            and species_key not in favorite_by_species
+            and species_key not in ki_pick_by_species
+        ):
             _assign_species_keys(mapping, species_key, url, common_names)
 
     if use_cache:

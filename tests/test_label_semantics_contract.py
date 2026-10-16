@@ -13,7 +13,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from tests.test_label_write_endpoints_contract import _reset_test_config, _seed, post
+from tests.labeling_helpers import _reset_test_config, _seed, post
 from utils.db import connection as db_connection
 from web.web_interface import create_web_interface
 
@@ -104,7 +104,7 @@ def semantic_case(semantic_client):
 def test_rejecting_one_object_does_not_state_no_bird_for_image(semantic_case):
     response = post(
         semantic_case["client"],
-        "/api/moderation/bulk/reject",
+        "/api/trash/move",
         {"detection_ids": [semantic_case["detection_id"]]},
     )
 
@@ -122,25 +122,27 @@ def test_rejecting_one_object_does_not_state_no_bird_for_image(semantic_case):
 def test_whole_image_no_bird_requires_explicit_image_answer(semantic_case):
     response = post(
         semantic_case["client"],
-        "/api/review/decision",
-        {"filenames": [semantic_case["filename"]], "action": "no_bird"},
+        "/api/labels/answer",
+        {"filename": semantic_case["filename"], "image_bird_presence": "absent"},
     )
 
     assert response.status_code == 200, response.get_data(as_text=True)
-    assert response.get_json()["action"] == "no_bird"
-    assert _review_status(semantic_case["filename"]) == "no_bird"
-    assert _presence_facts(semantic_case["filename"]) == [("image", None, "absent")]
+    assert _review_status(semantic_case["filename"]) == "untagged"
+    assert _presence_facts(semantic_case["filename"]) == [
+        ("image", None, "absent"),
+        ("object", semantic_case["detection_id"], "absent"),
+    ]
 
 
 def test_unanswered_object_bbox_and_species_facts_remain_unknown(semantic_case):
     response = post(
         semantic_case["client"],
-        "/api/review/decision",
-        {"filenames": [semantic_case["filename"]], "action": "confirm"},
+        "/api/labels/answer",
+        {"filename": semantic_case["filename"], "image_bird_presence": "present"},
     )
 
     assert response.status_code == 200, response.get_data(as_text=True)
-    assert _review_status(semantic_case["filename"]) == "confirmed_bird"
+    assert _review_status(semantic_case["filename"]) == "untagged"
     assert _label_state(semantic_case["detection_id"]) == {
         column: None for column in LABEL_COLUMNS
     }

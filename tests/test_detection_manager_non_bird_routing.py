@@ -135,6 +135,7 @@ def test_non_bird_skips_cls_and_routes_through_scoring():
         frame_shape=original_frame.shape,
         od_conf=det["confidence"],
         cls_conf=cls_conf,
+        species_key=cls_result.class_name if cls_result else None,
         top_k_confidences=None,
         decision_policy=mgr.decision_policy_service,
         capability_registry=mgr.capability_registry,
@@ -143,7 +144,7 @@ def test_non_bird_skips_cls_and_routes_through_scoring():
     )
 
     mgr.classification_service.classify.assert_not_called()
-    assert signals.decision_state == DecisionState.CONFIRMED
+    assert signals.decision_state == DecisionState.UNCERTAIN
     assert signals.score == pytest.approx(0.90)
     assert signals.unknown_score == pytest.approx(0.0)
 
@@ -188,6 +189,7 @@ def test_bird_track_still_calls_cls():
         frame_shape=original_frame.shape,
         od_conf=det["confidence"],
         cls_conf=cls_conf,
+        species_key=cls_result.class_name if cls_result else None,
         top_k_confidences=cls_result.top_k_confidences,
         decision_policy=mgr.decision_policy_service,
         capability_registry=mgr.capability_registry,
@@ -217,8 +219,7 @@ def test_non_bird_low_conf_uncertain_still_visible():
         od_class_name="squirrel",
         non_bird_confirm_threshold=0.65,
     )
-    # The critical contract: NOT UNKNOWN. UNKNOWN would hide the detection
-    # from every surface via _gallery_visibility_sql.
+    # Non-bird objects remain unresolved proposals without classifier uncertainty.
     assert signals.decision_state != DecisionState.UNKNOWN
     assert signals.decision_state == DecisionState.UNCERTAIN
 

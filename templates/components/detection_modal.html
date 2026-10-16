@@ -33,15 +33,15 @@ nav_index (int|None): Optional index within nav_scope
             <div class="modal-header wm-modal__header">
                 <div class="wm-modal__title">
                     {# P1-06: Trusted-species rendering — non-confirmed show tentative label #}
-                    {# A human "species unknown" answer clears manual_species_override, so an
+                    {# A human "species unknown" answer clears human_species_key, so an
                        explicit unknown and a never-answered box both arrive with an empty
-                       override. species_source is the only signal that separates them and the
+                       override. The fact-derived source separates them and the
                        only one present on every detail entrance. #}
-                    {% set _species_source = det.species_source | default('', true) %}
+                    {% set _species_source = det.human_species_source | default('', true) %}
                     {% set has_human_unknown_species = (_species_source in ['manual_unknown', 'manual_wrong']) or (det.human_review_state | default('', true) == 'reviewed_unknown') %}
-                    {% set has_manual_species_review = (_species_source == 'manual') and det.manual_species_override %}
+                    {% set has_manual_species_review = (_species_source == 'manual') and det.human_species_key %}
                     {% set is_trusted = has_manual_species_review or has_human_unknown_species or (det.decision_state == 'confirmed') or (det.decision_state is none) %}
-                    {% set title_species = none if has_human_unknown_species or det.species_key == 'Unknown_species' else (det.species_key or det.manual_species_override or det.cls_class_name or det.od_class_name) %}
+                    {% set title_species = none if has_human_unknown_species or det.species_key == 'Unknown_species' else (det.species_key or det.human_species_key or det.cls_class_name or det.od_class_name) %}
                     {% set review_status_text = render_review_status_text(det, "font-size: 0.7rem; opacity: 0.8;") %}
                     {# No species to look up: the unknown label is not a search term. #}
                     {% set wiki_url = none if has_human_unknown_species else wikipedia_species_url(det.common_name, title_species) %}

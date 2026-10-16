@@ -18,6 +18,18 @@ from utils.deploy_info import detect_deploy_type
 logger = logging.getLogger(__name__)
 
 
+def take_retention_update_notice() -> bool:
+    from utils.db import closing_connection
+
+    with closing_connection() as conn:
+        return (
+            conn.execute(
+                "DELETE FROM _migration_state WHERE key='human_answers_retention_notice'"
+            ).rowcount
+            == 1
+        )
+
+
 def get_current_settings() -> dict[str, Any]:
     """
     Returns the current settings as a payload for the UI.

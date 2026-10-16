@@ -3,7 +3,7 @@
 Nightly aesthetic auto-tagger for WatchMyBirds.
 
 Computes a CLIP facing-camera score and selects automatic gallery candidates.
-Human bird-absence answers exclude their image or object from both steps.
+Object bird-absence answers exclude the object from both steps.
 The score measures composition, not bird presence or species correctness.
 
 In production this runs in-process via the app's daemon-thread scheduler
@@ -171,8 +171,7 @@ _NO_HUMAN_BIRD_ABSENCE = """
 AND NOT EXISTS (
     SELECT 1 FROM current_human_label_facts human
     WHERE human.fact_type = 'bird_presence' AND human.answer_value = 'absent'
-      AND ((human.scope = 'image' AND human.image_filename = d.image_filename)
-        OR (human.scope = 'object' AND human.detection_id = d.detection_id))
+      AND human.scope = 'object' AND human.detection_id = d.detection_id
 )
 """
 

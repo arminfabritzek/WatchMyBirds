@@ -22,46 +22,9 @@ UNKNOWN_IMAGE = "20260920_094825_673647.jpg"
 def _build_conn() -> sqlite3.Connection:
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row
-    conn.executescript(
-        """
-        CREATE TABLE images (
-            filename TEXT PRIMARY KEY,
-            timestamp TEXT NOT NULL,
-            source_id INTEGER,
-            review_status TEXT DEFAULT 'untagged'
-        );
+    from utils.db.connection import _init_schema
 
-        CREATE TABLE detections (
-            detection_id INTEGER PRIMARY KEY,
-            image_filename TEXT NOT NULL,
-            status TEXT DEFAULT 'active',
-            created_at TEXT,
-            bbox_x REAL,
-            bbox_y REAL,
-            bbox_w REAL,
-            bbox_h REAL,
-            od_class_name TEXT,
-            od_confidence REAL,
-            score REAL,
-            thumbnail_path TEXT,
-            manual_species_override TEXT,
-            species_source TEXT,
-            is_favorite INTEGER DEFAULT 0,
-            decision_state TEXT,
-            decision_level TEXT,
-            quality_gallery_ok INTEGER
-        );
-
-        CREATE TABLE classifications (
-            classification_id INTEGER PRIMARY KEY AUTOINCREMENT,
-            detection_id INTEGER NOT NULL,
-            cls_class_name TEXT,
-            cls_confidence REAL,
-            rank INTEGER DEFAULT 1,
-            status TEXT DEFAULT 'active'
-        );
-        """
-    )
+    _init_schema(conn)
     return conn
 
 
@@ -224,7 +187,7 @@ def test_a_trashed_frame_hides_the_human_unknown_box_too():
     conn = _build_conn()
     _seed(conn)
     conn.execute(
-        "UPDATE images SET review_status = 'no_bird' WHERE filename = ?",
+        "UPDATE detections SET status = 'rejected' WHERE image_filename = ?",
         (UNKNOWN_IMAGE,),
     )
     conn.commit()

@@ -420,16 +420,8 @@ def create_local_app(work: Path) -> Flask:
         "review.review_page",
         "review.review_modal_fragment",
         "review.review_thumb",
-        "review.review_decision",
-        "review.review_cleanup_preview",
-        "review.review_cleanup_run",
-        "review.update_bbox_review_state",
-        "review.review_quick_species",
-        "review.review_approve",
-        "review.review_event_approve",
-        "review.review_event_trash",
-        "review.review_event_unresolved",
-        "review.review_event_resolve",
+        "moderation.resolve_selection",
+        "moderation.bulk_download",
     }
 
     def local_boundary() -> Any:

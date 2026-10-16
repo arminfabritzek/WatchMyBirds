@@ -9,6 +9,10 @@ from typing import Any
 from core import detections_core
 
 
+def move_to_trash(conn: object, data: dict) -> dict[str, int]:
+    return detections_core.move_to_trash(conn, data)
+
+
 def reject_detections(detection_ids: list[int]) -> bool:
     """
     Mark detections as rejected (move to trash).
@@ -34,17 +38,6 @@ def hard_delete_detections(detection_ids: list[int]) -> dict[str, Any]:
     Delegates to core.detections_core.
     """
     return detections_core.hard_delete_detections(detection_ids)
-
-
-def update_review_status(
-    detection_id: int, save_threshold: float | None = None, reviewed: bool = True
-) -> bool:
-    """
-    Update review status of a detection.
-
-    Delegates to core.detections_core.
-    """
-    return detections_core.update_review_status(detection_id, save_threshold, reviewed)
 
 
 def get_trash_items() -> list[dict]:
@@ -85,27 +78,6 @@ def hard_delete_detections_with_conn(
     """Permanently delete detections with existing connection."""
     return detections_core.hard_delete_detections_with_conn(
         conn, detection_ids=detection_ids, before_date=before_date
-    )
-
-
-def hard_delete_images(
-    filenames: list[str] | None = None,
-    delete_all: bool = False,
-) -> dict[str, Any]:
-    """Permanently delete images."""
-    return detections_core.hard_delete_images(
-        filenames=filenames, delete_all=delete_all
-    )
-
-
-def hard_delete_images_with_conn(
-    conn,
-    filenames: list[str] | None = None,
-    delete_all: bool = False,
-) -> dict[str, Any]:
-    """Permanently delete images with existing connection."""
-    return detections_core.hard_delete_images_with_conn(
-        conn, filenames=filenames, delete_all=delete_all
     )
 
 

@@ -3,11 +3,11 @@
 Reproduces the production state of a real record: a human opened a detection
 whose classifier had proposed ``Sitta_europaea`` at 92% and answered
 "bird, but I cannot tell the species". ``core.human_label_core`` records that
-by *clearing* ``manual_species_override`` and stamping
-``species_source='manual_unknown'``.
+by *clearing* ``human_species_key`` and stamping
+``human_species_source='manual_unknown'``.
 
 The head used to key "has a human touched this?" off
-``species_source == 'manual'`` alone. ``manual_unknown`` failed that test, so
+``human_species_source == 'manual'`` alone. ``manual_unknown`` failed that test, so
 the modal fell back through ``cls_class_name`` and presented the withdrawn
 species as the current identity, complete with the old CLS confidence and a
 Wikipedia link to the wrong bird.
@@ -51,10 +51,9 @@ def _detection(**overrides) -> dict:
         "detection_id": 74759,
         "species_key": "Unknown_species",
         "common_name": UNKNOWN_COMMON,
-        "manual_species_override": None,
-        "species_source": "manual_unknown",
-        "human_review_state": "reviewed_unknown",
         "human_species_key": None,
+        "human_species_source": "manual_unknown",
+        "human_review_state": "reviewed_unknown",
         "human_common_name": "",
         "od_class_name": "bird",
         "od_confidence": 0.931461155414581,
@@ -171,7 +170,7 @@ def test_untouched_ai_proposal_still_shows_its_species_and_confidence() -> None:
     det = _detection(
         species_key=AI_SPECIES,
         common_name=AI_COMMON,
-        species_source="model_top1",
+        human_species_source="model_top1",
         human_review_state="unreviewed",
         decision_state="confirmed",
     )
@@ -184,10 +183,9 @@ def test_human_confirmed_species_still_shows_that_species() -> None:
     det = _detection(
         species_key="Parus_major",
         common_name="Kohlmeise",
-        manual_species_override="Parus_major",
-        species_source="manual",
-        human_review_state="confirmed",
         human_species_key="Parus_major",
+        human_species_source="manual",
+        human_review_state="confirmed",
         human_common_name="Kohlmeise",
     )
     head = _head(_render(det))
@@ -222,17 +220,17 @@ def test_all_detail_entrances_agree_on_the_unknown_head(group: str) -> None:
 def test_modal_renders_when_the_row_omits_the_new_fields() -> None:
     """Stream and other surfaces build detection dicts without these keys.
 
-    ``species_source`` arrives as Jinja ``Undefined`` there, and an Undefined
+    ``human_species_source`` arrives as Jinja ``Undefined`` there, and an Undefined
     inside the ``current_detection`` payload makes ``tojson`` raise, which
     took down the whole page rather than just the head.
     """
     det = _detection()
     for key in (
-        "species_source",
+        "human_species_source",
         "human_review_state",
         "human_species_key",
         "human_common_name",
-        "manual_species_override",
+        "human_species_key",
         "review_status",
     ):
         det.pop(key, None)
@@ -251,7 +249,7 @@ def test_ai_status_badge_follows_the_decision_state() -> None:
             _detection(
                 species_key=AI_SPECIES,
                 common_name=AI_COMMON,
-                species_source="model_top1",
+                human_species_source="model_top1",
                 human_review_state="unreviewed",
                 decision_state="confirmed",
             )
@@ -264,7 +262,7 @@ def test_ai_status_badge_follows_the_decision_state() -> None:
             _detection(
                 species_key=AI_SPECIES,
                 common_name=AI_COMMON,
-                species_source="model_top1",
+                human_species_source="model_top1",
                 human_review_state="unreviewed",
                 decision_state="uncertain",
             )
@@ -286,8 +284,8 @@ def test_manual_species_provenance_wins_over_the_ai_badge(
             _detection(
                 species_key="Parus_major",
                 common_name="Kohlmeise",
-                manual_species_override="Parus_major",
-                species_source="manual",
+                human_species_key="Parus_major",
+                human_species_source="manual",
                 review_status="confirmed_bird",
                 human_review_state=review_state,
             )
@@ -308,7 +306,7 @@ def test_confidence_pair_is_rendered_for_an_untouched_proposal() -> None:
             _detection(
                 species_key=AI_SPECIES,
                 common_name=AI_COMMON,
-                species_source="model_top1",
+                human_species_source="model_top1",
                 human_review_state="unreviewed",
                 decision_state="confirmed",
             )
@@ -326,8 +324,8 @@ def test_manual_species_hides_the_old_cls_confidence() -> None:
             _detection(
                 species_key="Parus_major",
                 common_name="Kohlmeise",
-                manual_species_override="Parus_major",
-                species_source="manual",
+                human_species_key="Parus_major",
+                human_species_source="manual",
                 human_review_state="corrected",
             )
         )
@@ -345,8 +343,8 @@ def test_wikipedia_link_targets_the_displayed_species() -> None:
             _detection(
                 species_key="Parus_major",
                 common_name="Kohlmeise",
-                manual_species_override="Parus_major",
-                species_source="manual",
+                human_species_key="Parus_major",
+                human_species_source="manual",
                 human_review_state="confirmed",
             )
         )
@@ -400,8 +398,8 @@ def test_a_real_species_still_gets_its_wikipedia_link() -> None:
             det=_detection(
                 species_key="Parus_major",
                 common_name="Kohlmeise",
-                manual_species_override="Parus_major",
-                species_source="manual",
+                human_species_key="Parus_major",
+                human_species_source="manual",
                 human_review_state="confirmed",
             ),
         )

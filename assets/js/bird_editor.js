@@ -26,7 +26,7 @@
     function isHumanUnknownSpecies(item) {
         if (item.provenance === 'human_unknown') return true;
         if (item.human_review_state === 'reviewed_unknown') return true;
-        const source = String(item.species_source || '').trim().toLowerCase();
+        const source = String(item.human_species_source || '').trim().toLowerCase();
         return HUMAN_UNKNOWN_SOURCES.indexOf(source) !== -1;
     }
 
@@ -34,7 +34,7 @@
         const manualId = item.manual_object_id == null ? null : Number(item.manual_object_id);
         const detectionId = item.detection_id == null ? null : Number(item.detection_id);
         const humanUnknown = isHumanUnknownSpecies(item);
-        const speciesKey = humanUnknown ? null : (item.species_key || item.manual_species_override ||
+        const speciesKey = humanUnknown ? null : (item.species_key || item.human_species_key ||
             item.cls_class_name || item.od_class_name || null);
         const humanReviewState = item.human_review_state ||
             (humanUnknown ? 'reviewed_unknown' : 'unreviewed');
@@ -44,14 +44,14 @@
         if (!provenance && humanReviewState === 'confirmed') provenance = 'human_confirmed';
         if (!provenance && humanReviewState !== 'unreviewed') provenance = 'manually_identified';
         if (!provenance) {
-            provenance = item.species_source === 'manual' ? 'manually_identified' : 'model_proposal';
+            provenance = item.human_species_source === 'manual' ? 'manually_identified' : 'model_proposal';
         }
         return {
             objectKey: objectKey(item),
             objectKind: manualId ? 'manual' : 'detection',
             manualObjectId: manualId,
             detectionId: detectionId,
-            objectStatus: item.object_status || 'active',
+            objectStatus: humanReviewState === 'reviewed_negative' ? 'dismissed' : (item.object_status || 'active'),
             needsReview: Boolean(item.needs_review),
             revision: item.revision == null ? null : Number(item.revision),
             speciesKey: speciesKey,
@@ -113,7 +113,7 @@
     // so it is asked while simply viewing a bird — requiring an edit draft
     // first would hide it exactly where it is meant to be answered.
     function bboxVerdictView(item, inEditMode) {
-        if (!item || item.objectKind === 'manual' || item.objectStatus === 'rejected') {
+        if (!item || item.objectKind === 'manual' || ['dismissed', 'rejected'].includes(item.objectStatus)) {
             return { visible: false, active: null };
         }
         return { visible: true, active: item.bboxVerdict || null };
@@ -129,7 +129,7 @@
     // Confirming a species writes immediately, so the second click is a
     // second write that undoes the first rather than a local reset.
     function speciesClickAction(item) {
-        if (!item || !item.speciesKey || item.objectStatus === 'rejected') return 'none';
+        if (!item || !item.speciesKey || ['dismissed', 'rejected'].includes(item.objectStatus)) return 'none';
         const answered = ['confirmed', 'corrected'].includes(item.humanReviewState);
         return answered ? 'retract' : 'confirm';
     }
@@ -152,7 +152,7 @@
     }
 
     function bboxStatusText(item, initial) {
-        if (item.objectStatus === 'rejected') return 'Dismissed box · restore before assessing';
+        if (['dismissed', 'rejected'].includes(item.objectStatus)) return 'Dismissed box · restore before assessing';
         if (item.objectKind === 'manual') return 'Manually drawn box';
         const verdict = effectiveBboxVerdict(item, initial);
         const text = verdict === 'suitable' ? '☑ Box confirmed'
@@ -243,7 +243,7 @@
     }
 
     function provenanceLabel(item) {
-        if (item.objectStatus === 'rejected') return 'Dismissed';
+        if (['dismissed', 'rejected'].includes(item.objectStatus)) return 'Dismissed';
         if (item.needsReview) return 'In Review';
         if (item.provenance === 'human_unknown') return 'Marked unknown by a person';
         if (item.provenance === 'manually_added') return 'Manually added';
@@ -417,7 +417,7 @@
                 const option = document.createElement('option');
                 option.value = item.objectKey;
                 option.textContent = String(index + 1) + ' · ' + item.commonName
-                    + (item.objectStatus === 'rejected' ? ' · Dismissed' : item.needsReview ? ' · In Review' : '');
+                    + (['dismissed', 'rejected'].includes(item.objectStatus) ? ' · Dismissed' : item.needsReview ? ' · In Review' : '');
                 option.selected = item.objectKey === activeKey;
                 objectSelect.appendChild(option);
             });
@@ -429,8 +429,8 @@
                 objectSelect.appendChild(option);
             }
             objectSelect.disabled = mode !== 'browse' || objects.length <= 1;
-            const pendingCount = objects.filter(function (item) { return item.needsReview && item.objectStatus !== 'rejected'; }).length;
-            const dismissedCount = objects.filter(function (item) { return item.objectStatus === 'rejected'; }).length;
+            const pendingCount = objects.filter(function (item) { return item.needsReview && !['dismissed', 'rejected'].includes(item.objectStatus); }).length;
+            const dismissedCount = objects.filter(function (item) { return ['dismissed', 'rejected'].includes(item.objectStatus); }).length;
             objectSelect.title = objects.length + ' saved box(es) · ' + pendingCount + ' in Review · ' + dismissedCount + ' dismissed';
         }
 
@@ -625,7 +625,7 @@
                 const selected = item.objectKey === (draft ? draft.objectKey : selectedKey);
                 const shape = document.createElement('div');
                 shape.className = 'wm-bird-editor__box' + (selected ? ' is-selected' : '') + (item.needsReview ? ' is-in-review' : '');
-                shape.classList.toggle('is-dismissed', item.objectStatus === 'rejected');
+                shape.classList.toggle('is-dismissed', ['dismissed', 'rejected'].includes(item.objectStatus));
                 shape.dataset.editorObjectKey = item.objectKey;
                 const body = document.createElement('button');
                 body.type = 'button';
@@ -654,7 +654,7 @@
 
                 const label = document.createElement('div');
                 label.className = 'wm-bird-editor__box-label';
-                if (item.objectStatus === 'rejected') {
+                if (['dismissed', 'rejected'].includes(item.objectStatus)) {
                     const name = document.createElement('span');
                     name.className = 'wm-bird-editor__box-label-name';
                     name.textContent = String(index + 1) + ' · Dismissed · ' + item.commonName;
@@ -793,12 +793,12 @@
             layer.classList.toggle('is-editing', editing);
             layer.classList.toggle('is-adding', mode === 'add');
             drawHint.hidden = mode !== 'add';
-            const dismissed = item && item.objectStatus === 'rejected';
+            const dismissed = item && ['dismissed', 'rejected'].includes(item.objectStatus);
             root.querySelectorAll('[data-editor-action="confirm-species"]').forEach(function (button) {
                 button.disabled = saving || stale || editing || dismissed || !item || !item.speciesKey || item.objectKind !== 'detection';
             });
             adjustButton.hidden = editing || dismissed;
-            restoreButton.hidden = editing || !dismissed;
+            restoreButton.hidden = editing || !item || item.objectStatus !== 'dismissed';
             restoreButton.disabled = saving || stale;
             root.querySelectorAll('[data-editor-action="no-bird"]').forEach(function (button) {
                 button.hidden = !!dismissed;
@@ -831,7 +831,7 @@
             if (saving || stale) return;
             if (!requireAuth()) return;
             const item = current();
-            if (!item || item.objectStatus === 'rejected') return;
+            if (!item || ['dismissed', 'rejected'].includes(item.objectStatus)) return;
             initialDraft = clone(item);
             draft = clone(item);
             mode = 'edit';
@@ -926,7 +926,7 @@
             if (saving || stale) return;
             if (!requireAuth() || typeof window.WmSpeciesPicker === 'undefined') return;
             const item = (key && objects.find(function (candidate) { return candidate.objectKey === key; })) || current();
-            if (!item || item.objectStatus === 'rejected') return;
+            if (!item || ['dismissed', 'rejected'].includes(item.objectStatus)) return;
             if (mode !== 'browse' && (!draft || item.objectKey !== draft.objectKey)) {
                 render('Save or Cancel before editing a different bird');
                 return;
@@ -1009,12 +1009,12 @@
             render('Taking the species back…');
             let message;
             try {
-                const response = await fetch('/api/labels/species/retract', {
+                const response = await fetch('/api/labels/answer', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         filename: root.dataset.filename,
-                        detection_id: saved.detectionId
+                        detection_id: saved.detectionId, retract: 'species_identity'
                     })
                 });
                 const payload = await response.json().catch(function () { return {}; });
@@ -1022,6 +1022,8 @@
                     throw new Error(payload.message || 'Unable to take the species back');
                 }
                 const reverted = clone(saved);
+                reverted.speciesKey = reverted.clsClassName || reverted.odClassName || null;
+                reverted.commonName = reverted.speciesKey ? reverted.speciesKey.replace(/_/g, ' ') : 'Bird · species unknown';
                 reverted.provenance = 'model_proposal';
                 reverted.humanReviewState = 'unreviewed';
                 reverted.needsReview = true;
@@ -1029,6 +1031,7 @@
                 message = reverted.commonName + ' · confirmation withdrawn';
                 broadcastObjects();
                 if (window.wmToast) window.wmToast('Confirmation withdrawn', 'success', 2200);
+                window.location.reload();
             } catch (error) {
                 message = error.message || 'Unable to take the species back';
                 if (window.wmToast) window.wmToast(message, 'error', 4200);
@@ -1039,7 +1042,7 @@
         }
 
         async function postBboxVerdict(item, verdict) {
-            if (item.objectStatus === 'rejected' || saving || stale || !requireAuth()) return;
+            if (['dismissed', 'rejected'].includes(item.objectStatus) || saving || stale || !requireAuth()) return;
             saving = true;
             render(verdict ? 'Saving box verdict…' : 'Clearing box verdict…');
             let message;
@@ -1050,7 +1053,7 @@
                 };
                 let url = '/api/labels/answer';
                 if (verdict) body.bbox_quality = verdict;
-                else url = '/api/labels/bbox-quality/retract';
+                else body.retract = 'bbox_quality';
                 const response = await fetch(url, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -1063,6 +1066,7 @@
                 const next = clone(item);
                 next.bboxVerdict = verdict;
                 updateObjects(next);
+                if (!verdict) { window.location.reload(); return; }
                 message = verdict === 'suitable' ? 'Box marked as fitting'
                     : verdict === 'unsuitable' ? 'Box marked as wrong'
                     : 'Box verdict cleared';
@@ -1226,20 +1230,21 @@
             }
         }
 
-        async function resolveImagePresence() {
+        async function withdrawImageAbsence() {
             if (saving || stale || mode !== 'browse' || !requireAuth()) return;
             saving = true;
             try {
                 const response = await fetch('/api/labels/answer', {
                     method: 'POST', headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ filename: root.dataset.filename, image_bird_presence: 'present' })
+                    body: JSON.stringify({ filename: root.dataset.filename, retract: 'bird_presence' })
                 });
                 const payload = await response.json();
                 if (!response.ok || payload.status !== 'success') throw new Error(payload.message || 'Unable to save');
-                const notice = root.querySelector('[data-review-conflict]');
+                const notice = root.querySelector('[data-image-absence]');
                 if (notice) notice.hidden = true;
                 saving = false;
-                render('Whole-image answer corrected · current object answers retained');
+                render('Full-image answer withdrawn');
+                window.location.reload();
                 broadcastObjects();
             } catch (error) {
                 saving = false;
@@ -1260,7 +1265,8 @@
                 });
                 const payload = await response.json();
                 if (!response.ok || payload.status !== 'success') throw new Error(payload.message || 'Unable to save');
-                item.objectStatus = 'rejected';
+                item.objectStatus = 'dismissed';
+                item.humanReviewState = 'reviewed_negative';
                 updateObjects(item);
                 saving = false;
                 closeMenu();
@@ -1274,13 +1280,13 @@
 
         async function restoreSelectedBird() {
             const item = current();
-            if (!item || item.objectStatus !== 'rejected' || saving || stale || !requireAuth()) return;
+            if (!item || item.objectStatus !== 'dismissed' || saving || stale || !requireAuth()) return;
             saving = true;
             render('Restoring bird…');
             try {
-                const response = await fetch('/api/detections/' + encodeURIComponent(item.detectionId) + '/restore', {
+                const response = await fetch('/api/labels/answer', {
                     method: 'POST', headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ filename: root.dataset.filename })
+                    body: JSON.stringify({ filename: root.dataset.filename, detection_id: item.detectionId, retract: 'bird_presence' })
                 });
                 const payload = await response.json();
                 if (!response.ok || payload.status !== 'success') throw new Error(payload.message || 'Unable to restore bird');
@@ -1291,7 +1297,8 @@
                         : item.humanReviewState === 'reviewed_unknown' ? 'human_unknown' : 'model_proposal';
                 updateObjects(item);
                 saving = false;
-                render('Bird restored · species and box assessments unchanged');
+                render('No bird answer withdrawn');
+                window.location.reload();
                 broadcastObjects();
             } catch (error) {
                 saving = false;
@@ -1343,11 +1350,11 @@
             const action = control.dataset.editorAction;
             if (action === 'confirm-species') {
                 const item = current();
-                if (item && mode === 'browse' && item.objectStatus !== 'rejected') confirmSpecies(item.objectKey, control);
+                if (item && mode === 'browse' && !['dismissed', 'rejected'].includes(item.objectStatus)) confirmSpecies(item.objectKey, control);
             } else if (action === 'choose-species') chooseSpecies(selectedKey);
             else if (action === 'unknown-species') {
                 const item = current();
-                if (!item || stale || mode !== 'browse' || item.objectStatus === 'rejected' || !requireAuth()) return;
+                if (!item || stale || mode !== 'browse' || ['dismissed', 'rejected'].includes(item.objectStatus) || !requireAuth()) return;
                 initialDraft = clone(item);
                 draft = clone(item);
                 draft.speciesKey = null;
@@ -1375,7 +1382,7 @@
             else if (action === 'menu') openMenu();
             else if (action === 'retract') retractManualObject();
             else if (action === 'no-bird') rejectSelectedBird();
-            else if (action === 'image-has-bird') resolveImagePresence();
+            else if (action === 'withdraw-image-absence') withdrawImageAbsence();
             else if (action === 'restore') restoreSelectedBird();
             else if (action === 'bbox-verdict') {
                 const item = current();
@@ -1653,6 +1660,16 @@
             if (sizeObserver) sizeObserver.disconnect();
             sharedObjectCache.delete(root.dataset.filename);
         };
+        if (root.dataset.canModerate === 'true') {
+            fetch('/api/labels/state?filename=' + encodeURIComponent(root.dataset.filename))
+                .then(function (response) { return response.ok ? response.json() : null; })
+                .then(function (state) {
+                    const notice = root.querySelector('[data-image-absence]');
+                    if (notice && state) notice.hidden = !state.facts.some(function (fact) {
+                        return fact.scope === 'image' && fact.fact_type === 'bird_presence' && fact.answer_value === 'absent';
+                    });
+                }).catch(function () {});
+        }
         render();
         requestAnimationFrame(function () {
             requestAnimationFrame(syncLayer);

@@ -15,7 +15,7 @@ _CANDIDATE_SQL = """
     SELECT
         i.filename AS filename,
         i.timestamp AS timestamp,
-        i.review_status AS review_status,
+        CASE WHEN EXISTS(SELECT 1 FROM current_human_label_facts f WHERE f.image_filename=i.filename) OR EXISTS(SELECT 1 FROM manual_objects m WHERE m.image_filename=i.filename AND m.status='active') OR EXISTS(SELECT 1 FROM detections rd WHERE rd.image_filename=i.filename AND rd.status='active' AND rd.decision_state='confirmed') THEN 'answered' ELSE 'untagged' END AS review_status,
         COALESCE(i.original_present, 1) AS original_present,
         EXISTS (
             SELECT 1 FROM detections d
@@ -95,7 +95,7 @@ def candidate_image(
     """Return current retention facts for one image, including favourite state."""
     row = conn.execute(
         """
-        SELECT i.filename, i.timestamp, i.review_status,
+        SELECT i.filename, i.timestamp, CASE WHEN EXISTS(SELECT 1 FROM current_human_label_facts f WHERE f.image_filename=i.filename) OR EXISTS(SELECT 1 FROM manual_objects m WHERE m.image_filename=i.filename AND m.status='active') OR EXISTS(SELECT 1 FROM detections rd WHERE rd.image_filename=i.filename AND rd.status='active' AND rd.decision_state='confirmed') THEN 'answered' ELSE 'untagged' END AS review_status,
                COALESCE(i.original_present, 1) AS original_present,
                EXISTS (
                    SELECT 1 FROM detections d

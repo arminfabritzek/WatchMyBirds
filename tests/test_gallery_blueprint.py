@@ -84,6 +84,7 @@ def _seed_detection(
             "created_at": timestamp,
             "score": score,
             "decision_state": decision_state,
+            "decision_level": "species",
             "thumbnail_path": filename.replace(".jpg", "_crop_1.webp"),
         },
     )
@@ -319,10 +320,11 @@ def test_gallery_review_progress_uses_canonical_human_facts(seeded_client):
 
     relabeled = post(
         client,
-        "/api/detections/relabel",
+        "/api/labels/answer",
         {
             "detection_id": row["detection_id"],
-            "species": "Cyanistes_caeruleus",
+            "species_identity": "corrected",
+            "species_key": "Cyanistes_caeruleus",
         },
     )
     assert relabeled.status_code == 200, relabeled.get_data(as_text=True)

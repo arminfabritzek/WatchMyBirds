@@ -12,7 +12,7 @@ execute the deletion.
 
 Safety:
 
-- ``manual_species_override`` rows are NEVER deleted, even if the OD
+- Rows with human answer history are NEVER deleted, even if the OD
   class is non-bird (the operator manually re-labelled the row).
 - Image files are deleted only when no surviving detection references
   them. A bird sibling on the same frame keeps the image and its
@@ -53,12 +53,12 @@ def _connect(db_path: Path) -> sqlite3.Connection:
 
 
 def _find_candidates(conn: sqlite3.Connection) -> list[sqlite3.Row]:
-    """Return the detection rows that A2 would delete.
+    """Return the detection rows that the cleanup would delete.
 
     Filter:
       - decision_state == 'uncertain'
       - od_class_name in NON_BIRD_CLASSES
-      - manual_species_override is NULL or empty (never touch human edits)
+      - no human answer history exists for the image (never touch human edits)
     """
     placeholders = ",".join("?" for _ in NON_BIRD_CLASSES)
     return list(
@@ -70,12 +70,11 @@ def _find_candidates(conn: sqlite3.Connection) -> list[sqlite3.Row]:
                 od_class_name,
                 od_confidence,
                 decision_state,
-                manual_species_override,
-                created_at
+                                created_at
             FROM detections
             WHERE decision_state = 'uncertain'
               AND od_class_name IN ({placeholders})
-              AND (manual_species_override IS NULL OR manual_species_override = '')
+              AND NOT EXISTS (SELECT 1 FROM human_label_facts f JOIN label_subjects s USING(subject_id) WHERE s.image_filename=detections.image_filename)
             ORDER BY created_at
             """,
             NON_BIRD_CLASSES,
@@ -83,10 +82,8 @@ def _find_candidates(conn: sqlite3.Connection) -> list[sqlite3.Row]:
     )
 
 
-def _orphan_images(
-    conn: sqlite3.Connection, candidate_filenames: set[str]
-) -> set[str]:
-    """Return image filenames whose only detections are A2 candidates.
+def _orphan_images(conn: sqlite3.Connection, candidate_filenames: set[str]) -> set[str]:
+    """Return image filenames whose only detections are cleanup candidates.
 
     An image is orphaned iff every active detection on it is in the
     candidate set. A bird detection or a human-edited row on the same
@@ -106,7 +103,7 @@ def _orphan_images(
               AND NOT (
                   decision_state = 'uncertain'
                   AND od_class_name IN ('marten_mustelid','cat','squirrel','hedgehog')
-                  AND (manual_species_override IS NULL OR manual_species_override = '')
+                  AND NOT EXISTS (SELECT 1 FROM human_label_facts f JOIN label_subjects s USING(subject_id) WHERE s.image_filename=detections.image_filename)
               )
             """,
             (filename,),
@@ -154,7 +151,6 @@ def _write_csv(
                 "od_class_name",
                 "od_confidence",
                 "decision_state",
-                "manual_species_override",
                 "created_at",
                 "image_orphaned",
                 "image_files_on_disk",
@@ -173,7 +169,6 @@ def _write_csv(
                     r["od_class_name"],
                     r["od_confidence"],
                     r["decision_state"],
-                    r["manual_species_override"] or "",
                     r["created_at"],
                     "yes" if r["image_filename"] in orphan_set else "no",
                     files_on_disk,
@@ -288,7 +283,9 @@ def main() -> int:
     for cls, n in sorted(by_class.items(), key=lambda x: -x[1]):
         print(f"  {cls}: {n}")
     print(f"Images that would be orphaned (no surviving detection): {len(orphan_set)}")
-    print(f"  → ~{len(orphan_set) * 0.6:.0f} MB of disk freed (estimate at 600 KB/image)")
+    print(
+        f"  → ~{len(orphan_set) * 0.6:.0f} MB of disk freed (estimate at 600 KB/image)"
+    )
 
     _write_csv(rows, orphan_set, args.output_csv, data_root)
     print(f"\nCandidate CSV: {args.output_csv}")

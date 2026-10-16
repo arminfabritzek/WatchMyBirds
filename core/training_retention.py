@@ -1,4 +1,4 @@
-"""Protect human training evidence, including previously protected legacy signals."""
+"""Protect human training evidence, including historical answers and manual favorites."""
 
 import sqlite3
 
@@ -20,16 +20,9 @@ def protection_sources_any(
                 EXISTS (
                     SELECT 1 FROM detections d WHERE d.image_filename=i.filename AND d.status='active'
                     AND (
-                        i.review_status='no_bird'
-                        OR (lower(COALESCE(d.decision_level,'')) IN ('species','species_review')
-                            AND COALESCE(i.review_status,'') != 'no_bird'
-                            AND (lower(COALESCE(d.species_source,''))='manual'
-                                 OR COALESCE(d.manual_species_override,'') != ''))
-                        OR (COALESCE(d.manual_species_override,'') != ''
-                            AND d.manual_species_override != COALESCE(d.raw_species_name,''))
-                        OR (d.is_favorite=1 AND d.rating_source='manual')
+                        d.is_favorite=1 AND d.rating_source='manual'
                     )
-                ) AS legacy_review
+                ) AS manual_favorite
             FROM images i WHERE i.filename IN ({placeholders})
         """,
             batch,
@@ -37,7 +30,7 @@ def protection_sources_any(
         for row in rows:
             reasons = {
                 name
-                for name in ("canonical_facts", "manual_objects", "legacy_review")
+                for name in ("canonical_facts", "manual_objects", "manual_favorite")
                 if row[name]
             }
             if reasons:

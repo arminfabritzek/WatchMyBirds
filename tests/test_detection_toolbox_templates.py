@@ -221,13 +221,10 @@ def test_detection_info_hides_decision_badges_after_manual_species_review():
     # suppress decision badges per sibling when human approval has
     # landed.
     assert (
-        "sib_has_manual_species_review = (sib.species_source == 'manual') and sib.manual_species_override"
+        "sib_has_manual_species_review = (sib.human_species_source == 'manual') and sib.human_species_key"
         in content
     )
-    assert (
-        "sib_has_manual_review_approval = sib_has_manual_species_review and (sib.review_status == 'confirmed_bird')"
-        in content
-    )
+    assert "sib_has_manual_review_approval = sib_has_manual_species_review" in content
     assert "{% if sib_has_manual_review_approval %}" in content
     assert (
         "{% elif sib.decision_state and not sib_has_manual_review_approval %}"
@@ -468,8 +465,8 @@ def test_no_bird_js_fallback_is_surface_agnostic():
     css = _read("assets/design-system.css")
 
     assert "async function noBirdFrame(" in js
-    assert "'/api/review/decision'" in js
-    assert "'no_bird'" in js
+    assert "'/api/labels/answer'" in js
+    assert "image_bird_presence: 'absent'" in js
     assert "window.wmConfirmFullImageNoBird = confirmFullImageNoBird" in js
     assert "noBirdConfirmed" not in js
     assert "NO_BIRD_KEY" not in js
@@ -477,10 +474,7 @@ def test_no_bird_js_fallback_is_surface_agnostic():
     # language (multi-detection count or generic "all detections").
     # Tolerates both the modal-with-full-frame UX and the legacy
     # confirm() fallback path used by old browsers.
-    assert (
-        "ALL will be flagged as false-positives" in js
-        or "All detections on this frame" in js
-    )
+    assert "Every detected object will be answered No bird." in js
     # Modal must include a full-frame preview to prevent the UX trap
     # where the operator confirms based on the cropped tile view.
     assert "data-full-src" in js

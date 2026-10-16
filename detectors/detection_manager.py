@@ -1138,6 +1138,9 @@ class DetectionManager:
                     decision_policy=self.decision_policy_service,
                     capability_registry=self.capability_registry,
                     od_class_name=od_class_name,
+                    species_key=cls_name,
+                    geography_json=getattr(cls_result, "geography_json", None),
+                    decision_level=getattr(cls_result, "decision_level", None),
                     non_bird_confirm_threshold=global_non_bird_floor,
                     non_bird_confirm_threshold_fn=non_bird_floor_for,
                 )
@@ -1174,9 +1177,7 @@ class DetectionManager:
                     )
                     if cls_conf > 0
                     else [],
-                    decision_level=getattr(cls_result, "decision_level", None)
-                    if cls_result is not None
-                    else None,
+                    decision_level=signals.decision_level,
                     raw_species_name=getattr(cls_result, "raw_species_name", None)
                     if cls_result is not None
                     else None,
@@ -1305,9 +1306,15 @@ class DetectionManager:
                     try:
                         from utils.live_event_bus import get_bus
 
-                        _species_latin = cls_name or det_data.class_name
-                        _species_common = self.notification_service.get_common_name(
-                            _species_latin
+                        _species_latin = (
+                            cls_name
+                            if decision_state == DecisionState.CONFIRMED
+                            else ""
+                        )
+                        _species_common = (
+                            self.notification_service.get_common_name(_species_latin)
+                            if _species_latin
+                            else ""
                         )
                         get_bus().publish(
                             {

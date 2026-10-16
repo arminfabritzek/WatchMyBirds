@@ -93,13 +93,20 @@ def _seed_detection(
 ) -> int:
     """Insert a detection with a specific species (via od_class_name fallback)
     and decision_state. Returns the detection_id."""
+    from detectors.services.decision_policy_service import DecisionPolicyService
+
+    reasons = DecisionPolicyService().admission_reasons(
+        score=score, species_key=species, geography_json=None
+    )
+    if reasons and decision_state == "confirmed":
+        decision_state = "uncertain"
     cur = conn.execute(
         """
         INSERT INTO detections
             (image_filename, od_class_name, od_confidence, score,
-             decision_state, status, bbox_x, bbox_y, bbox_w, bbox_h,
+             decision_state, decision_level, status, bbox_x, bbox_y, bbox_w, bbox_h,
              bbox_quality)
-        VALUES (?, ?, ?, ?, ?, 'active', 0.1, 0.1, 0.2, 0.2, 0.8)
+        VALUES (?, ?, ?, ?, ?, 'species', 'active', 0.1, 0.1, 0.2, 0.2, 0.8)
         """,
         (image_filename, species, score, score, decision_state),
     )
@@ -297,13 +304,8 @@ def test_fetch_species_best_photos_drops_unconfirmed(report_db, tmp_path):
     assert species_in_report == {"Parus_major"}
 
 
-def test_fetch_species_best_photos_drops_catalog_orphans(report_db, tmp_path):
-    """Classifier genus-fallbacks (Phoenicurus_sp., Passer_sp.) and stale
-    class names must not reach Telegram even when decision_state=confirmed.
-
-    The whitelist comes from common_names + extended_species + the non-bird
-    OD class set. Anything else is dropped at the Python pass.
-    """
+def test_fetch_species_best_photos_uses_persisted_admission(report_db, tmp_path):
+    """Admission rejects genus and non-bird proposals without a catalog veto."""
     # Confirmed valid -> survives
     _seed_detection(
         report_db, species="Cyanistes_caeruleus", decision_state="confirmed", score=0.9
@@ -315,11 +317,11 @@ def test_fetch_species_best_photos_drops_catalog_orphans(report_db, tmp_path):
     _seed_detection(
         report_db, species="Passer_sp.", decision_state="confirmed", score=0.7
     )
-    # Confirmed nonsense (typo / stale class) -> dropped
+    # A stored admitted name is not rechecked against the name catalog.
     _seed_detection(
         report_db, species="not_a_real_species", decision_state="confirmed", score=0.7
     )
-    # Confirmed non-bird OD class (cat) -> survives, OD label IS the species
+    # A non-bird proposal is excluded by capture admission.
     _seed_detection(report_db, species="cat", decision_state="confirmed", score=0.85)
     report_db.commit()
 
@@ -329,7 +331,7 @@ def test_fetch_species_best_photos_drops_catalog_orphans(report_db, tmp_path):
             results = _fetch_species_best_photos(report_db, "2026-04-30")
 
     species_in_report = {r["species"] for r in results}
-    assert species_in_report == {"Cyanistes_caeruleus", "cat"}
+    assert species_in_report == {"Cyanistes_caeruleus", "not_a_real_species"}
 
 
 def test_fetch_species_best_photos_does_not_apply_visit_threshold(

@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from core.human_label_core import HumanAnswer, LabelProvenance, record_human_answer
 from utils.db.detections import insert_detection
 
 
@@ -81,13 +82,21 @@ def seed_image(
             conn,
             {
                 "image_filename": filename,
-                "bbox_x": 0.1, "bbox_y": 0.1, "bbox_w": 0.2, "bbox_h": 0.2,
-                "od_class_name": "bird", "od_confidence": 0.9,
+                "bbox_x": 0.1,
+                "bbox_y": 0.1,
+                "bbox_w": 0.2,
+                "bbox_h": 0.2,
+                "od_class_name": "bird",
+                "od_confidence": 0.9,
                 "thumbnail_path": thumb_name,
                 "manual_species_override": manual_species_override,
                 "raw_species_name": raw_species_name,
                 "species_source": species_source,
-                "decision_level": decision_level,
+                "decision_level": decision_level
+                or ("species" if review_status == "confirmed_bird" else None),
+                "decision_state": "confirmed"
+                if review_status == "confirmed_bird"
+                else "uncertain",
             },
         )
         conn.execute(
@@ -95,6 +104,25 @@ def seed_image(
             "WHERE detection_id=?",
             (1 if favorite else 0, "manual" if favorite else None, det_id),
         )
+        if manual_species_override or species_source in {
+            "manual_unknown",
+            "manual_wrong",
+        }:
+            record_human_answer(
+                conn,
+                HumanAnswer(
+                    image_filename=filename,
+                    detection_id=det_id,
+                    species_identity={
+                        "manual_unknown": "unknown",
+                        "manual_wrong": "wrong",
+                    }.get(species_source, "corrected"),
+                    species_key=manual_species_override,
+                ),
+                LabelProvenance(
+                    "synthetic", "test", "normal_correction", "watchmybirds_ui"
+                ),
+            )
         if write_thumbs:
             thumbs_dir.mkdir(parents=True, exist_ok=True)
             tp = thumbs_dir / thumb_name
@@ -107,5 +135,13 @@ def seed_image(
         pp.write_bytes(b"preview-bytes")
         paths["preview"] = pp
 
+    if review_status == "no_bird":
+        record_human_answer(
+            conn,
+            HumanAnswer(image_filename=filename, image_bird_presence="absent"),
+            LabelProvenance(
+                "synthetic", "test", "normal_correction", "watchmybirds_ui"
+            ),
+        )
     conn.commit()
     return paths

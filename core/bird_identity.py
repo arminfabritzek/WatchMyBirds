@@ -13,14 +13,15 @@ from core.human_label_core import (
     HumanLabelError,
     LabelProvenance,
     record_human_answer,
+    require_no_image_absence,
 )
 from core.manual_object_core import (
     ManualObjectDraft,
     create_manual_object,
     update_manual_object,
 )
-from core.review_state import refresh_review_image_visibility
 from utils.db.detections import effective_bbox_projection_sql
+from utils.db.observations import identity_sql
 from utils.species_names import canonical_species_key, is_known_bird_species
 
 
@@ -37,7 +38,7 @@ def matching_birds(
     geometry, join = effective_bbox_projection_sql(conn)
     rows = conn.execute(
         f"""SELECT d.detection_id, d.status,
-            COALESCE(d.manual_species_override, d.raw_species_name) AS species_key,
+            {identity_sql(conn, "d.raw_species_name")} AS species_key,
             {geometry[0]} AS x, {geometry[1]} AS y, {geometry[2]} AS w, {geometry[3]} AS h,
             (SELECT COALESCE(MAX(f.fact_id), 0) FROM current_human_label_facts f
              WHERE f.detection_id = d.detection_id) AS revision
@@ -75,7 +76,8 @@ def matching_birds(
         if intersection / union >= 0.35 or intersection / smaller >= 0.75:
             matches.append({**obj, "bbox": {a: obj[a] for a in ("x", "y", "w", "h")}})
     image = conn.execute(
-        "SELECT review_status FROM images WHERE filename = ?", (filename,)
+        "SELECT MAX(fact_id) FROM current_human_label_facts WHERE scope='image' AND image_filename = ?",
+        (filename,),
     ).fetchone()
     token = hashlib.sha256(
         json.dumps([objects, list(image) if image else None], sort_keys=True).encode()
@@ -121,21 +123,13 @@ def add_or_correct_bird(
         if prior["payload_json"] != signature:
             raise HumanLabelError("request_id already belongs to another object")
         return json.loads(prior["result_json"]), False
+    require_no_image_absence(conn, filename)
     candidates, token = matching_birds(conn, filename, bbox)
     if candidates and (match_token != token or not target_key):
         raise BirdMatchRequired(candidates, token)
     target = next((obj for obj in candidates if obj["object_key"] == target_key), None)
     if target_key and target_key != "new" and target is None:
         raise BirdMatchRequired(candidates, token)
-    # An explicit bird correction supersedes an earlier whole-frame absence.
-    absent = conn.execute(
-        "SELECT 1 FROM current_human_label_facts WHERE image_filename=? AND scope='image' AND fact_type='bird_presence' AND answer_value='absent'",
-        (filename,),
-    ).fetchone()
-    if absent:
-        record_human_answer(
-            conn, HumanAnswer(filename, image_bird_presence="present"), provenance
-        )
     if target and target["detection_id"] is not None:
         detection_id = target["detection_id"]
         record_human_answer(
@@ -182,7 +176,6 @@ def add_or_correct_bird(
         result, created = create_manual_object(
             conn, draft, provenance, original_path=original_path, locale=locale
         )
-    refresh_review_image_visibility(conn, filename, gallery_threshold)
     conn.execute(
         "INSERT INTO bird_add_requests(request_id,image_filename,payload_json,result_json) VALUES (?,?,?,?)",
         (draft.request_id, filename, signature, json.dumps(result)),

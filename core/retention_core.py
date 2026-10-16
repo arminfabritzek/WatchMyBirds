@@ -301,6 +301,11 @@ def execute_plan(
     Returns deletion totals, protection reasons, progress totals, and whether
     a cooperative stop interrupted the run.
     """
+    from utils.db.connection import human_answers_migrated
+
+    if not human_answers_migrated(conn):
+        raise RuntimeError("Human-answer migration is incomplete; deletion is disabled")
+
     # Imported lazily so the pure Policy half of this module has no IO deps.
     from pathlib import Path
 

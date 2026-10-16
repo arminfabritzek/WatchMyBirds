@@ -1,15 +1,4 @@
-"""Taking back a species confirmation must undo every axis it set.
-
-Confirming a species writes a fact *and* five columns on ``detections``
-(override, source, timestamp, decision_state, decision_level). A retraction
-that only withdraws the fact would leave the row half-converted: it keeps a
-manual override nobody stands behind, and the compensator columns keep it
-visible as human-confirmed. That is the failure mode behind the five-copy
-species fallback, so it is pinned here.
-
-The model's own proposal (``raw_species_name``, the classification rows) is
-never touched by either direction, so the AI prediction returns by itself.
-"""
+"""Species withdrawal removes the whole human action and preserves model decisions."""
 
 from __future__ import annotations
 
@@ -132,15 +121,19 @@ def _confirm(conn, seeded, provenance) -> None:
     conn.commit()
 
 
-def test_confirming_sets_every_axis(conn, seeded, provenance):
+def test_confirmation_writes_facts_without_mirroring(conn, seeded, provenance):
     """Baseline: what the undo has to reverse."""
     _confirm(conn, seeded, provenance)
 
     row = _row(conn, int(seeded["detection_id"]))
-    assert row["manual_species_override"] == AI_SPECIES
-    assert row["species_source"] == "manual"
-    assert row["decision_state"] == "confirmed"
-    assert row["decision_level"] == "species"
+    assert row["manual_species_override"] is None
+    assert row["species_source"] is None
+    assert row["decision_state"] == "uncertain"
+    assert row["decision_level"] is None
+    assert set(_facts(conn, int(seeded["detection_id"]))) == {
+        "bird_presence",
+        "species_identity",
+    }
 
 
 def test_undo_clears_the_manual_override_and_source(conn, seeded, provenance):
@@ -159,13 +152,7 @@ def test_undo_clears_the_manual_override_and_source(conn, seeded, provenance):
     assert not row["species_source"]
 
 
-def test_undo_also_resets_the_decision_axes(conn, seeded, provenance):
-    """The decisive guard against a half-undone row.
-
-    Clearing only the override while leaving decision_state='confirmed'
-    would keep the row looking human-confirmed on every surface that reads
-    those columns.
-    """
+def test_undo_preserves_the_decision_axes(conn, seeded, provenance):
     _confirm(conn, seeded, provenance)
 
     retract_species_identity(
@@ -237,8 +224,7 @@ def test_undo_retracts_the_fact_rather_than_deleting_it(conn, seeded, provenance
     assert history[1]["answer_value"] is None
 
 
-def test_undo_leaves_the_bird_presence_answer_alone(conn, seeded, provenance):
-    """Taking back a species says nothing about whether a bird is there."""
+def test_undo_withdraws_presence_written_by_the_same_click(conn, seeded, provenance):
     _confirm(conn, seeded, provenance)
     retract_species_identity(
         conn,
@@ -249,8 +235,7 @@ def test_undo_leaves_the_bird_presence_answer_alone(conn, seeded, provenance):
     conn.commit()
 
     facts = _facts(conn, int(seeded["detection_id"]))
-    assert facts["bird_presence"]["answer_value"] == "present"
-    assert facts["bird_presence"]["assertion_state"] == "asserted"
+    assert "bird_presence" not in facts
 
 
 def test_undo_without_a_previous_answer_is_a_no_op(conn, seeded, provenance):

@@ -151,57 +151,11 @@ def test_interior_bbox_still_outranks_aesthetic():
 
 
 def _build_minimal_db() -> sqlite3.Connection:
-    """Create an in-memory DB with the columns these queries reference.
+    from utils.db.connection import _init_schema
 
-    We do not call _init_schema (that loads the full app config); we mirror
-    just the structure the two functions exercise.
-    """
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row
-    conn.executescript("""
-    CREATE TABLE images (
-        filename TEXT PRIMARY KEY,
-        timestamp TEXT,
-        review_status TEXT DEFAULT 'untagged',
-        downloaded_timestamp TEXT,
-        source_id INTEGER,
-        ptz_origin TEXT
-    );
-    CREATE TABLE detections (
-        detection_id INTEGER PRIMARY KEY AUTOINCREMENT,
-        image_filename TEXT NOT NULL,
-        thumbnail_path TEXT,
-        od_class_name TEXT,
-        od_confidence REAL,
-        score REAL,
-        bbox_quality REAL,
-        bbox_x REAL, bbox_y REAL, bbox_w REAL, bbox_h REAL,
-        rating INTEGER,
-        rating_source TEXT DEFAULT 'auto',
-        is_favorite INTEGER DEFAULT 0,
-        is_gallery_eligible INTEGER DEFAULT 0,
-        aesthetic_score REAL,
-        aesthetic_score_at TEXT,
-        decision_state TEXT,
-        decision_level TEXT,
-        manual_species_override TEXT,
-        species_source TEXT,
-        unknown_score REAL,
-        decision_reasons TEXT,
-        status TEXT DEFAULT 'active',
-        created_at TEXT,
-        quality_gallery_ok INTEGER,
-        FOREIGN KEY(image_filename) REFERENCES images(filename)
-    );
-    CREATE TABLE classifications (
-        classification_id INTEGER PRIMARY KEY AUTOINCREMENT,
-        detection_id INTEGER NOT NULL,
-        cls_class_name TEXT,
-        cls_confidence REAL,
-        rank INTEGER DEFAULT 1,
-        status TEXT DEFAULT 'active'
-    );
-    """)
+    _init_schema(conn)
     return conn
 
 
@@ -250,15 +204,7 @@ def _insert_image_and_det(
 
 def test_fetch_daily_covers_prefers_high_aesthetic_score(monkeypatch):
     """Two detections same day: the one with higher aesthetic_score wins as cover."""
-    # The function imports config and a visibility helper that requires the
-    # full app context; we patch the visibility helper to a permissive clause.
     from utils.db import detections as detections_module
-
-    monkeypatch.setattr(
-        detections_module,
-        "_gallery_visibility_sql",
-        lambda d, i, conn=None: f"{d}.status = 'active'",
-    )
 
     conn = _build_minimal_db()
     # Same day, same species, same detector score → aesthetic_score breaks tie.
@@ -281,12 +227,6 @@ def test_fetch_daily_covers_prefers_high_aesthetic_score(monkeypatch):
 def test_fetch_daily_covers_null_aesthetic_does_not_override(monkeypatch):
     """A NULL aesthetic_score must not beat a real one (COALESCE -1 fallback)."""
     from utils.db import detections as detections_module
-
-    monkeypatch.setattr(
-        detections_module,
-        "_gallery_visibility_sql",
-        lambda d, i, conn=None: f"{d}.status = 'active'",
-    )
 
     conn = _build_minimal_db()
     _insert_image_and_det(
@@ -311,12 +251,6 @@ def test_fetch_daily_covers_null_aesthetic_does_not_override(monkeypatch):
 def test_gallery_select_includes_aesthetic_score(monkeypatch):
     """fetch_detections_for_gallery returns aesthetic_score in the row dict."""
     from utils.db import detections as detections_module
-
-    monkeypatch.setattr(
-        detections_module,
-        "_gallery_visibility_sql",
-        lambda d, i, conn=None: f"{d}.status = 'active'",
-    )
 
     conn = _build_minimal_db()
     _insert_image_and_det(

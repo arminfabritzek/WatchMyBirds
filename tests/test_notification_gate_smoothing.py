@@ -52,6 +52,7 @@ def _base_manager(monkeypatch, tmp_path):
             "BBOX_QUALITY_THRESHOLD": "0.40",
             "SPECIES_CONF_THRESHOLD": "0.70",
             "UNKNOWN_SCORE_THRESHOLD": "0.60",
+            "GALLERY_DISPLAY_THRESHOLD": "0.65",
         }
     )
 

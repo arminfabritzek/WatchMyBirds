@@ -184,11 +184,11 @@ def _resolve_detection_species(det: dict[str, Any]) -> tuple[str | None, str]:
     ``species_key`` (post-processed canonical species), then the raw
     classifier output, then the object-detector class as a last resort.
     """
-    manual_species = _normalize_species(det.get("manual_species_override"))
+    manual_species = _normalize_species(det.get("human_species_key"))
     if manual_species:
         return manual_species, "manual"
 
-    species_source = str(det.get("species_source") or "").strip().lower()
+    species_source = str(det.get("human_species_source") or "").strip().lower()
     # An explicit human "species unknown" clears the override, so without this
     # the chain falls through to the classifier's own withdrawn guess.
     if species_source in _HUMAN_UNKNOWN_SPECIES_SOURCES:

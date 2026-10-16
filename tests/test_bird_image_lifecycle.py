@@ -81,6 +81,10 @@ def test_purging_rejected_proposal_preserves_active_manual_bird(
 ) -> None:
     client, filename, detection_id = labeling_case
     pm = add_manual_and_reject_proposal(client, filename, detection_id)
+    assert (
+        post(client, "/api/trash/move", dict(detection_ids=[detection_id])).status_code
+        == 200
+    )
     optimized = pm.get_derivative_path(filename, "optimized")
     optimized.parent.mkdir(parents=True, exist_ok=True)
     optimized.write_bytes(b"retained-preview")
@@ -192,7 +196,8 @@ def test_box_verdict_does_not_undo_full_image_absence(
         fact = conn.execute(
             "SELECT answer_value FROM current_human_label_facts WHERE scope='image' AND fact_type='bird_presence'"
         ).fetchone()[0]
-    assert status == "no_bird", dict(status=status, canonical_presence=fact)
+    assert status == projected_status
+    assert fact == "absent"
 
 
 def test_manual_bundle_is_accepted_by_fiftyone_importer(
@@ -260,7 +265,7 @@ def test_restore_retains_identity_history_and_independent_axes(
         assert [dict(r) for r in siblings] == [
             {k: v for k, v in dict(r).items() if k != "image_filename"} for r in batch
         ]
-        assert siblings[0]["object_status"] == "rejected"
+        assert siblings[0]["object_status"] == "active"
         proposal = tuple(
             conn.execute(
                 "SELECT bbox_x,bbox_y,bbox_w,bbox_h FROM detections WHERE detection_id=?",
@@ -268,27 +273,20 @@ def test_restore_retains_identity_history_and_independent_axes(
             ).fetchone()
         )
     response = post(
-        client, f"/api/detections/{detection_id}/restore", dict(filename=filename)
+        client, "/api/labels/answer", dict(filename=filename, retract="bird_presence")
     )
     assert response.status_code == 200, response.get_json()
-    assert response.get_json()["review_state"]["bbox_verdict"] == "unsuitable"
-    assert response.get_json()["review_state"]["state"] == "unreviewed"
+    assert response.get_json()["review_state"] is None
     with db_connection.closing_connection() as conn:
         facts = conn.execute(
             "SELECT * FROM current_human_label_facts WHERE image_filename=?",
             (filename,),
         ).fetchall()
-        presence = next(
-            f
-            for f in facts
-            if f["scope"] == "object" and f["fact_type"] == "bird_presence"
-        )
-        assert presence["answer_value"] == "present"
-        assert presence["supersedes_fact_id"] == rejected_fact
+        assert not any(f["fact_type"] == "bird_presence" for f in facts)
         assert not any(f["fact_type"] == "species_identity" for f in facts)
-        assert (
-            next(f for f in facts if f["scope"] == "image")["answer_value"] == "present"
-        )
+        assert conn.execute(
+            "SELECT 1 FROM human_label_facts WHERE fact_id=?", (rejected_fact,)
+        ).fetchone()
         row = fetch_sibling_detections(conn, filename)[0]
         assert row["object_status"] == "active"
         assert tuple(row[f"bbox_{axis}"] for axis in ("x", "y", "w", "h")) == tuple(
@@ -316,9 +314,11 @@ def test_restore_retains_identity_history_and_independent_axes(
         count = conn.execute("SELECT COUNT(*) FROM human_label_facts").fetchone()[0]
     assert (
         post(
-            client, f"/api/detections/{detection_id}/restore", dict(filename=filename)
+            client,
+            "/api/labels/answer",
+            dict(filename=filename, retract="bird_presence"),
         ).status_code
-        == 409
+        == 200
     )
     with db_connection.closing_connection() as conn:
         assert (
@@ -383,7 +383,11 @@ def test_dismissed_box_is_in_detail_even_with_only_one_active_bird(
     ]
     dismissed = [r for r in rows if r.get("detection_id") == dismissed_id]
     assert dismissed, route
-    assert all(r["object_status"] == "rejected" for r in dismissed)
+    assert all(
+        r["object_status"] == "active"
+        and r["human_review_state"] == "reviewed_negative"
+        for r in dismissed
+    )
     assert 'data-editor-action="restore"' in text
 
 
@@ -403,9 +407,18 @@ def test_restore_rejects_cross_image_and_missing_auth_or_csrf(
         ).status_code
         == 200
     )
-    url = f"/api/detections/{detection_id}/restore"
-    assert post(client, url, dict(filename="other.jpg")).status_code == 409
-    assert post(client, url, {}).status_code == 400
+    url = "/api/labels/answer"
+    assert (
+        post(
+            client,
+            url,
+            dict(
+                filename="other.jpg", detection_id=detection_id, retract="bird_presence"
+            ),
+        ).status_code
+        == 409
+    )
+    assert post(client, url, {}).status_code == 409
     assert client.post(url, json=dict(filename=filename)).status_code == 403
     with client.session_transaction() as session:
         session.pop("authenticated", None)
@@ -415,5 +428,5 @@ def test_restore_rejects_cross_image_and_missing_auth_or_csrf(
             conn.execute(
                 "SELECT status FROM detections WHERE detection_id=?", (detection_id,)
             ).fetchone()[0]
-            == "rejected"
+            == "active"
         )

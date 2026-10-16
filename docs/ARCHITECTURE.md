@@ -112,10 +112,10 @@ must not be used as evidence that legacy route logic has been removed.
 
 - Gallery data: `web.services.gallery_service.get_detections_for_date` →
   `core.gallery_core.get_detections_for_date` → SQLite queries.
-- Trash: `web.blueprints.trash.reject_detection` currently calls
-  `db_service.reject_detections` → `utils.db.detections.reject_detections`.
+- Trash: `web.blueprints.trash.move_to_trash` calls
+  `detections_service.move_to_trash` → `core.detections_core.move_to_trash`.
   This changes detection/classification status; it does not move image files
-  or assert a training label. The service pass-through is S-02 debt.
+  or assert a training label. It stamps `detections.trashed_at` in the same transaction.
 - Hard deletion: core/service wrappers → `utils.file_gc`. Referenced files
   are attempted first, then DB rows; missing files do not stop DB cleanup.
 - Corrections: `web.blueprints.human_labels` → `human_label_service` →

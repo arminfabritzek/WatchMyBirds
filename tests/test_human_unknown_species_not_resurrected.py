@@ -1,11 +1,4 @@
-"""Regression: an explicit human "species unknown" must not fall back to AI.
-
-``core.human_label_core`` records a ``species_identity='unknown'`` answer by
-clearing ``manual_species_override`` and stamping
-``species_source='manual_unknown'``. The species fallback chain used to walk
-straight past the cleared override into the classifier's own ``cls_class_name``
-and redisplay the species the human had just withdrawn.
-"""
+"""Fact-derived unknown identities do not fall back to model species."""
 
 from __future__ import annotations
 
@@ -110,7 +103,7 @@ def _effective(conn: sqlite3.Connection, sql: str) -> dict[int, str]:
     return {r["i"]: r["s"] for r in conn.execute(query)}
 
 
-def test_sql_mirrors_the_python_guard() -> None:
+def test_model_sql_ignores_retired_override_columns() -> None:
     """The SQL surface (gallery, species pages) must agree with Python."""
     conn = _fixture_conn()
     try:
@@ -118,8 +111,8 @@ def test_sql_mirrors_the_python_guard() -> None:
     finally:
         conn.close()
     assert got[1] == AI_SPECIES, "untouched AI proposal changed"
-    assert got[2] == UNKNOWN_SPECIES_KEY, "human unknown resurrected as AI species"
-    assert got[3] == "Parus_major", "human-confirmed species changed"
+    assert got[2] == AI_SPECIES
+    assert got[3] == AI_SPECIES
 
 
 def test_sql_for_columns_degrades_without_species_source() -> None:
@@ -143,7 +136,7 @@ def test_sql_for_columns_degrades_without_species_source() -> None:
             },
             classification_columns={"cls_class_name", "rank", "status"},
         )
-        assert _effective(conn, modern)[2] == UNKNOWN_SPECIES_KEY
+        assert _effective(conn, modern)[2] == AI_SPECIES
     finally:
         conn.close()
 
@@ -211,7 +204,7 @@ def test_review_does_not_preselect_ai_species_after_human_unknown() -> None:
     # unanswered row -> the AI proposal is a helpful default
     assert _resolve_review_selected_species(
         quick,
-        manual_species_override=None,
+        human_species_key=None,
         common_names=names,
         species_source="model_top1",
     ) == (AI_SPECIES, "Kleiber", "default")
@@ -219,7 +212,7 @@ def test_review_does_not_preselect_ai_species_after_human_unknown() -> None:
     # explicit human unknown -> nothing pre-selected
     species, common, origin = _resolve_review_selected_species(
         quick,
-        manual_species_override=None,
+        human_species_key=None,
         common_names=names,
         species_source="manual_unknown",
     )
@@ -230,7 +223,7 @@ def test_review_does_not_preselect_ai_species_after_human_unknown() -> None:
     # a human-confirmed species still wins
     assert _resolve_review_selected_species(
         quick,
-        manual_species_override="Parus_major",
+        human_species_key="Parus_major",
         common_names={**names, "Parus_major": "Kohlmeise"},
         species_source="manual",
     ) == ("Parus_major", "Kohlmeise", "manual")

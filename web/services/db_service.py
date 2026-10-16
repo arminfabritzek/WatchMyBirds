@@ -46,10 +46,6 @@ def fetch_active_detection_selection_in_date_range(
     )
 
 
-def fetch_active_detection_selection_by_source_type(conn, source_type: str) -> dict:
-    return db_core.fetch_active_detection_selection_by_source_type(conn, source_type)
-
-
 def fetch_trash_candidate_selection_in_date_range(
     conn, from_date: str, to_date: str
 ) -> dict:
@@ -58,36 +54,12 @@ def fetch_trash_candidate_selection_in_date_range(
     )
 
 
-def fetch_trash_candidate_selection_by_source_type(conn, source_type: str) -> dict:
-    return db_core.fetch_trash_candidate_selection_by_source_type(conn, source_type)
-
-
 def reject_detections(conn, detection_ids: list[int], *, commit: bool = True) -> None:
     db_core.reject_detections(conn, detection_ids, commit=commit)
 
 
-def apply_species_override(conn, detection_id: int, species: str, source: str) -> None:
-    db_core.apply_species_override(conn, detection_id, species, source)
-
-
-def apply_species_override_many(
-    conn, detection_ids: list[int], species: str, source: str
-) -> int:
-    return db_core.apply_species_override_many(conn, detection_ids, species, source)
-
-
-def set_manual_bbox_review(conn, detection_id: int, review_state: str | None) -> None:
-    db_core.set_manual_bbox_review(conn, detection_id, review_state)
-
-
 def restore_detections(conn, detection_ids: list[int]) -> None:
     db_core.restore_detections(conn, detection_ids)
-
-
-def update_review_status(
-    conn, filenames, new_status: str, *, commit: bool = True
-) -> int:
-    return db_core.update_review_status(conn, filenames, new_status, commit=commit)
 
 
 def update_downloaded_timestamp(conn, filenames, download_time) -> None:
@@ -137,10 +109,6 @@ def fetch_trash_items(conn, page: int = 1, limit: int = 50) -> tuple:
 
 def fetch_trash_count(conn) -> int:
     return db_core.fetch_trash_count(conn)
-
-
-def restore_no_bird_images(conn, image_filenames: list[str]) -> int:
-    return db_core.restore_no_bird_images(conn, image_filenames)
 
 
 # --- Analytics Operations ---

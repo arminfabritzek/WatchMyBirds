@@ -209,7 +209,7 @@ def build_canonical_dataset(
     detections = _rows(
         conn,
         """
-        SELECT * FROM detections WHERE image_filename IN (
+        SELECT detection_id, image_filename, frame_width, frame_height, status FROM detections WHERE image_filename IN (
             SELECT image_filename FROM label_subjects
             UNION SELECT image_filename FROM manual_objects WHERE status = 'active'
         ) ORDER BY image_filename, detection_id

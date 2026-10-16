@@ -11,7 +11,7 @@ from utils.db import closing_connection
 
 def test_ordinary_review_keeps_answered_unknown_reachable(local_db_app: Flask) -> None:
     with closing_connection() as conn:
-        filename = seed(conn, identifier=101)
+        filename = seed(conn, identifier=101, state="uncertain")
         answer(conn, 101, filename, state="unknown", species=None)
         seed(conn, identifier=102, state="uncertain")
     with local_db_app.test_client() as client:
@@ -37,7 +37,7 @@ def test_report_builds_automatically_and_stale_claims_are_hidden(
     local_db_app: Flask,
 ) -> None:
     with closing_connection() as conn:
-        filename = seed(conn)
+        filename = seed(conn, state="uncertain")
         answer(conn, 101, filename, species="Pica_pica")
     try:
         with local_db_app.test_client() as client:
@@ -73,7 +73,7 @@ def test_raw_model_proposal_is_separate_and_scoped_to_its_image(
     local_db_app: Flask,
 ) -> None:
     with closing_connection() as conn:
-        filename = seed(conn)
+        filename = seed(conn, state="uncertain")
         conn.execute(
             "UPDATE detections SET raw_species_name='Himantopus_leucocephalus'"
         )
@@ -102,8 +102,8 @@ def test_raw_model_proposal_is_separate_and_scoped_to_its_image(
 def test_review_groups_whole_visits_and_selects_days(local_db_app: Flask) -> None:
     with closing_connection() as conn:
         for identifier in range(1, 56):
-            seed(conn, identifier=identifier)
-        seed(conn, identifier=60)
+            seed(conn, identifier=identifier, state="uncertain")
+        seed(conn, identifier=60, state="uncertain")
         conn.execute(
             "UPDATE images SET timestamp='20261012_082211' WHERE filename LIKE '%_60.jpg'"
         )
@@ -127,11 +127,11 @@ def test_event_answers_are_atomic_and_never_overwrite_completed_objects(
     from utils.db.detections import fetch_observation_page
 
     with closing_connection() as conn:
-        first = seed(conn, identifier=10, species="Pica_pica")
-        seed(conn, identifier=11, species="Pica_pica")
-        seed(conn, identifier=12, species="Pica_pica")
+        first = seed(conn, identifier=10, species="Pica_pica", state="uncertain")
+        seed(conn, identifier=11, species="Pica_pica", state="uncertain")
+        seed(conn, identifier=12, species="Pica_pica", state="uncertain")
     with local_db_app.test_client() as client:
-        assert client.post("/api/review/answers", json={}).status_code in {
+        assert client.post("/api/labels/answer", json={}).status_code in {
             302,
             401,
             403,
@@ -143,7 +143,12 @@ def test_event_answers_are_atomic_and_never_overwrite_completed_objects(
         with closing_connection() as conn:
             answer(conn, 10, first, species="Picus_viridis")
         result = client.post(
-            "/api/review/answers", json={"detection_ids": [10, 11], "action": "no_bird"}
+            "/api/labels/answer",
+            json={
+                "detection_ids": [10, 11],
+                "object_bird_presence": "absent",
+                "review_only": True,
+            },
         )
         assert result.status_code == 409
         with closing_connection() as conn:
@@ -152,12 +157,22 @@ def test_event_answers_are_atomic_and_never_overwrite_completed_objects(
                 for row in fetch_observation_page(conn, answered=False)[0]
             } == {11, 12}
         result = client.post(
-            "/api/review/answers", json={"detection_ids": [11], "action": "unknown"}
+            "/api/labels/answer",
+            json={
+                "detection_ids": [11],
+                "species_identity": "unknown",
+                "review_only": True,
+            },
         )
         assert result.status_code == 200
         result = client.post(
-            "/api/review/answers",
-            json={"detection_ids": [12], "action": "species", "species": "Pica_pica"},
+            "/api/labels/answer",
+            json={
+                "detection_ids": [12],
+                "species_identity": "confirmed",
+                "species_key": "Pica_pica",
+                "review_only": True,
+            },
         )
         assert result.status_code == 200
         with closing_connection() as conn:
@@ -167,18 +182,31 @@ def test_event_answers_are_atomic_and_never_overwrite_completed_objects(
         )
         assert (
             client.post(
-                "/api/review/answers", json={"detection_ids": [12], "action": "no_bird"}
+                "/api/labels/answer",
+                json={
+                    "detection_ids": [12],
+                    "object_bird_presence": "absent",
+                    "review_only": True,
+                },
             ).status_code
             == 409
         )
         for body in [
             {},
             [],
-            {"detection_ids": "12", "action": "no_bird"},
-            {"detection_ids": [True], "action": "no_bird"},
+            {
+                "detection_ids": "12",
+                "object_bird_presence": "absent",
+                "review_only": True,
+            },
+            {
+                "detection_ids": [True],
+                "object_bird_presence": "absent",
+                "review_only": True,
+            },
             {"detection_ids": [999], "action": []},
         ]:
-            assert client.post("/api/review/answers", json=body).status_code in {
+            assert client.post("/api/labels/answer", json=body).status_code in {
                 400,
                 409,
             }

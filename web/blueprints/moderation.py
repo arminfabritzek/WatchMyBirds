@@ -3,8 +3,6 @@ Moderation Blueprint.
 
 Handles all bulk moderation routes:
 - POST /api/moderation/resolve-selection  — Resolve selection to concrete IDs
-- POST /api/moderation/bulk/relabel       — Bulk relabel detections
-- POST /api/moderation/bulk/reject        — Bulk reject detections / review items
 - POST /api/moderation/bulk/download      — ZIP the originals behind a selection
 """
 
@@ -14,17 +12,10 @@ from datetime import datetime
 
 from flask import Blueprint, jsonify, request, send_file
 
-from config import get_config
-from core.human_label_core import HumanAnswer
 from logging_config import get_logger
-from utils.species_names import build_species_picker_entries
 from web.blueprints.auth import login_required
-from web.security import safe_log_value as _slv
 from web.services import (
-    cache_service,
     db_service,
-    gallery_service,
-    human_label_service,
     image_download_service,
 )
 from web.services.filter_service import FilterContext, resolve_filtered_ids
@@ -58,12 +49,11 @@ def resolve_selection() -> tuple:
     """Resolve a selection to concrete detection IDs / filenames.
 
     Accepts:
-        { mode: "explicit" | "all_filtered" | "date_range" | "logical_filter",
+        { mode: "explicit" | "all_filtered" | "date_range",
           ids: [int, ...],              // only for mode=explicit
           filter_context: { ... },      // only for mode=all_filtered
           from_date: "YYYY-MM-DD",      // only for mode=date_range
-          to_date: "YYYY-MM-DD",        // only for mode=date_range
-          source_type: "folder_upload"  // only for mode=logical_filter
+          to_date: "YYYY-MM-DD"         // only for mode=date_range
         }
 
     Returns:
@@ -154,173 +144,15 @@ def resolve_selection() -> tuple:
             }
         )
 
-    if mode == "logical_filter":
-        source_type = data.get("source_type")
-        if not source_type:
-            return jsonify({"status": "error", "message": "source_type required"}), 400
-
-        with db_service.closing_connection() as conn:
-            selection = db_service.fetch_trash_candidate_selection_by_source_type(
-                conn, source_type
-            )
-
-        detection_ids = selection.get("detection_ids", [])
-        image_count = selection.get("image_count", 0)
-        return jsonify(
-            {
-                "status": "success",
-                "detection_ids": detection_ids,
-                "image_filenames": selection.get("image_filenames", []),
-                "total_count": len(detection_ids)
-                + int(selection.get("orphan_count", 0) or 0),
-                "detection_count": len(detection_ids),
-                "image_count": image_count,
-                "orphan_count": int(selection.get("orphan_count", 0) or 0),
-            }
-        )
-
     return jsonify({"status": "error", "message": f"Unknown mode: {mode}"}), 400
 
 
 # ---------------------------------------------------------------------------
-# POST /api/moderation/bulk/relabel
 # ---------------------------------------------------------------------------
 
 
-@moderation_bp.route("/api/moderation/bulk/relabel", methods=["POST"])
-@login_required
-@cache_service.invalidates("analytics.")
-def bulk_relabel() -> tuple:
-    """Bulk relabel detections to a new species.
-
-    Accepts:
-        { detection_ids: [int, ...], species: "Scientific_name" }
-    """
-    data = request.get_json() or {}
-    detection_ids = data.get("detection_ids", [])
-    new_species = data.get("species")
-
-    if not detection_ids:
-        return jsonify({"status": "error", "message": "detection_ids required"}), 400
-    if not new_species:
-        return jsonify({"status": "error", "message": "species required"}), 400
-
-    with db_service.closing_connection() as conn:
-        cfg = get_config()
-        locale = cfg.get("SPECIES_COMMON_NAME_LOCALE", "DE")
-        allowed_species = {
-            entry["scientific"]
-            for entry in build_species_picker_entries(conn, locale=locale)
-        }
-        if new_species not in allowed_species:
-            return jsonify({"status": "error", "message": "unknown species"}), 400
-
-        placeholders = ",".join("?" for _ in detection_ids)
-        rows = conn.execute(
-            f"""
-            SELECT detection_id, image_filename
-            FROM detections
-            WHERE detection_id IN ({placeholders})
-              AND COALESCE(status, 'active') = 'active'
-            """,
-            list(detection_ids),
-        ).fetchall()
-        for row in rows:
-            human_label_service.record_answer(
-                conn,
-                HumanAnswer(
-                    image_filename=str(row["image_filename"]),
-                    detection_id=int(row["detection_id"]),
-                    species_identity="corrected",
-                    species_key=str(new_species),
-                ),
-                source_kind="watchmybirds_bulk_moderation",
-                source_ref="moderation:bulk-relabel",
-            )
-        relabeled = len(rows)
-
-    # Invalidate gallery cache
-    gallery_service.invalidate_cache()
-
-    logger.info(f"Bulk relabel: {relabeled} succeeded, 0 failed → {_slv(new_species)}")
-    return jsonify(
-        {
-            "status": "success",
-            "relabeled": relabeled,
-            "failed": [],
-            "new_species": new_species,
-        }
-    )
-
-
 # ---------------------------------------------------------------------------
-# POST /api/moderation/bulk/reject
 # ---------------------------------------------------------------------------
-
-
-@moderation_bp.route("/api/moderation/bulk/reject", methods=["POST"])
-@login_required
-@cache_service.invalidates("analytics.")
-def bulk_reject() -> tuple:
-    """Bulk reject detections and/or review queue items.
-
-    Accepts:
-        { detection_ids: [int, ...], image_filenames: [str, ...] }
-    Either or both may be provided.
-    """
-    data = request.get_json() or {}
-    detection_ids = data.get("detection_ids") or data.get("ids", [])
-    image_filenames = data.get("image_filenames", [])
-
-    if not detection_ids and not image_filenames:
-        return jsonify({"status": "error", "message": "No targets provided"}), 400
-
-    rejected_detections = 0
-    rejected_images = 0
-
-    with db_service.closing_connection() as conn:
-        if detection_ids:
-            placeholders = ",".join("?" for _ in detection_ids)
-            rows = conn.execute(
-                f"""
-                SELECT detection_id, image_filename
-                FROM detections
-                WHERE detection_id IN ({placeholders})
-                  AND COALESCE(status, 'active') = 'active'
-                """,
-                detection_ids,
-            ).fetchall()
-            active_detection_ids = [int(row["detection_id"]) for row in rows]
-            db_service.reject_detections(conn, active_detection_ids)
-            rejected_detections = len(rows)
-
-        if image_filenames:
-            placeholders = ",".join("?" for _ in image_filenames)
-            rows = conn.execute(
-                f"""
-                SELECT detection_id, image_filename
-                FROM detections
-                WHERE image_filename IN ({placeholders})
-                  AND COALESCE(status, 'active') = 'active'
-                """,
-                image_filenames,
-            ).fetchall()
-            active_detection_ids = [int(row["detection_id"]) for row in rows]
-            db_service.reject_detections(conn, active_detection_ids)
-            rejected_images = len({str(row["image_filename"]) for row in rows})
-
-    gallery_service.invalidate_cache()
-
-    logger.info(
-        f"Bulk reject: {rejected_detections} detections, {rejected_images} images"
-    )
-    return jsonify(
-        {
-            "status": "success",
-            "rejected_detections": rejected_detections,
-            "rejected_images": rejected_images,
-        }
-    )
 
 
 # ---------------------------------------------------------------------------

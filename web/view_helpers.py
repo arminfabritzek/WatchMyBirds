@@ -128,14 +128,14 @@ def get_species_key(det: dict | None) -> str:
     if species_key:
         return species_key
 
-    manual_species = det.get("manual_species_override")
+    manual_species = det.get("human_species_key")
     if manual_species:
         return manual_species
 
     return species_key_from_candidates(
         cls_class_name=det.get("cls_class_name"),
         od_class_name=det.get("od_class_name"),
-        species_source=det.get("species_source"),
+        species_source=det.get("human_species_source"),
     )
 
 
@@ -153,7 +153,7 @@ def _detection_has_human_unknown_species(det: dict) -> bool:
     must suppress the species key and the old CLS guess — this is the guard
     fixed in 461f9918; dropping either branch resurrects a withdrawn species.
     """
-    if is_human_unknown_species_source(det.get("species_source")):
+    if is_human_unknown_species_source(det.get("human_species_source")):
         return True
     return det.get("human_review_state") == "reviewed_unknown"
 
@@ -214,8 +214,8 @@ def build_current_detection_payload(det: dict) -> dict:
     ``tests/test_detail_modal_unknown_species_head.py`` for the coverage.
     """
     has_human_unknown_species = _detection_has_human_unknown_species(det)
-    has_manual_species_review = det.get("species_source") == "manual" and bool(
-        det.get("manual_species_override")
+    has_manual_species_review = det.get("human_species_source") == "manual" and bool(
+        det.get("human_species_key")
     )
     human_review_state = det.get("human_review_state") or "unreviewed"
 
@@ -225,7 +225,7 @@ def build_current_detection_payload(det: dict) -> dict:
         species_key = (
             det.get("human_species_key")
             or det.get("species_key")
-            or det.get("manual_species_override")
+            or det.get("human_species_key")
             or det.get("cls_class_name")
             or det.get("od_class_name")
         )
@@ -253,7 +253,7 @@ def build_current_detection_payload(det: dict) -> dict:
         "image_filename": image_filename,
         "species_key": species_key,
         "common_name": det.get("human_common_name") or det.get("common_name"),
-        "species_source": det.get("species_source"),
+        "human_species_source": det.get("human_species_source"),
         "human_review_state": human_review_state,
         "human_bbox_verdict": det.get("human_bbox_verdict"),
         "object_status": det.get("object_status") or det.get("status") or "active",
@@ -385,8 +385,8 @@ def build_detection_view_dict(
         "cls_confidence": det.get("cls_confidence", 0.0) or 0.0,
         "score": det.get("score", 0.0) or 0.0,
         "review_status": det.get("review_status"),
-        "manual_species_override": det.get("manual_species_override"),
-        "species_source": det.get("species_source"),
+        "human_species_key": det.get("human_species_key"),
+        "human_species_source": det.get("human_species_source"),
         "formatted_date": formatted_date,
         "formatted_time": formatted_time,
         "gallery_date": gallery_date,
@@ -417,7 +417,6 @@ def build_detection_view_dict(
         "conflict",
         "answered_at",
         "presence",
-        "image_presence",
         "observation_count",
         "human_count",
         "automatic_count",

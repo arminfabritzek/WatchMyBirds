@@ -207,6 +207,7 @@ def create_web_interface(detection_manager, system_monitor=None):
     @server.context_processor
     def inject_security_context():
         from web.services import auth_service as _auth
+        from web.services import settings_service
 
         if "_csrf_token" not in session:
             session["_csrf_token"] = secrets.token_hex(32)
@@ -219,6 +220,12 @@ def create_web_interface(detection_manager, system_monitor=None):
             "csrf_token": session["_csrf_token"],
             "is_authenticated": is_authenticated,
             "can_moderate": is_authenticated,
+            "retention_update_notice": (
+                is_authenticated
+                and request.path
+                in {"/", "/gallery", "/species", "/settings", "/admin/review", "/trash"}
+                and settings_service.take_retention_update_notice()
+            ),
             "station_name": str(config.get("STATION_NAME", "")),
             "ticker_dashboard_stats": _compute_ticker_dashboard_stats(),
             "footer_commit": _footer_commit,

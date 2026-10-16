@@ -12,28 +12,25 @@ from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 
 from utils.db.detections import fetch_species_covers
-from utils.db.observations import observations_cte, selection_sql, species_summaries
+from utils.db.observations import selection_sql, species_summaries
 
 logger = logging.getLogger(__name__)
 
 
 def build_report(conn: sqlite3.Connection, selection: dict[str, str]) -> dict:
     where, params = selection_sql(selection)
-    cte = observations_cte(conn)
     species = [
         row for row in species_summaries(conn, selection) if row["observation_count"]
     ]
     summary = dict(
         conn.execute(
-            cte
-            + f"""SELECT COUNT(*) AS objects,
+            f"""SELECT COUNT(*) AS objects,
         COUNT(CASE WHEN species_key != 'Unknown_species' THEN 1 END) AS identified_objects,
         COUNT(CASE WHEN unknown_bird THEN 1 END) AS unknown_birds,
-        COUNT(CASE WHEN COALESCE(conflict, 0) THEN 1 END) AS conflicts,
         COUNT(CASE WHEN active AND NOT admitted AND NOT answered THEN 1 END) AS open_objects,
         COUNT(CASE WHEN active AND original_present = 0 THEN 1 END) AS missing_originals,
         MIN(timestamp) AS first_capture, MAX(timestamp) AS last_capture
-        FROM observations WHERE {where}""",
+        FROM current_observations WHERE {where}""",
             params,
         ).fetchone()
     )
@@ -44,13 +41,12 @@ def build_report(conn: sqlite3.Connection, selection: dict[str, str]) -> dict:
     daily = [
         dict(row)
         for row in conn.execute(
-            cte
-            + f"""SELECT species_key,
+            f"""SELECT species_key,
         {day} AS day,
         MAX(origin = 'human') AS human, MAX(origin = 'automatic') AS automatic,
         MAX(origin = 'legacy') AS legacy,
         MAX(original_present = 0) AS missing_original
-        FROM observations WHERE {where} AND species_key != 'Unknown_species'
+        FROM current_observations WHERE {where} AND species_key != 'Unknown_species'
         GROUP BY species_key, day ORDER BY day""",
             params,
         )
@@ -98,10 +94,9 @@ def build_report(conn: sqlite3.Connection, selection: dict[str, str]) -> dict:
     models = [
         dict(row)
         for row in conn.execute(
-            cte
-            + f"""SELECT COALESCE(classifier_model_id, 'Unknown model') AS model,
+            f"""SELECT COALESCE(classifier_model_id, 'Unknown model') AS model,
         MIN(timestamp) AS first_capture, MAX(timestamp) AS last_capture, COUNT(*) AS objects
-        FROM observations WHERE {where} GROUP BY classifier_model_id ORDER BY first_capture""",
+        FROM current_observations WHERE {where} GROUP BY classifier_model_id ORDER BY first_capture""",
             params,
         )
     ]

@@ -147,7 +147,7 @@ def test_fetch_events_short_visit_profile_splits_meisen_burst():
     assert len(events) == 2, "short_station_visit must split at 17min gap"
 
 
-def test_fetch_events_respects_visibility_predicate_no_bird():
+def test_event_visibility_ignores_retired_image_status():
     """Detections on no_bird-flagged images are hidden, not counted."""
     clear_events_cache()
     conn = _make_conn()
@@ -157,7 +157,7 @@ def test_fetch_events_respects_visibility_predicate_no_bird():
 
     events = fetch_events_for_analysis(conn)
     assert len(events) == 1
-    assert events[0].photo_count == 1
+    assert events[0].photo_count == 2
 
 
 def test_fetch_events_respects_visibility_predicate_uncertain():
@@ -287,14 +287,12 @@ def test_cache_separates_databases_and_handles_same_timestamp_correction(
         writer = sqlite3.connect(tmp_path / "events.db")
         writer.row_factory = sqlite3.Row
         writer.execute(f"PRAGMA journal_mode = {journal}")
-        writer.execute("UPDATE detections SET manual_species_override = 'Parus_major'")
+        writer.execute("UPDATE classifications SET cls_class_name = 'Parus_major'")
         writer.commit()
         reader = sqlite3.connect(tmp_path / "events.db")
         reader.row_factory = sqlite3.Row
         assert get_events_cached(reader)[0].species == "Parus_major"
-        writer.execute(
-            "UPDATE detections SET manual_species_override = 'Turdus_merula'"
-        )
+        writer.execute("UPDATE classifications SET cls_class_name = 'Turdus_merula'")
         writer.commit()
         assert get_events_cached(reader)[0].species == "Turdus_merula"
         reader.close()
@@ -329,7 +327,7 @@ def test_cache_reuses_result_across_closed_request_connections(tmp_path: Path) -
     assert get_events_cached(reader) is first
     reader.close()
     writer = sqlite3.connect(path)
-    writer.execute("UPDATE detections SET manual_species_override = 'Turdus_merula'")
+    writer.execute("UPDATE classifications SET cls_class_name = 'Turdus_merula'")
     writer.commit()
     writer.close()
     reader = sqlite3.connect(path)
@@ -349,7 +347,7 @@ def test_uncommitted_file_changes_do_not_leak_through_cache(tmp_path: Path) -> N
     source.backup(writer)
     source.close()
     first = get_events_cached(writer)
-    writer.execute("UPDATE detections SET manual_species_override = 'Turdus_merula'")
+    writer.execute("UPDATE classifications SET cls_class_name = 'Turdus_merula'")
     assert get_events_cached(writer)[0].species == "Turdus_merula"
     writer.rollback()
     assert get_events_cached(writer) is first

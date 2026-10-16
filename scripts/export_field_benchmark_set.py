@@ -39,7 +39,7 @@ def _fetch_names(
             FROM images i
             JOIN detections d ON d.image_filename = i.filename
             WHERE i.filename BETWEEN ? AND ?
-              AND COALESCE(i.review_status, 'untagged') = 'untagged'
+              AND NOT EXISTS (SELECT 1 FROM current_human_label_facts f JOIN label_subjects fs ON fs.subject_id=f.subject_id WHERE fs.image_filename=i.filename)
               AND COALESCE(d.status, 'active') = 'active'
               AND LOWER(TRIM(COALESCE(d.od_class_name, ''))) = 'bird'
             ORDER BY i.filename

@@ -3,6 +3,7 @@
 import pytest
 
 from core import training_retention
+from core.human_label_core import HumanAnswer, LabelProvenance, record_human_answer
 from utils.db.connection import closing_connection
 from utils.db.detections import insert_detection
 
@@ -22,6 +23,15 @@ def _add_image(conn, filename, review_status="confirmed_bird"):
         "INSERT INTO images (filename, timestamp, review_status) VALUES (?, ?, ?)",
         (filename, filename[:15], review_status),
     )
+
+    if review_status == "no_bird":
+        record_human_answer(
+            conn,
+            HumanAnswer(image_filename=filename, image_bird_presence="absent"),
+            LabelProvenance(
+                "synthetic", "test", "normal_correction", "watchmybirds_ui"
+            ),
+        )
 
 
 def _add_detection(conn, filename, *, is_favorite=0, rating_source=None, **overrides):
@@ -44,6 +54,19 @@ def _add_detection(conn, filename, *, is_favorite=0, rating_source=None, **overr
         "WHERE detection_id=?",
         (is_favorite, rating_source, det_id),
     )
+    if overrides.get("manual_species_override"):
+        record_human_answer(
+            conn,
+            HumanAnswer(
+                image_filename=filename,
+                detection_id=det_id,
+                species_identity="corrected",
+                species_key=overrides["manual_species_override"],
+            ),
+            LabelProvenance(
+                "synthetic", "test", "normal_correction", "watchmybirds_ui"
+            ),
+        )
     return det_id
 
 

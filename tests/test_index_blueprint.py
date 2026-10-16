@@ -78,6 +78,7 @@ def _seed_detection(
             "created_at": timestamp,
             "score": score,
             "decision_state": decision_state,
+            "decision_level": "species",
             "thumbnail_path": filename.replace(".jpg", "_crop_1.webp"),
         },
     )

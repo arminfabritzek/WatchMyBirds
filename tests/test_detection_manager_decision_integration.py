@@ -53,7 +53,7 @@ def mock_detection_manager(monkeypatch, tmp_path):
         ("bird", 0.9, 0.8, DecisionState.CONFIRMED),
         ("bird", 0.9, 0.4, DecisionState.UNCERTAIN),
         ("bird", 0.9, None, DecisionState.UNKNOWN),
-        ("squirrel", 0.9, None, DecisionState.CONFIRMED),
+        ("squirrel", 0.9, None, DecisionState.UNCERTAIN),
         ("squirrel", 0.7, None, DecisionState.UNCERTAIN),
     ],
 )

@@ -107,23 +107,34 @@ def test_species_correction_unknown_visibility_and_companions(
         "UPDATE detections SET decision_state = 'unknown' WHERE detection_id = ?",
         (companion,),
     )
-    conn.execute(
-        "UPDATE detections SET manual_species_override = 'Cyanistes_caeruleus', species_source = 'manual' WHERE detection_id = ?",
-        (selected,),
+    provenance = LabelProvenance(
+        "synthetic", "test", "normal_correction", "watchmybirds_ui"
     )
-    conn.execute(
-        "UPDATE detections SET species_source = 'manual_unknown' WHERE detection_id = ?",
-        (other,),
+    record_human_answer(
+        conn,
+        HumanAnswer(
+            filename,
+            selected,
+            species_identity="corrected",
+            species_key="Cyanistes_caeruleus",
+        ),
+        provenance,
+    )
+    other_filename = conn.execute(
+        "SELECT image_filename FROM detections WHERE detection_id=?", (other,)
+    ).fetchone()[0]
+    record_human_answer(
+        conn, HumanAnswer(other_filename, other, species_identity="unknown"), provenance
     )
     conn.commit()
     assert fetch_species_page(conn, "Parus_major")[1] == 0
     rows, total, _ = fetch_species_page(conn, "Cyanistes_caeruleus")
     assert total == 1 and rows[0]["detection_id"] == selected
-    assert fetch_species_page(conn, "Unknown_species")[1] == 0
+    assert fetch_species_page(conn, "Unknown_species")[1] == 1
     siblings = fetch_sibling_detections_batch(conn, [filename])
     assert {r["detection_id"] for r in siblings[filename]} == {selected, companion}
-    conn.execute(
-        "UPDATE images SET review_status = 'no_bird' WHERE filename = ?", (filename,)
+    record_human_answer(
+        conn, HumanAnswer(filename, image_bird_presence="absent"), provenance
     )
     conn.commit()
     assert fetch_species_page(conn, "Cyanistes_caeruleus")[1] == 0
@@ -199,7 +210,11 @@ def test_days_are_paged_with_current_review_aggregates(
         conn, image_filename=filename, detection_id=ids[-1], provenance=provenance
     )
     after = fetch_gallery_days(conn)[0][0]["review_progress"]
-    assert after["reviewed"] == 1 and after["boxes_reviewed"] == 0 and after["complete"]
+    assert (
+        after["reviewed"] == 0
+        and after["boxes_reviewed"] == 0
+        and not after["complete"]
+    )
     record_human_answer(
         conn, HumanAnswer(filename, ids[-1], species_identity="wrong"), provenance
     )

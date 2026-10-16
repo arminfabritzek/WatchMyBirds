@@ -28,11 +28,11 @@ def _resolved_species_key(row_dict: dict) -> str:
     chain.
     """
     return species_key_from_candidates(
-        manual_override=row_dict.get("manual_species_override"),
+        manual_override=row_dict.get("human_species_key"),
         species_key=row_dict.get("species_key"),
         cls_class_name=row_dict.get("cls_class_name"),
         od_class_name=row_dict.get("od_class_name"),
-        species_source=row_dict.get("species_source"),
+        species_source=row_dict.get("human_species_source"),
     )
 
 
@@ -246,7 +246,7 @@ def _resolve_trash(ctx: FilterContext) -> ResolvedSelection:
 
         # no_bird images (filenames only)
         img_rows = conn.execute(
-            "SELECT filename FROM images WHERE review_status = 'no_bird'"
+            "SELECT DISTINCT image_filename AS filename FROM current_human_label_facts WHERE scope='object' AND fact_type='bird_presence' AND answer_value='absent'"
         ).fetchall()
         filenames = [r["filename"] for r in img_rows]
 

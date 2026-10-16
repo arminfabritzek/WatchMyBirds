@@ -106,6 +106,12 @@
                 Edits stay local. Camera, inference and maintenance jobs are disabled.
             </aside>
             {% endif %}
+            {% if retention_update_notice %}
+            <aside class="alert alert-info my-3" role="status" data-retention-update-notice>
+                Automatic deletion is off after the update. Choose your storage rules in
+                <a href="/settings">Settings</a>.
+            </aside>
+            {% endif %}
             {% block content %}{% endblock %}
         </div>
     </main>

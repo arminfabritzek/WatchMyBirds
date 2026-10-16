@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 from collections.abc import Iterator
 from pathlib import Path
@@ -19,7 +20,6 @@ from utils.db.detections import (
     fetch_species_covers,
     fetch_species_page,
 )
-from utils.db.observations import observations_cte
 
 
 @pytest.fixture
@@ -50,6 +50,16 @@ def seed(
         VALUES (?, ?, 'bird', 0.95, 0.1, 0.1, 0.3, 0.3, ?, ?, ?, 'active')""",
         (identifier, filename, state, level, quality),
     )
+    from detectors.services.decision_policy_service import DecisionPolicyService
+
+    reasons = DecisionPolicyService().admission_reasons(
+        score=0.95, species_key=species, geography_json=None
+    )
+    if reasons and state == "confirmed":
+        conn.execute(
+            "UPDATE detections SET decision_state='uncertain', decision_reasons=? WHERE detection_id=?",
+            (json.dumps(reasons), identifier),
+        )
     conn.execute(
         "INSERT INTO classifications(detection_id, cls_class_name, cls_confidence, rank) VALUES (?, ?, 0.95, 1)",
         (identifier, species),
@@ -129,6 +139,10 @@ def test_answered_unknown_or_refuted_proposal_stays_completed(
     assert not any(
         r["species_key"] != "Unknown_species" for r in fetch_species_covers(conn)
     )
+    from core.automatic_station_report import build_report
+
+    assert fetch_detections_for_gallery(conn) == []
+    assert build_report(conn, {})["summary"]["identified_objects"] == 0
     facts = list(
         conn.execute("SELECT fact_type, answer_value FROM current_human_label_facts")
     )
@@ -157,12 +171,6 @@ def test_retraction_removes_human_claim_without_resurrecting_history(
     retract_species_identity(
         conn, image_filename=filename, detection_id=101, provenance=provenance()
     )
-    assert not any(
-        r["species_key"] != "Unknown_species" for r in fetch_species_covers(conn)
-    )
-    conn.execute(
-        "UPDATE detections SET decision_state='confirmed', decision_level='species'"
-    )
     row = fetch_species_covers(conn)[0]
     assert row["species_key"] == "Parus_major" and row["human_count"] == 0
 
@@ -186,8 +194,7 @@ def test_legacy_species_is_not_human_evidence(conn: sqlite3.Connection) -> None:
     conn.execute(
         "UPDATE detections SET manual_species_override='Pica_pica', species_source='manual'"
     )
-    row = fetch_species_covers(conn)[0]
-    assert row["legacy_count"] == 1 and row["human_count"] == 0
+    assert fetch_species_covers(conn)[0]["species_key"] == "Himantopus_leucocephalus"
 
 
 def test_old_human_species_without_presence_is_usable_without_backfill(
@@ -215,7 +222,7 @@ def test_old_human_species_without_presence_is_usable_without_backfill(
     assert fetch_species_page(conn, "Pica_pica")[0][0]["image_filename"] == filename
 
 
-def test_conflicting_facts_exclude_positive_species_and_reopen_review(
+def test_object_absence_overrules_species_without_reopening_review(
     conn: sqlite3.Connection,
 ) -> None:
     from core.human_label_core import append_fact, ensure_object_subject
@@ -230,13 +237,7 @@ def test_conflicting_facts_exclude_positive_species_and_reopen_review(
         provenance=provenance(),
     )
     assert fetch_species_covers(conn) == []
-    assert fetch_observation_page(conn, answered=False)[1] == 1
-    assert (
-        conn.execute(
-            observations_cte(conn) + "SELECT conflict FROM observations"
-        ).fetchone()[0]
-        == 1
-    )
+    assert fetch_observation_page(conn, answered=False)[1] == 0
 
 
 @pytest.mark.parametrize(
@@ -278,12 +279,18 @@ def test_object_absence_preserves_other_birds_in_same_image(
 def test_geographic_doubt_requires_review_until_human_identification(
     conn: sqlite3.Connection,
 ) -> None:
-    import json
+    from detectors.services.decision_policy_service import DecisionPolicyService
 
     filename = seed(conn, species="Pica_pica", quality=1)
+    geography = json.dumps(
+        {"ranking": [{"species": "Pica_pica", "occurrence_score": 0}]}
+    )
+    reasons = DecisionPolicyService().admission_reasons(
+        score=0.95, species_key="Pica_pica", geography_json=geography
+    )
     conn.execute(
-        "UPDATE detections SET geography_json=?",
-        (json.dumps({"ranking": [{"species": "Pica_pica", "occurrence_score": 0}]}),),
+        "UPDATE detections SET geography_json=?, decision_state='uncertain', decision_reasons=?",
+        (geography, json.dumps(reasons)),
     )
     assert fetch_species_covers(conn) == []
     assert fetch_observation_page(conn, answered=False)[0][0]["review_reason"]
@@ -370,43 +377,60 @@ def test_multiple_objects_do_not_duplicate_missing_original_count(
 
 
 @pytest.mark.parametrize(
-    ("column", "value", "reason"),
+    "column,value",
     [
-        ("quality_gallery_ok", 0, "sharpness"),
-        ("bbox_quality", 0.1, "Bird uncertain"),
-        ("od_confidence", 0, "Bird uncertain"),
-        ("unknown_score", 0.95, "uncertainty"),
-        ("score", 0.01, "confidence"),
+        ("quality_gallery_ok", 0),
+        ("bbox_quality", 0.1),
+        ("od_confidence", 0),
+        ("unknown_score", 0.95),
+        ("score", 0.01),
     ],
 )
-def test_uncertain_automatic_records_share_one_gate_and_human_override(
-    conn: sqlite3.Connection, column: str, value: float, reason: str
+def test_readers_keep_the_capture_decision(
+    conn: sqlite3.Connection, column: str, value: float
+) -> None:
+    from config import get_config
+    from core.automatic_station_report import build_report
+    from utils.db.detections import fetch_detections_last_24h, fetch_gallery_days
+
+    seed(conn, species="Parus_major")
+    conn.execute(f"UPDATE detections SET {column} = ?", (value,))
+    cfg = get_config()
+    old = cfg["GALLERY_DISPLAY_THRESHOLD"]
+    try:
+        cfg["GALLERY_DISPLAY_THRESHOLD"] = 1.0
+        assert fetch_detections_for_gallery(conn)[0]["species_key"] == "Parus_major"
+        assert (
+            fetch_detections_last_24h(conn, "20261001")[0]["species_key"]
+            == "Parus_major"
+        )
+        assert fetch_species_covers(conn)[0]["automatic_count"] == 1
+        assert fetch_gallery_days(conn)[1] == 1
+        assert build_report(conn, {})["summary"]["identified_objects"] == 1
+        assert fetch_observation_page(conn, answered=False)[1] == 0
+    finally:
+        cfg["GALLERY_DISPLAY_THRESHOLD"] = old
+
+
+def test_unresolved_capture_has_one_gate_and_human_override(
+    conn: sqlite3.Connection,
 ) -> None:
     from core.automatic_station_report import build_report
-    from utils.db.detections import (
-        fetch_detections_last_24h,
-        fetch_gallery_days,
-        is_detection_visible_in_gallery,
-    )
+    from utils.db.detections import fetch_detections_last_24h, fetch_gallery_days
 
-    filename = seed(conn, species="Parus_major", quality=1)
-    conn.execute(f"UPDATE detections SET {column} = ?", (value,))
-    raw = tuple(conn.execute("SELECT * FROM classifications").fetchone())
+    filename = seed(conn, species="Parus_major", state="uncertain")
     assert not fetch_detections_for_gallery(conn)
     assert not fetch_detections_last_24h(conn, "20261001")
     assert not fetch_species_covers(conn)
     assert fetch_gallery_days(conn)[1] == 0
-    assert build_report(conn, {})["summary"]["species_count"] == 0
-    pending, count, _ = fetch_observation_page(conn, answered=False)
-    assert count == 1 and reason in pending[0]["review_reason"]
+    assert build_report(conn, {})["summary"]["identified_objects"] == 0
+    assert fetch_observation_page(conn, answered=False)[1] == 1
     answer(conn, 101, filename, species="Pica_pica")
     assert fetch_detections_for_gallery(conn)[0]["species_key"] == "Pica_pica"
     assert fetch_detections_last_24h(conn, "20261001")[0]["species_key"] == "Pica_pica"
     assert fetch_gallery_days(conn)[1] == 1
-    assert is_detection_visible_in_gallery(conn, 101, min_score=1)
-    assert build_report(conn, {})["summary"]["species_count"] == 1
+    assert build_report(conn, {})["summary"]["identified_objects"] == 1
     assert fetch_observation_page(conn, answered=False)[1] == 0
-    assert tuple(conn.execute("SELECT * FROM classifications").fetchone()) == raw
 
 
 def test_refutation_does_not_blacklist_other_well_supported_objects(
@@ -423,49 +447,64 @@ def test_refutation_does_not_blacklist_other_well_supported_objects(
     assert fetch_observation_page(conn, answered=False)[1] == 0
 
 
+@pytest.mark.parametrize("whole_image", [False, True])
 def test_no_bird_completes_previously_identified_object(
     conn: sqlite3.Connection,
+    whole_image: bool,
 ) -> None:
     filename = seed(conn, identifier=42)
     answer(conn, 42, filename, species="Pica_pica")
     record_human_answer(
         conn,
-        HumanAnswer(filename, detection_id=42, object_bird_presence="absent"),
+        HumanAnswer(filename, image_bird_presence="absent")
+        if whole_image
+        else HumanAnswer(filename, detection_id=42, object_bird_presence="absent"),
         provenance(),
     )
     assert fetch_observation_page(conn, answered=False)[1] == 0
     rows, total, _ = fetch_observation_page(conn, answered=True)
     assert total == 1 and rows[0]["presence"] == "absent"
     assert fetch_species_covers(conn) == []
+    assert fetch_detections_for_gallery(conn) == []
+    from core.automatic_station_report import build_report
+
+    assert build_report(conn, {})["summary"]["identified_objects"] == 0
+    assert conn.execute(
+        "SELECT answer_value FROM current_human_label_facts WHERE detection_id=42 AND fact_type='species_identity'"
+    ).fetchone()[0] in {"corrected", "confirmed"}
+    if whole_image:
+        record_human_answer(
+            conn, HumanAnswer(filename, image_bird_presence="present"), provenance()
+        )
     answer(conn, 42, filename, species="Picus_viridis")
     assert fetch_species_covers(conn)[0]["species_key"] == "Picus_viridis"
     assert fetch_observation_page(conn, answered=False)[1] == 0
 
 
 @pytest.mark.parametrize("resolution", ["object_absent", "image_present"])
-def test_image_absence_conflict_has_explicit_resolution(
+def test_image_training_statement_does_not_change_object_answer(
     conn: sqlite3.Connection, resolution: str
 ) -> None:
     from core.human_label_core import append_fact, ensure_object_subject
 
-    filename = seed(conn, identifier=55478)
+    filename = seed(conn, identifier=44)
     record_human_answer(
         conn, HumanAnswer(filename, image_bird_presence="absent"), provenance()
     )
     append_fact(
         conn,
-        subject_id=ensure_object_subject(conn, 55478),
+        subject_id=ensure_object_subject(conn, 44),
         fact_type="species_identity",
         answer_value="corrected",
         species_key="Passer_domesticus",
         provenance=provenance(),
     )
-    assert fetch_observation_page(conn, answered=False)[1] == 1
+    assert fetch_observation_page(conn, answered=False)[1] == 0
     record_human_answer(
         conn,
         HumanAnswer(
             filename,
-            detection_id=55478,
+            detection_id=44,
             object_bird_presence="absent" if resolution == "object_absent" else None,
             image_bird_presence="present" if resolution == "image_present" else None,
         ),
@@ -473,4 +512,4 @@ def test_image_absence_conflict_has_explicit_resolution(
     )
     assert fetch_observation_page(conn, answered=False)[1] == 0
     assert fetch_observation_page(conn, answered=True)[1] == 1
-    assert bool(fetch_species_covers(conn)) == (resolution == "image_present")
+    assert fetch_species_covers(conn) == []

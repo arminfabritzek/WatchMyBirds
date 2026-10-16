@@ -54,7 +54,7 @@
             surface='gallery',
             is_favorite=det.is_favorite|default(false),
             can_moderate=can_moderate,
-            current_species=det.species_key or det.manual_species_override or det.cls_class_name or det.od_class_name,
+            current_species=det.species_key or det.human_species_key or det.cls_class_name or det.od_class_name,
             modal_target='#modal-species-' ~ det.detection_id
             ) }}
 
@@ -108,7 +108,7 @@
     surface='gallery',
     is_favorite=obs.cover_detection.is_favorite|default(false),
     can_moderate=can_moderate,
-    current_species=obs.cover_detection.species_key or obs.cover_detection.manual_species_override or obs.cover_detection.cls_class_name or obs.cover_detection.od_class_name,
+    current_species=obs.cover_detection.species_key or obs.cover_detection.human_species_key or obs.cover_detection.cls_class_name or obs.cover_detection.od_class_name,
     modal_target='#modal-obs' ~ obs.observation_id ~ '-' ~ obs.cover_detection.detection_id
     ) }}
     <div class="wm-tile__body">
@@ -151,7 +151,7 @@
                 surface='gallery',
                 is_favorite=det.is_favorite|default(false),
                 can_moderate=can_moderate,
-                current_species=det.species_key or det.manual_species_override or det.cls_class_name or det.od_class_name,
+                current_species=det.species_key or det.human_species_key or det.cls_class_name or det.od_class_name,
                 modal_target='#modal-obs' ~ obs.observation_id ~ '-' ~ det.detection_id
                 ) }}
             </div>

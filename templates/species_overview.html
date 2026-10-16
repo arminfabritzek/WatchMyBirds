@@ -57,7 +57,7 @@
         surface='species',
         is_favorite=det.is_favorite|default(false),
         can_moderate=can_moderate,
-        current_species=det.species_key or det.manual_species_override or det.cls_class_name or det.od_class_name,
+        current_species=det.species_key or det.human_species_key or det.cls_class_name or det.od_class_name,
         modal_target='#modal-species_overview-' ~ det.detection_id
         ) }}
 
@@ -67,7 +67,7 @@
             <span class="wm-tile__latin">{{ det.species_key | replace('_', ' ') }}</span>
             {% endif %}
             {% if det.warning %}<span class="station-card-meta">{{ det.warning }}</span>{% endif %}
-            <span class="station-card-status">{% if det.conflict %}Conflicting answers · Review{% elif det.answer == 'wrong' %}Species proposal refuted · Answered{% elif det.answer == 'unknown' %}Bird · species unknown · Answered{% elif det.origin == 'human' %}User confirmed{% elif det.origin == 'legacy' %}Earlier assignment{% elif det.species_key != 'Unknown_species' %}Automatically identified{% else %}Detection unclear{% endif %}</span>
+            <span class="station-card-status">{% if det.answer == 'wrong' %}Species proposal refuted · Answered{% elif det.answer == 'unknown' %}Bird · species unknown · Answered{% elif det.origin == 'human' %}User confirmed{% elif det.origin == 'legacy' %}Earlier assignment{% elif det.species_key != 'Unknown_species' %}Automatically identified{% else %}Detection unclear{% endif %}</span>
             <span class="station-card-meta">{{ det.formatted_date }} {{ det.formatted_time }} · {{ 'Imported image' if det.source_type in ['folder_upload', 'import', 'folder'] else 'Camera' if det.source_type in ['ipcam', 'webcam', 'rtsp', 'camera'] else 'Source unknown' }}{% if det.media_status %} · {{ det.media_status }}{% endif %}{% if det.media_placeholder %} · No image available{% endif %}</span>
         </div>
     </div>

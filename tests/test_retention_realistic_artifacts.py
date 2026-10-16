@@ -88,7 +88,12 @@ def test_orphan_image_preview_thumb_counts(output_dir):
     fn = "20260101_120004_e.jpg"
     with closing_connection() as conn:
         seed_image(conn, fn, output_dir, detections=0, write_preview=True)
-        plan = retention_core.build_plan(conn, str(output_dir), SETTINGS, now=NOW)
+        plan = retention_core.build_plan(
+            conn,
+            str(output_dir),
+            dict(SETTINGS, RETENTION_PROTECT_UNREVIEWED=False),
+            now=NOW,
+        )
 
     assert [d["filename"] for d in plan.deletable] == [fn]
 
@@ -96,9 +101,7 @@ def test_orphan_image_preview_thumb_counts(output_dir):
 def test_orphan_image_without_any_thumb_is_protected(output_dir):
     fn = "20260101_120005_f.jpg"
     with closing_connection() as conn:
-        seed_image(
-            conn, fn, output_dir, detections=0, write_preview=False
-        )
+        seed_image(conn, fn, output_dir, detections=0, write_preview=False)
         plan = retention_core.build_plan(conn, str(output_dir), SETTINGS, now=NOW)
 
     assert plan.deletable == []

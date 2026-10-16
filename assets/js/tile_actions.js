@@ -68,7 +68,7 @@
      * `false` (cancelled). The confirmation is deliberately never
      * remembered: every whole-image assertion must show its full frame.
      */
-    function confirmFrameNoBird(filename, triggerEl, fullSrcOverride, progressLabel) {
+    async function confirmFrameNoBird(filename, triggerEl, fullSrcOverride, progressLabel) {
 
         // Resolve the full-image URL from the nearest tile's <img>.
         // data-full-src is set by every wm-tile in subgallery / species /
@@ -107,21 +107,6 @@
             return Promise.resolve(false);
         }
 
-        // Count siblings on the same frame so the warning can be honest:
-        // "you are about to flag N detections, not 1". We approximate
-        // via tiles whose data-full-src ends with the same filename stem.
-        let detectionCount = 1;
-        if (filename) {
-            const stem = filename.replace(/\.(jpg|jpeg|png|webp)$/i, '');
-            const allTiles = document.querySelectorAll('.wm-tile__image[data-full-src]');
-            let n = 0;
-            for (let i = 0; i < allTiles.length; i++) {
-                const src = allTiles[i].getAttribute('data-full-src') || '';
-                if (src.indexOf(stem) !== -1) n++;
-            }
-            if (n > 0) detectionCount = n;
-        }
-
         const dlg = document.getElementById('wm-no-bird-confirm');
         const title = dlg && dlg.querySelector('[data-no-bird-confirm-title]');
         const summary = dlg && dlg.querySelector('[data-no-bird-confirm-summary]');
@@ -138,16 +123,25 @@
 
         title.textContent = 'No birds in this full image?'
             + (progressLabel ? ' · ' + progressLabel : '');
-        summary.textContent = detectionCount > 1
-            ? ('This frame carries ' + detectionCount
-                + ' detections — ALL will be flagged as false-positives.')
-            : 'All detections on this frame will be flagged as false-positives.';
-
-        // Sanitise fullSrc through the same same-origin path validator used
-        // for navigation. Co-located at the sink so the guard is visible next
-        // to the .src assignment.
-        preview.src = safeFullSrc;
+        confirmBtn.disabled = true;
+        summary.textContent = 'Every detected object will be answered No bird.';
         preview.alt = 'Full image: ' + filename;
+        const loaded = new Promise(function (resolve) {
+            preview.onload = function () { resolve(true); };
+            preview.onerror = function () { resolve(false); };
+            preview.src = safeFullSrc;
+        });
+        try {
+            const response = await fetch('/api/labels/state?filename=' + encodeURIComponent(filename));
+            if (!response.ok) return false;
+            const state = await response.json();
+            if (!await loaded) return false;
+            const blocker = state.full_image_absence_blocker;
+            if (blocker) summary.textContent = blocker;
+            confirmBtn.disabled = Boolean(blocker);
+        } catch (error) {
+            return false;
+        }
 
         return new Promise(function (resolve) {
             let settled = false;
@@ -167,7 +161,7 @@
             }
 
             function confirm() {
-                dlg.close('confirm');
+                if (!confirmBtn.disabled) dlg.close('confirm');
             }
 
             function cancelOnBackdrop(event) {
@@ -227,11 +221,11 @@
         if (!confirmed) return;
 
         try {
-            const response = await fetch('/api/review/decision', {
+            const response = await fetch('/api/labels/answer', {
                 method: 'POST',
                 credentials: 'same-origin',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ filenames: [filename], action: 'no_bird' })
+                body: JSON.stringify({ filename: filename, image_bird_presence: 'absent' })
             });
             const data = await response.json().catch(function () { return {}; });
             if (!response.ok || data.status !== 'success') {

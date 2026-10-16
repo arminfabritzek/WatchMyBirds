@@ -25,8 +25,8 @@ def _row(detection_id: int, timestamp: str, **overrides) -> dict:
         "filename": f"{timestamp}_x.jpg",
         "timestamp": timestamp,
         "species_key": "Unknown_species",
-        "manual_species_override": None,
-        "species_source": "manual_unknown",
+        "human_species_key": None,
+        "human_species_source": "manual_unknown",
         "cls_class_name": AI_SPECIES,
         "cls_confidence": 0.92,
         "od_class_name": "bird",
@@ -60,7 +60,7 @@ def test_explicit_unknown_event_is_not_approvable() -> None:
 
 def test_species_wrong_is_treated_the_same_way() -> None:
     events = build_bird_events(
-        [_row(1, "20260921_094825", species_source="manual_wrong")]
+        [_row(1, "20260921_094825", human_species_source="manual_wrong")]
     )
     assert events[0].species != AI_SPECIES
     assert events[0].eligibility != "event_eligible"
@@ -81,7 +81,7 @@ def test_a_withdrawn_frame_does_not_contaminate_an_untouched_one() -> None:
                 2,
                 "20260921_094830",
                 species_key=AI_SPECIES,
-                species_source=None,
+                human_species_source=None,
             ),
         ]
     )
@@ -109,7 +109,7 @@ def test_an_untouched_proposal_still_forms_an_eligible_event() -> None:
                 1,
                 "20260921_094825",
                 species_key=AI_SPECIES,
-                species_source=None,
+                human_species_source=None,
             )
         ]
     )
@@ -124,8 +124,8 @@ def test_a_human_confirmed_species_still_forms_an_eligible_event() -> None:
                 1,
                 "20260921_094825",
                 species_key="Parus_major",
-                manual_species_override="Parus_major",
-                species_source="manual",
+                human_species_key="Parus_major",
+                human_species_source="manual",
                 cls_class_name=AI_SPECIES,
             )
         ]
@@ -148,9 +148,9 @@ def test_review_member_candidate_species_respects_an_explicit_unknown() -> None:
     assert (
         _resolve_review_member_candidate_species(
             {
-                "manual_species_override": None,
+                "human_species_key": None,
                 "cls_class_name": AI_SPECIES,
-                "species_source": "manual_unknown",
+                "human_species_source": "manual_unknown",
             }
         )
         is None
@@ -163,9 +163,9 @@ def test_review_member_candidate_species_unchanged_for_normal_rows() -> None:
     assert (
         _resolve_review_member_candidate_species(
             {
-                "manual_species_override": None,
+                "human_species_key": None,
                 "cls_class_name": AI_SPECIES,
-                "species_source": None,
+                "human_species_source": None,
             }
         )
         == AI_SPECIES
@@ -173,9 +173,9 @@ def test_review_member_candidate_species_unchanged_for_normal_rows() -> None:
     assert (
         _resolve_review_member_candidate_species(
             {
-                "manual_species_override": "Parus_major",
+                "human_species_key": "Parus_major",
                 "cls_class_name": AI_SPECIES,
-                "species_source": "manual",
+                "human_species_source": "manual",
             }
         )
         == "Parus_major"

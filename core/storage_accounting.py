@@ -311,7 +311,7 @@ def protection_summary(
         "training_unresolved",
         "historical_facts",
         "manual_objects",
-        "legacy_review",
+        "manual_favorite",
     )
     reasons = {key: dict(files=0, bytes=0, unshared_allocated_bytes=0) for key in keys}
     eligible = dict(files=0, bytes=0, unshared_allocated_bytes=0)

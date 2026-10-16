@@ -96,10 +96,10 @@ def test_answer_api_records_independent_facts_and_projection(labeling_case) -> N
             (detection_id,),
         ).fetchone()
     assert tuple(legacy) == (
-        "confirmed_bird",
-        "correct",
-        "Cyanistes_caeruleus",
-        "species",
+        "untagged",
+        None,
+        None,
+        None,
     )
 
 
@@ -202,7 +202,7 @@ def test_direct_image_correction_preserves_proposal_and_records_usable_bbox(
         rendered = fetch_sibling_detections(conn, filename)[0]
 
     assert tuple(proposal) == tuple(detection[:4])
-    assert detection["manual_bbox_review"] == "correct"
+    assert detection["manual_bbox_review"] is None
     assert tuple(
         rendered[axis] for axis in ("bbox_x", "bbox_y", "bbox_w", "bbox_h")
     ) == pytest.approx(tuple(corrected[axis] for axis in ("x", "y", "w", "h")))
