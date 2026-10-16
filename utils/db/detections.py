@@ -887,7 +887,10 @@ def fetch_sibling_detections_batch(
 
 
 def _fetch_manual_companions(
-    conn: sqlite3.Connection, image_filenames: list[str]
+    conn: sqlite3.Connection,
+    image_filenames: list[str],
+    *,
+    include_retracted: bool = False,
 ) -> dict[str, list[dict[str, object]]]:
     """Project manual objects into the shared detail-view sibling shape."""
     names = sorted({name for name in image_filenames if name})
@@ -899,9 +902,9 @@ def _fetch_manual_companions(
     rows = conn.execute(
         f"""
         SELECT manual_object_id, image_filename, bbox_x, bbox_y, bbox_w, bbox_h,
-               species_key, species_state, revision
+               species_key, species_state, revision, status
         FROM manual_objects
-        WHERE image_filename IN ({placeholders}) AND status = 'active'
+        WHERE image_filename IN ({placeholders}) {"" if include_retracted else "AND status = 'active'"}
         ORDER BY image_filename, manual_object_id
         """,
         names,
@@ -917,6 +920,7 @@ def _fetch_manual_companions(
                 "manual_object_id": manual_object_id,
                 "object_key": f"manual:{manual_object_id}",
                 "object_kind": "manual",
+                "object_status": row["status"],
                 "revision": int(row["revision"]),
                 "bbox_x": row["bbox_x"],
                 "bbox_y": row["bbox_y"],
@@ -1409,7 +1413,9 @@ def hydrate_observations(
     names = [
         row["image_filename"] for row in observations if row.get("manual_object_id")
     ]
-    for siblings in _fetch_manual_companions(conn, names).values():
+    for siblings in _fetch_manual_companions(
+        conn, names, include_retracted=True
+    ).values():
         for row in siblings:
             image = dict(
                 conn.execute(

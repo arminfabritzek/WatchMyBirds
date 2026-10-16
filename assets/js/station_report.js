@@ -2,53 +2,60 @@
     'use strict';
     const root = document.querySelector('[data-report-state]');
     if (!root) return;
-    let revision = root.dataset.reportRevision;
     const progress = document.getElementById('report-progress');
     const modals = document.querySelector('[data-report-modals]');
     let timer;
-    let polling = false;
-    let viewerOpen = false;
-    let changes = 0;
-    let appliedChanges = 0;
+    let requestId = 0;
+    let waiting = root.dataset.reportState !== 'ready' && root.dataset.reportState !== 'error';
 
     function interactionOpen() {
-        return viewerOpen || document.querySelector('.modal.show, dialog[open]');
+        return document.querySelector('.modal.show, dialog[open]');
     }
 
-    function hideReport(message) {
-        const report = root.querySelector('[data-current-report]');
-        if (report) {
-            report.style.visibility = 'hidden';
-            report.inert = true;
-            report.setAttribute('aria-hidden', 'true');
-        }
-        progress.style.position = report ? 'absolute' : '';
-        progress.hidden = false;
-        progress.textContent = message;
+    function showLocalTime() {
+        root.querySelectorAll('[data-report-time]').forEach(function (node) {
+            const stamp = new Date(node.dateTime);
+            node.textContent = 'as of ' + stamp.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit', hourCycle: 'h23'});
+            node.title = stamp.toLocaleString();
+        });
     }
 
-    function schedule(delay) {
+    function setOutdated(visible) {
+        root.querySelectorAll('[data-report-outdated]').forEach(function (notice) {
+            notice.hidden = !visible;
+        });
+    }
+
+    function setRefreshing(refreshing) {
+        root.querySelectorAll('[data-report-refresh]').forEach(function (button) {
+            button.disabled = refreshing;
+            button.textContent = refreshing ? 'Refreshing…' : 'Refresh';
+        });
+    }
+
+    function stop() {
+        requestId++;
+        waiting = false;
         window.clearTimeout(timer);
-        timer = window.setTimeout(poll, delay);
+        setRefreshing(false);
     }
 
-    async function updateReport() {
-        const pendingChanges = changes;
-        const response = await fetch(window.location.pathname + window.location.search, {cache: 'no-store'});
+    async function applyReport(request) {
+        const url = new URL(window.location.href);
+        url.searchParams.set('content', '1');
+        const response = await fetch(url, {cache: 'no-store'});
         if (!response.ok || response.redirected) throw new Error('Report unavailable');
         const page = new DOMParser().parseFromString(await response.text(), 'text/html');
         const nextRoot = page.querySelector('[data-report-state]');
         const nextReport = page.querySelector('[data-current-report]');
         const nextModals = page.querySelector('[data-report-modals]');
-        if (!nextRoot || !nextModals) throw new Error('Report unavailable');
-        if (nextRoot.dataset.reportState !== 'ready' || !nextReport ||
-            interactionOpen() || changes !== pendingChanges) return;
-
+        if (!nextRoot || !nextReport || !nextModals) throw new Error('Report unavailable');
+        if (!waiting || request !== requestId || interactionOpen() || nextRoot.dataset.reportState !== 'ready') return false;
         const previous = root.querySelector('[data-current-report]');
-        const scrollX = window.scrollX;
-        const scrollY = window.scrollY;
+        const x = window.scrollX;
+        const y = window.scrollY;
         const offsets = previous ? Array.from(previous.querySelectorAll('.station-report__table-scroll'), node => node.scrollLeft) : [];
-        const openDetails = previous ? Array.from(previous.querySelectorAll('details[data-report-details][open]'), node => node.dataset.reportDetails) : [];
+        const details = previous ? Array.from(previous.querySelectorAll('details[data-report-details][open]'), node => node.dataset.reportDetails) : [];
         modals.querySelectorAll('.gallery-modal').forEach(function (modal) {
             if (modal._wmBirdEditorDispose) modal._wmBirdEditorDispose();
             if (window.bootstrap) {
@@ -63,55 +70,94 @@
             node.scrollLeft = offsets[index] || 0;
         });
         nextReport.querySelectorAll('details[data-report-details]').forEach(function (node) {
-            node.open = openDetails.includes(node.dataset.reportDetails);
+            node.open = details.includes(node.dataset.reportDetails);
         });
-        revision = nextRoot.dataset.reportRevision;
-        root.dataset.reportRevision = revision;
+        root.dataset.reportRevision = nextRoot.dataset.reportRevision;
         root.dataset.reportState = 'ready';
-        appliedChanges = pendingChanges;
+        setOutdated(false);
         progress.hidden = true;
+        showLocalTime();
         if (window.observeDeferredViewers) window.observeDeferredViewers(nextReport);
-        window.scrollTo(scrollX, scrollY);
+        window.scrollTo(x, y);
         document.dispatchEvent(new CustomEvent('wmb:station-report-updated'));
+        return true;
     }
 
     async function poll() {
-        if (polling) return;
-        polling = true;
+        if (!waiting) return;
+        const request = requestId;
         try {
             const response = await fetch('/api/station-report' + window.location.search, {cache: 'no-store'});
             if (!response.ok) throw new Error('Report unavailable');
-            const current = await response.json();
-            if (current.state !== 'ready' || current.revision !== revision ||
-                root.dataset.reportState !== 'ready' || changes !== appliedChanges) {
-                hideReport(current.state === 'error' ? 'The update failed. Retrying automatically.' : 'Updating the station history automatically…');
-                if (current.state === 'ready' && !interactionOpen()) await updateReport();
-            } else {
-                const report = root.querySelector('[data-current-report]');
-                if (report) {
-                    report.style.visibility = '';
-                    report.inert = false;
-                    report.removeAttribute('aria-hidden');
-                }
-                progress.hidden = true;
+            const status = await response.json();
+            if (!waiting || request !== requestId) return;
+            if (status.state === 'error') throw new Error('Report unavailable');
+            if (status.state === 'ready' && !interactionOpen() && await applyReport(request)) {
+                stop();
+                return;
             }
         } catch (_) {
-            hideReport('Current data could not be checked. Retrying automatically.');
-        } finally {
-            polling = false;
-            schedule(2000);
+            if (request !== requestId) return;
+            progress.hidden = false;
+            progress.textContent = 'The report could not be calculated. Use Refresh to try again.';
+            stop();
+            return;
         }
+        if (waiting && request === requestId) timer = window.setTimeout(poll, 500);
     }
 
-    document.addEventListener('show.bs.modal', function () { viewerOpen = true; });
-    document.addEventListener('hidden.bs.modal', function () {
-        viewerOpen = Boolean(document.querySelector('.modal.show'));
-        if (!polling) schedule(0);
+    root.addEventListener('click', async function (event) {
+        const button = event.target.closest('[data-report-refresh]');
+        if (!button || button.disabled) return;
+        stop();
+        const request = requestId;
+        setRefreshing(true);
+        progress.hidden = true;
+        try {
+            const token = document.querySelector('meta[name="csrf-token"]');
+            const response = await fetch('/api/station-report' + window.location.search, {
+                method: 'POST', headers: {'X-CSRF-Token': token ? token.content : ''}
+            });
+            if (!response.ok) throw new Error('Report unavailable');
+            if (request !== requestId) return;
+            waiting = true;
+            poll();
+        } catch (_) {
+            if (request !== requestId) return;
+            progress.hidden = false;
+            progress.textContent = 'The report could not be calculated. Use Refresh to try again.';
+            stop();
+        }
     });
-    document.addEventListener('wmb:bird-objects-updated', function () {
-        changes++;
-        hideReport('Updating the station history automatically…');
-        if (!polling) schedule(0);
+
+    document.addEventListener('wmb:bird-objects-updated', function (event) {
+        const detail = event.detail || {};
+        if (!detail.filename) return;
+        stop();
+        progress.hidden = true;
+        setOutdated(true);
+        root.querySelectorAll('[data-current-report] article[data-image-filename]').forEach(function (tile) {
+            if (tile.dataset.imageFilename !== detail.filename) return;
+            const object = (detail.objects || []).find(function (item) {
+                return String(item.detection_id) === tile.dataset.detectionId;
+            });
+            if (!object && !detail.imageAbsent) return;
+            const removed = object && object.object_status === 'rejected';
+            const absent = detail.imageAbsent || object.human_review_state === 'reviewed_negative';
+            const name = removed ? 'Moved to trash' : absent ? 'No bird' : object.common_name;
+            const label = tile.querySelector('.wm-tile__name');
+            if (label) label.textContent = name || 'Bird · species unknown';
+            const latin = tile.querySelector('.wm-tile__latin');
+            if (latin) latin.textContent = absent || removed ? '' : (object.species_key || '').replaceAll('_', ' ');
+            const status = tile.querySelector('.station-card-status');
+            if (status) status.textContent = removed ? 'Moved to trash' : absent ? 'No bird · Answered' : 'Answer updated';
+            const image = tile.querySelector('img');
+            if (image) image.alt = name || 'Bird · species unknown';
+        });
     });
-    schedule(500);
+    showLocalTime();
+    if (waiting) {
+        setRefreshing(true);
+        timer = window.setTimeout(poll, 500);
+    }
 }());

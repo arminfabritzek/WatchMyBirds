@@ -53,6 +53,36 @@ def grouped_review(
                 params,
             )
         ]
+        if answered:
+            image_where, image_params = selection_sql(selection)
+            rows.extend(
+                {
+                    **dict(row),
+                    "object_key": f"image:{row['subject_id']}",
+                    "image_statement": True,
+                    "species_key": "Unknown_species",
+                    "proposed_species": "Unknown_species",
+                    "detection_id": None,
+                    "answered": True,
+                }
+                for row in conn.execute(
+                    """SELECT f.subject_id, f.image_filename, i.timestamp,
+                        i.original_present,
+                        MAX(CASE WHEN f.fact_type = 'bird_presence' THEN f.answer_value END) AS image_presence,
+                        MAX(CASE WHEN f.fact_type = 'detector_miss' THEN f.answer_value END) AS detector_miss
+                        FROM current_human_label_facts f
+                        JOIN images i ON i.filename = f.image_filename
+                        WHERE f.scope = 'image' AND ("""
+                    + image_where
+                    + """ )
+                        GROUP BY f.subject_id, f.image_filename, i.timestamp, i.original_present
+                        ORDER BY i.timestamp DESC, f.subject_id""",
+                    image_params,
+                )
+            )
+            rows.sort(
+                key=lambda row: (row["timestamp"], row["object_key"]), reverse=True
+            )
         days: dict[str, int] = {}
         for row in rows:
             stamp = str(row["timestamp"]).replace("-", "")
@@ -86,7 +116,10 @@ def grouped_review(
             members = [selected[index - 1] for index in event.detection_ids]
             groups.append(
                 {
-                    "rows": hydrate_observations(conn, members),
+                    "rows": hydrate_observations(
+                        conn, [row for row in members if not row.get("image_statement")]
+                    )
+                    + [row for row in members if row.get("image_statement")],
                     "event_key": event.event_key,
                     "species": event.species,
                     "eligibility": event.eligibility,
@@ -162,27 +195,6 @@ def media_paths(det: dict) -> dict:
         ),
         "media_placeholder": not (original_url or optimized_url or thumb_url),
     }
-
-
-def media_revision(output_dir: str) -> tuple:
-    """Watch media directory entries without enumerating the image history."""
-    from utils.path_manager import PathManager
-
-    paths = PathManager(output_dir)
-    signature = []
-    for root in (paths.originals_dir, paths.optimized_dir, paths.thumbs_dir):
-        try:
-            if not root.is_dir():
-                signature.append((str(root), None))
-                continue
-            signature.append((str(root), root.stat().st_mtime_ns))
-            for child in root.iterdir():
-                checked = paths.contained_path(child, root)
-                if checked is not None and checked.is_dir() and not child.is_symlink():
-                    signature.append((child.name, checked.stat().st_mtime_ns))
-        except OSError:
-            signature.append((str(root), "unavailable"))
-    return tuple(sorted(signature, key=str))
 
 
 def species_selection_ids(species: str, selection: dict[str, str]) -> list[int]:

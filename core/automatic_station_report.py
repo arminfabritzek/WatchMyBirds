@@ -1,4 +1,4 @@
-"""Derived everyday station history; diagnostic event contracts remain separate."""
+"""Station history snapshots, refreshed on opening or by explicit request."""
 
 from __future__ import annotations
 
@@ -6,7 +6,6 @@ import logging
 import sqlite3
 import threading
 import time
-import uuid
 from collections import OrderedDict
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
@@ -129,96 +128,67 @@ def build_report(conn: sqlite3.Connection, selection: dict[str, str]) -> dict:
 
 
 class StationReportCache:
-    """Bounded per-application cache with one coalescing background worker.
+    """Bounded snapshots with one background worker and no capture watchers."""
 
-    data_version is read from one long-lived observer connection. It sees
-    commits by every writer, including another process and media-flag updates.
-    Neither stale payloads nor late worker results are returned as current.
-    """
+    MAX_AGE_SECONDS = 600
 
     def __init__(
         self,
         connection_factory: Callable[[], sqlite3.Connection] | None = None,
         *,
         builder: Callable[[sqlite3.Connection, dict[str, str]], dict] = build_report,
-        media_version: Callable[[], tuple] | None = None,
         max_entries: int = 8,
-        debounce: float = 0.25,
-        poll_interval: float = 2.0,
+        clock: Callable[[], float] = time.monotonic,
     ) -> None:
         if connection_factory is None:
-            from config import get_config
-            from core.station_observations import media_revision
             from utils.db import get_connection
 
             connection_factory = get_connection
-            output_dir = str(get_config()["OUTPUT_DIR"])
-            if media_version is None:
-                media_version = lambda: media_revision(output_dir)
-        self._media_version = media_version
         self._factory = connection_factory
         self._builder = builder
-        self._observer = connection_factory()
+        self._clock = clock
         self._condition = threading.Condition(threading.RLock())
         self._entries: OrderedDict[tuple, dict] = OrderedDict()
         self._max_entries = max_entries
-        self._debounce = debounce
-        self._poll_interval = poll_interval
-        self._source_version = self._version()
         self._revision = 0
-        self._instance = uuid.uuid4().hex
         self._closed = False
         self._thread: threading.Thread | None = None
 
-    def _version(self) -> tuple:
-        return (
-            int(self._observer.execute("PRAGMA data_version").fetchone()[0]),
-            self._media_version() if self._media_version else (),
-        )
-
-    def _refresh(self) -> None:
-        version = self._version()
-        if version != self._source_version:
-            self._source_version = version
-            self._revision += 1
-            for entry in self._entries.values():
-                entry.update(state="updating", due=time.monotonic() + self._debounce)
-
-    def status(self, selection: dict[str, str]) -> dict:
+    def status(
+        self, selection: dict[str, str], *, opening: bool = False, refresh: bool = False
+    ) -> dict:
         key = tuple(sorted(selection.items()))
         with self._condition:
-            try:
-                self._refresh()
-            except sqlite3.Error:
-                self._condition.notify_all()
-                return {
-                    "state": "error",
-                    "revision": f"{self._instance}:{self._revision}",
-                    "report": None,
-                }
             if key not in self._entries:
                 self._entries[key] = {
                     "state": "building",
-                    "due": time.monotonic() + self._debounce,
                     "payload": None,
                     "revision": None,
+                    "completed_at": None,
+                    "requested": 0,
                 }
                 while len(self._entries) > self._max_entries:
                     self._entries.popitem(last=False)
+            entry = self._entries[key]
             self._entries.move_to_end(key)
+            expired = entry["completed_at"] is None or (
+                self._clock() - entry["completed_at"] > self.MAX_AGE_SECONDS
+            )
+            if refresh:
+                entry["requested"] += 1
+                entry["state"] = "updating" if entry["payload"] else "building"
+            elif entry["state"] not in {"building", "updating"} and opening and expired:
+                entry["state"] = "updating" if entry["payload"] else "building"
             if self._thread is None:
                 self._thread = threading.Thread(
                     target=self._run, name="station-report", daemon=True
                 )
                 self._thread.start()
             self._condition.notify_all()
-            entry = self._entries[key]
             return {
                 "state": entry["state"],
-                "revision": f"{self._instance}:{self._revision}",
-                "report": entry["payload"]
-                if entry["state"] == "ready" and entry["revision"] == self._revision
-                else None,
+                "revision": entry["revision"],
+                "report": entry["payload"],
             }
 
     def _run(self) -> None:
@@ -226,45 +196,19 @@ class StationReportCache:
             with self._condition:
                 if self._closed:
                     return
-                try:
-                    self._refresh()
-                except sqlite3.Error:
-                    for entry in self._entries.values():
-                        entry["state"] = "error"
-                    self._condition.wait(timeout=self._poll_interval)
-                    continue
-                due = next(
+                pending = next(
                     (
                         (key, entry)
                         for key, entry in self._entries.items()
-                        if entry["state"] != "ready"
-                        and entry["due"] <= time.monotonic()
+                        if entry["state"] in {"building", "updating"}
                     ),
                     None,
                 )
-                if due is None:
-                    self._condition.wait(
-                        timeout=min(
-                            self._poll_interval,
-                            max(
-                                0.01,
-                                min(
-                                    (
-                                        e["due"] - time.monotonic()
-                                        for e in self._entries.values()
-                                        if e["state"] != "ready"
-                                    ),
-                                    default=self._poll_interval,
-                                ),
-                            ),
-                        )
-                    )
+                if pending is None:
+                    self._condition.wait()
                     continue
-                key, entry = due
-                revision = self._revision
-                entry["state"] = "updating" if entry["payload"] else "building"
-            payload = None
-            error = False
+                key, entry = pending
+                requested = entry["requested"]
             try:
                 conn = self._factory()
                 try:
@@ -273,26 +217,24 @@ class StationReportCache:
                 finally:
                     conn.close()
             except Exception:
-                logger.exception("Automatic station report update failed")
-                error = True
+                logger.exception("Station report calculation failed")
+                with self._condition:
+                    if entry["requested"] == requested:
+                        entry["state"] = "error"
+                continue
             with self._condition:
                 if self._closed:
                     return
-                try:
-                    self._refresh()
-                except sqlite3.Error:
-                    entry.update(state="error", due=time.monotonic() + 5)
-                    continue
-                if self._entries.get(key) is not entry:
-                    continue
-                if revision != self._revision:
+                if self._entries.get(key) is entry:
+                    if entry["requested"] != requested:
+                        continue
+                    self._revision += 1
                     entry.update(
-                        state="updating", due=time.monotonic() + self._debounce
+                        state="ready",
+                        payload=payload,
+                        revision=self._revision,
+                        completed_at=self._clock(),
                     )
-                elif error:
-                    entry.update(state="error", due=time.monotonic() + 5)
-                else:
-                    entry.update(state="ready", payload=payload, revision=revision)
                 self._condition.notify_all()
 
     def close(self) -> None:
@@ -301,4 +243,3 @@ class StationReportCache:
             self._condition.notify_all()
         if self._thread:
             self._thread.join(timeout=5)
-        self._observer.close()

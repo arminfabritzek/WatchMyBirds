@@ -198,3 +198,151 @@ def test_review_answers_complete_and_can_be_corrected(
             browser.close()
             server.shutdown()
             thread.join(timeout=5)
+
+
+@pytest.mark.parametrize("width", [1440, 390])
+@pytest.mark.parametrize("theme", ["light", "dark"])
+def test_done_tabs_include_manual_birds_and_image_statements_without_photos(
+    local_db_app: Flask, tmp_path: Path, width: int, theme: str
+) -> None:
+    from PIL import Image
+
+    from core.human_label_core import BBox, append_fact, ensure_object_subject
+    from core.manual_object_core import ManualObjectDraft, create_manual_object
+    from tests.test_station_observations import answer
+
+    api = pytest.importorskip("playwright.sync_api")
+    with closing_connection() as conn:
+        absent = seed(conn, identifier=1, state="uncertain")
+        answer(conn, 1, absent, species="Pica_pica")
+        append_fact(
+            conn,
+            subject_id=ensure_object_subject(conn, 1),
+            fact_type="bird_presence",
+            answer_value="absent",
+            provenance=provenance(),
+        )
+        wrong = seed(conn, identifier=2, state="uncertain")
+        answer(conn, 2, wrong, state="wrong", species=None)
+        manual = seed(conn, identifier=3, state="uncertain")
+        original = tmp_path / "temporary.jpg"
+        Image.new("RGB", (600, 400), (115, 130, 110)).save(original)
+        create_manual_object(
+            conn,
+            ManualObjectDraft(
+                manual, BBox(0.5, 0.5, 0.2, 0.2), "Parus_major", "manual-review-browser"
+            ),
+            provenance(),
+            original_path=original,
+            locale="DE",
+        )
+        for filename, stamp, options in [
+            ("empty.jpg", "20261012_100000", {"image_bird_presence": "absent"}),
+            ("missed.jpg", "20261013_120000", {"detector_miss": True}),
+        ]:
+            conn.execute(
+                "INSERT INTO images(filename,timestamp,original_present) VALUES (?,?,0)",
+                (filename, stamp),
+            )
+            record_human_answer(conn, HumanAnswer(filename, **options), provenance())
+        conn.execute("UPDATE images SET original_present=0")
+    with api.sync_playwright() as playwright:
+        browser = playwright.chromium.launch()
+        server = make_server("127.0.0.1", 0, local_db_app, threaded=True)
+        thread = Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        base = f"http://127.0.0.1:{server.server_port}"
+        page = browser.new_page(
+            viewport={"width": width, "height": 900}, color_scheme=theme
+        )
+        page.add_init_script(f"localStorage.setItem('wmb-theme', '{theme}')")
+        errors: list[str] = []
+        page.on("pageerror", lambda error: errors.append(str(error)))
+        try:
+            page.goto(base + "/login")
+            page.get_by_label("Password").fill("test-password")
+            page.get_by_role("button", name="Login", exact=True).click()
+            page.goto(base + "/admin/review?day=all")
+            tabs = page.get_by_role("navigation", name="Review tabs")
+            assert (
+                tabs.get_by_role("link", name="Open", exact=True).get_attribute(
+                    "aria-current"
+                )
+                == "page"
+            )
+            page.screenshot(
+                path=str(tmp_path / f"open-{width}-{theme}.png"), full_page=True
+            )
+            tabs.get_by_role("link", name="Done", exact=True).click()
+            assert (
+                page.get_by_role("link", name="Done", exact=True).get_attribute(
+                    "aria-current"
+                )
+                == "page"
+            )
+            tile = page.locator('article[data-detection-id="1"]')
+            assert tile.locator(".wm-tile__name").inner_text() == "No bird"
+            assert tile.locator(".wm-tile__latin").count() == 0
+            assert tile.locator(".station-media-placeholder").is_visible()
+            assert (
+                page.locator("article .wm-tile__name")
+                .filter(has_text="Wrong species")
+                .count()
+                == 1
+            )
+            assert (
+                page.get_by_text("Manually added bird · Answered", exact=True).count()
+                == 1
+            )
+            assert (
+                page.locator("article .wm-tile__name")
+                .filter(has_text="No birds in full image")
+                .count()
+                == 1
+            )
+            assert (
+                page.locator("article .wm-tile__name")
+                .filter(has_text="Bird missed by the detector")
+                .count()
+                == 1
+            )
+            assert page.locator("html").get_attribute("data-theme") == theme
+            assert page.evaluate(
+                "document.documentElement.scrollWidth <= window.innerWidth"
+            )
+            page.screenshot(
+                path=str(tmp_path / f"done-{width}-{theme}.png"), full_page=True
+            )
+            # An image-only answer can use the shared viewer and its withdrawal gate.
+            page.locator(
+                'article[data-image-filename="empty.jpg"] .wm-tile__button'
+            ).click()
+            modal = page.locator(".gallery-modal.show")
+            notice = modal.locator("[data-image-absence]")
+            notice.wait_for(state="visible")
+            with page.expect_navigation(wait_until="load"):
+                notice.get_by_role(
+                    "button", name="Withdraw full-image answer", exact=True
+                ).click()
+            assert (
+                page.locator("article .wm-tile__name")
+                .filter(has_text="No birds in full image")
+                .count()
+                == 0
+            )
+            page.locator("#review-day").select_option("2026-10-13")
+            page.locator(".review-day-nav__form").get_by_role(
+                "button", name="Apply", exact=True
+            ).click()
+            assert "answered=1" in page.url
+            assert (
+                page.locator("article .wm-tile__name")
+                .filter(has_text="Bird missed by the detector")
+                .count()
+                == 1
+            )
+            assert errors == []
+        finally:
+            browser.close()
+            server.shutdown()
+            thread.join(timeout=5)

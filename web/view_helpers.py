@@ -747,6 +747,37 @@ def build_station_views(rows: list[dict]) -> list[dict]:
         )
         result.append(item)
     enrich_modal_review_states(result)
+    for item, row in zip(result, rows, strict=True):
+        if row.get("image_statement"):
+            labels = []
+            if row.get("image_presence") == "absent":
+                labels.append("No birds in full image")
+            elif row.get("image_presence") == "present":
+                labels.append("Bird in full image")
+            if row.get("detector_miss"):
+                labels.append("Bird missed by the detector")
+            item.update(
+                image_statement=True,
+                modal_key=f"image-{row['subject_id']}",
+                review_label=" · ".join(labels),
+                common_name=" · ".join(labels),
+            )
+        elif row.get("manual_object_id") and row.get("status") != "active":
+            item.update(
+                retracted_manual=True,
+                review_label="Manually added bird withdrawn",
+                common_name="Manually added bird withdrawn",
+            )
+        elif row.get("presence") == "absent":
+            item.update(
+                review_label="No bird",
+                common_name="No bird",
+                species_key="Unknown_species",
+            )
+        elif row.get("answer") == "wrong":
+            item["review_label"] = "Wrong species"
+        else:
+            item["review_label"] = item["common_name"]
     return result
 
 

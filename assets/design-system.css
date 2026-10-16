@@ -10232,7 +10232,7 @@ button.wm-bird-editor__box-verdict:disabled { cursor: default; opacity: 0.65; }
 .station-report__table, .station-report__calendar { border-collapse: collapse; width: 100%; font-size: .9rem; }
 .station-report__table th, .station-report__table td { text-align: left; padding: 12px; border-bottom: 1px solid var(--color-border); vertical-align: top; }
 .station-report__table small { display: block; color: var(--color-text-muted); }
-.station-report__table caption { text-align: left; padding: 8px; }
+.station-report__table caption { text-align: left; padding: 8px; color: var(--color-text-muted); }
 .station-report__calendar th, .station-report__calendar td { padding: 5px; text-align: center; min-width: 25px; border-bottom: 1px solid var(--color-border); }
 .station-report__calendar th:first-child { position: sticky; left: 0; min-width: 140px; text-align: left; background: var(--color-surface); z-index: 1; }
 .station-report__calendar thead span { writing-mode: vertical-rl; font-size: .65rem; }

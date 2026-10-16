@@ -242,6 +242,11 @@
         return;
     }
 
+    document.addEventListener('wmb:bird-objects-updated', function (event) {
+        const detail = event.detail || {};
+        if (detail.filename && Array.isArray(detail.objects)) sharedObjectCache.set(detail.filename, detail.objects);
+    });
+
     function provenanceLabel(item) {
         if (['dismissed', 'rejected'].includes(item.objectStatus)) return 'Dismissed';
         if (item.needsReview) return 'In Review';
@@ -1031,7 +1036,7 @@
                 message = reverted.commonName + ' · confirmation withdrawn';
                 broadcastObjects();
                 if (window.wmToast) window.wmToast('Confirmation withdrawn', 'success', 2200);
-                window.location.reload();
+                if (!document.querySelector('[data-report-state]')) window.location.reload();
             } catch (error) {
                 message = error.message || 'Unable to take the species back';
                 if (window.wmToast) window.wmToast(message, 'error', 4200);
@@ -1066,7 +1071,7 @@
                 const next = clone(item);
                 next.bboxVerdict = verdict;
                 updateObjects(next);
-                if (!verdict) { window.location.reload(); return; }
+                if (!verdict && !document.querySelector('[data-report-state]')) { window.location.reload(); return; }
                 message = verdict === 'suitable' ? 'Box marked as fitting'
                     : verdict === 'unsuitable' ? 'Box marked as wrong'
                     : 'Box verdict cleared';
@@ -1244,7 +1249,7 @@
                 if (notice) notice.hidden = true;
                 saving = false;
                 render('Full-image answer withdrawn');
-                window.location.reload();
+                if (!document.querySelector('[data-report-state]')) window.location.reload();
                 broadcastObjects();
             } catch (error) {
                 saving = false;
@@ -1298,7 +1303,7 @@
                 updateObjects(item);
                 saving = false;
                 render('No bird answer withdrawn');
-                window.location.reload();
+                if (!document.querySelector('[data-report-state]')) window.location.reload();
                 broadcastObjects();
             } catch (error) {
                 saving = false;

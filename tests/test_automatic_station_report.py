@@ -9,13 +9,8 @@ from pathlib import Path
 import pytest
 
 from core.automatic_station_report import StationReportCache, build_report
-from core.human_label_core import (
-    HumanAnswer,
-    record_human_answer,
-    retract_species_identity,
-)
 from core.station_observations import validate_selection
-from tests.test_station_observations import answer, provenance, seed
+from tests.test_station_observations import answer, seed
 from utils.db.connection import _init_schema
 from utils.db.detections import fetch_species_covers, fetch_species_page
 
@@ -72,60 +67,64 @@ def test_origins_union_and_automatic_use_without_event_approval(
     conn.close()
 
 
-def test_correction_retraction_and_new_capture_invalidate_cached_results(
-    database: Callable[[], sqlite3.Connection],
+def test_capture_commits_and_new_folders_leave_snapshot_until_refresh(
+    database: Callable[[], sqlite3.Connection], tmp_path: Path
 ) -> None:
-    cache = StationReportCache(database, debounce=0, poll_interval=0.01)
+    elapsed = [0.0]
+    cache = StationReportCache(database, clock=lambda: elapsed[0])
     try:
-        assert await_ready(cache)["summary"]["species_count"] == 1
-        conn = database()
-        record_human_answer(
-            conn,
-            HumanAnswer(
-                image_filename="20261013_082211_1.jpg",
-                detection_id=1,
-                species_identity="corrected",
-                species_key="Pica_pica",
-            ),
-            provenance(),
-        )
-        conn.commit()
-        assert cache.status(validate_selection())["report"] is None
-        report = await_ready(cache)
-        assert {r["species_key"] for r in report["species"]} == {
-            "Parus_major",
-            "Pica_pica",
-        }
-        retract_species_identity(
-            conn,
-            image_filename="20261013_082211_1.jpg",
-            detection_id=1,
-            provenance=provenance(),
-        )
-        conn.commit()
-        assert cache.status(validate_selection())["report"] is None
-        assert await_ready(cache)["summary"]["human_species"] == 0
-        seed(conn, identifier=3, species="Picus_viridis", quality=1)
-        conn.commit()
-        assert cache.status(validate_selection())["report"] is None
-        assert await_ready(cache)["summary"]["species_count"] == 2
-        conn.execute("UPDATE images SET original_present = 0")
-        conn.commit()
-        assert cache.status(validate_selection())["report"] is None
-        assert await_ready(cache)["summary"]["missing_originals"] == 3
-        conn.close()
+        before = await_ready(cache)
+        revision = cache.status(validate_selection())["revision"]
+        for minute in range(1, 11):
+            conn = database()
+            seed(conn, identifier=minute + 2, species="Picus_viridis", quality=1)
+            conn.commit()
+            conn.close()
+            folder = tmp_path / "originals" / f"2026-10-{minute:02}"
+            folder.mkdir(parents=True)
+            (folder / "capture.jpg").write_bytes(b"synthetic capture")
+            elapsed[0] = minute * 60
+            status = cache.status(validate_selection())
+            assert status["report"] == before
+            assert status["revision"] == revision
+        elapsed[0] = 601
+        assert cache.status(validate_selection())["report"] == before
+        current = cache.status(validate_selection(), refresh=True)
+        assert current["report"] == before
+        assert await_ready(cache)["summary"]["objects"] == 12
+        assert cache.status(validate_selection())["revision"] != revision
     finally:
         cache.close()
 
 
-def test_late_worker_result_is_never_current(
+def test_age_limit_is_checked_only_on_opening(
     database: Callable[[], sqlite3.Connection],
+) -> None:
+    elapsed = [0.0]
+    cache = StationReportCache(database, clock=lambda: elapsed[0])
+    try:
+        before = await_ready(cache)
+        elapsed[0] = 600
+        assert cache.status(validate_selection(), opening=True)["state"] == "ready"
+        elapsed[0] = 601
+        assert cache.status(validate_selection())["state"] == "ready"
+        status = cache.status(validate_selection(), opening=True)
+        assert status["state"] == "updating" and status["report"] == before
+        await_ready(cache)
+    finally:
+        cache.close()
+
+
+@pytest.mark.parametrize("refresh_during_build", [False, True])
+def test_capture_during_build_stays_snapshot_until_explicit_refresh(
+    database: Callable[[], sqlite3.Connection],
+    refresh_during_build: bool,
 ) -> None:
     started = threading.Event()
     release = threading.Event()
     calls = []
 
-    def builder(conn: sqlite3.Connection, selection: dict[str, str] | None) -> dict:
+    def builder(conn: sqlite3.Connection, selection: dict[str, str]) -> dict:
         result = build_report(conn, selection)
         calls.append(result)
         if len(calls) == 1:
@@ -133,64 +132,55 @@ def test_late_worker_result_is_never_current(
             assert release.wait(5)
         return result
 
-    cache = StationReportCache(
-        database, builder=builder, debounce=0, poll_interval=0.01
-    )
+    cache = StationReportCache(database, builder=builder)
     try:
         assert cache.status(validate_selection())["report"] is None
         assert started.wait(5)
         conn = database()
-        record_human_answer(
-            conn,
-            HumanAnswer(
-                image_filename="20261013_082211_1.jpg",
-                detection_id=1,
-                species_identity="corrected",
-                species_key="Pica_pica",
-            ),
-            provenance(),
-        )
+        seed(conn, identifier=3, species="Picus_viridis", quality=1)
         conn.commit()
         conn.close()
-        assert cache.status(validate_selection())["report"] is None
+        if refresh_during_build:
+            cache.status(validate_selection(), refresh=True)
         release.set()
-        report = await_ready(cache)
-        assert len(calls) >= 2
-        assert any(r["species_key"] == "Pica_pica" for r in report["species"])
+        assert await_ready(cache)["summary"]["objects"] == (
+            3 if refresh_during_build else 2
+        )
+        assert len(calls) == (2 if refresh_during_build else 1)
+        cache.status(validate_selection(), refresh=True)
+        assert await_ready(cache)["summary"]["objects"] == 3
     finally:
         release.set()
         cache.close()
 
 
-def test_failure_hides_old_payload_and_retries_automatically(
+def test_failed_refresh_keeps_snapshot_and_requires_explicit_retry(
     database: Callable[[], sqlite3.Connection],
 ) -> None:
     attempts = []
 
-    def builder(conn: sqlite3.Connection, selection: dict[str, str] | None) -> dict:
+    def builder(conn: sqlite3.Connection, selection: dict[str, str]) -> dict:
         attempts.append(1)
-        if len(attempts) == 1:
+        if len(attempts) == 2:
             raise RuntimeError("controlled failure")
         return build_report(conn, selection)
 
-    cache = StationReportCache(
-        database, builder=builder, debounce=0, poll_interval=0.01
-    )
+    cache = StationReportCache(database, builder=builder)
     try:
-        cache.status(validate_selection())
+        before = await_ready(cache)
+        cache.status(validate_selection(), refresh=True)
         deadline = time.monotonic() + 2
         while (
             cache.status(validate_selection())["state"] != "error"
             and time.monotonic() < deadline
         ):
             time.sleep(0.01)
-        assert cache.status(validate_selection())["report"] is None
-        # A new data revision triggers retry without a manual completion step.
-        conn = database()
-        conn.execute("UPDATE images SET original_present=0")
-        conn.commit()
-        conn.close()
-        assert await_ready(cache)["summary"]["missing_originals"] == 2
+        assert cache.status(validate_selection())["state"] == "error"
+        assert cache.status(validate_selection())["report"] == before
+        assert len(attempts) == 2
+        cache.status(validate_selection(), refresh=True)
+        assert await_ready(cache)["summary"]["objects"] == 2
+        assert len(attempts) == 3
     finally:
         cache.close()
 
@@ -227,29 +217,3 @@ def test_period_keeps_imported_records_without_inventing_profile(
     report = build_report(conn, validate_selection(start="2026-10-14"))
     assert not report["species"]
     conn.close()
-
-
-def test_filesystem_media_loss_invalidates_without_database_write(
-    database: Callable[[], sqlite3.Connection], tmp_path: Path
-) -> None:
-    from core.station_observations import media_revision
-
-    folder = tmp_path / "originals" / "2026-10-13"
-    folder.mkdir(parents=True)
-    image = folder / "one.jpg"
-    image.write_bytes(b"local fixture")
-    cache = StationReportCache(
-        database,
-        media_version=lambda: media_revision(str(tmp_path)),
-        debounce=0,
-        poll_interval=0.01,
-    )
-    try:
-        await_ready(cache)
-        before = cache.status(validate_selection())["revision"]
-        image.unlink()
-        current = cache.status(validate_selection())
-        assert current["report"] is None and current["revision"] != before
-        assert await_ready(cache)["summary"]["species_count"] == 1
-    finally:
-        cache.close()

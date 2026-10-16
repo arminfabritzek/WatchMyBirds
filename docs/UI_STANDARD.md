@@ -113,8 +113,13 @@ selection separately from current human answers.
 Ordinary Review uses the original `review_grid.html` event cards, day navigation,
 selection controls and canonical detection modal. Its membership is the shared
 current observation projection: every active unanswered excluded proposal.
-There is no separate Open surface. Completed answers remain accessible through
-the archive compatibility link.
+The existing event/day view has Open and Done tabs. Both read
+`current_observations`; Done includes No bird, Wrong species and manual birds,
+plus current image statements grouped by capture day. Missing photos use a
+placeholder without removing the answer. No bird takes precedence over an older
+species answer in the card caption. Tabs, day navigation and pagination preserve
+the date selection. Withdrawn manual objects remain visible as withdrawn
+records, with no detector actions or object editing.
 Event buttons answer selected open objects, or all open objects in that card
 when none are selected. They require no evidence-quality assessment. The server
 checks the whole selection under one write transaction; completed, admitted,
@@ -130,23 +135,32 @@ filters. The calendar shows positive records; empty cells mean
 unknown, never absence. Knowledge links use existing references and own images;
 no behavior claims or unsourced local species profiles are fabricated.
 
-One bounded, per-application report worker coalesces database changes. Status
-reads never return stale payloads. Rebuild/error states hide superseded content,
-and results whose database revision changed during calculation are discarded.
-The browser polls status and replaces ready report content in place, without
-reloading the document. It preserves filter drafts, scroll positions and expanded
-details. Hidden superseded content retains its layout space while rebuilding.
-Editing keeps the active viewer open until it closes, then refreshes affected
-history; replaced editors release their listeners and observers. Local development
-runs this derived report worker on its isolated
-copy; camera, inference, integrations and retention jobs remain disabled.
+One bounded, per-application report worker computes snapshots. Opening shows
+the last result with its local calculation time (as of HH:MM). A missing result
+or one older than ten minutes starts a background calculation on opening, with
+a loading note. The browser polls only until that opening calculation finishes;
+the previous report stays visible. Afterward, captures, database commits, media
+changes and elapsed time never hide or replace the open report. Refresh explicitly
+starts a new calculation and replaces the result when ready, preserving filter
+drafts, scrolling and expanded details. Errors retain the previous result and
+offer Refresh. An in-report correction immediately updates the affected card
+and marks totals "outdated, refresh" with the existing `alert alert-info`
+status notice style used by the update notice. Show the notice below the report
+controls and directly below "Species and recorded days". Both retain
+`role="status"`, explain that the correction is saved but the species list and
+totals still need recalculation, and disappear only after a successful Refresh.
+The notice by the species list includes a Refresh button using the same action
+and busy state as the upper button, including after report content is replaced.
+Closing the viewer does not reload the report. Replaced editors release listeners
+and observers. Local development runs this worker on its isolated copy; camera,
+inference, integrations and retention jobs remain disabled.
 
 Ordinary Review uses day navigation and complete visit groups from the shared
 `build_bird_events` grouping rules. Group membership grants no approval. Each
 object exposes its proposal and admission reason; the shared viewer offers
 Confirm species, Change species, Bird · species unknown, and No bird. These
-answers do not require box quality or event approval. Answered is an optional
-archive, including object absence answers. An explicit object dismissal completes
+answers do not require box quality or event approval. Done includes object absence
+answers, manual birds and image statements. An explicit object dismissal completes
 that object. Whole-image statements are training facts and do not control display.
 The migration withdraws contradictory image and object answers before Review opens;
 ordinary answer writes reject bird-presence contradictions. A valid whole-image

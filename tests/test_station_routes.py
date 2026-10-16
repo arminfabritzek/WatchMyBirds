@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import re
 import time
+from pathlib import Path
 
 from flask import Flask
 
@@ -33,7 +35,7 @@ def test_ordinary_review_keeps_answered_unknown_reachable(local_db_app: Flask) -
         assert client.get("/admin/review?answered=invalid").status_code == 400
 
 
-def test_report_builds_automatically_and_stale_claims_are_hidden(
+def test_report_retains_snapshot_until_explicit_refresh(
     local_db_app: Flask,
 ) -> None:
     with closing_connection() as conn:
@@ -59,8 +61,22 @@ def test_report_builds_automatically_and_stale_claims_are_hidden(
             with closing_connection() as conn:
                 answer(conn, 101, filename, species="Picus_viridis")
             stale = client.get("/analytics").get_data(as_text=True)
-            assert "data-current-report" not in stale and "Pica pica" not in stale
-            assert "Earlier results are hidden" in stale
+            assert "data-current-report" in stale and "Pica pica" in stale
+            assert "as of" in stale
+            assert client.post("/api/station-report").status_code == 403
+            with client.session_transaction() as session:
+                session["_csrf_token"] = "report-test"
+            assert (
+                client.post(
+                    "/api/station-report", headers={"X-CSRF-Token": "report-test"}
+                ).status_code
+                == 200
+            )
+            while client.get("/api/station-report").get_json()["state"] != "ready":
+                assert time.monotonic() < deadline
+                time.sleep(0.01)
+            refreshed = client.get("/analytics").get_data(as_text=True)
+            assert "Picus viridis" in refreshed and "Pica pica" not in refreshed
             assert (
                 client.get("/api/station-report").headers["Cache-Control"] == "no-store"
             )
@@ -210,3 +226,132 @@ def test_event_answers_are_atomic_and_never_overwrite_completed_objects(
                 400,
                 409,
             }
+
+
+def test_done_keeps_absence_above_old_species_and_lists_image_answers(
+    local_db_app: Flask, tmp_path: Path
+) -> None:
+    from core.human_label_core import (
+        BBox,
+        HumanAnswer,
+        append_fact,
+        ensure_object_subject,
+        record_human_answer,
+    )
+    from core.manual_object_core import ManualObjectDraft, create_manual_object
+    from tests.test_station_observations import provenance
+
+    with closing_connection() as conn:
+        absent = seed(conn, identifier=1, species="Parus_major")
+        answer(conn, 1, absent, species="Pica_pica")
+        append_fact(
+            conn,
+            subject_id=ensure_object_subject(conn, 1),
+            fact_type="bird_presence",
+            answer_value="absent",
+            provenance=provenance(),
+        )
+        wrong = seed(conn, identifier=2)
+        answer(conn, 2, wrong, state="wrong", species=None)
+        manual = seed(conn, identifier=3, state="uncertain")
+        original = tmp_path / "manual.jpg"
+        original.write_bytes(b"synthetic image")
+        create_manual_object(
+            conn,
+            ManualObjectDraft(
+                manual, BBox(0.5, 0.5, 0.2, 0.2), "Pica_pica", "manual-review-test"
+            ),
+            provenance(),
+            original_path=original,
+            locale="DE",
+        )
+        conn.execute(
+            "INSERT INTO images(filename,timestamp,original_present) VALUES ('empty.jpg','20261012_100000',0)"
+        )
+        record_human_answer(
+            conn,
+            HumanAnswer(image_filename="empty.jpg", image_bird_presence="absent"),
+            provenance(),
+        )
+        conn.execute(
+            "INSERT INTO images(filename,timestamp,original_present) VALUES ('missed.jpg','20261013_120000',0)"
+        )
+        record_human_answer(
+            conn,
+            HumanAnswer(image_filename="missed.jpg", detector_miss=True),
+            provenance(),
+        )
+        conn.execute("UPDATE images SET original_present=0")
+    with local_db_app.test_client() as client:
+        with client.session_transaction() as session:
+            session["authenticated"] = True
+        response = client.get(
+            "/admin/review?answered=1&day=all&start=2026-10-12&end=2026-10-13"
+        )
+        assert response.status_code == 200
+        body = response.get_data(as_text=True)
+        tile = re.search(
+            r'<article[^>]*data-detection-id="1".*?</article>', body, re.S
+        ).group()
+        assert '<span class="wm-tile__name">No bird</span>' in tile
+        assert 'class="wm-tile__latin"' not in tile
+        assert 'class="station-media-placeholder"' in tile
+        assert '<span class="wm-tile__name">Wrong species</span>' in body
+        for label in (
+            "Manually added bird",
+            "No birds in full image",
+            "Bird missed by the detector",
+        ):
+            assert label in body
+        assert 'name="answered" value="1"' in body
+        assert 'aria-current="page">Done</a>' in body
+        older = client.get("/admin/review?answered=1&day=2026-10-12").get_data(
+            as_text=True
+        )
+        assert (
+            "No birds in full image" in older
+            and "Bird missed by the detector" not in older
+        )
+        empty = client.get("/admin/review?answered=1&start=2026-10-14").get_data(
+            as_text=True
+        )
+        assert 'class="wm-tile__name"' not in empty
+
+
+def test_done_keeps_withdrawn_manual_object_visible(
+    local_db_app: Flask, tmp_path: Path
+) -> None:
+    from core.human_label_core import BBox
+    from core.manual_object_core import (
+        ManualObjectDraft,
+        create_manual_object,
+        retract_manual_object,
+    )
+    from tests.test_station_observations import provenance
+
+    with closing_connection() as conn:
+        filename = seed(conn, identifier=1, state="uncertain")
+        original = tmp_path / "original.jpg"
+        original.write_bytes(b"synthetic image")
+        obj, _ = create_manual_object(
+            conn,
+            ManualObjectDraft(
+                filename, BBox(0.5, 0.5, 0.2, 0.2), "Pica_pica", "manual-withdraw-test"
+            ),
+            provenance(),
+            original_path=original,
+            locale="DE",
+        )
+        retract_manual_object(
+            conn,
+            manual_object_id=obj["manual_object_id"],
+            image_filename=filename,
+            expected_revision=obj["revision"],
+            provenance=provenance(),
+        )
+    with local_db_app.test_client() as client:
+        with client.session_transaction() as session:
+            session["authenticated"] = True
+        response = client.get("/admin/review?answered=1")
+        assert response.status_code == 200
+        assert "Manually added bird withdrawn" in response.get_data(as_text=True)

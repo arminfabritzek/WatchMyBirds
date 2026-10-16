@@ -333,6 +333,29 @@ function navigateModal(btn, direction) {
 /* =========================================
    Deletion Logic
    ========================================= */
+function updateStationReportObject(id, updates) {
+    const report = document.querySelector('[data-report-state]');
+    if (!report) return false;
+    const tile = report.querySelector('article[data-detection-id="' + id + '"]');
+    if (!tile) return false;
+    const modal = document.getElementById('modal-station_report-' + id);
+    const viewer = modal && modal.querySelector('.wm-image-viewer');
+    if (!viewer) return false;
+    const current = JSON.parse(viewer.dataset.currentDetection || '{}');
+    const siblings = JSON.parse(viewer.dataset.siblings || '[]');
+    const objects = new Map();
+    [current].concat(siblings).forEach(function (item) {
+        if (Number(item.detection_id) === id) Object.assign(item, updates);
+        objects.set(item.object_key || 'detection:' + item.detection_id, item);
+    });
+    viewer.dataset.currentDetection = JSON.stringify(current);
+    viewer.dataset.siblings = JSON.stringify(Array.from(objects.values()));
+    document.dispatchEvent(new CustomEvent('wmb:bird-objects-updated', {
+        detail: {filename: tile.dataset.imageFilename, objects: Array.from(objects.values())}
+    }));
+    return true;
+}
+
 async function deleteDetection(event, id) {
     if (event) {
         event.preventDefault();
@@ -376,6 +399,7 @@ async function deleteDetection(event, id) {
                 }
             }
 
+            if (updateStationReportObject(id, {object_status: 'rejected'})) return;
             // Fallback: main detection deleted or last one — reload page
             location.reload();
         } else {
@@ -430,6 +454,15 @@ async function relabelDetection(event, detectionId, currentSpecies) {
             return;
         }
         if (resp.ok) {
+            if (updateStationReportObject(detectionId, {
+                species_key: choice.scientific,
+                human_species_key: choice.scientific,
+                human_species_source: 'manual',
+                human_review_state: 'corrected',
+                provenance: 'manually_identified',
+                common_name: choice.common,
+                needs_review: false
+            })) return;
             // Species changed — reload to get correct groupings and status
             location.reload();
             return;

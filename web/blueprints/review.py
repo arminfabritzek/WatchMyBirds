@@ -940,45 +940,40 @@ def review_page():
         )
     except ValueError as exc:
         abort(400, description=str(exc))
-    if not answered:
-        events = view_helpers.build_station_review_events(review["groups"])
-        days = list(review["days"])
-        selected_day = review["selected_day"]
+    days = list(review["days"])
+    selected_day = review["selected_day"]
 
-        def day_url(value: str) -> str:
-            return url_for("review.review_page", day=value, **selection)
-
-        older = [day for day in days if day < selected_day]
-        newer = [day for day in days if day > selected_day]
-        return render_template(
-            "review_grid.html",
-            review_events=events,
-            ordinary_review=True,
-            review=review,
-            selection=selection,
-            current_path="/admin/review",
-            review_navigation={
-                "days": list(review["days"].items()),
-                "selected_day": selected_day,
-                "total_events": review["total_items"],
-                "is_grid_layout": True,
-                "older_url": day_url(max(older))
-                if older and selected_day != "all"
-                else None,
-                "newer_url": day_url(min(newer))
-                if newer and selected_day != "all"
-                else None,
-                "sort_order": "priority",
-            },
+    def day_url(value: str) -> str:
+        return url_for(
+            "review.review_page", day=value, answered=int(answered), **selection
         )
-    for group in review["groups"]:
-        group["detections"] = view_helpers.build_station_views(group.pop("rows"))
-        for det in group["detections"]:
-            det["ordinary_review"] = True
+
+    older = [day for day in days if day < selected_day]
+    newer = [day for day in days if day > selected_day]
+    navigation = {
+        "days": list(review["days"].items()),
+        "selected_day": selected_day,
+        "total_events": review["total_items"],
+        "is_grid_layout": True,
+        "older_url": day_url(max(older)) if older and selected_day != "all" else None,
+        "newer_url": day_url(min(newer)) if newer and selected_day != "all" else None,
+    }
+    events = []
+    detections = []
+    if answered:
+        for group in review["groups"]:
+            group["detections"] = view_helpers.build_station_views(group.pop("rows"))
+            for det in group["detections"]:
+                det["ordinary_review"] = not det.get("image_statement")
+                detections.append(det)
+    else:
+        events = view_helpers.build_station_review_events(review["groups"])
     return render_template(
-        "station_review.html",
+        "station_review.html" if answered else "review_grid.html",
+        review_events=events,
+        review_navigation=navigation,
         review=review,
-        detections=[det for group in review["groups"] for det in group["detections"]],
+        detections=detections,
         selection=selection,
         ordinary_review=True,
         answered=answered,

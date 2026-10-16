@@ -16,9 +16,9 @@ nav_index (int|None): Optional index within nav_scope
 {% from "components/bird_editor_toolbar.html" import render_bird_editor_toolbar %}
 
 {% macro render_modal(det, group_id, nav_scope=none, nav_index=none) %}
-{% set can_moderate = session.get('authenticated') %}
+{% set can_moderate = session.get('authenticated') and not det.retracted_manual %}
 {% set show_nav = kwargs.show_nav if kwargs.show_nav is defined else true %}
-<div class="modal fade gallery-modal wm-modal" id="modal-{{ group_id }}-{{ det.detection_id }}" tabindex="-1"
+<div class="modal fade gallery-modal wm-modal" id="modal-{{ group_id }}-{{ det.modal_key | default(det.detection_id) }}" tabindex="-1"
     aria-hidden="true" data-modal-group="{{ group_id }}" data-image-path="{{ det.full_path }}"
     {% if interactive_labels %}data-human-review-state="{{ det.human_review_state | default('unreviewed') }}"{% endif %}
     {% if nav_scope %}data-nav-scope="{{ nav_scope }}"{% endif %}

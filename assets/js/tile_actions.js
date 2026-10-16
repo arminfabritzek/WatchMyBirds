@@ -232,13 +232,18 @@
                 throw new Error(data.message || ('HTTP ' + response.status));
             }
 
-            // Fade out the nearest tile in-place
-            const tile = triggerEl && triggerEl.closest('.wm-tile');
-            if (tile) {
-                tile.style.transition = 'opacity 0.3s, transform 0.3s';
-                tile.style.opacity = '0';
-                tile.style.transform = 'scale(0.95)';
-                setTimeout(function () { tile.remove(); }, 320);
+            if (document.querySelector('[data-report-state]')) {
+                document.dispatchEvent(new CustomEvent('wmb:bird-objects-updated', {
+                    detail: { filename: filename, imageAbsent: true }
+                }));
+            } else {
+                const tile = triggerEl && triggerEl.closest('.wm-tile');
+                if (tile) {
+                    tile.style.transition = 'opacity 0.3s, transform 0.3s';
+                    tile.style.opacity = '0';
+                    tile.style.transform = 'scale(0.95)';
+                    setTimeout(function () { tile.remove(); }, 320);
+                }
             }
 
             if (window.wmToast) {
