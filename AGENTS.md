@@ -14,6 +14,8 @@ Human contributors: [CONTRIBUTING.md](CONTRIBUTING.md).
 - Ask when a missing decision materially changes scope. Deployment, live
   camera or production-data changes, pushing, and publishing need action-specific
   authorization; existing authorization in the conversation counts.
+- This repository is public. Never put agent session links (for example
+  `claude.ai/code/session_…`) in commits, pull requests, or GitHub comments.
 - When contributors work concurrently, agree file ownership and re-read shared
   files before editing. Integrate their changes instead of reverting them.
 - Keep fixes focused. Do not bundle unsolicited refactors.
