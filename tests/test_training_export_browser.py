@@ -21,7 +21,7 @@ from utils.path_manager import PathManager
 def test_export_download_repeat_and_receipt(
     local_db_app: Flask, tmp_path: Path, width: int, theme: str
 ) -> None:
-    from playwright.sync_api import sync_playwright
+    sync_playwright = pytest.importorskip("playwright.sync_api").sync_playwright
 
     paths = PathManager(get_config()["OUTPUT_DIR"])
     filename = "20261001_120000_answer.jpg"

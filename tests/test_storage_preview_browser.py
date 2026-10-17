@@ -27,7 +27,7 @@ def test_storage_preview_measurement_and_status_notices(
     theme: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from playwright.sync_api import sync_playwright
+    sync_playwright = pytest.importorskip("playwright.sync_api").sync_playwright
 
     paths = PathManager(get_config()["OUTPUT_DIR"])
     with closing_connection():
