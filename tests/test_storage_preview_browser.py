@@ -10,6 +10,7 @@ from werkzeug.serving import make_server
 
 from config import get_config, update_runtime_settings
 from core.human_label_core import HumanAnswer, LabelProvenance, record_human_answer
+from core.storage_forecast import forecast_capacity
 from core.training_export import create_export
 from tests.retention_helpers import seed_image
 from tests.test_surface_routes_local_db import local_db_app as local_db_app
@@ -34,6 +35,14 @@ def test_storage_preview_measurement_and_status_notices(
     update_runtime_settings({"AUTOMATIC_DELETION_ENABLED": False})
     monkeypatch.setattr(
         "config.ensure_go2rtc_stream_synced", lambda *_args, **_kwargs: None
+    )
+    saving_state = {
+        "paused": True,
+        "message": "Photo saving paused: 6.00 GiB of training photos waiting for export confirmation. Live view continues; saving resumes automatically when space is available.",
+        "last_cleanup": {},
+    }
+    monkeypatch.setattr(
+        "web.services.storage_service.saving_state", lambda manager: dict(saving_state)
     )
     provenance = LabelProvenance("test", "test", "normal_correction", "watchmybirds_ui")
     with closing_connection() as conn:
@@ -88,6 +97,29 @@ def test_storage_preview_measurement_and_status_notices(
             page.get_by_role("button", name="Login", exact=True).click()
             page.goto(base + "/storage")
             assert page.locator("html").get_attribute("data-theme") == theme
+            saving_notice = page.locator("#photo-saving-notice")
+            assert saving_notice.is_visible()
+            assert "6.00 GiB of training photos" in saving_notice.inner_text()
+            assert saving_notice.get_attribute("role") == "status"
+            page.screenshot(
+                path=str(tmp_path / f"storage-paused-{width}-{theme}.png"),
+                full_page=True,
+            )
+            saving_state.update(
+                message="", paused=False, last_cleanup={"freed_bytes": 1048576}
+            )
+            page.wait_for_function(
+                "() => document.getElementById('photo-saving-notice').textContent.includes('early deletion recovered')"
+            )
+            assert (
+                "Favorites and training photos remain protected"
+                in saving_notice.inner_text()
+            )
+            page.screenshot(
+                path=str(tmp_path / f"storage-cleaned-{width}-{theme}.png"),
+                full_page=True,
+            )
+            saving_state["last_cleanup"] = {}
             notice = page.locator("#deletion-notice")
             assert notice.is_visible()
             assert "Automatic deletion is off" in notice.inner_text()
@@ -127,6 +159,8 @@ def test_storage_preview_measurement_and_status_notices(
                 path=str(tmp_path / f"storage-{width}-{theme}.png"), full_page=True
             )
             page.reload()
+            saving_notice.wait_for(state="hidden")
+            page.locator("#storage-upcoming tr").first.wait_for(state="visible")
             assert page.locator("#storage-upcoming tr").count() > 0
             page.goto(base + "/settings")
             page.locator("#panelRetention .settings-panel__trigger").click()
@@ -195,6 +229,56 @@ def test_storage_preview_measurement_and_status_notices(
                 in page.locator("#deletion-notice").inner_text()
             )
             assert "14 days" in page.locator("#deletion-notice").inner_text()
+            measured = page.request.get(base + "/api/v1/storage/status").json()
+            inputs = dict(
+                sample_days=7,
+                recent_bytes=700,
+                kept_rows=0,
+                permanent_bytes=700,
+                reclaimable_bytes=0,
+            )
+            measured["result"]["forecast"] = forecast_capacity(
+                inputs, free_bytes=6000, reserve_bytes=0, database={}
+            )
+            page.route(
+                "**/api/v1/storage/status", lambda route: route.fulfill(json=measured)
+            )
+            page.reload()
+            forecast = page.locator("#storage-forecast")
+            page.get_by_text(
+                "At the current pace, the card will be full in about 2 months.",
+                exact=True,
+            ).wait_for()
+            assert forecast.get_attribute("role") == "status"
+            assert "alert-warning" in forecast.get_attribute("class")
+            assert page.locator("#storage-forecast-action").is_visible()
+            assert (
+                page.locator("#storage-forecast-action a").get_attribute("href")
+                == "/settings#panelRetention"
+            )
+            assert "add more storage" in forecast.inner_text()
+            page.get_by_text("How this is estimated", exact=True).click()
+            assert "retained metadata" in forecast.inner_text()
+            page.get_by_text("How this is estimated", exact=True).click()
+            assert page.evaluate(
+                "document.documentElement.scrollWidth <= window.innerWidth"
+            )
+            page.evaluate("window.scrollTo(0, 0)")
+            page.screenshot(path=str(tmp_path / f"forecast-{width}-{theme}.png"))
+            inputs["permanent_bytes"] = 0
+            measured["result"]["forecast"] = forecast_capacity(
+                inputs, free_bytes=6000, reserve_bytes=0, database={}
+            )
+            page.reload()
+            page.get_by_text("Card full: not foreseeable", exact=False).wait_for()
+            assert "alert-info" in forecast.get_attribute("class")
+            assert page.locator("#storage-forecast-action").is_hidden()
+            measured["result"]["forecast"] = dict(status="settings_changed")
+            page.reload()
+            page.get_by_text(
+                "Settings changed. Measure storage again to update the forecast.",
+                exact=True,
+            ).wait_for()
             assert errors == []
             assert originals_before == {
                 p: p.read_bytes() for p in paths.originals_dir.rglob("*.jpg")

@@ -441,19 +441,7 @@ def _init_schema(
         );
     """)
 
-    # Reject-audit log: metadata-only record of detections the classifier
-    # routed to ``decision_level='reject'`` (top-1 below review threshold,
-    # no genus rescue). The detection itself is not persisted — no image,
-    # no crop, no detections row, no images row when the frame had only
-    # rejects. This keeps the FP-cluster signal
-    # (bbox position + raw_species_name + counts) auditable without
-    # filling disk and the Unclear-tab with non-bird crops from static
-    # background objects (e.g. tree-branch FPs).
-    #
-    # No FK to images/detections: by design, the parent rows don't exist
-    # for reject-only frames. The frame is identified by its filename
-    # stamp (``frame_timestamp`` = ``YYYYMMDD_HHMMSS_ffffff``) so the
-    # operator can cross-reference logs even though no file was written.
+    # Kept only so older databases remain schema-compatible.
     conn.execute("""
         CREATE TABLE IF NOT EXISTS reject_audit (
             audit_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -481,8 +469,6 @@ def _init_schema(
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_reject_audit_raw_species ON reject_audit(raw_species_name);"
     )
-    # Composite bbox index supports the static-FP cluster detection
-    # query ("which bbox positions cluster across reject rows?").
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_reject_audit_bbox ON reject_audit(bbox_x, bbox_y);"
     )
@@ -501,6 +487,12 @@ def _init_schema(
     recreate_observations_view(conn)
 
     conn.commit()
+    _retire_reject_audit(conn)
+    from core.technical_storage import prune_samples
+
+    for table in ("station_runtime_samples", "weather_logs"):
+        prune_samples(conn, table)
+    conn.commit()
     try:
         migrate_human_answers(conn, existing_installation=existing_installation)
         _initialize_automatic_deletion(
@@ -512,6 +504,23 @@ def _init_schema(
         logging.getLogger(__name__).exception(
             "Human-answer migration failed; deletion remains disabled"
         )
+
+
+def _retire_reject_audit(conn: sqlite3.Connection) -> None:
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        marker = "retire_reject_audit_v1"
+        if not conn.execute(
+            "SELECT 1 FROM _migration_state WHERE key=?", (marker,)
+        ).fetchone():
+            conn.execute("DELETE FROM reject_audit")
+            conn.execute(
+                "INSERT INTO _migration_state VALUES (?,datetime('now'))", (marker,)
+            )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
 
 
 def _initialize_automatic_deletion(

@@ -155,7 +155,9 @@ def test_training_uses_shared_protection_for_waiting_unconfirmed_and_changes(
     conn.commit()
     result = plan(conn, paths)
     assert result.files[0].decision.rule == 4
-    assert result.files[0].decision.deadline == RECEIVED + timedelta(days=90)
+    assert result.files[0].decision.deadline == RECEIVED + timedelta(
+        days=DEFAULT_SETTINGS.original_days
+    )
     answer(conn, identifier, bbox_quality="unsuitable")
     result = plan(conn, paths)
     assert result.training_sources == ("waiting_for_training",)
@@ -287,7 +289,9 @@ def test_manual_bird_is_training_protected_and_then_follows_bird_policy(
     received(conn, paths)
     result = plan(conn, paths)
     assert result.files[0].decision.rule == 4
-    assert result.files[0].decision.deadline == RECEIVED + timedelta(days=90)
+    assert result.files[0].decision.deadline == RECEIVED + timedelta(
+        days=DEFAULT_SETTINGS.original_days
+    )
     assert all(row.decision.action == "keep" for row in result.rows)
     assert any(row.table == "manual_object_revisions" for row in result.rows)
 

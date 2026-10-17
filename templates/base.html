@@ -112,7 +112,11 @@
                 <a href="/settings">Settings</a>.
             </aside>
             {% endif %}
-            {% block content %}{% endblock %}
+        {% if is_authenticated %}
+        <aside class="alert alert-info my-3" role="status" aria-live="polite" id="photo-saving-notice"{% if not photo_saving_state.message and not photo_saving_state.get('last_cleanup', {}).get('freed_bytes') %} hidden{% endif %}>{{ photo_saving_state.message }}</aside>
+        <script src="/assets/js/storage_status.js?v={{ asset_version }}" defer></script>
+        {% endif %}
+        {% block content %}{% endblock %}
         </div>
     </main>
 

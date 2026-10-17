@@ -93,6 +93,7 @@ def local_db_app(monkeypatch, tmp_path):
     _reset_test_config(monkeypatch, tmp_path)
 
     detection_manager = MagicMock()
+    detection_manager.paused = False
     detection_manager.frame_lock = nullcontext()
     detection_manager.latest_raw_timestamp = 0.0
     detection_manager.last_good_frame_timestamp = 0.0

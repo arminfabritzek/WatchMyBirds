@@ -235,6 +235,8 @@ def system_stats_route():
 @system_bp.route("/api/status", methods=["GET"])
 @login_required
 def api_status():
+    from web.services import storage_service
+
     try:
         output_dir = config.get("OUTPUT_DIR", "./data/output")
 
@@ -242,6 +244,7 @@ def api_status():
             "detection_paused": _detection_manager.paused,
             "detection_running": not _detection_manager.paused,
             "restart_required": backup_restore_service.is_restart_required(output_dir),
+            "photo_saving": storage_service.saving_state(_detection_manager),
         }
 
         try:

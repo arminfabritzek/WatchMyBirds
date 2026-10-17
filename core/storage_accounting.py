@@ -19,6 +19,7 @@ from core import training_retention
 from core.canonical_dataset import build_canonical_dataset, read_media_size
 from core.deletion_plan import deletion_preview, plan_deletions
 from core.retention_core import activation_date, settings_for_plan
+from core.storage_forecast import forecast_capacity
 from utils.db import storage as storage_db
 from utils.path_manager import PathManager
 
@@ -502,6 +503,15 @@ def inspect_storage(
             - protection["accounted_original_bytes"],
         )
         protection["current_estimate"] = not partial
+    volume = next((v for v in last["volumes"] if v["scope"] == "output"), None)
+    forecast = dict(status="unavailable")
+    if not partial and volume and preview.get("forecast_inputs"):
+        forecast = forecast_capacity(
+            preview["forecast_inputs"],
+            free_bytes=volume["free_bytes"],
+            reserve_bytes=preview["settings"]["reserve_bytes"],
+            database=database,
+        )
     return dict(
         schema_version=1,
         started_at=began.isoformat(),
@@ -512,6 +522,7 @@ def inspect_storage(
         database=database,
         protections=protection,
         deletion_preview=preview,
+        forecast=forecast,
         files_changed=changed,
         database_changed=changed_db,
         database_error=error,

@@ -201,6 +201,7 @@ def execute_plan(
     stop_requested: Callable[[], bool] | None = None,
     progress_callback: Callable[[dict[str, Any]], None] | None = None,
     settings_provider: Callable[[], dict[str, Any]] | None = None,
+    pressure_stage: int = 0,
 ) -> dict[str, Any]:
     if not human_answers_migrated(conn):
         raise RuntimeError("Human-answer migration is incomplete; deletion is disabled")
@@ -227,10 +228,44 @@ def execute_plan(
         return result
     result["total"] = conn.execute("SELECT COUNT(*) FROM images").fetchone()[0]
     for batch in image_batches(conn, batch_size):
+        candidates = None
+        if pressure_stage:
+            current = current_settings()
+            original_markers = {
+                image["filename"]: image["original_present"] for image in batch
+            }
+            # Filter bounded candidates without locking unchanged retained history.
+            # Each selected photo still gets a new authoritative plan under the lock.
+            candidates = {
+                photo.filename
+                for photo in plan_deletions(
+                    conn,
+                    settings_for_plan(current),
+                    now,
+                    paths=paths,
+                    filenames=list(original_markers),
+                    automatic_deletion_enabled_at=activation_date(current),
+                    pressure_stage=pressure_stage,
+                )
+                if any(item.error for item in photo.files)
+                or any(row.decision.due(now) for row in photo.rows)
+                or any(
+                    item.decision.due(now)
+                    and (
+                        item.present
+                        or item.category == "original"
+                        and original_markers[photo.filename]
+                    )
+                    for item in photo.files
+                )
+            }
         for image in batch:
             if stop_requested and stop_requested():
                 result["stopped"] = True
                 break
+            if candidates is not None and image["filename"] not in candidates:
+                result["processed"] += 1
+                continue
             conn.execute("BEGIN IMMEDIATE")
             try:
                 current = current_settings()
@@ -249,6 +284,7 @@ def execute_plan(
                         paths=paths,
                         filenames=[image["filename"]],
                         automatic_deletion_enabled_at=enabled_at,
+                        pressure_stage=pressure_stage,
                     ),
                     None,
                 )
@@ -293,6 +329,49 @@ def execute_plan(
             progress_callback(dict(result))
         if result["stopped"] or result["disabled"]:
             break
+    return result
+
+
+def reclaim_space(
+    conn: sqlite3.Connection,
+    output_dir: str,
+    settings: dict[str, Any],
+    *,
+    free_bytes: Callable[[], int],
+    target_bytes: int,
+    now: datetime | None = None,
+    settings_provider: Callable[[], dict[str, Any]] | None = None,
+    stop_requested: Callable[[], bool] | None = None,
+) -> dict[str, Any]:
+    result: dict[str, Any] = dict(deleted=0, deleted_rows=0, freed_bytes=0, errors=0)
+    result["stages"] = []
+    for stage in (1, 2, 3):
+        current = settings_provider() if settings_provider else settings
+        if (
+            stage == 3
+            and current.get("OLD_BIRD_PHOTOS", "keep_previews") != "delete_all"
+        ):
+            break
+        if free_bytes() >= target_bytes or stop_requested and stop_requested():
+            break
+        step = execute_plan(
+            conn,
+            output_dir,
+            settings,
+            now,
+            pressure_stage=stage,
+            settings_provider=settings_provider,
+            stop_requested=lambda: (
+                free_bytes() >= target_bytes
+                or bool(stop_requested and stop_requested())
+            ),
+        )
+        result["stages"].append({"stage": stage, **step})
+        for key in ("deleted", "deleted_rows", "freed_bytes", "errors"):
+            result[key] += step[key]
+        if step["disabled"]:
+            break
+    result["free_bytes"] = free_bytes()
     return result
 
 

@@ -32,7 +32,10 @@ import sqlite3
 import sys
 import time
 from datetime import UTC, datetime, timedelta
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
+
+from core.technical_storage import LOG_BACKUPS, LOG_FILE_BYTES
 
 # Redirect HF cache to a writable location BEFORE huggingface_hub gets
 # imported transitively via open_clip. huggingface_hub.constants reads
@@ -158,7 +161,9 @@ def setup_logging(verbose: bool) -> None:
         level=logging.DEBUG if verbose else logging.INFO,
         format="%(asctime)s %(levelname)s %(message)s",
         handlers=[
-            logging.FileHandler(LOG_PATH),
+            RotatingFileHandler(
+                LOG_PATH, maxBytes=LOG_FILE_BYTES, backupCount=LOG_BACKUPS
+            ),
             logging.StreamHandler(sys.stdout),
         ],
     )

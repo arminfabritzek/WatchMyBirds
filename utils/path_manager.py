@@ -1,3 +1,4 @@
+from collections.abc import Iterator
 from pathlib import Path
 
 # Directory structure:
@@ -118,6 +119,32 @@ class PathManager:
 
     def get_database_path(self) -> Path:
         return self.base_dir / "images.db"
+
+    def get_report_tmp_dir(self) -> Path:
+        return self.base_dir / "report_tmp"
+
+    def disposable_files(self) -> Iterator[tuple[Path, str]]:
+        for directory in (self.base_dir / "restore_tmp", self.get_report_tmp_dir()):
+            yield from (
+                (path, "temporary") for path in directory.rglob("*") if path.is_file()
+            )
+        for pattern in (
+            "backup/tmp_db_*.db*",
+            "*.tmp",
+            ".storage-usage-*",
+            "nightly_jobs/tmp*",
+        ):
+            yield from ((path, "temporary") for path in self.base_dir.glob(pattern))
+        for pattern in (
+            "logs/*",
+            "vital_signs_legacy_*.csv",
+            "derivatives/visual_ptz/cam*/debug/*",
+        ):
+            yield from (
+                (path, "log")
+                for path in self.base_dir.glob(pattern)
+                if path.is_file() and path.name not in {"app.log", "aesthetic_tag.log"}
+            )
 
     def get_nightly_job_status_path(self, name: str) -> Path:
         """Return the lifecycle status path for one registered job."""

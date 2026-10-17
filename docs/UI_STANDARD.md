@@ -1295,6 +1295,13 @@ and species answers continue through their normal controls.
     cases and model non-birds; while off, assume activation today. Mark saved
     measurements clearly and request a new measurement after settings change.
     Missing deadline starts and incomplete scans use the same status pattern.
+    Show a rough full-card forecast above the measurement, based on recent stored
+    captures, measured free space minus the reserve, retained metadata and planned
+    file expiry. Respect the deletion switch. Say not foreseeable when the model
+    finds no lasting growth, and unavailable for insufficient history or incomplete
+    scans. Settings changes require a new measurement. Below the single warning
+    threshold in `core/storage_forecast.py`, use `alert alert-warning` with
+    `role="status"` and suggest Delete everything in Settings or more storage.
 12. Storage Retention lives in Settings (`#panelRetention`) using the standard
     `settings-panel` / `settings-field` shells. It has one Automatic deletion
     switch and the Old bird photos choices Keep previews / Delete everything.
@@ -1304,6 +1311,13 @@ and species answers continue through their normal controls.
     bytes, missing files and errors. Original-serving routes return `410 Gone`
     for a retained image whose original was retired; history and answers remain
     available through surviving previews or placeholders.
+13. A shared status notice above page content (`alert alert-info`, `role="status"`,
+    polite live announcements) shows the authenticated owner when photo saving
+    pauses or pressure cleanup removes files early. It states the blocking reason,
+    continued live view, automatic resumption, and protection of favorites and
+    pending training. Refresh it from cached runtime status; polling must not scan
+    media or initiate cleanup. Explain in Settings and Storage that pressure cleanup
+    may shorten the normal Review grace period while automatic deletion is on.
 
 ## 7. Guided Recovery (non-image settings workflow)
 

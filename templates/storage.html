@@ -6,9 +6,15 @@
     <a class="btn btn--secondary" href="/settings">Settings</a>
 </div>
 <p>Measure existing files and retention protections. This page never removes files or changes cleanup settings.</p>
+<div id="storage-forecast" class="alert alert-info" role="status" aria-live="polite">
+    <p id="storage-forecast-summary">Measure storage to estimate when the card will be full.</p>
+    <p id="storage-forecast-action" hidden>Choose <a href="/settings#panelRetention">Delete everything in Settings</a> or add more storage. Favorites and pending training photos still need space.</p>
+    <details id="storage-forecast-details" hidden><summary>How this is estimated</summary><p id="storage-forecast-basis" class="text-muted"></p></details>
+</div>
 <div class="alert alert-info" role="status" id="deletion-notice">
     {% if deletion_state.enabled %}Automatic deletion is on.{% else %}Automatic deletion is off. Nothing is deleted while it is off. The preview assumes activation today.{% endif %}
     Open cases and model non-birds get a fresh 14-day grace period after enabling deletion.
+    With automatic deletion on, low free space can remove unprotected photos earlier, including during that grace period. Favorites and pending training files stay protected.
     Measure storage to see the next 14 days for the current settings.
 </div>
 <p id="storage-last-run" role="status">{{ deletion_state.last_run_text }}</p>
@@ -66,6 +72,15 @@
         const progress=state.progress || {};
         text('storage-status',running ? `Measuring ${progress.phase || 'files'}… ${count(progress.files_done)} files; ${count(progress.images_done)} / ${count(progress.images_total)} images.` : state.status==='idle' ? 'No measurement yet.' : state.status==='failed' ? state.error : 'Measurement finished' + (state.status==='partial' ? ' with changes or incomplete access.' : '.'));
         const report=state.result;if(!report)return;
+        const forecast=report.forecast || {};
+        const estimated=forecast.status==='estimated';
+        const roundedMonths=estimated ? Math.round(forecast.months) : 0;
+        const months=estimated ? (forecast.months < 1 ? 'less than 1 month' : `about ${roundedMonths} month${roundedMonths===1 ? '' : 's'}`) : '';
+        text('storage-forecast-summary',estimated ? `At the current pace, the card will be full in ${months}.` : forecast.status==='not_foreseeable' ? 'Card full: not foreseeable at the current pace after planned deletions; no lasting growth was estimated.' : forecast.status==='settings_changed' ? 'Settings changed. Measure storage again to update the forecast.' : forecast.status==='insufficient_history' ? 'Forecast unavailable: at least one day of capture history is needed.' : 'Forecast unavailable. Measure storage again; incomplete scans cannot provide an estimate.');
+        el('storage-forecast').className=`alert ${forecast.warning ? 'alert-warning' : 'alert-info'}`;
+        el('storage-forecast-action').hidden=!forecast.warning;
+        el('storage-forecast-details').hidden=!forecast.sample_days;
+        text('storage-forecast-basis',forecast.sample_days ? `Rough estimate from the last ${count(forecast.sample_days)} days of stored captures: ${bytes(forecast.saved_bytes_per_day)}/day saved; ${bytes(forecast.net_bytes_per_day)}/day lasting growth, including estimated retained metadata (${bytes(forecast.metadata_bytes_per_day)}/day). Uses measured free space minus the reserve plus ${bytes(forecast.planned_reclaimable_bytes)} of planned file reclamation. Finite retention is assumed to reach a steady size. ${report.automatic_deletion_enabled ? '' : 'Automatic deletion is off: no planned deletions are subtracted. '}Saved measurement; measure again after changes. Future answers, export confirmations and other programs writing to this volume can change the result.` : '');
         el('storage-result').hidden=false;
         text('storage-time',`Measured ${new Date(report.started_at).toLocaleString()} to ${new Date(report.finished_at).toLocaleString()}. Manual scan; filesystem observations are not atomic.`);
         const inv=report.inventory;
@@ -77,9 +92,9 @@
         if(plan && plan.settings) {
             const upcoming = plan.next_14_days;
             const state = plan.enabled ? 'Automatic deletion was on at measurement time.' : 'Automatic deletion was off at measurement time. Nothing is deleted while it is off. The preview assumes activation today.';
-            text('deletion-notice', `${state} Open cases and model non-birds get a fresh 14-day grace period after enabling deletion. ${upcoming ? `Due within the following 14 days, including overdue files: ${count(upcoming.photos)} photo${upcoming.photos === 1 ? '' : 's'}, ${count(upcoming.files)} file${upcoming.files === 1 ? '' : 's'} (${bytes(upcoming.bytes)}).` : 'Measure again to calculate the next 14 days.'} This is a saved measurement; measure again after changing settings.`);
+            text('deletion-notice', `${state} Open cases and model non-birds get a fresh 14-day grace period after enabling deletion. With automatic deletion on, low free space can remove unprotected photos earlier, including during that grace period. Favorites and pending training files stay protected. ${upcoming ? `Due within the following 14 days, including overdue files: ${count(upcoming.photos)} photo${upcoming.photos === 1 ? '' : 's'}, ${count(upcoming.files)} file${upcoming.files === 1 ? '' : 's'} (${bytes(upcoming.bytes)}).` : 'Measure again to calculate the next 14 days.'} This is a saved measurement; measure again after changing settings.`);
             const s=plan.settings;
-            text('storage-policy',`Old bird photos: ${s.old_bird_photos==='keep_previews' ? 'Keep previews' : 'Delete everything'}. Provisional values: originals ${s.original_days} days; previews ${s.preview_days} days with Delete everything; trash ${s.trash_days} days; other photos ${s.other_days} days; reserve ${bytes(s.reserve_bytes)} (no early deletion in this preview).`);
+            text('storage-policy',`Old bird photos: ${s.old_bird_photos==='keep_previews' ? 'Keep previews' : 'Delete everything'}. Originals ${s.original_days} days; previews ${s.preview_days} days with Delete everything; trash ${s.trash_days} days; other photos ${s.other_days} days; reserve ${bytes(s.reserve_bytes)}. This saved preview shows age deadlines; low free space may remove unprotected files earlier.`);
             rows('storage-classes',Object.entries(rules).map(([key,label])=>[label,count(plan.classes[key]?.files),bytes(plan.classes[key]?.bytes || 0)]));
             const w=plan.waiting.waiting_for_training || {}, u=plan.waiting.unconfirmed_export || {};
             text('storage-waiting',`Waiting for training: ${photos(w.photos)} (${bytes(w.bytes || 0)}). Waiting for export confirmation: ${photos(u.photos)} (${bytes(u.bytes || 0)}).`);

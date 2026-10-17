@@ -17,7 +17,6 @@ import json
 import logging
 import os
 import sys
-import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -45,7 +44,7 @@ from core.db_core import (
 from core.gallery_core import summarize_observations
 from utils.cover_selection import cover_order_sql
 from utils.image_ops import create_square_crop
-from utils.path_manager import get_path_manager
+from utils.path_manager import PathManager, get_path_manager
 from utils.telegram_notifier import send_telegram_message
 
 logging.basicConfig(
@@ -386,7 +385,7 @@ def _variant_output_dir(report_date: str, output_dir: str | Path | None = None) 
     base_dir = (
         Path(output_dir)
         if output_dir
-        else Path(tempfile.gettempdir()) / "watchmybirds_report_variants"
+        else PathManager(str(get_config()["OUTPUT_DIR"])).get_report_tmp_dir()
     )
     path = base_dir / report_date
     path.mkdir(parents=True, exist_ok=True)

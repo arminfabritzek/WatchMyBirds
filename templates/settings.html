@@ -2279,7 +2279,7 @@
                     <option value="keep_previews" {% if payload['OLD_BIRD_PHOTOS'].value == 'keep_previews' %}selected{% endif %}>Keep previews</option>
                     <option value="delete_all" {% if payload['OLD_BIRD_PHOTOS'].value == 'delete_all' %}selected{% endif %}>Delete everything</option>
                 </select>
-                <p class="settings-field__help">Originals expire after 90 days. Keep previews preserves bird previews and thumbnails; Delete everything removes them after 365 days. Bird records and answers stay. Answered non-bird files expire 14 days after training protection ends. These age values are provisional.</p>
+                <p class="settings-field__help">Originals expire after {{ photo_deletion_defaults.original_days }} days. Keep previews preserves bird previews and thumbnails; Delete everything removes them after {{ photo_deletion_defaults.preview_days }} days. Bird records and answers stay. Answered non-bird files expire 14 days after training protection ends. With automatic deletion on, low free space can remove unprotected photos earlier, including during the Review grace period. Favorites and pending training files stay protected. If space remains low, saving pauses while live view continues and resumes automatically when space is available.</p>
             </div>
             <div id="retentionResult" class="alert alert-info" role="status">Open cases and model non-birds get a fresh 14-day grace period when automatic deletion is enabled. Calculating the upcoming count…</div>
             <div class="flex flex--gap-sm flex--wrap">

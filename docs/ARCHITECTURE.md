@@ -188,8 +188,8 @@ an original wait until included in an export. Changed answers wait again.
 export, including unchanged context siblings. Historical facts and legacy flags
 alone grant no training protection. Favorites remain a separate retention rule.
 An idempotent receipt stores `received_at` for that export only; it is the reference
-time for deletion deadlines. `core/retention_core.py` executes only due planner
-actions, rechecking each photo under `BEGIN IMMEDIATE` before files and then rows.
+time for deletion deadlines. `core/retention_core.py` executes due planner actions,
+rechecking each photo under `BEGIN IMMEDIATE` before files and then rows.
 Setting changes serialize with that transaction. Export records have no foreign
 keys to images, detections or label subjects and survive their deletion. The
 unused legacy `training_exports` table is never explicitly written or altered;
@@ -218,3 +218,24 @@ modify source tables. Protection attribution reuses the existing training predic
 and retention decision, with overlapping reasons and a distinct protected union.
 Readiness does not release training protection. The filesystem scan is not atomic;
 concurrent files/DB changes make reclaim estimates provisional. Training export receipts are recorded separately from temporary-file diagnostics.
+
+`core/storage_pressure.py` gates image persistence using a two-second filesystem
+cache and subtracts a conservative per-frame budget between checks. Recovery runs
+outside capture through that same planner and executor: open/model non-bird files
+and rows first, then unprotected answered/admitted originals, then bird previews
+only with Delete everything. Every pass rechecks all objects and current settings
+under the write lock. Favorites and pending training files stay protected; normal
+trash deadlines still apply. Low space can shorten the normal Review grace period.
+The photo switch gates early deletion too. While off, or when reclamation cannot
+restore the reserve and frame headroom, new image/detection persistence pauses.
+Live frames and inference continue, but these unsaved frames produce no ticker,
+Telegram detection alert, MQTT event or history row. Already queued alerts and
+reports about stored observations can still send. Saving resumes automatically
+after free space recovers. Authenticated pages show the cached saving/cleanup status.
+
+Classifier rejects persist neither photos nor notes. The unused `reject_audit`
+table remains for schema compatibility; a transactional one-time migration clears
+its former rows. `core/technical_storage.py` bounds runtime/weather samples and
+disposable files independently of the photo switch. Application and aesthetic logs
+rotate; vital-sign CSV files rotate separately. Human answers, export records and
+admitted observations have no technical-data expiry.

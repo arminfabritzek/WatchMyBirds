@@ -281,9 +281,46 @@ switch preserves its date. Open cases and model non-birds expire no earlier than
 rules cover trash, favorites, pending training, answers, admitted birds and other
 photos. Trash expires 30 days after moving it; favorites and pending training
 stay. Answer rows and admitted bird rows stay after their files expire. The
-provisional constants in `DeletionSettings` are 90 days for bird originals,
-365 days for bird previews with `delete_all`, 14 days for other photos, and a
-1 GiB reserve. Reserve-triggered early deletion is not implemented.
+constants in `DeletionSettings` are 30 days for bird originals, 180 days for bird
+previews with `delete_all`, 14 days for other photos, and a 256 MiB reserve.
+These are age ceilings, not guaranteed availability: low free space triggers
+earlier removal through the same planner, in the order open/model non-bird files
+and rows, answered/admitted originals, then previews only with `delete_all`.
+Favorites and pending training files stay protected. The normal activation grace
+can be shortened by low free space. Off prevents every automatic photo deletion.
+
+Saving requires the reserve plus twice the estimated frame budget (three times
+raw frame bytes plus 1 MiB). Free space is checked at most once per two seconds,
+and each admitted frame subtracts its budget from the cache. Recovery runs outside
+capture, targets four frame budgets above the reserve, and retries at most once a
+minute. Saving waits for an active recovery pass to finish, so incomplete new photos
+cannot be mistaken for objectless photos by early deletion. Insufficient space
+pauses new photo and detection persistence; live view and inference continue. Unsaved frames produce
+no ticker, Telegram detection alert or MQTT event. Pending alerts and reports about
+existing observations can still send. Saving resumes when space is available.
+Authenticated pages show the saving stop and early-cleanup status without scanning.
+
+The age choices were sized from measured snapshot media for a nominal 16 GiB card
+at 130 captures/day (about 12 GiB for 30 days of originals and 180 days of previews),
+then exercised under pressure on a bounded 512 MiB APFS image. Keep previews can
+eventually exhaust a card; saving then pauses without deleting retained bird
+previews. Very busy stations retain observation rows permanently; database growth
+still needs capacity planning. These local measurements do not establish physical
+SD-card throughput or endurance.
+The reserve covers 17.6 MB of technical samples at their row caps, 51 MiB of
+diagnostic file caps, two measured 32.6 MiB frame budgets and a normal 4 MiB WAL
+allowance. Adding 50% margin and rounding to the next power of two gives 256 MiB.
+
+Technical storage limits apply even with automatic photo deletion off:
+
+- Runtime samples: 90 days and at most 129,600 rows; weather: 90 days and 4,320 rows.
+  Enforced at startup and by each writer. Freed SQLite pages are reused; no VACUUM.
+- App and aesthetic logs: 5 MiB per file, three rotated backups each.
+  Vital-sign CSV: 5 MiB plus one backup; FD dumps: 1 MiB.
+- Disposable restore uploads, temporary database snapshots, report images and
+  atomic-write remnants: 48 hours; stale log and visual-PTZ debug files: 14 days.
+  The effort monitor checks files at startup/first sample and hourly thereafter.
+  Media, retained backup snapshots, recovery checkpoints and settings are excluded.
 
 The daily job uses bounded photo batches and rechecks a photo under a write
 transaction before removing files, then rows. It requires the completed human

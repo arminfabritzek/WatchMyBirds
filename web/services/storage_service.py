@@ -1,12 +1,27 @@
 """Storage-accounting service construction without web or infrastructure imports."""
 
+from dataclasses import asdict
+from typing import Any
+
 from config import get_config
+from core.deletion_plan import DEFAULT_SETTINGS
 from core.retention_core import (
     _settings_from_config,
     activation_date,
     load_last_run_status,
 )
 from core.storage_scan import StorageScan
+
+
+def deletion_defaults() -> dict:
+    return asdict(DEFAULT_SETTINGS)
+
+
+def saving_state(manager: Any) -> dict:
+    persistence = getattr(manager, "persistence_service", None)
+    pressure = getattr(persistence, "storage_pressure", None)
+    status = pressure.status() if pressure is not None else {}
+    return status if isinstance(status, dict) else {}
 
 
 def create() -> StorageScan:

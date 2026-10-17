@@ -170,3 +170,80 @@ def test_uncertain_decision_suppresses_species_notification(
     # Verify notification service was NEVER called for queuing a species summary
     mock_detection_manager.notification_service.queue_detection.assert_not_called()
     mock_detection_manager.notification_service.send_summary.assert_not_called()
+
+
+def test_processing_continues_after_failed_frame(mock_detection_manager) -> None:
+    manager = mock_detection_manager
+    import queue
+
+    manager.processing_queue = queue.Queue()
+    manager.processing_queue.put({"frame": "broken"})
+    manager.processing_queue.put({"frame": "next"})
+    processed = []
+
+    def process(job: dict[str, object]) -> None:
+        processed.append(job["frame"])
+        if job["frame"] == "broken":
+            raise RuntimeError("bad frame")
+        manager.stop_event.set()
+
+    manager._process_job = process
+    manager._processing_loop()
+    assert processed == ["broken", "next"]
+
+
+def test_notification_database_error_does_not_stop_processing(
+    mock_detection_manager, monkeypatch
+) -> None:
+    import queue
+    import sqlite3
+    from unittest.mock import patch
+
+    from detectors.services.notification_service import NotificationService
+
+    manager = mock_detection_manager
+    manager.processing_queue = queue.Queue()
+    manager.persistence_service.save_detection.return_value.detection_id = 1
+    manager.classification_service.classify.return_value = ClassificationResult(
+        class_name="Parus_major",
+        confidence=0.95,
+        model_id="test",
+        top_k_confidences=[0.95],
+    )
+    service = NotificationService()
+    service._config = {"TELEGRAM_ENABLED": True}
+    monkeypatch.setattr(service, "should_send", lambda: False)
+    monkeypatch.setattr(
+        "detectors.services.notification_service.is_known_species",
+        lambda *args, **kwargs: True,
+    )
+    manager.notification_service = service
+    job = {
+        "capture_time_precise": datetime.now(),
+        "original_frame": np.zeros((200, 200, 3), dtype=np.uint8),
+        "detection_info_list": [
+            {
+                "x1": 10,
+                "y1": 10,
+                "x2": 100,
+                "y2": 100,
+                "class_name": "bird",
+                "confidence": 0.95,
+            }
+        ],
+        "detection_time_ms": 10,
+        "sleep_time_ms": 10,
+    }
+    manager.processing_queue.put(job)
+    manager.processing_queue.put(job)
+    manager._burst_admit = lambda: True
+    manager._same_bird_burst_admit = lambda *args: True
+    states = iter((False, False, True))
+    manager.stop_event.is_set = lambda: next(states)
+    with patch(
+        "detectors.services.notification_service.closing_connection",
+        side_effect=sqlite3.OperationalError("database is locked"),
+    ):
+        manager._processing_loop()
+    assert manager.persistence_service.save_detection.call_count == 2
+    assert service.pending_count == 1

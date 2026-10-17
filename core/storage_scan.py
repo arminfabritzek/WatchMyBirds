@@ -10,10 +10,12 @@ import os
 import tempfile
 import threading
 from collections.abc import Callable
+from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from core.retention_core import activation_date, settings_for_plan
 from core.storage_accounting import inspect_storage
 from utils.path_manager import PathManager
 
@@ -95,7 +97,19 @@ class StorageScan:
 
     def status(self) -> dict[str, Any]:
         with self._lock:
-            return copy.deepcopy(self._state)
+            state = copy.deepcopy(self._state)
+        report = state.get("result") or {}
+        preview = report.get("deletion_preview") or {}
+        if report.get("forecast"):
+            settings = self.settings_provider()
+            enabled_at = activation_date(settings)
+            saved_at = preview.get("enabled_at")
+            if (
+                preview.get("settings") != asdict(settings_for_plan(settings))
+                or (enabled_at.isoformat() if enabled_at else None) != saved_at
+            ):
+                report["forecast"] = dict(status="settings_changed")
+        return state
 
     def start(self) -> bool:
         with self._lock:

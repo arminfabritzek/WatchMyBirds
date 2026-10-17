@@ -12,6 +12,7 @@ from glob import escape
 from pathlib import Path
 from typing import Any, Literal
 
+from core.storage_forecast import StorageForecast
 from core.training_export import answer_revisions, list_exports
 from core.training_retention import protection_sources_any
 from utils.db.storage import image_batches
@@ -20,11 +21,10 @@ from utils.path_manager import PathManager
 
 @dataclass(frozen=True)
 class DeletionSettings:
-    # Provisional until measured on the target storage device.
     old_bird_photos: Literal["keep_previews", "delete_all"] = "keep_previews"
-    original_days: int = 90
-    preview_days: int = 365
-    reserve_bytes: int = 1024**3
+    original_days: int = 30
+    preview_days: int = 180
+    reserve_bytes: int = 256 * 1024**2
     trash_days: int = 30
     other_days: int = 14
 
@@ -87,6 +87,7 @@ class PhotoPlan:
     files: list[FilePlan]
     rows: list[RowPlan]
     training_sources: tuple[str, ...]
+    captured_at: datetime | None = None
 
 
 def _time(value: object) -> datetime | None:
@@ -142,11 +143,24 @@ def _actions(
     automatic_deletion_enabled_at: datetime,
     original_missing: bool = False,
     answered_at: datetime | None = None,
+    pressure_stage: int = 0,
+    now: datetime | None = None,
 ) -> tuple[Action, Action, Action]:
     rule, reason = _rule(obj, sources, answered)
     keep = Action("keep", rule, reason)
     if rule in {2, 3}:
         return keep, keep, keep
+    if pressure_stage and rule != 1:
+        early = Action("delete", rule, reason + ": low free space", now)
+        if rule == 6:
+            return early, early, early
+        return (
+            early if pressure_stage >= 2 else keep,
+            early
+            if pressure_stage >= 3 and settings.old_bird_photos == "delete_all"
+            else keep,
+            keep,
+        )
     if rule in {1, 6}:
         base = _time(obj.get("trashed_at")) if rule == 1 else captured
         if rule == 6 and base is not None:
@@ -260,6 +274,7 @@ def plan_deletions(
     batch_size: int = 200,
     filenames: list[str] | None = None,
     automatic_deletion_enabled_at: datetime | None = None,
+    pressure_stage: int = 0,
 ) -> Iterator[PhotoPlan]:
     """Yield complete photos in bounded batches, without SQL or filesystem writes.
 
@@ -270,6 +285,8 @@ def plan_deletions(
     """
     if now.tzinfo is None:
         raise ValueError("now must include a timezone")
+    if pressure_stage not in {0, 1, 2, 3}:
+        raise ValueError("Unknown pressure stage")
     enabled_at = automatic_deletion_enabled_at or now
     if enabled_at.tzinfo is None:
         raise ValueError("automatic_deletion_enabled_at must include a timezone")
@@ -306,7 +323,10 @@ def plan_deletions(
             receipts[str(revision["selection_key"])] = _time(row["received_at"])
         objects: dict[str, list[dict[str, Any]]] = defaultdict(list)
         for row in conn.execute(
-            f"""SELECT o.*, d.trashed_at FROM current_observations o
+            f"""SELECT o.object_key, o.detection_id, o.manual_object_id,
+            o.image_filename, o.status, o.is_favorite, o.admitted,
+            o.presence, o.answered_at, o.thumbnail_path, d.trashed_at
+            FROM current_observations o
             LEFT JOIN detections d ON d.detection_id=o.detection_id
             WHERE o.image_filename IN ({marks}) ORDER BY o.object_key""",
             names,
@@ -365,6 +385,8 @@ def plan_deletions(
                     answered_at=_time(
                         fact.get("answered_at") or obj.get("answered_at")
                     ),
+                    pressure_stage=pressure_stage,
+                    now=now,
                 )
             for subject in subjects[name]:
                 if subject["detection_id"] is None:
@@ -380,6 +402,8 @@ def plan_deletions(
                         automatic_deletion_enabled_at=enabled_at,
                         original_missing=original_missing,
                         answered_at=_time(fact.get("answered_at")),
+                        pressure_stage=pressure_stage,
+                        now=now,
                     )
             if not decisions:
                 decisions["image"] = _actions(
@@ -390,6 +414,8 @@ def plan_deletions(
                     captured,
                     settings,
                     automatic_deletion_enabled_at=enabled_at,
+                    pressure_stage=pressure_stage,
+                    now=now,
                 )
             original, derivative, image_row = (
                 _strongest([items[index] for items in decisions.values()])
@@ -446,6 +472,7 @@ def plan_deletions(
                     [],
                     rows,
                     tuple(sorted(sources.get(name, set()))),
+                    captured,
                 )
                 continue
             files = [
@@ -504,6 +531,7 @@ def plan_deletions(
                 files,
                 rows,
                 tuple(sorted(sources.get(name, set()))),
+                captured,
             )
 
 
@@ -521,6 +549,7 @@ def deletion_preview(
     due_files = due_bytes = due_rows = errors = unknown_deadlines = 0
     fortnight_files = fortnight_bytes = fortnight_photos = 0
     horizon = now + timedelta(days=14)
+    forecast = StorageForecast(now, enabled=automatic_deletion_enabled_at is not None)
     for photo in plan_deletions(
         conn,
         settings,
@@ -528,6 +557,7 @@ def deletion_preview(
         paths=paths,
         automatic_deletion_enabled_at=automatic_deletion_enabled_at,
     ):
+        forecast.add(photo)
         present_bytes = sum(item.size_bytes for item in photo.files)
         for source in photo.training_sources:
             waiting[source]["photos"] += 1
@@ -586,4 +616,5 @@ def deletion_preview(
         next_14_days=dict(
             photos=fortnight_photos, files=fortnight_files, bytes=fortnight_bytes
         ),
+        forecast_inputs=forecast.inputs(),
     )

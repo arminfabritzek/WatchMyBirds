@@ -55,10 +55,6 @@ from utils.db.images import (
 )
 
 # Reject-audit log (metadata-only, no image/crop/detection row)
-from utils.db.reject_audit import (
-    insert_reject_audit,
-)
-
 # Review Queue Operations
 from utils.db.review_queue import (
     delete_orphan_images,
@@ -117,7 +113,6 @@ __all__ = [
     "fetch_trash_items",
     "fetch_trash_count",
     # Reject-audit log
-    "insert_reject_audit",
     # Review Queue
     "fetch_orphan_images",
     "delete_orphan_images",

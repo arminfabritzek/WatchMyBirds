@@ -5,6 +5,7 @@ Implements NotificationInterface for sending detection alerts via Telegram.
 Extracts notification logic from DetectionManager for independent operation.
 """
 
+import sqlite3
 import threading
 import time
 
@@ -311,15 +312,21 @@ class NotificationService(NotificationInterface):
         """
         metadata = {}
         if detection_id is not None:
-            with closing_connection() as conn:
-                row = conn.execute(
-                    "SELECT d.*, i.timestamp, i.ptz_origin FROM detections d "
-                    "JOIN images i ON i.filename = d.image_filename "
-                    "WHERE d.detection_id = ?",
-                    (detection_id,),
-                ).fetchone()
-                if row is not None:
-                    metadata = dict(row)
+            try:
+                with closing_connection() as conn:
+                    row = conn.execute(
+                        "SELECT d.*, i.timestamp, i.ptz_origin FROM detections d "
+                        "JOIN images i ON i.filename = d.image_filename "
+                        "WHERE d.detection_id = ?",
+                        (detection_id,),
+                    ).fetchone()
+                    if row is not None:
+                        metadata = dict(row)
+            except sqlite3.Error:
+                logger.warning(
+                    "Could not read notification cover metadata; using score",
+                    exc_info=True,
+                )
         return SpeciesInfo(
             latin_name=latin_name,
             common_name=self.get_common_name(latin_name),

@@ -207,7 +207,7 @@ def create_web_interface(detection_manager, system_monitor=None):
     @server.context_processor
     def inject_security_context():
         from web.services import auth_service as _auth
-        from web.services import settings_service
+        from web.services import settings_service, storage_service
 
         if "_csrf_token" not in session:
             session["_csrf_token"] = secrets.token_hex(32)
@@ -220,6 +220,10 @@ def create_web_interface(detection_manager, system_monitor=None):
             "csrf_token": session["_csrf_token"],
             "is_authenticated": is_authenticated,
             "can_moderate": is_authenticated,
+            "photo_deletion_defaults": storage_service.deletion_defaults(),
+            "photo_saving_state": storage_service.saving_state(detection_manager)
+            if is_authenticated
+            else {},
             "retention_update_notice": (
                 is_authenticated
                 and request.path
