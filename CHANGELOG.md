@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Station reports summarize observations and species, keep results stable while
+  reading, and show when corrected answers require a refresh of report totals.
+- Optional Review separates Open and Done answers by day, including answered
+  objects whose original photos are no longer available.
 - Human answers use one API and one fact history. Withdrawing an answer removes
   everything written by that action; stored automatic decisions stay separate.
 - Updates preserve older answers, keep withdrawn answers withdrawn, and return
@@ -10,6 +14,23 @@
 - Automatic deletion starts off on existing installations, with a Settings
   notice. Deletion waits for the answer migration to finish.
 - Full-image no-bird answers and manually added birds now exclude each other.
+- Blurry but confidently identified birds now count as observations.
+- Image import, Companion, Deep Scan, and star ratings are removed; favorites stay.
+- Telegram detection alerts exclude non-birds, including squirrels and cats.
+- Training exports stream directly, support repeat downloads, and keep photos
+  protected until you confirm **Export received**.
+- Storage previews explain ordered photo deletion, protection and deadlines;
+  automatic cleanup preserves favorites, pending training and retained answers.
+- Low free space triggers earlier eligible photo cleanup. If space remains
+  insufficient, photo saving pauses while live view and inference continue,
+  then resumes when space is available.
+- Storage estimates lasting growth from recent captures and warns when estimated
+  capacity falls below three months.
+- Gallery, species pages, reports and Telegram share the same photo ranking.
+- Frame-processing and notification errors no longer stop subsequent detection
+  frames, and app updates refresh browser assets automatically.
+- Applying unrelated settings keeps the current video capture running.
+- Homepage photo selection avoids repeated database queries for sibling birds.
 
 
 ## 0.5.9 - 2026-10-13
