@@ -735,6 +735,10 @@ def fetch_sibling_detections(
     bbox_sql, bbox_join_sql = effective_bbox_projection_sql(conn)
     verdict_sql = human_bbox_verdict_sql(conn)
     query = f"""
+        WITH review_states AS MATERIALIZED (
+            SELECT detection_id, active AND NOT answered AND NOT admitted AS needs_review
+            FROM current_observations WHERE image_filename = ?
+        )
         SELECT
             d.detection_id,
             d.status AS object_status,
@@ -749,8 +753,7 @@ def fetch_sibling_detections(
             {verdict_sql} AS human_bbox_verdict,
             d.decision_state,
             d.decision_level,
-            (SELECT active AND NOT answered AND NOT admitted FROM current_observations o
-                WHERE o.detection_id = d.detection_id) AS needs_review,
+            o.needs_review,
             {fact_sql(conn, "species_identity", "species_key")} AS human_species_key,
             {human_species_source_sql(conn)} AS human_species_source,
             d.is_favorite,
@@ -761,6 +764,7 @@ def fetch_sibling_detections(
              COALESCE(d.thumbnail_path, REPLACE(i.filename, '.jpg', '_crop_1.webp'))) AS thumbnail_path_virtual
         FROM detections d
         JOIN images i ON d.image_filename = i.filename
+        LEFT JOIN review_states o ON o.detection_id = d.detection_id
         LEFT JOIN classifications c
           ON c.detection_id = d.detection_id
          AND c.rank = 1
@@ -769,7 +773,7 @@ def fetch_sibling_detections(
         WHERE d.image_filename = ? AND {visibility}
         ORDER BY d.score DESC
     """
-    cur = conn.execute(query, (image_filename,))
+    cur = conn.execute(query, (image_filename, image_filename))
     rows: list[sqlite3.Row | dict[str, object]] = list(cur.fetchall())
     rows.extend(
         _fetch_manual_companions(conn, [image_filename]).get(image_filename, [])
@@ -808,6 +812,10 @@ def fetch_sibling_detections_batch(
     bbox_sql, bbox_join_sql = effective_bbox_projection_sql(conn)
     verdict_sql = human_bbox_verdict_sql(conn)
     query = f"""
+        WITH review_states AS MATERIALIZED (
+            SELECT detection_id, active AND NOT answered AND NOT admitted AS needs_review
+            FROM current_observations WHERE image_filename IN ({placeholders})
+        )
         SELECT
             d.image_filename,
             d.detection_id,
@@ -823,8 +831,7 @@ def fetch_sibling_detections_batch(
             {verdict_sql} AS human_bbox_verdict,
             d.decision_state,
             d.decision_level,
-            (SELECT active AND NOT answered AND NOT admitted FROM current_observations o
-                WHERE o.detection_id = d.detection_id) AS needs_review,
+            o.needs_review,
             {fact_sql(conn, "species_identity", "species_key")} AS human_species_key,
             {human_species_source_sql(conn)} AS human_species_source,
             d.is_favorite,
@@ -835,6 +842,7 @@ def fetch_sibling_detections_batch(
              COALESCE(d.thumbnail_path, REPLACE(i.filename, '.jpg', '_crop_1.webp'))) AS thumbnail_path_virtual
         FROM detections d
         JOIN images i ON d.image_filename = i.filename
+        LEFT JOIN review_states o ON o.detection_id = d.detection_id
         LEFT JOIN classifications c
           ON c.detection_id = d.detection_id
          AND c.rank = 1
@@ -843,7 +851,7 @@ def fetch_sibling_detections_batch(
         WHERE d.image_filename IN ({placeholders}) AND {visibility}
         ORDER BY d.image_filename, d.score DESC
     """
-    cur = conn.execute(query, image_filenames)
+    cur = conn.execute(query, [*image_filenames, *image_filenames])
     grouped: dict[str, list[sqlite3.Row | dict[str, object]]] = {}
     for row in cur.fetchall():
         grouped.setdefault(row["image_filename"], []).append(row)

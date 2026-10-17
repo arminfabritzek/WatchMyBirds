@@ -381,3 +381,60 @@ def test_homepage_refreshes_canonical_answers_for_cached_modals_and_siblings(
 
         cached_modals = web_interface._best_species_cache["payload"]["modal_dets"]
         assert all("human_review_state" not in item for item in cached_modals)
+
+
+@pytest.mark.parametrize("card_count", [1, 25, 200])
+@pytest.mark.parametrize("empty_batch", [False, True])
+def test_species_board_batches_companions_independently_of_card_count(
+    local_db_app, card_count: int, empty_batch: bool
+) -> None:
+    from utils.db.detections import fetch_detections_for_gallery
+    from web import web_interface
+    from web.services import gallery_service
+
+    with db_connection.closing_connection() as conn:
+        for index in range(card_count):
+            _seed_detection(
+                conn,
+                filename=f"20200101_120000_{index}.jpg",
+                timestamp="20200101_120000",
+                species="Parus_major",
+                decision_state="confirmed",
+            )
+        rows = [dict(row) for row in fetch_detections_for_gallery(conn)]
+    web_interface.invalidate_best_species_cache()
+    with (
+        local_db_app.test_client() as client,
+        patch("web.view_helpers.fetch_best_species_pools", return_value=([], rows)),
+        patch.object(
+            gallery_service,
+            "get_sibling_detections_batch",
+            **(
+                {"return_value": {}}
+                if empty_batch
+                else {"wraps": gallery_service.get_sibling_detections_batch}
+            ),
+        ) as batch,
+        patch.object(
+            gallery_service,
+            "get_sibling_detections",
+            wraps=gallery_service.get_sibling_detections,
+        ) as single,
+    ):
+        with client.session_transaction() as session:
+            session["authenticated"] = True
+        response, captured = _capture_index_context(client)
+        assert response.status_code == 200
+        modals = captured["context"]["best_species_modal_dets"]
+        assert len(modals) == card_count
+        assert all(len(row["siblings"]) == (0 if empty_batch else 1) for row in modals)
+        assert batch.call_count == 1
+        assert len(batch.call_args.args[0]) == card_count
+        _capture_index_context(client)
+        assert batch.call_count == 1
+        web_interface._best_species_cache["timestamp"] = 0
+        response, captured = _capture_index_context(client)
+        assert response.status_code == 200
+        assert captured["context"]["best_species_modal_dets"] == modals
+        assert batch.call_count == 2
+        assert single.call_count == 0

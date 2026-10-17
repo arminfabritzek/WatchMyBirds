@@ -506,6 +506,21 @@ def index_route():
                 frames_per_species=20,
             )
             species_pools = raw_pools
+            sibling_keys = sorted(
+                {
+                    raw["original_name"]
+                    for raw in raw_modal_rows
+                    if raw.get("original_name")
+                    and raw["original_name"] not in sibling_rows_cache
+                }
+            )
+            if sibling_keys:
+                batch_siblings = gallery_service.get_sibling_detections_batch(
+                    sibling_keys
+                )
+                sibling_rows_cache.update(
+                    (name, batch_siblings.get(name, [])) for name in sibling_keys
+                )
             best_species_modal_dets = [
                 _build_modal_detection(raw) for raw in raw_modal_rows
             ]
