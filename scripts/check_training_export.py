@@ -7,6 +7,7 @@ import argparse
 import hashlib
 import json
 import math
+import re
 import stat
 import sys
 import warnings
@@ -19,8 +20,8 @@ from typing import Any
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 from PIL import Image
 
-SCHEMA = "watchmybirds.canonical-label-bundle.v2"
-RULE = "training-readiness-v2"
+SCHEMA = "watchmybirds.canonical-label-bundle.v3"
+RULE = "training-readiness-v3"
 VIEWS = ("od_positive", "od_negative", "cls_positive", "unresolved")
 JSONL_FILES = (
     "subjects.jsonl",
@@ -185,7 +186,7 @@ class ExportCheck:
         ):
             self.issue(
                 "unsupported_version",
-                "Only canonical bundle v2 / training-readiness-v2 is supported.",
+                "Only canonical bundle v2 / training-readiness-v3 is supported.",
             )
             return
         if self.coco.get("info") != {"schema_version": SCHEMA, "rule_version": RULE}:
@@ -352,6 +353,21 @@ class ExportCheck:
     def check_training_views(self) -> None:
         manifest = self.rows["manifest.jsonl"]
         objects = {}
+        sample_ids: dict[tuple[str, str], str] = {}
+        for row in manifest:
+            sample = str(row.get("sample_id", ""))
+            if not re.fullmatch(r"[0-9a-f]{32}:[0-9a-f]{24}", sample):
+                self.issue(
+                    "sample_id",
+                    "Sample ID must contain the labeling installation ID and local sample hash.",
+                )
+            identity = (
+                str(row.get("image_filename")),
+                str(row.get("object_key", "image")),
+            )
+            if identity in sample_ids and sample_ids[identity] != sample:
+                self.issue("sample_id", "Training views disagree about a sample ID.")
+            sample_ids[identity] = sample
         for row in self.rows["objects.jsonl"]:
             key = object_identity(row)
             if not all(key) or key in objects:
@@ -359,6 +375,8 @@ class ExportCheck:
                     "object_identity", "Missing or duplicate object identity.", key[0]
                 )
             objects[key] = row
+            if row.get("sample_id") != sample_ids.get(key):
+                self.issue("sample_id", "Object and manifest sample IDs disagree.")
         expected_od = Counter(
             object_identity(row)
             for row in manifest
@@ -530,6 +548,12 @@ class ExportCheck:
     def check_object(
         self, row: dict, obj: dict | None, box: list, filename: str, *, classifier: bool
     ) -> None:
+        if obj is not None and row.get("sample_id") != obj.get("sample_id"):
+            self.issue(
+                "sample_id",
+                "Training example and object sample IDs disagree.",
+                filename,
+            )
         if obj is None:
             self.issue(
                 "missing_object",

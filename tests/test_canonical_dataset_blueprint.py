@@ -72,7 +72,9 @@ def test_preview_and_download_share_bundle_and_do_not_write(canonical_client) ->
         before = conn.execute("SELECT COUNT(*) FROM human_label_facts").fetchone()[0]
 
     preview = client.get("/api/canonical-dataset/preview")
-    download = client.get("/api/canonical-dataset/download")
+    download = client.post(
+        "/api/canonical-dataset/download", headers={"X-CSRF-Token": "test-csrf-token"}
+    )
 
     assert preview.status_code == 200
     assert download.status_code == 200
@@ -101,7 +103,7 @@ def test_canonical_dataset_page_is_the_export_navigation_target(
 
     assert page.status_code == 200
     content = page.get_data(as_text=True)
-    assert "Canonical Dataset" in content
+    assert "Training export" in content
     main_start = content.index('<main class="page">')
     main_content = content[main_start : content.index("</main>", main_start)]
     assert 'href="/admin/review"' not in main_content
@@ -308,29 +310,30 @@ def test_canonical_dataset_page_has_no_action_when_no_box_verdict_is_needed(
 
 
 @pytest.mark.parametrize("consume", [True, False])
-def test_download_cleans_temporary_archive_on_close(
-    canonical_client, monkeypatch, consume
-):
-    from web.services import canonical_dataset_service as service
-
+def test_download_creates_no_files_under_output(canonical_client, consume):
     client, _ = canonical_client
-    created = []
-    render = service.render_canonical_bundle_to_tempdir
-
-    def record(*args, **kwargs):
-        result = render(*args, **kwargs)
-        created.append(result)
-        return result
-
-    monkeypatch.setattr(service, "render_canonical_bundle_to_tempdir", record)
-    response = client.get("/api/canonical-dataset/download", buffered=False)
+    root = Path(get_config()["OUTPUT_DIR"])
+    before = {p.relative_to(root) for p in root.rglob("*") if p.is_file()}
+    response = client.post(
+        "/api/canonical-dataset/download",
+        headers={"X-CSRF-Token": "test-csrf-token"},
+        buffered=False,
+    )
     assert response.status_code == 200
-    if consume:
-        assert response.data
+    for chunk in response.response:
+        assert chunk
+        assert {p.relative_to(root) for p in root.rglob("*") if p.is_file()} == before
+        if not consume:
+            break
     response.close()
-    assert created
-    assert created[0][0].parent == Path(get_config()["OUTPUT_DIR"]) / "backup"
-    assert not created[0][0].exists()
+    assert {p.relative_to(root) for p in root.rglob("*") if p.is_file()} == before
+    with db_connection.closing_connection() as conn:
+        assert (
+            conn.execute(
+                "SELECT COUNT(*) FROM labeling_exports WHERE received_at IS NULL"
+            ).fetchone()[0]
+            == 1
+        )
 
 
 def test_backup_form_streams_selected_options_and_requires_csrf(
@@ -368,3 +371,83 @@ def test_backup_form_streams_selected_options_and_requires_csrf(
             "include_settings": False,
         }
     ]
+
+
+def test_repeat_download_is_stable_after_answer_changes(canonical_client) -> None:
+    client, filename = canonical_client
+    original = client.post(
+        "/api/canonical-dataset/download", headers={"X-CSRF-Token": "test-csrf-token"}
+    )
+    with db_connection.closing_connection() as conn:
+        export_id = conn.execute("SELECT export_id FROM labeling_exports").fetchone()[0]
+        detection_id = conn.execute(
+            "SELECT detection_id FROM detections WHERE image_filename=?", (filename,)
+        ).fetchone()[0]
+    post(
+        client,
+        "/api/labels/answer",
+        {
+            "filename": filename,
+            "detection_id": detection_id,
+            "species_identity": "corrected",
+            "species_key": "Pica_pica",
+        },
+    )
+    repeated = client.get(f"/api/canonical-dataset/exports/{export_id}/download")
+    assert repeated.status_code == 200 and repeated.data == original.data
+    page = client.get("/admin/canonical-dataset").get_data(as_text=True)
+    assert "1 photo is waiting for training" in page
+    assert "Not yet confirmed" in page
+    assert (
+        client.post(f"/api/canonical-dataset/exports/{export_id}/received").status_code
+        == 403
+    )
+    response = client.post(
+        f"/api/canonical-dataset/exports/{export_id}/received",
+        data={"_csrf_token": "test-csrf-token"},
+    )
+    assert response.status_code == 303
+    page = client.get(response.location).get_data(as_text=True)
+    assert "Not yet confirmed" not in page
+    assert "1 photo is waiting for training" in page
+
+
+def test_export_actions_require_auth_csrf_and_valid_selection(canonical_client) -> None:
+    client, _ = canonical_client
+    assert client.get("/api/canonical-dataset/download").status_code == 405
+    assert client.post("/api/canonical-dataset/download").status_code == 403
+    for selection in ("detection:1", [False], ["detection:999999"], []):
+        response = post(
+            client, "/api/canonical-dataset/download", {"selection": selection}
+        )
+        assert response.status_code in {400, 409}
+    with db_connection.closing_connection() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM labeling_exports").fetchone()[0] == 0
+    with client.session_transaction() as session:
+        session.clear()
+    assert (
+        client.get("/api/canonical-dataset/exports/missing/download").status_code == 302
+    )
+
+
+def test_missing_original_blocks_repeat_download_without_confirming(
+    canonical_client,
+) -> None:
+    client, filename = canonical_client
+    client.post(
+        "/api/canonical-dataset/download", headers={"X-CSRF-Token": "test-csrf-token"}
+    )
+    with db_connection.closing_connection() as conn:
+        identifier = conn.execute("SELECT export_id FROM labeling_exports").fetchone()[
+            0
+        ]
+    PathManager(str(get_config()["OUTPUT_DIR"])).get_original_path(filename).unlink()
+    assert (
+        client.get(f"/api/canonical-dataset/exports/{identifier}/download").status_code
+        == 409
+    )
+    with db_connection.closing_connection() as conn:
+        assert (
+            conn.execute("SELECT received_at FROM labeling_exports").fetchone()[0]
+            is None
+        )

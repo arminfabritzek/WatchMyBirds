@@ -15,8 +15,9 @@ from unittest.mock import patch
 
 import pytest
 
+from core.deletion_plan import plan_deletions
 from core.human_label_core import HumanAnswer, LabelProvenance, record_human_answer
-from core.retention_core import build_plan, resolve_posture_settings
+from core.retention_core import settings_for_plan
 from core.storage_accounting import inspect_storage
 from core.storage_scan import HISTORY_LIMIT, StorageScan, growth_summary
 from tests.labeling_helpers import _reset_test_config
@@ -27,9 +28,9 @@ from utils.path_manager import PathManager
 
 NOW = datetime(2026, 10, 13, tzinfo=UTC)
 SETTINGS = dict(
-    RETENTION_POSTURE="conservative",
-    RETENTION_DAYS=90,
-    RETENTION_PROTECT_FAVORITES=True,
+    AUTOMATIC_DELETION_ENABLED=True,
+    AUTOMATIC_DELETION_ENABLED_AT="2026-01-01T00:00:00+00:00",
+    OLD_BIRD_PHOTOS="keep_previews",
 )
 
 
@@ -80,8 +81,14 @@ def test_measured_categories_protections_overlap_and_no_deletion(output: Path) -
             write_original=False,
             original_present=0,
         )
-        expected = build_plan(
-            conn, str(output), resolve_posture_settings(SETTINGS), NOW
+        expected = list(
+            plan_deletions(
+                conn,
+                settings_for_plan(SETTINGS),
+                NOW,
+                paths=PathManager(str(output)),
+                automatic_deletion_enabled_at=datetime(2026, 1, 1, tzinfo=UTC),
+            )
         )
     (output / "backup").mkdir()
     (output / "backup" / "snapshot.zip").write_bytes(b"b" * 40)
@@ -96,16 +103,22 @@ def test_measured_categories_protections_overlap_and_no_deletion(output: Path) -
     result = scan(output)
     assert result["database_error"] is None, result
     p = result["protections"]
-    assert p["eligible"]["bytes"] == expected.estimated_bytes == 100
-    assert p["protected"]["bytes"] == 1400
+    assert (
+        p["eligible"]["bytes"]
+        == sum(
+            f.size_bytes
+            for photo in expected
+            for f in photo.files
+            if f.category == "original" and f.decision.due(NOW)
+        )
+        == 1000
+    )
+    assert p["protected"]["bytes"] == 500
     assert p["reasons"]["favorite"]["bytes"] == 500
-    assert p["reasons"]["training_evidence"]["bytes"] == 500
-    assert p["reasons"]["too_recent"]["bytes"] == 300
-    assert p["reasons"]["unreviewed"]["bytes"] == 500
-    assert p["reasons"]["missing_derivative"]["bytes"] == 400
+    assert p["reasons"]["training_evidence"]["bytes"] == 0
+    assert p["reasons"]["too_recent"]["bytes"] == 0
     assert p["missing_originals"] == 1
     assert p["retired_originals"] == 1
-    assert any("favorite" in key and "too_recent" in key for key in p["overlap_groups"])
     categories = result["inventory"]["categories"]
     assert categories["originals"]["bytes"] == 1500
     assert (
@@ -268,7 +281,7 @@ def test_disabled_retention_distinguishes_current_from_potential(output: Path) -
         seed_image(conn, "20260101_120000_off.jpg", output)
     result = inspect_storage(
         PathManager(str(output)),
-        {**SETTINGS, "RETENTION_POSTURE": "off"},
+        {**SETTINGS, "AUTOMATIC_DELETION_ENABLED": False},
         now=NOW,
         temp_root=output / "empty",
     )
@@ -349,7 +362,11 @@ def test_scoped_canonical_batches_match_full_export(output: Path) -> None:
                 )
         conn.execute("UPDATE detections SET frame_width=640,frame_height=480")
         conn.commit()
-        full = build_canonical_dataset(conn, media_exists=lambda _name: True)
+        full = build_canonical_dataset(
+            conn,
+            labeling_installation_id="0123456789abcdef0123456789abcdef",
+            media_exists=lambda _name: True,
+        )
         ready = {
             row["image_filename"]
             for row in full.manifest
@@ -366,7 +383,7 @@ def test_scoped_canonical_batches_match_full_export(output: Path) -> None:
     reasons = result["protections"]["reasons"]
     assert reasons["training_ready"]["files"] == len(ready) == 2
     assert reasons["training_unresolved"]["files"] == len(unresolved) == 4
-    assert reasons["canonical_facts"]["files"] == 4
+    assert reasons["waiting_for_training"]["files"] == 4
     assert result["database"]["records"]["images"] == 203
 
 

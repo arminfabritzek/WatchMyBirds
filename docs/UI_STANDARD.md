@@ -114,7 +114,8 @@ Ordinary Review uses the original `review_grid.html` event cards, day navigation
 selection controls and canonical detection modal. Its membership is the shared
 current observation projection: every active unanswered excluded proposal.
 The existing event/day view has Open and Done tabs. Both read
-`current_observations`; Done includes No bird, Wrong species and manual birds,
+`current_observations`; Done includes every object with a current answer, including
+presence-only and box-only answers, No bird, Wrong species and manual birds,
 plus current image statements grouped by capture day. Missing photos use a
 placeholder without removing the answer. No bird takes precedence over an older
 species answer in the card caption. Tabs, day navigation and pagination preserve
@@ -126,7 +127,9 @@ checks the whole selection under one write transaction; completed, admitted,
 or missing objects reject the entire operation. Manually added birds are edited
 in the shared viewer. No-bird answers concern the selected object, never
 unselected siblings or the whole image. Answered
-objects leave the queue; an event disappears once it has no open objects.
+objects with resolved species or absence leave the queue; an event disappears
+once it has no open objects. Presence-only and box-only answers also appear in
+Done while unresolved objects remain in Open.
 The editor rail keeps the available modal width even when the image is narrow
 or missing, so answer controls and notices remain readable.
 Station Report uses the same cards and viewer, current identifications and
@@ -166,6 +169,22 @@ The migration withdraws contradictory image and object answers before Review ope
 ordinary answer writes reject bird-presence contradictions. A valid whole-image
 absence still has a withdrawal notice in the shared viewer, including Answered.
 It is an existing image answer, not an unresolved conflict.
+
+## Training export
+
+The Training export page shows waiting photo counts and recorded exports.
+`Export waiting photos` records the waiting revisions and starts a streamed ZIP
+download. The page immediately shows the new unconfirmed export. `Download again`
+uses its recorded context, even after answers change. `Export received` confirms
+only that export and displays its receipt time. Waiting answers and unconfirmed
+exports protect photos; missing originals do not wait. Box-quality answers and
+the optional box walkthrough stay available independently of export receipts.
+
+Use the shared `btn` variants. Waiting counts and every unconfirmed export use a
+prominent `alert alert-info` notice with `role="status"`; the notice explains that
+photos remain protected until receipt is confirmed. Export actions wrap at narrow
+widths. Creating and acknowledging exports require authenticated CSRF-protected
+POSTs; downloads never acknowledge receipt.
 
 ## Homepage species cards
 
@@ -1263,7 +1282,24 @@ and species answers continue through their normal controls.
     reasons and their union separately. Show scan time, progress, partial errors,
     unavailable scopes and bounded growth history. Offer no cleanup action or
     automatic release of training protection on this page.
-12. Storage Retention lives as a Settings panel (`#panelRetention`), reusing the standard `settings-panel` / `settings-field` shells — it introduces no new image-bearing surface. When the retention policy has deleted an original, the original-serving routes (`/uploads/originals/...`, `/api/image/download/...`) return `410 Gone` with a human-readable message; gallery/stats/modals keep working off derivatives. (V1.1 will additionally hide the modal Download control when `original_present = 0`.)
+    The deletion preview and executor use the same `core/deletion_plan.py` rules.
+    Show its six classes, training and receipt waits, unconfirmed exports, and
+    next file deadlines. A prominent `alert alert-info` with `role="status"`
+    shows whether automatic deletion was enabled at measurement time and the
+    number of photos, files and bytes due within the following 14 days,
+    including overdue files. Explain the fresh 14-day grace period for open
+    cases and model non-birds; while off, assume activation today. Mark saved
+    measurements clearly and request a new measurement after settings change.
+    Missing deadline starts and incomplete scans use the same status pattern.
+12. Storage Retention lives in Settings (`#panelRetention`) using the standard
+    `settings-panel` / `settings-field` shells. It has one Automatic deletion
+    switch and the Old bird photos choices Keep previews / Delete everything.
+    Opening the panel calculates the next 14 days with the same status notice
+    as storage, explicitly including the existing Review backlog. The switch
+    also gates Clean up now. Show the last run's removed file and row counts,
+    bytes, missing files and errors. Original-serving routes return `410 Gone`
+    for a retained image whose original was retired; history and answers remain
+    available through surviving previews or placeholders.
 
 ## 7. Guided Recovery (non-image settings workflow)
 

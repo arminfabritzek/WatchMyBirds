@@ -5,7 +5,7 @@ WatchMyBirds is an AI-powered bird detection system that provides real-time vide
 
 ## 2. Core Architectural Invariants
 *   **Originals are Immutable:** After initial capture/import finalization (including initial EXIF), stored originals must not be overwritten or edited for review corrections. Initial ingestion may encode the incoming image; this is not a promise of byte identity with an uploaded source. Retention and explicit hard deletion are separate removal workflows.
-*   **Derivatives and Retention:** Optimized images and thumbnails can be regenerated only while their source remains available. `core/retention_core.py` can retire originals while preserving derivatives and metadata. Do not treat those surviving derivatives as disposable caches.
+*   **Derivatives and Retention:** Optimized images and thumbnails can be regenerated only while their source remains available. `core/deletion_plan.py` decides which files and rows expire. Bird previews survive with Keep previews; Delete everything expires them later. Answers and admitted bird rows survive file expiry. Do not treat retained derivatives as disposable caches.
 *   **Database as Metadata Authority:** The SQLite database is the sole authority for metadata. It contains *NO* absolute filesystem paths, only filenames and relative references resolved dynamically.
 *   **PathManager as the storage-path API:** New storage-path construction SHOULD go through `utils.path_manager.PathManager`. This is specified as a SOFT invariant (`S-05` in `INVARIANTS.md`), not as a fact about the current codebase — some legacy call sites still build paths manually. New code must not add to that pile; refactors that remove a manual path are welcome.
 *   **`utils.image_ops` as the image-op API:** Shared image transformations (crop, pad) live in `utils.image_ops`. Same status as PathManager: required for new code, partial in legacy (`O-04` in `INVARIANTS.md` retired the "already-enforced" claim).
@@ -169,15 +169,38 @@ facts and active manual objects. Stable `detection:<id>` and `manual:<id>` keys
 identify birds once per training view. Species crops are independent of unresolved
 neighbors; COCO contains only frames whose objects are all resolved, including
 manually drawn boxes. Historical facts and manual revisions remain audit evidence.
-Manual records never acquire synthetic model predictions. Bundle/rule version 2
-adds manual identities and history; unknown manual species can supply a box but
-cannot supply a species label. Missing originals exclude training use.
+Manual records never acquire synthetic model predictions. Bundle/rule version 3
+uses sample IDs `<labeling_installation_id>:<24-hex local sample hash>` for both
+object and image samples. Object absence suppresses an older species answer in
+the training object; raw historical facts remain audit evidence. Unknown manual
+species can supply a box but cannot supply a species label. Missing originals
+exclude training use.
 
-The former User-Groundtruth pages, API and archive builder are removed. Existing
-legacy export bookkeeping tables are left untouched, but no longer created or
-used. `core/training_retention.py` conservatively protects human evidence and
-previously protected legacy signals from automatic original deletion; removing
-an old export must not make those originals newly deletable.
+`core/training_export.py` records each export's immutable bundle metadata, creation
+time and exact answer revisions in `labeling_exports` / `labeling_export_members`.
+The incompatible legacy `training_exports` table stays untouched and unused;
+its rows never count as current exports or receipts. Backups preserve it as data,
+while merge imports export evidence only from the new tables.
+The builder can select detection, manual-object or image-statement keys; selected
+photos include all their objects and statements. Current asserted revisions with
+an original wait until included in an export. Changed answers wait again.
+`core/training_retention.py` protects waiting photos and photos in any unconfirmed
+export, including unchanged context siblings. Historical facts and legacy flags
+alone grant no training protection. Favorites remain a separate retention rule.
+An idempotent receipt stores `received_at` for that export only; it is the reference
+time for deletion deadlines. `core/retention_core.py` executes only due planner
+actions, rechecking each photo under `BEGIN IMMEDIATE` before files and then rows.
+Setting changes serialize with that transaction. Export records have no foreign
+keys to images, detections or label subjects and survive their deletion. The
+unused legacy `training_exports` table is never explicitly written or altered;
+its existing detection cascade can remove rows when a detection is fully deleted.
+
+ZIP responses stream media in 64 KiB chunks without a temporary archive. Saved
+metadata rebuilds the same bytes after later edits; originals remain immutable.
+Metadata memory scales with the selected photo context, not media byte volume.
+Missing originals make a repeat download fail explicitly. SQLite backup includes
+both tables; USB merge maps membership IDs and media locations while preserving
+the original snapshot and sample IDs.
 
 ## Storage diagnostics
 
@@ -194,5 +217,4 @@ the unchanged canonical exporter to batches of 200 complete images; they never
 modify source tables. Protection attribution reuses the existing training predicate
 and retention decision, with overlapping reasons and a distinct protected union.
 Readiness does not release training protection. The filesystem scan is not atomic;
-concurrent files/DB changes make reclaim estimates provisional. Temporary export
-activity/expiry remains unknown until export jobs have a durable lifecycle registry.
+concurrent files/DB changes make reclaim estimates provisional. Training export receipts are recorded separately from temporary-file diagnostics.

@@ -263,18 +263,34 @@ are outside this release.
 |----------|---------|-------------|
 | `CPU_LIMIT` | `0` | CPU affinity cap (`0` disables affinity; `1+` pins to first N available CPUs) |
 
-### Storage Retention
+### Photo deletion
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `RETENTION_POSTURE` | `off` | `off`, `conservative`, or `reclaim`; controls which old originals are eligible. |
-| `RETENTION_AUTO_ENABLED` | `False` | Explicit opt-in for one automatic run per UTC day, independent of whether detection pauses at night. |
-| `RETENTION_DAYS` | `90` | Originals at or below this age are retained. |
-| `RETENTION_PROTECT_FAVORITES` | `True` | Keep favourites even when their originals are otherwise eligible. |
+| `AUTOMATIC_DELETION_ENABLED` | On for new databases; off for existing databases | One runtime switch for all photo deadlines, including expired trash and manual cleanup requests. |
+| `OLD_BIRD_PHOTOS` | `keep_previews` | Keep bird previews and thumbnails, or `delete_all` to expire them too. |
 
-Retention removes full-resolution originals only. Derivatives, database rows,
-statistics, favourites, and export-relevant images continue to use storage, so
-this feature does not impose a fixed upper bound on total storage growth.
+The database's existence is checked before schema initialization. Startup saves
+these defaults once; old retention keys in YAML are ignored. On every off-to-on
+transition, the app writes `AUTOMATIC_DELETION_ENABLED_AT` alongside the switch.
+This timestamp is internal, not an editable runtime key. Saving an already-on
+switch preserves its date. Open cases and model non-birds expire no earlier than
+14 days after the latest activation, even when their capture is much older.
+
+`core/deletion_plan.py` supplies both the preview and the deletion job. Its ordered
+rules cover trash, favorites, pending training, answers, admitted birds and other
+photos. Trash expires 30 days after moving it; favorites and pending training
+stay. Answer rows and admitted bird rows stay after their files expire. The
+provisional constants in `DeletionSettings` are 90 days for bird originals,
+365 days for bird previews with `delete_all`, 14 days for other photos, and a
+1 GiB reserve. Reserve-triggered early deletion is not implemented.
+
+The daily job uses bounded photo batches and rechecks a photo under a write
+transaction before removing files, then rows. It requires the completed human
+answer migration. Missing retained previews are regenerated before an original
+is removed. Settings and Storage usage show upcoming counts and bytes for the
+next 14 days and the last cleanup result. Storage measurements are dated
+snapshots and should be refreshed after settings or data change.
 
 ---
 

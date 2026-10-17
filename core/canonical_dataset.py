@@ -14,8 +14,8 @@ from PIL import Image
 
 from core.human_label_core import object_training_readiness
 
-MANIFEST_SCHEMA_VERSION = "watchmybirds.canonical-label-bundle.v2"
-RULE_VERSION = "training-readiness-v2"
+MANIFEST_SCHEMA_VERSION = "watchmybirds.canonical-label-bundle.v3"
+RULE_VERSION = "training-readiness-v3"
 
 
 @dataclass(frozen=True)
@@ -142,6 +142,8 @@ def read_media_size(path: Path) -> tuple[int, int] | None:
 def build_canonical_dataset(
     conn: sqlite3.Connection,
     *,
+    labeling_installation_id: str,
+    filenames: set[str] | None = None,
     media_exists: Callable[[str], bool],
     media_size: Callable[[str], tuple[int, int] | None] | None = None,
 ) -> CanonicalDataset:
@@ -181,6 +183,12 @@ def build_canonical_dataset(
         conn,
         "SELECT * FROM current_human_label_facts ORDER BY subject_id, fact_type",
     )
+    if filenames is not None:
+        subjects = [row for row in subjects if row["image_filename"] in filenames]
+        facts = [row for row in facts if row["image_filename"] in filenames]
+        current_facts = [
+            row for row in current_facts if row["image_filename"] in filenames
+        ]
     current_by_subject = _current_by_subject(current_facts)
     subject_by_detection = {
         int(subject["detection_id"]): subject
@@ -198,6 +206,14 @@ def build_canonical_dataset(
     manual_revisions = _rows(
         conn, "SELECT * FROM manual_object_revisions ORDER BY manual_revision_id"
     )
+    if filenames is not None:
+        manual_objects = [
+            row for row in manual_objects if row["image_filename"] in filenames
+        ]
+        manual_ids = {row["manual_object_id"] for row in manual_objects}
+        manual_revisions = [
+            row for row in manual_revisions if row["manual_object_id"] in manual_ids
+        ]
     candidate_filenames = sorted(
         {str(subject["image_filename"]) for subject in subjects}
         | {
@@ -209,12 +225,14 @@ def build_canonical_dataset(
     detections = _rows(
         conn,
         """
-        SELECT detection_id, image_filename, frame_width, frame_height, status FROM detections WHERE image_filename IN (
+        SELECT detection_id, image_filename, frame_width, frame_height, status, bbox_x, bbox_y, bbox_w, bbox_h, raw_species_name, decision_state, decision_level FROM detections WHERE image_filename IN (
             SELECT image_filename FROM label_subjects
             UNION SELECT image_filename FROM manual_objects WHERE status = 'active'
         ) ORDER BY image_filename, detection_id
     """,
     )
+    candidate_names = set(candidate_filenames)
+    detections = [row for row in detections if row["image_filename"] in candidate_names]
     image_facts = {
         name: current_by_subject.get(int(subject["subject_id"]), [])
         for name, subject in image_subjects.items()
@@ -249,8 +267,15 @@ def build_canonical_dataset(
                 "detection_id": detection_id,
                 "manual_object_id": None,
                 "image_filename": filename,
-                "bbox": _effective_bbox(subject, current),
-                "species_key": species,
+                "bbox": _effective_bbox(subject, current)
+                if subject
+                else tuple(detection[f"bbox_{axis}"] for axis in ("x", "y", "w", "h")),
+                "proposal_species_key": detection["raw_species_name"],
+                "decision_state": detection["decision_state"],
+                "decision_level": detection["decision_level"],
+                "species_key": None
+                if _fact_value(current, "bird_presence") == "absent"
+                else species,
                 "presence": _fact_value(current, "bird_presence"),
                 "active": detection.get("status", "active") == "active",
                 "resolved_od": _object_resolved_for_od(current),
@@ -446,6 +471,18 @@ def build_canonical_dataset(
                     **identity,
                 }
             )
+
+    def station_sample_id(local_id: str) -> str:
+        return f"{labeling_installation_id}:{local_id}"
+
+    for rows in (manifest, annotations, classifier_ready):
+        for row in rows:
+            row["sample_id"] = station_sample_id(str(row["sample_id"]))
+    sample_ids = {
+        row["object_key"]: row["sample_id"] for row in manifest if "object_key" in row
+    }
+    for obj in objects:
+        obj["sample_id"] = sample_ids[obj["object_key"]]
     manifest.sort(
         key=lambda row: (
             str(row["image_filename"]),

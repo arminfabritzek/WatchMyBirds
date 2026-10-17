@@ -1,9 +1,8 @@
-"""Nightly-job adapter for full-resolution original retention."""
+"""Nightly adapter for the shared photo deletion plan."""
 
 from __future__ import annotations
 
 import threading
-from typing import Any
 
 from config import get_config
 from core import retention_core
@@ -23,16 +22,8 @@ class RetentionJob(JobBase):
     def requires_night_pause(self) -> bool:
         return False
 
-    def load_last_status(self) -> dict[str, Any]:
-        return retention_core.load_last_run_status()
-
     def should_run_in_daily_loop(self) -> bool:
-        """Automatic deletion requires its own explicit opt-in."""
-        cfg = get_config()
-        if not bool(cfg.get("RETENTION_AUTO_ENABLED", False)):
-            return False
-        settings = retention_core.resolve_posture_settings(cfg)
-        return bool(settings.get("RETENTION_ENABLED", False))
+        return bool(get_config().get("AUTOMATIC_DELETION_ENABLED", False))
 
     def run(self, stop_event: threading.Event, reason: str) -> int:
         result = retention_core.run(

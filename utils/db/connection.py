@@ -492,6 +492,7 @@ def _init_schema(
         "CREATE TABLE IF NOT EXISTS _migration_state (key TEXT PRIMARY KEY, applied_at TEXT NOT NULL)"
     )
     _init_human_label_schema(conn)
+    _init_training_export_schema(conn)
     _init_station_event_review_schema(conn)
     _init_station_runtime_schema(conn)
 
@@ -501,25 +502,77 @@ def _init_schema(
 
     conn.commit()
     try:
-        if existing_installation and not human_answers_migrated(conn):
-            from utils.settings import load_settings_yaml, save_settings_yaml
-
-            cfg = get_config()
-            disabled = {
-                "RETENTION_POSTURE": "off",
-                "RETENTION_ENABLED": False,
-                "RETENTION_AUTO_ENABLED": False,
-            }
-            settings = load_settings_yaml(str(cfg["OUTPUT_DIR"]))
-            save_settings_yaml({**settings, **disabled}, str(cfg["OUTPUT_DIR"]))
-            cfg.update(disabled)
         migrate_human_answers(conn, existing_installation=existing_installation)
+        _initialize_automatic_deletion(
+            conn, existing_installation=existing_installation
+        )
     except Exception:
         import logging
 
         logging.getLogger(__name__).exception(
             "Human-answer migration failed; deletion remains disabled"
         )
+
+
+def _initialize_automatic_deletion(
+    conn: sqlite3.Connection, *, existing_installation: bool
+) -> None:
+    from datetime import UTC, datetime
+
+    from utils.settings import load_settings_yaml, save_settings_yaml
+
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        marker = "automatic_deletion_defaults_v1"
+        if conn.execute(
+            "SELECT 1 FROM _migration_state WHERE key=?", (marker,)
+        ).fetchone():
+            conn.rollback()
+            return
+        cfg = get_config()
+        stamp = datetime.now(UTC).isoformat()
+        settings = load_settings_yaml(str(cfg["OUTPUT_DIR"]))
+        defaults = {
+            "AUTOMATIC_DELETION_ENABLED": not existing_installation,
+            "AUTOMATIC_DELETION_ENABLED_AT": None if existing_installation else stamp,
+            "OLD_BIRD_PHOTOS": "keep_previews",
+        }
+        save_settings_yaml({**settings, **defaults}, str(cfg["OUTPUT_DIR"]))
+        cfg.update(defaults)
+        conn.execute("INSERT INTO _migration_state VALUES (?,?)", (marker, stamp))
+        if existing_installation:
+            conn.execute(
+                "INSERT OR IGNORE INTO _migration_state VALUES ('human_answers_retention_notice',?)",
+                (stamp,),
+            )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+
+
+def _init_training_export_schema(conn: sqlite3.Connection) -> None:
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS labeling_exports (
+            export_id TEXT PRIMARY KEY,
+            created_at TEXT NOT NULL,
+            received_at TEXT,
+            bundle_json TEXT NOT NULL,
+            media_map_json TEXT NOT NULL DEFAULT '{}'
+        );
+        CREATE TABLE IF NOT EXISTS labeling_export_members (
+            export_id TEXT NOT NULL REFERENCES labeling_exports(export_id),
+            image_filename TEXT NOT NULL,
+            kind TEXT NOT NULL CHECK(kind IN ('subject', 'manual')),
+            object_id INTEGER NOT NULL,
+            revision_json TEXT NOT NULL,
+            PRIMARY KEY(export_id, kind, object_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_labeling_export_member_revision
+        ON labeling_export_members(kind, object_id, revision_json);
+        CREATE INDEX IF NOT EXISTS idx_labeling_export_member_image
+        ON labeling_export_members(image_filename);
+    """)
 
 
 def _init_human_label_schema(conn: sqlite3.Connection) -> None:

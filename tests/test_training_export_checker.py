@@ -128,6 +128,19 @@ def test_real_export_passes_and_source_is_unchanged(
         ),
         ("bundle.json", lambda doc: {**doc, "counts": {}}, "count_mismatch"),
         ("views/cls_positive.jsonl", lambda rows: [], "view_mismatch"),
+        (
+            "manifest.jsonl",
+            lambda rows: [
+                {**row, "sample_id": str(row["sample_id"]).split(":")[-1]}
+                for row in rows
+            ],
+            "sample_id",
+        ),
+        (
+            "views/classifier_ready.jsonl",
+            lambda rows: [{**rows[0], "sample_id": "f" * 32 + ":" + "0" * 24}],
+            "sample_id",
+        ),
         ("views/classifier_ready.jsonl", lambda rows: rows + rows, "cls_membership"),
         ("views/coco.json", lambda doc: {**doc, "images": "broken"}, "invalid_coco"),
     ],

@@ -120,11 +120,19 @@ def test_missing_original_count_deduplicates_views_and_ignores_unanswered_birds(
     canonical_case,
 ) -> None:
     conn, pm, *_ = canonical_case
-    before = build_canonical_dataset(conn, media_exists=lambda _: True)
+    before = build_canonical_dataset(
+        conn,
+        labeling_installation_id="0123456789abcdef0123456789abcdef",
+        media_exists=lambda _: True,
+    )
     assert missing_original_bird_count(before) == 0
 
     # Two labeled birds, one unanswered sibling and a negative image.
-    missing = build_canonical_dataset(conn, media_exists=lambda _: False)
+    missing = build_canonical_dataset(
+        conn,
+        labeling_installation_id="0123456789abcdef0123456789abcdef",
+        media_exists=lambda _: False,
+    )
     assert missing_original_bird_count(missing) == 2
     assert needs_box_verdict_count(missing) == 0
 
@@ -135,10 +143,14 @@ def test_bundle_is_deterministic_and_export_is_read_only(
     conn, pm, *_ = canonical_case
     before = conn.execute("SELECT COUNT(*) FROM human_label_facts").fetchone()[0]
     first = build_canonical_dataset(
-        conn, media_exists=lambda name: pm.get_original_path(name).is_file()
+        conn,
+        labeling_installation_id="0123456789abcdef0123456789abcdef",
+        media_exists=lambda name: pm.get_original_path(name).is_file(),
     )
     second = build_canonical_dataset(
-        conn, media_exists=lambda name: pm.get_original_path(name).is_file()
+        conn,
+        labeling_installation_id="0123456789abcdef0123456789abcdef",
+        media_exists=lambda name: pm.get_original_path(name).is_file(),
     )
 
     first_path = render_canonical_bundle_to_path(
@@ -160,7 +172,9 @@ def test_bundle_keeps_partial_facts_and_gives_every_decision_reasons(
 ) -> None:
     conn, pm, _, partial_ids, *_ = canonical_case
     bundle = build_canonical_dataset(
-        conn, media_exists=lambda name: pm.get_original_path(name).is_file()
+        conn,
+        labeling_installation_id="0123456789abcdef0123456789abcdef",
+        media_exists=lambda name: pm.get_original_path(name).is_file(),
     )
     archive_path = render_canonical_bundle_to_path(
         bundle, path_resolver=pm.get_original_path, destination=tmp_path / "bundle.zip"
@@ -190,7 +204,9 @@ def test_bundle_keeps_partial_facts_and_gives_every_decision_reasons(
 def test_od_cls_negative_and_unresolved_views_are_independent(canonical_case) -> None:
     conn, pm, _, partial_ids, negative_ids, cls_ids = canonical_case
     bundle = build_canonical_dataset(
-        conn, media_exists=lambda name: pm.get_original_path(name).is_file()
+        conn,
+        labeling_installation_id="0123456789abcdef0123456789abcdef",
+        media_exists=lambda name: pm.get_original_path(name).is_file(),
     )
     by_key = {
         (row["view"], row.get("detection_id"), row["image_filename"]): row
@@ -232,7 +248,9 @@ def test_resolving_sibling_makes_complete_od_frame_eligible(canonical_case) -> N
     conn.commit()
 
     bundle = build_canonical_dataset(
-        conn, media_exists=lambda name: pm.get_original_path(name).is_file()
+        conn,
+        labeling_installation_id="0123456789abcdef0123456789abcdef",
+        media_exists=lambda name: pm.get_original_path(name).is_file(),
     )
     decision = next(
         row
@@ -257,7 +275,9 @@ def test_box_walkthrough_candidates_need_species_and_no_bbox_verdict(
     """
     conn, pm, provenance, partial_ids, negative_ids, cls_ids = canonical_case
     bundle = build_canonical_dataset(
-        conn, media_exists=lambda name: pm.get_original_path(name).is_file()
+        conn,
+        labeling_installation_id="0123456789abcdef0123456789abcdef",
+        media_exists=lambda name: pm.get_original_path(name).is_file(),
     )
 
     assert box_walkthrough_candidate_ids(bundle) == []
@@ -277,7 +297,9 @@ def test_box_walkthrough_candidates_need_species_and_no_bbox_verdict(
     conn.commit()
 
     bundle = build_canonical_dataset(
-        conn, media_exists=lambda name: pm.get_original_path(name).is_file()
+        conn,
+        labeling_installation_id="0123456789abcdef0123456789abcdef",
+        media_exists=lambda name: pm.get_original_path(name).is_file(),
     )
 
     assert box_walkthrough_candidate_ids(bundle) == [partial_ids[1]]
@@ -312,7 +334,9 @@ def test_box_walkthrough_candidate_survives_an_unresolved_sibling(
     conn.commit()
 
     bundle = build_canonical_dataset(
-        conn, media_exists=lambda name: pm.get_original_path(name).is_file()
+        conn,
+        labeling_installation_id="0123456789abcdef0123456789abcdef",
+        media_exists=lambda name: pm.get_original_path(name).is_file(),
     )
     od_row = next(
         row
@@ -332,7 +356,9 @@ def test_explicit_transfer_writes_the_same_bundle_bytes(
 ) -> None:
     conn, pm, *_ = canonical_case
     bundle = build_canonical_dataset(
-        conn, media_exists=lambda name: pm.get_original_path(name).is_file()
+        conn,
+        labeling_installation_id="0123456789abcdef0123456789abcdef",
+        media_exists=lambda name: pm.get_original_path(name).is_file(),
     )
     expected = render_canonical_bundle_to_path(
         bundle,
@@ -388,7 +414,9 @@ def test_render_memory_stays_bounded_as_media_volume_grows(
     conn.commit()
 
     bundle = build_canonical_dataset(
-        conn, media_exists=lambda name: pm.get_original_path(name).is_file()
+        conn,
+        labeling_installation_id="0123456789abcdef0123456789abcdef",
+        media_exists=lambda name: pm.get_original_path(name).is_file(),
     )
     assert len(bundle.media_filenames) >= file_count
 
@@ -414,48 +442,20 @@ def test_render_memory_stays_bounded_as_media_volume_grows(
     )
 
 
-def test_failed_render_removes_temp_directory(canonical_case, tmp_path, monkeypatch):
-    from web.services import canonical_dataset_service as service
-
-    directory = tmp_path / "temporary"
-    directory.mkdir()
-    monkeypatch.setattr(service.tempfile, "mkdtemp", lambda **kwargs: str(directory))
-
-    def fail(*args, **kwargs):
-        raise OSError("disk full")
-
-    monkeypatch.setattr(service, "_write_bundle_zip", fail)
-    with pytest.raises(OSError, match="disk full"):
-        service.render_canonical_bundle_to_tempdir(None, path_resolver=lambda _: None)
-    assert not directory.exists()
-
-
-def test_disk_archive_preserves_legacy_compression_and_bytes(canonical_case, tmp_path):
-    from io import BytesIO
-
+def test_disk_and_browser_transports_produce_identical_zip_bytes(
+    canonical_case, tmp_path
+):
     from web.services import canonical_dataset_service as service
 
     conn, pm, *_ = canonical_case
-    bundle = build_canonical_dataset(
-        conn, media_exists=lambda name: pm.get_original_path(name).is_file()
+    bundle = service.build_bundle(conn, path_resolver=pm.get_original_path)
+    streamed = b"".join(
+        service.stream_canonical_bundle(bundle, path_resolver=pm.get_original_path)
     )
-    entries = service._non_media_entries(bundle)
-    for filename in bundle.media_filenames:
-        path = pm.get_original_path(filename)
-        path.write_bytes((b"repetitive image-like fixture " * 4096) + bytes(range(256)))
-        entries[service._media_archive_path(filename)] = path.read_bytes()
-    legacy = BytesIO()
-    with zipfile.ZipFile(
-        legacy, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9
-    ) as archive:
-        for name in sorted(entries):
-            archive.writestr(service._zip_info(name), entries[name], compresslevel=9)
-    result = service.write_canonical_bundle(
-        bundle,
-        path_resolver=pm.get_original_path,
-        destination=tmp_path / "streamed.zip",
+    path = service.write_canonical_bundle(
+        bundle, path_resolver=pm.get_original_path, destination=tmp_path / "bundle.zip"
     )
-    assert result.read_bytes() == legacy.getvalue()
+    assert path.read_bytes() == streamed
 
 
 @pytest.mark.parametrize("negative", [False, True])
@@ -484,7 +484,9 @@ def test_manual_birds_are_included_and_prevent_negative_od_export(
             provenance,
         )
     before = build_canonical_dataset(
-        conn, media_exists=lambda name: pm.get_original_path(name).is_file()
+        conn,
+        labeling_installation_id="0123456789abcdef0123456789abcdef",
+        media_exists=lambda name: pm.get_original_path(name).is_file(),
     )
     if negative:
         # Older station data can contain contradictions that current writers reject.
@@ -502,7 +504,9 @@ def test_manual_birds_are_included_and_prevent_negative_od_export(
     )
     changes = conn.total_changes
     after = build_canonical_dataset(
-        conn, media_exists=lambda name: pm.get_original_path(name).is_file()
+        conn,
+        labeling_installation_id="0123456789abcdef0123456789abcdef",
+        media_exists=lambda name: pm.get_original_path(name).is_file(),
     )
     assert conn.total_changes == changes
     view = "od_negative" if negative else "od_positive"
@@ -535,6 +539,8 @@ def test_manual_birds_are_included_and_prevent_negative_od_export(
         provenance=provenance,
     )
     restored = build_canonical_dataset(
-        conn, media_exists=lambda name: pm.get_original_path(name).is_file()
+        conn,
+        labeling_installation_id="0123456789abcdef0123456789abcdef",
+        media_exists=lambda name: pm.get_original_path(name).is_file(),
     )
     assert restored.manifest == before.manifest

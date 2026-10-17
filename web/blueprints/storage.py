@@ -17,7 +17,11 @@ def init_storage(state: BlueprintSetupState) -> None:
 @storage_bp.get("/storage")
 @login_required
 def storage_page() -> str:
-    return render_template("storage.html", current_path="/settings")
+    return render_template(
+        "storage.html",
+        current_path="/settings",
+        deletion_state=storage_service.deletion_state(),
+    )
 
 
 @storage_bp.get("/api/v1/storage/status")

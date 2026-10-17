@@ -86,9 +86,18 @@ reports from the same installation; the data is pseudonymous, not fully anonymou
 
 ## Training-data exports
 
-The Export page offers a bundle of your reviewed birds — a ZIP built on this
-device, containing selected images and the labels you confirmed. It stays
-here. WatchMyBirds never sends it anywhere; only you can do that, by hand.
+The Export page streams a ZIP of answered photos to your browser without writing
+an archive on this device. Each selected photo includes every object and image
+statement on it, manual objects, answer history and model proposal context.
+Sample IDs contain the stable local `labeling_installation_id`, separate from
+the optional heartbeat ID. It identifies the labeling installation across exports.
+
+The device records the export's date, answer revisions and your explicit
+"Export received" confirmation date. Unconfirmed exports can be downloaded again
+with their original context. Changed answers wait again. WatchMyBirds does not
+upload this bundle or send species counts to a server; sharing requires your own
+manual transfer. A later optional upload would need its own explanation and
+per-station opt-in before implementation.
 
 Sharing it is entirely optional and nothing in the app depends on it. The
 page invites you to pass your corrections on, because that is how the models

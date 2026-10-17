@@ -230,16 +230,9 @@ DEFAULTS = {
     # original. Off restores the verbatim-original download. Runtime
     # (live-editable in Settings), not a boot ENV like EXIF_GPS_ENABLED.
     "EXPORT_BURN_IN_METADATA": True,
-    # Artifact retention (full-resolution originals only); ships OFF.
-    # RETENTION_POSTURE is the policy authority. RETENTION_ENABLED is derived
-    # from it at decision time and retained for backcompat; automatic execution
-    # has a separate default-OFF opt-in.
-    "RETENTION_POSTURE": "off",
-    "RETENTION_ENABLED": False,
-    "RETENTION_AUTO_ENABLED": False,
-    "RETENTION_DAYS": 90,
-    "RETENTION_PROTECT_FAVORITES": True,
-    "RETENTION_PROTECT_UNREVIEWED": True,
+    "AUTOMATIC_DELETION_ENABLED": False,
+    "AUTOMATIC_DELETION_ENABLED_AT": None,
+    "OLD_BIRD_PHOTOS": "keep_previews",
     "MOTION_DETECTION_ENABLED": False,
     "MOTION_SENSITIVITY": 500,
     "CAMERA_URL": "",
@@ -266,12 +259,8 @@ RUNTIME_KEYS = {
     "SPECIES_GEOGRAPHY_ENABLED",
     "CLASSIFIER_BACKEND",
     "EXPORT_BURN_IN_METADATA",
-    "RETENTION_POSTURE",
-    "RETENTION_ENABLED",
-    "RETENTION_AUTO_ENABLED",
-    "RETENTION_DAYS",
-    "RETENTION_PROTECT_FAVORITES",
-    "RETENTION_PROTECT_UNREVIEWED",
+    "AUTOMATIC_DELETION_ENABLED",
+    "OLD_BIRD_PHOTOS",
     "SAVE_THRESHOLD",
     "SAVE_THRESHOLD_MODE",
     "NON_BIRD_CONFIRM_THRESHOLD",
@@ -467,20 +456,9 @@ def _load_config() -> dict[str, Any]:
         if key in RUNTIME_KEYS:
             config[key] = value
 
-    # Legacy retention migration: before RETENTION_POSTURE existed, the
-    # persisted RETENTION_ENABLED boolean controlled manual cleanup. The
-    # default posture must not hide that explicit older choice. Automatic
-    # execution remains independently default-OFF unless its new key is
-    # explicitly present in YAML.
-    if (
-        "RETENTION_POSTURE" not in yaml_settings
-        and "RETENTION_ENABLED" in yaml_settings
-    ):
-        config["RETENTION_POSTURE"] = (
-            "conservative"
-            if _coerce_bool(yaml_settings["RETENTION_ENABLED"])
-            else "off"
-        )
+    config["AUTOMATIC_DELETION_ENABLED_AT"] = yaml_settings.get(
+        "AUTOMATIC_DELETION_ENABLED_AT"
+    )
 
     # Telemetry keys persist via a dedicated endpoint (/api/v1/settings/telemetry)
     # and deliberately bypass RUNTIME_KEYS so the generic Settings form can't
@@ -781,26 +759,13 @@ def _coerce_config_types(config: dict[str, Any]) -> None:
         "EXIF_GPS_ENABLED",
         "MOTION_DETECTION_ENABLED",
         "NON_BIRD_DROP_BELOW_CONFIRM",
-        "RETENTION_ENABLED",
-        "RETENTION_AUTO_ENABLED",
-        "RETENTION_PROTECT_FAVORITES",
-        "RETENTION_PROTECT_UNREVIEWED",
+        "AUTOMATIC_DELETION_ENABLED",
     ):
         if key in config:
             config[key] = _coerce_bool(config.get(key))
 
-    # RETENTION_DAYS: positive int, capped at 3650 (~10 years).
-    try:
-        ret_days = int(float(config.get("RETENTION_DAYS", 90)))
-    except (TypeError, ValueError):
-        ret_days = 90
-    config["RETENTION_DAYS"] = max(1, min(3650, ret_days))
-
-    # RETENTION_POSTURE: normalize; unknown -> off (non-destructive default).
-    posture = str(config.get("RETENTION_POSTURE", "off")).strip().lower()
-    config["RETENTION_POSTURE"] = (
-        posture if posture in ("off", "conservative", "reclaim") else "off"
-    )
+    if config.get("OLD_BIRD_PHOTOS") not in {"keep_previews", "delete_all"}:
+        config["OLD_BIRD_PHOTOS"] = "keep_previews"
 
     # LOCATION_DATA: parse "lat, lon" strings into dict
     location_val = config.get("LOCATION_DATA")
@@ -1157,6 +1122,14 @@ def update_runtime_settings(updates: dict[str, Any]) -> None:
     back to "live" ("Instant" in the UI). Writing every explicit choice
     means the user's intent survives restarts and image rebuilds.
     """
+    from utils.db.connection import closing_connection
+
+    with closing_connection() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        _persist_runtime_settings(updates)
+
+
+def _persist_runtime_settings(updates: dict[str, Any]) -> None:
     cfg = get_config()
     output_dir = str(cfg["OUTPUT_DIR"])
     yaml_settings = load_settings_yaml(output_dir)
@@ -1169,6 +1142,18 @@ def update_runtime_settings(updates: dict[str, Any]) -> None:
         next_cfg[key] = value
         if key == "LOCATION_DATA":
             next_cfg["LOCATION_DATA_CONFIGURED"] = True
+    if "AUTOMATIC_DELETION_ENABLED" in updates:
+        from datetime import UTC, datetime
+
+        enabled = _coerce_bool(updates["AUTOMATIC_DELETION_ENABLED"])
+        previously_enabled = yaml_settings.get("AUTOMATIC_DELETION_ENABLED") is True
+        if enabled and (
+            not previously_enabled
+            or not yaml_settings.get("AUTOMATIC_DELETION_ENABLED_AT")
+        ):
+            stamp = datetime.now(UTC).isoformat()
+            next_yaml_settings["AUTOMATIC_DELETION_ENABLED_AT"] = stamp
+            next_cfg["AUTOMATIC_DELETION_ENABLED_AT"] = stamp
     _coerce_config_types(next_cfg)
     save_settings_yaml(next_yaml_settings, output_dir)
     cfg.update(next_cfg)
@@ -1186,11 +1171,8 @@ def _validate_value(key: str, value: Any) -> tuple[bool, Any]:
         "EXIF_GPS_ENABLED",
         "EXPORT_BURN_IN_METADATA",
         "NON_BIRD_DROP_BELOW_CONFIRM",
+        "AUTOMATIC_DELETION_ENABLED",
         "PTZ_TRACKING_OVERLAY_ENABLED",
-        "RETENTION_ENABLED",
-        "RETENTION_AUTO_ENABLED",
-        "RETENTION_PROTECT_FAVORITES",
-        "RETENTION_PROTECT_UNREVIEWED",
     ):
         return True, _coerce_bool(value)
     if key == "MQTT_PORT":
@@ -1233,24 +1215,13 @@ def _validate_value(key: str, value: Any) -> tuple[bool, Any]:
             and "\n" not in base
             and len(base) <= 2048
         ), base
-    if key == "RETENTION_DAYS":
-        try:
-            days = int(float(value))
-        except (TypeError, ValueError):
-            return False, None
-        if 1 <= days <= 3650:
-            return True, days
-        return False, None
     if key == "SAVE_THRESHOLD_MODE":
         val = str(value).strip().lower() if value is not None else ""
         if val in ("auto", "manual"):
             return True, val
         return False, None
-    if key == "RETENTION_POSTURE":
-        val = str(value).strip().lower() if value is not None else ""
-        if val in ("off", "conservative", "reclaim"):
-            return True, val
-        return False, None
+    if key == "OLD_BIRD_PHOTOS":
+        return value in ("keep_previews", "delete_all"), value
     if key in (
         "SAVE_THRESHOLD",
         "NON_BIRD_CONFIRM_THRESHOLD",

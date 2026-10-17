@@ -559,7 +559,14 @@ def test_mixed_legacy_database_completes_and_restarts_without_duplicates(
     assert before == (31, 62, 79)
     assert counts(legacy) == (31, 62, 94)
     assert len(open_ids) == 37
-    assert fetch_observation_page(legacy, answered=True)[1] == 23
+    done, total, _ = fetch_observation_page(legacy, answered=True, per_page=100)
+    assert total == 36
+    assert {
+        f"detection:{row[0]}"
+        for row in legacy.execute(
+            "SELECT DISTINCT detection_id FROM current_human_label_facts WHERE scope='object'"
+        )
+    } <= {row["object_key"] for row in done}
     assert result == {
         "withdrawn_facts": 13,
         "image_object_conflicts": 6,
@@ -681,7 +688,7 @@ def test_retention_is_blocked_before_migration_even_when_enabled(
     from core.retention_core import execute_plan
 
     with pytest.raises(RuntimeError, match="migration is incomplete"):
-        execute_plan(legacy, str(tmp_path), {"RETENTION_ENABLED": True})
+        execute_plan(legacy, str(tmp_path), {"AUTOMATIC_DELETION_ENABLED": True})
     assert list(tmp_path.iterdir()) == []
 
 
@@ -705,9 +712,8 @@ def test_existing_empty_database_disables_old_retention_once(
     with connection.closing_connection() as conn:
         assert human_answers_migrated(conn)
     settings = load_settings_yaml(str(tmp_path))
-    assert settings["RETENTION_POSTURE"] == "off"
-    assert settings["RETENTION_ENABLED"] is False
-    assert settings["RETENTION_AUTO_ENABLED"] is False
+    assert settings["AUTOMATIC_DELETION_ENABLED"] is False
+    assert settings["AUTOMATIC_DELETION_ENABLED_AT"] is None
     assert take_retention_update_notice() is True
     assert take_retention_update_notice() is False
     settings["RETENTION_POSTURE"] = "conservative"

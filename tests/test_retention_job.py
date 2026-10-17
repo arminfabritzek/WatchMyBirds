@@ -32,23 +32,10 @@ def test_daily_loop_requires_explicit_auto_opt_in(monkeypatch):
     monkeypatch.setattr(
         retention_job,
         "get_config",
-        lambda: {"RETENTION_POSTURE": "conservative", "RETENTION_AUTO_ENABLED": False},
+        lambda: {"AUTOMATIC_DELETION_ENABLED": False},
     )
     job = RetentionJob()
     nightly_job_hub.register_job(job)
-
-    nightly_job_hub._maybe_fire_due_jobs(is_night=False)
-
-    assert nightly_job_hub.status("retention")["last_started_at"] is None
-
-
-def test_daily_loop_does_not_run_when_posture_is_off(monkeypatch):
-    monkeypatch.setattr(
-        retention_job,
-        "get_config",
-        lambda: {"RETENTION_POSTURE": "off", "RETENTION_AUTO_ENABLED": True},
-    )
-    nightly_job_hub.register_job(RetentionJob())
 
     nightly_job_hub._maybe_fire_due_jobs(is_night=False)
 
@@ -59,7 +46,7 @@ def test_daily_loop_runs_enabled_retention_and_keeps_result(monkeypatch):
     monkeypatch.setattr(
         retention_job,
         "get_config",
-        lambda: {"RETENTION_POSTURE": "conservative", "RETENTION_AUTO_ENABLED": True},
+        lambda: {"AUTOMATIC_DELETION_ENABLED": True},
     )
     finished = threading.Event()
 
@@ -145,7 +132,10 @@ def test_last_result_is_restored_after_registry_restart(monkeypatch):
 
 
 def test_restored_automatic_run_is_not_repeated_same_day(monkeypatch):
-    retention_job.retention_core.save_last_run_status(
+    from core.nightly_job_state import save_status
+
+    save_status(
+        "retention",
         {
             "last_started_at": datetime.now(tz=UTC).isoformat(),
             "last_finished_at": datetime.now(tz=UTC).isoformat(),
@@ -154,12 +144,12 @@ def test_restored_automatic_run_is_not_repeated_same_day(monkeypatch):
             "last_error": None,
             "last_daily_fire_date": datetime.now(tz=UTC).date().isoformat(),
             "progress": {"deleted": 0},
-        }
+        },
     )
     monkeypatch.setattr(
         retention_job,
         "get_config",
-        lambda: {"RETENTION_POSTURE": "conservative", "RETENTION_AUTO_ENABLED": True},
+        lambda: {"AUTOMATIC_DELETION_ENABLED": True},
     )
     called = threading.Event()
 

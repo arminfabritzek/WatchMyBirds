@@ -17,8 +17,8 @@ from typing import Any
 
 from core import training_retention
 from core.canonical_dataset import build_canonical_dataset, read_media_size
-from core.retention_core import _age_days, decide, resolve_posture_settings
-from utils.db import retention as retention_db
+from core.deletion_plan import deletion_preview, plan_deletions
+from core.retention_core import activation_date, settings_for_plan
 from utils.db import storage as storage_db
 from utils.path_manager import PathManager
 
@@ -266,25 +266,6 @@ def _original(path_mgr: PathManager, filename: str) -> Path | None:
     return path_mgr.contained_path(candidate, path_mgr.originals_dir)
 
 
-def _derivatives_present(
-    path_mgr: PathManager, filename: str, thumbs: list[str]
-) -> bool:
-    optimized = path_mgr.contained_path(
-        path_mgr.get_derivative_path(filename, "optimized"), path_mgr.optimized_dir
-    )
-    if optimized is None or not optimized.is_file():
-        return False
-    directory = path_mgr.thumbs_dir / path_mgr.extract_date_from_filename(filename)
-    candidates = [directory / name for name in thumbs] + [
-        path_mgr.get_preview_thumb_path(filename)
-    ]
-    return any(
-        (checked := path_mgr.contained_path(path, path_mgr.thumbs_dir)) is not None
-        and checked.is_file()
-        for path in candidates
-    )
-
-
 def _add(target: dict[str, int], size: int, allocated: int) -> None:
     target["files"] += 1
     target["bytes"] += size
@@ -301,17 +282,14 @@ def protection_summary(
     keys = (
         "disabled",
         "too_recent",
-        "missing_derivative",
         "training_evidence",
         "favorite",
-        "unreviewed",
         "presence_marker_conflict",
-        "canonical_facts",
+        "waiting_for_training",
+        "unconfirmed_export",
         "training_ready",
         "training_unresolved",
         "historical_facts",
-        "manual_objects",
-        "manual_favorite",
     )
     reasons = {key: dict(files=0, bytes=0, unshared_allocated_bytes=0) for key in keys}
     eligible = dict(files=0, bytes=0, unshared_allocated_bytes=0)
@@ -324,8 +302,24 @@ def protection_summary(
     for batch in storage_db.image_batches(conn):
         filenames = [str(row["filename"]) for row in batch]
         storage_db.select_images(conn, filenames)
-        sources = training_retention.protection_sources_any(conn, filenames)
-        thumbs = retention_db.thumbnail_names_for_images(conn, filenames)
+        sources = training_retention.protection_sources_any(
+            conn,
+            filenames,
+            media_exists=lambda name: training_retention.original_resolver(path_mgr)(
+                name
+            ).is_file(),
+        )
+        planned = {
+            photo.filename: photo
+            for photo in plan_deletions(
+                conn,
+                settings_for_plan(settings),
+                now,
+                paths=path_mgr,
+                filenames=filenames,
+                automatic_deletion_enabled_at=activation_date(settings),
+            )
+        }
         history = storage_db.historical_images(conn)
         existing: dict[str, tuple[Path, os.stat_result]] = {}
         for image_row in batch:
@@ -349,6 +343,7 @@ def protection_summary(
                 _error(errors, "originals", type(exc).__name__)
         bundle = build_canonical_dataset(
             conn,
+            labeling_installation_id="",
             media_exists=lambda name, files=existing: name in files,
             media_size=lambda name, files=existing: (
                 read_media_size(files[name][0]) if name in files else None
@@ -379,41 +374,28 @@ def protection_summary(
             )
             accounted_bytes += size
             shared += int(info.st_nlink > 1)
-            facts = dict(
-                age_days=_age_days(str(row["timestamp"] or ""), now),
-                original_present=row["original_present"],
-                is_favorite=bool(row["is_favorite"]),
-                review_status=row["review_status"],
-                export_relevant=name in sources,
-                derivatives_present=_derivatives_present(
-                    path_mgr, name, thumbs.get(name, [])
-                ),
+            original = next(
+                (item for item in planned[name].files if item.category == "original"),
+                None,
             )
+            due = original is not None and original.decision.due(now)
             blocked = []
-            if not settings.get("RETENTION_ENABLED"):
+            if activation_date(settings) is None:
                 blocked.append("disabled")
-            if not facts["original_present"]:
+            if not row["original_present"]:
                 blocked.append("presence_marker_conflict")
-            if facts["age_days"] <= int(settings.get("RETENTION_DAYS", 90)):
+            if original and original.decision.deadline and not due:
                 blocked.append("too_recent")
-            if not facts["derivatives_present"]:
-                blocked.append("missing_derivative")
-            if facts["export_relevant"]:
+            if original and original.decision.rule == 3:
                 blocked.append("training_evidence")
-            if (
-                settings.get("RETENTION_PROTECT_FAVORITES", True)
-                and facts["is_favorite"]
-            ):
+            if original and original.decision.rule == 2:
                 blocked.append("favorite")
-            if settings.get("RETENTION_PROTECT_UNREVIEWED", True) and facts[
-                "review_status"
-            ] in (None, "", "untagged"):
-                blocked.append("unreviewed")
             labels = set(blocked) | sources.get(name, set())
             if name in ready:
                 labels.add("training_ready")
             if name in unresolved or (
-                sources.get(name, set()) & {"canonical_facts", "manual_objects"}
+                sources.get(name, set())
+                & {"waiting_for_training", "unconfirmed_export"}
                 and name not in ready
             ):
                 labels.add("training_unresolved")
@@ -421,9 +403,12 @@ def protection_summary(
                 labels.add("historical_facts")
             for label in labels:
                 _add(reasons[label], size, allocated)
-            action, _ = decide(facts, settings)
-            _add(eligible if action == "delete" else protected, size, allocated)
-            if decide(facts, {**settings, "RETENTION_ENABLED": True})[0] == "delete":
+            _add(
+                eligible if due and activation_date(settings) else protected,
+                size,
+                allocated,
+            )
+            if due:
                 _add(potential, size, allocated)
             if len(blocked) > 1:
                 overlaps[" + ".join(sorted(blocked))] += 1
@@ -454,7 +439,6 @@ def inspect_storage(
 ) -> dict[str, Any]:
     began = datetime.now(UTC)
     now = now or began
-    settings = resolve_posture_settings(settings)
     progress(dict(phase="locating_storage"))
     roots = scan_roots(
         path_mgr,
@@ -463,13 +447,26 @@ def inspect_storage(
     )
     first = inventory(roots, progress)
     progress(dict(phase="database"))
-    database, protection, error = {}, {}, None
+    database, protection, preview, error = {}, {}, {}, None
     changed_db = False
     try:
         with closing(storage_db.open_readonly(path_mgr.get_database_path())) as conn:
             version = conn.execute("PRAGMA main.data_version").fetchone()[0]
             database = storage_db.database_summary(conn)
             progress(dict(images_total=database["records"].get("images", 0)))
+            preview = deletion_preview(
+                conn,
+                settings_for_plan(settings),
+                now,
+                paths=path_mgr,
+                automatic_deletion_enabled_at=activation_date(settings),
+            )
+            preview["enabled"] = activation_date(settings) is not None
+            preview["enabled_at"] = (
+                settings.get("AUTOMATIC_DELETION_ENABLED_AT")
+                if preview["enabled"]
+                else None
+            )
             protection = protection_summary(conn, path_mgr, settings, now, progress)
             conn.rollback()
             changed_db = (
@@ -496,6 +493,7 @@ def inspect_storage(
         or changed_db
         or last["skipped_entries"]
         or protection.get("unsafe_originals")
+        or preview.get("errors")
     )
     if protection:
         protection["unattributed_original_bytes"] = max(
@@ -509,11 +507,11 @@ def inspect_storage(
         started_at=began.isoformat(),
         finished_at=datetime.now(UTC).isoformat(),
         status="partial" if partial else "complete",
-        posture=settings["RETENTION_POSTURE"],
-        retention_days=int(settings.get("RETENTION_DAYS", 90)),
+        automatic_deletion_enabled=activation_date(settings) is not None,
         inventory=last,
         database=database,
         protections=protection,
+        deletion_preview=preview,
         files_changed=changed,
         database_changed=changed_db,
         database_error=error,

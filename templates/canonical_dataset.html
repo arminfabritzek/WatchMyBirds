@@ -1,19 +1,50 @@
 {% extends "base.html" %}
 
-{% block title %}Canonical Dataset{% endblock %}
+{% block title %}Training export{% endblock %}
 
 {% block content %}
 <div class="container py-4 canonical-dataset">
     <header class="canonical-dataset__header">
         <div>
             <p class="canonical-dataset__eyebrow">Human-verified training data</p>
-            <h1>Canonical Dataset</h1>
-            <p>Inspect the facts behind the dataset, review another bird, or download the current bundle.</p>
+            <h1>Training export</h1>
+            <p>Download answered photos waiting for training, then confirm when you have received the export.</p>
         </div>
-        <a class="btn btn--secondary" href="/api/canonical-dataset/download"
-            aria-label="Download canonical dataset bundle"
-            title="Download the current human-label bundle">Download bundle</a>
+        <form method="post" action="/api/canonical-dataset/exports">
+            <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
+            <button class="btn btn--primary" type="submit" {% if not waiting %}disabled{% endif %}>Export waiting photos</button>
+        </form>
     </header>
+
+    <div class="alert alert-info" role="status">
+        <strong>{{ waiting_photos }} {{ 'photo is' if waiting_photos == 1 else 'photos are' }} waiting for training.</strong>
+        <p>Photos stay protected until you confirm “Export received” for their export.
+            Changed answers wait again. Answers without an original do not wait.</p>
+    </div>
+    <section class="canonical-dataset__exports" aria-labelledby="exports-title">
+        <h2 id="exports-title">Recorded exports</h2>
+        {% for export in exports %}
+        <article class="canonical-dataset__export">
+            {% if not export.received_at %}
+            <div class="alert alert-info" role="status">
+                <strong>Not yet confirmed</strong>
+                <p>{{ export.photo_count }} {{ 'photo remains' if export.photo_count == 1 else 'photos remain' }} protected. Confirm only after you have received this ZIP.</p>
+            </div>
+            {% endif %}
+            <p>Created <time datetime="{{ export.created_at }}">{{ export.created_at[:16]|replace('T', ' ') }} UTC</time> · {{ export.photo_count }} {{ 'photo' if export.photo_count == 1 else 'photos' }}
+                {% if export.received_at %}<br>Received <time datetime="{{ export.received_at }}">{{ export.received_at[:16]|replace('T', ' ') }} UTC</time>{% endif %}</p>
+            <div class="canonical-dataset__export-actions">
+                <a class="btn btn--secondary" href="/api/canonical-dataset/exports/{{ export.export_id }}/download">Download again</a>
+                {% if not export.received_at %}
+                <form method="post" action="/api/canonical-dataset/exports/{{ export.export_id }}/received">
+                    <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
+                    <button class="btn btn--primary" type="submit">Export received</button>
+                </form>
+                {% endif %}
+            </div>
+        </article>
+        {% else %}<p>No exports recorded yet.</p>{% endfor %}
+    </section>
 
     <section class="canonical-review{% if not needs_box_verdict_count %} canonical-review--complete{% endif %}"
         aria-labelledby="canonical-review-title">
@@ -138,4 +169,11 @@
         </details>
     </section>
 </div>
+{% endblock %}
+
+{% block scripts %}
+{{ super() }}
+{% if download_export_id %}
+<script src="/assets/js/training_export.js?v={{ asset_version }}" defer data-export-download="/api/canonical-dataset/exports/{{ download_export_id }}/download"></script>
+{% endif %}
 {% endblock %}

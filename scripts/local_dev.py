@@ -387,7 +387,6 @@ def create_local_app(work: Path) -> Flask:
             "telemetry_enabled": False,
             "telemetry_installation_id": "",
             "AESTHETIC_TAG_ENABLED": False,
-            "RETENTION_AUTO_ENABLED": False,
             "DEBUG_MODE": False,
             "STATION_NAME": "Local development",
         }
@@ -422,6 +421,7 @@ def create_local_app(work: Path) -> Flask:
         "review.review_thumb",
         "moderation.resolve_selection",
         "moderation.bulk_download",
+        "retention.retention_preview",
     }
 
     def local_boundary() -> Any:

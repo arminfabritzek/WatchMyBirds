@@ -35,12 +35,13 @@ def test_removed_presentation_pages_return_not_found(client):
     assert client.get("/tbwd-vision").status_code == 404
 
 
-def test_privacy_renders(client):
+def test_privacy_renders(client) -> None:
     response = client.get("/privacy")
     assert response.status_code == 200
-    content = response.get_data(as_text=True)
+    content = " ".join(response.get_data(as_text=True).split())
     assert "Training-data exports" in content
-    assert "never sends it anywhere" in content
+    assert "WatchMyBirds does not upload this bundle" in content
+    assert "Sharing requires your own manual transfer." in content
     assert "entirely optional" in content
 
 

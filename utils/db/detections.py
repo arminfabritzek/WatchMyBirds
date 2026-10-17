@@ -1462,7 +1462,7 @@ def fetch_observation_page(
         params.append(species)
     elif answered is not None:
         where += (
-            " AND answered"
+            " AND has_current_answer"
             if answered
             else " AND active AND NOT answered AND NOT admitted"
         )

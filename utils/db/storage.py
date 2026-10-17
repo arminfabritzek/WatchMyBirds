@@ -61,17 +61,27 @@ def database_summary(conn: sqlite3.Connection) -> dict[str, Any]:
 
 
 def image_batches(
-    conn: sqlite3.Connection, batch_size: int = 200
+    conn: sqlite3.Connection,
+    batch_size: int = 200,
+    *,
+    filenames: list[str] | None = None,
 ) -> Iterator[list[dict[str, Any]]]:
+    if filenames is not None and not 1 <= len(filenames) <= 400:
+        raise ValueError("Select between 1 and 400 photos")
+    selection = (
+        ""
+        if filenames is None
+        else " AND i.filename IN (" + ",".join("?" for _ in filenames) + ")"
+    )
     cursor = ""
     while True:
         rows = conn.execute(
-            """SELECT i.filename, i.timestamp, CASE WHEN EXISTS(SELECT 1 FROM main.current_human_label_facts f WHERE f.image_filename=i.filename) OR EXISTS(SELECT 1 FROM main.manual_objects m WHERE m.image_filename=i.filename AND m.status='active') OR EXISTS(SELECT 1 FROM main.detections rd WHERE rd.image_filename=i.filename AND rd.status='active' AND rd.decision_state='confirmed') THEN 'answered' ELSE 'untagged' END AS review_status,
+            f"""SELECT i.filename, i.timestamp, CASE WHEN EXISTS(SELECT 1 FROM main.current_human_label_facts f WHERE f.image_filename=i.filename) OR EXISTS(SELECT 1 FROM main.manual_objects m WHERE m.image_filename=i.filename AND m.status='active') OR EXISTS(SELECT 1 FROM main.detections rd WHERE rd.image_filename=i.filename AND rd.status='active' AND rd.decision_state='confirmed') THEN 'answered' ELSE 'untagged' END AS review_status,
             COALESCE(i.original_present,1) AS original_present,
             EXISTS(SELECT 1 FROM main.detections d WHERE d.image_filename=i.filename
                 AND d.status='active' AND d.is_favorite=1) AS is_favorite
-            FROM main.images i WHERE i.filename > ? ORDER BY i.filename LIMIT ?""",
-            (cursor, max(1, min(batch_size, 400))),
+            FROM main.images i WHERE i.filename > ? {selection} ORDER BY i.filename LIMIT ?""",
+            (cursor, *(filenames or []), max(1, min(batch_size, 400))),
         ).fetchall()
         if not rows:
             return

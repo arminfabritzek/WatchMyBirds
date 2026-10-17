@@ -1,0 +1,8 @@
+{
+  "source_commits": [
+    "5d4768f9fd71ccd675c95a0792045d9c5175d594",
+    "f39d9dd595267dcecac69c605aa6deb225f29e2d"
+  ],
+  "sha256": "f9e1d7abf84bd7f9c5b7b3711ec7705c481526e7f71454796dd725e64fa6fb76",
+  "generation": "git archive v0.5.2 and f39d9dd5 into temporary directories; v0.5.2 get_connection, apply_species_override and mark_exported; f39d9dd5 get_connection and record_human_answer on the same temporary OUTPUT_DIR; sqlite3 iterdump."
+}

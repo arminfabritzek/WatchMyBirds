@@ -112,10 +112,6 @@ class PathManager:
         """
         return self.base_dir / ".restart_required"
 
-    def get_retention_status_path(self) -> Path:
-        """Return the persisted last-run status for storage retention."""
-        return self.base_dir / "retention_status.json"
-
     def get_storage_usage_path(self) -> Path:
         """Return the bounded local storage-accounting history."""
         return self.base_dir / "storage_usage.json"

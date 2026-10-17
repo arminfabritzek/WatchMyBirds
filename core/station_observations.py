@@ -40,7 +40,9 @@ def grouped_review(
         validate_selection(day, day)
     where, params = selection_sql(selection)
     where += (
-        " AND answered" if answered else " AND active AND NOT answered AND NOT admitted"
+        " AND has_current_answer"
+        if answered
+        else " AND active AND NOT answered AND NOT admitted"
     )
     with closing_connection() as conn:
         conn.execute("BEGIN")

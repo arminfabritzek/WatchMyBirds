@@ -71,7 +71,7 @@ def recreate_observations_view(conn: sqlite3.Connection) -> None:
             d.unknown_score, c.cls_confidence, d.is_favorite, d.quality_gallery_ok,
             d.thumbnail_path, d.is_gallery_eligible, d.decision_state, d.decision_level, d.decision_reasons,
             f.answer,
-            f.answered_at, f.presence,
+            f.answered_at, f.presence, (f.scope IS NOT NULL) AS has_current_answer,
             REPLACE(CASE WHEN f.answer IN ('confirmed', 'corrected') THEN f.human_species
                 ELSE COALESCE(c.cls_class_name, d.od_class_name) END, ' ', '_') AS proposed_species,
             CASE WHEN f.answer IN ('confirmed', 'corrected') THEN 'human'
@@ -87,7 +87,7 @@ def recreate_observations_view(conn: sqlite3.Connection) -> None:
             i.classifier_model_id, i.ptz_origin, COALESCE(i.original_present, 1),
             m.status, NULL, NULL, NULL, NULL, NULL, 0, NULL, NULL, 0, NULL, NULL, NULL,
             CASE WHEN m.species_state = 'unknown' THEN 'unknown' ELSE 'corrected' END,
-            m.updated_at, 'present', REPLACE(m.species_key, ' ', '_'), 'human'
+            m.updated_at, 'present', 1, REPLACE(m.species_key, ' ', '_'), 'human'
         FROM manual_objects m JOIN images i ON i.filename = m.image_filename
         LEFT JOIN sources s ON s.source_id = i.source_id
     ), evidence AS (

@@ -6,6 +6,12 @@
     <a class="btn btn--secondary" href="/settings">Settings</a>
 </div>
 <p>Measure existing files and retention protections. This page never removes files or changes cleanup settings.</p>
+<div class="alert alert-info" role="status" id="deletion-notice">
+    {% if deletion_state.enabled %}Automatic deletion is on.{% else %}Automatic deletion is off. Nothing is deleted while it is off. The preview assumes activation today.{% endif %}
+    Open cases and model non-birds get a fresh 14-day grace period after enabling deletion.
+    Measure storage to see the next 14 days for the current settings.
+</div>
+<p id="storage-last-run" role="status">{{ deletion_state.last_run_text }}</p>
 <button class="btn btn--primary" id="storage-scan" type="button">Measure storage</button>
 <p id="storage-status" role="status" aria-live="polite">Loading saved measurement…</p>
 <div id="storage-result" hidden>
@@ -15,11 +21,17 @@
     <h2>Measured files</h2>
     <p id="storage-total"></p>
     <div class="report-table-wrap"><table class="report-table"><thead><tr><th>Category</th><th>Files</th><th>Logical size</th></tr></thead><tbody id="storage-categories"></tbody></table></div>
-    <h2>Originals and protection</h2>
+    <h2>Photo storage by retention class</h2>
+    <p id="storage-policy"></p>
+    <div class="report-table-wrap"><table class="report-table"><thead><tr><th>Class</th><th>Files</th><th>Logical size</th></tr></thead><tbody id="storage-classes"></tbody></table></div>
+    <h2>Training protection</h2>
+    <p id="storage-waiting"></p>
+    <p>Waiting and unconfirmed groups may overlap. Every object and image statement must allow deletion before a photo file can expire.</p>
+    <ul id="storage-exports" class="storage-exports"></ul>
+    <h2>What is due next</h2>
     <p id="storage-eligible"></p>
-    <p>Protection rows overlap. The protected union counts each original once. Training readiness uses the current canonical export rules and never releases protection.</p>
-    <div class="report-table-wrap"><table class="report-table"><thead><tr><th>Reason</th><th>Originals</th><th>Logical size</th></tr></thead><tbody id="storage-protection"></tbody></table></div>
-    <details><summary>Overlapping protection combinations</summary><ul id="storage-overlaps"></ul></details>
+    <div id="storage-plan-warning" class="alert alert-info" role="status" hidden></div>
+    <div class="report-table-wrap"><table class="report-table"><thead><tr><th>File</th><th>Class</th><th>Deadline</th><th>Logical size</th></tr></thead><tbody id="storage-upcoming"></tbody></table></div>
     <h2>SQLite</h2>
     <p id="storage-database"></p>
     <details><summary>Record counts and table/index sizes</summary><ul id="storage-records"></ul><ul id="storage-db-objects"></ul></details>
@@ -31,10 +43,16 @@
 {% block scripts %}
 <script>
 (() => {
-    const names = {originals:'Original images', optimized:'Optimized images', thumbnails:'Thumbnails, crops and previews', other_derivatives:'Other derivatives', sqlite:'SQLite database', wal:'SQLite WAL', shm:'SQLite shared memory', backups:'Backups', archives:'Retained archives', temporary_exports:'Temporary exports (lifecycle unknown)', restore_temporary:'Temporary restores', other:'Other application files', disabled:'Retention is off', too_recent:'Within retention age window', missing_derivative:'Missing display derivative', training_evidence:'Training evidence (all sources)', favorite:'Favorite protection', unreviewed:'Unreviewed protection', presence_marker_conflict:'File exists despite retired DB marker', canonical_facts:'Canonical human facts', training_ready:'Canonical training-ready (at least one view)', training_unresolved:'Unresolved canonical evidence', historical_facts:'Historical or retracted human facts', manual_objects:'Manual birds and their history', legacy_review:'Legacy review signals'};
+    const names = {originals:'Original images', optimized:'Optimized images', thumbnails:'Thumbnails, crops and previews', other_derivatives:'Other derivatives', sqlite:'SQLite database', wal:'SQLite WAL', shm:'SQLite shared memory', backups:'Backups', archives:'Retained archives', temporary_exports:'Temporary exports (lifecycle unknown)', restore_temporary:'Temporary restores', other:'Other application files',  too_recent:'Within retention age window',  training_evidence:'Training evidence (all sources)', favorite:'Favorite protection',  presence_marker_conflict:'File exists despite retired DB marker', canonical_facts:'Canonical human facts', training_ready:'Canonical training-ready (at least one view)', training_unresolved:'Unresolved canonical evidence', historical_facts:'Historical or retracted human facts', manual_objects:'Manual birds and their history'};
     const el = id => document.getElementById(id);
-    const bytes = n => n === null || n === undefined ? 'Unavailable' : new Intl.NumberFormat(undefined,{maximumFractionDigits:2}).format(n / 1024**2) + ' MiB';
+    const bytes = n => {
+        if(n === null || n === undefined)return 'Unavailable';
+        const unit=Math.min(3, Math.max(0, Math.floor(Math.log2(Math.abs(n) || 1)/10)));
+        return new Intl.NumberFormat(undefined,{maximumFractionDigits:2}).format(n / 1024**unit)+' '+['B','KiB','MiB','GiB'][unit];
+    };
     const count = n => new Intl.NumberFormat().format(n || 0);
+    const photos = n => `${count(n)} ${n===1 ? 'photo' : 'photos'}`;
+    const rules = {'1':'Trash', '2':'Favorite', '3':'Training protection', '4':'Answered', '5':'Admitted bird', '6':'Open cases and model non-birds'};
     const text = (id,value) => { el(id).textContent = value; };
     function rows(id,items) {
         const target = el(id); target.replaceChildren();
@@ -55,18 +73,32 @@
         text('storage-total',`All measured file paths: ${bytes(inv.logical_bytes)}. Unique allocated blocks: ${bytes(inv.allocated_bytes)}. Shared hardlinks are counted once for allocated totals.`);
         rows('storage-categories',Object.entries(inv.categories).map(([key,v])=>[names[key] || key,count(v.files),bytes(v.bytes)]));
         const p=report.protections || {};
-        if(p.eligible) {
-            text('storage-eligible',`Eligible under current settings: ${bytes(p.eligible.bytes)} (${count(p.eligible.files)} originals). Unshared allocated blocks: ${bytes(p.eligible.unshared_allocated_bytes)} (conservative estimate). Protected union: ${bytes(p.protected.bytes)} (${count(p.protected.files)} originals). Eligible if retention were enabled with the same protections: ${bytes(p.eligible_if_enabled.bytes)}. ${p.current_estimate ? '' : 'Live changes or errors make these snapshot estimates provisional.'}`);
-            rows('storage-protection',Object.entries(p.reasons).map(([key,v])=>[names[key] || key,count(v.files),bytes(v.bytes)]));
-            list('storage-overlaps',Object.entries(p.overlap_groups).map(([key,v])=>key.split(' + ').map(k=>names[k] || k).join(' + ') + ': ' + count(v)));
-        } else text('storage-eligible','Protection diagnostics unavailable.');
+        const plan=report.deletion_preview;
+        if(plan && plan.settings) {
+            const upcoming = plan.next_14_days;
+            const state = plan.enabled ? 'Automatic deletion was on at measurement time.' : 'Automatic deletion was off at measurement time. Nothing is deleted while it is off. The preview assumes activation today.';
+            text('deletion-notice', `${state} Open cases and model non-birds get a fresh 14-day grace period after enabling deletion. ${upcoming ? `Due within the following 14 days, including overdue files: ${count(upcoming.photos)} photo${upcoming.photos === 1 ? '' : 's'}, ${count(upcoming.files)} file${upcoming.files === 1 ? '' : 's'} (${bytes(upcoming.bytes)}).` : 'Measure again to calculate the next 14 days.'} This is a saved measurement; measure again after changing settings.`);
+            const s=plan.settings;
+            text('storage-policy',`Old bird photos: ${s.old_bird_photos==='keep_previews' ? 'Keep previews' : 'Delete everything'}. Provisional values: originals ${s.original_days} days; previews ${s.preview_days} days with Delete everything; trash ${s.trash_days} days; other photos ${s.other_days} days; reserve ${bytes(s.reserve_bytes)} (no early deletion in this preview).`);
+            rows('storage-classes',Object.entries(rules).map(([key,label])=>[label,count(plan.classes[key]?.files),bytes(plan.classes[key]?.bytes || 0)]));
+            const w=plan.waiting.waiting_for_training || {}, u=plan.waiting.unconfirmed_export || {};
+            text('storage-waiting',`Waiting for training: ${photos(w.photos)} (${bytes(w.bytes || 0)}). Waiting for export confirmation: ${photos(u.photos)} (${bytes(u.bytes || 0)}).`);
+            list('storage-exports',plan.unconfirmed_exports.length ? plan.unconfirmed_exports.map(e=>`Unconfirmed export ${e.export_id}: ${photos(e.photo_count)}; created ${new Date(e.created_at).toLocaleString()}.`) : ['No unconfirmed exports.']);
+            text('storage-eligible',`Would be due now: ${count(plan.due_files)} files (${bytes(plan.due_bytes)}) and ${count(plan.due_rows)} metadata rows. Showing up to 20 file deadlines from the same plan. The job rechecks each photo before deletion.`);
+            rows('storage-upcoming',plan.upcoming.map(e=>[e.reference,rules[e.rule],(e.due ? 'Due now · ' : '')+new Date(e.deadline).toLocaleString(),bytes(e.bytes)]));
+            el('storage-plan-warning').hidden=!(plan.errors || plan.unknown_deadlines || report.status==='partial');
+            text('storage-plan-warning',`Preview limitations: ${count(plan.unknown_deadlines)} existing files have no confirmed deadline start; ${count(plan.errors)} media paths could not be checked. ${report.status==='partial' ? 'The measurement is incomplete or files changed during scanning. ' : ''}Measure again after changes. Files with unavailable dates or unsafe paths are kept.`);
+        } else {
+            text('storage-eligible','No deletion plan in this saved measurement. Measure storage to build the preview.');
+            rows('storage-classes',[]); rows('storage-upcoming',[]); list('storage-exports',[]);
+        }
         const db=report.database;
         text('storage-database',report.database_error ? 'Database diagnostics unavailable.' : `Allocated database pages: ${bytes(db.allocated_bytes)}. Internally reusable: ${bytes(db.reusable_bytes)} (${count(db.reusable_pages)} pages); this is not filesystem free space. Observation span: ${db.first_timestamp || 'Unavailable'} — ${db.last_timestamp || 'Unavailable'}.`);
         list('storage-records',Object.entries(db.records || {}).map(([k,v])=>k+': '+count(v)));
         list('storage-db-objects',db.object_sizes_status==='available' ? db.object_sizes.map(v=>v.name+': '+bytes(v.bytes)) : ['Table/index size attribution unavailable in this SQLite build.']);
         const g=state.growth;
         text('storage-growth',g.status==='measured' ? `Output change: ${bytes(g.delta_bytes)} over ${count(g.interval_seconds)} seconds. ${g.bytes_per_day===null ? 'At least one hour between samples is needed for a daily rate.' : 'Observed rate: '+bytes(g.bytes_per_day)+'/day; not a forecast.'} ${g.collection_gap ? 'Collection gap exceeds two days.' : ''}` : 'At least two comparable manual samples are needed.');
-        text('storage-notes',`Saved samples: ${count(state.history.length)} / 32. Expected originals missing: ${count(p.missing_originals)}. Retired originals absent as expected: ${count(p.retired_originals)}. Original bytes without matching metadata: ${bytes(p.unattributed_original_bytes)}. Shared original hardlinks: ${count(p.shared_originals)}. Skipped entries: ${count(inv.skipped_entries)}. Errors: ${count(report.errors.length)}. Unavailable scopes: ${inv.scopes.filter(s=>s.state!=='measured').map(s=>s.scope).join(', ') || 'none'}. Temporary export activity/expiry cannot be inferred because the current exporter has no durable job registry. Original retention keeps derivatives and database history; compaction only frees internally unused pages. Filesystem snapshots or copy-on-write can affect actual freed space.`);
+        text('storage-notes',`Saved samples: ${count(state.history.length)} / 32. Expected originals missing: ${count(p.missing_originals)}. Retired originals absent as expected: ${count(p.retired_originals)}. Original bytes without matching metadata: ${bytes(p.unattributed_original_bytes)}. Shared original hardlinks: ${count(p.shared_originals)}. Skipped entries: ${count(inv.skipped_entries)}. Errors: ${count(report.errors.length)}. Unavailable scopes: ${inv.scopes.filter(s=>s.state!=='measured').map(s=>s.scope).join(', ') || 'none'}. File sizes are logical bytes; hardlinks, snapshots and copy-on-write can affect actual freed space. SQLite compaction only frees internally unused pages. Missing files do not prevent planned row cleanup.`);
     }
     async function refresh() {
         try { const response=await fetch('/api/v1/storage/status');if(!response.ok)throw new Error('status');const state=await response.json();render(state);if(state.status==='running')setTimeout(refresh,1000); }

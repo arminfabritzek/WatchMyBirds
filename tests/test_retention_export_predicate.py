@@ -1,11 +1,13 @@
-"""Retention preserves canonical evidence and previously protected user signals."""
+"""Training protection requires current answers with originals or pending exports."""
 
 import pytest
 
+from config import get_config
 from core import training_retention
 from core.human_label_core import HumanAnswer, LabelProvenance, record_human_answer
 from utils.db.connection import closing_connection
 from utils.db.detections import insert_detection
+from utils.path_manager import PathManager
 
 
 @pytest.fixture(autouse=True)
@@ -23,6 +25,10 @@ def _add_image(conn, filename, review_status="confirmed_bird"):
         "INSERT INTO images (filename, timestamp, review_status) VALUES (?, ?, ?)",
         (filename, filename[:15], review_status),
     )
+
+    path = PathManager(get_config()["OUTPUT_DIR"]).get_original_path(filename)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"original")
 
     if review_status == "no_bird":
         record_human_answer(
@@ -90,14 +96,14 @@ def test_hard_negative_is_export_relevant():
     assert result == {fn}
 
 
-def test_favorite_is_export_relevant():
+def test_favorite_is_not_training_evidence():
     fn = "20260101_120002_c.jpg"
     with closing_connection() as conn:
         _add_image(conn, fn)
         _add_detection(conn, fn, is_favorite=1, rating_source="manual")
         conn.commit()
         result = training_retention.is_export_relevant_any(conn, [fn])
-    assert result == {fn}
+    assert result == set()
 
 
 def test_species_relabel_is_export_relevant():

@@ -123,7 +123,7 @@ real camera/device integration tests.
 
 ## Check a finished training export
 
-The offline checker reads the actual canonical v2 ZIP. It does not start Flask,
+The offline checker reads the actual canonical v3 ZIP. It does not start Flask,
 connect to a camera or database, or change the ZIP or original images:
 
 ```bash

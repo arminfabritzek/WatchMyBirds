@@ -245,6 +245,15 @@ def test_done_tabs_include_manual_birds_and_image_statements_without_photos(
                 (filename, stamp),
             )
             record_human_answer(conn, HumanAnswer(filename, **options), provenance())
+        for identifier, options in [
+            (4, {"object_bird_presence": "present"}),
+            (5, {"bbox_quality": "suitable"}),
+            (6, {"bbox_correction": BBox(0.2, 0.2, 0.2, 0.2)}),
+        ]:
+            filename = seed(conn, identifier=identifier, state="uncertain")
+            record_human_answer(
+                conn, HumanAnswer(filename, identifier, **options), provenance()
+            )
         conn.execute("UPDATE images SET original_present=0")
     with api.sync_playwright() as playwright:
         browser = playwright.chromium.launch()
@@ -280,6 +289,10 @@ def test_done_tabs_include_manual_birds_and_image_statements_without_photos(
                 )
                 == "page"
             )
+            for identifier in (4, 5, 6):
+                assert page.locator(
+                    f'article[data-detection-id="{identifier}"]'
+                ).is_visible()
             tile = page.locator('article[data-detection-id="1"]')
             assert tile.locator(".wm-tile__name").inner_text() == "No bird"
             assert tile.locator(".wm-tile__latin").count() == 0

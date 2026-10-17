@@ -513,3 +513,40 @@ def test_image_training_statement_does_not_change_object_answer(
     assert fetch_observation_page(conn, answered=False)[1] == 0
     assert fetch_observation_page(conn, answered=True)[1] == 1
     assert fetch_species_covers(conn) == []
+
+
+@pytest.mark.parametrize(
+    "options, axis",
+    [
+        ({"object_bird_presence": "present"}, "bird_presence"),
+        ({"bbox_quality": "suitable"}, "bbox_quality"),
+        ({"bbox_correction": (0.2, 0.2, 0.2, 0.2)}, "bbox_correction"),
+    ],
+)
+def test_done_includes_partial_current_answers_without_closing_open_cases(
+    conn: sqlite3.Connection, options: dict, axis: str
+) -> None:
+    from core.human_label_core import BBox, retract_answer
+
+    filename = seed(conn, state="uncertain")
+    if axis == "bbox_correction":
+        options = {axis: BBox(*options[axis])}
+    before_open = fetch_observation_page(conn, answered=False)
+    record_human_answer(conn, HumanAnswer(filename, 101, **options), provenance())
+    assert fetch_observation_page(conn, answered=True)[1] == 1
+    assert fetch_observation_page(conn, answered=False)[1] == before_open[1] == 1
+    assert (
+        conn.execute(
+            "SELECT answered FROM current_observations WHERE detection_id=101"
+        ).fetchone()[0]
+        == 0
+    )
+    retract_answer(
+        conn,
+        image_filename=filename,
+        detection_id=101,
+        fact_type=axis,
+        provenance=provenance(),
+    )
+    assert fetch_observation_page(conn, answered=True)[1] == 0
+    assert fetch_observation_page(conn, answered=False)[1] == 1
