@@ -10,6 +10,7 @@ from collections.abc import Iterable
 from datetime import datetime, timedelta
 from typing import Any
 
+from utils.cover_selection import cover_order_sql
 from utils.db.observations import (
     fact_sql,
     identity_sql,
@@ -481,6 +482,7 @@ def fetch_detections_for_gallery(
             d.is_favorite,
             d.is_gallery_eligible,
             d.aesthetic_score,
+            d.quality_gallery_ok,
             d.decision_state,
             d.bbox_quality,
             d.unknown_score,
@@ -557,20 +559,8 @@ def fetch_random_favorites(
     conn: sqlite3.Connection,
     limit: int = 6,
 ) -> list[sqlite3.Row]:
-    """
-    Returns a random selection of cover-worthy detections, diversified by species.
-    Used for a quick 'best of' preview gallery on the homepage.
-
-    Two sources, queried equally:
-      - is_favorite=1            → manual gold label
-      - is_gallery_eligible=1    → AI auto-pick (aesthetic tagger)
-
-    Both are good cover candidates. The UI distinguishes them via an AI badge
-    rendered when is_favorite=0 AND is_gallery_eligible=1. Within the random
-    selection, both pool together so a station with few manual favorites still
-    has a populated homepage.
-    """
-    query = """
+    """Return one quality-ranked pick per species, sampling species randomly."""
+    query = f"""
     WITH CoverCandidates AS (
         SELECT
             d.detection_id,
@@ -585,7 +575,7 @@ def fetch_random_favorites(
             o.species_key as species_key,
             ROW_NUMBER() OVER(
                 PARTITION BY o.species_key
-                ORDER BY RANDOM()
+                ORDER BY {cover_order_sql(alias="o")}, RANDOM()
             ) as rn
         FROM current_observations o
         JOIN detections d ON d.detection_id = o.detection_id
@@ -643,18 +633,8 @@ def fetch_species_story_board_candidates(
             CAST(strftime('%s', substr(o.timestamp, 1, 4) || '-' ||
                 substr(o.timestamp, 5, 2) || '-' || substr(o.timestamp, 7, 2) || ' ' ||
                 substr(o.timestamp, 10, 2) || ':' || substr(o.timestamp, 12, 2) || ':' ||
-                substr(o.timestamp, 14, 2)) AS INTEGER) AS image_epoch,
-            d.aesthetic_score,
-            CASE WHEN COALESCE(d.bbox_x, m.bbox_x, 0) > 0.01
-                AND COALESCE(d.bbox_y, m.bbox_y, 0) > 0.01
-                AND COALESCE(d.bbox_w, m.bbox_w, 0) > 0
-                AND COALESCE(d.bbox_h, m.bbox_h, 0) > 0
-                AND COALESCE(d.bbox_x + d.bbox_w, m.bbox_x + m.bbox_w, 1) < 0.99
-                AND COALESCE(d.bbox_y + d.bbox_h, m.bbox_y + m.bbox_h, 1) < 0.99
-                THEN 1 ELSE 0 END AS is_interior
+                substr(o.timestamp, 14, 2)) AS INTEGER) AS image_epoch
         FROM current_observations o
-        LEFT JOIN detections d ON d.detection_id = o.detection_id
-        LEFT JOIN manual_objects m ON m.manual_object_id = o.manual_object_id
         WHERE o.admitted
     ),
     eligible AS (
@@ -715,19 +695,7 @@ def fetch_species_story_board_candidates(
             e.*,
             ROW_NUMBER() OVER (
                 PARTITION BY e.species_key
-                ORDER BY
-                    COALESCE(e.is_favorite, 0) DESC,
-                    CASE e.ptz_origin
-                        WHEN 'preset' THEN 1
-                        WHEN 'manual_drive' THEN 1
-                        ELSE 0
-                    END DESC,
-                    COALESCE(e.is_gallery_eligible, 0) DESC,
-                    e.is_interior DESC,
-                    COALESCE(e.aesthetic_score, -1) DESC,
-                    COALESCE(e.score, 0) DESC,
-                    e.image_timestamp DESC,
-                    e.detection_id DESC
+                ORDER BY {cover_order_sql()}, e.detection_id DESC
             ) AS frame_rank
         FROM eligible e
         JOIN ranked_species rs ON rs.species_key = e.species_key
@@ -991,7 +959,7 @@ def fetch_daily_covers(
     end_date: str | None = None,
 ) -> list[sqlite3.Row | dict[str, Any]]:
     """
-    Returns each day's cover by PTZ origin, aesthetic score, then detection score.
+    Returns each day's cover using the shared photo-quality order.
     Includes bbox for dynamic cropping and image count per day.
 
     Args:
@@ -1012,10 +980,7 @@ def fetch_daily_covers(
                         AND f.fact_type = 'bbox_quality' AND f.answer_value IN ('suitable', 'unsuitable')))
                     OVER (PARTITION BY substr(REPLACE(timestamp, '-', ''), 1, 8)) AS boxes_reviewed_count,
                 ROW_NUMBER() OVER (PARTITION BY substr(REPLACE(timestamp, '-', ''), 1, 8)
-                    ORDER BY CASE WHEN ptz_origin IN ('preset', 'manual_drive') THEN 1 ELSE 0 END DESC,
-                        COALESCE((SELECT d.aesthetic_score FROM detections d
-                            WHERE d.detection_id = current_observations.detection_id), -1) DESC,
-                        score DESC, detection_id DESC, object_key) AS rn
+                    ORDER BY {cover_order_sql()}, detection_id DESC, object_key) AS rn
             FROM current_observations WHERE species_key != 'Unknown_species' AND {where}
         ) SELECT * FROM ranked WHERE rn = 1 ORDER BY day DESC
         """,
@@ -1513,21 +1478,18 @@ def fetch_species_covers(
         dict(row)
         for row in conn.execute(
             f"""
-        WITH ranked AS (SELECT *, ROW_NUMBER() OVER (
-            PARTITION BY species_key ORDER BY ({where}) DESC,
-            CASE WHEN origin = 'human' THEN 1 ELSE 0 END DESC,
-            original_present DESC, COALESCE(quality_gallery_ok, 1) DESC,
-            (COALESCE(score, 0) >= ?) DESC,
-            CASE WHEN COALESCE(is_favorite, 0) != 0 THEN 5
-                WHEN ptz_origin IN ('preset', 'manual_drive') AND COALESCE(is_gallery_eligible, 0) != 0 THEN 4
-                WHEN ptz_origin IN ('preset', 'manual_drive') THEN 3
-                WHEN COALESCE(is_gallery_eligible, 0) != 0 THEN 2 ELSE 0 END DESC,
-            COALESCE(score, 0) DESC, timestamp DESC, object_key
-        ) AS rn FROM current_observations
-        WHERE species_key != 'Unknown_species' OR unknown_bird)
+        WITH selected AS (
+            SELECT *, ({where}) AS in_period FROM current_observations
+            WHERE species_key != 'Unknown_species' OR unknown_bird
+        ), candidates AS (
+            SELECT *, MAX(in_period) OVER (PARTITION BY species_key) AS has_period
+            FROM selected
+        ), ranked AS (SELECT *, ROW_NUMBER() OVER (
+            PARTITION BY species_key ORDER BY {cover_order_sql()}, object_key
+        ) AS rn FROM candidates WHERE in_period = has_period)
         SELECT * FROM ranked WHERE rn = 1
     """,
-            [*params, min_score],
+            params,
         )
     ]
     result = []

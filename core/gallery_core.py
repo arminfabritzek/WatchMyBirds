@@ -15,6 +15,7 @@ import cv2
 
 from config import get_config
 from core.crop_refresh import refresh_detection_thumbnail
+from utils.cover_selection import cover_sort_key
 from utils.db import (
     closing_connection,
     fetch_daily_covers,
@@ -493,22 +494,6 @@ def summarize_observations(
     }
 
 
-def _story_board_bbox_touches_edge(det: dict, margin: float = 0.01) -> bool:
-    """Return True if the bbox touches the image edge."""
-    bx = det.get("bbox_x") or 0.0
-    by = det.get("bbox_y") or 0.0
-    bw = det.get("bbox_w") or 0.0
-    bh = det.get("bbox_h") or 0.0
-    if bw <= 0 or bh <= 0:
-        return True
-    return (
-        bx <= margin
-        or by <= margin
-        or (bx + bw) >= (1.0 - margin)
-        or (by + bh) >= (1.0 - margin)
-    )
-
-
 def is_favorite(det: dict) -> bool:
     """True when a detection is marked as ❤️ favorite (manual gold label)."""
     return bool(int(det.get("is_favorite") or 0))
@@ -526,162 +511,26 @@ def is_ptz_preset(det: dict) -> bool:
     indicate the camera was aimed close-up at the bird, so the frame is
     physically tighter than an overview/idle frame. ``None`` (legacy /
     non-PTZ cameras) and ``"overview"`` (idle park position) return False.
-    Mirrors the SQL ``CASE ptz_origin`` arm used in fetch_daily_covers and
-    fetch_species_story_board_candidates.
     """
     return det.get("ptz_origin") in ("preset", "manual_drive")
-
-
-def cover_quality_tuple(
-    det: dict,
-) -> tuple[int, int, int, int, float, float, float, str, int]:
-    """Quality key for species cover and summary selection.
-
-    Identical DNA to ``_story_board_candidate_quality`` — both must stay in
-    sync. Used by the Today's-Visitors-Summary row, Species tab, and the
-    subgallery's Species-of-Day. Highest priority first:
-        is_favorite           manual gold label.
-        ptz_preset            PTZ-driven frames (preset or manual_drive) are
-                              physically closer to the bird.
-        is_gallery_eligible   AI auto-pick from aesthetic_tag_nightly.py.
-        is_interior           bbox not touching the frame edge.
-        aesthetic_score       CLIP facing-camera probability; -1.0 when
-                              missing so legacy / non-taggable rows sink.
-        score                 detector confidence (legacy fallback).
-        bbox_quality          geometric heuristic from BBoxQualityService.
-        ts                    recency.
-        det_id                stable id so the sort is deterministic.
-    """
-    fav = 1 if is_favorite(det) else 0
-    ptz = 1 if is_ptz_preset(det) else 0
-    ki = 1 if is_gallery_eligible(det) else 0
-    interior = 0 if _story_board_bbox_touches_edge(det) else 1
-    raw_aesthetic = det.get("aesthetic_score")
-    aesthetic_score = float(raw_aesthetic) if raw_aesthetic is not None else -1.0
-    score = float(det.get("score") or 0.0)
-    bbox_quality = float(det.get("bbox_quality") or 0.0)
-    ts = det.get("image_timestamp", "") or ""
-    det_id = int(det.get("detection_id") or 0)
-    return (
-        fav,
-        ptz,
-        ki,
-        interior,
-        aesthetic_score,
-        score,
-        bbox_quality,
-        ts,
-        det_id,
-    )
 
 
 def pick_cover_for_group(
     candidates: list[dict], rng: random.Random | None = None
 ) -> dict | None:
-    """Pick one cover candidate for a species group.
-
-    Priority (highest first):
-        1. manual favorites → random.choice() among them. The "sieh mal mein
-           Lieblingsbild" surface must not be hijacked by automation.
-        2. PTZ preset / manual_drive frames ∩ AI gallery-eligible →
-           random.choice(). Preset-targeted frames are physically closer to
-           the bird ;
-           when the aesthetic tagger also approved the same frame, that is
-           the strongest non-human signal available.
-        3. PTZ preset / manual_drive frames (any aesthetic state) →
-           random.choice(). A close-up beats a generic auto-pick.
-        4. AI gallery-eligible picks → random.choice().
-        5. Prefer non-edge images, then fall back to best by score.
-
-    ``rng`` is injectable for deterministic tests; defaults to module random.
-    """
+    """Choose the best photo, randomly breaking equal-quality ties."""
     if not candidates:
         return None
-
-    if rng is None:
-        rng = random.Random()
-
-    fav_pool = [d for d in candidates if is_favorite(d)]
-    if fav_pool:
-        return rng.choice(fav_pool)
-
-    ptz_pool = [d for d in candidates if is_ptz_preset(d)]
-    ki_pool = [d for d in candidates if is_gallery_eligible(d)]
-
-    ptz_ki_pool = [d for d in ptz_pool if is_gallery_eligible(d)]
-    if ptz_ki_pool:
-        return rng.choice(ptz_ki_pool)
-
-    if ptz_pool:
-        return rng.choice(ptz_pool)
-
-    if ki_pool:
-        return rng.choice(ki_pool)
-
-    interior = [d for d in candidates if not _story_board_bbox_touches_edge(d)]
-    pool = interior if interior else candidates
-    ranked = sorted(pool, key=lambda d: float(d.get("score") or 0.0), reverse=True)
-    return ranked[0] if ranked else None
-
-
-def _story_board_candidate_quality(
-    det: dict,
-) -> tuple[int, int, int, int, float, float, float, str, int]:
-    """Quality key for story-board cover candidates.
-
-    Tuple ordering (highest priority first):
-        is_favorite     manual gold label. Wins over everything else so the
-                        "sieh mal mein Lieblingsbild" surface cannot be
-                        hijacked by automation.
-        ptz_preset      1 if the frame was captured while the camera was
-                        driven to a non-overview preset (close-up shot);
-                        0 for overview rest, manual rest, or non-PTZ
-                        cameras. Sits above is_gallery_eligible so a
-                        physically-closer preset shot beats a pure
-                        aesthetic-tagger pick.
-        is_gallery_eligible AI auto-pick from aesthetic_tag_nightly.py.
-        is_interior     bbox not touching the frame edge.
-        aesthetic_score CLIP "facing camera" probability from
-                        scripts/aesthetic_tag_nightly.py; -1.0 when missing
-                        so legacy / non-taggable detections sort by `score`
-                        downstream instead of being penalised globally.
-        score           detector OD confidence (legacy primary tiebreaker).
-        bbox_quality    geometric heuristic from BBoxQualityService.
-        ts              recency.
-        det_id          stable id so the sort is deterministic.
-    """
-    is_favorite = 1 if int(det.get("is_favorite") or 0) else 0
-    is_gallery_eligible = 1 if int(det.get("is_gallery_eligible") or 0) else 0
-    is_interior = 0 if _story_board_bbox_touches_edge(det) else 1
-    ptz_origin = det.get("ptz_origin")
-    ptz_preset = 1 if ptz_origin in ("preset", "manual_drive") else 0
-    # NULL aesthetic_score → -1.0 mirrors the SQL `COALESCE(.., -1)` fallback
-    # in fetch_daily_covers / _fetch_species_best_photos. Legacy and
-    # non-taggable detections sink behind anything actually scored.
-    raw_aesthetic = det.get("aesthetic_score")
-    aesthetic_score = float(raw_aesthetic) if raw_aesthetic is not None else -1.0
-    score = float(det.get("score") or 0.0)
-    bbox_quality = float(det.get("bbox_quality") or 0.0)
-    ts = det.get("image_timestamp", "") or ""
-    det_id = int(det.get("detection_id") or 0)
-    return (
-        is_favorite,
-        ptz_preset,
-        is_gallery_eligible,
-        is_interior,
-        aesthetic_score,
-        score,
-        bbox_quality,
-        ts,
-        det_id,
-    )
+    best = max(map(cover_sort_key, candidates))
+    pool = [candidate for candidate in candidates if cover_sort_key(candidate) == best]
+    return (rng or random.Random()).choice(pool)
 
 
 def _rank_story_board_candidates(candidates: list[dict]) -> list[dict]:
-    """Sort cover candidates by favorite/interior/score/recency quality."""
+    """Sort cover candidates using the shared photo-quality order."""
     return sorted(
         candidates,
-        key=_story_board_candidate_quality,
+        key=cover_sort_key,
         reverse=True,
     )
 
@@ -698,18 +547,9 @@ def _story_board_image_key(det: dict) -> str:
 
 def _build_story_board_candidate_pool(
     detections: list[dict],
-    cover_detection_ids: set[int],
     limit: int = 12,
 ) -> list[dict]:
-    """Build a species-level candidate pool with favorites ahead of covers.
-
-    The story board still uses observation-derived ranking for visit counts, but
-    image rotation should not be restricted to one cover per observation. We
-    therefore promote:
-    - favorited detections first
-    - observation cover detections second
-    - then other high-quality detections as fallback
-    """
+    """Build a quality-ranked pool of distinct photos for one species."""
     if not detections:
         return []
 
@@ -730,25 +570,7 @@ def _build_story_board_candidate_pool(
             if len(pool) >= limit:
                 break
 
-    favorites = [d for d in ranked if int(d.get("is_favorite") or 0)]
-    # AI picks: gallery_eligible but NOT also a manual favorite — already in
-    # `favorites` if both. Going in second so manual choice still wins ties.
-    ki_picks = [
-        d
-        for d in ranked
-        if int(d.get("is_gallery_eligible") or 0) and not int(d.get("is_favorite") or 0)
-    ]
-    covers = [
-        d for d in ranked if int(d.get("detection_id") or 0) in cover_detection_ids
-    ]
-
-    _append_unique(favorites)
-    if len(pool) < limit:
-        _append_unique(ki_picks)
-    if len(pool) < limit:
-        _append_unique(covers)
-    if len(pool) < limit:
-        _append_unique(ranked)
+    _append_unique(ranked)
 
     return pool
 
@@ -773,24 +595,7 @@ def _choose_story_board_frames(
             continue
         seen_images.add(image_key)
         ranked.append(det)
-    # Primary cover preference: manual-favorites first; only fall back to AI
-    # picks if there are no manual ones. The "sieh mal mein Lieblingsbild"
-    # surface should not get hijacked by a model pick when a human pick
-    # exists.
-    favorites = [d for d in ranked if int(d.get("is_favorite") or 0)]
-    fallback_pool = ranked[: min(3, len(ranked))]
-    if len(favorites) >= 2:
-        primary_pool = favorites
-    elif len(favorites) == 1 and len(ranked) > 1:
-        primary_pool = [favorites[0], favorites[0]]
-        primary_pool.extend(
-            det
-            for det in fallback_pool
-            if det.get("detection_id") != favorites[0].get("detection_id")
-        )
-    else:
-        primary_pool = fallback_pool
-    primary = rng.choice(primary_pool)
+    primary = pick_cover_for_group(ranked, rng=rng)
 
     frames = [primary]
     remaining = [
@@ -885,7 +690,6 @@ def build_species_story_board(
                 "last_seen_timestamp": "",
                 "best_cover_score": 0.0,
                 "is_favorite_available": False,
-                "_cover_detection_ids": set(),
             },
         )
         row["visit_count"] += 1
@@ -897,7 +701,6 @@ def build_species_story_board(
             float(row["best_cover_score"] or 0.0),
             float(obs.get("best_score") or 0.0),
         )
-        row["_cover_detection_ids"].add(int(cover_det.get("detection_id") or 0))
 
     ranked_species = sorted(
         species_rows.values(),
@@ -915,7 +718,6 @@ def build_species_story_board(
         species_key = row["species_key"]
         candidates = _build_story_board_candidate_pool(
             species_detections.get(species_key, []),
-            row.get("_cover_detection_ids") or set(),
         )
         primary, frames = _choose_story_board_frames(candidates, rng=rng, frame_count=4)
         if not primary:

@@ -41,6 +41,7 @@ from core.event_intelligence import (
     representative_image_budget,
     resolve_event_profile,
 )
+from utils.cover_selection import cover_sort_key
 
 EVENT_GAP_MINUTES_DEFAULT = 30
 """Default independence window in minutes. Documented in the module docstring."""
@@ -100,9 +101,8 @@ class BirdEvent:
     start_time / end_time
         ``YYYYMMDD_HHMMSS`` strings of the first and last member.
     cover_detection_id
-        Detection id chosen to represent the event: the newest
-        actionable (non-context) member, falling back to the newest
-        member overall when every member is context.
+        Detection id of the best photo among actionable (non-context)
+        members, falling back to all members when every member is context.
     eligibility
         ``"event_eligible"`` when the event is a clean single-species
         run without ambiguity, ``"event_ineligible"`` otherwise.
@@ -374,6 +374,7 @@ def _collect_items(detections: list[dict[str, Any]]) -> list[dict[str, Any]]:
         species, source = _resolve_detection_species(det)
         items.append(
             {
+                "cover_quality": cover_sort_key(det),
                 "detection_id": detection_id,
                 "filename": str(det.get("filename") or det.get("image_filename") or ""),
                 "timestamp": timestamp,
@@ -552,13 +553,18 @@ def build_bird_events(
 
         start_time = members[0]["timestamp"]
         end_time = members[-1]["timestamp"]
-        # Prefer the newest actionable (non-context) member as cover so the
-        # Review surface always gets a frame the operator can act on. Falls
-        # back to the newest member overall when every member is context.
+        # Context anchors must not replace an actionable Review cover.
         actionable_members = [
             member for member in members if not member.get("context_only")
         ]
-        cover_source = actionable_members[-1] if actionable_members else members[-1]
+        cover_source = max(
+            actionable_members or members,
+            key=lambda member: (
+                member["cover_quality"],
+                member["timestamp"],
+                member["detection_id"],
+            ),
+        )
         cover_detection_id = cover_source["detection_id"]
         duration_sec = max(
             round(members[-1]["epoch"] - members[0]["epoch"], 1),

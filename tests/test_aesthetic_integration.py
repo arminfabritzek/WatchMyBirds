@@ -1,17 +1,4 @@
-"""Tests for the aesthetic_score integration into ranking surfaces.
-
-Covers the four call sites threaded by plan
-``aesthetic-score app integration``:
-
-1. core.gallery_core._story_board_candidate_quality (tuple ordering)
-2. SQL ORDER BY in fetch_daily_covers (utils.db.detections)
-3. SQL ORDER BY in _fetch_species_best_photos (utils.daily_report)
-4. SELECT side: gallery query carries aesthetic_score so the dict has it
-
-Notification-service integration is intentionally out of scope (plan v1
-recommendation (c): live alerts keep using detector confidence because
-the nightly tagger only runs once per day).
-"""
+"""Aesthetic scores participate in the shared photo-quality order."""
 
 from __future__ import annotations
 
@@ -22,11 +9,10 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
-from core.gallery_core import _story_board_candidate_quality  # noqa: E402
+from utils.cover_selection import cover_sort_key  # noqa: E402
 
 # ---------------------------------------------------------------------------
-# 1) Tuple ordering: aesthetic_score is the third tiebreaker, behind
-#    is_favorite and is_interior, ahead of score and bbox_quality.
+# 1) Aesthetic score breaks ties before detection score and box quality.
 # ---------------------------------------------------------------------------
 
 
@@ -53,7 +39,7 @@ def test_aesthetic_score_breaks_tie_when_score_equal():
     a = _det(detection_id=1, score=0.8, aesthetic_score=0.9)
     b = _det(detection_id=2, score=0.8, aesthetic_score=0.3)
     # Ranker key returns a tuple; descending sort puts higher tuples first.
-    assert _story_board_candidate_quality(a) > _story_board_candidate_quality(b)
+    assert cover_sort_key(a) > cover_sort_key(b)
 
 
 def test_aesthetic_score_overrides_lower_detector_score():
@@ -64,9 +50,7 @@ def test_aesthetic_score_overrides_lower_detector_score():
     """
     pretty_but_low_conf = _det(detection_id=1, score=0.4, aesthetic_score=0.95)
     confident_but_ugly = _det(detection_id=2, score=0.95, aesthetic_score=0.10)
-    assert _story_board_candidate_quality(
-        pretty_but_low_conf
-    ) > _story_board_candidate_quality(confident_but_ugly)
+    assert cover_sort_key(pretty_but_low_conf) > cover_sort_key(confident_but_ugly)
 
 
 def test_manual_favorite_still_wins_over_aesthetic():
@@ -87,9 +71,9 @@ def test_manual_favorite_still_wins_over_aesthetic():
         score=0.9,
         aesthetic_score=0.99,
     )
-    assert _story_board_candidate_quality(
-        manual_favorite_low_aesthetic
-    ) > _story_board_candidate_quality(auto_high_aesthetic)
+    assert cover_sort_key(manual_favorite_low_aesthetic) > cover_sort_key(
+        auto_high_aesthetic
+    )
 
 
 def test_null_aesthetic_loses_to_any_real_score():
@@ -97,32 +81,22 @@ def test_null_aesthetic_loses_to_any_real_score():
     any detection that has a real aesthetic_score, mirroring the SQL
     ``COALESCE(aesthetic_score, -1) DESC, score DESC`` fallback.
 
-    Plan rationale (Open Question #2 recommendation c): treating NULL as
-    "below floor" keeps tagged detections preferred wherever the tagger has
-    a verdict, while NULL still ranks among themselves by detector score.
+    NULL ranks below assessed aesthetic scores. Untagged detections still
+    compare by detector score.
     """
     legacy_high_score = _det(detection_id=1, score=0.9, aesthetic_score=None)
     scored_low_score = _det(detection_id=2, score=0.2, aesthetic_score=0.05)
-    assert _story_board_candidate_quality(
-        scored_low_score
-    ) > _story_board_candidate_quality(legacy_high_score)
+    assert cover_sort_key(scored_low_score) > cover_sort_key(legacy_high_score)
 
 
 def test_two_null_aesthetic_detections_rank_by_score():
     """Among NULL-aesthetic detections, the higher detector score wins."""
     legacy_better = _det(detection_id=1, score=0.9, aesthetic_score=None)
     legacy_worse = _det(detection_id=2, score=0.2, aesthetic_score=None)
-    assert _story_board_candidate_quality(
-        legacy_better
-    ) > _story_board_candidate_quality(legacy_worse)
+    assert cover_sort_key(legacy_better) > cover_sort_key(legacy_worse)
 
 
-def test_interior_bbox_still_outranks_aesthetic():
-    """is_interior is still ranked higher than aesthetic_score.
-
-    A bird touching the frame edge should not surface even if it scored
-    well -- bad composition wins out via the existing edge filter.
-    """
+def test_edge_position_does_not_override_cover_quality():
     edge_high_aesthetic = _det(
         detection_id=1,
         bbox_x=0.0,
@@ -139,9 +113,7 @@ def test_interior_bbox_still_outranks_aesthetic():
         bbox_h=0.3,  # interior
         aesthetic_score=0.5,
     )
-    assert _story_board_candidate_quality(
-        interior_mid_aesthetic
-    ) > _story_board_candidate_quality(edge_high_aesthetic)
+    assert cover_sort_key(edge_high_aesthetic) > cover_sort_key(interior_mid_aesthetic)
 
 
 # ---------------------------------------------------------------------------
@@ -262,6 +234,6 @@ def test_gallery_select_includes_aesthetic_score(monkeypatch):
     row = dict(rows[0])
     assert "aesthetic_score" in row, (
         "aesthetic_score must appear in fetch_detections_for_gallery rows so "
-        "_story_board_candidate_quality can pick it up via det.get(...)"
+        "cover_sort_key can pick it up via det.get(...)"
     )
     assert row["aesthetic_score"] == 0.77

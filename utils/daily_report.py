@@ -43,6 +43,7 @@ from core.db_core import (
     get_connection,
 )
 from core.gallery_core import summarize_observations
+from utils.cover_selection import cover_order_sql
 from utils.image_ops import create_square_crop
 from utils.path_manager import get_path_manager
 from utils.telegram_notifier import send_telegram_message
@@ -226,61 +227,29 @@ def _fetch_species_best_photos(conn: sqlite3.Connection, date_iso: str) -> list[
 
     config = get_config()
 
-    # The PTZ preset bias ("preset" or future "manual_drive" → 1, else 0)
-    # is reused in every best-photo ORDER BY below. Inlined as a SQL
-    # fragment so the six correlated subqueries stay readable.
-    ptz_bias_sql = (
-        "CASE e2.ptz_origin "
-        "WHEN 'preset' THEN 1 "
-        "WHEN 'manual_drive' THEN 1 "
-        "ELSE 0 END DESC"
-    )
-
     query = f"""
         WITH effective AS (
-            SELECT o.object_key, o.image_filename, o.score, o.bbox_quality,
-                d.aesthetic_score,
+            SELECT o.*,
                 COALESCE(b.bbox_x, d.bbox_x, m.bbox_x) AS bbox_x,
                 COALESCE(b.bbox_y, d.bbox_y, m.bbox_y) AS bbox_y,
                 COALESCE(b.bbox_w, d.bbox_w, m.bbox_w) AS bbox_w,
-                COALESCE(b.bbox_h, d.bbox_h, m.bbox_h) AS bbox_h,
-                o.ptz_origin, o.species_key AS species
+                COALESCE(b.bbox_h, d.bbox_h, m.bbox_h) AS bbox_h
             FROM current_observations o
             LEFT JOIN detections d ON d.detection_id = o.detection_id
             LEFT JOIN manual_objects m ON m.manual_object_id = o.manual_object_id
             LEFT JOIN current_human_label_facts b ON b.detection_id = o.detection_id
                 AND b.scope = 'object' AND b.fact_type = 'bbox_correction'
             WHERE o.timestamp LIKE ? || '%' AND o.admitted
+        ), ranked AS (
+            SELECT *, COUNT(*) OVER (PARTITION BY species_key) AS count,
+                ROW_NUMBER() OVER (PARTITION BY species_key
+                    ORDER BY {cover_order_sql()}, object_key) AS rn
+            FROM effective
         )
-        -- "Best photo" ranking, highest priority first:
-        --   1. PTZ preset bias — preset-targeted frames are physically
-        --      closer to the bird. Legacy NULL rows sort behind anything tagged.
-        --   2. nightly aesthetic_score from scripts/aesthetic_tag_nightly.py
-        --      (NULL on legacy / non-taggable species → ranked behind scored)
-        --   3. detector confidence
-        --   4. bbox-quality heuristic
-        SELECT
-            species,
-            COUNT(object_key) AS count,
-            (SELECT image_filename FROM effective e2
-             WHERE e2.species = effective.species
-             ORDER BY {ptz_bias_sql}, COALESCE(e2.aesthetic_score, -1) DESC, e2.score DESC, e2.bbox_quality DESC LIMIT 1) AS best_image_filename,
-            (SELECT bbox_x FROM effective e2
-             WHERE e2.species = effective.species
-             ORDER BY {ptz_bias_sql}, COALESCE(e2.aesthetic_score, -1) DESC, e2.score DESC, e2.bbox_quality DESC LIMIT 1) AS best_bbox_x,
-            (SELECT bbox_y FROM effective e2
-             WHERE e2.species = effective.species
-             ORDER BY {ptz_bias_sql}, COALESCE(e2.aesthetic_score, -1) DESC, e2.score DESC, e2.bbox_quality DESC LIMIT 1) AS best_bbox_y,
-            (SELECT bbox_w FROM effective e2
-             WHERE e2.species = effective.species
-             ORDER BY {ptz_bias_sql}, COALESCE(e2.aesthetic_score, -1) DESC, e2.score DESC, e2.bbox_quality DESC LIMIT 1) AS best_bbox_w,
-            (SELECT bbox_h FROM effective e2
-             WHERE e2.species = effective.species
-             ORDER BY {ptz_bias_sql}, COALESCE(e2.aesthetic_score, -1) DESC, e2.score DESC, e2.bbox_quality DESC LIMIT 1) AS best_bbox_h,
-            MAX(score) AS best_score
-        FROM effective
-        GROUP BY species
-        ORDER BY count DESC, best_score DESC;
+        SELECT species_key AS species, count, image_filename AS best_image_filename,
+            bbox_x AS best_bbox_x, bbox_y AS best_bbox_y,
+            bbox_w AS best_bbox_w, bbox_h AS best_bbox_h, score AS best_score
+        FROM ranked WHERE rn = 1 ORDER BY count DESC, best_score DESC
     """
 
     cur = conn.execute(query, (date_prefix,))

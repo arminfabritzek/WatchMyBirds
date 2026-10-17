@@ -33,9 +33,9 @@ from datetime import datetime, timedelta
 from flask import Blueprint, render_template
 
 from config import get_config
-from core.gallery_core import cover_quality_tuple as _cover_quality_tuple
 from core.species_colours import assign_species_colours as _assign_species_colours
 from logging_config import get_logger
+from utils.cover_selection import cover_sort_key
 from web import view_helpers
 from web import web_interface as _web_interface
 from web.services import db_service, gallery_service
@@ -332,7 +332,7 @@ def index_route():
 
         sorted_summary = sorted(
             species_groups.values(),
-            key=_cover_quality_tuple,
+            key=cover_sort_key,
             reverse=True,
         )
 

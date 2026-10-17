@@ -97,7 +97,11 @@ exactly zero occurrence; thresholds are unchanged. Settings affect new captures
 only. No background job re-evaluates stored admission decisions.
 
 Sharpness and CLIP rank photos, covers and event representatives only. They never
-veto admission or send a confident bird to Review. Standard Gallery applies no
+veto admission or send a confident bird to Review. All group covers use
+`utils.cover_selection`: favorite, sharpness (`quality_gallery_ok != 0`, with
+NULL treated as sharp), PTZ close-up (`preset` / `manual_drive`), AI eligibility,
+aesthetic score, detection score, box quality, then recency. Exact ties retain
+the selector's existing random or stable choice. Standard Gallery applies no
 second score floor. Human answers bypass automatic thresholds. Refutations affect
 their own object; historical hints do not blacklist a species or reopen Review.
 Excluded automatic records expose the persisted decision reason. Open Review and

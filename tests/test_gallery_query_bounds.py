@@ -158,13 +158,14 @@ def test_species_covers_preserve_priority_and_hydrate_only_covers(
     ) as hydrate:
         assert fetch_species_covers(conn)[0]["detection_id"] == ids[0]
         assert hydrate.call_args.kwargs["detection_ids"] == [ids[0]]
-    assert fetch_species_covers(conn, min_score=0.51)[0]["detection_id"] == ids[1]
+    assert fetch_species_covers(conn, min_score=0.51)[0]["detection_id"] == ids[0]
     assert (
         fetch_species_covers(conn, min_score=0.51, favorites_only=True)[0][
             "detection_id"
         ]
-        == ids[1]
+        == ids[0]
     )
+    conn.execute("UPDATE detections SET is_favorite = 0")
     conn.execute(
         "UPDATE images SET ptz_origin = 'preset' WHERE filename = (SELECT image_filename FROM detections WHERE detection_id = ?)",
         (ids[2],),

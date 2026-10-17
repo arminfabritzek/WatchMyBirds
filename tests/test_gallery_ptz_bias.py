@@ -3,13 +3,13 @@
 Two layers:
 1. SQL: fetch_daily_covers picks the preset row over an overview row
    when all other quality fields tie.
-2. Python: _story_board_candidate_quality returns a tuple that ranks
+2. Python: cover_sort_key returns a tuple that ranks
    preset rows above overview/NULL rows but BELOW manual favorites.
 """
 
 import pytest
 
-from core.gallery_core import _story_board_candidate_quality
+from utils.cover_selection import cover_sort_key
 from utils.db.connection import closing_connection
 from utils.db.detections import fetch_daily_covers
 
@@ -135,9 +135,7 @@ def test_story_board_quality_preset_beats_overview_at_equal_aesthetic():
     overview_det = {**preset_det, "ptz_origin": "overview", "detection_id": 101}
 
     # Higher tuple = better. preset row must rank higher.
-    assert _story_board_candidate_quality(preset_det) > _story_board_candidate_quality(
-        overview_det
-    )
+    assert cover_sort_key(preset_det) > cover_sort_key(overview_det)
 
 
 def test_story_board_quality_favorite_beats_preset():
@@ -163,9 +161,7 @@ def test_story_board_quality_favorite_beats_preset():
         "detection_id": 201,
     }
 
-    assert _story_board_candidate_quality(
-        favorite_overview_det
-    ) > _story_board_candidate_quality(plain_preset_det)
+    assert cover_sort_key(favorite_overview_det) > cover_sort_key(plain_preset_det)
 
 
 def test_story_board_quality_manual_drive_treated_as_preset():
@@ -188,8 +184,8 @@ def test_story_board_quality_manual_drive_treated_as_preset():
     manual_drive = {**auto_preset, "ptz_origin": "manual_drive", "detection_id": 301}
 
     # the initial of the gallery ranker treats both equally.
-    auto_key = _story_board_candidate_quality(auto_preset)
-    manual_key = _story_board_candidate_quality(manual_drive)
+    auto_key = cover_sort_key(auto_preset)
+    manual_key = cover_sort_key(manual_drive)
     # The PTZ-preset slot (index 1, between is_favorite and is_gallery_eligible)
     # must be identical for both PTZ origins.
     assert auto_key[1] == manual_key[1] == 1
@@ -211,6 +207,6 @@ def test_story_board_quality_null_ptz_does_not_throw():
         "detection_id": 400,
     }
 
-    key = _story_board_candidate_quality(null_det)
+    key = cover_sort_key(null_det)
     # PTZ slot (index 1) should default to 0 (legacy treated as non-preset).
-    assert key[1] == 0
+    assert key[2] == 0

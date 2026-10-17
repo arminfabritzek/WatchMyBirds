@@ -119,7 +119,7 @@ def test_story_board_primary_uses_favorites_from_same_observation():
         )
         primary_ids.add(board["featured"][0]["primary_detection"]["detection_id"])
 
-    assert primary_ids == {2, 3}
+    assert primary_ids == {3}
 
 
 def test_story_board_single_favorite_still_allows_rotation():
@@ -130,6 +130,7 @@ def test_story_board_single_favorite_still_allows_rotation():
     ]
 
     primary_ids = []
+    secondary_ids = set()
     for seed in range(12):
         board = build_species_story_board(
             detections,
@@ -140,9 +141,12 @@ def test_story_board_single_favorite_still_allows_rotation():
             rng=random.Random(seed),
         )
         primary_ids.append(board["featured"][0]["primary_detection"]["detection_id"])
+        secondary_ids.update(
+            row["detection_id"] for row in board["featured"][0]["story_detections"][1:]
+        )
 
-    assert 1 in primary_ids
-    assert len(set(primary_ids)) > 1
+    assert set(primary_ids) == {1}
+    assert secondary_ids == {2, 3}
 
 
 @pytest.mark.parametrize(
@@ -190,6 +194,6 @@ def test_story_pool_does_not_spend_its_budget_on_duplicate_detections() -> None:
         row["original_name"] = (
             "shared.jpg" if row["detection_id"] < 17 else f"{row['detection_id']}.jpg"
         )
-    pool = _build_story_board_candidate_pool(rows, set())
+    pool = _build_story_board_candidate_pool(rows)
     assert len(pool) == 5
     assert len({row["original_name"] for row in pool}) == 5

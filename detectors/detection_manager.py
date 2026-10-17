@@ -36,6 +36,7 @@ from detectors.services.detection_service import DetectionService
 from detectors.services.mqtt_detection_service import MqttDetectionService
 from detectors.services.scoring_pipeline import compute_detection_signals
 from logging_config import get_logger
+from utils.cover_selection import cover_sort_key
 from utils.db import get_connection, get_or_create_default_source
 from utils.path_manager import get_path_manager
 
@@ -985,6 +986,8 @@ class DetectionManager:
             # --- Process each detection ---
             best_species = None
             best_score = 0.0
+            best_cover_key = None
+            best_detection_id = None
             best_thumb_path = None
 
             # Resolve the active save threshold once per frame so Filter (A)
@@ -1338,7 +1341,15 @@ class DetectionManager:
 
                     notify_eligible = decision_state == DecisionState.CONFIRMED
 
-                    if score > best_score and notify_eligible:
+                    # New objects on one frame share capture context and unassessed image quality.
+                    cover_key = cover_sort_key(
+                        {"score": score, "bbox_quality": signals.bbox_quality}
+                    )
+                    if notify_eligible and (
+                        best_cover_key is None or cover_key > best_cover_key
+                    ):
+                        best_cover_key = cover_key
+                        best_detection_id = det_result.detection_id
                         best_score = score
                         best_species = cls_name or "Unknown"
                         best_thumb_path = (
@@ -1367,6 +1378,7 @@ class DetectionManager:
                     latin_name=best_species,
                     score=best_score,
                     image_path=best_thumb_path,
+                    detection_id=best_detection_id,
                 )
                 self.notification_service.queue_detection(species_info)
 

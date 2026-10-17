@@ -10,6 +10,7 @@ from collections import OrderedDict
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 
+from utils.cover_selection import cover_sort_key
 from utils.db.detections import fetch_species_covers
 from utils.db.observations import selection_sql, species_summaries
 
@@ -73,22 +74,12 @@ def build_report(conn: sqlite3.Connection, selection: dict[str, str]) -> dict:
             cells.get((row["species_key"], day)) for day in calendar_days
         ]
     covers = fetch_species_covers(conn, selection=selection)
-    # Favor sparse human records, then representative photo quality; novelty
-    # and geography never turn an unreviewed model name into a sensation.
     covers = [
         row
         for row in covers
         if row["species_key"] != "Unknown_species" and row.get("observation_count")
     ]
-    covers.sort(
-        key=lambda row: (
-            0 if row.get("human_count") else 1,
-            row.get("human_days") or 999,
-            -int(row.get("quality_gallery_ok") != 0),
-            -float(row.get("score") or 0),
-            row["species_key"],
-        )
-    )
+    covers.sort(key=cover_sort_key, reverse=True)
     highlights = covers[:6]
     models = [
         dict(row)
