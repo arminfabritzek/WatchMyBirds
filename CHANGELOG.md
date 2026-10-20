@@ -36,6 +36,8 @@
   frames, and app updates refresh browser assets automatically.
 - Applying unrelated settings keeps the current video capture running.
 - Homepage photo selection avoids repeated database queries for sibling birds.
+- Archive queries limit loaded photo records; homepage archive highlights load
+  separately from live content and offer Retry if loading fails.
 
 
 ## 0.5.9 - 2026-10-13
